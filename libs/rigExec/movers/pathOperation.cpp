@@ -1,3 +1,4 @@
+#include "rigExecSchema/schemaNames.h"
 #include "pathOperation.h"
 
 #include "rigExecMath/propertyMath.h"
@@ -17,11 +18,11 @@ PXR_NAMESPACE_USING_DIRECTIVE
 // Interned once: binders run on parallel lanes, and building a token from
 // text takes the registry lock.
 TF_DEFINE_PRIVATE_TOKENS(_pathTokens,
-    ((path, "rigExec:path"))
-    ((pathComponent, "rigExec:pathComponent"))
-    ((pathOffset, "rigExec:pathOffset"))
-    ((pathHeadingOffset, "rigExec:pathHeadingOffset"))
-    ((pathMeasure, "rigExec:pathMeasure"))
+    ((path, rigExec::SchemaAttrText::rigExecPath))
+    ((pathComponent, rigExec::SchemaAttrText::rigExecPathComponent))
+    ((pathOffset, rigExec::SchemaAttrText::rigExecPathOffset))
+    ((pathHeadingOffset, rigExec::SchemaAttrText::rigExecPathHeadingOffset))
+    ((pathMeasure, rigExec::SchemaAttrText::rigExecPathMeasure))
     (x)
     (length));
 
@@ -51,7 +52,7 @@ _Uniform(const UsdPrim &prim, const TfToken &name, const T &fallback,
     return value;
 }
 
-}  // namespace
+} // namespace
 
 bool
 RigExecBindPathOperation(const UsdPrim &mover, RigExecPathBinding *out,
@@ -72,8 +73,7 @@ RigExecBindPathOperation(const UsdPrim &mover, RigExecPathBinding *out,
         _Uniform(mover, componentName, _pathTokens->x, &out->structural);
     const GfVec2f offset =
         _Uniform(mover, offsetName, GfVec2f(0.0f), &out->structural);
-    const float heading =
-        _Uniform(mover, headingName, 0.0f, &out->structural);
+    const float heading = _Uniform(mover, headingName, 0.0f, &out->structural);
     const TfToken measure =
         _Uniform(mover, measureName, _pathTokens->length, &out->structural);
     RigExecPathSettings &settings = out->settings;
@@ -92,7 +92,7 @@ RigExecBindPathOperation(const UsdPrim &mover, RigExecPathBinding *out,
     if (!std::isfinite(offset[0]) || !std::isfinite(offset[1]) ||
         !std::isfinite(heading)) {
         return _Fail(error, who() + ": rigExec:pathOffset and "
-                                  "rigExec:pathHeadingOffset must be finite");
+                                    "rigExec:pathHeadingOffset must be finite");
     }
     SdfPathVector targets;
     if (const UsdRelationship rel = mover.GetRelationship(pathRel)) {
@@ -100,7 +100,7 @@ RigExecBindPathOperation(const UsdPrim &mover, RigExecPathBinding *out,
     }
     if (targets.size() != 1 || !targets[0].IsPrimPath()) {
         return _Fail(error, who() + ": rigExec:path must name exactly one "
-                                  "UsdGeomBasisCurves prim");
+                                    "UsdGeomBasisCurves prim");
     }
     const UsdPrim curvePrim = mover.GetStage()->GetPrimAtPath(targets[0]);
     const UsdGeomBasisCurves curves(curvePrim);
@@ -159,4 +159,4 @@ RigExecBindPathOperation(const UsdPrim &mover, RigExecPathBinding *out,
     return true;
 }
 
-}  // namespace rigExec
+} // namespace rigExec

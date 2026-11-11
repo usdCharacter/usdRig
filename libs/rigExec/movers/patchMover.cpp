@@ -1,5 +1,6 @@
 // RigExecPatchMover: NURBS patch surface attachment from phased UV points,
 // mixed toward weighted UV shapes, with contact pairs kept from crossing.
+#include "rigExecSchema/schemaNames.h"
 #include "moverRegistry.h"
 #include "externalPlayback.h"
 #include "../parallel.h"
@@ -24,14 +25,14 @@ using namespace rigExec;
 // Relationship names the binders and validators read, interned once:
 // building a token from text takes the registry lock.
 TF_DEFINE_PRIVATE_TOKENS(_relTokens,
-    ((patch, "rigExec:patch"))
-    ((uvPoints, "rigExec:uvPoints"))
-    ((uvShapes, "rigExec:uvShapes")));
+    ((patch, rigExec::SchemaAttrText::rigExecPatch))
+    ((uvPoints, rigExec::SchemaAttrText::rigExecUvPoints))
+    ((uvShapes, rigExec::SchemaAttrText::rigExecUvShapes)));
 
 // Interned once: callbacks, binders and validators run on parallel
 // lanes, and building a token from text takes the registry lock.
 TF_DEFINE_PRIVATE_TOKENS(_patchTokens,
-    ((patch, "rigExec:patch"))
+    ((patch, rigExec::SchemaAttrText::rigExecPatch))
     (points)
     (pointWeights)
     (uVertexCount)
@@ -43,8 +44,8 @@ TF_DEFINE_PRIVATE_TOKENS(_patchTokens,
     (uForm)
     (open)
     (vForm)
-    ((uvPoints, "rigExec:uvPoints"))
-    ((uvShapes, "rigExec:uvShapes")));
+    ((uvPoints, rigExec::SchemaAttrText::rigExecUvPoints))
+    ((uvShapes, rigExec::SchemaAttrText::rigExecUvShapes)));
 
 namespace {
 
@@ -70,10 +71,10 @@ enum Input : size_t {
 
 // Interned once at load: the oracle asks per frame, and interning takes
 // the token registry's lock.
-const TfToken _uvWeights("inputs:uvWeights");
-const TfToken _uvShapes("rigExec:uvShapes");
-const TfToken _uvContactLower("rigExec:uvContactLower");
-const TfToken _uvContactUpper("rigExec:uvContactUpper");
+const TfToken _uvWeights(rigExec::SchemaAttrText::inputsUvWeights);
+const TfToken _uvShapes(rigExec::SchemaAttrText::rigExecUvShapes);
+const TfToken _uvContactLower(rigExec::SchemaAttrText::rigExecUvContactLower);
+const TfToken _uvContactUpper(rigExec::SchemaAttrText::rigExecUvContactUpper);
 
 // How many shapes the declared inputs hold, and whether their weights are
 // connected sources (one Dial each) or the authored array.
@@ -105,12 +106,13 @@ LayoutOf(const std::vector<RigExecRevisionLeafKey> &keys)
 {
     Layout layout;
     size_t k = UvShapes;
-    while (k < keys.size() && keys[k].type == RigExecRevisionLeafType::Vec3fArray) {
+    while (k < keys.size() &&
+           keys[k].type == RigExecRevisionLeafType::Vec3fArray) {
         ++layout.shapes;
         ++k;
     }
-    layout.connected = k < keys.size() &&
-                       keys[k].type == RigExecRevisionLeafType::Dial;
+    layout.connected =
+        k < keys.size() && keys[k].type == RigExecRevisionLeafType::Dial;
     return layout;
 }
 
@@ -129,10 +131,11 @@ DeclaredInputs(const SdfPath &mover, const SdfPath &patchTarget,
     inputs.reserve(UvShapes + 2 * shapeTargets.size() + 3);
     if (patchTarget.IsEmpty()) {
         const SdfPath unbound = mover.AppendProperty(_patchTokens->patch);
-        const Type patchTypes[] = {
-            Type::Vec3fArray, Type::DoubleArray, Type::Int, Type::Int,
-            Type::Int, Type::Int, Type::DoubleArray, Type::DoubleArray,
-            Type::Token, Type::Token};
+        const Type patchTypes[] = {Type::Vec3fArray,  Type::DoubleArray,
+                                   Type::Int,         Type::Int,
+                                   Type::Int,         Type::Int,
+                                   Type::DoubleArray, Type::DoubleArray,
+                                   Type::Token,       Type::Token};
         for (Type type : patchTypes) {
             inputs.push_back({unbound, type, RigExecRevisionLeafTime::AtTime,
                               RigExecRevisionLeafFlavour::Raw, VtValue()});
@@ -161,8 +164,7 @@ DeclaredInputs(const SdfPath &mover, const SdfPath &patchTarget,
                              Type::Token, VtValue(_patchTokens->open)));
     }
     if (uvTarget.IsEmpty()) {
-        const SdfPath unbound =
-            mover.AppendProperty(_patchTokens->uvPoints);
+        const SdfPath unbound = mover.AppendProperty(_patchTokens->uvPoints);
         inputs.push_back({unbound, Type::Vec3fArray,
                           RigExecRevisionLeafTime::AtTime,
                           RigExecRevisionLeafFlavour::Raw, VtValue()});
@@ -181,13 +183,13 @@ DeclaredInputs(const SdfPath &mover, const SdfPath &patchTarget,
             inputs.push_back(key(source, Type::Dial, VtValue(0.0)));
         }
     } else {
-        inputs.push_back(key(mover.AppendProperty(_uvWeights),
-                             Type::FloatArray, VtValue(VtFloatArray())));
+        inputs.push_back(key(mover.AppendProperty(_uvWeights), Type::FloatArray,
+                             VtValue(VtFloatArray())));
     }
-    inputs.push_back(key(mover.AppendProperty(_uvContactLower),
-                         Type::IntArray, VtValue(VtIntArray())));
-    inputs.push_back(key(mover.AppendProperty(_uvContactUpper),
-                         Type::IntArray, VtValue(VtIntArray())));
+    inputs.push_back(key(mover.AppendProperty(_uvContactLower), Type::IntArray,
+                         VtValue(VtIntArray())));
+    inputs.push_back(key(mover.AppendProperty(_uvContactUpper), Type::IntArray,
+                         VtValue(VtIntArray())));
     return inputs;
 }
 
@@ -202,7 +204,8 @@ WeightSources(const UsdPrim &mover)
 }
 
 template <class T>
-bool As(const VtValue &value, T *out)
+bool
+As(const VtValue &value, T *out)
 {
     if (!value.IsHolding<T>()) {
         return false;
@@ -212,7 +215,8 @@ bool As(const VtValue &value, T *out)
 }
 
 // A weight as a double, from a float or a double value.
-bool Scalar(const VtValue &value, double *out)
+bool
+Scalar(const VtValue &value, double *out)
 {
     if (value.IsHolding<double>()) {
         *out = value.UncheckedGet<double>();
@@ -226,7 +230,8 @@ bool Scalar(const VtValue &value, double *out)
 }
 
 template <class T>
-const T *Get(const VtDictionary &d, const char *key)
+const T *
+Get(const VtDictionary &d, const char *key)
 {
     const auto found = d.find(key);
     return found != d.end() && found->second.IsHolding<T>()
@@ -234,7 +239,8 @@ const T *Get(const VtDictionary &d, const char *key)
                : nullptr;
 }
 
-bool Text(const VtValue &value, const char **out)
+bool
+Text(const VtValue &value, const char **out)
 {
     if (value.IsHolding<TfToken>()) {
         *out = value.UncheckedGet<TfToken>().GetText();
@@ -247,12 +253,14 @@ bool Text(const VtValue &value, const char **out)
     return false;
 }
 
-bool Is(const char *token, const char *text)
+bool
+Is(const char *token, const char *text)
 {
     return std::strcmp(token, text) == 0;
 }
 
-bool ValidForm(const char *form, bool *periodic)
+bool
+ValidForm(const char *form, bool *periodic)
 {
     if (!form) {
         return false;
@@ -272,8 +280,9 @@ bool ValidForm(const char *form, bool *periodic)
 // uv = neutral + sum_k w_k (shape_k - neutral), in UV space, accumulated in
 // double. Only the XY components move. False when a shape's point count
 // differs from the neutral's or a weight is not finite.
-bool MixShapes(const std::vector<const GfVec3f *> &shapes,
-               const std::vector<double> &weights, VtVec3fArray *uvPoints)
+bool
+MixShapes(const std::vector<const GfVec3f *> &shapes,
+          const std::vector<double> &weights, VtVec3fArray *uvPoints)
 {
     for (const double weight : weights) {
         if (!std::isfinite(weight)) {
@@ -283,30 +292,32 @@ bool MixShapes(const std::vector<const GfVec3f *> &shapes,
     const VtVec3fArray neutral = *uvPoints;
     GfVec3f *const mixed = uvPoints->data();
     // Each point mixes independently, so the loop may be split.
-    RigExecRunRanges(RigExecGeometryRanges(), neutral.size(), 1024,
-                     [&](size_t begin, size_t end) {
-        for (size_t i = begin; i < end; ++i) {
-            double u = double(neutral[i][0]), v = double(neutral[i][1]);
-            for (size_t k = 0; k < shapes.size(); ++k) {
-                if (weights[k] == 0.0) {
-                    continue;
+    RigExecRunRanges(
+        RigExecGeometryRanges(), neutral.size(), 1024,
+        [&](size_t begin, size_t end) {
+            for (size_t i = begin; i < end; ++i) {
+                double u = double(neutral[i][0]), v = double(neutral[i][1]);
+                for (size_t k = 0; k < shapes.size(); ++k) {
+                    if (weights[k] == 0.0) {
+                        continue;
+                    }
+                    u += weights[k] *
+                         (double(shapes[k][i][0]) - double(neutral[i][0]));
+                    v += weights[k] *
+                         (double(shapes[k][i][1]) - double(neutral[i][1]));
                 }
-                u += weights[k] *
-                     (double(shapes[k][i][0]) - double(neutral[i][0]));
-                v += weights[k] *
-                     (double(shapes[k][i][1]) - double(neutral[i][1]));
+                mixed[i] = GfVec3f(float(u), float(v), neutral[i][2]);
             }
-            mixed[i] = GfVec3f(float(u), float(v), neutral[i][2]);
-        }
-    });
+        });
     return true;
 }
 
 // Why the contact lists are unusable for pointCount UV points, or empty
 // when they are usable: as long as each other, every index in range, and
 // no point named twice, so pairs do not interact.
-std::string ContactError(const VtIntArray &lower, const VtIntArray &upper,
-                         size_t pointCount)
+std::string
+ContactError(const VtIntArray &lower, const VtIntArray &upper,
+             size_t pointCount)
 {
     if (lower.size() != upper.size()) {
         return "rigExec:uvContactLower holds " + std::to_string(lower.size()) +
@@ -340,8 +351,9 @@ std::string ContactError(const VtIntArray &lower, const VtIntArray &upper,
 // passing through. Only v moves; a pair meant to keep two curves apart
 // shares its u (one column of each curve), and then the curves cannot
 // cross between columns either. False when ContactError reports.
-bool TouchContacts(const VtIntArray &lower, const VtIntArray &upper,
-                   VtVec3fArray *uvPoints)
+bool
+TouchContacts(const VtIntArray &lower, const VtIntArray &upper,
+              VtVec3fArray *uvPoints)
 {
     if (lower.empty() && upper.empty()) {
         return true;
@@ -363,7 +375,8 @@ bool TouchContacts(const VtIntArray &lower, const VtIntArray &upper,
     return true;
 }
 
-void Bind(const RigExecMoverBindContext &ctx)
+void
+Bind(const RigExecMoverBindContext &ctx)
 {
     auto &b = *ctx.binding;
     const auto patches =
@@ -401,8 +414,9 @@ void Bind(const RigExecMoverBindContext &ctx)
         ctx.moverPrim.GetPath().AppendProperty(_uvWeights));
 }
 
-void DeclareInputs(const RigExecMoverBindContext &ctx,
-                   std::vector<RigExecRevisionLeafKey> *inputs)
+void
+DeclareInputs(const RigExecMoverBindContext &ctx,
+              std::vector<RigExecRevisionLeafKey> *inputs)
 {
     const auto patches =
         RigExecRelationshipTargets(ctx.moverPrim, _relTokens->patch);
@@ -415,16 +429,16 @@ void DeclareInputs(const RigExecMoverBindContext &ctx,
         WeightSources(ctx.moverPrim));
 }
 
-bool CompileScene(const RigExecSceneDescriptors &scene, const SdfPath &mover,
-                  const SdfPath &, RigExecRevisionBinding *binding,
-                  std::string *error)
+bool
+CompileScene(const RigExecSceneDescriptors &scene, const SdfPath &mover,
+             const SdfPath &, RigExecRevisionBinding *binding,
+             std::string *error)
 {
     if (!binding) {
         return false;
     }
     const auto relationship = [&](const TfToken &name) {
-        const auto found =
-            scene.relationships.find(mover.AppendProperty(name));
+        const auto found = scene.relationships.find(mover.AppendProperty(name));
         return found == scene.relationships.end() ? nullptr : &found->second;
     };
     const auto phaseOf = [&](const RigExecSceneRelationshipDescriptor &rel,
@@ -479,8 +493,9 @@ bool CompileScene(const RigExecSceneDescriptors &scene, const SdfPath &mover,
     return true;
 }
 
-bool Payload(const std::vector<VtValue> &in, const Layout &layout,
-             const RigExecExternalProviderValues &v, VtValue *out)
+bool
+Payload(const std::vector<VtValue> &in, const Layout &layout,
+        const RigExecExternalProviderValues &v, VtValue *out)
 {
     if (in.size() != InputCount(layout)) {
         return false;
@@ -493,12 +508,9 @@ bool Payload(const std::vector<VtValue> &in, const Layout &layout,
         !As(in[PatchPointWeights], &pointWeights) ||
         !As(in[PatchUVertexCount], &uVertexCount) ||
         !As(in[PatchVVertexCount], &vVertexCount) ||
-        !As(in[PatchUOrder], &uOrder) ||
-        !As(in[PatchVOrder], &vOrder) ||
-        !As(in[PatchUKnots], &uKnots) ||
-        !As(in[PatchVKnots], &vKnots) ||
-        !Text(in[PatchUForm], &uForm) ||
-        !Text(in[PatchVForm], &vForm) ||
+        !As(in[PatchUOrder], &uOrder) || !As(in[PatchVOrder], &vOrder) ||
+        !As(in[PatchUKnots], &uKnots) || !As(in[PatchVKnots], &vKnots) ||
+        !Text(in[PatchUForm], &uForm) || !Text(in[PatchVForm], &vForm) ||
         !As(in[UvPoints], &uvPoints)) {
         return false;
     }
@@ -587,13 +599,15 @@ bool Payload(const std::vector<VtValue> &in, const Layout &layout,
     return true;
 }
 
-bool Assemble(const RigExecExternalInputContext &ctx, VtValue *out)
+bool
+Assemble(const RigExecExternalInputContext &ctx, VtValue *out)
 {
-    return Payload(ctx.inputs, LayoutOf(ctx.binding.externalInputs),
-                   ctx.values, out);
+    return Payload(ctx.inputs, LayoutOf(ctx.binding.externalInputs), ctx.values,
+                   out);
 }
 
-bool Apply(const VtValue &data, std::vector<GfVec3f> *output)
+bool
+Apply(const VtValue &data, std::vector<GfVec3f> *output)
 {
     if (!output || !data.IsHolding<VtDictionary>()) {
         return false;
@@ -611,8 +625,8 @@ bool Apply(const VtValue &data, std::vector<GfVec3f> *output)
     const auto *vPeriodic = Get<bool>(d, "vPeriodic");
     const auto *uvPoints = Get<VtVec3fArray>(d, "uvPoints");
     if (!patchPoints || !pointWeights || !uVertexCount || !vVertexCount ||
-        !uOrder || !vOrder || !uKnots || !vKnots || !uPeriodic ||
-        !vPeriodic || !uvPoints) {
+        !uOrder || !vOrder || !uKnots || !vKnots || !uPeriodic || !vPeriodic ||
+        !uvPoints) {
         return false;
     }
     RigExecNurbsPatch patch;
@@ -630,13 +644,13 @@ bool Apply(const VtValue &data, std::vector<GfVec3f> *output)
     patch.vKnotCount = vKnots->size();
     patch.uPeriodic = *uPeriodic;
     patch.vPeriodic = *vPeriodic;
-    return RigExecApplyPatchMover(
-        output, patch, uvPoints->cdata(), uvPoints->size(),
-        RigExecGeometryRanges());
+    return RigExecApplyPatchMover(output, patch, uvPoints->cdata(),
+                                  uvPoints->size(), RigExecGeometryRanges());
 }
 
 // A weight source's value through the resolved scene, as a double.
-double OracleWeight(const RigExecMoverOracleContext &ctx, const SdfPath &path)
+double
+OracleWeight(const RigExecMoverOracleContext &ctx, const SdfPath &path)
 {
     const RigExecOracleAttribute source = ctx.stage.GetAttributeAtPath(path);
     if (!source) {
@@ -652,7 +666,8 @@ double OracleWeight(const RigExecMoverOracleContext &ctx, const SdfPath &path)
     return value;
 }
 
-RigExecOracleResult Oracle(const RigExecMoverOracleContext &ctx)
+RigExecOracleResult
+Oracle(const RigExecMoverOracleContext &ctx)
 {
     SdfPathVector patches, uvs, shapeTargets;
     if (RigExecOracleRelationship rel =
@@ -663,8 +678,7 @@ RigExecOracleResult Oracle(const RigExecMoverOracleContext &ctx)
             ctx.prim.GetRelationship(_patchTokens->uvPoints)) {
         rel.GetTargets(&uvs);
     }
-    if (RigExecOracleRelationship rel =
-            ctx.prim.GetRelationship(_uvShapes)) {
+    if (RigExecOracleRelationship rel = ctx.prim.GetRelationship(_uvShapes)) {
         rel.GetTargets(&shapeTargets);
     }
     if (patches.size() != 1 || uvs.size() != 1) {
@@ -676,8 +690,10 @@ RigExecOracleResult Oracle(const RigExecMoverOracleContext &ctx)
     const SdfPath uvPointsPath = RigExecPointsOf(uvs[0]);
 
     VtVec3fArray patchPoints, uvPoints;
-    RigExecReadPhasedPoints(ctx, "rigExec:patch", patchPointsPath, &patchPoints);
-    RigExecReadPhasedPoints(ctx, "rigExec:uvPoints", uvPointsPath, &uvPoints);
+    RigExecReadPhasedPoints(ctx, rigExec::SchemaAttrText::rigExecPatch,
+                            patchPointsPath, &patchPoints);
+    RigExecReadPhasedPoints(ctx, rigExec::SchemaAttrText::rigExecUvPoints,
+                            uvPointsPath, &uvPoints);
 
     // The shapes and their weights, read independently of the packet.
     bool shapesValid = true;
@@ -685,7 +701,7 @@ RigExecOracleResult Oracle(const RigExecMoverOracleContext &ctx)
     std::vector<const GfVec3f *> shapes(shapeTargets.size());
     std::vector<double> weights(shapeTargets.size(), 0.0);
     for (size_t k = 0; k < shapeTargets.size(); ++k) {
-        RigExecReadPhasedPoints(ctx, "rigExec:uvShapes",
+        RigExecReadPhasedPoints(ctx, rigExec::SchemaAttrText::rigExecUvShapes,
                                 RigExecPointsOf(shapeTargets[k]),
                                 &shapeArrays[k]);
         shapesValid = shapesValid && shapeArrays[k].size() == uvPoints.size();
@@ -734,7 +750,8 @@ RigExecOracleResult Oracle(const RigExecMoverOracleContext &ctx)
         }
         return fallback;
     };
-    const VtDoubleArray pointWeights = read(_patchTokens->pointWeights, VtDoubleArray());
+    const VtDoubleArray pointWeights =
+        read(_patchTokens->pointWeights, VtDoubleArray());
     const int uVertexCount = read(_patchTokens->uVertexCount, 0);
     const int vVertexCount = read(_patchTokens->vVertexCount, 0);
     const int uOrder = read(_patchTokens->uOrder, 0);
@@ -769,8 +786,8 @@ RigExecOracleResult Oracle(const RigExecMoverOracleContext &ctx)
     std::vector<GfVec3f> scratch(ctx.points->begin(), ctx.points->end());
     if (!shapesValid || !MixShapes(shapes, weights, &uvPoints) ||
         !TouchContacts(contactLower, contactUpper, &uvPoints) ||
-        !RigExecApplyPatchMover(
-            &scratch, patch, uvPoints.cdata(), uvPoints.size())) {
+        !RigExecApplyPatchMover(&scratch, patch, uvPoints.cdata(),
+                                uvPoints.size())) {
         if (ctx.diagnostics) {
             ctx.diagnostics->push_back(
                 "MoverFailed " + ctx.moverPath.GetString() +
@@ -794,19 +811,22 @@ struct PreparedState {
     Layout layout;
 };
 
-void AppendCount(std::vector<uint8_t> *out, uint32_t count)
+void
+AppendCount(std::vector<uint8_t> *out, uint32_t count)
 {
     const uint8_t *bytes = reinterpret_cast<const uint8_t *>(&count);
     out->insert(out->end(), bytes, bytes + sizeof(count));
 }
 
-void AppendString(std::vector<uint8_t> *out, const std::string &s)
+void
+AppendString(std::vector<uint8_t> *out, const std::string &s)
 {
     AppendCount(out, uint32_t(s.size()));
     out->insert(out->end(), s.begin(), s.end());
 }
 
-void AppendPath(std::vector<uint8_t> *out, const SdfPath &path)
+void
+AppendPath(std::vector<uint8_t> *out, const SdfPath &path)
 {
     std::string text;
     if (!RigExecSpellPathText(path, &text)) {
@@ -815,8 +835,8 @@ void AppendPath(std::vector<uint8_t> *out, const SdfPath &path)
     AppendString(out, text);
 }
 
-bool ReadCount(const uint8_t *data, size_t size, size_t *offset,
-               uint32_t *out)
+bool
+ReadCount(const uint8_t *data, size_t size, size_t *offset, uint32_t *out)
 {
     if (*offset + sizeof(uint32_t) > size) {
         return false;
@@ -826,8 +846,8 @@ bool ReadCount(const uint8_t *data, size_t size, size_t *offset,
     return true;
 }
 
-bool ReadString(const uint8_t *data, size_t size, size_t *offset,
-                std::string *out)
+bool
+ReadString(const uint8_t *data, size_t size, size_t *offset, std::string *out)
 {
     uint32_t len = 0;
     if (!ReadCount(data, size, offset, &len) || *offset + len > size) {
@@ -838,10 +858,12 @@ bool ReadString(const uint8_t *data, size_t size, size_t *offset,
     return true;
 }
 
-bool EncodeCompiledData(const RigExecRevisionBinding &binding,
-                 std::vector<uint8_t> *compiledRig)
+bool
+EncodeCompiledData(const RigExecRevisionBinding &binding,
+                   std::vector<uint8_t> *compiledRig)
 {
-    compiledRig->assign(kCompiledDataTag, kCompiledDataTag + sizeof(kCompiledDataTag));
+    compiledRig->assign(kCompiledDataTag,
+                        kCompiledDataTag + sizeof(kCompiledDataTag));
     const auto &inputs = binding.externalInputs;
     const Layout layout = LayoutOf(inputs);
     if (inputs.size() != InputCount(layout)) {
@@ -857,18 +879,20 @@ bool EncodeCompiledData(const RigExecRevisionBinding &binding,
     return true;
 }
 
-bool Encode(const VtValue &, const RigExecRevisionBinding &binding,
-            std::vector<uint8_t> *compiledRig, std::vector<uint8_t> *frame)
+bool
+Encode(const VtValue &, const RigExecRevisionBinding &binding,
+       std::vector<uint8_t> *compiledRig, std::vector<uint8_t> *frame)
 {
     frame->clear();
     return EncodeCompiledData(binding, compiledRig);
 }
 
-std::shared_ptr<const void> Prepare(const uint8_t *compiledRig, size_t size,
-                                    std::string *error)
+std::shared_ptr<const void>
+Prepare(const uint8_t *compiledRig, size_t size, std::string *error)
 {
     if (size < sizeof(kCompiledDataTag) ||
-        std::memcmp(compiledRig, kCompiledDataTag, sizeof(kCompiledDataTag)) != 0) {
+        std::memcmp(compiledRig, kCompiledDataTag, sizeof(kCompiledDataTag)) !=
+            0) {
         if (error) {
             *error = "not a patch mover compiled rig";
         }
@@ -886,7 +910,8 @@ std::shared_ptr<const void> Prepare(const uint8_t *compiledRig, size_t size,
             ok = ok && ReadString(compiledRig, size, &offset, &path);
         }
     }
-    ok = ok && ReadCount(compiledRig, size, &offset, &connected) && connected <= 1;
+    ok = ok && ReadCount(compiledRig, size, &offset, &connected) &&
+         connected <= 1;
     if (!ok || offset != size) {
         if (error) {
             *error = "corrupt patch mover compiled rig";
@@ -898,10 +923,11 @@ std::shared_ptr<const void> Prepare(const uint8_t *compiledRig, size_t size,
     return state;
 }
 
-bool Play(const void *rawState, const uint8_t *, size_t,
-          const RigExecExternalPhasedPoints *phased, size_t phasedCount,
-          const RigExecExternalInputValue *inputs, size_t inputCount,
-          const RigExecExternalProviders &providers, float *xyz, size_t count)
+bool
+Play(const void *rawState, const uint8_t *, size_t,
+     const RigExecExternalPhasedPoints *phased, size_t phasedCount,
+     const RigExecExternalInputValue *inputs, size_t inputCount,
+     const RigExecExternalProviders &providers, float *xyz, size_t count)
 {
     if (!rawState) {
         return false;
@@ -917,8 +943,7 @@ bool Play(const void *rawState, const uint8_t *, size_t,
         }
         VtVec3fArray points(phased[k].count);
         for (size_t i = 0; i < phased[k].count; ++i) {
-            points[i] = GfVec3f(phased[k].xyz[i * 3],
-                                phased[k].xyz[i * 3 + 1],
+            points[i] = GfVec3f(phased[k].xyz[i * 3], phased[k].xyz[i * 3 + 1],
                                 phased[k].xyz[i * 3 + 2]);
         }
         if (state.patchPoints == phased[k].path) {
@@ -942,21 +967,24 @@ bool Play(const void *rawState, const uint8_t *, size_t,
 
 // A points property, as rigExec:uvPoints and every rigExec:uvShapes target
 // must be.
-bool IsPointsProperty(const UsdStageRefPtr &stage, const SdfPath &path)
+bool
+IsPointsProperty(const UsdStageRefPtr &stage, const SdfPath &path)
 {
     const UsdAttribute attr = stage->GetAttributeAtPath(path);
-    return attr &&
-           attr.GetTypeName().GetType() == SdfValueTypeNames->Float3Array.GetType();
+    return attr && attr.GetTypeName().GetType() ==
+                       SdfValueTypeNames->Float3Array.GetType();
 }
 
-bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
+bool
+Validate(const RigExecMoverValidateContext &ctx, std::string *error)
 {
     const auto who = [&] { return ctx.prim.GetPath().GetString(); };
     if (ctx.targets.size() != 1) {
         *error = who() + ": patch mover requires a single target";
         return false;
     }
-    const auto patches = RigExecRelationshipTargets(ctx.prim, _relTokens->patch);
+    const auto patches =
+        RigExecRelationshipTargets(ctx.prim, _relTokens->patch);
     if (patches.size() != 1) {
         *error = who() + ": rigExec:patch requires exactly one target";
         return false;
@@ -976,24 +1004,28 @@ bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
         patchPrim.GetPath().AppendProperty(_patchTokens->points);
     const SdfPath uvPointsPath = RigExecPointsOf(uvs[0]);
     if (!IsPointsProperty(ctx.stage, uvPointsPath)) {
-        *error = who() + ": rigExec:uvPoints target is not a point3f[]/float3[] property";
+        *error =
+            who() +
+            ": rigExec:uvPoints target is not a point3f[]/float3[] property";
         return false;
     }
     if (patchPointsPath == uvPointsPath &&
         RigExecPhaseForInput(ctx.prim, _relTokens->patch) !=
             RigExecPhaseForInput(ctx.prim, _relTokens->uvPoints)) {
         *error = who() + ": rigExec:patch and rigExec:uvPoints name the same "
-                       "points property with conflicting read phases";
+                         "points property with conflicting read phases";
         return false;
     }
-    const auto shapes = RigExecRelationshipTargets(ctx.prim, _relTokens->uvShapes);
+    const auto shapes =
+        RigExecRelationshipTargets(ctx.prim, _relTokens->uvShapes);
     VtVec3fArray neutral;
     const bool haveNeutral =
         ctx.stage->GetAttributeAtPath(uvPointsPath).Get(&neutral);
     for (const SdfPath &shape : shapes) {
         const SdfPath shapePath = RigExecPointsOf(shape);
         if (!IsPointsProperty(ctx.stage, shapePath)) {
-            *error = who() + ": rigExec:uvShapes target " + shapePath.GetString() +
+            *error = who() + ": rigExec:uvShapes target " +
+                     shapePath.GetString() +
                      " is not a point3f[]/float3[] property";
             return false;
         }
@@ -1060,7 +1092,8 @@ bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
     // Validate authored Default values when present; time-sampled or connected
     // arrays without Default values are checked per frame during assembly.
     VtVec3fArray targetPoints;
-    const UsdAttribute targetAttr = ctx.stage->GetAttributeAtPath(ctx.targets[0]);
+    const UsdAttribute targetAttr =
+        ctx.stage->GetAttributeAtPath(ctx.targets[0]);
     const bool haveTargetDefault = targetAttr && targetAttr.Get(&targetPoints);
     std::vector<VtValue> inputs;
     const auto keys =
@@ -1087,16 +1120,16 @@ bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
         return true;
     }
     *error = who() + ": invalid NURBS patch topology, knots, weights, form, "
-                   "UV point count or UV shapes";
+                     "UV point count or UV shapes";
     return false;
 }
 
-RigExecMoverHandler Handler()
+RigExecMoverHandler
+Handler()
 {
-    RigExecMoverHandler h(
-        "RigExecPatchMover",
-        &RigExecFixedMoverOp<RigExecRevisionOp::External>,
-        RigExecMoverDomain::Points);
+    RigExecMoverHandler h(rigExec::SchemaTypeName::RigExecPatchMover,
+                          &RigExecFixedMoverOp<RigExecRevisionOp::External>,
+                          RigExecMoverDomain::Points);
     h.singleTarget = true;
     h.bind = &Bind;
     h.validate = &Validate;
@@ -1112,6 +1145,6 @@ RigExecMoverHandler Handler()
     return h;
 }
 
-}  // namespace
+} // namespace
 
 RIGEXEC_REGISTER_MOVER(Handler());

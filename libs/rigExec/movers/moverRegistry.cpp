@@ -17,6 +17,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <string_view>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -113,11 +114,14 @@ _Find(const TfToken &schemaType)
 bool
 RigExecRegisterMoverHandler(RigExecMoverHandler handler, std::string *error)
 {
-    const auto fail = [error](const std::string &message) {
+    // Every diagnostic is prose glued to a mover name. The view is valid for
+    // the whole call; the copy is made only where the message is stored, and
+    // TF_WARN needs a null-terminated string.
+    const auto fail = [error](std::string_view message) {
         if (error) {
-            *error = message;
+            *error = std::string(message);
         } else {
-            TF_WARN("%s", message.c_str());
+            TF_WARN("%s", std::string(message).c_str());
         }
         return false;
     };

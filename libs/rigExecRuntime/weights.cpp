@@ -30,6 +30,7 @@
 // otherwise), never a defaulted valid field.
 #include "stageArrayInputs.h"
 #include "rigExecRuntime/labels.h"
+#include "rigExecSchema/schemaNames.h"
 #include "rigExecRuntime/store.h"
 #include "rigExecRuntime/spaces.h"
 #include "rigExecMath/volumeFieldCheck.h"
@@ -225,8 +226,10 @@ RrWeightSizeScratch(RrProgram *program, std::string *error)
                 rows.emplace(program->TextOrEmpty(row.path), i);
         }
         for (const auto &object : objects) {
-            const auto found = rows.find(program->TextOrEmpty(object.path) +
-                                         ".inputs:falloffSamples");
+            // Row keys are spelled "<path>.<attribute>".
+            const auto found =
+                rows.find(program->TextOrEmpty(object.path) + "." +
+                          SchemaAttrText::inputsFalloffSamples);
             if (found != rows.end())
                 scratch->falloffRows.emplace(object.path, found->second);
         }
@@ -246,34 +249,40 @@ RrWeightSizeScratch(RrProgram *program, std::string *error)
         const std::string planeBounds =
             program->TextOrEmpty(object.oraclePlaneBounds);
         Kind kind;
-        kind.type = type == "RigExecStaticWeight"    ? Kind::Type::Static
-                    : type == "RigExecDynamicWeight" ? Kind::Type::Dynamic
-                    : type == "RigExecCombineWeight" ? Kind::Type::Combine
-                    : type == "RigExecSphereWeight"  ? Kind::Type::Sphere
-                    : type == "RigExecPlaneWeight"   ? Kind::Type::Plane
-                    : type == "RigExecCurveWeight"   ? Kind::Type::Curve
-                                                     : Kind::Type::Unknown;
-        kind.representation =
-            representation == "constant" ? Kind::Representation::Constant
-            : representation == "dense"  ? Kind::Representation::Dense
-            : representation == "sparse" ? Kind::Representation::Sparse
-                                         : Kind::Representation::Other;
-        kind.strict = rangePolicy == "strict";
-        kind.clamp = rangePolicy == "clamp";
+        kind.type =
+            type == SchemaTypeName::RigExecStaticWeight    ? Kind::Type::Static
+            : type == SchemaTypeName::RigExecDynamicWeight ? Kind::Type::Dynamic
+            : type == SchemaTypeName::RigExecCombineWeight ? Kind::Type::Combine
+            : type == SchemaTypeName::RigExecSphereWeight  ? Kind::Type::Sphere
+            : type == SchemaTypeName::RigExecPlaneWeight   ? Kind::Type::Plane
+            : type == SchemaTypeName::RigExecCurveWeight   ? Kind::Type::Curve
+                                                         : Kind::Type::Unknown;
+        kind.representation = representation == SchemaValueText::constant
+                                  ? Kind::Representation::Constant
+                              : representation == SchemaValueText::dense
+                                  ? Kind::Representation::Dense
+                              : representation == SchemaValueText::sparse
+                                  ? Kind::Representation::Sparse
+                                  : Kind::Representation::Other;
+        kind.strict = rangePolicy == SchemaValueText::strict;
+        kind.clamp = rangePolicy == SchemaValueText::clamp;
         // RigExecWeightCombine order, which _RrCombineMode mirrors.
-        const char *const modes[] = {"multiply", "add",     "subtract", "max",
-                                     "min",      "average", "overlay"};
+        const char *const modes[] = {
+            SchemaValueText::multiply, SchemaValueText::add,
+            SchemaValueText::subtract, SchemaValueText::max,
+            SchemaValueText::min,      SchemaValueText::average,
+            SchemaValueText::overlay};
         for (int m = 0; m < 7; ++m) {
             if (combineMode == modes[m]) {
                 kind.combineMode = m;
             }
         }
-        kind.planeAxis = planeAxis == "x"   ? 0
-                         : planeAxis == "y" ? 1
-                         : planeAxis == "z" ? 2
-                                            : -1;
-        kind.bounded = planeBounds == "bounded";
-        kind.unbounded = planeBounds == "unbounded";
+        kind.planeAxis = planeAxis == SchemaValueText::x   ? 0
+                         : planeAxis == SchemaValueText::y ? 1
+                         : planeAxis == SchemaValueText::z ? 2
+                                                           : -1;
+        kind.bounded = planeBounds == SchemaValueText::bounded;
+        kind.unbounded = planeBounds == SchemaValueText::unbounded;
         scratch->oracleKinds.push_back(kind);
     }
     // A path names at most one slot, so an object has at most one volume.
@@ -417,13 +426,13 @@ enum _RrRepresentation {
 _RrRepresentation
 _RrClassifyRepresentation(const RrProgram *program, uint32_t id)
 {
-    if (program->TokenEquals(id, "dense")) {
+    if (program->TokenEquals(id, SchemaValueText::dense)) {
         return _RrRepDense;
     }
-    if (program->TokenEquals(id, "sparse")) {
+    if (program->TokenEquals(id, SchemaValueText::sparse)) {
         return _RrRepSparse;
     }
-    if (program->TokenEquals(id, "constant")) {
+    if (program->TokenEquals(id, SchemaValueText::constant)) {
         return _RrRepConstant;
     }
     return _RrRepOther;
@@ -981,11 +990,11 @@ _RrVolumeCanBuild(const RrProgram *program, const RigExecWireWeightObject &wire,
                   bool hasPlacement, const RrVec3f &scales,
                   RrMat4d *worldToLocal)
 {
-    if (!program->TokenEquals(wire.representation, "dense")) {
+    if (!program->TokenEquals(wire.representation, SchemaValueText::dense)) {
         return false;
     }
-    if (!program->TokenEquals(wire.rangePolicy, "strict") &&
-        !program->TokenEquals(wire.rangePolicy, "clamp")) {
+    if (!program->TokenEquals(wire.rangePolicy, SchemaValueText::strict) &&
+        !program->TokenEquals(wire.rangePolicy, SchemaValueText::clamp)) {
         return false;
     }
     if (!hasPlacement || !_RrRigidWorldToLocal(*placement, worldToLocal)) {
@@ -1035,7 +1044,8 @@ bool
 _RrFinishVolumeWeight(const RrProgram *program, const RrWeightPacket *packet,
                       std::vector<float> *weights, RrWeightPacket *out)
 {
-    const bool clamp = program->TokenEquals(packet->rangePolicy, "clamp");
+    const bool clamp =
+        program->TokenEquals(packet->rangePolicy, SchemaValueText::clamp);
     for (float &w : *weights) {
         if (!_RrApplyRangePolicy(clamp, &w)) {
             *out = RrWeightPacket();
@@ -1112,8 +1122,10 @@ _RrBuildStaticPacket(const RrProgram *program,
         _RrRepOther) {
         return packet;
     }
-    const bool clamp = program->TokenEquals(wire.rangePolicy, "clamp");
-    if (!clamp && !program->TokenEquals(wire.rangePolicy, "strict")) {
+    const bool clamp =
+        program->TokenEquals(wire.rangePolicy, SchemaValueText::clamp);
+    if (!clamp &&
+        !program->TokenEquals(wire.rangePolicy, SchemaValueText::strict)) {
         return packet;
     }
     packet.defaultWeight = defaultWeight;
@@ -1195,8 +1207,10 @@ _RrBuildDynamicPacket(const RrProgram *program,
         _RrRepOther) {
         return packet;
     }
-    const bool clamp = program->TokenEquals(wire.rangePolicy, "clamp");
-    if (!clamp && !program->TokenEquals(wire.rangePolicy, "strict")) {
+    const bool clamp =
+        program->TokenEquals(wire.rangePolicy, SchemaValueText::clamp);
+    if (!clamp &&
+        !program->TokenEquals(wire.rangePolicy, SchemaValueText::strict)) {
         return packet;
     }
 
@@ -1205,7 +1219,8 @@ _RrBuildDynamicPacket(const RrProgram *program,
     const float a = bias;
 
     if (wire.base < 0) {
-        if (!program->TokenEquals(packet.representation, "constant")) {
+        if (!program->TokenEquals(packet.representation,
+                                  SchemaValueText::constant)) {
             return packet;
         }
         packet.defaultWeight = (1.0f * d) * s + a;
@@ -1233,7 +1248,7 @@ _RrBuildDynamicPacket(const RrProgram *program,
         }
         packet.values.push_back(r);
     }
-    if (program->TokenEquals(packet.representation, "dense")) {
+    if (program->TokenEquals(packet.representation, SchemaValueText::dense)) {
         packet.defaultWeight = 0.0f;
     } else {
         packet.defaultWeight = (base.defaultWeight * d) * s + a;
@@ -1253,28 +1268,33 @@ _RrBuildCombinePacket(const RrProgram *program,
     RrWeightPacket packet;
     packet.representation = wire.representation;
     packet.rangePolicy = wire.rangePolicy;
-    if (!program->TokenEquals(packet.representation, "dense")) {
+    if (!program->TokenEquals(packet.representation, SchemaValueText::dense)) {
         return packet;
     }
-    const bool clamp = program->TokenEquals(wire.rangePolicy, "clamp");
-    if (!clamp && !program->TokenEquals(wire.rangePolicy, "strict")) {
+    const bool clamp =
+        program->TokenEquals(wire.rangePolicy, SchemaValueText::clamp);
+    if (!clamp &&
+        !program->TokenEquals(wire.rangePolicy, SchemaValueText::strict)) {
         return packet;
     }
 
     _RrCombineMode mode = _RrCombineMultiply;
-    if (program->TokenEquals(wire.combineMode, "multiply")) {
+    if (program->TokenEquals(wire.combineMode, SchemaValueText::multiply)) {
         mode = _RrCombineMultiply;
-    } else if (program->TokenEquals(wire.combineMode, "add")) {
+    } else if (program->TokenEquals(wire.combineMode, SchemaValueText::add)) {
         mode = _RrCombineAdd;
-    } else if (program->TokenEquals(wire.combineMode, "subtract")) {
+    } else if (program->TokenEquals(wire.combineMode,
+                                    SchemaValueText::subtract)) {
         mode = _RrCombineSubtract;
-    } else if (program->TokenEquals(wire.combineMode, "max")) {
+    } else if (program->TokenEquals(wire.combineMode, SchemaValueText::max)) {
         mode = _RrCombineMax;
-    } else if (program->TokenEquals(wire.combineMode, "min")) {
+    } else if (program->TokenEquals(wire.combineMode, SchemaValueText::min)) {
         mode = _RrCombineMin;
-    } else if (program->TokenEquals(wire.combineMode, "average")) {
+    } else if (program->TokenEquals(wire.combineMode,
+                                    SchemaValueText::average)) {
         mode = _RrCombineAverage;
-    } else if (program->TokenEquals(wire.combineMode, "overlay")) {
+    } else if (program->TokenEquals(wire.combineMode,
+                                    SchemaValueText::overlay)) {
         mode = _RrCombineOverlay;
     } else {
         return packet;
@@ -1386,18 +1406,19 @@ _RrBuildPlanePacket(const RrProgram *program,
         return packet;
     }
     int axisIndex = 1;
-    if (program->TokenEquals(wire.planeAxis, "x")) {
+    if (program->TokenEquals(wire.planeAxis, SchemaValueText::x)) {
         axisIndex = 0;
-    } else if (program->TokenEquals(wire.planeAxis, "y")) {
+    } else if (program->TokenEquals(wire.planeAxis, SchemaValueText::y)) {
         axisIndex = 1;
-    } else if (program->TokenEquals(wire.planeAxis, "z")) {
+    } else if (program->TokenEquals(wire.planeAxis, SchemaValueText::z)) {
         axisIndex = 2;
     } else {
         return packet;
     }
 
     if (!bounded) {
-        if (!program->TokenEquals(wire.planeBounds, "unbounded")) {
+        if (!program->TokenEquals(wire.planeBounds,
+                                  SchemaValueText::unbounded)) {
             return packet;
         }
     } else if (!std::isfinite(extentU) || extentU <= 0.0f ||
@@ -1473,13 +1494,13 @@ _RrRunWeightPacket(RrProgram *program, size_t step, std::string *error)
         program->geometry->weightObjects[index];
     RrWeightScratch *scratch = _RrScratch(program);
 
-    if (program->TokenEquals(wire.type, "RigExecStaticWeight")) {
+    if (program->TokenEquals(wire.type, SchemaTypeName::RigExecStaticWeight)) {
         store.weightPackets[index] = _RrBuildStaticPacket(
             program, wire,
             _RrReadWeightFloat(program, index, RrWeightDefaultWeight));
         return true;
     }
-    if (program->TokenEquals(wire.type, "RigExecDynamicWeight")) {
+    if (program->TokenEquals(wire.type, SchemaTypeName::RigExecDynamicWeight)) {
         store.weightPackets[index] = _RrBuildDynamicPacket(
             program, wire, _RrReadWeightFloat(program, index, RrWeightDriver),
             _RrReadWeightFloat(program, index, RrWeightScale),
@@ -1494,7 +1515,7 @@ _RrRunWeightPacket(RrProgram *program, size_t step, std::string *error)
         return false;
     }
     const RrWeightScratch::Gathers &gathers = scratch->gathers[index];
-    if (program->TokenEquals(wire.type, "RigExecCombineWeight")) {
+    if (program->TokenEquals(wire.type, SchemaTypeName::RigExecCombineWeight)) {
         size_t targetCount = 0;
         for (size_t i = 0; i < gathers.combineTargets.size(); ++i) {
             if (i < wire.combineTargetValid.size() &&
@@ -1511,9 +1532,11 @@ _RrRunWeightPacket(RrProgram *program, size_t step, std::string *error)
         return true;
     }
     const bool isSphere =
-        program->TokenEquals(wire.type, "RigExecSphereWeight");
-    const bool isPlane = program->TokenEquals(wire.type, "RigExecPlaneWeight");
-    const bool isCurve = program->TokenEquals(wire.type, "RigExecCurveWeight");
+        program->TokenEquals(wire.type, SchemaTypeName::RigExecSphereWeight);
+    const bool isPlane =
+        program->TokenEquals(wire.type, SchemaTypeName::RigExecPlaneWeight);
+    const bool isCurve =
+        program->TokenEquals(wire.type, SchemaTypeName::RigExecCurveWeight);
     if (isSphere || isPlane || isCurve) {
         // The volume's BASE frame: the last base version of the
         // provider slot, which is what the authoritative snapshot
@@ -1548,7 +1571,8 @@ _RrRunWeightPacket(RrProgram *program, size_t step, std::string *error)
                 RrVec3f(_RrReadWeightFloat(program, index, RrWeightScaleX),
                         _RrReadWeightFloat(program, index, RrWeightScaleY),
                         _RrReadWeightFloat(program, index, RrWeightScaleZ));
-        } else if (program->TokenEquals(wire.planeBounds, "bounded")) {
+        } else if (program->TokenEquals(wire.planeBounds,
+                                        SchemaValueText::bounded)) {
             bounded = true;
             extentU = _RrReadWeightFloat(program, index, RrWeightExtentU);
             extentV = _RrReadWeightFloat(program, index, RrWeightExtentV);
@@ -1874,10 +1898,10 @@ _RrOracleVolume(const RrProgram *program, const RrWeightScratch &scratch,
             token(wire.oraclePlaneAxisSlot, wire.oraclePlaneAxis);
         const std::string boundsName =
             token(wire.oraclePlaneBoundsSlot, wire.oraclePlaneBounds);
-        const int axis = axisName == "x"   ? 0
-                         : axisName == "y" ? 1
-                         : axisName == "z" ? 2
-                                           : -1;
+        const int axis = axisName == SchemaValueText::x   ? 0
+                         : axisName == SchemaValueText::y ? 1
+                         : axisName == SchemaValueText::z ? 2
+                                                          : -1;
         if (axis < 0) {
             *error = who() + ": unknown rigExec:planeAxis " + axisName;
             return false;
@@ -1886,14 +1910,14 @@ _RrOracleVolume(const RrProgram *program, const RrWeightScratch &scratch,
         bool bounded = false;
         float extentU = 1.0f;
         float extentV = 1.0f;
-        if (boundsName == "bounded") {
+        if (boundsName == SchemaValueText::bounded) {
             extentU = read(wire.extentU, 1.0f);
             extentV = read(wire.extentV, 1.0f);
             if (!RigExecVolumeExtentsOk(who(), extentU, extentV, error)) {
                 return false;
             }
             bounded = true;
-        } else if (boundsName != "unbounded") {
+        } else if (boundsName != SchemaValueText::unbounded) {
             *error = RigExecUnknownPlaneBoundsMessage(who(), boundsName);
             return false;
         }

@@ -1,5 +1,6 @@
 // USD notice classification and compiled rig invalidation.
 
+#include "rigExecSchema/schemaNames.h"
 #include "rigEvaluatorInternal.h"
 #include "projectorCaptureNotice.h"
 #include "rigEvaluatorPropertyBindings.h"
@@ -33,18 +34,18 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
     (RigExecJoint)
     (RigExecControl)
     (RigExecPoseInterpolator)
-    ((rigExecJointElements, "rigExec:jointElements"))
-    ((avarsTx, "avars:tx"))
-    ((avarsTy, "avars:ty"))
-    ((avarsTz, "avars:tz"))
-    ((avarsSx, "avars:sx"))
-    ((avarsSy, "avars:sy"))
-    ((avarsSz, "avars:sz"))
-    ((avarsRx, "avars:rx"))
-    ((avarsRy, "avars:ry"))
-    ((avarsRz, "avars:rz"))
-    ((avarsRspin, "avars:rspin"))
-    ((avarsUnitScaleFactor, "avars:unitScaleFactor")));
+    ((rigExecJointElements, SchemaAttrText::rigExecJointElements))
+    ((avarsTx, SchemaAttrText::avarsTx))
+    ((avarsTy, SchemaAttrText::avarsTy))
+    ((avarsTz, SchemaAttrText::avarsTz))
+    ((avarsSx, SchemaAttrText::avarsSx))
+    ((avarsSy, SchemaAttrText::avarsSy))
+    ((avarsSz, SchemaAttrText::avarsSz))
+    ((avarsRx, SchemaAttrText::avarsRx))
+    ((avarsRy, SchemaAttrText::avarsRy))
+    ((avarsRz, SchemaAttrText::avarsRz))
+    ((avarsRspin, SchemaAttrText::avarsRspin))
+    ((avarsUnitScaleFactor, SchemaAttrText::avarsUnitScaleFactor)));
 
 using namespace evaluatorDetail;
 
@@ -128,8 +129,8 @@ _NoticeIsAvarValuesOnly(const UsdNotice::ObjectsChanged &notice)
 
 // Built while the library loads, so a notice on any thread compares without
 // a guarded static.
-const TfToken _mlMoverType("RigExecMlMover");
-const TfToken _animatedMapsType("RigExecAnimatedMaps");
+const TfToken _mlMoverType(SchemaTypeName::RigExecMlMover);
+const TfToken _animatedMapsType(SchemaTypeName::RigExecAnimatedMaps);
 
 // The types whose prims the digest writes the path of for the type alone,
 // wherever under the rig they sit: the discovered joints, controls, volume

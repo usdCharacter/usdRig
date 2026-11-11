@@ -1,5 +1,6 @@
 // Constraint operators, pose interpolators, and rest-frame composition.
 
+#include "rigExecSchema/schemaNames.h"
 #include "rigEvaluatorInternal.h"
 #include "rigExecScene/poseSceneTranslation.h"
 #include "rigExecScene/startFrameDerivation.h"
@@ -31,21 +32,21 @@ namespace rigExec {
 
 TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
-    ((rigExecAimConstraint, "RigExecAimConstraint"))
-    ((rigExecPositionConstraint, "RigExecPositionConstraint"))
-    ((rigExecRotationConstraint, "RigExecRotationConstraint"))
-    ((rigExecScaleConstraint, "RigExecScaleConstraint"))
-    ((rigExecParentConstraint, "RigExecParentConstraint"))
-    ((rigExecSingleChainIkConstraint, "RigExecSingleChainIkConstraint"))
-    ((rigExecIkFkMatchConstraint, "RigExecIkFkMatchConstraint"))
-    ((rigExecHarmonicsConstraint, "RigExecHarmonicsConstraint"))
-    ((posedSpace, "posed:space"))
-    ((avarsTx, "avars:tx"))
-    ((avarsTy, "avars:ty"))
-    ((avarsTz, "avars:tz"))
-    ((avarsSx, "avars:sx"))
-    ((avarsSy, "avars:sy"))
-    ((avarsSz, "avars:sz"))
+    ((rigExecAimConstraint, SchemaTypeName::RigExecAimConstraint))
+    ((rigExecPositionConstraint, SchemaTypeName::RigExecPositionConstraint))
+    ((rigExecRotationConstraint, SchemaTypeName::RigExecRotationConstraint))
+    ((rigExecScaleConstraint, SchemaTypeName::RigExecScaleConstraint))
+    ((rigExecParentConstraint, SchemaTypeName::RigExecParentConstraint))
+    ((rigExecSingleChainIkConstraint, SchemaTypeName::RigExecSingleChainIkConstraint))
+    ((rigExecIkFkMatchConstraint, SchemaTypeName::RigExecIkFkMatchConstraint))
+    ((rigExecHarmonicsConstraint, SchemaTypeName::RigExecHarmonicsConstraint))
+    ((posedSpace, SchemaAttrText::posedSpace))
+    ((avarsTx, SchemaAttrText::avarsTx))
+    ((avarsTy, SchemaAttrText::avarsTy))
+    ((avarsTz, SchemaAttrText::avarsTz))
+    ((avarsSx, SchemaAttrText::avarsSx))
+    ((avarsSy, SchemaAttrText::avarsSy))
+    ((avarsSz, SchemaAttrText::avarsSz))
 );
 
 using namespace evaluatorDetail;
@@ -71,11 +72,9 @@ const std::vector<_ConstraintHandler> _kConstraintHandlers = {
      _ChannelGroup::Rotation, _ChannelGroup::Rotation,
      _SolveRotationConstraint},
     {_tokens->rigExecScaleConstraint, true, true, false, false,
-     _ChannelGroup::Scale, _ChannelGroup::Scale,
-     _SolveScaleConstraint},
+     _ChannelGroup::Scale, _ChannelGroup::Scale, _SolveScaleConstraint},
     {_tokens->rigExecParentConstraint, true, true, true, false,
-     _ChannelGroup::All, _ChannelGroup::None,
-     _SolveParentConstraint},
+     _ChannelGroup::All, _ChannelGroup::None, _SolveParentConstraint},
     {_tokens->rigExecSingleChainIkConstraint, false, true, false, true,
      _ChannelGroup::None, _ChannelGroup::None, nullptr},
     {_tokens->rigExecIkFkMatchConstraint, false, true, false, true,
@@ -105,25 +104,25 @@ const std::vector<TfToken> _kConstraintOperatorTypeNames = [] {
 // Attribute names read per constraint per frame, interned once. Each is
 // spelled here rather than at its call site because the parent solve and the
 // group-mask reader name the same nine.
-const TfToken _kAffectTranslationX("inputs:affectTranslationX");
-const TfToken _kAffectTranslationY("inputs:affectTranslationY");
-const TfToken _kAffectTranslationZ("inputs:affectTranslationZ");
-const TfToken _kAffectRotationX("inputs:affectRotationX");
-const TfToken _kAffectRotationY("inputs:affectRotationY");
-const TfToken _kAffectRotationZ("inputs:affectRotationZ");
-const TfToken _kAffectScaleX("inputs:affectScaleX");
-const TfToken _kAffectScaleY("inputs:affectScaleY");
-const TfToken _kAffectScaleZ("inputs:affectScaleZ");
-const TfToken _kTranslationOffset("inputs:translationOffset");
-const TfToken _kRotationOffset("inputs:rotationOffset");
-const TfToken _kScaleOffset("inputs:scaleOffset");
-const TfToken _kInputsEnabled("inputs:enabled");
+const TfToken _kAffectTranslationX(SchemaAttrText::inputsAffectTranslationX);
+const TfToken _kAffectTranslationY(SchemaAttrText::inputsAffectTranslationY);
+const TfToken _kAffectTranslationZ(SchemaAttrText::inputsAffectTranslationZ);
+const TfToken _kAffectRotationX(SchemaAttrText::inputsAffectRotationX);
+const TfToken _kAffectRotationY(SchemaAttrText::inputsAffectRotationY);
+const TfToken _kAffectRotationZ(SchemaAttrText::inputsAffectRotationZ);
+const TfToken _kAffectScaleX(SchemaAttrText::inputsAffectScaleX);
+const TfToken _kAffectScaleY(SchemaAttrText::inputsAffectScaleY);
+const TfToken _kAffectScaleZ(SchemaAttrText::inputsAffectScaleZ);
+const TfToken _kTranslationOffset(SchemaAttrText::inputsTranslationOffset);
+const TfToken _kRotationOffset(SchemaAttrText::inputsRotationOffset);
+const TfToken _kScaleOffset(SchemaAttrText::inputsScaleOffset);
+const TfToken _kInputsEnabled(SchemaAttrText::inputsEnabled);
 
 RigExecConstraintAxisMask
-_ReadConstraintAxisMask(
-    const RigExecResolvedInputs &resolved, const UsdPrim &prim,
-    const TfToken &x, const TfToken &y, const TfToken &z, UsdTimeCode time,
-    bool fallback = true)
+_ReadConstraintAxisMask(const RigExecResolvedInputs &resolved,
+                        const UsdPrim &prim, const TfToken &x, const TfToken &y,
+                        const TfToken &z, UsdTimeCode time,
+                        bool fallback = true)
 {
     RigExecConstraintAxisMask mask;
     mask.x = _ResolvedRead(resolved, prim, x, fallback, time);
@@ -136,8 +135,8 @@ RigExecPointFrame
 _SolvePositionConstraint(const _ConstraintSolveContext &c)
 {
     RigExecPositionConstraintParams params;
-    params.offset = _ResolvedRead(
-        *c.resolved, c.prim, _kTranslationOffset, GfVec3d(0), c.time);
+    params.offset = _ResolvedRead(*c.resolved, c.prim, _kTranslationOffset,
+                                  GfVec3d(0), c.time);
     params.affect = c.affect;
     params.weight = c.weight;
     return RigExecApplyPositionConstraint(c.inputFrame, *c.sources, params);
@@ -147,8 +146,8 @@ RigExecPointFrame
 _SolveRotationConstraint(const _ConstraintSolveContext &c)
 {
     RigExecRotationConstraintParams params;
-    params.offsetDegrees = _ResolvedRead(
-        *c.resolved, c.prim, _kRotationOffset, GfVec3d(0), c.time);
+    params.offsetDegrees = _ResolvedRead(*c.resolved, c.prim, _kRotationOffset,
+                                         GfVec3d(0), c.time);
     params.affect = c.affect;
     params.rotationOrder = c.order;
     params.weight = c.weight;
@@ -160,8 +159,8 @@ RigExecPointFrame
 _SolveScaleConstraint(const _ConstraintSolveContext &c)
 {
     RigExecScaleConstraintParams params;
-    params.offset = _ResolvedRead(
-        *c.resolved, c.prim, _kScaleOffset, GfVec3d(0), c.time);
+    params.offset =
+        _ResolvedRead(*c.resolved, c.prim, _kScaleOffset, GfVec3d(0), c.time);
     params.affect = c.affect;
     params.weight = c.weight;
     params.blendShear = c.blendShear;
@@ -178,16 +177,16 @@ _SolveParentConstraint(const _ConstraintSolveContext &c)
         params.scaleAxes = c.precompScale;
     } else {
         params.translationAxes = _ReadConstraintAxisMask(
-            *c.resolved, c.prim, _kAffectTranslationX,
-            _kAffectTranslationY, _kAffectTranslationZ, c.time);
+            *c.resolved, c.prim, _kAffectTranslationX, _kAffectTranslationY,
+            _kAffectTranslationZ, c.time);
         params.rotationAxes = _ReadConstraintAxisMask(
-            *c.resolved, c.prim, _kAffectRotationX,
-            _kAffectRotationY, _kAffectRotationZ, c.time);
+            *c.resolved, c.prim, _kAffectRotationX, _kAffectRotationY,
+            _kAffectRotationZ, c.time);
         // FBX disables scale by default; the explicit false fallback is the
         // authored contract, not an oversight (schema.usda:775-777).
         params.scaleAxes = _ReadConstraintAxisMask(
-            *c.resolved, c.prim, _kAffectScaleX,
-            _kAffectScaleY, _kAffectScaleZ, c.time, false);
+            *c.resolved, c.prim, _kAffectScaleX, _kAffectScaleY, _kAffectScaleZ,
+            c.time, false);
     }
     params.rotationOrder = c.order;
     params.weight = c.weight;
@@ -238,17 +237,21 @@ const TfToken _kOrderZyx("ZYX");
 RigExecEulerOrder
 _ParseConstraintEulerOrder(const TfToken &token)
 {
-    if (token == _kOrderXzy) return RigExecEulerOrder::XZY;
-    if (token == _kOrderYxz) return RigExecEulerOrder::YXZ;
-    if (token == _kOrderYzx) return RigExecEulerOrder::YZX;
-    if (token == _kOrderZxy) return RigExecEulerOrder::ZXY;
-    if (token == _kOrderZyx) return RigExecEulerOrder::ZYX;
+    if (token == _kOrderXzy)
+        return RigExecEulerOrder::XZY;
+    if (token == _kOrderYxz)
+        return RigExecEulerOrder::YXZ;
+    if (token == _kOrderYzx)
+        return RigExecEulerOrder::YZX;
+    if (token == _kOrderZxy)
+        return RigExecEulerOrder::ZXY;
+    if (token == _kOrderZyx)
+        return RigExecEulerOrder::ZYX;
     return RigExecEulerOrder::XYZ;
 }
 
 bool
-_TokenIsOneOf(const TfToken &value,
-              std::initializer_list<const char *> allowed)
+_TokenIsOneOf(const TfToken &value, std::initializer_list<const char *> allowed)
 {
     return std::any_of(
         allowed.begin(), allowed.end(),
@@ -264,17 +267,16 @@ _ReadGroupMask(const RigExecResolvedInputs &resolved, const UsdPrim &prim,
 {
     switch (group) {
     case _ChannelGroup::Translation:
-        return _ReadConstraintAxisMask(
-            resolved, prim, _kAffectTranslationX,
-            _kAffectTranslationY, _kAffectTranslationZ, time);
+        return _ReadConstraintAxisMask(resolved, prim, _kAffectTranslationX,
+                                       _kAffectTranslationY,
+                                       _kAffectTranslationZ, time);
     case _ChannelGroup::Rotation:
-        return _ReadConstraintAxisMask(
-            resolved, prim, _kAffectRotationX, _kAffectRotationY,
-            _kAffectRotationZ, time);
+        return _ReadConstraintAxisMask(resolved, prim, _kAffectRotationX,
+                                       _kAffectRotationY, _kAffectRotationZ,
+                                       time);
     case _ChannelGroup::Scale:
-        return _ReadConstraintAxisMask(
-            resolved, prim, _kAffectScaleX, _kAffectScaleY,
-            _kAffectScaleZ, time);
+        return _ReadConstraintAxisMask(resolved, prim, _kAffectScaleX,
+                                       _kAffectScaleY, _kAffectScaleZ, time);
     case _ChannelGroup::All:
     case _ChannelGroup::None:
         break;
@@ -290,53 +292,74 @@ _ReadGroupMask(const RigExecResolvedInputs &resolved, const UsdPrim &prim,
 
 bool
 RigExecRigEvaluator::_CompilePoseInterpolators(
-    const std::vector<SdfPath> &joints,
-    const std::vector<SdfPath> &controls,
-    std::vector<_PoseInterpolator> *out,
-    std::vector<std::string> *notes,
+    const std::vector<SdfPath> &joints, const std::vector<SdfPath> &controls,
+    std::vector<_PoseInterpolator> *out, std::vector<std::string> *notes,
     std::string *error, SdfPath *operation,
-    RigExecSceneDescriptors *capturedScene,RigExecProfiler *profile) const
+    RigExecSceneDescriptors *capturedScene, RigExecProfiler *profile) const
 {
-    RigExecProfilePhases phases(profile,"compile");
+    RigExecProfilePhases phases(profile, "compile");
     phases.Next("Compile.PoseInterpolators.Discovery");
     out->clear();
-    auto paths=_DiscoverPoseInterpolators(_stage,_rigPath);
-    paths.erase(std::remove_if(paths.begin(),paths.end(),[this](const SdfPath &path) {
-        return _IsSkippedOperation(path);
-    }),paths.end());
-    if(paths.empty())return true;
+    auto paths = _DiscoverPoseInterpolators(_stage, _rigPath);
+    paths.erase(std::remove_if(paths.begin(), paths.end(),
+                               [this](const SdfPath &path) {
+                                   return _IsSkippedOperation(path);
+                               }),
+                paths.end());
+    if (paths.empty())
+        return true;
     phases.Next("Compile.PoseInterpolators.SceneCapture");
     RigExecSceneDescriptors localScene;
-    RigExecSceneDescriptors &scene = capturedScene ? *capturedScene : localScene;
-    if(!RigExecDispatchCaptureSceneDescriptors(_stage,_rigPath,{UsdTimeCode::Default()},&scene,error))return false;
+    RigExecSceneDescriptors &scene =
+        capturedScene ? *capturedScene : localScene;
+    if (!RigExecDispatchCaptureSceneDescriptors(
+            _stage, _rigPath, {UsdTimeCode::Default()}, &scene, error))
+        return false;
     phases.Next("Compile.PoseInterpolators.Translation");
-    std::set<SdfPath> providers(joints.begin(),joints.end());
-    providers.insert(controls.begin(),controls.end());
-    for(const auto &path:paths) {
-        *operation=path;
-        auto descriptor=std::make_shared<RigExecScenePoseInterpolatorDescriptor>();
-        if(!RigExecDispatchTranslateScenePoseInterpolator(scene,path,descriptor.get(),error))return false;
-        if(!descriptor->driver.IsEmpty() && !providers.count(descriptor->driver)) {
-            *error="pose interpolator "+path.GetString()+" driver is not a provider of this rig";
+    std::set<SdfPath> providers(joints.begin(), joints.end());
+    providers.insert(controls.begin(), controls.end());
+    for (const auto &path : paths) {
+        *operation = path;
+        auto descriptor =
+            std::make_shared<RigExecScenePoseInterpolatorDescriptor>();
+        if (!RigExecDispatchTranslateScenePoseInterpolator(
+                scene, path, descriptor.get(), error))
+            return false;
+        if (!descriptor->driver.IsEmpty() &&
+            !providers.count(descriptor->driver)) {
+            *error = "pose interpolator " + path.GetString() +
+                     " driver is not a provider of this rig";
             return false;
         }
-        if(!descriptor->parent.IsEmpty() && !providers.count(descriptor->parent)) {
-            *error="pose interpolator "+path.GetString()+" driver parent is not a provider of this rig";
+        if (!descriptor->parent.IsEmpty() &&
+            !providers.count(descriptor->parent)) {
+            *error = "pose interpolator " + path.GetString() +
+                     " driver parent is not a provider of this rig";
             return false;
         }
-        for(size_t k=0;k<descriptor->extraDrivers.size();++k) {
-            if(!providers.count(descriptor->extraDrivers[k]) || (!descriptor->extraParents[k].IsEmpty() &&
-               !providers.count(descriptor->extraParents[k]))) {
-                *error="pose interpolator "+path.GetString()+" driver or driver parent is not a provider of this rig";
+        for (size_t k = 0; k < descriptor->extraDrivers.size(); ++k) {
+            if (!providers.count(descriptor->extraDrivers[k]) ||
+                (!descriptor->extraParents[k].IsEmpty() &&
+                 !providers.count(descriptor->extraParents[k]))) {
+                *error =
+                    "pose interpolator " + path.GetString() +
+                    " driver or driver parent is not a provider of this rig";
                 return false;
             }
         }
-        _PoseInterpolator record;record.prim=path;record.descriptor=descriptor;
-        record.driver=descriptor->driver;record.driverParent=descriptor->parent;
-        record.extraDrivers=descriptor->extraDrivers;record.extraDriverParents=descriptor->extraParents;
-        record.driverAttributes=descriptor->driverAttributes;
-        record.poseWeights=descriptor->poseWeights;record.disabledPoseWeights=descriptor->disabledPoseWeights;
-        if(notes)notes->insert(notes->end(),descriptor->notes.begin(),descriptor->notes.end());
+        _PoseInterpolator record;
+        record.prim = path;
+        record.descriptor = descriptor;
+        record.driver = descriptor->driver;
+        record.driverParent = descriptor->parent;
+        record.extraDrivers = descriptor->extraDrivers;
+        record.extraDriverParents = descriptor->extraParents;
+        record.driverAttributes = descriptor->driverAttributes;
+        record.poseWeights = descriptor->poseWeights;
+        record.disabledPoseWeights = descriptor->disabledPoseWeights;
+        if (notes)
+            notes->insert(notes->end(), descriptor->notes.begin(),
+                          descriptor->notes.end());
         out->push_back(std::move(record));
     }
     return true;
@@ -361,8 +384,8 @@ RigExecRigEvaluator::_DeriveStartFrames(
         return true;
     };
     for (const UsdPrim &prim : UsdPrimRange(rig)) {
-        if ((prim.GetTypeName() != "RigExecFkChain" &&
-             prim.GetTypeName() != "RigExecSkeleton2d") ||
+        if ((prim.GetTypeName() != SchemaTypeName::RigExecFkChain &&
+             prim.GetTypeName() != SchemaTypeName::RigExecSkeleton2d) ||
             _IsSkippedOperation(prim.GetPath())) {
             continue;
         }
@@ -410,7 +433,8 @@ RigExecRigEvaluator::_NoteRestEdits(const UsdNotice::ObjectsChanged &notice)
         // A subtree is one contiguous run of the ordered map, starting at
         // the prim itself when the prim is a key.
         const auto first = _restCompiledRigProviderPaths.lower_bound(prim);
-        if (first == _restCompiledRigProviderPaths.end() || !first->HasPrefix(prim)) {
+        if (first == _restCompiledRigProviderPaths.end() ||
+            !first->HasPrefix(prim)) {
             return;
         }
         if (*first == prim) {
@@ -427,7 +451,8 @@ RigExecRigEvaluator::_NoteRestEdits(const UsdNotice::ObjectsChanged &notice)
         // contiguous run of the ordered map, starting at the prim itself.
         for (auto provider = _restCompiledRigProviderPaths.lower_bound(path);
              provider != _restCompiledRigProviderPaths.end() &&
-             provider->HasPrefix(path); ++provider) {
+             provider->HasPrefix(path);
+             ++provider) {
             _restEditedProviders.insert(*provider);
             reached = true;
         }
@@ -451,10 +476,8 @@ RigExecRigEvaluator::_NoteRestEdits(const UsdNotice::ObjectsChanged &notice)
 
 bool
 RigExecRigEvaluator::_FrameFromXformRelativeToAsset(
-    const UsdPrim &assetRoot,
-    UsdGeomXformCache *xformCache,
-    const SdfPath &path,
-    RigExecPointFrame *outFrame,
+    const UsdPrim &assetRoot, UsdGeomXformCache *xformCache,
+    const SdfPath &path, RigExecPointFrame *outFrame,
     GfMatrix4d *outMatrix) const
 {
     RIGEXEC_PURITY_CHECK();
@@ -463,9 +486,8 @@ RigExecRigEvaluator::_FrameFromXformRelativeToAsset(
         return false;
     }
     bool resetsBelowAsset = false;
-    const GfMatrix4d relative =
-        xformCache->ComputeRelativeTransform(prim, assetRoot,
-                                             &resetsBelowAsset);
+    const GfMatrix4d relative = xformCache->ComputeRelativeTransform(
+        prim, assetRoot, &resetsBelowAsset);
     if (outFrame) {
         *outFrame = RigExecFrameFromMatrix(relative);
     }
@@ -476,10 +498,9 @@ RigExecRigEvaluator::_FrameFromXformRelativeToAsset(
 }
 
 bool
-RigExecApplyRevisedAncestorDelta(
-    const SdfPath &xformPath,
-    const RigExecPoseFrameEnumerator &providers,
-    RigExecPointFrame *frame)
+RigExecApplyRevisedAncestorDelta(const SdfPath &xformPath,
+                                 const RigExecPoseFrameEnumerator &providers,
+                                 RigExecPointFrame *frame)
 {
     // A native source that is not itself a written provider may still
     // sit beneath a constrained transform provider. The closest
@@ -491,16 +512,14 @@ RigExecApplyRevisedAncestorDelta(
     // ride the source on an identity that is not one.
     SdfPath closest;
     RigExecPointFrame closestBase, closestCurrent;
-    auto select = [&](const SdfPath &provider,
-                      const RigExecPointFrame &base,
+    auto select = [&](const SdfPath &provider, const RigExecPointFrame &base,
                       const RigExecPointFrame &current) {
         if (provider == xformPath || !xformPath.HasPrefix(provider) ||
             current.points == base.points) {
             return;
         }
         if (closest.IsEmpty() ||
-            provider.GetPathElementCount() >
-                closest.GetPathElementCount()) {
+            provider.GetPathElementCount() > closest.GetPathElementCount()) {
             closest = provider;
             closestBase = base;
             closestCurrent = current;
@@ -509,8 +528,8 @@ RigExecApplyRevisedAncestorDelta(
     providers(select);
     if (!closest.IsEmpty()) {
         GfMatrix4d delta(1.0);
-        if (!RigExecPointsToMatrix(
-                closestBase.points, closestCurrent.points, &delta)) {
+        if (!RigExecPointsToMatrix(closestBase.points, closestCurrent.points,
+                                   &delta)) {
             return false;
         }
         *frame = RigExecMatrixToPoints(frame->points, delta);
@@ -526,18 +545,17 @@ RigExecRigEvaluator::_IkUsesAnimatedTs(const std::vector<SdfPath> &chain) const
             return true;
         }
         const UsdPrim joint = _stage->GetPrimAtPath(path);
-        for (const TfToken &name : {
-                 _tokens->posedSpace, _tokens->avarsTx, _tokens->avarsTy,
-                 _tokens->avarsTz, _tokens->avarsSx, _tokens->avarsSy,
-                 _tokens->avarsSz}) {
+        for (const TfToken &name :
+             {_tokens->posedSpace, _tokens->avarsTx, _tokens->avarsTy,
+              _tokens->avarsTz, _tokens->avarsSx, _tokens->avarsSy,
+              _tokens->avarsSz}) {
             const UsdAttribute attr = joint.GetAttribute(name);
             SdfPathVector connections;
             // HasAuthoredConnections first: see _AuthoredConnections.
             if (attr &&
                 (attr.GetNumTimeSamples() > 0 ||
                  (attr.HasAuthoredConnections() &&
-                  attr.GetConnections(&connections) &&
-                  !connections.empty()))) {
+                  attr.GetConnections(&connections) && !connections.empty()))) {
                 return true;
             }
         }

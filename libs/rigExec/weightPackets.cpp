@@ -1,3 +1,4 @@
+#include "rigExecSchema/schemaNames.h"
 #include "weightPackets.h"
 #include "parallel.h"
 
@@ -18,11 +19,11 @@
 // (RigExecWeightPacketsTouchTokens).
 TF_DEFINE_PRIVATE_TOKENS(
     _weightTokens,
-    ((sphere, "RigExecSphereWeight"))
-    ((plane, "RigExecPlaneWeight"))
-    ((curve, "RigExecCurveWeight"))
-    ((unbounded, "unbounded"))
-    ((bounded, "bounded"))
+    ((sphere, rigExec::SchemaTypeName::RigExecSphereWeight))
+    ((plane, rigExec::SchemaTypeName::RigExecPlaneWeight))
+    ((curve, rigExec::SchemaTypeName::RigExecCurveWeight))
+    ((unbounded, rigExec::SchemaValueText::unbounded))
+    ((bounded, rigExec::SchemaValueText::bounded))
 );
 
 namespace rigExec {
@@ -40,7 +41,7 @@ RigExecApplyWeightRangePolicy(const TfToken &policy, float *w)
         return false;
     }
     if (*w < 0.0f || *w > 1.0f) {
-        if (policy == "clamp") {
+        if (policy == SchemaValueText::clamp) {
             *w = std::min(std::max(*w, 0.0f), 1.0f);
             return true;
         }
@@ -54,23 +55,24 @@ RigExecApplyWeightRangePolicy(const TfToken &policy, float *w)
 // Null with a zero size stands for an empty array and is never
 // dereferenced.
 static RigExecWeightPacket
-_BuildStaticWeightPacket(
-    const TfToken &representation, const TfToken &rangePolicy,
-    const float *values, size_t valuesSize,
-    const int *indices, size_t indicesSize,
-    float defaultWeight,RigExecWeightPacketWorkspace &workspace)
+_BuildStaticWeightPacket(const TfToken &representation,
+                         const TfToken &rangePolicy, const float *values,
+                         size_t valuesSize, const int *indices,
+                         size_t indicesSize, float defaultWeight,
+                         RigExecWeightPacketWorkspace &workspace)
 {
     RigExecWeightPacket packet;
     packet.representation = representation;
     packet.rangePolicy = rangePolicy;
     // Unknown structural tokens are rejected, never coerced;
     // allowedTokens metadata alone is not validation.
-    if (packet.representation != "constant" &&
-        packet.representation != "dense" &&
-        packet.representation != "sparse") {
+    if (packet.representation != SchemaValueText::constant &&
+        packet.representation != SchemaValueText::dense &&
+        packet.representation != SchemaValueText::sparse) {
         return packet;
     }
-    if (packet.rangePolicy != "strict" && packet.rangePolicy != "clamp") {
+    if (packet.rangePolicy != SchemaValueText::strict &&
+        packet.rangePolicy != SchemaValueText::clamp) {
         return packet;
     }
     packet.defaultWeight = defaultWeight;
@@ -78,15 +80,16 @@ _BuildStaticWeightPacket(
         return packet;
     }
 
-    auto &pairs=workspace.pairs;pairs.clear();
+    auto &pairs = workspace.pairs;
+    pairs.clear();
     {
-        if (packet.representation == "sparse") {
+        if (packet.representation == SchemaValueText::sparse) {
             const size_t paired = std::min(valuesSize, indicesSize);
             for (size_t i = 0; i < paired; ++i) {
                 pairs.emplace_back(indices[i], values[i]);
             }
             if (valuesSize != indicesSize) {
-                return packet;  // size mismatch: invalid
+                return packet; // size mismatch: invalid
             }
         } else if (valuesSize > 0) {
             // One sized copy, not a push_back loop: the caller already
@@ -97,37 +100,50 @@ _BuildStaticWeightPacket(
     }
     // Canonical sorted sparse support; authored pair order is
     // non-semantic and duplicates are rejected.
-    if (packet.representation == "sparse") {
-        const bool sameSupport=workspace.support.size()==indicesSize &&
-            (indicesSize==0 || std::equal(workspace.support.begin(),workspace.support.end(),indices));
-        if(!sameSupport) {
-            if(indicesSize)workspace.support.assign(indices,indices+indicesSize);else workspace.support.clear();
+    if (packet.representation == SchemaValueText::sparse) {
+        const bool sameSupport =
+            workspace.support.size() == indicesSize &&
+            (indicesSize == 0 || std::equal(workspace.support.begin(),
+                                            workspace.support.end(), indices));
+        if (!sameSupport) {
+            if (indicesSize)
+                workspace.support.assign(indices, indices + indicesSize);
+            else
+                workspace.support.clear();
             workspace.supportOrder.resize(indicesSize);
-            std::iota(workspace.supportOrder.begin(),workspace.supportOrder.end(),size_t(0));
-            std::sort(workspace.supportOrder.begin(),workspace.supportOrder.end(),
-                [&](size_t a,size_t b){return indices[a]<indices[b];});
-            workspace.uniqueSupport=true;
-            for(size_t i=1;i<indicesSize;++i)
-                if(indices[workspace.supportOrder[i-1]]==indices[workspace.supportOrder[i]]) {
-                    workspace.uniqueSupport=false;break;
+            std::iota(workspace.supportOrder.begin(),
+                      workspace.supportOrder.end(), size_t(0));
+            std::sort(
+                workspace.supportOrder.begin(), workspace.supportOrder.end(),
+                [&](size_t a, size_t b) { return indices[a] < indices[b]; });
+            workspace.uniqueSupport = true;
+            for (size_t i = 1; i < indicesSize; ++i)
+                if (indices[workspace.supportOrder[i - 1]] ==
+                    indices[workspace.supportOrder[i]]) {
+                    workspace.uniqueSupport = false;
+                    break;
                 }
         }
-        if(workspace.uniqueSupport) {
-            for(size_t i=0;i<indicesSize;++i) {
-                const size_t source=workspace.supportOrder[i];pairs[i]={indices[source],values[source]};
+        if (workspace.uniqueSupport) {
+            for (size_t i = 0; i < indicesSize; ++i) {
+                const size_t source = workspace.supportOrder[i];
+                pairs[i] = {indices[source], values[source]};
             }
-        } else std::sort(pairs.begin(), pairs.end());
-        packet.indices.reserve(pairs.size());packet.values.reserve(pairs.size());
+        } else
+            std::sort(pairs.begin(), pairs.end());
+        packet.indices.reserve(pairs.size());
+        packet.values.reserve(pairs.size());
         for (size_t i = 0; i < pairs.size(); ++i) {
             if (i > 0 && pairs[i].first == pairs[i - 1].first) {
-                return packet;  // duplicate index: invalid
+                return packet; // duplicate index: invalid
             }
             packet.indices.push_back(pairs[i].first);
             packet.values.push_back(pairs[i].second);
         }
     }
-    if (packet.representation == "dense" && packet.defaultWeight != 0.0f) {
-        return packet;  // canonical dense default is zero
+    if (packet.representation == SchemaValueText::dense &&
+        packet.defaultWeight != 0.0f) {
+        return packet; // canonical dense default is zero
     }
 
     for (float &w : packet.values) {
@@ -135,8 +151,8 @@ _BuildStaticWeightPacket(
             return packet;
         }
     }
-    if (!RigExecApplyWeightRangePolicy(
-            packet.rangePolicy, &packet.defaultWeight)) {
+    if (!RigExecApplyWeightRangePolicy(packet.rangePolicy,
+                                       &packet.defaultWeight)) {
         return packet;
     }
     packet.valid = true;
@@ -146,8 +162,10 @@ _BuildStaticWeightPacket(
 RigExecWeightPacket
 RigExecBuildStaticWeightPacket(const RigExecStaticWeightInputs &inputs)
 {
-    const RigExecStaticWeightInputsView view{inputs.representation,inputs.rangePolicy,
-        inputs.values.data(),inputs.values.size(),inputs.indices.data(),inputs.indices.size(),inputs.defaultWeight};
+    const RigExecStaticWeightInputsView view{
+        inputs.representation, inputs.rangePolicy,    inputs.values.data(),
+        inputs.values.size(),  inputs.indices.data(), inputs.indices.size(),
+        inputs.defaultWeight};
     return RigExecBuildStaticWeightPacket(view);
 }
 
@@ -155,31 +173,34 @@ RigExecWeightPacket
 RigExecBuildStaticWeightPacket(const RigExecStaticWeightInputsView &inputs)
 {
     RigExecWeightPacketWorkspace workspace;
-    return RigExecBuildStaticWeightPacket(inputs,&workspace);
+    return RigExecBuildStaticWeightPacket(inputs, &workspace);
 }
 RigExecWeightPacket
 RigExecBuildStaticWeightPacket(const RigExecStaticWeightInputsView &inputs,
-    RigExecWeightPacketWorkspace *workspace)
+                               RigExecWeightPacketWorkspace *workspace)
 {
-    if(!workspace)return RigExecBuildStaticWeightPacket(inputs);
-    return _BuildStaticWeightPacket(inputs.representation,inputs.rangePolicy,
-        inputs.values,inputs.valuesSize,inputs.indices,inputs.indicesSize,
-        inputs.defaultWeight,*workspace);
+    if (!workspace)
+        return RigExecBuildStaticWeightPacket(inputs);
+    return _BuildStaticWeightPacket(inputs.representation, inputs.rangePolicy,
+                                    inputs.values, inputs.valuesSize,
+                                    inputs.indices, inputs.indicesSize,
+                                    inputs.defaultWeight, *workspace);
 }
 
 RigExecWeightPacket
-RigExecBuildDynamicWeightPacket(
-    const RigExecDynamicWeightInputs &inputs, const RigExecWeightPacket *base)
+RigExecBuildDynamicWeightPacket(const RigExecDynamicWeightInputs &inputs,
+                                const RigExecWeightPacket *base)
 {
     RigExecWeightPacket packet;
     packet.representation = inputs.representation;
     packet.rangePolicy = inputs.rangePolicy;
-    if (packet.representation != "constant" &&
-        packet.representation != "dense" &&
-        packet.representation != "sparse") {
+    if (packet.representation != SchemaValueText::constant &&
+        packet.representation != SchemaValueText::dense &&
+        packet.representation != SchemaValueText::sparse) {
         return packet;
     }
-    if (packet.rangePolicy != "strict" && packet.rangePolicy != "clamp") {
+    if (packet.rangePolicy != SchemaValueText::strict &&
+        packet.rangePolicy != SchemaValueText::clamp) {
         return packet;
     }
 
@@ -189,12 +210,12 @@ RigExecBuildDynamicWeightPacket(
 
     if (!base) {
         // Without a base only constant is legal and b_i = 1.
-        if (packet.representation != "constant") {
+        if (packet.representation != SchemaValueText::constant) {
             return packet;
         }
         packet.defaultWeight = (1.0f * d) * s + a;
-        if (!RigExecApplyWeightRangePolicy(
-                packet.rangePolicy, &packet.defaultWeight)) {
+        if (!RigExecApplyWeightRangePolicy(packet.rangePolicy,
+                                           &packet.defaultWeight)) {
             return packet;
         }
         packet.valid = true;
@@ -215,12 +236,12 @@ RigExecBuildDynamicWeightPacket(
         }
         packet.values.push_back(r);
     }
-    if (packet.representation == "dense") {
+    if (packet.representation == SchemaValueText::dense) {
         packet.defaultWeight = 0.0f;
     } else {
         packet.defaultWeight = (base->defaultWeight * d) * s + a;
-        if (!RigExecApplyWeightRangePolicy(
-                packet.rangePolicy, &packet.defaultWeight)) {
+        if (!RigExecApplyWeightRangePolicy(packet.rangePolicy,
+                                           &packet.defaultWeight)) {
             return packet;
         }
     }
@@ -240,8 +261,8 @@ RigExecRigidWorldToLocal(const RigExecPointFrame &posed, GfMatrix4d *result)
         return false;
     }
     GfMatrix4d placement(1.0);
-    if (!RigExecPointsToMatrix(
-            RigExecIdentityLandmarks(), posed.points, &placement)) {
+    if (!RigExecPointsToMatrix(RigExecIdentityLandmarks(), posed.points,
+                               &placement)) {
         return false;
     }
     for (int i = 0; i < 4; ++i) {
@@ -274,8 +295,7 @@ RigExecVolumePlacement(const RigExecPointFrame &final)
         }
     }
     // A failed decomposition writes the identity (pointFrame.cpp).
-    RigExecPointsToMatrix(RigExecIdentityLandmarks(), final.points,
-                          &placement);
+    RigExecPointsToMatrix(RigExecIdentityLandmarks(), final.points, &placement);
     return placement;
 }
 
@@ -310,17 +330,16 @@ _UsesAxisScales(const TfToken &typeName)
 // caller that has to gather a whole mesh to fill in targetPoints can ask
 // first -- see RigExecVolumeWeightCanBuild.
 bool
-_CheckVolumePrologue(
-    bool usesScales,
-    const RigExecVolumeWeightInputs &inputs,
-    GfMatrix4d *worldToLocal)
+_CheckVolumePrologue(bool usesScales, const RigExecVolumeWeightInputs &inputs,
+                     GfMatrix4d *worldToLocal)
 {
     // A generated field has a value at every element, so dense is the only
     // representation it can honestly publish. Rejected, never coerced.
-    if (inputs.representation != "dense") {
+    if (inputs.representation != SchemaValueText::dense) {
         return false;
     }
-    if (inputs.rangePolicy != "strict" && inputs.rangePolicy != "clamp") {
+    if (inputs.rangePolicy != SchemaValueText::strict &&
+        inputs.rangePolicy != SchemaValueText::clamp) {
         return false;
     }
     if (!inputs.hasPlacement ||
@@ -338,12 +357,9 @@ _CheckVolumePrologue(
 // The shared prologue: structural tokens, placement, band, and the points
 // the field is measured over. Returns false when the packet is invalid.
 bool
-_BeginVolumeWeight(
-    bool usesScales,
-    const RigExecVolumeWeightInputs &inputs,
-    RigExecWeightPacket *packet,
-    GfMatrix4d *worldToLocal,
-    RigExecWeightPointView *points)
+_BeginVolumeWeight(bool usesScales, const RigExecVolumeWeightInputs &inputs,
+                   RigExecWeightPacket *packet, GfMatrix4d *worldToLocal,
+                   RigExecWeightPointView *points)
 {
     packet->representation = inputs.representation;
     packet->rangePolicy = inputs.rangePolicy;
@@ -354,15 +370,24 @@ _BeginVolumeWeight(
     // rigExec:sampleSource, when authored, replaces the weightTarget for
     // SAMPLING only -- the weighted domain stays the target, so the two
     // must still agree in cardinality.
-    const RigExecWeightPointView target=inputs.usePointViews?inputs.targetView:
-        RigExecWeightPointView{inputs.targetPoints.data(),inputs.targetPoints.size()};
-    const RigExecWeightPointView samples=inputs.usePointViews?inputs.sampleView:
-        RigExecWeightPointView{inputs.samplePoints.data(),inputs.samplePoints.size()};
-    const size_t targetCount = inputs.targetPointCount != 0
-        ? inputs.targetPointCount : target.count;
-    if (targetCount == 0) return false;
-    if (samples.count != 0 && samples.count != targetCount) return false;
-    if (samples.count == 0 && target.count != targetCount) return false;
+    const RigExecWeightPointView target =
+        inputs.usePointViews
+            ? inputs.targetView
+            : RigExecWeightPointView{inputs.targetPoints.data(),
+                                     inputs.targetPoints.size()};
+    const RigExecWeightPointView samples =
+        inputs.usePointViews
+            ? inputs.sampleView
+            : RigExecWeightPointView{inputs.samplePoints.data(),
+                                     inputs.samplePoints.size()};
+    const size_t targetCount =
+        inputs.targetPointCount != 0 ? inputs.targetPointCount : target.count;
+    if (targetCount == 0)
+        return false;
+    if (samples.count != 0 && samples.count != targetCount)
+        return false;
+    if (samples.count == 0 && target.count != targetCount)
+        return false;
     *points = samples.count == 0 ? target : samples;
     return true;
 }
@@ -377,7 +402,7 @@ _FinishVolumeWeight(RigExecWeightPacket *packet, std::vector<float> *weights)
         }
     }
     packet->values = std::move(*weights);
-    packet->defaultWeight = 0.0f;  // canonical dense default
+    packet->defaultWeight = 0.0f; // canonical dense default
     packet->valid = true;
     return true;
 }
@@ -401,17 +426,17 @@ _BuildSphereWeightPacket(const RigExecVolumeWeightInputs &inputs)
     GfMatrix4d worldToLocal;
     RigExecWeightPointView points;
     if (!_BeginVolumeWeight(
-            /* usesScales = */ true, inputs, &packet, &worldToLocal,
-            &points)) {
+            /* usesScales = */ true, inputs, &packet, &worldToLocal, &points)) {
         return packet;
     }
     if (!_ValidateScales(inputs.positiveScales) ||
-        !_ValidateScales(inputs.negativeScales)) return packet;
+        !_ValidateScales(inputs.negativeScales))
+        return packet;
     std::vector<float> weights;
-    RigExecSphereWeightField(
-        points, _ApplyAxisScales(worldToLocal, inputs.scales), inputs.params,
-        &weights, inputs.positiveScales, inputs.negativeScales,
-        RigExecGeometryRanges());
+    RigExecSphereWeightField(points,
+                             _ApplyAxisScales(worldToLocal, inputs.scales),
+                             inputs.params, &weights, inputs.positiveScales,
+                             inputs.negativeScales, RigExecGeometryRanges());
     if (!_FinishVolumeWeight(&packet, &weights)) {
         return RigExecWeightPacket();
     }
@@ -430,14 +455,14 @@ _BuildPlaneWeightPacket(const RigExecVolumeWeightInputs &inputs)
         return packet;
     }
     int axisIndex;
-    if (inputs.planeAxis == "x") {
+    if (inputs.planeAxis == SchemaValueText::x) {
         axisIndex = 0;
-    } else if (inputs.planeAxis == "y") {
+    } else if (inputs.planeAxis == SchemaValueText::y) {
         axisIndex = 1;
-    } else if (inputs.planeAxis == "z") {
+    } else if (inputs.planeAxis == SchemaValueText::z) {
         axisIndex = 2;
     } else {
-        return packet;  // unknown structural token: rejected, not coerced
+        return packet; // unknown structural token: rejected, not coerced
     }
 
     // Bounded clips the field to the in-plane rectangle; unbounded is
@@ -452,18 +477,17 @@ _BuildPlaneWeightPacket(const RigExecVolumeWeightInputs &inputs)
         extent.extentV = inputs.extentV;
         for (const float e : {extent.extentU, extent.extentV}) {
             if (!std::isfinite(e) || e <= 0.0f) {
-                return packet;  // no such rectangle; same rule as scales
+                return packet; // no such rectangle; same rule as scales
             }
         }
         extentPtr = &extent;
     } else if (inputs.planeBounds != _weightTokens->unbounded) {
-        return packet;  // unknown structural token: rejected, not coerced
+        return packet; // unknown structural token: rejected, not coerced
     }
 
     std::vector<float> weights;
-    RigExecPlaneWeightField(
-        points, worldToLocal, axisIndex, inputs.params, &weights, extentPtr,
-        RigExecGeometryRanges());
+    RigExecPlaneWeightField(points, worldToLocal, axisIndex, inputs.params,
+                            &weights, extentPtr, RigExecGeometryRanges());
     if (!_FinishVolumeWeight(&packet, &weights)) {
         return RigExecWeightPacket();
     }
@@ -477,21 +501,23 @@ _BuildCurveWeightPacket(const RigExecVolumeWeightInputs &inputs)
     GfMatrix4d worldToLocal;
     RigExecWeightPointView points;
     if (!_BeginVolumeWeight(
-            /* usesScales = */ true, inputs, &packet, &worldToLocal,
-            &points)) {
+            /* usesScales = */ true, inputs, &packet, &worldToLocal, &points)) {
         return packet;
     }
-    const RigExecWeightPointView curve=inputs.usePointViews?inputs.curveView:
-        RigExecWeightPointView{inputs.curvePoints.data(),inputs.curvePoints.size()};
+    const RigExecWeightPointView curve =
+        inputs.usePointViews
+            ? inputs.curveView
+            : RigExecWeightPointView{inputs.curvePoints.data(),
+                                     inputs.curvePoints.size()};
     if (curve.count == 0) {
-        return packet;  // a curve weight with no curve is not a field
+        return packet; // a curve weight with no curve is not a field
     }
     std::vector<float> weights;
     std::vector<GfVec3f> localCurve;
     RigExecCurveWeightField(
-        points, curve,
-        _ApplyAxisScales(worldToLocal, inputs.scales), inputs.params,
-        &weights, inputs.localCurveScratch?inputs.localCurveScratch:&localCurve,
+        points, curve, _ApplyAxisScales(worldToLocal, inputs.scales),
+        inputs.params, &weights,
+        inputs.localCurveScratch ? inputs.localCurveScratch : &localCurve,
         RigExecGeometryRanges());
     if (!_FinishVolumeWeight(&packet, &weights)) {
         return RigExecWeightPacket();
@@ -499,23 +525,24 @@ _BuildCurveWeightPacket(const RigExecVolumeWeightInputs &inputs)
     return packet;
 }
 
-}  // namespace
+} // namespace
 
 bool
-RigExecVolumeWeightCanBuild(
-    const TfToken &typeName, const RigExecVolumeWeightInputs &inputs)
+RigExecVolumeWeightCanBuild(const TfToken &typeName,
+                            const RigExecVolumeWeightInputs &inputs)
 {
     GfMatrix4d worldToLocal(1.0);
-    if (typeName == "RigExecSphereWeight" &&
+    if (typeName == SchemaTypeName::RigExecSphereWeight &&
         (!_ValidateScales(inputs.positiveScales) ||
-         !_ValidateScales(inputs.negativeScales))) return false;
-    return _CheckVolumePrologue(
-        _UsesAxisScales(typeName), inputs, &worldToLocal);
+         !_ValidateScales(inputs.negativeScales)))
+        return false;
+    return _CheckVolumePrologue(_UsesAxisScales(typeName), inputs,
+                                &worldToLocal);
 }
 
 RigExecWeightPacket
-RigExecBuildVolumeWeightPacket(
-    const TfToken &typeName, const RigExecVolumeWeightInputs &inputs)
+RigExecBuildVolumeWeightPacket(const TfToken &typeName,
+                               const RigExecVolumeWeightInputs &inputs)
 {
     if (typeName == _weightTokens->sphere) {
         return _BuildSphereWeightPacket(inputs);
@@ -550,11 +577,11 @@ RigExecBuildVolumeWeightPacket(
 // out-of-range sparse support that Resolve tolerates, and it
 // validates constant packets Resolve ignores.
 static bool
-_ResolveCombineInput(
-    const RigExecWeightPacket &in, size_t elementCount,
-    std::vector<float> *scratch, const float **data, size_t *size)
+_ResolveCombineInput(const RigExecWeightPacket &in, size_t elementCount,
+                     std::vector<float> *scratch, const float **data,
+                     size_t *size)
 {
-    if (in.representation == "dense") {
+    if (in.representation == SchemaValueText::dense) {
         if (in.values.size() != elementCount) {
             return false;
         }
@@ -567,7 +594,7 @@ _ResolveCombineInput(
         *size = in.values.size();
         return true;
     }
-    if (in.representation != "sparse") {
+    if (in.representation != SchemaValueText::sparse) {
         // Constant and unknown broadcast the default, which the
         // per-point loop rejected when negative.
         if (in.defaultWeight < 0.0f) {
@@ -630,12 +657,12 @@ RigExecBuildCombineWeightPacket(
     const TfToken &representation, const TfToken &rangePolicy,
     const TfToken &combineMode,
     const std::vector<const RigExecWeightPacket *> &inputs,
-    size_t weightTargetCount,
-    float strength, float invert)
+    size_t weightTargetCount, float strength, float invert)
 {
     RigExecWeightPacketWorkspace workspace;
-    return RigExecBuildCombineWeightPacket(representation,rangePolicy,combineMode,
-        inputs,weightTargetCount,strength,invert,&workspace);
+    return RigExecBuildCombineWeightPacket(
+        representation, rangePolicy, combineMode, inputs, weightTargetCount,
+        strength, invert, &workspace);
 }
 
 RigExecWeightPacket
@@ -643,35 +670,38 @@ RigExecBuildCombineWeightPacket(
     const TfToken &representation, const TfToken &rangePolicy,
     const TfToken &combineMode,
     const std::vector<const RigExecWeightPacket *> &inputs,
-    size_t weightTargetCount,
-    float strength, float invert,RigExecWeightPacketWorkspace *workspace)
+    size_t weightTargetCount, float strength, float invert,
+    RigExecWeightPacketWorkspace *workspace)
 {
-    if(!workspace)return RigExecBuildCombineWeightPacket(representation,rangePolicy,combineMode,
-        inputs,weightTargetCount,strength,invert);
+    if (!workspace)
+        return RigExecBuildCombineWeightPacket(
+            representation, rangePolicy, combineMode, inputs, weightTargetCount,
+            strength, invert);
     RigExecWeightPacket packet;
     packet.representation = representation;
     packet.rangePolicy = rangePolicy;
-    if (packet.representation != "dense") {
+    if (packet.representation != SchemaValueText::dense) {
         return packet;
     }
-    if (packet.rangePolicy != "strict" && packet.rangePolicy != "clamp") {
+    if (packet.rangePolicy != SchemaValueText::strict &&
+        packet.rangePolicy != SchemaValueText::clamp) {
         return packet;
     }
 
     RigExecWeightCombine mode;
-    if (combineMode == "multiply") {
+    if (combineMode == SchemaValueText::multiply) {
         mode = RigExecWeightCombine::Multiply;
-    } else if (combineMode == "add") {
+    } else if (combineMode == SchemaValueText::add) {
         mode = RigExecWeightCombine::Add;
-    } else if (combineMode == "subtract") {
+    } else if (combineMode == SchemaValueText::subtract) {
         mode = RigExecWeightCombine::Subtract;
-    } else if (combineMode == "max") {
+    } else if (combineMode == SchemaValueText::max) {
         mode = RigExecWeightCombine::Max;
-    } else if (combineMode == "min") {
+    } else if (combineMode == SchemaValueText::min) {
         mode = RigExecWeightCombine::Min;
-    } else if (combineMode == "average") {
+    } else if (combineMode == SchemaValueText::average) {
         mode = RigExecWeightCombine::Average;
-    } else if (combineMode == "overlay") {
+    } else if (combineMode == SchemaValueText::overlay) {
         mode = RigExecWeightCombine::Overlay;
     } else {
         return packet;
@@ -691,9 +721,9 @@ RigExecBuildCombineWeightPacket(
     size_t elementCount = 0;
     for (const RigExecWeightPacket *in : inputs) {
         if (!in || !in->valid) {
-            return packet;  // one bad input fails the fold atomically
+            return packet; // one bad input fails the fold atomically
         }
-        if (in->representation == "dense") {
+        if (in->representation == SchemaValueText::dense) {
             if (elementCount && in->values.size() != elementCount) {
                 return packet;
             }
@@ -713,12 +743,12 @@ RigExecBuildCombineWeightPacket(
     // Dense inputs borrow the packet's values with no copy; the
     // scratch serves only sparse/constant expansion.
     std::vector<float> folded;
-    auto &field=workspace->combineField;
+    auto &field = workspace->combineField;
     if (!RigExecCombineWeightFieldsStreamed(
             mode, inputs.size(), elementCount,
             [&](size_t k, const float **data, size_t *size) {
-                return _ResolveCombineInput(
-                    *inputs[k], elementCount, &field, data, size);
+                return _ResolveCombineInput(*inputs[k], elementCount, &field,
+                                            data, size);
             },
             &folded)) {
         return packet;
@@ -736,20 +766,21 @@ RigExecBuildCombineWeightPacket(
 }
 
 RigExecWeightPacket
-RigExecBuildCombineWeightPacket(
-    const TfToken &representation, const TfToken &rangePolicy,
-    const TfToken &combineMode,
-    const std::vector<RigExecWeightPacket> &inputs, size_t weightTargetCount,
-    float strength, float invert)
+RigExecBuildCombineWeightPacket(const TfToken &representation,
+                                const TfToken &rangePolicy,
+                                const TfToken &combineMode,
+                                const std::vector<RigExecWeightPacket> &inputs,
+                                size_t weightTargetCount, float strength,
+                                float invert)
 {
     std::vector<const RigExecWeightPacket *> borrowed;
     borrowed.reserve(inputs.size());
     for (const RigExecWeightPacket &in : inputs) {
         borrowed.push_back(&in);
     }
-    return RigExecBuildCombineWeightPacket(
-        representation, rangePolicy, combineMode, borrowed,
-        weightTargetCount, strength, invert);
+    return RigExecBuildCombineWeightPacket(representation, rangePolicy,
+                                           combineMode, borrowed,
+                                           weightTargetCount, strength, invert);
 }
 
-}  // namespace rigExec
+} // namespace rigExec

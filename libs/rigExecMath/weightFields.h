@@ -11,6 +11,7 @@
 #ifndef RIGEXEC_MATH_WEIGHT_FIELDS_H
 #define RIGEXEC_MATH_WEIGHT_FIELDS_H
 
+#include "rigExecSchema/schemaNames.h"
 #include "pointFrame.h"
 #include "rangeRunner.h"
 
@@ -29,11 +30,11 @@ namespace rigExec {
 /// Every profile maps the ramp parameter r in [0, 1] -- 1 at falloffMin,
 /// 0 at falloffMax -- to a weight in [0, 1], with f(0) = 0 and f(1) = 1.
 enum class RigExecFalloffProfile {
-    Linear,    ///< f(r) = r
-    Smooth,    ///< smoothstep: f(r) = r^2 (3 - 2r); zero slope at both ends
-    EaseIn,    ///< f(r) = r^2; slow departure from zero
-    EaseOut,   ///< f(r) = 1 - (1 - r)^2; slow approach to one
-    Constant,  ///< hard step: f(r) = r > 0 ? 1 : 0
+    Linear,   ///< f(r) = r
+    Smooth,   ///< smoothstep: f(r) = r^2 (3 - 2r); zero slope at both ends
+    EaseIn,   ///< f(r) = r^2; slow departure from zero
+    EaseOut,  ///< f(r) = 1 - (1 - r)^2; slow approach to one
+    Constant, ///< hard step: f(r) = r > 0 ? 1 : 0
 };
 
 /// Resolution of the baked falloff lookup table. A power of two plus one
@@ -43,8 +44,8 @@ constexpr size_t RigExecFalloffLutSize = 257;
 /// Bakes \p profile into a \p count-entry lookup table over r in [0, 1].
 /// Fewer than two entries yields an empty table, which every consumer
 /// reads as "linear".
-std::vector<float> RigExecBuildFalloffLut(
-    RigExecFalloffProfile profile, size_t count = RigExecFalloffLutSize);
+std::vector<float> RigExecBuildFalloffLut(RigExecFalloffProfile profile,
+                                          size_t count = RigExecFalloffLutSize);
 
 /// The distance-to-weight remap shared by every volumetric weight object.
 ///
@@ -127,18 +128,18 @@ struct RigExecPlaneBounds {
 /// sphere (or a second plane) and inherits that volume's falloff -- which
 /// is the same answer composition gives to every other "but softer"
 /// question in this file.
-bool RigExecPlaneWithinBounds(
-    const GfVec3f &p, int axis, const RigExecPlaneBounds &bounds);
+bool RigExecPlaneWithinBounds(const GfVec3f &p, int axis,
+                              const RigExecPlaneBounds &bounds);
 
 /// Distance from \p p to the nearest point on the polyline through
 /// \p curvePoints. Zero points gives infinity (an empty field); one point
 /// degenerates to the sphere distance about it.
-float RigExecCurveDistance(
-    const GfVec3f &p, const GfVec3f *curvePoints, size_t count);
+float RigExecCurveDistance(const GfVec3f &p, const GfVec3f *curvePoints,
+                           size_t count);
 
 /// Distance from \p p to the nearest point on the segment [a, b].
-float RigExecSegmentDistance(
-    const GfVec3f &p, const GfVec3f &a, const GfVec3f &b);
+float RigExecSegmentDistance(const GfVec3f &p, const GfVec3f &a,
+                             const GfVec3f &b);
 
 // Field builders. \p worldToLocal maps a point from the space \p points
 // are expressed in into the volume's local space; pass identity when they
@@ -146,13 +147,12 @@ float RigExecSegmentDistance(
 
 /// Directional divisors are selected by each transformed local coordinate
 /// sign. Callers validate finite, positive scales; defaults preserve symmetry.
-void RigExecSphereWeightField(
-    const std::vector<GfVec3f> &points,
-    const GfMatrix4d &worldToLocal,
-    const RigExecFalloffParams &params,
-    std::vector<float> *weights,
-    const GfVec3f &positiveScales = GfVec3f(1.0f),
-    const GfVec3f &negativeScales = GfVec3f(1.0f));
+void RigExecSphereWeightField(const std::vector<GfVec3f> &points,
+                              const GfMatrix4d &worldToLocal,
+                              const RigExecFalloffParams &params,
+                              std::vector<float> *weights,
+                              const GfVec3f &positiveScales = GfVec3f(1.0f),
+                              const GfVec3f &negativeScales = GfVec3f(1.0f));
 
 /// \p bounds is null for the infinite plane and non-null for a bounded
 /// one, whose field is exactly zero outside the rectangle. A pointer
@@ -160,42 +160,42 @@ void RigExecSphereWeightField(
 /// caller cannot pass extents that are quietly ignored; the caller is
 /// responsible for having rejected non-positive or non-finite extents,
 /// exactly as it is for the per-axis scales.
-void RigExecPlaneWeightField(
-    const std::vector<GfVec3f> &points,
-    const GfMatrix4d &worldToLocal,
-    int axis,
-    const RigExecFalloffParams &params,
-    std::vector<float> *weights,
-    const RigExecPlaneBounds *bounds = nullptr);
+void RigExecPlaneWeightField(const std::vector<GfVec3f> &points,
+                             const GfMatrix4d &worldToLocal, int axis,
+                             const RigExecFalloffParams &params,
+                             std::vector<float> *weights,
+                             const RigExecPlaneBounds *bounds = nullptr);
 
 /// \p curvePoints are taken in the SAME space as \p points (they are a
 /// native geometry property read off the stage, not a property of the
 /// volume prim), so both are transformed by \p worldToLocal together.
-void RigExecCurveWeightField(
-    const std::vector<GfVec3f> &points,
-    const std::vector<GfVec3f> &curvePoints,
-    const GfMatrix4d &worldToLocal,
-    const RigExecFalloffParams &params,
-    std::vector<float> *weights);
+void RigExecCurveWeightField(const std::vector<GfVec3f> &points,
+                             const std::vector<GfVec3f> &curvePoints,
+                             const GfMatrix4d &worldToLocal,
+                             const RigExecFalloffParams &params,
+                             std::vector<float> *weights);
 
 /// Borrowed input overloads. Views remain immutable through the call;
 /// localCurve is producer-owned retained transform scratch. Each point's
 /// weight depends only on that point, so \p ranges may split the point loop
 /// across threads; the field is bitwise the same either way.
-void RigExecSphereWeightField(RigExecWeightPointView points,
-    const GfMatrix4d &, const RigExecFalloffParams &, std::vector<float> *,
-    const GfVec3f &positiveScales = GfVec3f(1.0f),
-    const GfVec3f &negativeScales = GfVec3f(1.0f),
-    const RigExecRangeRunner *ranges = nullptr);
-void RigExecPlaneWeightField(RigExecWeightPointView points,
-    const GfMatrix4d &, int axis, const RigExecFalloffParams &,
-    std::vector<float> *, const RigExecPlaneBounds *bounds = nullptr,
-    const RigExecRangeRunner *ranges = nullptr);
+void RigExecSphereWeightField(RigExecWeightPointView points, const GfMatrix4d &,
+                              const RigExecFalloffParams &,
+                              std::vector<float> *,
+                              const GfVec3f &positiveScales = GfVec3f(1.0f),
+                              const GfVec3f &negativeScales = GfVec3f(1.0f),
+                              const RigExecRangeRunner *ranges = nullptr);
+void RigExecPlaneWeightField(RigExecWeightPointView points, const GfMatrix4d &,
+                             int axis, const RigExecFalloffParams &,
+                             std::vector<float> *,
+                             const RigExecPlaneBounds *bounds = nullptr,
+                             const RigExecRangeRunner *ranges = nullptr);
 void RigExecCurveWeightField(RigExecWeightPointView points,
-    RigExecWeightPointView curvePoints, const GfMatrix4d &,
-    const RigExecFalloffParams &, std::vector<float> *,
-    std::vector<GfVec3f> *localCurve,
-    const RigExecRangeRunner *ranges = nullptr);
+                             RigExecWeightPointView curvePoints,
+                             const GfMatrix4d &, const RigExecFalloffParams &,
+                             std::vector<float> *,
+                             std::vector<GfVec3f> *localCurve,
+                             const RigExecRangeRunner *ranges = nullptr);
 
 // Composition (weight objects compose).
 
@@ -208,13 +208,13 @@ void RigExecCurveWeightField(RigExecWeightPointView points,
 /// result. Authors who need a permutation-proof composition use the
 /// commutative modes or nest single-input combines.
 enum class RigExecWeightCombine {
-    Multiply,  ///< identity 1
-    Add,       ///< identity 0
-    Subtract,  ///< first input minus each subsequent one
-    Max,       ///< identity 0
-    Min,       ///< identity 1
-    Average,   ///< arithmetic mean over the inputs
-    Overlay,   ///< a < 0.5 ? 2ab : 1 - 2(1-a)(1-b), per element
+    Multiply, ///< identity 1
+    Add,      ///< identity 0
+    Subtract, ///< first input minus each subsequent one
+    Max,      ///< identity 0
+    Min,      ///< identity 1
+    Average,  ///< arithmetic mean over the inputs
+    Overlay,  ///< a < 0.5 ? 2ab : 1 - 2(1-a)(1-b), per element
 };
 
 /// The seed value a fold of zero inputs produces under \p mode.
@@ -243,9 +243,10 @@ float RigExecFoldWeight(RigExecWeightCombine mode, float acc, float value);
 /// and average normalization match RigExecCombineWeightFields
 /// exactly, so the two answer bitwise identically input for input.
 template <typename Resolve>
-bool RigExecCombineWeightFieldsStreamed(
-    RigExecWeightCombine mode, size_t inputCount, size_t elementCount,
-    Resolve &&resolve, std::vector<float> *out)
+bool
+RigExecCombineWeightFieldsStreamed(RigExecWeightCombine mode, size_t inputCount,
+                                   size_t elementCount, Resolve &&resolve,
+                                   std::vector<float> *out)
 {
     const bool seedFromFirst = mode == RigExecWeightCombine::Subtract ||
                                mode == RigExecWeightCombine::Overlay;
@@ -290,12 +291,10 @@ bool RigExecCombineWeightFieldsStreamed(
     return true;
 }
 
-bool RigExecCombineWeightFields(
-    RigExecWeightCombine mode,
-    const std::vector<std::vector<float>> &inputs,
-    size_t elementCount,
-    std::vector<float> *out);
+bool RigExecCombineWeightFields(RigExecWeightCombine mode,
+                                const std::vector<std::vector<float>> &inputs,
+                                size_t elementCount, std::vector<float> *out);
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_MATH_WEIGHT_FIELDS_H
+#endif // RIGEXEC_MATH_WEIGHT_FIELDS_H

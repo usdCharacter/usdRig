@@ -3,6 +3,7 @@
 // their descriptors, and the aggregate solvers publish
 // computePointFrameArray. Point chains evaluate through the shared typed
 // operation graph, not through callbacks here.
+#include "rigExecSchema/schemaNames.h"
 #include "types.h"
 #include "moverGraph.h"
 #include "frameExtraction.h"
@@ -63,45 +64,45 @@ TF_DEFINE_PRIVATE_TOKENS(
     (basePoints)
 
     // Attribute tokens.
-    ((representation, "rigExec:representation"))
-    ((rangePolicy, "rigExec:rangePolicy"))
-    ((values, "rigExec:values"))
-    ((indices, "rigExec:indices"))
-    ((defaultWeight, "rigExec:defaultWeight"))
-    ((inputsDefaultWeight, "inputs:defaultWeight"))
-    ((baseWeight, "rigExec:baseWeight"))
-    ((inputsDriver, "inputs:driver"))
-    ((inputsScale, "inputs:scale"))
-    ((inputsBias, "inputs:bias"))
-    ((activation, "rigExec:activation"))
-    ((targetPoints, "rigExec:targetPoints"))
-    ((samples, "rigExec:samples"))
-    ((inputsWeight, "inputs:weight"))
-    ((deltaSpace, "rigExec:deltaSpace"))
-    ((moverRel, "rigExec:mover"))
-    ((weightObjectRel, "rigExec:weightObject"))
-    ((inputsEnabled, "inputs:enabled"))
-    ((resolvedTransform, "rigExec:resolvedTransform"))
-    ((resolvedBlendInputs, "rigExec:resolvedBlendInputs"))
-    ((resolvedBase, "rigExec:resolvedBase"))
-    ((resolvedFinalPoints, "rigExec:resolvedFinalPoints"))
-    ((resolvedTopologyCounts, "rigExec:resolvedTopologyCounts"))
-    ((resolvedTopologyIndices, "rigExec:resolvedTopologyIndices"))
-    ((resolvedCagePoints, "rigExec:resolvedCagePoints"))
-    ((resolvedSurfacePoints, "rigExec:resolvedSurfacePoints"))
-    ((resolvedBindCoords, "rigExec:resolvedBindCoords"))
-    ((resolvedDriverFrames, "rigExec:resolvedDriverFrames"))
-    ((computeDriverPoints, "rigExec:computeDriverPoints"))
-    ((computeRestDriverPoints, "rigExec:computeRestDriverPoints"))
-    ((resolvedWidths, "rigExec:resolvedWidths"))
-    ((restCagePointsAttr, "rigExec:restCagePoints"))
-    ((divisionsAttr, "rigExec:divisions"))
-    ((sampleCountAttr, "rigExec:sampleCount"))
-    ((joints, "rigExec:joints"))
+    ((representation, rigExec::SchemaAttrText::rigExecRepresentation))
+    ((rangePolicy, rigExec::SchemaAttrText::rigExecRangePolicy))
+    ((values, rigExec::SchemaAttrText::rigExecValues))
+    ((indices, rigExec::SchemaAttrText::rigExecIndices))
+    ((defaultWeight, rigExec::SchemaAttrText::rigExecDefaultWeight))
+    ((inputsDefaultWeight, rigExec::SchemaAttrText::inputsDefaultWeight))
+    ((baseWeight, rigExec::SchemaAttrText::rigExecBaseWeight))
+    ((inputsDriver, rigExec::SchemaAttrText::inputsDriver))
+    ((inputsScale, rigExec::SchemaAttrText::inputsScale))
+    ((inputsBias, rigExec::SchemaAttrText::inputsBias))
+    ((activation, rigExec::SchemaAttrText::rigExecActivation))
+    ((targetPoints, rigExec::SchemaAttrText::rigExecTargetPoints))
+    ((samples, rigExec::SchemaAttrText::rigExecSamples))
+    ((inputsWeight, rigExec::SchemaAttrText::inputsWeight))
+    ((deltaSpace, rigExec::SchemaAttrText::rigExecDeltaSpace))
+    ((moverRel, rigExec::SchemaAttrText::rigExecMover))
+    ((weightObjectRel, rigExec::SchemaAttrText::rigExecWeightObject))
+    ((inputsEnabled, rigExec::SchemaAttrText::inputsEnabled))
+    ((resolvedTransform, rigExec::SchemaAttrText::rigExecResolvedTransform))
+    ((resolvedBlendInputs, rigExec::SchemaAttrText::rigExecResolvedBlendInputs))
+    ((resolvedBase, rigExec::SchemaAttrText::rigExecResolvedBase))
+    ((resolvedFinalPoints, rigExec::SchemaAttrText::rigExecResolvedFinalPoints))
+    ((resolvedTopologyCounts, rigExec::SchemaAttrText::rigExecResolvedTopologyCounts))
+    ((resolvedTopologyIndices, rigExec::SchemaAttrText::rigExecResolvedTopologyIndices))
+    ((resolvedCagePoints, rigExec::SchemaAttrText::rigExecResolvedCagePoints))
+    ((resolvedSurfacePoints, rigExec::SchemaAttrText::rigExecResolvedSurfacePoints))
+    ((resolvedBindCoords, rigExec::SchemaAttrText::rigExecResolvedBindCoords))
+    ((resolvedDriverFrames, rigExec::SchemaAttrText::rigExecResolvedDriverFrames))
+    ((computeDriverPoints, rigExec::SchemaAttrText::rigExecComputeDriverPoints))
+    ((computeRestDriverPoints, rigExec::SchemaAttrText::rigExecComputeRestDriverPoints))
+    ((resolvedWidths, rigExec::SchemaAttrText::rigExecResolvedWidths))
+    ((restCagePointsAttr, rigExec::SchemaAttrText::rigExecRestCagePoints))
+    ((divisionsAttr, rigExec::SchemaAttrText::rigExecDivisions))
+    ((sampleCountAttr, rigExec::SchemaAttrText::rigExecSampleCount))
+    ((joints, rigExec::SchemaAttrText::rigExecJoints))
     (jointRests)
     (computeRestFrame)
-    ((modeAttr, "rigExec:mode"))
-    ((strengthAttr, "inputs:strength"))
+    ((modeAttr, rigExec::SchemaAttrText::rigExecMode))
+    ((strengthAttr, rigExec::SchemaAttrText::inputsStrength))
     (computePointFrameArray)
     (finalPoints)
     (topologyCounts)
@@ -116,7 +117,7 @@ TF_DEFINE_PRIVATE_TOKENS(
     (computeMoverStatus)
     (status)
     (moverPath)
-    ((outputsExpression, "outputs:expression"))
+    ((outputsExpression, rigExec::SchemaAttrText::outputsExpression))
 
     // Volumetric weight objects.
     (computeFalloffLut)
@@ -126,43 +127,42 @@ TF_DEFINE_PRIVATE_TOKENS(
     (curvePoints)
     (inputPackets)
     (selfMatrix)
-    ((weightTargetRel, "rigExec:weightTarget"))
-    ((sampleSourceRel, "rigExec:sampleSource"))
-    ((curveRel, "rigExec:curve"))
-    ((inputWeightsRel, "rigExec:inputWeights"))
-    ((falloffMin, "inputs:falloffMin"))
-    ((falloffMax, "inputs:falloffMax"))
-    ((inputsInvert, "inputs:invert"))
-    ((inputsScaleXPos, "inputs:scaleXPos"))
-    ((inputsScaleYPos, "inputs:scaleYPos"))
-    ((inputsScaleZPos, "inputs:scaleZPos"))
-    ((inputsScaleXNeg, "inputs:scaleXNeg"))
-    ((inputsScaleYNeg, "inputs:scaleYNeg"))
-    ((inputsScaleZNeg, "inputs:scaleZNeg"))
-    ((inputsScaleX, "inputs:scaleX"))
-    ((inputsScaleY, "inputs:scaleY"))
-    ((inputsScaleZ, "inputs:scaleZ"))
-    ((inputsExtentU, "inputs:extentU"))
-    ((inputsExtentV, "inputs:extentV"))
-    ((planeAxisAttr, "rigExec:planeAxis"))
-    ((planeBoundsAttr, "rigExec:planeBounds"))
-    ((combineModeAttr, "rigExec:combineMode"))
+    ((weightTargetRel, rigExec::SchemaAttrText::rigExecWeightTarget))
+    ((sampleSourceRel, rigExec::SchemaAttrText::rigExecSampleSource))
+    ((curveRel, rigExec::SchemaAttrText::rigExecCurve))
+    ((inputWeightsRel, rigExec::SchemaAttrText::rigExecInputWeights))
+    ((falloffMin, rigExec::SchemaAttrText::inputsFalloffMin))
+    ((falloffMax, rigExec::SchemaAttrText::inputsFalloffMax))
+    ((inputsInvert, rigExec::SchemaAttrText::inputsInvert))
+    ((inputsScaleXPos, rigExec::SchemaAttrText::inputsScaleXPos))
+    ((inputsScaleYPos, rigExec::SchemaAttrText::inputsScaleYPos))
+    ((inputsScaleZPos, rigExec::SchemaAttrText::inputsScaleZPos))
+    ((inputsScaleXNeg, rigExec::SchemaAttrText::inputsScaleXNeg))
+    ((inputsScaleYNeg, rigExec::SchemaAttrText::inputsScaleYNeg))
+    ((inputsScaleZNeg, rigExec::SchemaAttrText::inputsScaleZNeg))
+    ((inputsScaleX, rigExec::SchemaAttrText::inputsScaleX))
+    ((inputsScaleY, rigExec::SchemaAttrText::inputsScaleY))
+    ((inputsScaleZ, rigExec::SchemaAttrText::inputsScaleZ))
+    ((inputsExtentU, rigExec::SchemaAttrText::inputsExtentU))
+    ((inputsExtentV, rigExec::SchemaAttrText::inputsExtentV))
+    ((planeAxisAttr, rigExec::SchemaAttrText::rigExecPlaneAxis))
+    ((planeBoundsAttr, rigExec::SchemaAttrText::rigExecPlaneBounds))
+    ((combineModeAttr, rigExec::SchemaAttrText::rigExecCombineMode))
 );
 
 namespace {
 // Immutable worker operands are constructed before computation dispatch.
-const TfToken _workerConstant("constant");
-const TfToken _workerStrict("strict");
-const TfToken _workerDense("dense");
-const TfToken _workerClamp("clamp");
-const TfToken _workerSphereType("RigExecSphereWeight");
-const TfToken _workerPlaneType("RigExecPlaneWeight");
-const TfToken _workerYAxis("y");
-const TfToken _workerUnbounded("unbounded");
-const TfToken _workerBounded("bounded");
-const TfToken _workerCurveType("RigExecCurveWeight");
-const TfToken _workerMultiply("multiply");
-
+const TfToken _workerConstant(rigExec::SchemaValueText::constant);
+const TfToken _workerStrict(rigExec::SchemaValueText::strict);
+const TfToken _workerDense(rigExec::SchemaValueText::dense);
+const TfToken _workerClamp(rigExec::SchemaValueText::clamp);
+const TfToken _workerSphereType(rigExec::SchemaTypeName::RigExecSphereWeight);
+const TfToken _workerPlaneType(rigExec::SchemaTypeName::RigExecPlaneWeight);
+const TfToken _workerYAxis(rigExec::SchemaValueText::y);
+const TfToken _workerUnbounded(rigExec::SchemaValueText::unbounded);
+const TfToken _workerBounded(rigExec::SchemaValueText::bounded);
+const TfToken _workerCurveType(rigExec::SchemaTypeName::RigExecCurveWeight);
+const TfToken _workerMultiply(rigExec::SchemaValueText::multiply);
 
 // Weight objects.
 // The packet arithmetic lives in weightPackets.h, not here: the baked
@@ -227,7 +227,7 @@ _BuildStaticWeightPacket(const VdfContext &ctx)
     // rigExec:indices pairs with the values in the sparse representation
     // and means nothing in the other two, which is why the callback this
     // replaced never dereferenced its iterator outside that arm either.
-    if (inputs.representation == "sparse") {
+    if (inputs.representation == rigExec::SchemaValueText::sparse) {
         inputs.indices = _CollectScalars<int>(ctx, _tokens->indices);
     }
     return rigExec::RigExecBuildStaticWeightPacket(inputs);
@@ -312,8 +312,8 @@ _ReadVolumeWeightInputs(const VdfContext &ctx)
 
 // The weighted domain and, when authored, the shape it is sampled on.
 void
-_ReadVolumeWeightPoints(
-    const VdfContext &ctx, rigExec::RigExecVolumeWeightInputs *inputs)
+_ReadVolumeWeightPoints(const VdfContext &ctx,
+                        rigExec::RigExecVolumeWeightInputs *inputs)
 {
     inputs->targetPoints = _CollectPoints(ctx, _tokens->weightTargetPoints);
     inputs->samplePoints = _CollectPoints(ctx, _tokens->sampleSourcePoints);
@@ -402,9 +402,8 @@ _BuildCombineWeightPacket(const VdfContext &ctx)
     // and never the points.
     VdfReadIterator<GfVec3f> target(ctx, _tokens->weightTargetPoints);
     return rigExec::RigExecBuildCombineWeightPacket(
-        repr ? *repr : dense, policy ? *policy : clamp,
-        mode ? *mode : multiply, inputs, target.ComputeSize(),
-        _Scalar(ctx, _tokens->strengthAttr, 1.0f),
+        repr ? *repr : dense, policy ? *policy : clamp, mode ? *mode : multiply,
+        inputs, target.ComputeSize(), _Scalar(ctx, _tokens->strengthAttr, 1.0f),
         _Scalar(ctx, _tokens->inputsInvert, 0.0f));
 }
 
@@ -412,8 +411,7 @@ RigExecBlendSampleData
 _BuildBlendSampleData(const VdfContext &ctx)
 {
     RigExecBlendSampleData data;
-    const float *activation =
-        ctx.GetInputValuePtr<float>(_tokens->activation);
+    const float *activation = ctx.GetInputValuePtr<float>(_tokens->activation);
     data.activation = activation ? *activation : 1.0f;
     VdfReadIterator<GfVec3f> it(ctx, _tokens->samplePoints);
     data.points.reserve(it.ComputeSize());
@@ -433,11 +431,11 @@ _BuildBlendChannel(const VdfContext &ctx)
     for (; !it.IsAtEnd(); ++it) {
         channel.samples.push_back(*it);
     }
-    std::sort(channel.samples.begin(), channel.samples.end(),
-              [](const RigExecBlendSampleData &x,
-                 const RigExecBlendSampleData &y) {
-                  return x.activation < y.activation;
-              });
+    std::sort(
+        channel.samples.begin(), channel.samples.end(),
+        [](const RigExecBlendSampleData &x, const RigExecBlendSampleData &y) {
+            return x.activation < y.activation;
+        });
     return channel;
 }
 
@@ -503,9 +501,9 @@ _EvaluateMatrixPointArrayExpression(const VdfContext &ctx)
         for (; !previous.IsAtEnd(); ++previous) {
             scratch.push_back(*previous);
         }
-        rigExec::RigExecApplyWeightedMatrixSimd(
-            scratch.data(), scratch.data(), weights.data(), count,
-            params->transform);
+        rigExec::RigExecApplyWeightedMatrixSimd(scratch.data(), scratch.data(),
+                                                weights.data(), count,
+                                                params->transform);
         size_t i = 0;
         for (; !out.IsAtEnd(); ++out, ++i) {
             *out = scratch[i];
@@ -606,8 +604,8 @@ _EvaluateScratchKernel(const VdfContext &ctx, const TfToken &expectedKind,
         return;
     }
     for (size_t i = 0; i < scratch.size(); ++i) {
-        scratch[i] = rigExec::RigExecBlendEnvelope(
-            preceding[i], scratch[i], envelope[i]);
+        scratch[i] = rigExec::RigExecBlendEnvelope(preceding[i], scratch[i],
+                                                   envelope[i]);
     }
     auto out = VdfReadWriteIterator<GfVec3f>::Allocate(ctx, scratch.size());
     size_t i = 0;
@@ -657,8 +655,7 @@ _ComputeRibbonFrames(const VdfContext &ctx)
                                               jointRests, jointRestLive);
 }
 
-
-}  // namespace
+} // namespace
 
 // Weight objects publish computeWeightPacket.
 
@@ -666,28 +663,26 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecStaticWeight)
 {
     self.PrimComputation(_tokens->computeWeightPacket)
         .Callback<RigExecWeightPacket>(&_BuildStaticWeightPacket)
-        .Inputs(
-            AttributeValue<TfToken>(_tokens->representation),
-            AttributeValue<TfToken>(_tokens->rangePolicy),
-            AttributeValue<float>(_tokens->values),
-            AttributeValue<int>(_tokens->indices),
-            AttributeValue<float>(_tokens->defaultWeight));
+        .Inputs(AttributeValue<TfToken>(_tokens->representation),
+                AttributeValue<TfToken>(_tokens->rangePolicy),
+                AttributeValue<float>(_tokens->values),
+                AttributeValue<int>(_tokens->indices),
+                AttributeValue<float>(_tokens->defaultWeight));
 }
 
 EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecDynamicWeight)
 {
     self.PrimComputation(_tokens->computeWeightPacket)
         .Callback<RigExecWeightPacket>(&_BuildDynamicWeightPacket)
-        .Inputs(
-            AttributeValue<TfToken>(_tokens->representation),
-            AttributeValue<TfToken>(_tokens->rangePolicy),
-            AttributeValue<float>(_tokens->inputsDriver),
-            AttributeValue<float>(_tokens->inputsScale),
-            AttributeValue<float>(_tokens->inputsBias),
-            Relationship(_tokens->baseWeight)
-                .TargetedObjects<RigExecWeightPacket>(
-                    _tokens->computeWeightPacket)
-                .InputName(_tokens->basePacket));
+        .Inputs(AttributeValue<TfToken>(_tokens->representation),
+                AttributeValue<TfToken>(_tokens->rangePolicy),
+                AttributeValue<float>(_tokens->inputsDriver),
+                AttributeValue<float>(_tokens->inputsScale),
+                AttributeValue<float>(_tokens->inputsBias),
+                Relationship(_tokens->baseWeight)
+                    .TargetedObjects<RigExecWeightPacket>(
+                        _tokens->computeWeightPacket)
+                    .InputName(_tokens->basePacket));
 }
 
 // Volumetric weight objects.
@@ -703,35 +698,35 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecDynamicWeight)
 // differ in what they read, and a registration that lied about its inputs
 // would silently miss an invalidation.
 
-#define RIGEXEC_VOLUME_WEIGHT_COMMON_INPUTS                                  \
-    AttributeValue<TfToken>(_tokens->representation),                        \
-        AttributeValue<TfToken>(_tokens->rangePolicy),                       \
-        AttributeValue<float>(_tokens->falloffMin),                          \
-        AttributeValue<float>(_tokens->falloffMax),                          \
-        AttributeValue<float>(_tokens->inputsInvert),                        \
-        AttributeValue<float>(_tokens->strengthAttr),                        \
-        Computation<RigExecPointFrame>(_tokens->computePointFrame)           \
-            .InputName(_tokens->selfMatrix)                                  \
-            .Required(),                                                     \
-        Computation<rigExec::RigExecFalloffLut>(_tokens->computeFalloffLut)  \
-            .InputName(_tokens->falloffLut),                                 \
-        Relationship(_tokens->weightTargetRel)                               \
-            .TargetedObjects<GfVec3f>(ExecBuiltinComputations->computeValue) \
-            .InputName(_tokens->weightTargetPoints),                         \
-        Relationship(_tokens->sampleSourceRel)                               \
-            .TargetedObjects<GfVec3f>(ExecBuiltinComputations->computeValue) \
+#define RIGEXEC_VOLUME_WEIGHT_COMMON_INPUTS                                    \
+    AttributeValue<TfToken>(_tokens->representation),                          \
+        AttributeValue<TfToken>(_tokens->rangePolicy),                         \
+        AttributeValue<float>(_tokens->falloffMin),                            \
+        AttributeValue<float>(_tokens->falloffMax),                            \
+        AttributeValue<float>(_tokens->inputsInvert),                          \
+        AttributeValue<float>(_tokens->strengthAttr),                          \
+        Computation<RigExecPointFrame>(_tokens->computePointFrame)             \
+            .InputName(_tokens->selfMatrix)                                    \
+            .Required(),                                                       \
+        Computation<rigExec::RigExecFalloffLut>(_tokens->computeFalloffLut)    \
+            .InputName(_tokens->falloffLut),                                   \
+        Relationship(_tokens->weightTargetRel)                                 \
+            .TargetedObjects<GfVec3f>(ExecBuiltinComputations->computeValue)   \
+            .InputName(_tokens->weightTargetPoints),                           \
+        Relationship(_tokens->sampleSourceRel)                                 \
+            .TargetedObjects<GfVec3f>(ExecBuiltinComputations->computeValue)   \
             .InputName(_tokens->sampleSourcePoints)
 
-#define RIGEXEC_VOLUME_WEIGHT_AXIS_SCALES                                    \
-    AttributeValue<float>(_tokens->inputsScaleX),                            \
-        AttributeValue<float>(_tokens->inputsScaleY),                        \
+#define RIGEXEC_VOLUME_WEIGHT_AXIS_SCALES                                      \
+    AttributeValue<float>(_tokens->inputsScaleX),                              \
+        AttributeValue<float>(_tokens->inputsScaleY),                          \
         AttributeValue<float>(_tokens->inputsScaleZ)
 
 // The stub the evaluator overrides. Registered per concrete type for the
 // same reason the packets are.
-#define RIGEXEC_REGISTER_FALLOFF_LUT_STUB                                    \
-    self.PrimComputation(_tokens->computeFalloffLut)                         \
-        .Callback<rigExec::RigExecFalloffLut>(                               \
+#define RIGEXEC_REGISTER_FALLOFF_LUT_STUB                                      \
+    self.PrimComputation(_tokens->computeFalloffLut)                           \
+        .Callback<rigExec::RigExecFalloffLut>(                                 \
             +[](const VdfContext &) { return rigExec::RigExecFalloffLut(); })
 
 EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecSphereWeight)
@@ -740,15 +735,14 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecSphereWeight)
 
     self.PrimComputation(_tokens->computeWeightPacket)
         .Callback<RigExecWeightPacket>(&_BuildSphereWeightPacket)
-        .Inputs(
-            RIGEXEC_VOLUME_WEIGHT_COMMON_INPUTS,
-            RIGEXEC_VOLUME_WEIGHT_AXIS_SCALES,
-            AttributeValue<float>(_tokens->inputsScaleXPos),
-            AttributeValue<float>(_tokens->inputsScaleYPos),
-            AttributeValue<float>(_tokens->inputsScaleZPos),
-            AttributeValue<float>(_tokens->inputsScaleXNeg),
-            AttributeValue<float>(_tokens->inputsScaleYNeg),
-            AttributeValue<float>(_tokens->inputsScaleZNeg));
+        .Inputs(RIGEXEC_VOLUME_WEIGHT_COMMON_INPUTS,
+                RIGEXEC_VOLUME_WEIGHT_AXIS_SCALES,
+                AttributeValue<float>(_tokens->inputsScaleXPos),
+                AttributeValue<float>(_tokens->inputsScaleYPos),
+                AttributeValue<float>(_tokens->inputsScaleZPos),
+                AttributeValue<float>(_tokens->inputsScaleXNeg),
+                AttributeValue<float>(_tokens->inputsScaleYNeg),
+                AttributeValue<float>(_tokens->inputsScaleZNeg));
 }
 
 EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecPlaneWeight)
@@ -757,12 +751,11 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecPlaneWeight)
 
     self.PrimComputation(_tokens->computeWeightPacket)
         .Callback<RigExecWeightPacket>(&_BuildPlaneWeightPacket)
-        .Inputs(
-            RIGEXEC_VOLUME_WEIGHT_COMMON_INPUTS,
-            AttributeValue<TfToken>(_tokens->planeAxisAttr),
-            AttributeValue<TfToken>(_tokens->planeBoundsAttr),
-            AttributeValue<float>(_tokens->inputsExtentU),
-            AttributeValue<float>(_tokens->inputsExtentV));
+        .Inputs(RIGEXEC_VOLUME_WEIGHT_COMMON_INPUTS,
+                AttributeValue<TfToken>(_tokens->planeAxisAttr),
+                AttributeValue<TfToken>(_tokens->planeBoundsAttr),
+                AttributeValue<float>(_tokens->inputsExtentU),
+                AttributeValue<float>(_tokens->inputsExtentV));
 }
 
 EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecCurveWeight)
@@ -775,8 +768,7 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecCurveWeight)
             RIGEXEC_VOLUME_WEIGHT_COMMON_INPUTS,
             RIGEXEC_VOLUME_WEIGHT_AXIS_SCALES,
             Relationship(_tokens->curveRel)
-                .TargetedObjects<GfVec3f>(
-                    ExecBuiltinComputations->computeValue)
+                .TargetedObjects<GfVec3f>(ExecBuiltinComputations->computeValue)
                 .InputName(_tokens->curvePoints));
 }
 
@@ -801,8 +793,7 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecCombineWeight)
             // Only ever read for its SIZE, when no input is dense enough
             // to carry the cardinality itself.
             Relationship(_tokens->weightTargetRel)
-                .TargetedObjects<GfVec3f>(
-                    ExecBuiltinComputations->computeValue)
+                .TargetedObjects<GfVec3f>(ExecBuiltinComputations->computeValue)
                 .InputName(_tokens->weightTargetPoints));
 }
 
@@ -815,8 +806,7 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecBlendSample)
         .Inputs(
             AttributeValue<float>(_tokens->activation),
             Relationship(_tokens->targetPoints)
-                .TargetedObjects<GfVec3f>(
-                    ExecBuiltinComputations->computeValue)
+                .TargetedObjects<GfVec3f>(ExecBuiltinComputations->computeValue)
                 .InputName(_tokens->samplePoints)
                 .Required());
 }
@@ -825,13 +815,12 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecBlendInput)
 {
     self.PrimComputation(_tokens->computeBlendChannel)
         .Callback<RigExecBlendChannel>(&_BuildBlendChannel)
-        .Inputs(
-            AttributeValue<float>(_tokens->inputsWeight),
-            Relationship(_tokens->samples)
-                .TargetedObjects<RigExecBlendSampleData>(
-                    _tokens->computeBlendSampleData)
-                .InputName(_tokens->sampleData)
-                .Required());
+        .Inputs(AttributeValue<float>(_tokens->inputsWeight),
+                Relationship(_tokens->samples)
+                    .TargetedObjects<RigExecBlendSampleData>(
+                        _tokens->computeBlendSampleData)
+                    .InputName(_tokens->sampleData)
+                    .Required());
 }
 
 // Operation/type-specific property applications: each
@@ -889,81 +878,83 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecRibbon)
 // each host's frozen signature consumes the preceding exact-typed vector,
 // the realizing mover's computeMoverParameters, and computeMoverStatus.
 
-#define RIGEXEC_REGISTER_ARRAY_HOST(HostSchema, KernelFn)                    \
-    EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(HostSchema)                        \
-    {                                                                        \
-        self.AttributeExpression(_tokens->outputsExpression)                 \
-            .Callback<GfVec3f>(&KernelFn)                                    \
-            .Inputs(                                                         \
-                Connections<GfVec3f>(ExecBuiltinComputations->computeValue)  \
-                    .InputName(_tokens->previous)                            \
-                    .Required(),                                             \
-                Prim().Relationship(_tokens->moverRel)                       \
-                    .TargetedObjects<RigExecMoverParameters>(                \
-                        _tokens->computeMoverParameters)                     \
-                    .InputName(_tokens->parameters)                          \
-                    .Required(),                                             \
-                Prim().Relationship(_tokens->moverRel)                       \
-                    .TargetedObjects<rigExec::RigExecMoverStatus>(           \
-                        _tokens->computeMoverStatus)                         \
-                    .InputName(_tokens->status)                              \
-                    .Required());                                            \
+#define RIGEXEC_REGISTER_ARRAY_HOST(HostSchema, KernelFn)                      \
+    EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(HostSchema)                          \
+    {                                                                          \
+        self.AttributeExpression(_tokens->outputsExpression)                   \
+            .Callback<GfVec3f>(&KernelFn)                                      \
+            .Inputs(                                                           \
+                Connections<GfVec3f>(ExecBuiltinComputations->computeValue)    \
+                    .InputName(_tokens->previous)                              \
+                    .Required(),                                               \
+                Prim()                                                         \
+                    .Relationship(_tokens->moverRel)                           \
+                    .TargetedObjects<RigExecMoverParameters>(                  \
+                        _tokens->computeMoverParameters)                       \
+                    .InputName(_tokens->parameters)                            \
+                    .Required(),                                               \
+                Prim()                                                         \
+                    .Relationship(_tokens->moverRel)                           \
+                    .TargetedObjects<rigExec::RigExecMoverStatus>(             \
+                        _tokens->computeMoverStatus)                           \
+                    .InputName(_tokens->status)                                \
+                    .Required());                                              \
     }
 
 // Synthesized derived-maintenance hosts: the host is
 // self-realized — the compiler points rigExec:mover at the host itself,
 // so the standard rel wiring resolves the host-owned parameter/status
 // computations declared here.
-#define RIGEXEC_REGISTER_DERIVED_HOST(HostSchema, KernelFn, ParamsFn)        \
-    EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(HostSchema)                        \
-    {                                                                        \
-        self.AttributeExpression(_tokens->outputsExpression)                 \
-            .Callback<GfVec3f>(&KernelFn)                                    \
-            .Inputs(                                                         \
-                Connections<GfVec3f>(ExecBuiltinComputations->computeValue)  \
-                    .InputName(_tokens->previous)                            \
-                    .Required(),                                             \
-                Prim().Relationship(_tokens->moverRel)                       \
-                    .TargetedObjects<RigExecMoverParameters>(                \
-                        _tokens->computeMoverParameters)                     \
-                    .InputName(_tokens->parameters)                          \
-                    .Required(),                                             \
-                Prim().Relationship(_tokens->moverRel)                       \
-                    .TargetedObjects<rigExec::RigExecMoverStatus>(           \
-                        _tokens->computeMoverStatus)                         \
-                    .InputName(_tokens->status)                              \
-                    .Required());                                            \
-                                                                             \
-        self.PrimComputation(_tokens->computeMoverParameters)                \
-            .Callback<RigExecMoverParameters>(&ParamsFn)                     \
-            .Inputs(                                                         \
-                Relationship(_tokens->resolvedFinalPoints)                   \
-                    .TargetedObjects<GfVec3f>(                               \
-                        ExecBuiltinComputations->computeValue)               \
-                    .InputName(_tokens->finalPoints),                        \
-                Relationship(_tokens->resolvedTopologyCounts)                \
-                    .TargetedObjects<int>(                                   \
-                        ExecBuiltinComputations->computeValue)               \
-                    .InputName(_tokens->topologyCounts),                     \
-                Relationship(_tokens->resolvedTopologyIndices)               \
-                    .TargetedObjects<int>(                                   \
-                        ExecBuiltinComputations->computeValue)               \
-                    .InputName(_tokens->topologyIndices),                    \
-                Relationship(_tokens->resolvedWidths)                        \
-                    .TargetedObjects<float>(                                 \
-                        ExecBuiltinComputations->computeValue)               \
-                    .InputName(_tokens->widthsInput));                       \
-                                                                             \
-        self.PrimComputation(_tokens->computeMoverStatus)                    \
-            .Callback<rigExec::RigExecMoverStatus>(&rigExec::RigExecMoverBuildStatus)       \
-            .Inputs(                                                         \
-                Computation<RigExecMoverParameters>(                         \
-                    _tokens->computeMoverParameters)                         \
-                    .Required(),                                             \
-                Computation<SdfPath>(ExecBuiltinComputations->computePath)   \
-                    .InputName(_tokens->moverPath));                         \
+#define RIGEXEC_REGISTER_DERIVED_HOST(HostSchema, KernelFn, ParamsFn)          \
+    EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(HostSchema)                          \
+    {                                                                          \
+        self.AttributeExpression(_tokens->outputsExpression)                   \
+            .Callback<GfVec3f>(&KernelFn)                                      \
+            .Inputs(                                                           \
+                Connections<GfVec3f>(ExecBuiltinComputations->computeValue)    \
+                    .InputName(_tokens->previous)                              \
+                    .Required(),                                               \
+                Prim()                                                         \
+                    .Relationship(_tokens->moverRel)                           \
+                    .TargetedObjects<RigExecMoverParameters>(                  \
+                        _tokens->computeMoverParameters)                       \
+                    .InputName(_tokens->parameters)                            \
+                    .Required(),                                               \
+                Prim()                                                         \
+                    .Relationship(_tokens->moverRel)                           \
+                    .TargetedObjects<rigExec::RigExecMoverStatus>(             \
+                        _tokens->computeMoverStatus)                           \
+                    .InputName(_tokens->status)                                \
+                    .Required());                                              \
+                                                                               \
+        self.PrimComputation(_tokens->computeMoverParameters)                  \
+            .Callback<RigExecMoverParameters>(&ParamsFn)                       \
+            .Inputs(Relationship(_tokens->resolvedFinalPoints)                 \
+                        .TargetedObjects<GfVec3f>(                             \
+                            ExecBuiltinComputations->computeValue)             \
+                        .InputName(_tokens->finalPoints),                      \
+                    Relationship(_tokens->resolvedTopologyCounts)              \
+                        .TargetedObjects<int>(                                 \
+                            ExecBuiltinComputations->computeValue)             \
+                        .InputName(_tokens->topologyCounts),                   \
+                    Relationship(_tokens->resolvedTopologyIndices)             \
+                        .TargetedObjects<int>(                                 \
+                            ExecBuiltinComputations->computeValue)             \
+                        .InputName(_tokens->topologyIndices),                  \
+                    Relationship(_tokens->resolvedWidths)                      \
+                        .TargetedObjects<float>(                               \
+                            ExecBuiltinComputations->computeValue)             \
+                        .InputName(_tokens->widthsInput));                     \
+                                                                               \
+        self.PrimComputation(_tokens->computeMoverStatus)                      \
+            .Callback<rigExec::RigExecMoverStatus>(                            \
+                &rigExec::RigExecMoverBuildStatus)                             \
+            .Inputs(Computation<RigExecMoverParameters>(                       \
+                        _tokens->computeMoverParameters)                       \
+                        .Required(),                                           \
+                    Computation<SdfPath>(ExecBuiltinComputations->computePath) \
+                        .InputName(_tokens->moverPath));                       \
     }
-
 
 #undef RIGEXEC_REGISTER_DERIVED_HOST
 #undef RIGEXEC_REGISTER_ARRAY_HOST

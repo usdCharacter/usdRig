@@ -1,5 +1,6 @@
 // rigExecPose evaluates the compiled native program and preserves exact pose/golden output.
 // Optional --cpu-reference checks point chains; --exec-crosscheck verifies builtin rows.
+#include "rigExecSchema/schemaNames.h"
 #include "rigExec/frozenContext.h"
 #include "rigExecSampler/runtimePoseProjection.h"
 #include "rigExec/bakedProgramImpl.h"
@@ -50,47 +51,83 @@
 PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace {
-bool gCpuReference=false,gExecCrossCheck=false;
-struct CheckVisitState {uint64_t serial=0;const rigExec::RigExecBakedProgram *program=nullptr;};
-std::map<const rigExec::RigExecRigEvaluator *,CheckVisitState> checkVisits;
-rigExec::RigExecRigPose EvaluateChecked(rigExec::RigExecRigEvaluator &evaluator,UsdTimeCode time) {
-    evaluator.cpuReference=gCpuReference;
-    if(gExecCrossCheck) {
-        auto &state=checkVisits[&evaluator];
-        if(!evaluator.GetBakedProgram() || (state.program && state.serial!=evaluator.GetStageEditSerial())) {
+bool gCpuReference = false, gExecCrossCheck = false;
+struct CheckVisitState {
+    uint64_t serial = 0;
+    const rigExec::RigExecBakedProgram *program = nullptr;
+};
+std::map<const rigExec::RigExecRigEvaluator *, CheckVisitState> checkVisits;
+rigExec::RigExecRigPose
+EvaluateChecked(rigExec::RigExecRigEvaluator &evaluator, UsdTimeCode time)
+{
+    evaluator.cpuReference = gCpuReference;
+    if (gExecCrossCheck) {
+        auto &state = checkVisits[&evaluator];
+        if (!evaluator.GetBakedProgram() ||
+            (state.program && state.serial != evaluator.GetStageEditSerial())) {
             std::vector<std::string> errors;
-            if(!evaluator.Compile(&errors)) {
-                rigExec::RigExecRigPose failed;failed.time=time;failed.diagnostics=std::move(errors);return failed;
+            if (!evaluator.Compile(&errors)) {
+                rigExec::RigExecRigPose failed;
+                failed.time = time;
+                failed.diagnostics = std::move(errors);
+                return failed;
             }
         }
-        const auto *program=evaluator.GetBakedProgram();std::string error;
-        if(!program || (!rigExec::RigExecBakedProgramTesting::ExecCrossCheckRows(*program) &&
-            !rigExec::RigExecBakedProgramTesting::EnableExecCrossCheck(*program,&error))) {
-            rigExec::RigExecRigPose failed;failed.time=time;
-            failed.diagnostics.push_back("exec crosscheck preparation failed: "+error);return failed;
+        const auto *program = evaluator.GetBakedProgram();
+        std::string error;
+        if (!program ||
+            (!rigExec::RigExecBakedProgramTesting::ExecCrossCheckRows(
+                 *program) &&
+             !rigExec::RigExecBakedProgramTesting::EnableExecCrossCheck(
+                 *program, &error))) {
+            rigExec::RigExecRigPose failed;
+            failed.time = time;
+            failed.diagnostics.push_back(
+                "exec crosscheck preparation failed: " + error);
+            return failed;
         }
-        state={evaluator.GetStageEditSerial(),program};
+        state = {evaluator.GetStageEditSerial(), program};
     }
-    auto pose=evaluator.Evaluate(time);
-    if(gExecCrossCheck) {
-        const auto *program=evaluator.GetBakedProgram();
-        const auto rows=program?rigExec::RigExecBakedProgramTesting::ExecCrossCheckRows(*program):nullptr;
-        if(!rows) {pose.valid=false;pose.diagnostics.push_back("exec crosscheck rows unavailable after generation");}
-        else {
-            const auto report=rows->Evaluate(time);
-            pose.diagnostics.insert(pose.diagnostics.end(),report.diagnostics.begin(),report.diagnostics.end());
+    auto pose = evaluator.Evaluate(time);
+    if (gExecCrossCheck) {
+        const auto *program = evaluator.GetBakedProgram();
+        const auto rows =
+            program ? rigExec::RigExecBakedProgramTesting::ExecCrossCheckRows(
+                          *program)
+                    : nullptr;
+        if (!rows) {
+            pose.valid = false;
+            pose.diagnostics.push_back(
+                "exec crosscheck rows unavailable after generation");
+        } else {
+            const auto report = rows->Evaluate(time);
+            pose.diagnostics.insert(pose.diagnostics.end(),
+                                    report.diagnostics.begin(),
+                                    report.diagnostics.end());
             // A skipOnly row has no public equivalent by construction: only a
             // checkable row going unchecked fails, never an external-only set.
-            if(!report.Passed() || (std::any_of(rows->Descriptors().begin(),rows->Descriptors().end(),[](const auto &d){return !d.skipOnly;}) && !report.checked)) {
-                pose.valid=false;pose.diagnostics.push_back("exec crosscheck failed or checked no declared rows");
+            if (!report.Passed() ||
+                (std::any_of(rows->Descriptors().begin(),
+                             rows->Descriptors().end(),
+                             [](const auto &d) { return !d.skipOnly; }) &&
+                 !report.checked)) {
+                pose.valid = false;
+                pose.diagnostics.push_back(
+                    "exec crosscheck failed or checked no declared rows");
             }
         }
     }
-    if(gCpuReference && pose.valid) {
-        const auto *program=evaluator.GetBakedProgram();size_t expected=0;
-        if(program)for(const auto &chain:program->GetStepGraph().chains)if(chain.haveBase && chain.haveResult)++expected;
-        if(pose.referenceAgreements+pose.referenceMismatches!=expected) {
-            pose.valid=false;pose.diagnostics.push_back("scalar reference did not check every published point chain");
+    if (gCpuReference && pose.valid) {
+        const auto *program = evaluator.GetBakedProgram();
+        size_t expected = 0;
+        if (program)
+            for (const auto &chain : program->GetStepGraph().chains)
+                if (chain.haveBase && chain.haveResult)
+                    ++expected;
+        if (pose.referenceAgreements + pose.referenceMismatches != expected) {
+            pose.valid = false;
+            pose.diagnostics.push_back(
+                "scalar reference did not check every published point chain");
         }
     }
     return pose;
@@ -113,7 +150,8 @@ SdfPath
 FindRig(const UsdStageRefPtr &stage)
 {
     for (const UsdPrim &prim : stage->TraverseAll()) {
-        if (prim.GetTypeName() == TfToken("RigExecRoot")) {
+        if (prim.GetTypeName() ==
+            TfToken(rigExec::SchemaTypeName::RigExecRoot)) {
             return prim.GetPath();
         }
     }
@@ -192,8 +230,8 @@ FormatValue(const VtValue &value)
         const VtVec3fArray &a = value.UncheckedGet<VtVec3fArray>();
         std::string out = TfStringPrintf("vec3f[%zu]", a.size());
         for (const GfVec3f &v : a) {
-            out += " " + FormatF(v[0]) + " " + FormatF(v[1]) + " " +
-                   FormatF(v[2]);
+            out +=
+                " " + FormatF(v[0]) + " " + FormatF(v[1]) + " " + FormatF(v[2]);
         }
         return out;
     }
@@ -260,10 +298,9 @@ WritePoseDump(FILE *out, const rigExec::RigExecRigPose &pose, double frame)
                      FormatValue(value).c_str());
     }
     for (const auto &[path, field] : pose.weightFields) {
-        std::string line = TfStringPrintf("weightFields %s target=%s [%zu]",
-                                          path.GetText(),
-                                          field.target.GetText(),
-                                          field.weights.size());
+        std::string line =
+            TfStringPrintf("weightFields %s target=%s [%zu]", path.GetText(),
+                           field.target.GetText(), field.weights.size());
         for (float w : field.weights) {
             line += " " + FormatF(w);
         }
@@ -276,8 +313,11 @@ WritePoseDump(FILE *out, const rigExec::RigExecRigPose &pose, double frame)
     for (const std::string &d : pose.diagnostics) {
         std::fprintf(out, "diagnostic %s\n", d.c_str());
     }
-    std::fprintf(out,"counters referenceMismatches=%zu referenceAgreements=%zu comparisonMismatches=%zu executedOpCount=%zu\n",
-        pose.referenceMismatches,pose.referenceAgreements,pose.comparisonMismatches,pose.executedOpCount);
+    std::fprintf(out,
+                 "counters referenceMismatches=%zu referenceAgreements=%zu "
+                 "comparisonMismatches=%zu executedOpCount=%zu\n",
+                 pose.referenceMismatches, pose.referenceAgreements,
+                 pose.comparisonMismatches, pose.executedOpCount);
 }
 
 // A moved property is only interesting as a change: printing 1864 points
@@ -304,8 +344,7 @@ ReportPoints(const std::string &label, const VtValue &value,
         const GfMatrix4d m = value.UncheckedGet<GfMatrix4d>();
         std::printf("      %-52s t%s\n", label.c_str(),
                     FormatVec(m.ExtractTranslation()).c_str());
-        std::printf("        x%s y%s z%s\n",
-                    FormatVec(m.GetRow3(0)).c_str(),
+        std::printf("        x%s y%s z%s\n", FormatVec(m.GetRow3(0)).c_str(),
                     FormatVec(m.GetRow3(1)).c_str(),
                     FormatVec(m.GetRow3(2)).c_str());
         return;
@@ -332,8 +371,8 @@ ReportPoints(const std::string &label, const VtValue &value,
                 FormatVec(GfVec3d(bound.GetMin())).c_str(),
                 FormatVec(GfVec3d(bound.GetMax())).c_str());
     if (!rest.empty()) {
-        std::printf("        moved max %.5f  mean %.5f\n",
-                    worst, points.empty() ? 0.0 : total / points.size());
+        std::printf("        moved max %.5f  mean %.5f\n", worst,
+                    points.empty() ? 0.0 : total / points.size());
     }
 }
 
@@ -399,12 +438,13 @@ public:
             tokens.push_back(TfToken(jointPath.GetString()));
         }
         UsdAttribute paths = prim.CreateAttribute(
-            TfToken("rigExec:jointPaths"), SdfValueTypeNames->TokenArray,
+            TfToken(rigExec::SchemaAttrText::rigExecJointPaths),
+            SdfValueTypeNames->TokenArray,
             /* custom = */ false, SdfVariabilityUniform);
         paths.Set(tokens);
 
         UsdAttribute transforms = prim.CreateAttribute(
-            TfToken("rigExec:jointTransforms"),
+            TfToken(rigExec::SchemaAttrText::rigExecJointTransforms),
             SdfValueTypeNames->Matrix4dArray);
         for (size_t i = 0; i < _frames.size(); ++i) {
             VtArray<GfMatrix4d> row(_rows[i].begin(), _rows[i].end());
@@ -420,7 +460,10 @@ public:
         return true;
     }
 
-    size_t Degenerate() const { return _degenerate; }
+    size_t Degenerate() const
+    {
+        return _degenerate;
+    }
 
 private:
     std::vector<SdfPath> _paths;
@@ -443,7 +486,8 @@ AttributeDouble(const UsdAttribute &attribute, UsdTimeCode time, double *out)
     }
     if (attribute.GetTypeName() == SdfValueTypeNames->Float) {
         float value = 0;
-        if (!attribute.Get(&value, time)) return false;
+        if (!attribute.Get(&value, time))
+            return false;
         *out = value;
         return true;
     }
@@ -467,13 +511,15 @@ DisplacedValue(const UsdAttribute &attribute, UsdTimeCode time, double bump,
     }
     if (attribute.GetTypeName() == SdfValueTypeNames->Double) {
         double value = 0;
-        if (!attribute.Get(&value, time)) return false;
+        if (!attribute.Get(&value, time))
+            return false;
         *out = VtValue(value + bump);
         return true;
     }
     if (attribute.GetTypeName() == SdfValueTypeNames->Float) {
         float value = 0;
-        if (!attribute.Get(&value, time)) return false;
+        if (!attribute.Get(&value, time))
+            return false;
         *out = VtValue(float(value + bump));
         return true;
     }
@@ -510,24 +556,27 @@ _VerifyOutputs(const rigExec::RigExecRigPose &native,
 {
     rigExec::RigExecRigPose runtime;
     std::string error;
-    if (!rigExec::RigExecProjectRuntimePose(reader,native.time,true,&runtime,&error)) {
-        _VerifyPush(diffs,error); return;
+    if (!rigExec::RigExecProjectRuntimePose(reader, native.time, true, &runtime,
+                                            &error)) {
+        _VerifyPush(diffs, error);
+        return;
     }
-    std::vector<rigExec::RigExecGoldenValue> expected,actual;
-    if (!rigExec::RigExecEncodeGoldenPose(native,&expected,&error) ||
-        !rigExec::RigExecEncodeGoldenPose(runtime,&actual,&error)) {
-        _VerifyPush(diffs,error); return;
+    std::vector<rigExec::RigExecGoldenValue> expected, actual;
+    if (!rigExec::RigExecEncodeGoldenPose(native, &expected, &error) ||
+        !rigExec::RigExecEncodeGoldenPose(runtime, &actual, &error)) {
+        _VerifyPush(diffs, error);
+        return;
     }
-    const auto a=rigExec::RigExecGoldenVisit("verify",0,native,expected);
-    const auto b=rigExec::RigExecGoldenVisit("verify",0,runtime,actual);
-    if (!rigExec::RigExecCompareGolden(a,b,&error)) _VerifyPush(diffs,error);
+    const auto a = rigExec::RigExecGoldenVisit("verify", 0, native, expected);
+    const auto b = rigExec::RigExecGoldenVisit("verify", 0, runtime, actual);
+    if (!rigExec::RigExecCompareGolden(a, b, &error))
+        _VerifyPush(diffs, error);
 }
 
 bool
 _InvalidLeg(const rigExec::RigExecRigPose &pose)
 {
-    return !pose.valid || pose.referenceMismatches ||
-           pose.comparisonMismatches;
+    return !pose.valid || pose.referenceMismatches || pose.comparisonMismatches;
 }
 
 // An input value as FormatValue prints the stage's: type, then value.
@@ -600,8 +649,7 @@ _SameSampled(const VtValue &read, const rigExec::RrInputValue &value,
         return read.IsHolding<bool>() &&
                read.UncheckedGet<bool>() == value.boolean;
     case rigExec::RrInputTag::Int:
-        return read.IsHolding<int>() &&
-               read.UncheckedGet<int>() == value.i32;
+        return read.IsHolding<int>() && read.UncheckedGet<int>() == value.i32;
     case rigExec::RrInputTag::Matrix4d:
         if (!read.IsHolding<GfMatrix4d>()) {
             return false;
@@ -774,9 +822,8 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
                 const std::string &jointsOut)
 {
     std::ifstream stream(binaryPath, std::ios::binary);
-    const std::vector<char> raw(
-        (std::istreambuf_iterator<char>(stream)),
-        std::istreambuf_iterator<char>());
+    const std::vector<char> raw((std::istreambuf_iterator<char>(stream)),
+                                std::istreambuf_iterator<char>());
     const std::vector<uint8_t> bytes(raw.begin(), raw.end());
     if (bytes.empty()) {
         std::printf("  FATAL: cannot read %s\n", binaryPath.c_str());
@@ -784,8 +831,7 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
     }
     std::string error;
     std::unique_ptr<rigExec::RigExecRuntimeReader> reader =
-        rigExec::RigExecRuntimeReader::Open(bytes.data(), bytes.size(),
-                                            &error);
+        rigExec::RigExecRuntimeReader::Open(bytes.data(), bytes.size(), &error);
     if (!reader) {
         std::printf("  FATAL: cannot open %s: %s\n", binaryPath.c_str(),
                     error.c_str());
@@ -829,7 +875,8 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
     // handed the frame itself. A rig without any runs as it always has.
     const bool windowed = reader->GetWindowedOperationCount() > 0;
     const auto prefill = [&](double t, std::string *why) {
-        if (!windowed) return true;
+        if (!windowed)
+            return true;
         reader->ClearHistory();
         for (size_t k = reader->GetHistoryDepth(); k >= 1; --k) {
             if (!sampler.Apply(UsdTimeCode(t - double(k)), reader.get(), why) ||
@@ -842,7 +889,8 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
     if (windowed) {
         std::printf("  windowed: %zu operation(s), %zu frame(s) of history "
                     "replayed before each run\n",
-                    reader->GetWindowedOperationCount(), reader->GetHistoryDepth());
+                    reader->GetWindowedOperationCount(),
+                    reader->GetHistoryDepth());
     }
 
     FILE *poseDump = nullptr;
@@ -860,16 +908,15 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
     // attached to the first run the runtime completes, restoring exactly
     // the no-precompile flow.
     bool seedAttached = errors.empty();
-    const auto expectedPose =
-        [&](const rigExec::RigExecRigPose &pose) {
-            rigExec::RigExecRigPose expected = pose;
-            if (!seedAttached) {
-                seedAttached = true;
-                expected.diagnostics.insert(expected.diagnostics.begin(), errors.begin(),
-                                            errors.end());
-            }
-            return expected;
-        };
+    const auto expectedPose = [&](const rigExec::RigExecRigPose &pose) {
+        rigExec::RigExecRigPose expected = pose;
+        if (!seedAttached) {
+            seedAttached = true;
+            expected.diagnostics.insert(expected.diagnostics.begin(),
+                                        errors.begin(), errors.end());
+        }
+        return expected;
+    };
 
     // The defaults: a fresh reader's run is the bake time's generation, in
     // every published output and ordered diagnostic. Not counted below.
@@ -877,15 +924,14 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
     // What the drags are measured against: whether a value moved anything.
     {
         const rigExec::RigExecRigPose pose =
-            EvaluateChecked(evaluator,UsdTimeCode(bakeTime));
+            EvaluateChecked(evaluator, UsdTimeCode(bakeTime));
         if (_InvalidLeg(pose)) {
             std::printf("  defaults t=%g: native leg INVALID "
                         "(native generation or requested checks failed)\n",
                         bakeTime);
             status = 1;
         } else if (!prefill(bakeTime, &error) || !reader->Execute(&error)) {
-            std::printf("  defaults t=%g: FAIL: %s\n", bakeTime,
-                        error.c_str());
+            std::printf("  defaults t=%g: FAIL: %s\n", bakeTime, error.c_str());
             status = 1;
         } else {
             std::vector<std::string> diffs;
@@ -918,7 +964,7 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
     _SampledCheck sampled;
     for (UsdTimeCode frame : frames) {
         const double t = frame.GetValue();
-        const rigExec::RigExecRigPose pose = EvaluateChecked(evaluator,frame);
+        const rigExec::RigExecRigPose pose = EvaluateChecked(evaluator, frame);
         if (_InvalidLeg(pose)) {
             std::printf("\n  frame %g: native leg INVALID "
                         "(native generation or requested checks failed)\n",
@@ -1013,12 +1059,10 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
         const bool found = reader->FindInput(name, &index);
         const rigExec::RigExecRuntimeInputInfo &info =
             reader->GetInputInfo(index);
-        const bool isFloat =
-            attribute &&
-            attribute.GetTypeName().GetType() == TfType::Find<float>();
-        const bool isDouble =
-            attribute &&
-            attribute.GetTypeName().GetType() == TfType::Find<double>();
+        const bool isFloat = attribute && attribute.GetTypeName().GetType() ==
+                                              TfType::Find<float>();
+        const bool isDouble = attribute && attribute.GetTypeName().GetType() ==
+                                               TfType::Find<double>();
         if (!found || !attribute || (!isFloat && !isDouble) ||
             (info.type != rigExec::RrInputTag::Double &&
              info.type != rigExec::RrInputTag::Float)) {
@@ -1040,20 +1084,23 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
             bool compiled = false;
             std::vector<std::string> notices;
             std::string sourceBefore, sessionBeforeDrag;
-            const bool capturedLayers = stage->GetRootLayer()->ExportToString(&sourceBefore) &&
+            const bool capturedLayers =
+                stage->GetRootLayer()->ExportToString(&sourceBefore) &&
                 session->ExportToString(&sessionBeforeDrag);
             rigExec::RigExecRigPose pose;
             {
                 // Preserve source wiring through the admitted native channel.
                 // Connected heads instead retain their authored fallback in an
                 // isolated session; the input stage stays intact.
-                const SdfLayerRefPtr referenceSession = SdfLayer::CreateAnonymous();
+                const SdfLayerRefPtr referenceSession =
+                    SdfLayer::CreateAnonymous();
                 referenceSession->TransferContent(sessionBefore);
-                const UsdStageRefPtr referenceStage = UsdStage::Open(
-                    stage->GetRootLayer(), referenceSession,
-                    stage->GetPathResolverContext());
+                const UsdStageRefPtr referenceStage =
+                    UsdStage::Open(stage->GetRootLayer(), referenceSession,
+                                   stage->GetPathResolverContext());
                 if (referenceStage) {
-                    rigExec::RigExecRigEvaluator reference(referenceStage, rigPath);
+                    rigExec::RigExecRigEvaluator reference(referenceStage,
+                                                           rigPath);
                     reference.SetSolverGuidesEnabled(true);
                     compiled = reference.Compile(&notices);
                     const UsdAttribute referenceAttribute =
@@ -1066,31 +1113,36 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
                                          attribute.GetPath()) != admitted.end();
                     SdfPathVector referenceConnections;
                     if (!authored && referenceAttribute)
-                        referenceAttribute.GetConnections(&referenceConnections);
+                        referenceAttribute.GetConnections(
+                            &referenceConnections);
                     if (!authored && !referenceConnections.empty()) {
                         // A connected head is not an admitted upstream input.
                         // Its own authored fallback retains SetInput semantics.
                         reference.SetUpstreamInputs({});
                         UsdEditContext edit(referenceStage, referenceSession);
-                        authored = isFloat ? referenceAttribute.Set(float(value))
-                                           : referenceAttribute.Set(value);
+                        authored = isFloat
+                                       ? referenceAttribute.Set(float(value))
+                                       : referenceAttribute.Set(value);
                     }
-                    pose = EvaluateChecked(reference,dragTime);
+                    pose = EvaluateChecked(reference, dragTime);
                 }
-
             }
             std::vector<std::string> diffs;
             std::string sourceAfter, sessionAfterDrag;
-            if (!capturedLayers || !stage->GetRootLayer()->ExportToString(&sourceAfter) ||
-                !session->ExportToString(&sessionAfterDrag) || sourceBefore != sourceAfter ||
+            if (!capturedLayers ||
+                !stage->GetRootLayer()->ExportToString(&sourceAfter) ||
+                !session->ExportToString(&sessionAfterDrag) ||
+                sourceBefore != sourceAfter ||
                 sessionBeforeDrag != sessionAfterDrag) {
-                _VerifyPush(&diffs, "native input override changed the source stage");
+                _VerifyPush(&diffs,
+                            "native input override changed the source stage");
             }
             if (!compiled) {
                 _VerifyPush(&diffs, "the reference did not compile");
             }
             if (!authored) {
-                _VerifyPush(&diffs, "the native upstream channel refused the value");
+                _VerifyPush(&diffs,
+                            "the native upstream channel refused the value");
             }
             if (_InvalidLeg(pose)) {
                 _VerifyPush(&diffs,
@@ -1098,14 +1150,14 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
                                 "native leg INVALID (valid=%d, %zu reference "
                                 "mismatch(es), %zu comparison "
                                 "mismatch(es))",
-                                int(pose.valid),
-                                pose.referenceMismatches,
+                                int(pose.valid), pose.referenceMismatches,
                                 pose.comparisonMismatches));
                 for (const std::string &line : pose.diagnostics) {
                     _VerifyPush(&diffs, "  " + line.substr(0, 200));
                 }
-            } else if (windowed && !_ReplayHeldHistory(reader.get(), &sampler, name,
-                                                       value, bakeTime, &error)) {
+            } else if (windowed &&
+                       !_ReplayHeldHistory(reader.get(), &sampler, name, value,
+                                           bakeTime, &error)) {
                 _VerifyPush(&diffs, error);
             } else if (!reader->SetInput(name, value, &error) ||
                        !reader->Execute(&error)) {
@@ -1118,8 +1170,9 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
             reader->ResetInput(name, nullptr);
             if (diffs.empty()) {
                 ++dragsMatched;
-                std::printf("  drag %s = %.17g: runtime==native exact published pose\n",
-                            name.c_str(), value);
+                std::printf(
+                    "  drag %s = %.17g: runtime==native exact published pose\n",
+                    name.c_str(), value);
             } else {
                 std::printf("  drag %s = %.17g: MISMATCH (%zu differences)\n",
                             name.c_str(), value, diffs.size());
@@ -1135,7 +1188,6 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
     return status;
 }
 
-
 struct GoldenAction {
     std::string source;
     SdfPath path;
@@ -1149,51 +1201,63 @@ RunGoldenProtocol(const UsdStageRefPtr &stage, const SdfPath &rigPath,
                   const std::string &fixture, const std::string &output,
                   const std::string &check, bool compact,
                   const std::vector<GoldenAction> &actions,
-                  const std::string &backend,
-                  const std::string &programPath)
+                  const std::string &backend, const std::string &programPath)
 {
     if (backend != "native" && backend != "frozen" && backend != "runtime") {
         std::printf("golden: unknown backend %s\n", backend.c_str());
         return 2;
     }
     if (backend == "frozen" && gExecCrossCheck) {
-        std::printf("golden: --exec-crosscheck currently requires --golden-backend native\n");
+        std::printf("golden: --exec-crosscheck currently requires "
+                    "--golden-backend native\n");
         return 2;
     }
     std::vector<uint8_t> runtimeBytes;
-    if (backend=="runtime") {
+    if (backend == "runtime") {
         if (programPath.empty()) {
-            std::printf("golden: runtime backend requires --golden-program\n"); return 2;
+            std::printf("golden: runtime backend requires --golden-program\n");
+            return 2;
         }
         if (gExecCrossCheck || gCpuReference) {
-            std::printf("golden: runtime backend does not support native reference or exec-row checks\n"); return 2;
+            std::printf("golden: runtime backend does not support native "
+                        "reference or exec-row checks\n");
+            return 2;
         }
-        for(const auto &action:actions) if(action.source=="interactive") {
-            std::printf("golden: runtime binary has no distinct interactive-input semantics\n"); return 2;
-        }
-        std::ifstream stream(programPath,std::ios::binary);
-        const std::vector<char> raw{std::istreambuf_iterator<char>(stream),std::istreambuf_iterator<char>()};
-        runtimeBytes.assign(raw.begin(),raw.end());
-        if(runtimeBytes.empty()) {
-            std::printf("golden: cannot read runtime program %s\n",programPath.c_str()); return 2;
+        for (const auto &action : actions)
+            if (action.source == "interactive") {
+                std::printf("golden: runtime binary has no distinct "
+                            "interactive-input semantics\n");
+                return 2;
+            }
+        std::ifstream stream(programPath, std::ios::binary);
+        const std::vector<char> raw{std::istreambuf_iterator<char>(stream),
+                                    std::istreambuf_iterator<char>()};
+        runtimeBytes.assign(raw.begin(), raw.end());
+        if (runtimeBytes.empty()) {
+            std::printf("golden: cannot read runtime program %s\n",
+                        programPath.c_str());
+            return 2;
         }
     }
     std::string bytes = "rigexec-golden 2\nfixture " +
-        rigExec::RigExecGoldenEscape(fixture) + " rig " +
-        rigExec::RigExecGoldenEscape(rigPath.GetString()) +
-        "\nprotocol exact-bits guides=1 fields=1 visits=first,held,forward,reverse,cold,actions\n";
+                        rigExec::RigExecGoldenEscape(fixture) + " rig " +
+                        rigExec::RigExecGoldenEscape(rigPath.GetString()) +
+                        "\nprotocol exact-bits guides=1 fields=1 "
+                        "visits=first,held,forward,reverse,cold,actions\n";
     std::vector<std::string> layerDigests;
     for (const SdfLayerHandle &layer : stage->GetUsedLayers()) {
         std::string contents;
         if (!layer->ExportToString(&contents)) {
-            std::printf("golden: cannot encode source layer\n"); return 1;
+            std::printf("golden: cannot encode source layer\n");
+            return 1;
         }
-        layerDigests.push_back(rigExec::RigExecGoldenHex(
-            rigExec::RigExecGoldenDigest(contents)));
+        layerDigests.push_back(
+            rigExec::RigExecGoldenHex(rigExec::RigExecGoldenDigest(contents)));
     }
     std::sort(layerDigests.begin(), layerDigests.end());
     bytes += "layers";
-    for (const std::string &digest : layerDigests) bytes += " " + digest;
+    for (const std::string &digest : layerDigests)
+        bytes += " " + digest;
     bytes += "\n";
     size_t visits = 0;
     std::shared_ptr<const rigExec::RigExecFrozenProgram> frozen;
@@ -1203,64 +1267,85 @@ RunGoldenProtocol(const UsdStageRefPtr &stage, const SdfPath &rigPath,
     std::vector<rigExec::RigExecValueOverride> frozenOverrides;
     std::unique_ptr<rigExec::RigExecRuntimeReader> runtimeReader;
     rigExec::RigExecInputSampler runtimeSampler;
-    std::map<SdfPath,VtValue> runtimeUpstream;
+    std::map<SdfPath, VtValue> runtimeUpstream;
     std::set<SdfPath> runtimeTouched;
 
     const auto visit = [&](rigExec::RigExecRigEvaluator &source,
-                           const std::string &leg, size_t ordinal, UsdTimeCode time) {
+                           const std::string &leg, size_t ordinal,
+                           UsdTimeCode time) {
         rigExec::RigExecRigPose pose;
-        if (backend == "native") pose = EvaluateChecked(source,time);
-        else if (backend=="runtime") {
+        if (backend == "native")
+            pose = EvaluateChecked(source, time);
+        else if (backend == "runtime") {
             std::string error;
-            if(!runtimeReader) {
-                runtimeReader=rigExec::RigExecRuntimeReader::Open(runtimeBytes.data(),runtimeBytes.size(),&error);
-                if(!runtimeReader || !runtimeSampler.Bind(stage,*runtimeReader,&error)) {
-                    std::printf("golden runtime open: %s\n",error.c_str()); return false;
+            if (!runtimeReader) {
+                runtimeReader = rigExec::RigExecRuntimeReader::Open(
+                    runtimeBytes.data(), runtimeBytes.size(), &error);
+                if (!runtimeReader ||
+                    !runtimeSampler.Bind(stage, *runtimeReader, &error)) {
+                    std::printf("golden runtime open: %s\n", error.c_str());
+                    return false;
                 }
-                if(!runtimeSampler.GetWarnings().empty()) {
-                    for(const auto &warning:runtimeSampler.GetWarnings())
-                        std::printf("golden runtime input: %s\n",warning.c_str());
+                if (!runtimeSampler.GetWarnings().empty()) {
+                    for (const auto &warning : runtimeSampler.GetWarnings())
+                        std::printf("golden runtime input: %s\n",
+                                    warning.c_str());
                     return false;
                 }
             }
-            if(!runtimeSampler.Apply(time,runtimeReader.get(),&error)) {
-                std::printf("golden runtime sample: %s\n",error.c_str()); return false;
+            if (!runtimeSampler.Apply(time, runtimeReader.get(), &error)) {
+                std::printf("golden runtime sample: %s\n", error.c_str());
+                return false;
             }
-            for(const auto &path:runtimeTouched) {
-                size_t index=0;
-                if(!runtimeReader->FindInput(path.GetString(),&index)) {
-                    std::printf("golden runtime: action names no declared input %s\n",path.GetText()); return false;
+            for (const auto &path : runtimeTouched) {
+                size_t index = 0;
+                if (!runtimeReader->FindInput(path.GetString(), &index)) {
+                    std::printf(
+                        "golden runtime: action names no declared input %s\n",
+                        path.GetText());
+                    return false;
                 }
-                const auto &info=runtimeReader->GetInputInfo(index);
-                const auto upstream=runtimeUpstream.find(path);
-                if(upstream==runtimeUpstream.end()) {
-                    if(!rigExec::RigExecSampleInputAt(stage->GetAttributeAtPath(path),index,path.GetString(),
-                            info.type,time,runtimeReader.get(),&error)) {
-                        std::printf("golden runtime restore: %s\n",error.c_str()); return false;
+                const auto &info = runtimeReader->GetInputInfo(index);
+                const auto upstream = runtimeUpstream.find(path);
+                if (upstream == runtimeUpstream.end()) {
+                    if (!rigExec::RigExecSampleInputAt(
+                            stage->GetAttributeAtPath(path), index,
+                            path.GetString(), info.type, time,
+                            runtimeReader.get(), &error)) {
+                        std::printf("golden runtime restore: %s\n",
+                                    error.c_str());
+                        return false;
                     }
                 } else {
                     rigExec::RrInputValue value;
-                    if(!rigExec::RigExecInputValueFrom(upstream->second,info.type,&value) ||
-                       !runtimeReader->SetInputAt(index,value,&error)) {
-                        std::printf("golden runtime upstream: %s\n",error.c_str()); return false;
+                    if (!rigExec::RigExecInputValueFrom(upstream->second,
+                                                        info.type, &value) ||
+                        !runtimeReader->SetInputAt(index, value, &error)) {
+                        std::printf("golden runtime upstream: %s\n",
+                                    error.c_str());
+                        return false;
                     }
                 }
             }
-            const bool valid=runtimeReader->Execute(&error);
-            if(!valid || !rigExec::RigExecProjectRuntimePose(*runtimeReader,time,valid,&pose,&error)) {
-                std::printf("golden runtime execute: %s\n",error.c_str()); return false;
+            const bool valid = runtimeReader->Execute(&error);
+            if (!valid || !rigExec::RigExecProjectRuntimePose(
+                              *runtimeReader, time, valid, &pose, &error)) {
+                std::printf("golden runtime execute: %s\n", error.c_str());
+                return false;
             }
         } else {
             source.cpuReference = gCpuReference;
             std::string error;
             const bool changed = frozenSource != &source ||
-                frozenSerial != source.GetStageEditSerial();
+                                 frozenSerial != source.GetStageEditSerial();
             if (changed || !workspace) {
                 std::vector<std::string> errors;
                 if (!source.Compile(&errors) ||
-                    !rigExec::RigExecFreezeProgram(source,&frozen,&error)) {
-                    for (const auto &line : errors) std::printf("golden frozen: %s\n",line.c_str());
-                    std::printf("golden frozen: %s\n",error.c_str()); return false;
+                    !rigExec::RigExecFreezeProgram(source, &frozen, &error)) {
+                    for (const auto &line : errors)
+                        std::printf("golden frozen: %s\n", line.c_str());
+                    std::printf("golden frozen: %s\n", error.c_str());
+                    return false;
                 }
                 workspace = rigExec::RigExecCreateFrozenWorkspace(frozen);
                 frozenSource = &source;
@@ -1268,48 +1353,62 @@ RunGoldenProtocol(const UsdStageRefPtr &stage, const SdfPath &rigPath,
             }
             rigExec::RigExecFrameInputs inputs;
             std::vector<rigExec::RigExecUpstreamValue> frozenUpstream;
-            for(const auto &value:source.GetUpstreamInputs())
-                frozenUpstream.push_back({value.prim.AppendProperty(value.attribute),value.value});
-            if (!rigExec::RigExecSampleFrameInputs(source,time,frozenOverrides,
-                    frozenUpstream,&inputs,&error)) {
-                std::printf("golden frozen sample: %s\n",error.c_str()); return false;
+            for (const auto &value : source.GetUpstreamInputs())
+                frozenUpstream.push_back(
+                    {value.prim.AppendProperty(value.attribute), value.value});
+            if (!rigExec::RigExecSampleFrameInputs(
+                    source, time, frozenOverrides, frozenUpstream, &inputs,
+                    &error)) {
+                std::printf("golden frozen sample: %s\n", error.c_str());
+                return false;
             }
             rigExec::RigExecFrozenEvalContext context;
             context.compiledRigSignature = source.GetCompiledRigSignature();
-            context.programDigest = context.compiledRigSignature ^
-                (uint64_t(source.GetBakedProgram()->GetBoundInputCount()) << 32) ^
+            context.programDigest =
+                context.compiledRigSignature ^
+                (uint64_t(source.GetBakedProgram()->GetBoundInputCount())
+                 << 32) ^
                 source.GetBakedProgram()->GetVaryingInputCount();
             context.slotCount = source.GetBakedProgram()->GetProviderCount();
             context.varyingInputCount = inputs.values.size();
             context.flags = rigExec::kRigExecFrozenSolverGuidesEnabled |
                             rigExec::kRigExecFrozenPublishWeightFields;
-            context.frozen = frozen.get(); context.workspace = workspace.get();
-            pose = rigExec::RigExecEvaluateFrozen(context,inputs,
-                rigExec::RigExecMakeProductionStepRunner(),nullptr,rigPath);
+            context.frozen = frozen.get();
+            context.workspace = workspace.get();
+            pose = rigExec::RigExecEvaluateFrozen(
+                context, inputs, rigExec::RigExecMakeProductionStepRunner(),
+                nullptr, rigPath);
         }
         std::vector<rigExec::RigExecGoldenValue> values;
         std::string error;
         if (!rigExec::RigExecEncodeGoldenPose(pose, &values, &error)) {
-            std::printf("golden: %s\n", error.c_str()); return false;
+            std::printf("golden: %s\n", error.c_str());
+            return false;
         }
-        bytes += rigExec::RigExecGoldenVisit(leg, ordinal, pose, values, compact);
+        bytes +=
+            rigExec::RigExecGoldenVisit(leg, ordinal, pose, values, compact);
         ++visits;
         if (!pose.valid) {
-            std::printf("golden: invalid visit %s[%zu]\n", leg.c_str(), ordinal);
+            std::printf("golden: invalid visit %s[%zu]\n", leg.c_str(),
+                        ordinal);
             return false;
         }
         return true;
     };
     if (!visit(evaluator, "first", 0, frames.front()) ||
-        !visit(evaluator, "held", 0, frames.front())) return 1;
+        !visit(evaluator, "held", 0, frames.front()))
+        return 1;
     for (size_t i = 0; i < frames.size(); ++i)
-        if (!visit(evaluator, "forward", i, frames[i])) return 1;
+        if (!visit(evaluator, "forward", i, frames[i]))
+            return 1;
     for (size_t i = 0; i < frames.size(); ++i)
-        if (!visit(evaluator, "reverse", i, frames[frames.size() - i - 1])) return 1;
+        if (!visit(evaluator, "reverse", i, frames[frames.size() - i - 1]))
+            return 1;
     for (size_t i = 0; i < frames.size(); ++i) {
-        if(backend=="runtime") {
+        if (backend == "runtime") {
             runtimeReader.reset();
-            if(!visit(evaluator,"cold",i,frames[i])) return 1;
+            if (!visit(evaluator, "cold", i, frames[i]))
+                return 1;
             continue;
         }
         rigExec::RigExecRigEvaluator cold(stage, rigPath);
@@ -1317,86 +1416,111 @@ RunGoldenProtocol(const UsdStageRefPtr &stage, const SdfPath &rigPath,
 
         std::vector<std::string> errors;
         if (!cold.Compile(&errors)) {
-            for (const auto &error : errors) std::printf("golden cold: %s\n", error.c_str());
+            for (const auto &error : errors)
+                std::printf("golden cold: %s\n", error.c_str());
             return 1;
         }
-        workspace.reset(); frozen.reset(); frozenSource = nullptr;
-        if (!visit(cold, "cold", i, frames[i])) return 1;
+        workspace.reset();
+        frozen.reset();
+        frozenSource = nullptr;
+        if (!visit(cold, "cold", i, frames[i]))
+            return 1;
     }
     const auto session = stage->GetSessionLayer();
     std::string originalSession;
-    if (!session->ExportToString(&originalSession)) return 1;
+    if (!session->ExportToString(&originalSession))
+        return 1;
     for (size_t i = 0; i < actions.size(); ++i) {
         const GoldenAction &action = actions[i];
         const UsdAttribute attribute = stage->GetAttributeAtPath(action.path);
         VtValue value;
-        if (!DisplacedValue(attribute, frames.front(), action.displacement, &value)) {
-            std::printf("golden: action requires a readable float/double: %s\n", action.path.GetText());
+        if (!DisplacedValue(attribute, frames.front(), action.displacement,
+                            &value)) {
+            std::printf("golden: action requires a readable float/double: %s\n",
+                        action.path.GetText());
             return 1;
         }
-        const rigExec::RigExecValueOverride input{action.path.GetPrimPath(), TfToken(),
-            action.path.GetNameToken(), value};
-        const std::string leg = action.source + ":" + action.path.GetString() +
-            "@" + rigExec::RigExecGoldenDouble(action.displacement);
-        if(backend=="runtime") {
+        const rigExec::RigExecValueOverride input{
+            action.path.GetPrimPath(), TfToken(), action.path.GetNameToken(),
+            value};
+        const std::string leg =
+            action.source + ":" + action.path.GetString() + "@" +
+            rigExec::RigExecGoldenDouble(action.displacement);
+        if (backend == "runtime") {
             runtimeTouched.insert(action.path);
-            if(action.source=="upstream") runtimeUpstream[action.path]=value;
+            if (action.source == "upstream")
+                runtimeUpstream[action.path] = value;
         }
-        if (action.source == "upstream") evaluator.SetUpstreamInputs({input});
+        if (action.source == "upstream")
+            evaluator.SetUpstreamInputs({input});
         else if (action.source == "interactive") {
-            evaluator.SetInteractiveOverrides({input}); frozenOverrides = {input};
-        }
-        else {
+            evaluator.SetInteractiveOverrides({input});
+            frozenOverrides = {input};
+        } else {
             UsdEditContext edit(stage, session);
-            if (!attribute.Set(value, frames.front())) return 1;
+            if (!attribute.Set(value, frames.front()))
+                return 1;
         }
-        const bool placed = visit(evaluator, leg + ":place", i, frames.front()) &&
-                            visit(evaluator, leg + ":held", i, frames.front());
-        if(backend=="runtime") runtimeUpstream.erase(action.path);
-        if (action.source == "upstream") evaluator.SetUpstreamInputs({});
+        const bool placed =
+            visit(evaluator, leg + ":place", i, frames.front()) &&
+            visit(evaluator, leg + ":held", i, frames.front());
+        if (backend == "runtime")
+            runtimeUpstream.erase(action.path);
+        if (action.source == "upstream")
+            evaluator.SetUpstreamInputs({});
         else if (action.source == "interactive") {
-            evaluator.ClearInteractiveOverrides(); frozenOverrides.clear();
-        }
-        else if (!session->ImportFromString(originalSession)) return 1;
-        if (!placed || !visit(evaluator, leg + ":lift", i, frames.front())) return 1;
+            evaluator.ClearInteractiveOverrides();
+            frozenOverrides.clear();
+        } else if (!session->ImportFromString(originalSession))
+            return 1;
+        if (!placed || !visit(evaluator, leg + ":lift", i, frames.front()))
+            return 1;
     }
     if (!check.empty()) {
         std::ifstream input(check, std::ios::binary);
-        if (!input) { std::printf("golden: cannot read %s\n", check.c_str()); return 1; }
+        if (!input) {
+            std::printf("golden: cannot read %s\n", check.c_str());
+            return 1;
+        }
         const std::string expected{std::istreambuf_iterator<char>(input),
                                    std::istreambuf_iterator<char>()};
         std::string error;
         if (!rigExec::RigExecCompareGolden(expected, bytes, &error)) {
-            std::printf("golden: %s\n", error.c_str()); return 1;
+            std::printf("golden: %s\n", error.c_str());
+            return 1;
         }
     }
     if (!output.empty()) {
         std::ofstream stream(output, std::ios::binary);
         stream.write(bytes.data(), std::streamsize(bytes.size()));
-        if (!stream) { std::printf("golden: cannot write %s\n", output.c_str()); return 1; }
+        if (!stream) {
+            std::printf("golden: cannot write %s\n", output.c_str());
+            return 1;
+        }
     }
     std::printf("golden: %zu explicit visits, %s\n", visits,
                 check.empty() ? "captured" : "exact match");
     return 0;
 }
 
-}  // namespace
+} // namespace
 
 int
 main(int argc, char **argv)
 {
     if (argc < 2) {
-        std::printf(
-            "usage: rigExecPose <stage> [--rig <primPath>] "
-            "[--frames a,b,c] [--joints] [--targets] "
-            "[--joints-out <file.usda>] [--pose-out <file.txt>] "
-            "[--profile <file.trace>] "
-            "[--golden-out file|--golden-check file] [--golden-compact] [--golden-backend native|frozen|runtime] [--golden-program file.rigexec] "
-            "[--cpu-reference] [--exec-crosscheck] "
-            "[--guides] "
-            "[--drag <prim> <attr> <steps>] "
-            "[--verify-binary <file.rigexec> --frames a,b,c "
-            "[--drag-input <prim.attr>]...]\n");
+        std::printf("usage: rigExecPose <stage> [--rig <primPath>] "
+                    "[--frames a,b,c] [--joints] [--targets] "
+                    "[--joints-out <file.usda>] [--pose-out <file.txt>] "
+                    "[--profile <file.trace>] "
+                    "[--golden-out file|--golden-check file] "
+                    "[--golden-compact] [--golden-backend "
+                    "native|frozen|runtime] [--golden-program file.rigexec] "
+                    "[--cpu-reference] [--exec-crosscheck] "
+                    "[--guides] "
+                    "[--drag <prim> <attr> <steps>] "
+                    "[--verify-binary <file.rigexec> --frames a,b,c "
+                    "[--drag-input <prim.attr>]...]\n");
         return 2;
     }
     std::string stagePath = argv[1];
@@ -1409,7 +1533,7 @@ main(int argc, char **argv)
     std::vector<GoldenAction> goldenActions;
     std::string profileOut;
     std::string verifyBinary;
-    bool cpuReference=false,execCrossCheck=false;
+    bool cpuReference = false, execCrossCheck = false;
     std::vector<UsdTimeCode> frames;
     std::vector<std::string> dragInputs;
     std::string dragPrim, dragAttr;
@@ -1431,9 +1555,9 @@ main(int argc, char **argv)
         } else if (arg == "--guides") {
             solverGuides = true;
         } else if (arg == "--cpu-reference") {
-            cpuReference=true;
+            cpuReference = true;
         } else if (arg == "--exec-crosscheck") {
-            execCrossCheck=true;
+            execCrossCheck = true;
         } else if (arg == "--joints-out" && i + 1 < argc) {
             jointsOut = argv[++i];
         } else if (arg == "--pose-out" && i + 1 < argc) {
@@ -1451,15 +1575,18 @@ main(int argc, char **argv)
         } else if (arg == "--golden-compact") {
             goldenCompact = true;
         } else if ((arg == "--golden-upstream" || arg == "--golden-edit" ||
-                    arg == "--golden-interactive") && i + 2 < argc) {
-            const std::string source = arg == "--golden-upstream" ? "upstream" :
-                arg == "--golden-edit" ? "authored" : "interactive";
+                    arg == "--golden-interactive") &&
+                   i + 2 < argc) {
+            const std::string source = arg == "--golden-upstream" ? "upstream"
+                                       : arg == "--golden-edit"   ? "authored"
+                                                                : "interactive";
             const SdfPath path(argv[++i]);
             char *end = nullptr;
             const char *text = argv[++i];
             const double delta = std::strtod(text, &end);
             if (!path.IsPropertyPath() || end == text || *end) {
-                std::printf("golden action needs a property path and numeric displacement\n");
+                std::printf("golden action needs a property path and numeric "
+                            "displacement\n");
                 return 2;
             }
             goldenActions.push_back({source, path, delta});
@@ -1492,12 +1619,16 @@ main(int argc, char **argv)
     const bool golden = !goldenOut.empty() || !goldenCheck.empty();
     if (golden) {
         solverGuides = true;
-        if (repeat != 1 || dragSteps || !verifyBinary.empty() || !profileOut.empty()) {
-            std::printf("golden protocol cannot be combined with benchmark/drag/binary/profile runs\n");
+        if (repeat != 1 || dragSteps || !verifyBinary.empty() ||
+            !profileOut.empty()) {
+            std::printf("golden protocol cannot be combined with "
+                        "benchmark/drag/binary/profile runs\n");
             return 2;
         }
-    } else if (goldenCompact || !goldenActions.empty() || !goldenFixture.empty()) {
-        std::printf("golden options need --golden-out or --golden-check\n"); return 2;
+    } else if (goldenCompact || !goldenActions.empty() ||
+               !goldenFixture.empty()) {
+        std::printf("golden options need --golden-out or --golden-check\n");
+        return 2;
     }
 
     // The binary holds one time; the frames to verify it at are the
@@ -1519,14 +1650,12 @@ main(int argc, char **argv)
         std::printf("FATAL: cannot open %s\n", stagePath.c_str());
         return 2;
     }
-    const SdfPath rigPath =
-        rigArg.empty() ? FindRig(stage) : SdfPath(rigArg);
+    const SdfPath rigPath = rigArg.empty() ? FindRig(stage) : SdfPath(rigArg);
     if (rigPath.IsEmpty() || !stage->GetPrimAtPath(rigPath)) {
         std::printf("FATAL: no RigExecRoot in %s\n", stagePath.c_str());
         return 2;
     }
-    std::printf("stage %s\n  rig %s\n", stagePath.c_str(),
-                rigPath.GetText());
+    std::printf("stage %s\n  rig %s\n", stagePath.c_str(), rigPath.GetText());
 
     rigExec::RigExecRigEvaluator evaluator(stage, rigPath);
     // Ordinary reports publish guides when requested. Golden and binary
@@ -1537,30 +1666,38 @@ main(int argc, char **argv)
     if (!profileOut.empty()) {
         evaluator.SetProfilingEnabled(true);
     }
-    gCpuReference=cpuReference;gExecCrossCheck=execCrossCheck;
-    evaluator.cpuReference=cpuReference;
+    gCpuReference = cpuReference;
+    gExecCrossCheck = execCrossCheck;
+    evaluator.cpuReference = cpuReference;
     std::vector<std::string> errors;
     const bool compiled = evaluator.Compile(&errors);
     for (const std::string &error : errors) {
         std::printf("  %s\n", error.c_str());
     }
     std::printf("  compile: %s (%zu mover applications, digest %zu)\n",
-        compiled?"ok":"FAILED",evaluator.GetMoverOrder().size(),evaluator.GetCompiledRigSignature());
-    if(!compiled)return 1;
-    int status=0;
-    if(execCrossCheck && evaluator.GetBakedProgram()) {
+                compiled ? "ok" : "FAILED", evaluator.GetMoverOrder().size(),
+                evaluator.GetCompiledRigSignature());
+    if (!compiled)
+        return 1;
+    int status = 0;
+    if (execCrossCheck && evaluator.GetBakedProgram()) {
         std::string error;
-        if(!rigExec::RigExecBakedProgramTesting::EnableExecCrossCheck(*evaluator.GetBakedProgram(),&error)) {
-            std::printf("  exec crosscheck preparation failed: %s\n",error.c_str());return 1;
+        if (!rigExec::RigExecBakedProgramTesting::EnableExecCrossCheck(
+                *evaluator.GetBakedProgram(), &error)) {
+            std::printf("  exec crosscheck preparation failed: %s\n",
+                        error.c_str());
+            return 1;
         }
-        checkVisits[&evaluator]={evaluator.GetStageEditSerial(),evaluator.GetBakedProgram()};
+        checkVisits[&evaluator] = {evaluator.GetStageEditSerial(),
+                                   evaluator.GetBakedProgram()};
     }
-    if(!evaluator.GetBakedProgram()) {
-        std::printf("  native program unavailable\n");return 1;
+    if (!evaluator.GetBakedProgram()) {
+        std::printf("  native program unavailable\n");
+        return 1;
     }
     if (showTargets) {
         for (const rigExec::RigExecMoverRecord &record :
-                 evaluator.GetMoverOrder()) {
+             evaluator.GetMoverOrder()) {
             std::printf("    %3d %-28s %s\n", record.ordinal,
                         record.schemaType.GetText(),
                         record.moverPath.GetName().c_str());
@@ -1575,8 +1712,8 @@ main(int argc, char **argv)
             std::printf("  note: --verify-binary ignores "
                         "--repeat/--drag/--profile\n");
         }
-        return RunVerifyBinary(stage, rigPath, frames, dragInputs,
-                               verifyBinary, poseOut, jointsOut);
+        return RunVerifyBinary(stage, rigPath, frames, dragInputs, verifyBinary,
+                               poseOut, jointsOut);
     }
     if (!dragInputs.empty()) {
         std::printf("  note: --drag-input applies to --verify-binary "
@@ -1595,9 +1732,13 @@ main(int argc, char **argv)
     }
 
     if (golden) {
-        return RunGoldenProtocol(stage, rigPath, evaluator, frames,
-            goldenFixture.empty() ? std::filesystem::path(stagePath).filename().string() : goldenFixture,
-            goldenOut, goldenCheck, goldenCompact, goldenActions, goldenBackend, goldenProgram);
+        return RunGoldenProtocol(
+            stage, rigPath, evaluator, frames,
+            goldenFixture.empty()
+                ? std::filesystem::path(stagePath).filename().string()
+                : goldenFixture,
+            goldenOut, goldenCheck, goldenCompact, goldenActions, goldenBackend,
+            goldenProgram);
     }
 
     // Rest values, so displacements are reported against the authored
@@ -1609,7 +1750,7 @@ main(int argc, char **argv)
     // `repeat` times, so first-visit cost is amortized anyway; the pose
     // returned here is discarded (the reporting pass feeds the gate).
     for (UsdTimeCode frame : frames) {
-        (void)EvaluateChecked(evaluator,frame);
+        (void)EvaluateChecked(evaluator, frame);
     }
     // The silent passes. They are the same call the reporting loop makes,
     // so they cost what a frame costs -- including the pose the evaluator
@@ -1620,16 +1761,17 @@ main(int argc, char **argv)
         const auto began = std::chrono::steady_clock::now();
         for (int pass = 1; pass < repeat; ++pass) {
             for (UsdTimeCode frame : frames) {
-                const rigExec::RigExecRigPose pose = EvaluateChecked(evaluator,frame);
+                const rigExec::RigExecRigPose pose =
+                    EvaluateChecked(evaluator, frame);
                 if (!pose.valid || pose.referenceMismatches ||
                     pose.comparisonMismatches) {
                     status = 1;
                 }
             }
         }
-        const double seconds =
-            std::chrono::duration<double>(
-                std::chrono::steady_clock::now() - began).count();
+        const double seconds = std::chrono::duration<double>(
+                                   std::chrono::steady_clock::now() - began)
+                                   .count();
         const size_t ran = frames.size() * size_t(repeat - 1);
         std::printf("  repeat: %zu frame(s) in %.3fs (%.1fus/frame)\n", ran,
                     seconds, ran ? seconds * 1e6 / double(ran) : 0.0);
@@ -1645,16 +1787,18 @@ main(int argc, char **argv)
         }
     }
     for (UsdTimeCode frame : frames) {
-        const rigExec::RigExecRigPose pose = EvaluateChecked(evaluator,frame);
+        const rigExec::RigExecRigPose pose = EvaluateChecked(evaluator, frame);
         if (!jointsOut.empty()) {
             jointExport.Add(pose, frame.GetValue());
         }
         if (poseDump) {
             WritePoseDump(poseDump, pose, frame.GetValue());
         }
-        std::printf("\n  frame %g: %s (%zu moved properties, %zu reference agreements / %zu mismatches, %zu executed ops)\n",
-            frame.GetValue(),pose.valid?"valid":"INVALID",pose.movedProperties.size(),
-            pose.referenceAgreements,pose.referenceMismatches,pose.executedOpCount);
+        std::printf("\n  frame %g: %s (%zu moved properties, %zu reference "
+                    "agreements / %zu mismatches, %zu executed ops)\n",
+                    frame.GetValue(), pose.valid ? "valid" : "INVALID",
+                    pose.movedProperties.size(), pose.referenceAgreements,
+                    pose.referenceMismatches, pose.executedOpCount);
         if (!pose.valid || pose.referenceMismatches ||
             pose.comparisonMismatches) {
             status = 1;
@@ -1725,7 +1869,7 @@ main(int argc, char **argv)
             // One generation at this time before the first measured step, so
             // that what every step measures is a drag and not the first
             // frame's cold caches.
-            EvaluateChecked(evaluator,dragFrame);
+            EvaluateChecked(evaluator, dragFrame);
             std::vector<double> stepUs;
             stepUs.reserve(size_t(dragSteps));
             for (int k = 0; k < dragSteps; ++k) {
@@ -1735,22 +1879,21 @@ main(int argc, char **argv)
                 // did -- which a cone re-execution would skip, and a
                 // benchmark would then report as a cheap drag frame.
                 const double bump =
-                    direction * 0.005 *
-                    (phase < 10 ? phase + 1 : 21 - phase);
+                    direction * 0.005 * (phase < 10 ? phase + 1 : 21 - phase);
                 VtValue value;
                 if (!DisplacedValue(attribute, dragFrame, bump, &value)) {
                     break;
                 }
                 const auto began = std::chrono::steady_clock::now();
                 evaluator.SetInteractiveOverrides(
-                    {rigExec::RigExecValueOverride{
-                        dragPath, TfToken(), TfToken(dragAttr), value}});
+                    {rigExec::RigExecValueOverride{dragPath, TfToken(),
+                                                   TfToken(dragAttr), value}});
                 const rigExec::RigExecRigPose pose =
-                    EvaluateChecked(evaluator,dragFrame);
-                stepUs.push_back(
-                    std::chrono::duration<double>(
-                        std::chrono::steady_clock::now() - began).count() *
-                    1e6);
+                    EvaluateChecked(evaluator, dragFrame);
+                stepUs.push_back(std::chrono::duration<double>(
+                                     std::chrono::steady_clock::now() - began)
+                                     .count() *
+                                 1e6);
                 if (!pose.valid || pose.referenceMismatches ||
                     pose.comparisonMismatches) {
                     status = 1;
@@ -1789,7 +1932,8 @@ main(int argc, char **argv)
                         jointExport.Degenerate()
                             ? TfStringPrintf(", %zu degenerate frames written "
                                              "as identity",
-                                             jointExport.Degenerate()).c_str()
+                                             jointExport.Degenerate())
+                                  .c_str()
                             : "");
         }
     }
@@ -1802,14 +1946,13 @@ main(int argc, char **argv)
         } else {
             std::printf("\n  wrote %s (%zu events)\n", profileOut.c_str(),
                         evaluator.GetProfiler().GetEventCount());
-            std::printf("  %10s %10s %7s  %s\n", "total_ms", "max_ms",
-                        "count", "phase");
+            std::printf("  %10s %10s %7s  %s\n", "total_ms", "max_ms", "count",
+                        "phase");
             for (const rigExec::RigExecProfileSummaryRow &row :
                  evaluator.GetProfiler().Summarize()) {
                 std::printf("  %10.2f %10.2f %7zu  [%s] %s\n",
-                            row.totalUs / 1000.0, row.maxUs / 1000.0,
-                            row.count, row.category.c_str(),
-                            row.name.c_str());
+                            row.totalUs / 1000.0, row.maxUs / 1000.0, row.count,
+                            row.category.c_str(), row.name.c_str());
             }
         }
     }

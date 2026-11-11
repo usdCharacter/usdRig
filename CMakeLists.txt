@@ -687,6 +687,13 @@ add_test(NAME testRigExecTestSelectorObjectSources
     COMMAND ${Python3_EXECUTABLE}
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/select_affected_tests.py" --self-test)
 
+# The allocation checker is textual, so its extractor is golden-tested on
+# synthetic sources of every banned form before the repository scan runs.
+add_test(NAME testRigExecAllocationChecker
+    COMMAND ${Python3_EXECUTABLE}
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/testRigExecAllocationChecker.py")
+set_tests_properties(testRigExecAllocationChecker PROPERTIES LABELS "fast")
+
 add_executable(testRigExecMath tests/testRigExecMath.cpp)
 add_executable(testRigExecWrinkleMath tests/testRigExecWrinkleMath.cpp)
 target_link_libraries(testRigExecWrinkleMath PRIVATE rigExecMath)
@@ -2867,7 +2874,7 @@ install(FILES libs/rigExecOracle/registerOracle.h
     DESTINATION "${RIGEXEC_INSTALL_INCLUDEDIR}/rigExecOracle")
 
 # FILES_MATCHING still walks -- and recreates -- every subdirectory it passes
-foreach(_lib rigExecGraph rigExecScene rigExecMath rigExec rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu rigExecBinary rigExecBake rigExecRuntime rigExecSampler)
+foreach(_lib rigExecGraph rigExecScene rigExecMath rigExec rigExecSchema rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu rigExecBinary rigExecBake rigExecRuntime rigExecSampler)
     install(DIRECTORY "libs/${_lib}/"
         DESTINATION "${RIGEXEC_INSTALL_INCLUDEDIR}/${_lib}"
         FILES_MATCHING

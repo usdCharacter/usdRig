@@ -1,4 +1,5 @@
 // RigExec exec type registrations.
+#include "rigExecSchema/schemaNames.h"
 #include "types.h"
 
 #include "pxr/exec/exec/typeRegistry.h"
@@ -10,26 +11,30 @@
 namespace rigExec {
 
 namespace {
-const TfToken constantWeightRepresentation("constant"), strictWeightRange("strict");
+const TfToken constantWeightRepresentation(SchemaValueText::constant),
+    strictWeightRange(SchemaValueText::strict);
 }
 
-void RigExecLoadComputations() {}
+void
+RigExecLoadComputations()
+{
+}
 
 float
 RigExecWeightPacket::Resolve(size_t i, size_t count) const
 {
-    if (representation == "dense") {
+    if (representation == SchemaValueText::dense) {
         if (values.size() != count || i >= count) {
             return -1.0f;
         }
         return values[i];
     }
-    if (representation == "sparse") {
+    if (representation == SchemaValueText::sparse) {
         if (indices.size() != values.size()) {
             return -1.0f;
         }
-        const auto it = std::lower_bound(
-            indices.begin(), indices.end(), static_cast<int>(i));
+        const auto it = std::lower_bound(indices.begin(), indices.end(),
+                                         static_cast<int>(i));
         if (it != indices.end() && *it == static_cast<int>(i)) {
             return values[it - indices.begin()];
         }
@@ -60,18 +65,19 @@ _WeightPacketResolvesAll(const RigExecWeightPacket &packet, size_t count)
         return false;
     }
     if (!packet.rangePolicy.IsEmpty() &&
-        packet.rangePolicy != "strict" && packet.rangePolicy != "clamp") {
+        packet.rangePolicy != SchemaValueText::strict &&
+        packet.rangePolicy != SchemaValueText::clamp) {
         return false;
     }
-    if (packet.representation == "constant") {
+    if (packet.representation == SchemaValueText::constant) {
         if (!packet.values.empty() || !packet.indices.empty()) {
             return false;
         }
-    } else if (packet.representation == "dense") {
+    } else if (packet.representation == SchemaValueText::dense) {
         if (!packet.indices.empty() || packet.values.size() != count) {
             return false;
         }
-    } else if (packet.representation == "sparse") {
+    } else if (packet.representation == SchemaValueText::sparse) {
         if (packet.indices.size() != packet.values.size()) {
             return false;
         }
@@ -96,11 +102,11 @@ _WeightPacketResolvesAll(const RigExecWeightPacket &packet, size_t count)
         return std::isfinite(v) && v >= 0.0f && v <= 1.0f;
     };
 
-    if (packet.representation == "constant") {
+    if (packet.representation == SchemaValueText::constant) {
         return usable(packet.defaultWeight);
     }
 
-    if (packet.representation == "dense") {
+    if (packet.representation == SchemaValueText::dense) {
         for (size_t i = 0; i < count; ++i) {
             if (!usable(packet.values[i])) {
                 return false;
@@ -132,9 +138,8 @@ _WeightPacketResolvesAll(const RigExecWeightPacket &packet, size_t count)
 // weights, so only it keeps the self-resolve temporary.
 template <typename FloatArray>
 static bool
-_ResolveWeightPacketAll(
-    const RigExecWeightPacket &packet, size_t count,
-    FloatArray *resolved)
+_ResolveWeightPacketAll(const RigExecWeightPacket &packet, size_t count,
+                        FloatArray *resolved)
 {
     // Same values, same failure conditions, and the same atomicity: nothing
     // is written into *resolved until the whole array has passed, because an
@@ -143,14 +148,13 @@ _ResolveWeightPacketAll(
         return false;
     }
 
-    if (packet.representation == "constant") {
+    if (packet.representation == SchemaValueText::constant) {
         resolved->assign(count, packet.defaultWeight);
         return true;
     }
 
-    if (packet.representation == "dense") {
-        resolved->assign(
-            packet.values.begin(), packet.values.begin() + count);
+    if (packet.representation == SchemaValueText::dense) {
+        resolved->assign(packet.values.begin(), packet.values.begin() + count);
         return true;
     }
 
@@ -172,22 +176,20 @@ _ResolveWeightPacketAll(
     }
     resolved->assign(count, packet.defaultWeight);
     for (size_t i = 0; i < packet.indices.size(); ++i) {
-        (*resolved)[static_cast<size_t>(packet.indices[i])] =
-            packet.values[i];
+        (*resolved)[static_cast<size_t>(packet.indices[i])] = packet.values[i];
     }
     return true;
 }
 
 bool
-RigExecWeightPacket::ResolveAll(
-    size_t count, std::vector<float> *resolved) const
+RigExecWeightPacket::ResolveAll(size_t count,
+                                std::vector<float> *resolved) const
 {
     return _ResolveWeightPacketAll(*this, count, resolved);
 }
 
 bool
-RigExecWeightPacket::ResolveAll(
-    size_t count, VtFloatArray *resolved) const
+RigExecWeightPacket::ResolveAll(size_t count, VtFloatArray *resolved) const
 {
     return _ResolveWeightPacketAll(*this, count, resolved);
 }
@@ -198,7 +200,7 @@ RigExecWeightPacket::ResolvesAll(size_t count) const
     return _WeightPacketResolvesAll(*this, count);
 }
 
-}  // namespace rigExec
+} // namespace rigExec
 
 PXR_NAMESPACE_OPEN_SCOPE
 

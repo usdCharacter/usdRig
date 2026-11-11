@@ -3,6 +3,7 @@
 #ifndef RIGEXEC_FROZEN_CONTEXT_INTERNAL_H
 #define RIGEXEC_FROZEN_CONTEXT_INTERNAL_H
 
+#include "rigExecSchema/schemaNames.h"
 #include "frozenContext.h"
 #include "frozenProgram.h"
 #include "tapSet.h"
@@ -28,21 +29,21 @@ inline constexpr size_t kMaxFrozenArenaSlots = size_t(1) << 27;
 
 TF_DEFINE_PRIVATE_TOKENS(
     _frozenIterativeTokens,
-    ((iterations, "inputs:iterations"))
-    ((step, "inputs:step"))
-    ((pinBorders, "inputs:pinBorders"))
-    ((distanceWeight, "inputs:distanceWeight"))
-    ((displacement, "inputs:displacement"))
-    ((neighborDistance, "inputs:neighborDistance"))
-    ((restLengthScale, "inputs:restLengthScale"))
-    ((stretchStiffness, "inputs:stretchStiffness"))
-    ((compressionStiffness, "inputs:compressionStiffness"))
-    ((bendStiffness, "inputs:bendStiffness"))
-    ((maxDisplacement, "inputs:maxDisplacement"))
-    ((tangentPlaneCollisions, "inputs:tangentPlaneCollisions"))
-    ((tangentPlaneInset, "inputs:tangentPlaneInset"))
-    ((wrinkleScale, "inputs:wrinkleScale"))
-    ((smoothingIterations, "inputs:smoothingIterations"))
+    ((iterations, SchemaAttrText::inputsIterations))
+    ((step, SchemaAttrText::inputsStep))
+    ((pinBorders, SchemaAttrText::inputsPinBorders))
+    ((distanceWeight, SchemaAttrText::inputsDistanceWeight))
+    ((displacement, SchemaAttrText::inputsDisplacement))
+    ((neighborDistance, SchemaAttrText::inputsNeighborDistance))
+    ((restLengthScale, SchemaAttrText::inputsRestLengthScale))
+    ((stretchStiffness, SchemaAttrText::inputsStretchStiffness))
+    ((compressionStiffness, SchemaAttrText::inputsCompressionStiffness))
+    ((bendStiffness, SchemaAttrText::inputsBendStiffness))
+    ((maxDisplacement, SchemaAttrText::inputsMaxDisplacement))
+    ((tangentPlaneCollisions, SchemaAttrText::inputsTangentPlaneCollisions))
+    ((tangentPlaneInset, SchemaAttrText::inputsTangentPlaneInset))
+    ((wrinkleScale, SchemaAttrText::inputsWrinkleScale))
+    ((smoothingIterations, SchemaAttrText::inputsSmoothingIterations))
 );
 
 // Shared scalar schema for the iterative deformers' inputs: the frozen
@@ -52,7 +53,7 @@ TF_DEFINE_PRIVATE_TOKENS(
 template <class Fn>
 void
 _VisitIterativeMoverScalars(RigExecRevisionOp op,
-                           RigExecMoverParameters &params, Fn &&fn)
+                            RigExecMoverParameters &params, Fn &&fn)
 {
     const auto &T = *_frozenIterativeTokens;
     if (op == RigExecRevisionOp::DeltaMush) {
@@ -71,8 +72,7 @@ _VisitIterativeMoverScalars(RigExecRevisionOp op,
         fn(T.bendStiffness, 0.1f, settings.bendStiffness);
         fn(T.maxDisplacement, 0.2f, settings.maxDisplacement);
         fn(T.pinBorders, true, settings.pinBorders);
-        fn(T.tangentPlaneCollisions, true,
-           settings.tangentPlaneCollisions);
+        fn(T.tangentPlaneCollisions, true, settings.tangentPlaneCollisions);
         fn(T.tangentPlaneInset, 0.0f, settings.tangentPlaneInset);
         fn(T.wrinkleScale, 1.0f, settings.wrinkleScale);
         fn(T.smoothingIterations, 0, settings.smoothingIterations);
@@ -86,7 +86,8 @@ void
 _VisitLadderInputs(Obj &ladder, Fn &&fn, bool includeIntervening = true)
 {
     fn(ladder.restSpace);
-    if (includeIntervening) fn(ladder.interveningSpace);
+    if (includeIntervening)
+        fn(ladder.interveningSpace);
     fn(ladder.defaultSpace);
     fn(ladder.posedSpace);
     fn(ladder.parentSpace);
@@ -110,7 +111,11 @@ _VisitSolverInputs(Obj &solver, Fn &&fn)
     fn(solver.lowerOffset);
     fn(solver.stretch);
     fn(solver.softness);
-    fn(solver.pin);fn(solver.upperScale);fn(solver.lowerScale);fn(solver.softDistance);fn(solver.limbTwist);
+    fn(solver.pin);
+    fn(solver.upperScale);
+    fn(solver.lowerScale);
+    fn(solver.softDistance);
+    fn(solver.limbTwist);
     fn(solver.blendWeight);
     fn(solver.preserveVolume);
     fn(solver.midFollowWeight);
@@ -120,16 +125,19 @@ _VisitSolverInputs(Obj &solver, Fn &&fn)
     fn(solver.twistTurns);
     fn(solver.ribbonSampleCount);
     fn(solver.ikSpace);
-    for (auto &input : solver.bone2dDoubles) fn(input);
-    for (auto &input : solver.bone2dBools) fn(input);
-    for (auto &input : solver.bone2dSelectors) fn(input);
-    for (auto &input : solver.jointGroupSelectors) fn(input);
+    for (auto &input : solver.bone2dDoubles)
+        fn(input);
+    for (auto &input : solver.bone2dBools)
+        fn(input);
+    for (auto &input : solver.bone2dSelectors)
+        fn(input);
+    for (auto &input : solver.jointGroupSelectors)
+        fn(input);
 }
 
 template <class Obj, class Fn>
 void
-_VisitConstraintInputs(
-    Obj &constraint, Fn &&fn)
+_VisitConstraintInputs(Obj &constraint, Fn &&fn)
 {
     fn(constraint.enabled);
     fn(constraint.defaultWeight);
@@ -156,23 +164,26 @@ _VisitConstraintInputs(
     // An IK/FK match's scalars, each in the one precision it is bound in.
     if (constraint.ikFkMatch) {
         for (auto &scalar : constraint.matchScalars) {
-            if (scalar.isFloat) fn(scalar.narrow);
-            else fn(scalar.wide);
+            if (scalar.isFloat)
+                fn(scalar.narrow);
+            else
+                fn(scalar.wide);
         }
     }
     // A harmonics constraint's scalars, likewise.
     if (constraint.harmonics) {
         for (auto &scalar : constraint.harmonicsScalars) {
-            if (scalar.isFloat) fn(scalar.narrow);
-            else fn(scalar.wide);
+            if (scalar.isFloat)
+                fn(scalar.narrow);
+            else
+                fn(scalar.wide);
         }
     }
 }
 
 template <class Obj, class Fn>
 void
-_VisitInterpolatorInputs(
-    Obj &interp, Fn &&fn)
+_VisitInterpolatorInputs(Obj &interp, Fn &&fn)
 {
     fn(interp.enabled);
     // A numeric driver's dials, in rigExec:driverAttributes order, each
@@ -190,9 +201,14 @@ _VisitInterpolatorInputs(
 }
 
 template <class Obj, class Fn>
-void _VisitAutoClavicleInputs(Obj &operation,Fn &&fn) {
-    for(auto &read:operation.scalars) {
-        if(read.isFloat)fn(read.narrow);else fn(read.wide);
+void
+_VisitAutoClavicleInputs(Obj &operation, Fn &&fn)
+{
+    for (auto &read : operation.scalars) {
+        if (read.isFloat)
+            fn(read.narrow);
+        else
+            fn(read.wide);
     }
 }
 
@@ -200,8 +216,10 @@ template <class Obj, class Fn>
 void
 _VisitSpaceSwitchInputs(Obj &spaceSwitch, Fn &&fn)
 {
-    if (spaceSwitch.tokenIndex) fn(spaceSwitch.activeTokenInput);
-    else fn(spaceSwitch.activeInput);
+    if (spaceSwitch.tokenIndex)
+        fn(spaceSwitch.activeTokenInput);
+    else
+        fn(spaceSwitch.activeInput);
 }
 
 template <class Obj, class Fn>
@@ -233,12 +251,12 @@ _VisitWeightInputs(Obj &object, Fn &&fn)
 // (bakedWeights.cpp names the same set).
 TF_DEFINE_PRIVATE_TOKENS(
     _frozenWeightTokens,
-    ((staticWeight, "RigExecStaticWeight"))
-    ((dynamicWeight, "RigExecDynamicWeight"))
-    ((combineWeight, "RigExecCombineWeight"))
-    ((sphereWeight, "RigExecSphereWeight"))
-    ((planeWeight, "RigExecPlaneWeight"))
-    ((curveWeight, "RigExecCurveWeight"))
+    ((staticWeight, SchemaTypeName::RigExecStaticWeight))
+    ((dynamicWeight, SchemaTypeName::RigExecDynamicWeight))
+    ((combineWeight, SchemaTypeName::RigExecCombineWeight))
+    ((sphereWeight, SchemaTypeName::RigExecSphereWeight))
+    ((planeWeight, SchemaTypeName::RigExecPlaneWeight))
+    ((curveWeight, SchemaTypeName::RigExecCurveWeight))
     ((targetPointsKey, "frozenWeight:targetPoints"))
     ((samplePointsKey, "frozenWeight:samplePoints"))
     ((curvePointsKey, "frozenWeight:curvePoints"))
@@ -248,8 +266,7 @@ TF_DEFINE_PRIVATE_TOKENS(
 /// \p name is one of the frozenWeight: keys of _frozenWeightTokens. The
 /// sampler and the freeze call it; the worker reads the freeze's keys
 /// (RigExecFrozenBindings::weightArrayKeys) and builds none.
-SdfPath
-_FrozenWeightArrayKey(const SdfPath &objectPath, const TfToken &name);
+SdfPath _FrozenWeightArrayKey(const SdfPath &objectPath, const TfToken &name);
 
 /// The position of each frozenWeight: key in a weight object's four
 /// RigExecFrozenBindings::weightArrayKeys.
@@ -278,11 +295,9 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((ribbonBindCoords, "frozenRibbon:bindCoords"))
 );
 
-SdfPath
-_FrozenWireInputKey(const SdfPath &moverPath, const TfToken &key);
+SdfPath _FrozenWireInputKey(const SdfPath &moverPath, const TfToken &key);
 
-SdfPath
-_FrozenBlendInputKey(const SdfPath &samplePath, const TfToken &key);
+SdfPath _FrozenBlendInputKey(const SdfPath &samplePath, const TfToken &key);
 
 /// Each override's property path (prim.attribute), empty where it names a
 /// computation. UI thread: it builds paths.
@@ -291,20 +306,16 @@ _FrozenOverridePaths(const std::vector<RigExecValueOverride> &overrides);
 
 /// \p paths is _FrozenOverridePaths(\p overrides), built on the UI thread,
 /// so placement builds no path; a length mismatch is unplaceable.
-bool
-_FrozenPlaceOverrides(const RigExecBakedProgramImpl &B,
-                      const std::vector<RigExecValueOverride> &overrides,
-                      const std::vector<SdfPath> &paths,
-                      std::vector<char> *flags);
+bool _FrozenPlaceOverrides(const RigExecBakedProgramImpl &B,
+                           const std::vector<RigExecValueOverride> &overrides,
+                           const std::vector<SdfPath> &paths,
+                           std::vector<char> *flags);
 
-SdfPath
-_FrozenSurfaceInputKey(const SdfPath &moverPath, const TfToken &key);
+SdfPath _FrozenSurfaceInputKey(const SdfPath &moverPath, const TfToken &key);
 
-SdfPath
-_FrozenLatticeInputKey(const SdfPath &moverPath, const TfToken &key);
+SdfPath _FrozenLatticeInputKey(const SdfPath &moverPath, const TfToken &key);
 
-SdfPath
-_FrozenRibbonInputKey(const SdfPath &moverPath, const TfToken &key);
+SdfPath _FrozenRibbonInputKey(const SdfPath &moverPath, const TfToken &key);
 
 struct _ChainMoverDesc {
     SdfPath moverPath;
@@ -312,35 +323,27 @@ struct _ChainMoverDesc {
     SdfPath target;
 };
 
-bool
-_DiscoverChainMovers(const RigExecRigEvaluator &evaluator,
-                     std::vector<_ChainMoverDesc> *out, std::string *error);
+bool _DiscoverChainMovers(const RigExecRigEvaluator &evaluator,
+                          std::vector<_ChainMoverDesc> *out,
+                          std::string *error);
 
-bool
-_OrderDiscoveredChains(
+bool _OrderDiscoveredChains(
     const UsdStageRefPtr &stage,
     const std::map<SdfPath, std::vector<_ChainMoverDesc>> &chains,
     std::vector<SdfPath> *order, std::string *error);
 
-RigExecChainSampleInput
-_BindChainInput(const UsdPrim &prim, const TfToken &name);
+RigExecChainSampleInput _BindChainInput(const UsdPrim &prim,
+                                        const TfToken &name);
 
-uint64_t
-_MixWord(uint64_t hash, uint64_t word);
+uint64_t _MixWord(uint64_t hash, uint64_t word);
 
-uint64_t
-_HashBytes(uint64_t hash, const void *data, size_t size);
+uint64_t _HashBytes(uint64_t hash, const void *data, size_t size);
 
-uint64_t
-_HashString(uint64_t hash, const char *text);
+uint64_t _HashString(uint64_t hash, const char *text);
 
-uint64_t
-_HashPathText(uint64_t hash, const SdfPath &path, std::string *text);
+uint64_t _HashPathText(uint64_t hash, const SdfPath &path, std::string *text);
 
-bool
-_HashVtValue(uint64_t *hash, const VtValue &value);
-
-
+bool _HashVtValue(uint64_t *hash, const VtValue &value);
 
 // The report RigExecEvaluateFrozen's caller asked for, set for the span of
 // its runner call on the calling thread, else null. _RunFrozen fills it.
@@ -350,9 +353,8 @@ extern thread_local RigExecFrozenRunReport *_frozenRunReport;
 // the table its last run placed (RigExecBakedPlaceUpstream, rule 8): leaves
 // under a value placed, moved or lifted re-read, their override numbers
 // seed the closure, and the constant-avar pass runs. No stage access.
-void
-_FrozenPlaceUpstream(RigExecBakedProgramImpl *program,
-                     const RigExecFrameInputs &inputs);
+void _FrozenPlaceUpstream(RigExecBakedProgramImpl *program,
+                          const RigExecFrameInputs &inputs);
 
 // Visits every patchable input in one fixed order. The freeze uses it to
 // capture head paths (UI thread, handles valid there) and the worker uses
@@ -373,7 +375,8 @@ _ForEachPatchableInput(Impl &B, Fn &&fn, bool includeIntervening = true)
     for (auto &ladder : B.ladders) {
         _VisitLadderInputs(ladder, fn, includeIntervening);
     }
-    for(auto &operation:B.autoClavicles)_VisitAutoClavicleInputs(operation,fn);
+    for (auto &operation : B.autoClavicles)
+        _VisitAutoClavicleInputs(operation, fn);
     for (auto &spaceSwitch : B.spaceSwitches) {
         _VisitSpaceSwitchInputs(spaceSwitch, fn);
     }
@@ -397,9 +400,9 @@ _ForEachPatchableInput(Impl &B, Fn &&fn, bool includeIntervening = true)
 /// settled verdict (the source is a settled, immutable snapshot).
 enum class _CloneVerdict : uint8_t { Compute, Defer, Inherit };
 
-void
-_CloneImpl(const RigExecBakedProgramImpl &src, RigExecBakedProgramImpl *dst,
-           _CloneVerdict verdict = _CloneVerdict::Compute);
+void _CloneImpl(const RigExecBakedProgramImpl &src,
+                RigExecBakedProgramImpl *dst,
+                _CloneVerdict verdict = _CloneVerdict::Compute);
 
 /// The clone check run on \p program as both source and copy; sets
 /// opAdapter.everRan and clears retainedFirst when the keys do not stand.
@@ -451,16 +454,14 @@ _SampleHolds<float>(const VtValue &held, float *out)
     return false;
 }
 
-bool
-_RunFrozen(const RigExecFrozenEvalContext &context,
-           const RigExecFrameInputs &inputs, RigExecRigPose *pose);
+bool _RunFrozen(const RigExecFrozenEvalContext &context,
+                const RigExecFrameInputs &inputs, RigExecRigPose *pose);
 
 // One history tick (RigExecRunFrozenHistoryTick).
-bool
-_RunFrozenHistoryTick(const RigExecFrozenEvalContext &context,
-                      const RigExecFrameInputs &inputs,
-                      const std::vector<RigExecWindowRing> &rings,
-                      std::vector<RigExecWindowPacketPtr> *captures);
+bool _RunFrozenHistoryTick(const RigExecFrozenEvalContext &context,
+                           const RigExecFrameInputs &inputs,
+                           const std::vector<RigExecWindowRing> &rings,
+                           std::vector<RigExecWindowPacketPtr> *captures);
 
 } // namespace frozenDetail
 

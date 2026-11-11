@@ -1,3 +1,4 @@
+#include "rigExecSchema/schemaNames.h"
 // .rigexec serialization.
 #include "rigExecBake/serialize.h"
 #include "rigExecBake/computedCapture.h"
@@ -21,9 +22,9 @@ namespace {
 // The schema's enums mirror the program enums in order; the order is part
 // of the format, so every enumerator is pinned here. A reordered program
 // enum fails the build, not the bake.
-#define _RIGEXEC_BAKE_PIN_STEP(name)                                       \
-    static_assert(uint8_t(RigExecBakedStepKind::name) ==                   \
-                      uint8_t(RigExecWireStepKind::name),                  \
+#define _RIGEXEC_BAKE_PIN_STEP(name)                                           \
+    static_assert(uint8_t(RigExecBakedStepKind::name) ==                       \
+                      uint8_t(RigExecWireStepKind::name),                      \
                   "wire step order drifted")
 _RIGEXEC_BAKE_PIN_STEP(ComposeSubtree);
 _RIGEXEC_BAKE_PIN_STEP(Solve);
@@ -51,9 +52,9 @@ _RIGEXEC_BAKE_PIN_STEP(SkinTopology);
 _RIGEXEC_BAKE_PIN_STEP(ProviderRefresh);
 #undef _RIGEXEC_BAKE_PIN_STEP
 
-#define _RIGEXEC_BAKE_PIN_DOMAIN(name)                                     \
-    static_assert(uint8_t(RigExecBakedSlotDomain::name) ==                 \
-                      uint8_t(RigExecWireSlotDomain::name),                \
+#define _RIGEXEC_BAKE_PIN_DOMAIN(name)                                         \
+    static_assert(uint8_t(RigExecBakedSlotDomain::name) ==                     \
+                      uint8_t(RigExecWireSlotDomain::name),                    \
                   "wire domain order drifted")
 _RIGEXEC_BAKE_PIN_DOMAIN(Avars);
 _RIGEXEC_BAKE_PIN_DOMAIN(PoseBase);
@@ -139,8 +140,8 @@ _ToFrame(const RigExecPointFrame &f)
 
 // The pose-table enums the file stores as raw bytes, pinned like the step
 // and domain orders above: a reordered program enum fails the build.
-#define _RIGEXEC_BAKE_PIN_EULER(name, value)                               \
-    static_assert(uint8_t(RigExecEulerOrder::name) == value,               \
+#define _RIGEXEC_BAKE_PIN_EULER(name, value)                                   \
+    static_assert(uint8_t(RigExecEulerOrder::name) == value,                   \
                   "wire euler order drifted")
 _RIGEXEC_BAKE_PIN_EULER(XYZ, 0);
 _RIGEXEC_BAKE_PIN_EULER(XZY, 1);
@@ -185,8 +186,7 @@ _ToVec3f(const GfVec3f &v)
 }
 
 RigExecWireAncestorRead
-_ToAncestorRead(
-    const RigExecBakedCommit::AncestorRead &read)
+_ToAncestorRead(const RigExecBakedCommit::AncestorRead &read)
 {
     RigExecWireAncestorRead out;
     out.slot = int32_t(read.slot);
@@ -195,8 +195,8 @@ _ToAncestorRead(
     return out;
 }
 
-#define _RIGEXEC_BAKE_PIN_OP(name, value)                                  \
-    static_assert(uint8_t(RigExecRevisionOp::name) == value,               \
+#define _RIGEXEC_BAKE_PIN_OP(name, value)                                      \
+    static_assert(uint8_t(RigExecRevisionOp::name) == value,                   \
                   "wire revision-op order drifted")
 _RIGEXEC_BAKE_PIN_OP(Matrix, 0);
 _RIGEXEC_BAKE_PIN_OP(Skin, 1);
@@ -213,8 +213,8 @@ _RIGEXEC_BAKE_PIN_OP(RecomputeExtent, 13);
 _RIGEXEC_BAKE_PIN_OP(DeltaMush, 14);
 _RIGEXEC_BAKE_PIN_OP(Wrinkle, 15);
 #undef _RIGEXEC_BAKE_PIN_OP
-#define _RIGEXEC_BAKE_PIN_PHASE(name, value)                               \
-    static_assert(uint8_t(RigExecReadPhaseKind::name) == value,            \
+#define _RIGEXEC_BAKE_PIN_PHASE(name, value)                                   \
+    static_assert(uint8_t(RigExecReadPhaseKind::name) == value,                \
                   "wire read-phase order drifted")
 _RIGEXEC_BAKE_PIN_PHASE(Base, 0);
 _RIGEXEC_BAKE_PIN_PHASE(Preceding, 1);
@@ -287,7 +287,8 @@ _FbAncestorLists(
 class _FileFill {
 public:
     _FileFill(const RigExecBakedProgramImpl &program,
-              const RigExecBakeInputs &inputs, RigExecBakePathTable *paths, RigExecBakePools *pools)
+              const RigExecBakeInputs &inputs, RigExecBakePathTable *paths,
+              RigExecBakePools *pools)
         : _program(program), _inputs(inputs), _paths(paths), _pools(pools)
     {
     }
@@ -304,8 +305,14 @@ private:
         }
         return false;
     }
-    uint32_t _Path(const SdfPath &path) { return _paths->Path(path); }
-    uint32_t _Tok(const TfToken &token) { return _paths->Token(token); }
+    uint32_t _Path(const SdfPath &path)
+    {
+        return _paths->Path(path);
+    }
+    uint32_t _Tok(const TfToken &token)
+    {
+        return _paths->Token(token);
+    }
     RigExecWireReadPhase _Phase(const RigExecReadPhase &phase)
     {
         RigExecWireReadPhase out;
@@ -317,9 +324,8 @@ private:
     _PointsBinding(const RigExecBakedPointsBinding &binding);
 
     bool _Index();
-    std::unique_ptr<fb::RigExecWireInput> _Registered(_Family family,
-                                                      size_t object,
-                                                      size_t field);
+    std::unique_ptr<fb::RigExecWireInput>
+    _Registered(_Family family, size_t object, size_t field);
     fb::RigExecWireInput _RegisteredValue(_Family family, size_t object,
                                           size_t field);
 
@@ -364,8 +370,8 @@ bool
 _FileFill::_Index()
 {
     for (const RigExecBakeRegisteredRead &entry : _inputs.registeredReads) {
-        const auto key = std::make_tuple(uint8_t(entry.family), entry.object,
-                                         entry.field);
+        const auto key =
+            std::make_tuple(uint8_t(entry.family), entry.object, entry.field);
         if (!_registered.emplace(key, &entry.read).second) {
             return _Fail("the inputs hold two registered reads for one table "
                          "field");
@@ -390,9 +396,9 @@ _FileFill::_Index()
         }
     }
     for (const RigExecBakeBlendPointsRead &entry : _inputs.blendPoints) {
-        const auto key = std::make_tuple(entry.chain, entry.revision,
-                                         entry.derived, entry.channel,
-                                         entry.sample);
+        const auto key =
+            std::make_tuple(entry.chain, entry.revision, entry.derived,
+                            entry.channel, entry.sample);
         if (!_blendPoints.emplace(key, &entry.read).second) {
             return _Fail("the inputs hold two points reads for one blend "
                          "sample");
@@ -474,9 +480,12 @@ _FileFill::_SlotMeta(fb::RigExecWireSlotMeta *meta)
         meta->xformPaths.push_back(_Path(prim.GetPath()));
     }
     meta->publicationRoles.assign(program.paths.size(), uint8_t(0));
-    for (int slot : program.jointSlots) meta->publicationRoles[size_t(slot)] |= uint8_t(1);
-    for (int slot : program.controlSlots) meta->publicationRoles[size_t(slot)] |= uint8_t(2);
-    meta->solverGuidesEnabled = program.solverGuidesEnabled && *program.solverGuidesEnabled;
+    for (int slot : program.jointSlots)
+        meta->publicationRoles[size_t(slot)] |= uint8_t(1);
+    for (int slot : program.controlSlots)
+        meta->publicationRoles[size_t(slot)] |= uint8_t(2);
+    meta->solverGuidesEnabled =
+        program.solverGuidesEnabled && *program.solverGuidesEnabled;
     meta->jointSlots = _ToI32s(program.jointSlots);
     meta->jointPaths.reserve(program.jointPaths.size());
     for (const SdfPath &path : program.jointPaths) {
@@ -529,10 +538,13 @@ _FileFill::_Constants(fb::RigExecWireConstants *constants)
     for (const GfMatrix4d &m : program.selfD) {
         constants->selfD.push_back(_ToMatrix(m));
     }
-    for (const auto &m : program.posedD) constants->posedD.push_back(_ToMatrix(m));
-    for (const auto &m : program.parentSpaceM) constants->parentSpaceM.push_back(_ToMatrix(m));
+    for (const auto &m : program.posedD)
+        constants->posedD.push_back(_ToMatrix(m));
+    for (const auto &m : program.parentSpaceM)
+        constants->parentSpaceM.push_back(_ToMatrix(m));
     for (char value : program.parentSpaceAuthored)
-        constants->parentSpaceAuthored.push_back(value ? uint8_t(1) : uint8_t(0));
+        constants->parentSpaceAuthored.push_back(value ? uint8_t(1)
+                                                       : uint8_t(0));
     constants->parentDinv.reserve(program.parentDinv.size());
     for (const GfMatrix4d &m : program.parentDinv) {
         constants->parentDinv.push_back(_ToMatrix(m));
@@ -575,7 +587,7 @@ _FileFill::_Steps(std::vector<fb::RigExecWireStep> *steps)
         out.kind = fb::StepKind(uint8_t(step.kind));
         out.object = int32_t(step.object);
         out.part = int32_t(step.part);
-        out.descriptorKey=step.descriptorKey;
+        out.descriptorKey = step.descriptorKey;
         out.semanticPredecessorKeys = step.semanticPredecessorKeys;
         out.reads = _FbRanges(step.reads);
         out.writes = _FbRanges(step.writes);
@@ -634,7 +646,8 @@ _FileFill::_Cones(fb::RigExecWireCones *cones)
     cones->avarCluster = _ToI32s(_program.cones.avarCluster);
     cones->chainBaseClusters = _FbIntLists(_program.cones.chainBaseClusters);
     cones->revisionClusters = _FbIntLists(_program.cones.revisionClusters);
-    cones->revisionStaticCluster = _ToI32s(_program.cones.revisionStaticCluster);
+    cones->revisionStaticCluster =
+        _ToI32s(_program.cones.revisionStaticCluster);
     cones->varyingSteps = _ToI32s(_program.cones.varyingSteps);
     cones->overrideSteps = _ToI32s(_program.cones.overrideSteps);
 }
@@ -706,12 +719,15 @@ _FileFill::_Solver(size_t index, fb::RigExecWireSolver *out)
     out->twistTurns = read(11);
     out->ribbonSampleCount = read(12);
     out->ikSpace = read(13);
-    out->pin=read(14);out->upperScale=read(15);out->lowerScale=read(16);
-    out->softDistance=read(17);out->limbTwist=read(18);
-    out->scaleSegments=solver.scaleSegments;
-    out->softDistancePolicy=solver.ikParams.softDistancePolicy;
-    out->ikScaleSegments=solver.ikParams.scaleSegments;
-    out->scaleCalibration=solver.ikParams.limb.scaleCalibration;
+    out->pin = read(14);
+    out->upperScale = read(15);
+    out->lowerScale = read(16);
+    out->softDistance = read(17);
+    out->limbTwist = read(18);
+    out->scaleSegments = solver.scaleSegments;
+    out->softDistancePolicy = solver.ikParams.softDistancePolicy;
+    out->ikScaleSegments = solver.ikParams.scaleSegments;
+    out->scaleCalibration = solver.ikParams.limb.scaleCalibration;
     out->upperLengthBase = solver.upperLengthBase;
     out->lowerLengthBase = solver.lowerLengthBase;
     out->spaceSlot = int32_t(solver.spaceSlot);
@@ -720,7 +736,8 @@ _FileFill::_Solver(size_t index, fb::RigExecWireSolver *out)
     out->inA = int32_t(solver.inA);
     out->inB = int32_t(solver.inB);
     out->solveDescriptorKey = solver.solveDescriptorKey;
-    out->relationshipRequirements.reserve(solver.relationshipRequirements.size());
+    out->relationshipRequirements.reserve(
+        solver.relationshipRequirements.size());
     for (const auto &requirement : solver.relationshipRequirements) {
         fb::RigExecWireSolverRelationshipRequirement wire;
         wire.port = requirement.first;
@@ -818,22 +835,26 @@ _FileFill::_Solver(size_t index, fb::RigExecWireSolver *out)
         skeleton->targetCandidates = solver.bone2dTargetCandidates;
         skeleton->channels.reserve(bones * kRigExecBone2dChannelCount);
         for (size_t f = 0; f < bones * kRigExecBone2dChannelCount; ++f) {
-            skeleton->channels.push_back(
-                _RegisteredValue(_Family::Solver, index, RigExecWireSolverFixedFieldCount + f));
+            skeleton->channels.push_back(_RegisteredValue(
+                _Family::Solver, index, RigExecWireSolverFixedFieldCount + f));
         }
         const size_t selectors = solver.bone2dSelectors.size();
         skeleton->selectorChannels.reserve(selectors);
         for (size_t g = 0; g < selectors; ++g) {
-            skeleton->selectorChannels.push_back(_RegisteredValue(_Family::Solver, index,
-                RigExecWireSolverFixedFieldCount + bones * kRigExecBone2dChannelCount + g));
+            skeleton->selectorChannels.push_back(
+                _RegisteredValue(_Family::Solver, index,
+                                 RigExecWireSolverFixedFieldCount +
+                                     bones * kRigExecBone2dChannelCount + g));
         }
         out->skeleton2d = std::move(skeleton);
     }
     // Joint groups, registered after the solver's other inputs.
-    const size_t bones2d = std::min(solver.bone2dDoubles.size() / kRigExecBone2dDoubleChannels,
-                                    solver.bone2dBools.size() / kRigExecBone2dBoolChannels);
+    const size_t bones2d =
+        std::min(solver.bone2dDoubles.size() / kRigExecBone2dDoubleChannels,
+                 solver.bone2dBools.size() / kRigExecBone2dBoolChannels);
     const size_t groupField = RigExecWireSolverFixedFieldCount +
-        bones2d * kRigExecBone2dChannelCount + solver.bone2dSelectors.size();
+                              bones2d * kRigExecBone2dChannelCount +
+                              solver.bone2dSelectors.size();
     for (const RigExecJointGroup &group : solver.jointGroups) {
         fb::RigExecWireJointGroup wire;
         wire.memberBegin = group.memberBegin;
@@ -864,10 +885,9 @@ _FileFill::_Constraint(size_t index, fb::RigExecWireConstraint *out)
     out->type = _Tok(constraint.type);
     out->weightObject = _Path(constraint.weightObject);
     out->weightField = constraint.weightField;
-    out->weightObjectIndex =
-        index < _inputs.constraintWeightObjectIndex.size()
-            ? _inputs.constraintWeightObjectIndex[index]
-            : -1;
+    out->weightObjectIndex = index < _inputs.constraintWeightObjectIndex.size()
+                                 ? _inputs.constraintWeightObjectIndex[index]
+                                 : -1;
     if (index >= _inputs.constraintWeightObjectIndex.size()) {
         _Fail("the inputs hold no envelope index for constraint " +
               constraint.path.GetString());
@@ -903,7 +923,7 @@ _FileFill::_Constraint(size_t index, fb::RigExecWireConstraint *out)
     out->worldUpVector = read(18);
     out->poleVector = read(19);
     out->twistDegrees = read(20);
-    out->stretch=read(21);
+    out->stretch = read(21);
     out->order = uint8_t(constraint.order);
     out->aimAxisFallback = _ToVec3d(constraint.aimAxisFallback);
     out->aimVectorAuthored = constraint.aimVectorAuthored;
@@ -942,14 +962,14 @@ _FileFill::_Constraint(size_t index, fb::RigExecWireConstraint *out)
         for (size_t k = 0; k < constraint.matchScalars.size(); ++k) {
             out->matchScalars.push_back(read(22 + k));
         }
-        out->matchConstants = {constraint.matchIkValue,
-                               constraint.matchScaleCalibration,
-                               constraint.matchUpperOffset,
-                               constraint.matchLowerOffset};
+        out->matchConstants = {
+            constraint.matchIkValue, constraint.matchScaleCalibration,
+            constraint.matchUpperOffset, constraint.matchLowerOffset};
         out->matchStretchLimb = constraint.matchStretchLimb;
         out->matchPoleSwitch = int32_t(constraint.matchPoleSwitch);
         for (char rides : constraint.matchPoleSourceRides) {
-            out->matchPoleSourceRides.push_back(rides ? uint8_t(1) : uint8_t(0));
+            out->matchPoleSourceRides.push_back(rides ? uint8_t(1)
+                                                      : uint8_t(0));
         }
         out->matchPoleParentRides = constraint.matchPoleParentRides;
     }
@@ -972,9 +992,12 @@ void
 _FileFill::_Pose(fb::RigExecWireDomainPose *pose)
 {
     const RigExecBakedProgramImpl &program = _program;
-    pose->requiredStageFramesAdmission = std::make_unique<fb::RigExecWireRequiredStageFramesAdmission>();
-    pose->requiredStageFramesAdmission->admitted = program.requiredStageFramesAdmission.admitted;
-    pose->requiredStageFramesAdmission->firstBadTarget = program.requiredStageFramesAdmission.firstBadTarget;
+    pose->requiredStageFramesAdmission =
+        std::make_unique<fb::RigExecWireRequiredStageFramesAdmission>();
+    pose->requiredStageFramesAdmission->admitted =
+        program.requiredStageFramesAdmission.admitted;
+    pose->requiredStageFramesAdmission->firstBadTarget =
+        program.requiredStageFramesAdmission.firstBadTarget;
     pose->ladders.resize(program.ladders.size());
     for (size_t i = 0; i < program.ladders.size(); ++i) {
         fb::RigExecWireLadder &out = pose->ladders[i];
@@ -998,7 +1021,8 @@ _FileFill::_Pose(fb::RigExecWireDomainPose *pose)
         out.interveningSpace = _Registered(_Family::Ladder, i, 21);
         const auto &ladder = program.ladders[i];
         out.interveningReset = ladder.interveningReset;
-        out.spaceValues.assign(ladder.spaceValues.begin(),ladder.spaceValues.end());
+        out.spaceValues.assign(ladder.spaceValues.begin(),
+                               ladder.spaceValues.end());
         out.posedSpaceConnected = ladder.posedSpaceConnected;
         out.defaultSpaceConnected = ladder.defaultSpaceConnected;
         out.parentSpaceConnected = ladder.parentSpaceConnected;
@@ -1156,7 +1180,8 @@ _FileFill::_Pose(fb::RigExecWireDomainPose *pose)
             program.constraintArrays[i];
         fb::RigExecWireConstraintArrays &out = pose->constraintArrays[i];
         out.prim = arrays.prim ? _Path(arrays.prim.GetPath()) : 0;
-        out.rawSlots.assign(_inputs.constraintRawSlots[i].begin(),_inputs.constraintRawSlots[i].end());
+        out.rawSlots.assign(_inputs.constraintRawSlots[i].begin(),
+                            _inputs.constraintRawSlots[i].end());
         out.sourceCount = uint64_t(arrays.sourceCount);
         out.parentOffsets = arrays.parentOffsets;
         out.readPole = arrays.readPole;
@@ -1212,8 +1237,7 @@ _FileFill::_Pose(fb::RigExecWireDomainPose *pose)
             wire.frame = _ToFrame(source.frame);
             wire.normalizedWeight = source.normalizedWeight;
             wire.translationOffset = _ToVec3d(source.translationOffset);
-            wire.rotationOffsetDegrees =
-                _ToVec3d(source.rotationOffsetDegrees);
+            wire.rotationOffsetDegrees = _ToVec3d(source.rotationOffsetDegrees);
             out.sources.push_back(wire);
         }
         out.slotReads = commit.slotReads;
@@ -1265,23 +1289,48 @@ _FileFill::_Pose(fb::RigExecWireDomainPose *pose)
     pose->publishWeightFields = program.publishWeightFields;
     // In program order: resolution round, then discovery.
     pose->autoClavicles.resize(program.autoClavicles.size());
-    for(size_t i=0;i<program.autoClavicles.size();++i) {
-        const auto &ac=program.autoClavicles[i];auto &out=pose->autoClavicles[i];
-        const auto &c=ac.operation.constants;
-        out.slot=ac.slot;out.basis.assign(c.basis,c.basis+9);out.ikValue=c.ikValue;out.gain=c.gain;
-        out.kernel=c.kernel;out.normalize=c.normalize;out.swings=c.swings;out.widths=c.widths;
-        out.gains=c.gains;out.weights=c.weights;out.hasLimb=ac.operation.hasLimb;
-        out.frames.resize(13);out.frames[0].slot=ac.slot;
-        for(size_t k=1;k<13;++k)for(const auto &read:ac.frames)if(read.value==ac.operation.frames[k]) {
-            out.frames[k].slot=read.slot;
-            out.frames[k].computation=read.computation=="computeDefaultFrame"?1:read.computation=="computeRestFrame"?2:0;
-            out.frames[k].recompose.assign(read.recompose.begin(),read.recompose.end());
-        }
-        for(size_t k=0;k<ac.scalars.size();++k)out.scalars.push_back(_RegisteredValue(_Family::AutoClavicle,i,k));
-        out.scalarIndices.assign(11,-1);
-        for(size_t k=0;k<11;++k)if(!ac.operation.scalars[k].hops.empty())
-            for(size_t j=0;j<ac.scalars.size();++j)if(ac.scalars[j].value==ac.operation.scalars[k].hops.front().raw)
-                out.scalarIndices[k]=int(j);
+    for (size_t i = 0; i < program.autoClavicles.size(); ++i) {
+        const auto &ac = program.autoClavicles[i];
+        auto &out = pose->autoClavicles[i];
+        const auto &c = ac.operation.constants;
+        out.slot = ac.slot;
+        out.basis.assign(c.basis, c.basis + 9);
+        out.ikValue = c.ikValue;
+        out.gain = c.gain;
+        out.kernel = c.kernel;
+        out.normalize = c.normalize;
+        out.swings = c.swings;
+        out.widths = c.widths;
+        out.gains = c.gains;
+        out.weights = c.weights;
+        out.hasLimb = ac.operation.hasLimb;
+        out.frames.resize(13);
+        out.frames[0].slot = ac.slot;
+        for (size_t k = 1; k < 13; ++k)
+            for (const auto &read : ac.frames)
+                if (read.value == ac.operation.frames[k]) {
+                    out.frames[k].slot = read.slot;
+                    out.frames[k].computation =
+                        read.computation ==
+                                SchemaComputationText::computeDefaultFrame
+                            ? 1
+                        : read.computation ==
+                                SchemaComputationText::computeRestFrame
+                            ? 2
+                            : 0;
+                    out.frames[k].recompose.assign(read.recompose.begin(),
+                                                   read.recompose.end());
+                }
+        for (size_t k = 0; k < ac.scalars.size(); ++k)
+            out.scalars.push_back(
+                _RegisteredValue(_Family::AutoClavicle, i, k));
+        out.scalarIndices.assign(11, -1);
+        for (size_t k = 0; k < 11; ++k)
+            if (!ac.operation.scalars[k].hops.empty())
+                for (size_t j = 0; j < ac.scalars.size(); ++j)
+                    if (ac.scalars[j].value ==
+                        ac.operation.scalars[k].hops.front().raw)
+                        out.scalarIndices[k] = int(j);
     }
     pose->spaceSwitches.resize(program.spaceSwitches.size());
     for (size_t i = 0; i < program.spaceSwitches.size(); ++i) {
@@ -1313,8 +1362,9 @@ _FileFill::_Pose(fb::RigExecWireDomainPose *pose)
         out.spaceRead = std::make_unique<fb::RigExecWireFrameVersion>(
             version(sw.spaceRead));
         out.active = _Registered(_Family::SpaceSwitch, i, 0);
-        out.tokenIndex=sw.tokenIndex;
-        for(const auto &label:sw.labels) out.labels.push_back(label.GetString());
+        out.tokenIndex = sw.tokenIndex;
+        for (const auto &label : sw.labels)
+            out.labels.push_back(label.GetString());
         for (size_t axis = 0; axis < 3; ++axis) {
             out.affectTranslation[axis] = sw.affectTranslation[axis];
             out.affectRotation[axis] = sw.affectRotation[axis];
@@ -1421,27 +1471,39 @@ _FileFill::_Revision(const RigExecBakedProgramImpl::GeomRevision &revision,
                      fb::RigExecWireRevision *out)
 {
     const auto fillSites = [&](bool layout, auto *destination) {
-        const auto found = _inputs.leafSites.find({uint32_t(chain), uint32_t(index), derived, layout});
-        if (found == _inputs.leafSites.end()) return;
+        const auto found = _inputs.leafSites.find(
+            {uint32_t(chain), uint32_t(index), derived, layout});
+        if (found == _inputs.leafSites.end())
+            return;
         *destination = found->second.reads;
         for (size_t k = 0; k < destination->size(); ++k) {
             auto &row = (*destination)[k];
-            if (!RigExecFormatIsArrayTag(row.read->tag)) continue;
+            if (!RigExecFormatIsArrayTag(row.read->tag))
+                continue;
             const auto &fallback = found->second.fallbacks[k];
-            fb::RigExecWireValue value; value.tag = row.read->tag;
+            fb::RigExecWireValue value;
+            value.tag = row.read->tag;
             if (fallback.IsHolding<VtIntArray>()) {
-                const auto &v=fallback.UncheckedGet<VtIntArray>(); value.array=_pools->Ints(v.cdata(),v.size());
+                const auto &v = fallback.UncheckedGet<VtIntArray>();
+                value.array = _pools->Ints(v.cdata(), v.size());
             } else if (fallback.IsHolding<VtFloatArray>()) {
-                const auto &v=fallback.UncheckedGet<VtFloatArray>(); value.array=_pools->Floats(v.cdata(),v.size());
+                const auto &v = fallback.UncheckedGet<VtFloatArray>();
+                value.array = _pools->Floats(v.cdata(), v.size());
             } else if (fallback.IsHolding<VtDoubleArray>()) {
-                const auto &v=fallback.UncheckedGet<VtDoubleArray>(); value.array=_pools->Doubles(v.cdata(),v.size());
+                const auto &v = fallback.UncheckedGet<VtDoubleArray>();
+                value.array = _pools->Doubles(v.cdata(), v.size());
             } else if (fallback.IsHolding<VtVec2fArray>()) {
-                const auto &v=fallback.UncheckedGet<VtVec2fArray>(); value.array=_pools->Vec2fs(v.empty()?nullptr:v.cdata()->data(),v.size());
+                const auto &v = fallback.UncheckedGet<VtVec2fArray>();
+                value.array = _pools->Vec2fs(
+                    v.empty() ? nullptr : v.cdata()->data(), v.size());
             } else if (fallback.IsHolding<VtVec3fArray>()) {
-                const auto &v=fallback.UncheckedGet<VtVec3fArray>(); value.array=_pools->Vec3fs(v.empty()?nullptr:v.cdata()->data(),v.size());
+                const auto &v = fallback.UncheckedGet<VtVec3fArray>();
+                value.array = _pools->Vec3fs(
+                    v.empty() ? nullptr : v.cdata()->data(), v.size());
             }
-            row.read->constant=_pools->Value(value);
-            if (row.bodyWalk) row.bodyWalk->constant=row.read->constant;
+            row.read->constant = _pools->Value(value);
+            if (row.bodyWalk)
+                row.bodyWalk->constant = row.read->constant;
         }
     };
     fillSites(false, &out->leafSites);
@@ -1473,8 +1535,7 @@ _FileFill::_Revision(const RigExecBakedProgramImpl::GeomRevision &revision,
     bound->driverCurveKnots = _Path(binding.driverCurveKnots);
     bound->driverTransformCount = int32_t(binding.driverTransformCount);
     bound->driverSpaceCount = int32_t(binding.driverSpaceCount);
-    bound->driverBaseTransformCount =
-        int32_t(binding.driverBaseTransformCount);
+    bound->driverBaseTransformCount = int32_t(binding.driverBaseTransformCount);
     bound->driverFrames = _Path(binding.driverFrames);
     bound->widths = _Path(binding.widths);
     bound->blendInputs.reserve(binding.blendInputs.size());
@@ -1583,8 +1644,8 @@ _FileFill::_Revision(const RigExecBakedProgramImpl::GeomRevision &revision,
     out->finalPhase = revision.finalPhase;
     out->skinTopologyFixed = revision.skinTopologyFixed;
     if (!derived) {
-        const auto layout = _layoutSlots.find(
-            std::make_pair(uint32_t(chain), uint32_t(index)));
+        const auto layout =
+            _layoutSlots.find(std::make_pair(uint32_t(chain), uint32_t(index)));
         if (layout != _layoutSlots.end()) {
             out->jointIndicesSlot = int32_t(layout->second->indices);
             out->jointWeightsSlot = int32_t(layout->second->weights);
@@ -1616,16 +1677,18 @@ _FileFill::_Revision(const RigExecBakedProgramImpl::GeomRevision &revision,
     out->partitionPointCount = uint64_t(revision.partitionPointCount);
     // A Range skin is unchunked in the file, its chunks the chain's groups
     // with their influence keys (RigExecFormatIsKeyedRevision).
-    out->chunked = revision.chunked &&
-                   revision.role != RigExecBakedRevisionRole::Range;
+    out->chunked =
+        revision.chunked && revision.role != RigExecBakedRevisionRole::Range;
     out->partitionCandidates = uint64_t(revision.partitionCandidates);
     out->partitionProducerMin = int32_t(revision.partitionProducerMin);
     out->partitionProducerMax = int32_t(revision.partitionProducerMax);
-    out->partitionDistinctReads=uint64_t(revision.partitionDistinctReads);
-    for(const auto &set:revision.partitionProducerSets) {
+    out->partitionDistinctReads = uint64_t(revision.partitionDistinctReads);
+    for (const auto &set : revision.partitionProducerSets) {
         fb::RigExecWirePartitionProducerSet row;
-        for(const auto &value:set) row.values.emplace_back(
-            fb::SlotDomain(value.first),uint32_t(value.second),uint32_t(value.second)+1);
+        for (const auto &value : set)
+            row.values.emplace_back(fb::SlotDomain(value.first),
+                                    uint32_t(value.second),
+                                    uint32_t(value.second) + 1);
         out->partitionProducerSets.push_back(std::move(row));
     }
     out->weightObject = int32_t(revision.weightObject);
@@ -1687,9 +1750,10 @@ _FileFill::_Geometry(fb::RigExecWireDomainGeometry *geometry)
         wire.derived.resize(chain.derived.size());
         for (size_t d = 0; d < chain.derived.size(); ++d) {
             wire.derived[d].target = _Path(chain.derived[d].target);
-            for(size_t k=0;k<program.derivedIndex.size();++k)
-                if(program.derivedIndex[k].first==int(c) && program.derivedIndex[k].second==int(d))
-                    wire.derived[d].baseSlot=_inputs.derivedBaseSlots[k];
+            for (size_t k = 0; k < program.derivedIndex.size(); ++k)
+                if (program.derivedIndex[k].first == int(c) &&
+                    program.derivedIndex[k].second == int(d))
+                    wire.derived[d].baseSlot = _inputs.derivedBaseSlots[k];
             wire.derived[d].revision =
                 std::make_unique<fb::RigExecWireRevision>();
             _Revision(chain.derived[d].revision, c, d, true,
@@ -1716,11 +1780,13 @@ _FileFill::_Geometry(fb::RigExecWireDomainGeometry *geometry)
     // only ones, each with its reads and oracle facts as collected.
     geometry->weightObjects = _inputs.weightObjects;
     geometry->weightFields = _inputs.weightFields;
-    for (size_t f=0;f<geometry->weightFields.size();++f) {
-        for (const auto &read:_program.weightFields[f].pointReads) {
+    for (size_t f = 0; f < geometry->weightFields.size(); ++f) {
+        for (const auto &read : _program.weightFields[f].pointReads) {
             fb::RigExecWireWeightFieldPointRead row;
-            row.object=read.object; row.leaf=read.leaf;
-            row.binding=std::make_unique<fb::RigExecWirePointsBinding>(_PointsBinding(read.binding));
+            row.object = read.object;
+            row.leaf = read.leaf;
+            row.binding = std::make_unique<fb::RigExecWirePointsBinding>(
+                _PointsBinding(read.binding));
             geometry->weightFields[f].pointReads.push_back(std::move(row));
         }
     }
@@ -1837,7 +1903,8 @@ _FileFill::Run(fb::RigExecWireFile *file, std::string *error)
     }
     RigExecProviderPlainProgram provider;
     if (!RigExecExportProviderRecords(_program.GetProviderProgram(),
-                                     _program.providerValues, &provider, error)) {
+                                      _program.providerValues, &provider,
+                                      error)) {
         return false;
     }
     file->providerProgram = std::make_unique<fb::RigExecWireProviderProgram>();
@@ -1852,35 +1919,62 @@ _FileFill::Run(fb::RigExecWireFile *file, std::string *error)
         row.authoritative = state.authoritative;
         row.count = state.count;
         row.error = state.error;
-        if (const auto *v = std::get_if<double>(&state.value)) row.scalarDouble = std::make_unique<double>(*v);
-        else if (const auto *v = std::get_if<float>(&state.value)) row.scalarFloat = std::make_unique<float>(*v);
-        else if (const auto *v = std::get_if<std::array<double, 3>>(&state.value))
+        if (const auto *v = std::get_if<double>(&state.value))
+            row.scalarDouble = std::make_unique<double>(*v);
+        else if (const auto *v = std::get_if<float>(&state.value))
+            row.scalarFloat = std::make_unique<float>(*v);
+        else if (const auto *v =
+                     std::get_if<std::array<double, 3>>(&state.value))
             row.vector = std::make_unique<RigExecWireVec3d>(*v);
-        else if (const auto *v = std::get_if<std::array<double, 16>>(&state.value))
+        else if (const auto *v =
+                     std::get_if<std::array<double, 16>>(&state.value))
             row.matrix = std::make_unique<RigExecWireMatrix4d>(*v);
-        else if (const auto *v = std::get_if<std::string>(&state.value)) row.token = *v;
-        else if (const auto *v = std::get_if<RigExecProviderPlainFrame>(&state.value)) {
+        else if (const auto *v = std::get_if<std::string>(&state.value))
+            row.token = *v;
+        else if (const auto *v =
+                     std::get_if<RigExecProviderPlainFrame>(&state.value)) {
             row.framePoints.assign(v->points.begin(), v->points.end());
             row.frameFlags = v->flags;
         }
-        if(const auto *v=std::get_if<std::array<float,3>>(&state.value))
-            row.vec3f=std::make_unique<RigExecWireVec3f>(*v);
-        else if(const auto *v=std::get_if<bool>(&state.value)) row.boolean=*v;
-        else if(const auto *v=std::get_if<int32_t>(&state.value)) row.integer=*v;
-        else if(const auto *v=std::get_if<std::vector<float>>(&state.value)) row.floats=*v;
-        else if(const auto *v=std::get_if<std::vector<double>>(&state.value)) row.doubles=*v;
-        else if(const auto *v=std::get_if<std::vector<std::array<float,3>>>(&state.value)) row.vec3fs=*v;
-        else if(const auto *v=std::get_if<std::vector<std::array<double,3>>>(&state.value)) row.vec3ds=*v;
-        else if(const auto *v=std::get_if<std::vector<int32_t>>(&state.value)) row.ints=*v;
-        else if(const auto *v=std::get_if<std::vector<std::array<double,16>>>(&state.value)) row.matrices=*v;
-        else if(const auto *v=std::get_if<std::vector<std::string>>(&state.value)) row.tokens=*v;
-        else if(const auto *v=std::get_if<std::vector<bool>>(&state.value))
-            for(bool bit:*v) row.bools.push_back(bit?1:0);
-        else if(const auto *v=std::get_if<std::array<float,2>>(&state.value))
-            row.vec2f=std::make_unique<RigExecWireVec2f>(*v);
-        else if(const auto *v=std::get_if<std::vector<std::array<float,2>>>(&state.value)) row.vec2fs=*v;
-        else if(const auto *v=std::get_if<std::array<int32_t,3>>(&state.value))
-            row.vec3i=std::make_unique<RigExecWireVec3i>(*v);
+        if (const auto *v = std::get_if<std::array<float, 3>>(&state.value))
+            row.vec3f = std::make_unique<RigExecWireVec3f>(*v);
+        else if (const auto *v = std::get_if<bool>(&state.value))
+            row.boolean = *v;
+        else if (const auto *v = std::get_if<int32_t>(&state.value))
+            row.integer = *v;
+        else if (const auto *v = std::get_if<std::vector<float>>(&state.value))
+            row.floats = *v;
+        else if (const auto *v = std::get_if<std::vector<double>>(&state.value))
+            row.doubles = *v;
+        else if (const auto *v = std::get_if<std::vector<std::array<float, 3>>>(
+                     &state.value))
+            row.vec3fs = *v;
+        else if (const auto *v =
+                     std::get_if<std::vector<std::array<double, 3>>>(
+                         &state.value))
+            row.vec3ds = *v;
+        else if (const auto *v =
+                     std::get_if<std::vector<int32_t>>(&state.value))
+            row.ints = *v;
+        else if (const auto *v =
+                     std::get_if<std::vector<std::array<double, 16>>>(
+                         &state.value))
+            row.matrices = *v;
+        else if (const auto *v =
+                     std::get_if<std::vector<std::string>>(&state.value))
+            row.tokens = *v;
+        else if (const auto *v = std::get_if<std::vector<bool>>(&state.value))
+            for (bool bit : *v)
+                row.bools.push_back(bit ? 1 : 0);
+        else if (const auto *v =
+                     std::get_if<std::array<float, 2>>(&state.value))
+            row.vec2f = std::make_unique<RigExecWireVec2f>(*v);
+        else if (const auto *v = std::get_if<std::vector<std::array<float, 2>>>(
+                     &state.value))
+            row.vec2fs = *v;
+        else if (const auto *v =
+                     std::get_if<std::array<int32_t, 3>>(&state.value))
+            row.vec3i = std::make_unique<RigExecWireVec3i>(*v);
         portable.defaults.push_back(std::move(row));
     }
     for (const auto &op : provider.ops) {
@@ -1908,38 +2002,54 @@ _FileFill::Run(fb::RigExecWireFile *file, std::string *error)
     for (size_t k = 0; k < portable.sampled.size(); ++k) {
         auto &row = portable.sampled[k];
         row.inputSlot = _inputs.providerLeafSlots[k];
-
     }
     for (size_t k = 0; k < portable.externalInputs.size(); ++k) {
         auto &row = portable.externalInputs[k];
         row.providerSlot = _program.providerExternalSlots[k];
-        if(row.providerSlot>=0 && (row.computation=="computePointFrame" || row.computation=="computeBasePointFrame"))
-            row.frameVersion=row.providerSlot;
-        if (row.providerSlot >= 0 && row.computation != "computeRestFrame" &&
-            row.computation != "computePointFrame" && row.computation != "computeBasePointFrame") {
-            row.interveningRead = std::make_unique<fb::RigExecWireInput>(
-                _RegisteredValue(_Family::Ladder, uint32_t(row.providerSlot), 21));
+        if (row.providerSlot >= 0 &&
+            (row.computation == SchemaComputationText::computePointFrame ||
+             row.computation == SchemaComputationText::computeBasePointFrame))
+            row.frameVersion = row.providerSlot;
+        if (row.providerSlot >= 0 &&
+            row.computation != SchemaComputationText::computeRestFrame &&
+            row.computation != SchemaComputationText::computePointFrame &&
+            row.computation != SchemaComputationText::computeBasePointFrame) {
+            row.interveningRead =
+                std::make_unique<fb::RigExecWireInput>(_RegisteredValue(
+                    _Family::Ladder, uint32_t(row.providerSlot), 21));
         }
     }
 
-    for (size_t k=0;k<provider.routedInputs.size();++k) {
-        const auto &route=provider.routedInputs[k];
+    for (size_t k = 0; k < provider.routedInputs.size(); ++k) {
+        const auto &route = provider.routedInputs[k];
         fb::RigExecWireProviderRoutedInput row;
-        row.value=route.value; row.consumer=route.consumer; row.source=route.source;
-        row.readPhase=route.readPhase; row.crossRead=_program.providerRoutedReads[k];
+        row.value = route.value;
+        row.consumer = route.consumer;
+        row.source = route.source;
+        row.readPhase = route.readPhase;
+        row.crossRead = _program.providerRoutedReads[k];
         portable.routedInputs.push_back(std::move(row));
     }
-    for (size_t k=0;k<_program.crossDomainReads.size();++k) {
-        const auto &read=_program.crossDomainReads[k];
+    for (size_t k = 0; k < _program.crossDomainReads.size(); ++k) {
+        const auto &read = _program.crossDomainReads[k];
         fb::RigExecWireCrossDomainRead row;
-        row.kind=fb::CrossDomainReadKind(read.kind);
-        row.consumer=_Path(read.consumer); row.source=_Path(read.source); row.reader=_Path(read.reader);
-        row.phase=_Phase(read.phase); row.element=read.element; row.provider=read.provider;
-        row.rawSlot=_inputs.crossDomainRawSlots[k]; row.spaceValue=read.spaceValue;
-        row.propertyChain=read.propertyChain; row.propertyVersion=read.propertyVersion;
-        row.baseFrame=read.baseFrame; row.finalPoints=read.finalPoints;
-        for (const auto &point:read.points) row.points.emplace_back(point.chain,point.version);
-        row.frames=read.frames; row.unavailable=read.unavailable;
+        row.kind = fb::CrossDomainReadKind(read.kind);
+        row.consumer = _Path(read.consumer);
+        row.source = _Path(read.source);
+        row.reader = _Path(read.reader);
+        row.phase = _Phase(read.phase);
+        row.element = read.element;
+        row.provider = read.provider;
+        row.rawSlot = _inputs.crossDomainRawSlots[k];
+        row.spaceValue = read.spaceValue;
+        row.propertyChain = read.propertyChain;
+        row.propertyVersion = read.propertyVersion;
+        row.baseFrame = read.baseFrame;
+        row.finalPoints = read.finalPoints;
+        for (const auto &point : read.points)
+            row.points.emplace_back(point.chain, point.version);
+        row.frames = read.frames;
+        row.unavailable = read.unavailable;
         file->crossDomainReads.push_back(std::move(row));
     }
     file->clustering = std::make_unique<fb::RigExecWireClustering>();
@@ -1958,7 +2068,7 @@ _FileFill::Run(fb::RigExecWireFile *file, std::string *error)
     return true;
 }
 
-}  // namespace
+} // namespace
 
 bool
 RigExecBakeFillFile(const RigExecBakedProgramImpl &program,
@@ -1980,4 +2090,4 @@ RigExecBakeFillFile(const RigExecBakedProgramImpl &program,
     return false;
 }
 
-}  // namespace rigExec
+} // namespace rigExec

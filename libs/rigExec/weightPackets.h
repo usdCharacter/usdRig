@@ -5,6 +5,7 @@
 #ifndef RIGEXEC_WEIGHT_PACKETS_H
 #define RIGEXEC_WEIGHT_PACKETS_H
 
+#include "rigExecSchema/schemaNames.h"
 #include "types.h"
 
 #include "rigExecMath/weightFields.h"
@@ -24,10 +25,10 @@ namespace rigExec {
 /// Scratch belongs to one packet producer and is never published. Unique
 /// sparse support order is reused until the authored index array changes.
 struct RigExecWeightPacketWorkspace {
-    std::vector<std::pair<int,float>> pairs;
+    std::vector<std::pair<int, float>> pairs;
     std::vector<int> support;
     std::vector<size_t> supportOrder;
-    bool uniqueSupport=false;
+    bool uniqueSupport = false;
     std::vector<float> combineField;
 };
 
@@ -42,59 +43,60 @@ bool RigExecApplyWeightRangePolicy(const TfToken &policy, float *w);
 /// and collapsing the two in the kernel would quietly accept a rig that
 /// exec rejects. The schema fallbacks each field expects are noted below.
 struct RigExecStaticWeightInputs {
-    TfToken representation;      ///< rigExec:representation, fallback
-                                 ///< "constant"
-    TfToken rangePolicy;         ///< rigExec:rangePolicy, fallback "strict"
-    std::vector<float> values;   ///< rigExec:values
-    std::vector<int> indices;    ///< rigExec:indices, sparse only
-    float defaultWeight = 0.0f;  ///< rigExec:defaultWeight, fallback 0
+    TfToken representation;     ///< rigExec:representation, fallback
+                                ///< "constant"
+    TfToken rangePolicy;        ///< rigExec:rangePolicy, fallback "strict"
+    std::vector<float> values;  ///< rigExec:values
+    std::vector<int> indices;   ///< rigExec:indices, sparse only
+    float defaultWeight = 0.0f; ///< rigExec:defaultWeight, fallback 0
 };
 
 /// Builds the packet an authored (painted) weight publishes. An invalid
 /// packet is returned by value rather than signalled, because that is what
 /// a consumer acts on: a mover with an invalid envelope passes its
 /// preceding revision through atomically.
-RigExecWeightPacket RigExecBuildStaticWeightPacket(
-    const RigExecStaticWeightInputs &inputs);
+RigExecWeightPacket
+RigExecBuildStaticWeightPacket(const RigExecStaticWeightInputs &inputs);
 
 /// Borrowed view of RigExecStaticWeightInputs for callers whose arrays
 /// already live elsewhere: identical semantics, no intermediate copies.
 /// Null with a zero size stands for an empty array; the source arrays
 /// must outlive the call and remain unchanged.
 struct RigExecStaticWeightInputsView {
-    TfToken representation;      ///< rigExec:representation, fallback
-                                 ///< "constant"
-    TfToken rangePolicy;         ///< rigExec:rangePolicy, fallback "strict"
-    const float *values = nullptr;  ///< rigExec:values
+    TfToken representation;        ///< rigExec:representation, fallback
+                                   ///< "constant"
+    TfToken rangePolicy;           ///< rigExec:rangePolicy, fallback "strict"
+    const float *values = nullptr; ///< rigExec:values
     size_t valuesSize = 0;
-    const int *indices = nullptr;   ///< rigExec:indices, sparse only
+    const int *indices = nullptr; ///< rigExec:indices, sparse only
     size_t indicesSize = 0;
-    float defaultWeight = 0.0f;  ///< rigExec:defaultWeight, fallback 0
+    float defaultWeight = 0.0f; ///< rigExec:defaultWeight, fallback 0
 };
 
 /// Builds the packet an authored (painted) weight publishes from
 /// borrowed arrays. Same packet as RigExecBuildStaticWeightPacket for
 /// the same array contents.
-RigExecWeightPacket RigExecBuildStaticWeightPacket(
-    const RigExecStaticWeightInputsView &inputs);
-RigExecWeightPacket RigExecBuildStaticWeightPacket(
-    const RigExecStaticWeightInputsView &inputs,RigExecWeightPacketWorkspace *);
+RigExecWeightPacket
+RigExecBuildStaticWeightPacket(const RigExecStaticWeightInputsView &inputs);
+RigExecWeightPacket
+RigExecBuildStaticWeightPacket(const RigExecStaticWeightInputsView &inputs,
+                               RigExecWeightPacketWorkspace *);
 
 /// The resolved inputs of a RigExecDynamicWeight, less its base packet.
 struct RigExecDynamicWeightInputs {
-    TfToken representation;  ///< rigExec:representation, fallback "constant"
-    TfToken rangePolicy;     ///< rigExec:rangePolicy, fallback "strict"
-    float driver = 1.0f;     ///< inputs:driver, fallback 1
-    float scale = 1.0f;      ///< inputs:scale, fallback 1
-    float bias = 0.0f;       ///< inputs:bias, fallback 0
+    TfToken representation; ///< rigExec:representation, fallback "constant"
+    TfToken rangePolicy;    ///< rigExec:rangePolicy, fallback "strict"
+    float driver = 1.0f;    ///< inputs:driver, fallback 1
+    float scale = 1.0f;     ///< inputs:scale, fallback 1
+    float bias = 0.0f;      ///< inputs:bias, fallback 0
 };
 
 /// Remaps \p base by r_i = (b_i d) s + a. \p base is null when
 /// rigExec:baseWeight targets nothing, which is legal only for a constant
 /// packet.
-RigExecWeightPacket RigExecBuildDynamicWeightPacket(
-    const RigExecDynamicWeightInputs &inputs,
-    const RigExecWeightPacket *base);
+RigExecWeightPacket
+RigExecBuildDynamicWeightPacket(const RigExecDynamicWeightInputs &inputs,
+                                const RigExecWeightPacket *base);
 
 /// The rigid placement of a volume weight, inverted.
 ///
@@ -113,8 +115,8 @@ RigExecWeightPacket RigExecBuildDynamicWeightPacket(
 /// painting with a shape they cannot see. inputs:scaleX/Y/Z is the sole
 /// authority on anisotropy, and it is applied per axis by the builders
 /// below.
-bool RigExecRigidWorldToLocal(
-    const RigExecPointFrame &posed, GfMatrix4d *result);
+bool RigExecRigidWorldToLocal(const RigExecPointFrame &posed,
+                              GfMatrix4d *result);
 
 /// The placement a volume publishes (pose.weightFrames) and the CPU oracle
 /// measures its field in: the map taking the identity landmarks to the
@@ -133,8 +135,8 @@ GfMatrix4d RigExecVolumePlacement(const RigExecPointFrame &final);
 /// error-prone than three near-identical structs that would still share
 /// the whole placement/band prologue.
 struct RigExecVolumeWeightInputs {
-    TfToken representation;  ///< rigExec:representation, fallback "dense"
-    TfToken rangePolicy;     ///< rigExec:rangePolicy, fallback "clamp"
+    TfToken representation; ///< rigExec:representation, fallback "dense"
+    TfToken rangePolicy;    ///< rigExec:rangePolicy, fallback "clamp"
 
     /// The volume's posed frame. \p hasPlacement is false when the
     /// computation has no frame at all, which is not the same as an
@@ -143,9 +145,9 @@ struct RigExecVolumeWeightInputs {
     RigExecPointFrame placement;
     bool hasPlacement = false;
 
-    RigExecFalloffParams params;  ///< band, invert/strength, baked remap
+    RigExecFalloffParams params; ///< band, invert/strength, baked remap
 
-    std::vector<GfVec3f> targetPoints;  ///< rigExec:weightTarget points
+    std::vector<GfVec3f> targetPoints; ///< rigExec:weightTarget points
     /// rigExec:weightTarget cardinality, when the coordinates are not
     /// materialized: a caller that sized the target without gathering
     /// it sets this and leaves targetPoints empty. Zero (the default)
@@ -153,19 +155,19 @@ struct RigExecVolumeWeightInputs {
     /// fill the coordinates are unaffected. Only the prologue reads
     /// it; the field kernels measure the selected points.
     size_t targetPointCount = 0;
-    std::vector<GfVec3f> samplePoints;  ///< rigExec:sampleSource, may be
-                                        ///< empty
+    std::vector<GfVec3f> samplePoints; ///< rigExec:sampleSource, may be
+                                       ///< empty
     GfVec3f positiveScales = GfVec3f(1.0f);
     GfVec3f negativeScales = GfVec3f(1.0f);
-    GfVec3f scales = GfVec3f(1.0f);     ///< inputs:scaleX/Y/Z (sphere,
-                                        ///< curve)
+    GfVec3f scales = GfVec3f(1.0f); ///< inputs:scaleX/Y/Z (sphere,
+                                    ///< curve)
 
-    TfToken planeAxis;      ///< rigExec:planeAxis, fallback "y"
-    TfToken planeBounds;    ///< rigExec:planeBounds, fallback "unbounded"
-    float extentU = 1.0f;   ///< inputs:extentU, bounded plane only
-    float extentV = 1.0f;   ///< inputs:extentV, bounded plane only
+    TfToken planeAxis;    ///< rigExec:planeAxis, fallback "y"
+    TfToken planeBounds;  ///< rigExec:planeBounds, fallback "unbounded"
+    float extentU = 1.0f; ///< inputs:extentU, bounded plane only
+    float extentV = 1.0f; ///< inputs:extentV, bounded plane only
 
-    std::vector<GfVec3f> curvePoints;  ///< rigExec:curve points (curve)
+    std::vector<GfVec3f> curvePoints; ///< rigExec:curve points (curve)
     /// Optional immutable call-scoped views replace the three owning arrays.
     bool usePointViews = false;
     RigExecWeightPointView targetView, sampleView, curveView;
@@ -183,21 +185,21 @@ struct RigExecVolumeWeightInputs {
 /// volume that is going to be rejected anyway. It is advisory only:
 /// RigExecBuildVolumeWeightPacket repeats every one of these checks, so a
 /// caller that never asks still gets exactly the same packet.
-bool RigExecVolumeWeightCanBuild(
-    const TfToken &typeName, const RigExecVolumeWeightInputs &inputs);
+bool RigExecVolumeWeightCanBuild(const TfToken &typeName,
+                                 const RigExecVolumeWeightInputs &inputs);
 
 /// Builds the dense field a volumetric weight publishes. \p typeName is
-/// the concrete schema type ("RigExecSphereWeight", "RigExecPlaneWeight",
-/// "RigExecCurveWeight"); anything else yields an invalid packet
-/// carrying the caller's representation and range policy, exactly as a
-/// rejected one does.
+/// the concrete schema type: sphere, plane, or curve weight. Anything
+/// else yields an invalid packet carrying the caller's representation and
+/// range policy, exactly as a rejected one does.
 ///
 /// Dispatch is on the type token rather than three entry points because
 /// every caller but the exec adapters -- which know their own type
 /// statically -- starts from a UsdPrim's type name, and because the three
 /// shapes share the whole prologue and epilogue anyway.
-RigExecWeightPacket RigExecBuildVolumeWeightPacket(
-    const TfToken &typeName, const RigExecVolumeWeightInputs &inputs);
+RigExecWeightPacket
+RigExecBuildVolumeWeightPacket(const TfToken &typeName,
+                               const RigExecVolumeWeightInputs &inputs);
 
 /// Constructs the packet builders' token table on the calling thread; Build
 /// calls it so the table's lazy construction never runs first on a worker.
@@ -212,9 +214,8 @@ void RigExecWeightPacketsTouchTokens();
 /// cardinality itself.
 RigExecWeightPacket RigExecBuildCombineWeightPacket(
     const TfToken &representation, const TfToken &rangePolicy,
-    const TfToken &combineMode,
-    const std::vector<RigExecWeightPacket> &inputs, size_t weightTargetCount,
-    float strength, float invert);
+    const TfToken &combineMode, const std::vector<RigExecWeightPacket> &inputs,
+    size_t weightTargetCount, float strength, float invert);
 
 /// Folds borrowed input packets in AUTHORED ORDER. Same packet as the
 /// owning overload for the same inputs; the packets must outlive the
@@ -223,8 +224,7 @@ RigExecWeightPacket RigExecBuildCombineWeightPacket(
     const TfToken &representation, const TfToken &rangePolicy,
     const TfToken &combineMode,
     const std::vector<const RigExecWeightPacket *> &inputs,
-    size_t weightTargetCount,
-    float strength, float invert);
+    size_t weightTargetCount, float strength, float invert);
 
 RigExecWeightPacket RigExecBuildCombineWeightPacket(
     const TfToken &representation, const TfToken &rangePolicy,
@@ -233,6 +233,6 @@ RigExecWeightPacket RigExecBuildCombineWeightPacket(
     size_t weightTargetCount, float strength, float invert,
     RigExecWeightPacketWorkspace *workspace);
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_WEIGHT_PACKETS_H
+#endif // RIGEXEC_WEIGHT_PACKETS_H

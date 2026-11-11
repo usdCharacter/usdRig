@@ -2,6 +2,7 @@
 // imaging bridge's guides. Tokens and unit tables are interned and built
 // once at load, in this TU; the tables and their initialization
 // dependencies never split across TUs.
+#include "rigExecSchema/schemaNames.h"
 #include "bridgeGuideGeometry.h"
 
 #include "rigExec/rigEvaluator.h"
@@ -21,57 +22,60 @@
 namespace rigExec {
 
 // Guide names are interned before frame publication.
-const TfToken _tControlType("RigExecControl");
-const TfToken _tJointType("RigExecJoint");
-const TfToken _tSphereWeightType("RigExecSphereWeight");
-const TfToken _tPlaneWeightType("RigExecPlaneWeight");
-const TfToken _tCurveWeightType("RigExecCurveWeight");
+const TfToken _tControlType(SchemaTypeName::RigExecControl);
+const TfToken _tJointType(SchemaTypeName::RigExecJoint);
+const TfToken _tSphereWeightType(SchemaTypeName::RigExecSphereWeight);
+const TfToken _tPlaneWeightType(SchemaTypeName::RigExecPlaneWeight);
+const TfToken _tCurveWeightType(SchemaTypeName::RigExecCurveWeight);
 const TfToken _tY("Y");
 const TfToken _tRigExecGenerated("__RigExecGenerated");
-const TfToken _tCircle("circle");
-const TfToken _tConstraintsRel("rigExec:constraints");
-const TfToken _tGuideDisplayColor("guide:displayColor");
-const TfToken _tGuideDisplayOpacity("guide:displayOpacity");
-const TfToken _tGuideDisplayOpacityInvert("guide:displayOpacityInvert");
-const TfToken _tGuideDisplayOpacityMin("guide:displayOpacityMin");
-const TfToken _tGuideDrawMode("guide:drawMode");
-const TfToken _tGuideOffset("guide:offset");
-const TfToken _tGuidePlaneNormal("guide:planeNormal");
-const TfToken _tGuideRadius("guide:radius");
-const TfToken _tGuideScaleX("guide:scaleX");
-const TfToken _tGuideScaleY("guide:scaleY");
-const TfToken _tGuideScaleZ("guide:scaleZ");
-const TfToken _tGuideShape("guide:shape");
-const TfToken _tGuideWireWidth("guide:wireWidth");
+const TfToken _tCircle(SchemaValueText::circle);
+const TfToken _tConstraintsRel(SchemaAttrText::rigExecConstraints);
+const TfToken _tGuideDisplayColor(SchemaAttrText::guideDisplayColor);
+const TfToken _tGuideDisplayOpacity(SchemaAttrText::guideDisplayOpacity);
+const TfToken
+    _tGuideDisplayOpacityInvert(SchemaAttrText::guideDisplayOpacityInvert);
+const TfToken _tGuideDisplayOpacityMin(SchemaAttrText::guideDisplayOpacityMin);
+const TfToken _tGuideDrawMode(SchemaAttrText::guideDrawMode);
+const TfToken _tGuideOffset(SchemaAttrText::guideOffset);
+const TfToken _tGuidePlaneNormal(SchemaAttrText::guidePlaneNormal);
+const TfToken _tGuideRadius(SchemaAttrText::guideRadius);
+const TfToken _tGuideScaleX(SchemaAttrText::guideScaleX);
+const TfToken _tGuideScaleY(SchemaAttrText::guideScaleY);
+const TfToken _tGuideScaleZ(SchemaAttrText::guideScaleZ);
+const TfToken _tGuideShape(SchemaAttrText::guideShape);
+const TfToken _tGuideWireWidth(SchemaAttrText::guideWireWidth);
 const TfToken _tPoints("points");
-const TfToken _tRigExecPlaneAxis("rigExec:planeAxis");
-const TfToken _tRigExecPlaneBounds("rigExec:planeBounds");
-const TfToken _tWire("wire");
-const TfToken _tGeometry("geometry"), _tCage("cage");
-const TfToken _tBrackets("brackets"), _tShell("shell");
-const TfToken _tFalloff("falloff");
-const TfToken _tWeightDisplay("guide:weightDisplay");
+const TfToken _tRigExecPlaneAxis(SchemaAttrText::rigExecPlaneAxis);
+const TfToken _tRigExecPlaneBounds(SchemaAttrText::rigExecPlaneBounds);
+const TfToken _tWire(SchemaValueText::wire);
+const TfToken _tGeometry(SchemaValueText::geometry),
+    _tCage(SchemaValueText::cage);
+const TfToken _tBrackets(SchemaValueText::brackets),
+    _tShell(SchemaValueText::shell);
+const TfToken _tFalloff(SchemaValueText::falloff);
+const TfToken _tWeightDisplay(SchemaAttrText::guideWeightDisplay);
 const TfToken _tHeatmap("heatmap"), _tBands("bands");
 
-const TfToken _volumeInputsExtentU("inputs:extentU");
-const TfToken _volumeInputsExtentV("inputs:extentV");
-const TfToken _volumeInputsFalloffMax("inputs:falloffMax");
-const TfToken _volumeInputsFalloffMin("inputs:falloffMin");
-const TfToken _volumeInputsScaleX("inputs:scaleX");
-const TfToken _volumeInputsScaleXNeg("inputs:scaleXNeg");
-const TfToken _volumeInputsScaleXPos("inputs:scaleXPos");
-const TfToken _volumeInputsScaleY("inputs:scaleY");
-const TfToken _volumeInputsScaleYNeg("inputs:scaleYNeg");
-const TfToken _volumeInputsScaleYPos("inputs:scaleYPos");
-const TfToken _volumeInputsScaleZ("inputs:scaleZ");
-const TfToken _volumeInputsScaleZNeg("inputs:scaleZNeg");
-const TfToken _volumeInputsScaleZPos("inputs:scaleZPos");
+const TfToken _volumeInputsExtentU(SchemaAttrText::inputsExtentU);
+const TfToken _volumeInputsExtentV(SchemaAttrText::inputsExtentV);
+const TfToken _volumeInputsFalloffMax(SchemaAttrText::inputsFalloffMax);
+const TfToken _volumeInputsFalloffMin(SchemaAttrText::inputsFalloffMin);
+const TfToken _volumeInputsScaleX(SchemaAttrText::inputsScaleX);
+const TfToken _volumeInputsScaleXNeg(SchemaAttrText::inputsScaleXNeg);
+const TfToken _volumeInputsScaleXPos(SchemaAttrText::inputsScaleXPos);
+const TfToken _volumeInputsScaleY(SchemaAttrText::inputsScaleY);
+const TfToken _volumeInputsScaleYNeg(SchemaAttrText::inputsScaleYNeg);
+const TfToken _volumeInputsScaleYPos(SchemaAttrText::inputsScaleYPos);
+const TfToken _volumeInputsScaleZ(SchemaAttrText::inputsScaleZ);
+const TfToken _volumeInputsScaleZNeg(SchemaAttrText::inputsScaleZNeg);
+const TfToken _volumeInputsScaleZPos(SchemaAttrText::inputsScaleZPos);
 
 namespace {
 
 // Tokens only this TU draws with; no other guide TU reads them.
 const TfToken _tFaceVarying("faceVarying");
-const TfToken _tRigExecCurve("rigExec:curve");
+const TfToken _tRigExecCurve(SchemaAttrText::rigExecCurve);
 const TfToken _tVertex("vertex");
 
 // Influence volume guides.

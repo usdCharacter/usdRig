@@ -4,6 +4,7 @@
 #ifndef RIGEXEC_MOVER_GRAPH_TYPES_H
 #define RIGEXEC_MOVER_GRAPH_TYPES_H
 
+#include "rigExecSchema/schemaNames.h"
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec3d.h"
 #include "pxr/base/gf/vec3f.h"
@@ -79,10 +80,10 @@ RigExecIsDerivedMatrixOp(RigExecRevisionOp op)
 /// names the input: the phase sits where the binding is, so any input can
 /// carry one and no schema attribute is needed to introduce another.
 enum class RigExecReadPhaseKind {
-    Base,       ///< the authored value: what the stage resolves at this time
-    Preceding,  ///< the value immediately before the reading mover
-    Final,      ///< the value after every mover that writes it has run
-    AtPrim,     ///< the value as of when the walk finished with a named prim
+    Base,      ///< the authored value: what the stage resolves at this time
+    Preceding, ///< the value immediately before the reading mover
+    Final,     ///< the value after every mover that writes it has run
+    AtPrim,    ///< the value as of when the walk finished with a named prim
 };
 
 /// A resolved read phase. \p prim is meaningful only for AtPrim.
@@ -98,11 +99,18 @@ struct RigExecReadPhase {
     RigExecReadPhaseKind kind = RigExecReadPhaseKind::Base;
     SdfPath prim;
 
-    bool IsBase() const { return kind == RigExecReadPhaseKind::Base; }
-    bool operator==(const RigExecReadPhase &o) const {
+    bool IsBase() const
+    {
+        return kind == RigExecReadPhaseKind::Base;
+    }
+    bool operator==(const RigExecReadPhase &o) const
+    {
         return kind == o.kind && prim == o.prim;
     }
-    bool operator!=(const RigExecReadPhase &o) const { return !(*this == o); }
+    bool operator!=(const RigExecReadPhase &o) const
+    {
+        return !(*this == o);
+    }
     /// Stable text for digests and diagnostics.
     std::string GetAsString() const;
 };
@@ -118,8 +126,8 @@ inline constexpr const char *RigExecReadPhaseMetadataName = "rigExecReadPhase";
 /// Accepts `base`, `preceding`, `final`, or an absolute prim path. Returns
 /// false for anything else -- including a relative path, which has no
 /// unambiguous meaning here -- and fills \p error.
-bool RigExecParseReadPhase(
-    const std::string &authored, RigExecReadPhase *phase, std::string *error);
+bool RigExecParseReadPhase(const std::string &authored, RigExecReadPhase *phase,
+                           std::string *error);
 
 /// Where one revision reads its side inputs from.
 ///
@@ -138,9 +146,10 @@ struct RigExecBlendSampleBinding {
     /// the sparse one. Never both: the compiler rejects a sample that
     /// authors both relationships rather than picking a winner.
     SdfPath blendShape;
-    bool operator==(const RigExecBlendSampleBinding &o) const {
-        return sample == o.sample && points == o.points &&
-               phase == o.phase && blendShape == o.blendShape;
+    bool operator==(const RigExecBlendSampleBinding &o) const
+    {
+        return sample == o.sample && points == o.points && phase == o.phase &&
+               blendShape == o.blendShape;
     }
 };
 
@@ -160,9 +169,9 @@ struct RigExecRevisionBinding {
     /// a varying attribute read per frame belongs in neither.
     std::vector<SdfPath> externalCompileSources;
     std::vector<RigExecRevisionLeafKey> externalInputs;
-    SdfPath moverPath;        ///< the authored mover
-    SdfPath target;           ///< canonical exact write target
-    SdfPath transform;        ///< computeMatrix provider (matrix)
+    SdfPath moverPath; ///< the authored mover
+    SdfPath target;    ///< canonical exact write target
+    SdfPath transform; ///< computeMatrix provider (matrix)
     /// Optional provider the transform is measured against (matrix):
     /// T = M(transform) * inverse(M(transformSpace)).
     SdfPath transformSpace;
@@ -179,13 +188,13 @@ struct RigExecRevisionBinding {
     /// Matrix movers use [referenceTransform, referenceTransformSpace]
     /// here when an explicit neutral solve supplies the deformation bind.
     std::vector<SdfPath> influences;
-    SdfPath weightObject;     ///< computeWeightPacket provider
-    SdfPath base;             ///< authored-base points (blend/volume/lattice)
-    SdfPath topologyCounts;   ///< faceVertexCounts (smooth/surface)
-    SdfPath topologyIndices;  ///< faceVertexIndices (smooth/surface)
-    SdfPath cagePoints;       ///< lattice cage points
-    SdfPath surfacePoints;    ///< driver surface points
-    SdfPath bindCoords;       ///< ribbon / wire bind coordinates
+    SdfPath weightObject;      ///< computeWeightPacket provider
+    SdfPath base;              ///< authored-base points (blend/volume/lattice)
+    SdfPath topologyCounts;    ///< faceVertexCounts (smooth/surface)
+    SdfPath topologyIndices;   ///< faceVertexIndices (smooth/surface)
+    SdfPath cagePoints;        ///< lattice cage points
+    SdfPath surfacePoints;     ///< driver surface points
+    SdfPath bindCoords;        ///< ribbon / wire bind coordinates
     SdfPath driverCurvePoints; ///< wire: driver NURBS curve points
     SdfPath driverCurveOrder;  ///< wire: that curve's order
     SdfPath driverCurveKnots;  ///< wire: that curve's knots
@@ -198,14 +207,14 @@ struct RigExecRevisionBinding {
     /// the rest are rigExec:driverBaseTransformSpaces.
     int driverSpaceCount = 0;
     int driverBaseTransformCount = 0;
-    SdfPath driverFrames;     ///< aggregate frame provider
-    SdfPath widths;           ///< authored widths (extent maintenance)
+    SdfPath driverFrames; ///< aggregate frame provider
+    SdfPath widths;       ///< authored widths (extent maintenance)
     /// Surface projector: rigExec:shaderDialSources, in order, at most
     /// sixteen, and the static asset-to-mesh map. The historical field name
     /// is retained on the C++/binary binding; provider frames are asset-space.
     std::vector<SdfPath> shaderDials;
     GfMatrix4d meshWorldInverse{1.0};
-    std::vector<SdfPath> blendInputs;  ///< sorted blend channels
+    std::vector<SdfPath> blendInputs; ///< sorted blend channels
     std::map<SdfPath, std::vector<RigExecBlendSampleBinding>> blendSamples;
 
     /// Declared read phase per side input, keyed by the exact property path
@@ -218,12 +227,14 @@ struct RigExecRevisionBinding {
     /// point chains -- a different store with a different value type.
     RigExecReadPhase transformPhase;
 
-    std::vector<std::pair<SdfPath, RigExecReadPhase>> GetPhasedInputs() const {
-        std::vector<std::pair<SdfPath, RigExecReadPhase>> result(
-            phases.begin(), phases.end());
+    std::vector<std::pair<SdfPath, RigExecReadPhase>> GetPhasedInputs() const
+    {
+        std::vector<std::pair<SdfPath, RigExecReadPhase>> result(phases.begin(),
+                                                                 phases.end());
         for (const auto &[input, samples] : blendSamples)
             for (const auto &sample : samples)
-                if (!sample.phase.IsBase()) result.emplace_back(sample.points, sample.phase);
+                if (!sample.phase.IsBase())
+                    result.emplace_back(sample.points, sample.phase);
         return result;
     }
 
@@ -240,7 +251,7 @@ struct RigExecRevisionBinding {
 /// deliberate exception is weights: null means no weight object was bound,
 /// so inputs:defaultWeight supplies the common envelope.
 struct RigExecProviderValues {
-    const GfMatrix4d *transform = nullptr;          ///< computeMatrix
+    const GfMatrix4d *transform = nullptr; ///< computeMatrix
     /// computeMatrix per binding.influences entry, in that order (skin).
     const std::vector<GfMatrix4d> *influenceTransforms = nullptr;
     /// computeMatrix of binding.carrySpace (rigExec:space), read at the
@@ -253,20 +264,25 @@ struct RigExecProviderValues {
     /// Bound computeWeightPacket, or null to use inputs:defaultWeight.
     const RigExecWeightPacket *weights = nullptr;
     const RigExecPointFrameArray *driverFrames = nullptr;
-    std::vector<GfVec3f> basePoints;   ///< owning stage/reference adapter form
+    std::vector<GfVec3f> basePoints; ///< owning stage/reference adapter form
     const GfVec3f *borrowedBasePoints = nullptr;
     size_t borrowedBaseCount = 0;
     bool borrowsBasePoints = false;
-    const GfVec3f *BasePointData() const {
+    const GfVec3f *BasePointData() const
+    {
         return borrowsBasePoints ? borrowedBasePoints : basePoints.data();
     }
-    size_t BasePointCount() const {
+    size_t BasePointCount() const
+    {
         return borrowsBasePoints ? borrowedBaseCount : basePoints.size();
     }
-    void CopyBasePoints(std::vector<GfVec3f> *out) const {
+    void CopyBasePoints(std::vector<GfVec3f> *out) const
+    {
         const size_t n = BasePointCount();
-        if (n) out->assign(BasePointData(),BasePointData()+n);
-        else out->clear();
+        if (n)
+            out->assign(BasePointData(), BasePointData() + n);
+        else
+            out->clear();
     }
     /// Summed channel deltas. Mutable so a caller that lends them
     /// (`lendBlendDeltas`) gives them up through the const assembler input.
@@ -334,7 +350,8 @@ struct RigExecExternalPayload {
     bool valid = false;
     VtValue data;
 
-    bool operator==(const RigExecExternalPayload &o) const {
+    bool operator==(const RigExecExternalPayload &o) const
+    {
         return schema == o.schema && valid == o.valid && data == o.data;
     }
 };
@@ -467,9 +484,10 @@ struct RigExecRevisionLeafKey {
     RigExecRevisionLeafTime time = RigExecRevisionLeafTime::AtTime;
     RigExecRevisionLeafFlavour flavour = RigExecRevisionLeafFlavour::Raw;
     VtValue fallback;
-    bool operator==(const RigExecRevisionLeafKey &o) const {
+    bool operator==(const RigExecRevisionLeafKey &o) const
+    {
         return path == o.path && type == o.type && time == o.time &&
-            flavour == o.flavour && fallback == o.fallback;
+               flavour == o.flavour && fallback == o.fallback;
     }
 };
 
@@ -491,12 +509,17 @@ struct RigExecRevisionLeafDecl {
     /// RigExecAssembleFromLeaves covers the operation.
     bool assembles = false;
 
-    RigExecRevisionLeafDecl() { roles.fill(-1); }
-    int Add(RigExecRevisionLeafKey key) {
+    RigExecRevisionLeafDecl()
+    {
+        roles.fill(-1);
+    }
+    int Add(RigExecRevisionLeafKey key)
+    {
         keys.push_back(std::move(key));
         return int(keys.size()) - 1;
     }
-    int Role(RigExecRevisionLeafRole role) const {
+    int Role(RigExecRevisionLeafRole role) const
+    {
         return roles[size_t(role)];
     }
 };
@@ -521,6 +544,6 @@ struct RigExecRevisionLeafView {
     const RigExecExternalPayload *external = nullptr;
 };
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_MOVER_GRAPH_TYPES_H
+#endif // RIGEXEC_MOVER_GRAPH_TYPES_H

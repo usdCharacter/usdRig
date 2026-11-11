@@ -13,6 +13,7 @@
 #ifndef RIGEXEC_BINARY_CLOTH_PLAYBACK_H
 #define RIGEXEC_BINARY_CLOTH_PLAYBACK_H
 
+#include "rigExecSchema/schemaNames.h"
 #include "rigExecBinary/external.h"
 #include "rigExecGraph/windowHistory.h"
 #include "rigExecMath/clothKernel.h"
@@ -27,7 +28,8 @@
 namespace rigExec {
 
 /// The schema type a runtime installs RigExecClothPlaybackKernel for.
-constexpr char RigExecClothMoverType[] = "RigExecClothMover";
+constexpr const char *const RigExecClothMoverType =
+    SchemaTypeName::RigExecClothMover;
 
 /// The declared inputs, in declaration order. The compiled rig's come first and
 /// read at Default (rigExec:frameRate 0 takes the stage's time codes per
@@ -96,14 +98,15 @@ struct RigExecClothCompiledData {
         const auto bits = [](const std::vector<float> &a,
                              const std::vector<float> &b) {
             return a.size() == b.size() &&
-                   (a.empty() ||
-                    std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0);
+                   (a.empty() || std::memcmp(a.data(), b.data(),
+                                             a.size() * sizeof(float)) == 0);
         };
         return pointCount == o.pointCount && counts == o.counts &&
                indices == o.indices && leftHanded == o.leftHanded &&
                bits(rest, o.rest) && bits(pins, o.pins) &&
                settings == o.settings &&
-               std::memcmp(&frameSeconds, &o.frameSeconds, sizeof(double)) == 0 &&
+               std::memcmp(&frameSeconds, &o.frameSeconds, sizeof(double)) ==
+                   0 &&
                colliders == o.colliders && model == o.model;
     }
 };
@@ -125,21 +128,25 @@ namespace cloth_playback_detail {
 constexpr char kTag[] = {'R', 'C', 'L', '3'};
 constexpr char kLegacyRevision = '1';
 
-inline void PutU32(std::vector<uint8_t> *out, uint32_t v)
+inline void
+PutU32(std::vector<uint8_t> *out, uint32_t v)
 {
     const uint8_t *b = reinterpret_cast<const uint8_t *>(&v);
     out->insert(out->end(), b, b + sizeof(v));
 }
-inline void PutBytes(std::vector<uint8_t> *out, const void *data, size_t size)
+inline void
+PutBytes(std::vector<uint8_t> *out, const void *data, size_t size)
 {
     const uint8_t *b = static_cast<const uint8_t *>(data);
     out->insert(out->end(), b, b + size);
 }
 template <class T>
-inline void PutVector(std::vector<uint8_t> *out, const std::vector<T> &v)
+inline void
+PutVector(std::vector<uint8_t> *out, const std::vector<T> &v)
 {
     PutU32(out, uint32_t(v.size()));
-    if (!v.empty()) PutBytes(out, v.data(), v.size() * sizeof(T));
+    if (!v.empty())
+        PutBytes(out, v.data(), v.size() * sizeof(T));
 }
 
 struct Reader {
@@ -149,7 +156,10 @@ struct Reader {
     template <class T> T Get()
     {
         T v{};
-        if (!ok || at + sizeof(T) > size) { ok = false; return v; }
+        if (!ok || at + sizeof(T) > size) {
+            ok = false;
+            return v;
+        }
         std::memcpy(&v, data + at, sizeof(T));
         at += sizeof(T);
         return v;
@@ -158,9 +168,13 @@ struct Reader {
     {
         const uint32_t n = Get<uint32_t>();
         std::vector<T> v;
-        if (!ok || at + size_t(n) * sizeof(T) > size) { ok = false; return v; }
+        if (!ok || at + size_t(n) * sizeof(T) > size) {
+            ok = false;
+            return v;
+        }
         v.resize(n);
-        if (n) std::memcpy(v.data(), data + at, size_t(n) * sizeof(T));
+        if (n)
+            std::memcpy(v.data(), data + at, size_t(n) * sizeof(T));
         at += size_t(n) * sizeof(T);
         return v;
     }
@@ -171,35 +185,43 @@ struct Reader {
     }
 };
 
-}  // namespace cloth_playback_detail
+} // namespace cloth_playback_detail
 
-inline void RigExecEncodeClothModel(const RigExecClothModel &model, std::vector<uint8_t> *out)
+inline void
+RigExecEncodeClothModel(const RigExecClothModel &model,
+                        std::vector<uint8_t> *out)
 {
     using namespace cloth_playback_detail;
     PutVector(out, model.triangleUV);
     PutU32(out, uint32_t(model.profiles.size()));
     for (const auto &p : model.profiles) {
-        PutU32(out, uint32_t(p.kind)); PutU32(out, p.hard ? 1 : 0);
+        PutU32(out, uint32_t(p.kind));
+        PutU32(out, p.hard ? 1 : 0);
         PutU32(out, p.twoSided ? 1 : 0);
         PutU32(out, uint32_t(p.targetCollider));
-        const float values[] = {p.minStrength, p.maxStrength, p.compliance, p.warp,
-            p.weft, p.normal, p.thickness, p.friction, p.restLength};
+        const float values[] = {p.minStrength, p.maxStrength, p.compliance,
+                                p.warp,        p.weft,        p.normal,
+                                p.thickness,   p.friction,    p.restLength};
         PutBytes(out, values, sizeof(values));
         PutVector(out, p.forceCurve);
-        for (const auto &map : p.maps) PutVector(out, map);
+        for (const auto &map : p.maps)
+            PutVector(out, map);
         for (const auto *samples : {&p.source, &p.target}) {
             PutU32(out, uint32_t(samples->size()));
             for (const auto &sample : *samples) {
-                for (int32_t i : sample.vertices) PutU32(out, uint32_t(i));
+                for (int32_t i : sample.vertices)
+                    PutU32(out, uint32_t(i));
                 PutBytes(out, sample.weights.data(), 3 * sizeof(float));
             }
         }
-        PutVector(out, p.sourceMask); PutVector(out, p.targetMask);
+        PutVector(out, p.sourceMask);
+        PutVector(out, p.targetMask);
     }
 }
 
-inline bool RigExecDecodeClothModel(cloth_playback_detail::Reader *reader,
-                                    RigExecClothModel *model)
+inline bool
+RigExecDecodeClothModel(cloth_playback_detail::Reader *reader,
+                        RigExecClothModel *model)
 {
     auto &r = *reader;
     model->profiles.clear();
@@ -209,27 +231,35 @@ inline bool RigExecDecodeClothModel(cloth_playback_detail::Reader *reader,
         RigExecClothProfile p;
         p.kind = RigExecClothProfileKind(r.Get<uint32_t>());
         const uint32_t hard = r.Get<uint32_t>();
-        if (hard > 1) r.ok = false;
+        if (hard > 1)
+            r.ok = false;
         p.hard = hard != 0;
         const uint32_t twoSided = r.Get<uint32_t>();
-        if (twoSided > 1) r.ok = false;
+        if (twoSided > 1)
+            r.ok = false;
         p.twoSided = twoSided != 0;
         p.targetCollider = int32_t(r.Get<uint32_t>());
-        float *values[] = {&p.minStrength, &p.maxStrength, &p.compliance, &p.warp,
-            &p.weft, &p.normal, &p.thickness, &p.friction, &p.restLength};
-        for (float *value : values) *value = r.Get<float>();
+        float *values[] = {&p.minStrength, &p.maxStrength, &p.compliance,
+                           &p.warp,        &p.weft,        &p.normal,
+                           &p.thickness,   &p.friction,    &p.restLength};
+        for (float *value : values)
+            *value = r.Get<float>();
         p.forceCurve = r.GetVector<float>();
-        for (auto &map : p.maps) map = r.GetVector<float>();
+        for (auto &map : p.maps)
+            map = r.GetVector<float>();
         for (auto *samples : {&p.source, &p.target}) {
             const uint32_t n = r.Get<uint32_t>();
             for (uint32_t j = 0; r.ok && j < n; ++j) {
                 RigExecClothSample sample;
-                for (int32_t &i : sample.vertices) i = int32_t(r.Get<uint32_t>());
-                for (float &v : sample.weights) v = r.Get<float>();
+                for (int32_t &i : sample.vertices)
+                    i = int32_t(r.Get<uint32_t>());
+                for (float &v : sample.weights)
+                    v = r.Get<float>();
                 samples->push_back(sample);
             }
         }
-        p.sourceMask = r.GetVector<float>(); p.targetMask = r.GetVector<float>();
+        p.sourceMask = r.GetVector<float>();
+        p.targetMask = r.GetVector<float>();
         model->profiles.push_back(std::move(p));
     }
     return r.ok;
@@ -237,7 +267,8 @@ inline bool RigExecDecodeClothModel(cloth_playback_detail::Reader *reader,
 
 /// The compiled rig's bytes, as a .rigexec file holds them.
 inline void
-RigExecEncodeClothCompiledData(const RigExecClothCompiledData &e, std::vector<uint8_t> *out)
+RigExecEncodeClothCompiledData(const RigExecClothCompiledData &e,
+                               std::vector<uint8_t> *out)
 {
     using namespace cloth_playback_detail;
     out->assign(kTag, kTag + sizeof(kTag));
@@ -272,13 +303,15 @@ RigExecEncodeClothCompiledData(const RigExecClothCompiledData &e, std::vector<ui
 /// \p legacy, when set, says whether the bytes were RCL1. False with \p why
 /// on bytes neither wrote.
 inline bool
-RigExecDecodeClothCompiledData(const uint8_t *data, size_t size, RigExecClothCompiledData *e,
-                        std::string *why, bool *legacy = nullptr)
+RigExecDecodeClothCompiledData(const uint8_t *data, size_t size,
+                               RigExecClothCompiledData *e, std::string *why,
+                               bool *legacy = nullptr)
 {
     using namespace cloth_playback_detail;
     if (size < sizeof(kTag) || std::memcmp(data, kTag, 3) != 0 ||
         (data[3] != kTag[3] && data[3] != kLegacyRevision)) {
-        if (why) *why = "not a cloth mover compiled rig";
+        if (why)
+            *why = "not a cloth mover compiled rig";
         return false;
     }
     const bool rcl1 = data[3] == kLegacyRevision;
@@ -313,15 +346,18 @@ RigExecDecodeClothCompiledData(const uint8_t *data, size_t size, RigExecClothCom
         out.colliders.push_back(std::move(c));
     }
     if (!rcl1 && !RigExecDecodeClothModel(&r, &out.model)) {
-        if (why) *why = "corrupt cloth material model";
+        if (why)
+            *why = "corrupt cloth material model";
         return false;
     }
     if (!r.ok || r.at != size) {
-        if (why) *why = "corrupt cloth mover compiled rig";
+        if (why)
+            *why = "corrupt cloth mover compiled rig";
         return false;
     }
     *e = std::move(out);
-    if (legacy) *legacy = rcl1;
+    if (legacy)
+        *legacy = rcl1;
     return true;
 }
 
@@ -337,42 +373,51 @@ RigExecClothInputSlot(size_t k, bool legacy)
 /// Builds \p compiledRig's mesh and colliders. False with \p why when the cloth
 /// topology, rest points or pins, or a collider's topology, are unusable.
 inline bool
-RigExecPrepareCloth(const RigExecClothCompiledData &compiledRig, RigExecClothPrepared *out,
-                    std::string *why)
+RigExecPrepareCloth(const RigExecClothCompiledData &compiledRig,
+                    RigExecClothPrepared *out, std::string *why)
 {
     const auto fail = [why](const std::string &text) {
-        if (why) *why = text;
+        if (why)
+            *why = text;
         return false;
     };
     if (compiledRig.rest.size() != size_t(compiledRig.pointCount) * 3)
         return fail("the cloth rest points do not match its point count");
-    if (!compiledRig.pins.empty() && compiledRig.pins.size() != compiledRig.pointCount)
-        return fail("rigExec:pinWeights holds " + std::to_string(compiledRig.pins.size()) +
-                    " weights for " + std::to_string(compiledRig.pointCount) + " points");
-    if (!(compiledRig.frameSeconds > 0.0) || !std::isfinite(compiledRig.frameSeconds))
+    if (!compiledRig.pins.empty() &&
+        compiledRig.pins.size() != compiledRig.pointCount)
+        return fail("rigExec:pinWeights holds " +
+                    std::to_string(compiledRig.pins.size()) + " weights for " +
+                    std::to_string(compiledRig.pointCount) + " points");
+    if (!(compiledRig.frameSeconds > 0.0) ||
+        !std::isfinite(compiledRig.frameSeconds))
         return fail("the cloth frame rate is not positive");
     RigExecClothPrepared prepared;
     prepared.compiledRig = compiledRig;
     std::string reason;
-    if (!RigExecBuildClothMesh(compiledRig.pointCount, compiledRig.counts.data(),
-                               compiledRig.counts.size(), compiledRig.indices.data(),
-                               compiledRig.indices.size(), compiledRig.leftHanded,
-                               compiledRig.rest.data(),
-                               compiledRig.pins.empty() ? nullptr : compiledRig.pins.data(),
-                               compiledRig.settings, &prepared.mesh, &reason)) {
+    if (!RigExecBuildClothMesh(
+            compiledRig.pointCount, compiledRig.counts.data(),
+            compiledRig.counts.size(), compiledRig.indices.data(),
+            compiledRig.indices.size(), compiledRig.leftHanded,
+            compiledRig.rest.data(),
+            compiledRig.pins.empty() ? nullptr : compiledRig.pins.data(),
+            compiledRig.settings, &prepared.mesh, &reason)) {
         return fail(reason);
     }
     for (const RigExecClothColliderTopology &c : compiledRig.colliders) {
-        if (!RigExecAppendClothCollider(c.pointCount, c.counts.data(), c.counts.size(),
-                                        c.indices.data(), c.indices.size(),
-                                        c.leftHanded, &prepared.colliders)) {
+        if (!RigExecAppendClothCollider(c.pointCount, c.counts.data(),
+                                        c.counts.size(), c.indices.data(),
+                                        c.indices.size(), c.leftHanded,
+                                        &prepared.colliders)) {
             return fail("collider " + c.path + " has invalid topology");
         }
     }
     std::vector<size_t> colliderCounts;
-    for (const auto &c : compiledRig.colliders) colliderCounts.push_back(c.pointCount);
-    if (!RigExecPrepareClothModel(&prepared.mesh, compiledRig.model, compiledRig.rest.data(),
-                                 colliderCounts, &reason)) return fail(reason);
+    for (const auto &c : compiledRig.colliders)
+        colliderCounts.push_back(c.pointCount);
+    if (!RigExecPrepareClothModel(&prepared.mesh, compiledRig.model,
+                                  compiledRig.rest.data(), colliderCounts,
+                                  &reason))
+        return fail(reason);
     *out = std::move(prepared);
     return true;
 }
@@ -381,8 +426,8 @@ RigExecPrepareCloth(const RigExecClothCompiledData &compiledRig, RigExecClothPre
 /// compiled rig order, and the parameters as doubles. False when a count disagrees
 /// with the compiled rig.
 inline bool
-RigExecClothPacket(const RigExecClothCompiledData &compiledRig, const float *entering,
-                   size_t enteringCount,
+RigExecClothPacket(const RigExecClothCompiledData &compiledRig,
+                   const float *entering, size_t enteringCount,
                    const std::vector<const float *> &colliderPoints,
                    const std::vector<size_t> &colliderCounts,
                    const RigExecClothParameters &p, RigExecWindowPacket *out)
@@ -394,16 +439,19 @@ RigExecClothPacket(const RigExecClothCompiledData &compiledRig, const float *ent
     }
     size_t total = 3 * size_t(compiledRig.pointCount);
     for (size_t k = 0; k < compiledRig.colliders.size(); ++k) {
-        if (colliderCounts[k] != compiledRig.colliders[k].pointCount || !colliderPoints[k])
+        if (colliderCounts[k] != compiledRig.colliders[k].pointCount ||
+            !colliderPoints[k])
             return false;
         total += 3 * colliderCounts[k];
     }
     out->points.resize(total);
     float *at = out->points.data();
-    std::memcpy(at, entering, 3 * size_t(compiledRig.pointCount) * sizeof(float));
+    std::memcpy(at, entering,
+                3 * size_t(compiledRig.pointCount) * sizeof(float));
     at += 3 * size_t(compiledRig.pointCount);
     for (size_t k = 0; k < compiledRig.colliders.size(); ++k) {
-        std::memcpy(at, colliderPoints[k], 3 * colliderCounts[k] * sizeof(float));
+        std::memcpy(at, colliderPoints[k],
+                    3 * colliderCounts[k] * sizeof(float));
         at += 3 * colliderCounts[k];
     }
     out->scalars = {double(p.stretchCompliance), double(p.bendCompliance),
@@ -423,33 +471,40 @@ RigExecClothPacket(const RigExecClothCompiledData &compiledRig, const float *ent
 inline bool
 RigExecClothTicksFromPackets(const RigExecClothPrepared &prepared,
                              const RigExecWindowPacket *const *ticks,
-                             size_t count, std::vector<RigExecClothTick> *window,
+                             size_t count,
+                             std::vector<RigExecClothTick> *window,
                              std::string *why)
 {
     const RigExecClothCompiledData &compiledRig = prepared.compiledRig;
-    const size_t expected = prepared.colliders.pointCount * 3 + 3 * size_t(compiledRig.pointCount);
+    const size_t expected =
+        prepared.colliders.pointCount * 3 + 3 * size_t(compiledRig.pointCount);
     const auto usable = [&](const RigExecWindowPacket *t) {
         return t && t->points.size() == expected &&
                t->scalars.size() == RigExecClothParameterCount;
     };
     window->clear();
     if (!count || !usable(ticks[count - 1])) {
-        if (why) *why = "the cloth's current inputs are unusable";
+        if (why)
+            *why = "the cloth's current inputs are unusable";
         return false;
     }
     size_t begin = count - 1;
-    while (begin > 0 && usable(ticks[begin - 1])) --begin;
+    while (begin > 0 && usable(ticks[begin - 1]))
+        --begin;
     // At most the history a window may reach back over, then the start.
-    const size_t keep = size_t(RigExecClothHistoryFrames(compiledRig.settings)) + 1;
-    if (count - begin > keep) begin = count - keep;
+    const size_t keep =
+        size_t(RigExecClothHistoryFrames(compiledRig.settings)) + 1;
+    if (count - begin > keep)
+        begin = count - keep;
     window->reserve(count - begin);
     for (size_t k = begin; k < count; ++k) {
         const RigExecWindowPacket &t = *ticks[k];
         RigExecClothTick tick;
         tick.entering = t.points.data();
-        tick.colliders = prepared.colliders.pointCount
-                             ? t.points.data() + 3 * size_t(compiledRig.pointCount)
-                             : nullptr;
+        tick.colliders =
+            prepared.colliders.pointCount
+                ? t.points.data() + 3 * size_t(compiledRig.pointCount)
+                : nullptr;
         RigExecClothParameters &p = tick.parameters;
         p.stretchCompliance = float(t.scalars[0]);
         p.bendCompliance = float(t.scalars[1]);
@@ -463,9 +518,9 @@ RigExecClothTicksFromPackets(const RigExecClothPrepared &prepared,
         p.friction = float(t.scalars[9]);
         window->push_back(tick);
     }
-    const size_t start = RigExecClothWindowStart(prepared.mesh, prepared.colliders,
-                                                 compiledRig.settings, window->data(),
-                                                 window->size());
+    const size_t start = RigExecClothWindowStart(
+        prepared.mesh, prepared.colliders, compiledRig.settings, window->data(),
+        window->size());
     window->erase(window->begin(), window->begin() + std::ptrdiff_t(start));
     return true;
 }
@@ -484,9 +539,9 @@ RigExecClothSolvePackets(const RigExecClothPrepared &prepared,
     if (!RigExecClothTicksFromPackets(prepared, ticks, count, &window, why))
         return false;
     RigExecClothWorkspace workspace;
-    return RigExecSolveCloth(prepared.mesh, prepared.colliders, compiledRig.settings,
-                             window.data(), window.size(), compiledRig.frameSeconds,
-                             &workspace, out, why);
+    return RigExecSolveCloth(prepared.mesh, prepared.colliders,
+                             compiledRig.settings, window.data(), window.size(),
+                             compiledRig.frameSeconds, &workspace, out, why);
 }
 
 namespace cloth_playback_detail {
@@ -507,9 +562,11 @@ Prepare(const uint8_t *compiledRig, size_t size, std::string *error)
 {
     RigExecClothCompiledData decoded;
     auto state = std::make_shared<State>();
-    if (!RigExecDecodeClothCompiledData(compiledRig, size, &decoded, error, &state->legacy))
+    if (!RigExecDecodeClothCompiledData(compiledRig, size, &decoded, error,
+                                        &state->legacy))
         return nullptr;
-    if (!RigExecPrepareCloth(decoded, &state->prepared, error)) return nullptr;
+    if (!RigExecPrepareCloth(decoded, &state->prepared, error))
+        return nullptr;
     return state;
 }
 
@@ -517,7 +574,8 @@ inline const float *
 ScalarFloat(const RigExecExternalInputValue *inputs, size_t count, size_t k,
             float *scratch)
 {
-    if (k >= count || !inputs[k].hasValue || !inputs[k].data) return nullptr;
+    if (k >= count || !inputs[k].hasValue || !inputs[k].data)
+        return nullptr;
     if (inputs[k].type == uint8_t(RigExecExternalInputType::Float)) {
         std::memcpy(scratch, inputs[k].data, sizeof(float));
         return scratch;
@@ -540,16 +598,21 @@ Capture(const void *state, const RigExecExternalPhasedPoints *phased,
         size_t inputCount, const float *xyz, size_t pointCount,
         RigExecWindowPacket *packet)
 {
-    if (!state || !packet) return false;
+    if (!state || !packet)
+        return false;
     const auto &held = *static_cast<const State *>(state);
     const RigExecClothCompiledData &compiledRig = held.prepared.compiledRig;
-    const auto slot = [&](size_t k) { return RigExecClothInputSlot(k, held.legacy); };
+    const auto slot = [&](size_t k) {
+        return RigExecClothInputSlot(k, held.legacy);
+    };
     RigExecClothParameters p;
-    if (held.legacy) p.damping = kLegacyDamping;
+    if (held.legacy)
+        p.damping = kLegacyDamping;
     float v = 0.0f;
     const auto scalar = [&](size_t k, float *out) {
         const float *got = ScalarFloat(inputs, inputCount, slot(k), &v);
-        if (got) *out = *got;
+        if (got)
+            *out = *got;
     };
     scalar(RigExecClothStretchCompliance, &p.stretchCompliance);
     scalar(RigExecClothBendCompliance, &p.bendCompliance);
@@ -574,23 +637,27 @@ Capture(const void *state, const RigExecExternalPhasedPoints *phased,
                 counts[k] = phased[j].count;
             }
         }
-        const size_t at = slot(RigExecClothFirstCollider) + k * RigExecClothInputsPerCollider;
+        const size_t at =
+            slot(RigExecClothFirstCollider) + k * RigExecClothInputsPerCollider;
         if (!colliders[k] && at < inputCount && inputs[at].hasValue &&
             inputs[at].type == uint8_t(RigExecExternalInputType::Vec3fArray)) {
             colliders[k] = static_cast<const float *>(inputs[at].data);
             counts[k] = inputs[at].count;
         }
     }
-    return RigExecClothPacket(compiledRig, xyz, pointCount, colliders, counts, p, packet);
+    return RigExecClothPacket(compiledRig, xyz, pointCount, colliders, counts,
+                              p, packet);
 }
 
 inline bool
 ApplyWindow(const void *state, const RigExecWindowPacket *const *ticks,
             size_t tickCount, float *xyz, size_t pointCount)
 {
-    if (!state) return false;
+    if (!state)
+        return false;
     const auto &prepared = static_cast<const State *>(state)->prepared;
-    if (pointCount != prepared.compiledRig.pointCount) return false;
+    if (pointCount != prepared.compiledRig.pointCount)
+        return false;
     std::vector<float> out(3 * pointCount);
     std::string why;
     if (!RigExecClothSolvePackets(prepared, ticks, tickCount, out.data(), &why))
@@ -602,13 +669,14 @@ ApplyWindow(const void *state, const RigExecWindowPacket *const *ticks,
 // A cloth never runs outside a window; apply alone solves one tick, which
 // is its entering points.
 inline bool
-Apply(const void *, const uint8_t *, size_t, const RigExecExternalPhasedPoints *,
-      size_t, const RigExecExternalInputValue *, size_t, float *, size_t)
+Apply(const void *, const uint8_t *, size_t,
+      const RigExecExternalPhasedPoints *, size_t,
+      const RigExecExternalInputValue *, size_t, float *, size_t)
 {
     return true;
 }
 
-}  // namespace cloth_playback_detail
+} // namespace cloth_playback_detail
 
 /// The cloth mover's playback kernel. A value, so no static initializer
 /// stands between a reader and it.
@@ -623,6 +691,6 @@ RigExecClothPlaybackKernel()
     return kernel;
 }
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_BINARY_CLOTH_PLAYBACK_H
+#endif // RIGEXEC_BINARY_CLOTH_PLAYBACK_H

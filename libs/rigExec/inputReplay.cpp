@@ -458,24 +458,39 @@ ApplyOperation(const Operation &op, const SdfLayerRefPtr &layer,
                            ? RebindField(op.field, op.value, aliases)
                            : Rebind(op.value, aliases);
     const auto delegate = layer->GetStateDelegate();
+    // A field, a dictionary key and a time sample are the three slots a value
+    // can sit in; an empty value is the record of that slot being removed.
+    const auto writeField = [&](const TfToken &field, const VtValue &v) {
+        if (v.IsEmpty()) {
+            layer->EraseField(op.path, field);
+        } else {
+            layer->SetField(op.path, field, v);
+        }
+    };
+    const auto writeDictKey = [&](const TfToken &field, const TfToken &key,
+                                  const VtValue &v) {
+        if (v.IsEmpty()) {
+            layer->EraseFieldDictValueByKey(op.path, field, key);
+        } else {
+            layer->SetFieldDictValueByKey(op.path, field, key, v);
+        }
+    };
+    const auto writeSample = [&](double time, const VtValue &v) {
+        if (v.IsEmpty()) {
+            layer->EraseTimeSample(op.path, time);
+        } else {
+            layer->SetTimeSample(op.path, time, v);
+        }
+    };
     switch (op.kind) {
     case Op::Field:
-        if (value.IsEmpty())
-            layer->EraseField(op.path, op.field);
-        else
-            layer->SetField(op.path, op.field, value);
+        writeField(op.field, value);
         break;
     case Op::Dictionary:
-        if (value.IsEmpty())
-            layer->EraseFieldDictValueByKey(op.path, op.field, op.key);
-        else
-            layer->SetFieldDictValueByKey(op.path, op.field, op.key, value);
+        writeDictKey(op.field, op.key, value);
         break;
     case Op::Sample:
-        if (value.IsEmpty())
-            layer->EraseTimeSample(op.path, op.time);
-        else
-            layer->SetTimeSample(op.path, op.time, value);
+        writeSample(op.time, value);
         break;
     case Op::Create:
         delegate->CreateSpec(op.path, op.type, op.inert);
@@ -1764,557 +1779,663 @@ struct HeldReplayProgram {
     std::unique_ptr<RigExecHeldProgramGoldenObserver> golden;
     std::unique_ptr<HeldReplayRouter> router;
 };
+
+// Which record dialect a transcript uses, and how many bytes its magic spans.
+// The dialects nest: controls imply lifetimes, lifetimes imply held programs.
+struct TranscriptFormat {
+    size_t headerSize = 0;
+    bool controls = false;
+    bool lifetimes = false;
+    bool extended = false;
+};
+
+bool
+DetectTranscriptFormat(const std::string &bytes, TranscriptFormat &format)
+{
+    format.controls = bytes.compare(0, sizeof(magic) - 1, magic) == 0;
+    format.lifetimes =
+        format.controls ||
+        bytes.compare(0, sizeof(lifetimeMagic) - 1, lifetimeMagic) == 0;
+    format.extended = format.lifetimes ||
+                      bytes.compare(0, sizeof(heldMagic) - 1, heldMagic) == 0;
+    if (format.lifetimes) {
+        format.headerSize = sizeof(magic) - 1;
+    } else if (format.extended) {
+        format.headerSize = sizeof(heldMagic) - 1;
+    } else if (bytes.compare(0, sizeof(legacyMagic) - 1, legacyMagic) == 0) {
+        format.headerSize = sizeof(legacyMagic) - 1;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+// One transcript's replay state: the reconstructed source layers, stages,
+// evaluators and held programs, plus the counters the strict end index
+// checks. Every event has its own handler so the driver stays a loop.
+struct Session {
+    bool controls = false, lifetimes = false, extended = false;
+    std::vector<SdfLayerRefPtr> layers;
+    std::vector<bool> permissions;
+    std::vector<UsdStageRefPtr> stages;
+    std::vector<std::string> layerIdentifiers;
+    std::vector<bool> retiredLayers, retiredStages;
+    std::vector<std::vector<InitialSpec>> initialSpecs;
+    std::vector<bool> initialized;
+    std::vector<std::unique_ptr<RigExecRigEvaluator>> owners;
+    std::vector<size_t> actions, visits, compileCalls;
+    std::vector<unsigned> ownerStages;
+    std::vector<HeldReplayProgram> programs;
+    std::vector<Operation> pending;
+    Aliases aliases;
+    ReplayAudit audit;
+    uint64_t sequence = 0, nextComparison = 0, openComparison = 0;
+    bool end = false, comparisonOpen = false;
+    size_t compileRefusals = 0, invalidVisits = 0;
+
+    // Layers written by an initial spec get their authored content before any
+    // evaluator or stage references them, then keep their recorded permission.
+    void InitializeLayers()
+    {
+        for (size_t i = 0; i < layers.size(); ++i)
+            if (!initialized[i] && !retiredLayers[i]) {
+                layers[i]->SetPermissionToEdit(true);
+                {
+                    SdfChangeBlock block;
+                    for (const auto &spec : initialSpecs[i])
+                        for (const auto &field : spec.fields)
+                            layers[i]->SetField(spec.path, field.first,
+                                                RebindField(field.first,
+                                                            field.second,
+                                                            aliases));
+                }
+                for (const auto &spec : initialSpecs[i]) {
+                    if (layers[i]->GetSpecType(spec.path) != spec.type ||
+                        layers[i]->ListFields(spec.path).size() !=
+                            spec.fields.size())
+                        throw std::runtime_error(
+                            "initial source spec/type/presence differs: " +
+                            spec.path.GetString());
+                    for (const auto &field : spec.fields)
+                        if (ValueBytes(
+                                layers[i]->GetField(spec.path, field.first)) !=
+                            ValueBytes(RebindField(field.first, field.second,
+                                                   aliases)))
+                            throw std::runtime_error(
+                                "initial source typed bits differ: " +
+                                spec.path.GetString() + " " +
+                                field.first.GetString());
+                }
+                layers[i]->SetPermissionToEdit(permissions[i]);
+                initialized[i] = true;
+            }
+    }
+
+    void ApplyArrayAdmission(Reader &r)
+    {
+        if (!controls)
+            throw std::runtime_error(
+                "array admission action requires input format 5");
+        const auto on = r.U8();
+        if (on > 1)
+            throw std::runtime_error("invalid array admission state");
+        r.Finish();
+        RigExecSetUpstreamArrayAdmissionForTesting(on != 0);
+    }
+
+    void ApplyLayer(Reader &r)
+    {
+        const auto id = r.U32();
+        if (id != layers.size())
+            throw std::runtime_error("duplicate/missing initial layer");
+        const auto identifier = r.Text();
+        const auto anonymous = r.U8(), permission = r.U8();
+        if (anonymous > 1 || permission > 1)
+            throw std::runtime_error("invalid layer flags");
+        const auto real = r.Text(), source = r.Text();
+        if (!real.empty() && ReadFile(real) != source)
+            throw std::runtime_error("source layer bytes changed: " + real);
+        auto layer = anonymous ? SdfLayer::CreateAnonymous(".usda")
+                               : SdfLayer::FindOrOpen(identifier);
+        if (!layer)
+            throw std::runtime_error("cannot reconstruct source layer: " +
+                                     identifier);
+        if (audit.ids.count(layer))
+            throw std::runtime_error("initial layers alias unexpectedly");
+        aliases[identifier] = layer->GetIdentifier();
+        audit.reverse[layer->GetIdentifier()] = identifier;
+        audit.ids[layer] = id;
+        layers.push_back(layer);
+        permissions.push_back(bool(permission));
+        layerIdentifiers.push_back(identifier);
+        retiredLayers.push_back(false);
+        layer->SetPermissionToEdit(true);
+        layer->Clear();
+        const auto count = r.U32();
+        std::vector<InitialSpec> specs;
+        for (unsigned i = 0; i < count; ++i) {
+            InitialSpec spec;
+            spec.path = SdfPath(r.Text());
+            spec.type = SdfSpecType(r.U32());
+            const auto nf = r.U32();
+            for (unsigned f = 0; f < nf; ++f) {
+                const TfToken key(r.Text());
+                spec.fields.emplace_back(key, ReadValue(r));
+            }
+            specs.push_back(std::move(spec));
+        }
+        {
+            SdfChangeBlock block;
+            for (const auto &spec : specs)
+                if (spec.path != SdfPath::AbsoluteRootPath())
+                    layer->GetStateDelegate()->CreateSpec(spec.path, spec.type,
+                                                          false);
+            for (const auto &spec : specs)
+                for (const auto &field : spec.fields)
+                    layer->SetField(
+                        spec.path, field.first,
+                        RebindField(field.first, field.second, aliases));
+        }
+        layer->SetPermissionToEdit(bool(permission));
+        initialSpecs.push_back(std::move(specs));
+        initialized.push_back(false);
+    }
+
+    void ApplyStage(Reader &r, Event event)
+    {
+        const auto id = r.U32();
+        const auto state = ReadStageState(r.Text());
+        for (const auto layer : {state.root, state.session, state.edit})
+            if (layer != noLayer &&
+                (retiredLayers.at(layer) || !layers.at(layer)))
+                throw std::runtime_error(
+                    "stage references retired source layer");
+        // Forward anonymous-layer references are bound after every initial
+        // layer has an identity, before any evaluator exists. Already
+        // initialized layers retain their actual edit history.
+        InitializeLayers();
+        if (event == Event::Stage) {
+            if (id != stages.size())
+                throw std::runtime_error("duplicate/missing stage");
+            const auto session = state.session == noLayer
+                                     ? SdfLayerHandle()
+                                     : SdfLayerHandle(layers.at(state.session));
+            auto stage = UsdStage::Open(layers.at(state.root), session,
+                                        state.context, UsdStage::LoadNone);
+            if (!stage)
+                throw std::runtime_error("initial source stage failed");
+            stages.push_back(stage);
+            retiredStages.push_back(false);
+        }
+        if (retiredStages.at(id) || !stages.at(id))
+            throw std::runtime_error("state action on retired source stage");
+        audit.enabled = false;
+        SetStageState(stages.at(id), state, layers, aliases);
+    }
+
+    void ApplyStageRetire(Reader &r)
+    {
+        if (!lifetimes)
+            throw std::runtime_error(
+                "source lifetime event in legacy transcript");
+        const auto id = r.U32();
+        if (retiredStages.at(id) || !stages.at(id))
+            throw std::runtime_error("duplicate source stage retirement");
+        for (size_t owner = 0; owner < owners.size(); ++owner)
+            if (ownerStages[owner] == id && owners[owner])
+                throw std::runtime_error(
+                    "source stage retirement with a live evaluator");
+        stages[id].Reset();
+        retiredStages[id] = true;
+    }
+
+    void ApplyLayerRetire(Reader &r)
+    {
+        if (!lifetimes)
+            throw std::runtime_error(
+                "source lifetime event in legacy transcript");
+        const auto id = r.U32();
+        auto &layer = layers.at(id);
+        if (retiredLayers.at(id) || !layer)
+            throw std::runtime_error("duplicate source layer retirement");
+        for (const auto &stage : stages)
+            if (stage) {
+                const auto used = stage->GetUsedLayers();
+                if (stage->GetRootLayer() == layer ||
+                    stage->GetSessionLayer() == layer ||
+                    stage->GetEditTarget().GetLayer() == layer ||
+                    std::find(used.begin(), used.end(), layer) != used.end())
+                    throw std::runtime_error(
+                        "source layer retirement while a live stage "
+                        "retains it");
+            }
+        const std::string liveIdentifier = layer->GetIdentifier();
+        audit.ids.erase(SdfLayerHandle(layer));
+        audit.reverse.erase(liveIdentifier);
+        const auto alias = aliases.find(layerIdentifiers[id]);
+        if (alias != aliases.end() && alias->second == liveIdentifier)
+            aliases.erase(alias);
+        layer.Reset();
+        retiredLayers[id] = true;
+        initialized[id] = true;
+    }
+
+    void ApplyCreate(Reader &r)
+    {
+        const auto stage = r.U32(), owner = r.U32();
+        const SdfPath rig(r.Text());
+        if (owner != owners.size())
+            throw std::runtime_error("duplicate/missing evaluator");
+        if (retiredStages.at(stage) || !stages.at(stage))
+            throw std::runtime_error(
+                "evaluator creation on retired source stage");
+        owners.emplace_back(
+            std::make_unique<RigExecRigEvaluator>(stages.at(stage), rig));
+        actions.push_back(0);
+        visits.push_back(0);
+        compileCalls.push_back(0);
+        ownerStages.push_back(stage);
+    }
+
+    void ApplySourceOperation(Reader &r)
+    {
+        auto operation = DecodeOperation(r);
+        if (retiredLayers.at(operation.layer) || !layers.at(operation.layer))
+            throw std::runtime_error("source operation on retired layer");
+        if (operation.kind == Op::Transfer &&
+            (retiredLayers.at(operation.value.Get<unsigned>()) ||
+             !layers.at(operation.value.Get<unsigned>())))
+            throw std::runtime_error("source transfer from retired layer");
+        pending.push_back(std::move(operation));
+    }
+
+    void ApplyBatch(Reader &r, uint64_t ordinal)
+    {
+        const auto count = r.U32();
+        const auto replace = r.U8();
+        if (replace > 1)
+            throw std::runtime_error("invalid bulk adapter tag");
+        const bool hasReplacement =
+            std::any_of(pending.begin(), pending.end(), [](const auto &v) {
+                return v.kind == Op::Import || v.kind == Op::Clear ||
+                       v.kind == Op::Transfer;
+            });
+        const auto recorded = r.Text();
+        const auto expected =
+            replace ? NormalizeImportNotice(recorded) : recorded;
+        if (count != pending.size() || !count ||
+            bool(replace) != hasReplacement || (replace && count != 1))
+            throw std::runtime_error(
+                "source batch operation count/adapter differs");
+        InitializeLayers();
+        audit.notices.clear();
+        audit.enabled = true;
+        audit.allowReplace = bool(replace);
+        {
+            SdfChangeBlock block;
+            for (const auto &operation : pending)
+                ApplyOperation(operation, layers.at(operation.layer), aliases,
+                               layers);
+        }
+        audit.enabled = false;
+        if (audit.notices.size() != 1 || audit.notices.front() != expected)
+            throw std::runtime_error(
+                "source notice batch audit differs at event " +
+                std::to_string(ordinal) +
+                NoticeDifference(expected, audit.notices));
+        pending.clear();
+    }
+
+    void ApplyComparisonBegin(Reader &r)
+    {
+        openComparison = r.U64();
+        if (openComparison != nextComparison++)
+            throw std::runtime_error("missing/reordered comparison scope");
+        if (r.Text().empty() || r.U8() > 1)
+            throw std::runtime_error("invalid named comparison scope");
+        comparisonOpen = true;
+    }
+
+    void ApplyComparisonEnd(Reader &r)
+    {
+        if (!comparisonOpen || r.U64() != openComparison)
+            throw std::runtime_error("unmatched comparison scope end");
+        comparisonOpen = false;
+    }
+
+    void ApplyEnd(Reader &r, uint64_t ordinal)
+    {
+        if (r.U64() != ordinal || r.U32() != layers.size() ||
+            r.U32() != stages.size() || r.U32() != owners.size())
+            throw std::runtime_error("input inventory total differs");
+        for (size_t i = 0; i < owners.size(); ++i)
+            if (r.U64() != actions[i] || r.U64() != visits[i] || owners[i])
+                throw std::runtime_error(
+                    "unclosed evaluator/action/visit count mismatch");
+        if (extended) {
+            if (r.U32() != programs.size())
+                throw std::runtime_error("held program inventory differs");
+            for (const auto &program : programs)
+                if (r.U32() != program.owner || r.U64() != program.runs ||
+                    !program.closed || program.router || program.program)
+                    throw std::runtime_error(
+                        "unclosed held program/run index differs");
+        }
+        end = true;
+    }
+
+    void ReportCompileRefusal(uint64_t ordinal,
+                              const std::vector<std::string> &diagnostics,
+                              bool requested)
+    {
+        ++compileRefusals;
+        std::fprintf(stderr, "input replay Compile refused at event %llu\n",
+                     static_cast<unsigned long long>(ordinal));
+        if (requested)
+            for (const auto &line : diagnostics)
+                std::fprintf(stderr, "  %s\n", line.c_str());
+    }
+
+    void ApplyCompile(RigExecRigEvaluator *evaluator, uint64_t ordinal)
+    {
+        std::vector<std::string> diagnostics;
+        NumericalReplayScope scope(audit);
+        if (!evaluator->Compile(&diagnostics))
+            ReportCompileRefusal(ordinal, diagnostics, true);
+    }
+
+    void ApplyCompileObserved(RigExecRigEvaluator *evaluator, unsigned owner,
+                              uint64_t ordinal, Reader &r)
+    {
+        if (!lifetimes)
+            throw std::runtime_error(
+                "Compile witness needs input action version 4");
+        const auto requested = r.U8();
+        if (requested > 1)
+            throw std::runtime_error("invalid Compile diagnostics flag");
+        std::vector<std::string> diagnostics;
+        if (requested) {
+            const auto count = r.U32();
+            for (uint32_t i = 0; i < count; ++i)
+                diagnostics.push_back(r.Text());
+        }
+        r.Finish();
+        const auto call = compileCalls.at(owner)++;
+        const auto golden = RigExecBeginCompileGolden(
+            owner, evaluator->GetRigPath(), call, requested != 0, diagnostics);
+        bool returned;
+        {
+            NumericalReplayScope scope(audit);
+            returned = evaluator->Compile(requested ? &diagnostics : nullptr);
+        }
+        RigExecRecordCompileGolden(golden, returned,
+                                   requested ? &diagnostics : nullptr);
+        if (!returned)
+            ReportCompileRefusal(ordinal, diagnostics, requested != 0);
+    }
+
+    void ApplyEvaluate(RigExecRigEvaluator *evaluator, unsigned owner,
+                       uint64_t ordinal, Reader &r)
+    {
+        const auto atDefault = r.U8();
+        const auto time = r.Double();
+        if (atDefault > 1)
+            throw std::runtime_error("invalid time identity");
+        NumericalReplayScope scope(audit);
+        const auto pose = evaluator->Evaluate(atDefault ? UsdTimeCode::Default()
+                                                        : UsdTimeCode(time));
+        if (!pose.valid) {
+            ++invalidVisits;
+            std::fprintf(stderr, "input replay invalid visit at event %llu\n",
+                         static_cast<unsigned long long>(ordinal));
+        }
+        ++visits[owner];
+    }
+
+    void ApplyProgramBuild(RigExecRigEvaluator *evaluator, unsigned owner,
+                           Reader &r)
+    {
+        if (!extended)
+            throw std::runtime_error("held event in legacy transcript");
+        const auto id = r.U32();
+        const auto reasonsRequested = r.U8();
+        if (id != programs.size())
+            throw std::runtime_error("duplicate/missing held program");
+        if (reasonsRequested > 1)
+            throw std::runtime_error("invalid held Build reasons request");
+        HeldReplayProgram program;
+        program.owner = owner;
+        program.golden = RigExecHeldProgramGoldenObserver::Create(
+            id, evaluator->GetRigPath());
+        std::vector<std::string> reasons;
+        {
+            NumericalReplayScope scope(audit);
+            program.program = RigExecBakedProgram::Build(
+                evaluator, reasonsRequested ? &reasons : nullptr);
+        }
+        if (program.golden)
+            program.golden->RecordBuild(bool(program.program), reasons);
+        programs.push_back(std::move(program));
+    }
+
+    void ApplyProgramAction(Event event, unsigned owner, Reader &r)
+    {
+        if (!extended)
+            throw std::runtime_error("held event in legacy transcript");
+        const auto id = r.U32();
+        auto &program = programs.at(id);
+        if (program.owner != owner || program.closed)
+            throw std::runtime_error("held program owner/lifetime differs");
+        if (event == Event::ProgramDestroy) {
+            if (program.router)
+                throw std::runtime_error(
+                    "held program destroyed with active router");
+            program.program.reset();
+            program.golden.reset();
+            program.closed = true;
+            return;
+        }
+        if (!program.program)
+            throw std::runtime_error("held action after refused Build");
+        if (event == Event::ProgramRouter) {
+            const auto enabled = r.U8();
+            if (enabled > 1 || bool(program.router) == bool(enabled))
+                throw std::runtime_error(
+                    "invalid/duplicate held router transition");
+            if (enabled)
+                program.router = std::make_unique<HeldReplayRouter>(
+                    stages.at(ownerStages.at(owner)), program.program.get());
+            else
+                program.router.reset();
+            return;
+        }
+        const auto atDefault = r.U8();
+        const auto numericTime = r.Double();
+        const auto seed = r.U8();
+        if (atDefault > 1 || seed > 1)
+            throw std::runtime_error("invalid held run time/seed");
+        const auto time =
+            atDefault ? UsdTimeCode::Default() : UsdTimeCode(numericTime);
+        RigExecRigPose pose;
+        if (seed)
+            pose.time = time;
+        bool returned;
+        {
+            NumericalReplayScope scope(audit);
+            returned = program.program->Run(time, &pose);
+        }
+        if (program.golden)
+            program.golden->RecordRun(
+                time, pose, returned,
+                ProgramBailName(program.program->GetLastBail()));
+        ++program.runs;
+    }
+
+    void ApplyCaller(Event event, unsigned owner, Reader &r, uint64_t ordinal)
+    {
+        auto &ptr = owners.at(owner);
+        if (!ptr)
+            throw std::runtime_error("caller action after evaluator close");
+        ++actions[owner];
+        switch (event) {
+        case Event::Compile:
+            ApplyCompile(ptr.get(), ordinal);
+            break;
+        case Event::CompileObserved:
+            ApplyCompileObserved(ptr.get(), owner, ordinal, r);
+            break;
+        case Event::Options: {
+            const auto guides = r.U8(), fields = r.U8();
+            if (guides > 1 || fields > 1)
+                throw std::runtime_error("invalid publication option");
+            ptr->SetSolverGuidesEnabled(bool(guides));
+            ptr->SetPublishWeightFields(bool(fields));
+            break;
+        }
+        case Event::Interactive:
+            ptr->SetInteractiveOverrides(ReadRequests(r, aliases));
+            break;
+        case Event::Clear:
+            ptr->ClearInteractiveOverrides();
+            break;
+        case Event::Upstream:
+            ptr->SetUpstreamInputs(ReadRequests(r, aliases));
+            break;
+        case Event::Evaluate:
+            ApplyEvaluate(ptr.get(), owner, ordinal, r);
+            break;
+        case Event::ProgramBuild:
+            ApplyProgramBuild(ptr.get(), owner, r);
+            break;
+        case Event::ProgramRun:
+        case Event::ProgramRouter:
+        case Event::ProgramDestroy:
+            ApplyProgramAction(event, owner, r);
+            break;
+        case Event::Destroy:
+            for (const auto &program : programs)
+                if (program.owner == owner && !program.closed)
+                    throw std::runtime_error(
+                        "owner destroyed before held program");
+            ptr.reset();
+            break;
+        default:
+            throw std::runtime_error("unknown input action event");
+        }
+    }
+
+    void VerifyComplete() const
+    {
+        if (!end || !pending.empty() || comparisonOpen)
+            throw std::runtime_error(
+                "incomplete input transcript (missing strict end index)");
+        if (compileRefusals || invalidVisits)
+            throw std::runtime_error(
+                "input chronology complete, but numerical execution had " +
+                std::to_string(compileRefusals) + " Compile refusals and " +
+                std::to_string(invalidVisits) +
+                " invalid visits; preserve original captures and report "
+                "separately");
+    }
+};
+
+struct ArrayAdmissionRestore {
+    bool saved = RigExecUpstreamArrayAdmission();
+    ~ArrayAdmissionRestore()
+    {
+        RigExecSetUpstreamArrayAdmissionForTesting(saved);
+    }
+};
 } // namespace
+
 bool
 RigExecReplayInputActions(const std::string &file, std::string *error)
 {
     try {
         RigExecInputReplaySuppression replayCaptureSuppression;
-        struct ArrayAdmissionRestore {
-            bool saved = RigExecUpstreamArrayAdmission();
-            ~ArrayAdmissionRestore()
-            {
-                RigExecSetUpstreamArrayAdmissionForTesting(saved);
-            }
-        } arrayAdmissionRestore;
+        ArrayAdmissionRestore arrayAdmissionRestore;
         if (const auto *capture = std::getenv("RIGEXEC_INPUT_REPLAY"))
             if (*capture)
                 throw std::runtime_error(
                     "input capture must be disabled in replay host");
         const auto bytes = ReadFile(file);
-        const bool controls = bytes.compare(0, sizeof(magic) - 1, magic) == 0;
-        const bool lifetimes =
-            controls ||
-            bytes.compare(0, sizeof(lifetimeMagic) - 1, lifetimeMagic) == 0;
-        const bool extended =
-            lifetimes ||
-            bytes.compare(0, sizeof(heldMagic) - 1, heldMagic) == 0;
-        if (!extended &&
-            bytes.compare(0, sizeof(legacyMagic) - 1, legacyMagic) != 0)
+        TranscriptFormat format;
+        if (!DetectTranscriptFormat(bytes, format))
             throw std::runtime_error("unknown input action format");
-        const auto body = bytes.substr(lifetimes  ? sizeof(magic) - 1
-                                       : extended ? sizeof(heldMagic) - 1
-                                                  : sizeof(legacyMagic) - 1);
+        // A named body: Reader keeps a reference, so a temporary here would
+        // dangle before the first payload is read.
+        const std::string body = bytes.substr(format.headerSize);
+        Session session;
+        session.controls = format.controls;
+        session.lifetimes = format.lifetimes;
+        session.extended = format.extended;
         Reader input(body);
         const auto provenancePath = input.Text(), provenance = input.Text();
         if (provenance.empty() || ReadFile(provenancePath) != provenance)
             throw std::runtime_error("source/plugin provenance changed");
-        std::vector<SdfLayerRefPtr> layers;
-        std::vector<bool> permissions;
-        std::vector<UsdStageRefPtr> stages;
-        std::vector<std::string> layerIdentifiers;
-        std::vector<bool> retiredLayers, retiredStages;
-        std::vector<std::vector<InitialSpec>> initialSpecs;
-        std::vector<bool> initialized;
-        std::vector<std::unique_ptr<RigExecRigEvaluator>> owners;
-        std::vector<size_t> actions, visits, compileCalls;
-        std::vector<unsigned> ownerStages;
-        std::vector<HeldReplayProgram> programs;
-        std::vector<Operation> pending;
-        Aliases aliases;
-        ReplayAudit audit;
-        uint64_t sequence = 0, nextComparison = 0, openComparison = 0;
-        bool end = false, comparisonOpen = false;
-        size_t compileRefusals = 0, invalidVisits = 0;
-        auto initializeLayers = [&] {
-            for (size_t i = 0; i < layers.size(); ++i)
-                if (!initialized[i] && !retiredLayers[i]) {
-                    layers[i]->SetPermissionToEdit(true);
-                    {
-                        SdfChangeBlock block;
-                        for (const auto &spec : initialSpecs[i])
-                            for (const auto &field : spec.fields)
-                                layers[i]->SetField(spec.path, field.first,
-                                                    RebindField(field.first,
-                                                                field.second,
-                                                                aliases));
-                    }
-                    for (const auto &spec : initialSpecs[i]) {
-                        if (layers[i]->GetSpecType(spec.path) != spec.type ||
-                            layers[i]->ListFields(spec.path).size() !=
-                                spec.fields.size())
-                            throw std::runtime_error(
-                                "initial source spec/type/presence differs: " +
-                                spec.path.GetString());
-                        for (const auto &field : spec.fields)
-                            if (ValueBytes(layers[i]->GetField(spec.path,
-                                                               field.first)) !=
-                                ValueBytes(RebindField(field.first,
-                                                       field.second, aliases)))
-                                throw std::runtime_error(
-                                    "initial source typed bits differ: " +
-                                    spec.path.GetString() + " " +
-                                    field.first.GetString());
-                    }
-                    layers[i]->SetPermissionToEdit(permissions[i]);
-                    initialized[i] = true;
-                }
-        };
         while (!input.Done()) {
             const auto ordinal = input.U64();
-            if (ordinal != sequence++)
+            if (ordinal != session.sequence++)
                 throw std::runtime_error("missing/reordered input action");
             const Event event = Event(input.U8());
             const auto payload = input.Text();
             Reader r(payload);
-            if (controls && ordinal == 0 && event != Event::ArrayAdmission)
+            if (session.controls && ordinal == 0 &&
+                event != Event::ArrayAdmission)
                 throw std::runtime_error(
                     "missing initial array admission state");
-            if (end)
+            if (session.end)
                 throw std::runtime_error(
                     "extra event after complete input index");
-            if (comparisonOpen && event != Event::ComparisonEnd)
+            if (session.comparisonOpen && event != Event::ComparisonEnd)
                 throw std::runtime_error(
                     "caller/source action inside a comparison scope");
-            if (!pending.empty() && event != Event::Operation &&
+            if (!session.pending.empty() && event != Event::Operation &&
                 event != Event::Batch)
                 throw std::runtime_error(
                     "unclosed source notice batch before caller action");
-            if (event == Event::ArrayAdmission) {
-                if (!controls)
-                    throw std::runtime_error(
-                        "array admission action requires input format 5");
-                const auto on = r.U8();
-                if (on > 1)
-                    throw std::runtime_error("invalid array admission state");
-                r.Finish();
-                RigExecSetUpstreamArrayAdmissionForTesting(on != 0);
-            } else if (event == Event::Layer) {
-                const auto id = r.U32();
-                if (id != layers.size())
-                    throw std::runtime_error("duplicate/missing initial layer");
-                const auto identifier = r.Text();
-                const auto anonymous = r.U8(), permission = r.U8();
-                if (anonymous > 1 || permission > 1)
-                    throw std::runtime_error("invalid layer flags");
-                const auto real = r.Text(), source = r.Text();
-                if (!real.empty() && ReadFile(real) != source)
-                    throw std::runtime_error("source layer bytes changed: " +
-                                             real);
-                auto layer = anonymous ? SdfLayer::CreateAnonymous(".usda")
-                                       : SdfLayer::FindOrOpen(identifier);
-                if (!layer)
-                    throw std::runtime_error(
-                        "cannot reconstruct source layer: " + identifier);
-                if (audit.ids.count(layer))
-                    throw std::runtime_error(
-                        "initial layers alias unexpectedly");
-                aliases[identifier] = layer->GetIdentifier();
-                audit.reverse[layer->GetIdentifier()] = identifier;
-                audit.ids[layer] = id;
-                layers.push_back(layer);
-                permissions.push_back(bool(permission));
-                layerIdentifiers.push_back(identifier);
-                retiredLayers.push_back(false);
-                layer->SetPermissionToEdit(true);
-                layer->Clear();
-                const auto count = r.U32();
-                std::vector<InitialSpec> specs;
-                for (unsigned i = 0; i < count; ++i) {
-                    InitialSpec spec;
-                    spec.path = SdfPath(r.Text());
-                    spec.type = SdfSpecType(r.U32());
-                    const auto nf = r.U32();
-                    for (unsigned f = 0; f < nf; ++f) {
-                        const TfToken key(r.Text());
-                        spec.fields.emplace_back(key, ReadValue(r));
-                    }
-                    specs.push_back(std::move(spec));
-                }
-                {
-                    SdfChangeBlock block;
-                    for (const auto &spec : specs)
-                        if (spec.path != SdfPath::AbsoluteRootPath())
-                            layer->GetStateDelegate()->CreateSpec(
-                                spec.path, spec.type, false);
-                    for (const auto &spec : specs)
-                        for (const auto &field : spec.fields)
-                            layer->SetField(spec.path, field.first,
-                                            RebindField(field.first,
-                                                        field.second, aliases));
-                }
-                layer->SetPermissionToEdit(bool(permission));
-                initialSpecs.push_back(std::move(specs));
-                initialized.push_back(false);
-            } else if (event == Event::Stage || event == Event::StageState) {
-                const auto id = r.U32();
-                const auto state = ReadStageState(r.Text());
-                for (const auto layer : {state.root, state.session, state.edit})
-                    if (layer != noLayer &&
-                        (retiredLayers.at(layer) || !layers.at(layer)))
-                        throw std::runtime_error(
-                            "stage references retired source layer");
-                // Forward anonymous-layer references are bound after every
-                // initial layer has an identity, before any evaluator exists.
-                // Already initialized layers retain their actual edit history.
-                initializeLayers();
-                if (event == Event::Stage) {
-                    if (id != stages.size())
-                        throw std::runtime_error("duplicate/missing stage");
-                    const auto session =
-                        state.session == noLayer
-                            ? SdfLayerHandle()
-                            : SdfLayerHandle(layers.at(state.session));
-                    auto stage =
-                        UsdStage::Open(layers.at(state.root), session,
-                                       state.context, UsdStage::LoadNone);
-                    if (!stage)
-                        throw std::runtime_error("initial source stage failed");
-                    stages.push_back(stage);
-                    retiredStages.push_back(false);
-                }
-                if (retiredStages.at(id) || !stages.at(id))
-                    throw std::runtime_error(
-                        "state action on retired source stage");
-                audit.enabled = false;
-                SetStageState(stages.at(id), state, layers, aliases);
-            } else if (event == Event::StageRetire) {
-                if (!lifetimes)
-                    throw std::runtime_error(
-                        "source lifetime event in legacy transcript");
-                const auto id = r.U32();
-                if (retiredStages.at(id) || !stages.at(id))
-                    throw std::runtime_error(
-                        "duplicate source stage retirement");
-                for (size_t owner = 0; owner < owners.size(); ++owner)
-                    if (ownerStages[owner] == id && owners[owner])
-                        throw std::runtime_error(
-                            "source stage retirement with a live evaluator");
-                stages[id].Reset();
-                retiredStages[id] = true;
-            } else if (event == Event::LayerRetire) {
-                if (!lifetimes)
-                    throw std::runtime_error(
-                        "source lifetime event in legacy transcript");
-                const auto id = r.U32();
-                auto &layer = layers.at(id);
-                if (retiredLayers.at(id) || !layer)
-                    throw std::runtime_error(
-                        "duplicate source layer retirement");
-                for (const auto &stage : stages)
-                    if (stage) {
-                        const auto used = stage->GetUsedLayers();
-                        if (stage->GetRootLayer() == layer ||
-                            stage->GetSessionLayer() == layer ||
-                            stage->GetEditTarget().GetLayer() == layer ||
-                            std::find(used.begin(), used.end(), layer) !=
-                                used.end())
-                            throw std::runtime_error(
-                                "source layer retirement while a live stage "
-                                "retains it");
-                    }
-                const std::string liveIdentifier = layer->GetIdentifier();
-                audit.ids.erase(SdfLayerHandle(layer));
-                audit.reverse.erase(liveIdentifier);
-                const auto alias = aliases.find(layerIdentifiers[id]);
-                if (alias != aliases.end() && alias->second == liveIdentifier)
-                    aliases.erase(alias);
-                layer.Reset();
-                retiredLayers[id] = true;
-                initialized[id] = true;
-            } else if (event == Event::Create) {
-                const auto stage = r.U32(), owner = r.U32();
-                const SdfPath rig(r.Text());
-                if (owner != owners.size())
-                    throw std::runtime_error("duplicate/missing evaluator");
-                if (retiredStages.at(stage) || !stages.at(stage))
-                    throw std::runtime_error(
-                        "evaluator creation on retired source stage");
-                owners.emplace_back(std::make_unique<RigExecRigEvaluator>(
-                    stages.at(stage), rig));
-                actions.push_back(0);
-                visits.push_back(0);
-                compileCalls.push_back(0);
-                ownerStages.push_back(stage);
-            } else if (event == Event::Operation) {
-                auto operation = DecodeOperation(r);
-                if (retiredLayers.at(operation.layer) ||
-                    !layers.at(operation.layer))
-                    throw std::runtime_error(
-                        "source operation on retired layer");
-                if (operation.kind == Op::Transfer &&
-                    (retiredLayers.at(operation.value.Get<unsigned>()) ||
-                     !layers.at(operation.value.Get<unsigned>())))
-                    throw std::runtime_error(
-                        "source transfer from retired layer");
-                pending.push_back(std::move(operation));
-            } else if (event == Event::Batch) {
-                const auto count = r.U32();
-                const auto replace = r.U8();
-                if (replace > 1)
-                    throw std::runtime_error("invalid bulk adapter tag");
-                const bool hasReplacement = std::any_of(
-                    pending.begin(), pending.end(), [](const auto &v) {
-                        return v.kind == Op::Import || v.kind == Op::Clear ||
-                               v.kind == Op::Transfer;
-                    });
-                const auto recorded = r.Text();
-                const auto expected =
-                    replace ? NormalizeImportNotice(recorded) : recorded;
-                if (count != pending.size() || !count ||
-                    bool(replace) != hasReplacement || (replace && count != 1))
-                    throw std::runtime_error(
-                        "source batch operation count/adapter differs");
-                initializeLayers();
-                audit.notices.clear();
-                audit.enabled = true;
-                audit.allowReplace = bool(replace);
-                {
-                    SdfChangeBlock block;
-                    for (const auto &operation : pending)
-                        ApplyOperation(operation, layers.at(operation.layer),
-                                       aliases, layers);
-                }
-                audit.enabled = false;
-                if (audit.notices.size() != 1 ||
-                    audit.notices.front() != expected)
-                    throw std::runtime_error(
-                        "source notice batch audit differs at event " +
-                        std::to_string(ordinal) +
-                        NoticeDifference(expected, audit.notices));
-                pending.clear();
-            } else if (event == Event::ComparisonBegin) {
-                openComparison = r.U64();
-                if (openComparison != nextComparison++)
-                    throw std::runtime_error(
-                        "missing/reordered comparison scope");
-                if (r.Text().empty() || r.U8() > 1)
-                    throw std::runtime_error("invalid named comparison scope");
-                comparisonOpen = true;
-            } else if (event == Event::ComparisonEnd) {
-                if (!comparisonOpen || r.U64() != openComparison)
-                    throw std::runtime_error("unmatched comparison scope end");
-                comparisonOpen = false;
-            } else if (event == Event::End) {
-                if (r.U64() != ordinal || r.U32() != layers.size() ||
-                    r.U32() != stages.size() || r.U32() != owners.size())
-                    throw std::runtime_error("input inventory total differs");
-                for (size_t i = 0; i < owners.size(); ++i)
-                    if (r.U64() != actions[i] || r.U64() != visits[i] ||
-                        owners[i])
-                        throw std::runtime_error(
-                            "unclosed evaluator/action/visit count mismatch");
-                if (extended) {
-                    if (r.U32() != programs.size())
-                        throw std::runtime_error(
-                            "held program inventory differs");
-                    for (const auto &program : programs)
-                        if (r.U32() != program.owner ||
-                            r.U64() != program.runs || !program.closed ||
-                            program.router || program.program)
-                            throw std::runtime_error(
-                                "unclosed held program/run index differs");
-                }
-                end = true;
-            } else {
-                const auto owner = r.U32();
-                auto &ptr = owners.at(owner);
-                if (!ptr)
-                    throw std::runtime_error(
-                        "caller action after evaluator close");
-                ++actions[owner];
-                switch (event) {
-                case Event::Compile: {
-                    std::vector<std::string> diagnostics;
-                    NumericalReplayScope scope(audit);
-                    if (!ptr->Compile(&diagnostics)) {
-                        ++compileRefusals;
-                        std::fprintf(
-                            stderr,
-                            "input replay Compile refused at event %llu\n",
-                            static_cast<unsigned long long>(ordinal));
-                        for (const auto &line : diagnostics)
-                            std::fprintf(stderr, "  %s\n", line.c_str());
-                    }
-                    break;
-                }
-                case Event::CompileObserved: {
-                    if (!lifetimes)
-                        throw std::runtime_error(
-                            "Compile witness needs input action version 4");
-                    const auto requested = r.U8();
-                    if (requested > 1)
-                        throw std::runtime_error(
-                            "invalid Compile diagnostics flag");
-                    std::vector<std::string> diagnostics;
-                    if (requested) {
-                        const auto count = r.U32();
-                        for (uint32_t i = 0; i < count; ++i)
-                            diagnostics.push_back(r.Text());
-                    }
-                    r.Finish();
-                    const auto call = compileCalls.at(owner)++;
-                    const auto golden = RigExecBeginCompileGolden(
-                        owner, ptr->GetRigPath(), call, requested != 0,
-                        diagnostics);
-                    bool returned;
-                    {
-                        NumericalReplayScope scope(audit);
-                        returned =
-                            ptr->Compile(requested ? &diagnostics : nullptr);
-                    }
-                    RigExecRecordCompileGolden(
-                        golden, returned, requested ? &diagnostics : nullptr);
-                    if (!returned) {
-                        ++compileRefusals;
-                        std::fprintf(
-                            stderr,
-                            "input replay Compile refused at event %llu\n",
-                            static_cast<unsigned long long>(ordinal));
-                        if (requested)
-                            for (const auto &line : diagnostics)
-                                std::fprintf(stderr, "  %s\n", line.c_str());
-                    }
-                    break;
-                }
-                case Event::Options: {
-                    const auto guides = r.U8(), fields = r.U8();
-                    if (guides > 1 || fields > 1)
-                        throw std::runtime_error("invalid publication option");
-                    ptr->SetSolverGuidesEnabled(bool(guides));
-                    ptr->SetPublishWeightFields(bool(fields));
-                    break;
-                }
-                case Event::Interactive:
-                    ptr->SetInteractiveOverrides(ReadRequests(r, aliases));
-                    break;
-                case Event::Clear:
-                    ptr->ClearInteractiveOverrides();
-                    break;
-                case Event::Upstream:
-                    ptr->SetUpstreamInputs(ReadRequests(r, aliases));
-                    break;
-                case Event::Evaluate: {
-                    const auto atDefault = r.U8();
-                    const auto time = r.Double();
-                    if (atDefault > 1)
-                        throw std::runtime_error("invalid time identity");
-                    NumericalReplayScope scope(audit);
-                    const auto pose = ptr->Evaluate(
-                        atDefault ? UsdTimeCode::Default() : UsdTimeCode(time));
-                    if (!pose.valid) {
-                        ++invalidVisits;
-                        std::fprintf(
-                            stderr,
-                            "input replay invalid visit at event %llu\n",
-                            static_cast<unsigned long long>(ordinal));
-                    }
-                    ++visits[owner];
-                    break;
-                }
-                case Event::ProgramBuild: {
-                    if (!extended)
-                        throw std::runtime_error(
-                            "held event in legacy transcript");
-                    const auto id = r.U32();
-                    const auto reasonsRequested = r.U8();
-                    if (id != programs.size())
-                        throw std::runtime_error(
-                            "duplicate/missing held program");
-                    if (reasonsRequested > 1)
-                        throw std::runtime_error(
-                            "invalid held Build reasons request");
-                    HeldReplayProgram program;
-                    program.owner = owner;
-                    program.golden = RigExecHeldProgramGoldenObserver::Create(
-                        id, ptr->GetRigPath());
-                    std::vector<std::string> reasons;
-                    {
-                        NumericalReplayScope scope(audit);
-                        program.program = RigExecBakedProgram::Build(
-                            ptr.get(), reasonsRequested ? &reasons : nullptr);
-                    }
-                    if (program.golden)
-                        program.golden->RecordBuild(bool(program.program),
-                                                    reasons);
-                    programs.push_back(std::move(program));
-                    break;
-                }
-                case Event::ProgramRun:
-                case Event::ProgramRouter:
-                case Event::ProgramDestroy: {
-                    if (!extended)
-                        throw std::runtime_error(
-                            "held event in legacy transcript");
-                    const auto id = r.U32();
-                    auto &program = programs.at(id);
-                    if (program.owner != owner || program.closed)
-                        throw std::runtime_error(
-                            "held program owner/lifetime differs");
-                    if (event == Event::ProgramDestroy) {
-                        if (program.router)
-                            throw std::runtime_error(
-                                "held program destroyed with active router");
-                        program.program.reset();
-                        program.golden.reset();
-                        program.closed = true;
-                        break;
-                    }
-                    if (!program.program)
-                        throw std::runtime_error(
-                            "held action after refused Build");
-                    if (event == Event::ProgramRouter) {
-                        const auto enabled = r.U8();
-                        if (enabled > 1 ||
-                            bool(program.router) == bool(enabled))
-                            throw std::runtime_error(
-                                "invalid/duplicate held router transition");
-                        if (enabled)
-                            program.router = std::make_unique<HeldReplayRouter>(
-                                stages.at(ownerStages.at(owner)),
-                                program.program.get());
-                        else
-                            program.router.reset();
-                        break;
-                    }
-                    const auto atDefault = r.U8();
-                    const auto numericTime = r.Double();
-                    const auto seed = r.U8();
-                    if (atDefault > 1 || seed > 1)
-                        throw std::runtime_error("invalid held run time/seed");
-                    const auto time = atDefault ? UsdTimeCode::Default()
-                                                : UsdTimeCode(numericTime);
-                    RigExecRigPose pose;
-                    if (seed)
-                        pose.time = time;
-                    bool returned;
-                    {
-                        NumericalReplayScope scope(audit);
-                        returned = program.program->Run(time, &pose);
-                    }
-                    if (program.golden)
-                        program.golden->RecordRun(
-                            time, pose, returned,
-                            ProgramBailName(program.program->GetLastBail()));
-                    ++program.runs;
-                    break;
-                }
-                case Event::Destroy:
-                    for (const auto &program : programs)
-                        if (program.owner == owner && !program.closed)
-                            throw std::runtime_error(
-                                "owner destroyed before held program");
-                    ptr.reset();
-                    break;
-                default:
-                    throw std::runtime_error("unknown input action event");
-                }
+            switch (event) {
+            case Event::ArrayAdmission:
+                session.ApplyArrayAdmission(r);
+                break;
+            case Event::Layer:
+                session.ApplyLayer(r);
+                break;
+            case Event::Stage:
+            case Event::StageState:
+                session.ApplyStage(r, event);
+                break;
+            case Event::StageRetire:
+                session.ApplyStageRetire(r);
+                break;
+            case Event::LayerRetire:
+                session.ApplyLayerRetire(r);
+                break;
+            case Event::Create:
+                session.ApplyCreate(r);
+                break;
+            case Event::Operation:
+                session.ApplySourceOperation(r);
+                break;
+            case Event::Batch:
+                session.ApplyBatch(r, ordinal);
+                break;
+            case Event::ComparisonBegin:
+                session.ApplyComparisonBegin(r);
+                break;
+            case Event::ComparisonEnd:
+                session.ApplyComparisonEnd(r);
+                break;
+            case Event::End:
+                session.ApplyEnd(r, ordinal);
+                break;
+            default:
+                session.ApplyCaller(event, r.U32(), r, ordinal);
+                break;
             }
             r.Finish();
         }
-        if (!end || !pending.empty() || comparisonOpen)
-            throw std::runtime_error(
-                "incomplete input transcript (missing strict end index)");
-        if (compileRefusals || invalidVisits) {
-            if (error)
-                *error =
-                    "input chronology complete, but numerical execution had " +
-                    std::to_string(compileRefusals) + " Compile refusals and " +
-                    std::to_string(invalidVisits) +
-                    " invalid visits; preserve original captures and report "
-                    "separately";
-            return false;
-        }
+        session.VerifyComplete();
         return true;
     } catch (const std::exception &failure) {
         if (error)

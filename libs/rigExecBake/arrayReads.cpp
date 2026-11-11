@@ -1,4 +1,5 @@
 // .rigexec array inputs.
+#include "rigExecSchema/schemaNames.h"
 #include "rigExecBake/arrayReads.h"
 #include "rigExec/bakedProgramImpl.h"
 #include "rigExec/moverGraph.h"
@@ -165,9 +166,11 @@ struct _Lister {
                 blendPoints.insert(sample.pointsLeaf);
                 if (!sample.blendShape.IsEmpty()) {
                     const auto shape = sample.blendShape.GetPrimPath();
-                    sparseSources.emplace(shape.AppendProperty(TfToken("offsets")),
+                    sparseSources.emplace(
+                        shape.AppendProperty(TfToken("offsets")),
                         RigExecRevisionLeafType::Vec3fArray);
-                    sparseSources.emplace(shape.AppendProperty(TfToken("pointIndices")),
+                    sparseSources.emplace(
+                        shape.AppendProperty(TfToken("pointIndices")),
                         RigExecRevisionLeafType::IntArray);
                 }
             }
@@ -185,24 +188,31 @@ struct _Lister {
                 // API4 declarations have no builtin role. Their immutable
                 // owning leaf site carries the read; list its typed storage
                 // hops here so Default/current array transport is complete.
-                if (decl.externalBegin >= 0 && k >= size_t(decl.externalBegin) &&
-                    k - size_t(decl.externalBegin) < revision.binding.externalInputs.size()) {
+                if (decl.externalBegin >= 0 &&
+                    k >= size_t(decl.externalBegin) &&
+                    k - size_t(decl.externalBegin) <
+                        revision.binding.externalInputs.size()) {
                     RigExecBakeArrayRead read;
                     if (Hops(key, tag, &read)) {
                         read.consumer = Consumer::Declared;
-                        read.chain = chain; read.revision = index; read.derived = derived;
+                        read.chain = chain;
+                        read.revision = index;
+                        read.derived = derived;
                         reads->push_back(std::move(read));
                     }
                     continue;
                 }
                 const auto sparse = sparseSources.find(key.path);
-                if (sparse != sparseSources.end() && sparse->second == key.type &&
+                if (sparse != sparseSources.end() &&
+                    sparse->second == key.type &&
                     key.time == RigExecRevisionLeafTime::AtDefault &&
                     key.flavour == RigExecRevisionLeafFlavour::Raw) {
                     RigExecBakeArrayRead read;
                     if (Hops(key, tag, &read)) {
                         read.consumer = Consumer::Declared;
-                        read.chain = chain; read.revision = index; read.derived = derived;
+                        read.chain = chain;
+                        read.revision = index;
+                        read.derived = derived;
                         reads->push_back(std::move(read));
                     }
                     continue;
@@ -217,14 +227,15 @@ struct _Lister {
                     RigExecBakeArrayRead read;
                     if (Hops(key, tag, &read)) {
                         read.consumer = Consumer::Row;
-                        read.chain = chain; read.revision = index; read.derived = derived;
+                        read.chain = chain;
+                        read.revision = index;
+                        read.derived = derived;
                         reads->push_back(std::move(read));
                     }
                     continue;
                 }
-                *error = "the assembly of " +
-                         revision.moverPath.GetString() + " reads array " +
-                         key.path.GetString() +
+                *error = "the assembly of " + revision.moverPath.GetString() +
+                         " reads array " + key.path.GetString() +
                          " at a site no input of the file stands for";
                 return false;
             }
@@ -280,8 +291,7 @@ struct _Lister {
             }
         }
         if (fixed && revision.op == RigExecRevisionOp::Skin) {
-            const RigExecRevisionLeafDecl &layout =
-                revision.layoutLeaves.decl;
+            const RigExecRevisionLeafDecl &layout = revision.layoutLeaves.decl;
             const int indices = layout.Role(Role::JointIndices);
             const int weights = layout.Role(Role::JointWeights);
             RigExecBakeArrayRead first, second;
@@ -311,7 +321,8 @@ struct _Lister {
         for (const RigExecRevisionLeafKey &key : object.pointLeaves.decl.keys) {
             RigExecBakeArrayRead read;
             const auto tag = key.type == RigExecRevisionLeafType::FloatArray
-                ? fb::InputTag::FloatArray : fb::InputTag::Vec3fArray;
+                                 ? fb::InputTag::FloatArray
+                                 : fb::InputTag::Vec3fArray;
             if (!Hops(key, tag, &read)) {
                 continue;
             }
@@ -351,12 +362,11 @@ struct _Lister {
             return;
         }
         const std::pair<const char *, fb::InputTag> painted[] = {
-            {"rigExec:values", fb::InputTag::FloatArray},
-            {"rigExec:indices", fb::InputTag::IntArray}};
+            {SchemaAttrText::rigExecValues, fb::InputTag::FloatArray},
+            {SchemaAttrText::rigExecIndices, fb::InputTag::IntArray}};
         for (const auto &[name, tag] : painted) {
             RigExecBakeArrayRead read;
-            if (!Raw(object.path.AppendProperty(TfToken(name)), tag,
-                     &read)) {
+            if (!Raw(object.path.AppendProperty(TfToken(name)), tag, &read)) {
                 continue;
             }
             read.consumer = Consumer::Painted;
@@ -365,43 +375,45 @@ struct _Lister {
             read.indices = tag == fb::InputTag::IntArray;
             reads->push_back(std::move(read));
         }
-        const bool curve = object.type == "RigExecCurveWeight";
-        const bool volume = curve || object.type == "RigExecSphereWeight" ||
-                            object.type == "RigExecPlaneWeight";
+        const bool curve = object.type == SchemaTypeName::RigExecCurveWeight;
+        const bool volume =
+            curve || object.type == SchemaTypeName::RigExecSphereWeight ||
+            object.type == SchemaTypeName::RigExecPlaneWeight;
         if (!object.oracle || !volume) {
             return;
         }
         const auto add = [&](const SdfPath &path, Consumer consumer) {
             RigExecBakeArrayRead read;
-            if (!path.IsEmpty() &&
-                Raw(path, fb::InputTag::Vec3fArray, &read)) {
+            if (!path.IsEmpty() && Raw(path, fb::InputTag::Vec3fArray, &read)) {
                 read.consumer = consumer;
                 read.object = index;
                 reads->push_back(std::move(read));
             }
         };
         if (!object.samplesInFlight) {
-            SdfPath samples = OraclePoints(prim, "rigExec:sampleSource");
+            SdfPath samples =
+                OraclePoints(prim, SchemaAttrText::rigExecSampleSource);
             if (samples.IsEmpty()) {
-                samples = OraclePoints(prim, "rigExec:weightTarget");
+                samples =
+                    OraclePoints(prim, SchemaAttrText::rigExecWeightTarget);
             }
             add(samples, Consumer::OracleSamples);
-            add(OraclePoints(prim, "rigExec:weightTarget"),
+            add(OraclePoints(prim, SchemaAttrText::rigExecWeightTarget),
                 Consumer::OracleFallback);
         }
         if (curve) {
-            add(OraclePoints(prim, "rigExec:curve"), Consumer::OracleCurve);
+            add(OraclePoints(prim, SchemaAttrText::rigExecCurve),
+                Consumer::OracleCurve);
         }
     }
 };
 
-}  // namespace
+} // namespace
 
 bool
 RigExecBakeListArrayReads(const RigExecBakedProgramImpl &program,
                           const std::vector<RigExecBakeArrayObject> &objects,
-                          double time,
-                          std::vector<RigExecBakeArrayRead> *reads,
+                          double time, std::vector<RigExecBakeArrayRead> *reads,
                           std::string *error)
 {
     reads->clear();
@@ -409,8 +421,8 @@ RigExecBakeListArrayReads(const RigExecBakedProgramImpl &program,
     for (size_t c = 0; c < program.chains.size(); ++c) {
         const RigExecBakedProgramImpl::GeomChain &chain = program.chains[c];
         for (size_t r = 0; r < chain.revisions.size(); ++r) {
-            if (!lister.Revision(chain.revisions[r], uint32_t(c),
-                                 uint32_t(r), false, error)) {
+            if (!lister.Revision(chain.revisions[r], uint32_t(c), uint32_t(r),
+                                 false, error)) {
                 return false;
             }
         }
@@ -445,4 +457,4 @@ RigExecBakeListArrayReads(const RigExecBakedProgramImpl &program,
     return true;
 }
 
-}  // namespace rigExec
+} // namespace rigExec

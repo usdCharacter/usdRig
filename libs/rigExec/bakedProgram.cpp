@@ -39,6 +39,7 @@
 #include "types.h"
 
 #include "rigExecMath/pointFrame.h"
+#include "rigExecSchema/schemaTokens.h"
 
 #include "pxr/base/gf/math.h"
 #include "pxr/base/tf/getenv.h"
@@ -47,6 +48,7 @@
 #include "pxr/base/work/dispatcher.h"
 #include "pxr/base/work/loops.h"
 #include "pxr/base/gf/rotation.h"
+#include "pxr/usd/sdf/schema.h"
 #include "pxr/usd/sdf/types.h"
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/attributeQuery.h"
@@ -78,8 +80,8 @@ namespace {
 
 TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
-    ((rigExecBaseWeight, "rigExec:baseWeight"))
-    ((rigExecInputWeights, "rigExec:inputWeights"))
+    ((rigExecBaseWeight, SchemaAttrText::rigExecBaseWeight))
+    ((rigExecInputWeights, SchemaAttrText::rigExecInputWeights))
     (xformOpOrder)
     ((default_, "default"))
     (timeSamples)
@@ -88,76 +90,80 @@ TF_DEFINE_PRIVATE_TOKENS(
     (custom)
     (variability)
     (visibility)
-    ((xyz, "XYZ"))
-    ((rigExecIkValue, "rigExec:ikValue"))
-    ((inputsGain, "inputs:gain"))
-    ((rigExecBasis, "rigExec:basis"))
-    ((rigExecPoseRotations, "rigExec:poseRotations"))
-    ((rigExecPoseFalloffs, "rigExec:poseFalloffs"))
-    ((rigExecPoseGains, "rigExec:poseGains"))
-    ((rigExecKernel, "rigExec:kernel"))
-    ((rigExecRegularization, "rigExec:regularization"))
-    ((rigExecTarget, "rigExec:target"))
-    ((inputsActiveSpace, "inputs:activeSpace"))
-    ((rigExecOperation, "rigExec:operation"))
-    ((rigExecWeightObject, "rigExec:weightObject"))
-    ((rigExecCombineWeight, "RigExecCombineWeight"))
-    ((rigExecCurveWeight, "RigExecCurveWeight"))
-    ((rigExecPlaneWeight, "RigExecPlaneWeight"))
-    ((rigExecDynamicWeight, "RigExecDynamicWeight"))
-    ((rigExecCombineMode, "rigExec:combineMode"))
+    ((xyz, SchemaValueText::xyz))
+    ((rigExecIkValue, SchemaAttrText::rigExecIkValue))
+    ((inputsGain, SchemaAttrText::inputsGain))
+    ((rigExecBasis, SchemaAttrText::rigExecBasis))
+    ((rigExecPoseRotations, SchemaAttrText::rigExecPoseRotations))
+    ((rigExecPoseFalloffs, SchemaAttrText::rigExecPoseFalloffs))
+    ((rigExecPoseGains, SchemaAttrText::rigExecPoseGains))
+    ((rigExecKernel, SchemaAttrText::rigExecKernel))
+    ((rigExecRegularization, SchemaAttrText::rigExecRegularization))
+    ((rigExecTarget, SchemaAttrText::rigExecTarget))
+    ((inputsActiveSpace, SchemaAttrText::inputsActiveSpace))
+    ((rigExecOperation, SchemaAttrText::rigExecOperation))
+    ((rigExecWeightObject, SchemaAttrText::rigExecWeightObject))
+    ((rigExecCombineWeight, SchemaTypeName::RigExecCombineWeight))
+    ((rigExecCurveWeight, SchemaTypeName::RigExecCurveWeight))
+    ((rigExecPlaneWeight, SchemaTypeName::RigExecPlaneWeight))
+    ((rigExecDynamicWeight, SchemaTypeName::RigExecDynamicWeight))
+    ((rigExecCombineMode, SchemaAttrText::rigExecCombineMode))
     (multiply)
-    ((rigExecWeightTarget, "rigExec:weightTarget"))
-    ((rigExecSampleSource, "rigExec:sampleSource"))
-    ((rigExecCurve, "rigExec:curve"))
-    ((rigExecPlaneAxis, "rigExec:planeAxis"))
+    ((rigExecWeightTarget, SchemaAttrText::rigExecWeightTarget))
+    ((rigExecSampleSource, SchemaAttrText::rigExecSampleSource))
+    ((rigExecCurve, SchemaAttrText::rigExecCurve))
+    ((rigExecPlaneAxis, SchemaAttrText::rigExecPlaneAxis))
     (y)
-    ((rigExecPlaneBounds, "rigExec:planeBounds"))
+    ((rigExecPlaneBounds, SchemaAttrText::rigExecPlaneBounds))
     (unbounded)
-    ((rigExecRepresentation, "rigExec:representation"))
+    ((rigExecRepresentation, SchemaAttrText::rigExecRepresentation))
     (constant)
-    ((rigExecRangePolicy, "rigExec:rangePolicy"))
+    ((rigExecRangePolicy, SchemaAttrText::rigExecRangePolicy))
     (strict)
-    ((rigExecIndices, "rigExec:indices"))
-    ((rigExecValues, "rigExec:values"))
-    ((rigExecDefaultWeight, "rigExec:defaultWeight"))
-    ((inputsEnabled, "inputs:enabled"))
-    ((inputsMask, "inputs:mask"))
-    ((inputsDefaultWeight, "inputs:defaultWeight"))
-    ((inputsValue, "inputs:value"))
-    ((inputsMin, "inputs:min"))
-    ((inputsMax, "inputs:max"))
-    ((inputsKeys, "inputs:keys"))
-    ((inputsTangents, "inputs:tangents"))
+    ((rigExecIndices, SchemaAttrText::rigExecIndices))
+    ((rigExecValues, SchemaAttrText::rigExecValues))
+    ((rigExecDefaultWeight, SchemaAttrText::rigExecDefaultWeight))
+    ((inputsEnabled, SchemaAttrText::inputsEnabled))
+    ((inputsMask, SchemaAttrText::inputsMask))
+    ((inputsDefaultWeight, SchemaAttrText::inputsDefaultWeight))
+    ((inputsValue, SchemaAttrText::inputsValue))
+    ((inputsMin, SchemaAttrText::inputsMin))
+    ((inputsMax, SchemaAttrText::inputsMax))
+    ((inputsKeys, SchemaAttrText::inputsKeys))
+    ((inputsTangents, SchemaAttrText::inputsTangents))
 );
 
-// The channels Build's parallel resolve lanes bind, interned at load:
-// TfToken from text takes the token registry's lock on every construction.
-const TfToken kPosedSpace("posed:space");
-const TfToken kRestSpace("rest:space");
-const TfToken kDefaultSpace("default:space");
-const TfToken kParentSpace("parent:space");
-const TfToken kParentDefaultSpace("parent:defaultSpace");
-const TfToken kAvarDefaultSpace("avars:defaultSpace");
-const TfToken kPosedDefaultSpace("posed:defaultSpace");
-const TfToken kRotationSign("avars:rotationSign");
-const TfToken kRotationOrder("avars:rotationOrder");
-const TfToken kRestAvarTokens[6] = {TfToken("rest:tx"), TfToken("rest:ty"),
-                                    TfToken("rest:tz"), TfToken("rest:rx"),
-                                    TfToken("rest:ry"), TfToken("rest:rz")};
+// The channels Build's parallel resolve lanes bind. They are the interned
+// SchemaAttr tokens, so no lane builds a token from text.
+const TfToken &kPosedSpace = SchemaAttr::posedSpace;
+const TfToken &kRestSpace = SchemaAttr::restSpace;
+const TfToken &kDefaultSpace = SchemaAttr::defaultSpace;
+const TfToken &kParentSpace = SchemaAttr::parentSpace;
+const TfToken &kParentDefaultSpace = SchemaAttr::parentDefaultSpace;
+const TfToken &kAvarDefaultSpace = SchemaAttr::avarsDefaultSpace;
+const TfToken &kPosedDefaultSpace = SchemaAttr::posedDefaultSpace;
+const TfToken &kRotationSign = SchemaAttr::avarsRotationSign;
+const TfToken &kRotationOrder = SchemaAttr::avarsRotationOrder;
+const TfToken kRestAvarTokens[6] = {SchemaAttr::restTx, SchemaAttr::restTy,
+                                    SchemaAttr::restTz, SchemaAttr::restRx,
+                                    SchemaAttr::restRy, SchemaAttr::restRz};
 const TfToken kDefaultAvarTokens[6] = {
-    TfToken("default:tx"), TfToken("default:ty"), TfToken("default:tz"),
-    TfToken("default:rx"), TfToken("default:ry"), TfToken("default:rz")};
+    SchemaAttr::defaultTx, SchemaAttr::defaultTy, SchemaAttr::defaultTz,
+    SchemaAttr::defaultRx, SchemaAttr::defaultRy, SchemaAttr::defaultRz};
 // RigExecBakedAvarNames, in its order.
 static_assert(std::size(RigExecBakedAvarNames) == 11,
               "kAvarTokens interns every avar name");
-const TfToken kAvarTokens[11] = {
-    TfToken(RigExecBakedAvarNames[0]), TfToken(RigExecBakedAvarNames[1]),
-    TfToken(RigExecBakedAvarNames[2]), TfToken(RigExecBakedAvarNames[3]),
-    TfToken(RigExecBakedAvarNames[4]), TfToken(RigExecBakedAvarNames[5]),
-    TfToken(RigExecBakedAvarNames[6]), TfToken(RigExecBakedAvarNames[7]),
-    TfToken(RigExecBakedAvarNames[8]), TfToken(RigExecBakedAvarNames[9]),
-    TfToken(RigExecBakedAvarNames[10])};
+const TfToken kAvarTokens[11] = {SchemaAttr::avarsTx,
+                                 SchemaAttr::avarsTy,
+                                 SchemaAttr::avarsTz,
+                                 SchemaAttr::avarsSx,
+                                 SchemaAttr::avarsSy,
+                                 SchemaAttr::avarsSz,
+                                 SchemaAttr::avarsRx,
+                                 SchemaAttr::avarsRy,
+                                 SchemaAttr::avarsRz,
+                                 SchemaAttr::avarsRspin,
+                                 SchemaAttr::avarsUnitScaleFactor};
 
 // A plain attribute read with no time and no resolution walk, for the
 // uniform tokens the dynamic path reads exactly this way
@@ -194,14 +200,14 @@ _Targets(const UsdPrim &prim, const TfToken &name)
 bool
 _IsBakedConstraintType(const TfToken &type)
 {
-    const bool baked = type == "RigExecPositionConstraint" ||
-                       type == "RigExecRotationConstraint" ||
-                       type == "RigExecScaleConstraint" ||
-                       type == "RigExecParentConstraint" ||
-                       type == "RigExecAimConstraint" ||
-                       type == "RigExecSingleChainIkConstraint" ||
-                       type == "RigExecIkFkMatchConstraint" ||
-                       type == "RigExecHarmonicsConstraint";
+    const bool baked = type == SchemaType::RigExecPositionConstraint ||
+                       type == SchemaType::RigExecRotationConstraint ||
+                       type == SchemaType::RigExecScaleConstraint ||
+                       type == SchemaType::RigExecParentConstraint ||
+                       type == SchemaType::RigExecAimConstraint ||
+                       type == SchemaType::RigExecSingleChainIkConstraint ||
+                       type == SchemaType::RigExecIkFkMatchConstraint ||
+                       type == SchemaType::RigExecHarmonicsConstraint;
     // RigExecRigEvaluator::GetConstraintOperatorTypeNames() is the authority
     // on which operators exist; this is the subset the program can express,
     // and it must stay a subset. A name here the evaluator does not register
@@ -217,10 +223,13 @@ _IsBakedConstraintType(const TfToken &type)
 bool
 _IsBakedSolverType(const TfToken &type)
 {
-    return type == "RigExecFkChain" || type == "RigExecTwoBoneIk" ||
-           type == "RigExecBlendPointFrames" || type == "RigExecSplineIk" ||
-           type == "RigExecTwistDistribution" || type == "RigExecRibbon" ||
-           type == "RigExecSkeleton2d";
+    return type == SchemaType::RigExecFkChain ||
+           type == SchemaType::RigExecTwoBoneIk ||
+           type == SchemaType::RigExecBlendPointFrames ||
+           type == SchemaType::RigExecSplineIk ||
+           type == SchemaType::RigExecTwistDistribution ||
+           type == SchemaType::RigExecRibbon ||
+           type == SchemaType::RigExecSkeleton2d;
 }
 
 // The three placeable weight shapes, which the evaluator spells the same way
@@ -230,8 +239,9 @@ _IsBakedSolverType(const TfToken &type)
 bool
 _IsVolumeWeightTypeName(const TfToken &type)
 {
-    return type == "RigExecSphereWeight" || type == "RigExecPlaneWeight" ||
-           type == "RigExecCurveWeight";
+    return type == SchemaTypeName::RigExecSphereWeight ||
+           type == SchemaTypeName::RigExecPlaneWeight ||
+           type == SchemaTypeName::RigExecCurveWeight;
 }
 
 // The volumes the walk places (_nativeVolumeProviders) that have no
@@ -310,8 +320,10 @@ _SolverCheckpointsWithoutAnOutput(
 bool
 _IsBakedWeightType(const TfToken &type)
 {
-    return type == "RigExecStaticWeight" || type == "RigExecDynamicWeight" ||
-           type == "RigExecCombineWeight" || _IsVolumeWeightTypeName(type);
+    return type == SchemaTypeName::RigExecStaticWeight ||
+           type == SchemaTypeName::RigExecDynamicWeight ||
+           type == SchemaTypeName::RigExecCombineWeight ||
+           _IsVolumeWeightTypeName(type);
 }
 
 // A numeric probe time. Selection along a connection chain must not depend on
@@ -350,12 +362,14 @@ _AttributeIsIdentity(const UsdPrim &prim, const TfToken &name, bool *connected)
 // expression that follows the namespace parent, or a posed frame -- not the
 // attribute's authored value. A connection that ENDS at one of them is
 // therefore outside the single-connection walk the binding table performs.
+const char *const kComputedSpaces[] = {
+    SchemaAttrText::defaultSpace,       SchemaAttrText::avarsDefaultSpace,
+    SchemaAttrText::posedDefaultSpace,  SchemaAttrText::parentSpace,
+    SchemaAttrText::parentDefaultSpace, SchemaAttrText::posedSpace};
+
 bool
 _ConnectionReachesComputedSpace(const UsdAttribute &attribute)
 {
-    static const char *const kComputedSpaces[] = {
-        "default:space", "avars:defaultSpace",  "posed:defaultSpace",
-        "parent:space",  "parent:defaultSpace", "posed:space"};
     // Mirrors RigExecBakedClassifyInput's loop, and stops on the same two
     // conditions it does: a cycle, or a fan-out the walk cannot follow.
     std::set<SdfPath> visiting;
@@ -522,7 +536,8 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
         // one difference the compose has to know about, which is that their
         // scale avars are read and discarded (RigExecBakedProgramImpl::
         // noScaleAvars).
-        if (type != "RigExecJoint" && type != "RigExecControl" &&
+        if (type != SchemaTypeName::RigExecJoint &&
+            type != SchemaTypeName::RigExecControl &&
             !_IsVolumeWeightTypeName(type)) {
             say("provider type not baked (" + type.GetString() + ")", path);
         }
@@ -618,7 +633,7 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
         // A transform-domain matrix mover rides the constraint walk without
         // being a constraint operator, so it is admitted by name here
         // rather than through the operator registry's subset check.
-        if (constraint.schemaType != "RigExecMatrixMover" &&
+        if (constraint.schemaType != SchemaTypeName::RigExecMatrixMover &&
             !_IsBakedConstraintType(constraint.schemaType)) {
             say("constraint type not baked (" +
                     constraint.schemaType.GetString() + ")",
@@ -631,7 +646,8 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
         sayUnbakedWeights(constraint.weightObject);
         // An IK/FK match revises no frame a reader sees, so it has none.
         if (constraint.targets.empty() &&
-            constraint.schemaType != "RigExecIkFkMatchConstraint") {
+            constraint.schemaType !=
+                SchemaTypeName::RigExecIkFkMatchConstraint) {
             say("constraint names no target", constraint.moverPath);
             continue;
         }
@@ -1147,7 +1163,7 @@ _FixedNumericSourceResync(const RigExecBakedProgramImpl &B,
         _ComposesJudgedXform(B, path))
         return false;
     for (const auto &field : notice.GetChangedFields(path))
-        if (field != "default" && field != "typeName")
+        if (field != SdfFieldKeys->Default && field != SdfFieldKeys->TypeName)
             return false;
     const auto attribute = B.stage->GetAttributeAtPath(path);
     if (!attribute || !attribute.GetPrim() || !attribute.GetPrim().IsActive() ||
@@ -1291,8 +1307,9 @@ _IsInvalidatedBy(const RigExecBakedProgramImpl &B,
             continue;
         if (path.IsPrimPath() && B.prims.count(path)) {
             for (const TfToken &field : notice.GetChangedFields(path))
-                if (field == "primOrder" || field == "primChildren" ||
-                    field == "typeName")
+                if (field == SdfFieldKeys->PrimOrder ||
+                    field == SdfChildrenKeys->PrimChildren ||
+                    field == SdfFieldKeys->TypeName)
                     return true;
         }
 
@@ -1591,8 +1608,8 @@ _UnrelatedAttributeResync(const RigExecBakedProgramImpl &B,
         attribute.HasAuthoredConnections())
         return false;
     for (const TfToken &field : notice.GetChangedFields(path))
-        if (field != "default" && field != "typeName" && field != "custom" &&
-            field != "variability")
+        if (field != SdfFieldKeys->Default && field != SdfFieldKeys->TypeName &&
+            field != SdfFieldKeys->Custom && field != SdfFieldKeys->Variability)
             return false;
     return true;
 }
@@ -1680,9 +1697,11 @@ _RouteValueEdits(const RigExecBakedProgramImpl &B,
         }
         for (const TfToken &field : fields) {
             if (field != kDefault && field != kTimeSamples &&
-                field != kSpline && !(fixedResync && field == "typeName") &&
-                !(liveResync && (field == "typeName" || field == "custom" ||
-                                 field == "variability"))) {
+                field != kSpline &&
+                !(fixedResync && field == SdfFieldKeys->TypeName) &&
+                !(liveResync && (field == SdfFieldKeys->TypeName ||
+                                 field == SdfFieldKeys->Custom ||
+                                 field == SdfFieldKeys->Variability))) {
                 return false;
             }
         }
@@ -4231,6 +4250,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
         }
         RigExecValueId next = 1;
         RigExecSceneGraphBindingContext link;
+        // resolve's out-parameters are the binding contract's: the id is
+        // required, the reason is optional and only filled when asked for.
         link.resolve = [&](const RigExecSceneGraphReadRequest &request,
                            RigExecValueId *id, std::string *why) {
             *id = next++;
@@ -4324,6 +4345,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
         [&](const RigExecRigEvaluator::_GraphRevision &revision) {
             if (!excludedSolverBodies.count(revision.binding.driverFrames))
                 return true;
+            // The reason is joined into a multi-line note the report prints
+            // long after Build, so the map holds the text it was built from.
             const std::string reason =
                 "driver frames " + revision.binding.driverFrames.GetString() +
                 " is not a solver of this rig; mover set aside";
@@ -4868,8 +4891,10 @@ namespace {
 // The per-source constraint tables Run reads, interned once at load:
 // interning takes the token registry's lock.
 const std::array<TfToken, 4> kConstraintArrayNames = {
-    TfToken("inputs:sourceWeights"), TfToken("inputs:translationOffsets"),
-    TfToken("inputs:rotationOffsets"), TfToken("inputs:poleVectorWeights")};
+    TfToken(SchemaAttrText::inputsSourceWeights),
+    TfToken(SchemaAttrText::inputsTranslationOffsets),
+    TfToken(SchemaAttrText::inputsRotationOffsets),
+    TfToken(SchemaAttrText::inputsPoleVectorWeights)};
 
 } // namespace
 
@@ -5448,9 +5473,10 @@ RigExecBakedProgram::DescribeWeightOracle(const RigExecRigEvaluator &evaluator,
     if (typeName == _tokens->rigExecCombineWeight) {
         const TfToken mode =
             readToken(_tokens->rigExecCombineMode, _tokens->multiply);
-        if (mode != "multiply" && mode != "add" && mode != "subtract" &&
-            mode != "max" && mode != "min" && mode != "average" &&
-            mode != "overlay") {
+        if (mode != SchemaValueText::multiply && mode != SchemaValueText::add &&
+            mode != SchemaValueText::subtract && mode != SchemaValueText::max &&
+            mode != SchemaValueText::min && mode != SchemaValueText::average &&
+            mode != SchemaValueText::overlay) {
             facts->staticError =
                 who() + ": unknown rigExec:combineMode " + mode.GetString();
         }
@@ -5533,13 +5559,14 @@ RigExecBakedProgram::DescribeWeightOracle(const RigExecRigEvaluator &evaluator,
         readToken(_tokens->rigExecRepresentation, _tokens->constant);
     const TfToken rangePolicy =
         readToken(_tokens->rigExecRangePolicy, _tokens->strict);
-    if (rangePolicy != "strict" && rangePolicy != "clamp") {
+    if (rangePolicy != SchemaValueText::strict &&
+        rangePolicy != SchemaValueText::clamp) {
         facts->staticError = "unknown rangePolicy on " + path.GetString();
         return;
     }
     if (typeName == _tokens->rigExecDynamicWeight) {
         if (readToken(_tokens->rigExecOperation, _tokens->multiply) !=
-            "multiply") {
+            SchemaValueText::multiply) {
             facts->staticError =
                 "unknown dynamic-weight operation on " + path.GetString();
             return;
@@ -5556,7 +5583,7 @@ RigExecBakedProgram::DescribeWeightOracle(const RigExecRigEvaluator &evaluator,
             return;
         }
         if (baseTargets.empty()) {
-            if (representation != "constant") {
+            if (representation != SchemaValueText::constant) {
                 facts->staticError =
                     "no-base dynamic weight must be constant on " +
                     path.GetString();
@@ -5595,7 +5622,7 @@ RigExecBakedProgram::DescribeWeightOracle(const RigExecRigEvaluator &evaluator,
                 "dynamic/base representation mismatch on " + path.GetString();
             return;
         }
-        if (representation == "sparse") {
+        if (representation == SchemaValueText::sparse) {
             VtIntArray mine;
             if (const UsdAttribute a =
                     prim.GetAttribute(_tokens->rigExecIndices)) {

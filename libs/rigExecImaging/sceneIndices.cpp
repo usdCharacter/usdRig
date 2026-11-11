@@ -1,4 +1,5 @@
 // RigExec Hydra scene-index filters implementation.
+#include "rigExecSchema/schemaNames.h"
 #include "sceneIndices.h"
 
 #include "frameTable.h"
@@ -1316,13 +1317,13 @@ std::vector<_ControlGuideShape>
 _BuildControlGuideShapes()
 {
     const TfToken kSphere("sphere");
-    const TfToken kCircle("circle");
+    const TfToken kCircle(SchemaValueText::circle);
     const TfToken kBox("box");
     const TfToken kCube("cube");
     const TfToken kDiamond("diamond");
     const TfToken kPyramid("pyramid");
-    const TfToken kWire("wire");
-    const TfToken kGeometry("geometry");
+    const TfToken kWire(SchemaValueText::wire);
+    const TfToken kGeometry(SchemaValueText::geometry);
 
     // The octahedron and the pyramid, shared by their wire and geometry
     // forms so the two cannot disagree about where the corners are.

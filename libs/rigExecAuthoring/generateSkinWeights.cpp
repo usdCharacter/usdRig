@@ -1,3 +1,4 @@
+#include "rigExecSchema/schemaNames.h"
 #include "generateSkinWeights.h"
 #include "rigBuilder.h"
 
@@ -28,43 +29,43 @@ namespace rigExec {
 
 namespace {
 
-const TfToken _tSkinMover("RigExecSkinMover");
-const TfToken _tRoot("RigExecRoot");
-const TfToken _tMoves("rigExec:moves");
-const TfToken _tInfluences("rigExec:influences");
-const TfToken _tElementSize("rigExec:elementSize");
-const TfToken _tJointIndices("rigExec:jointIndices");
-const TfToken _tJointWeights("rigExec:jointWeights");
+const TfToken _tSkinMover(SchemaTypeName::RigExecSkinMover);
+const TfToken _tRoot(SchemaTypeName::RigExecRoot);
+const TfToken _tMoves(SchemaAttrText::rigExecMoves);
+const TfToken _tInfluences(SchemaAttrText::rigExecInfluences);
+const TfToken _tElementSize(SchemaAttrText::rigExecElementSize);
+const TfToken _tJointIndices(SchemaAttrText::rigExecJointIndices);
+const TfToken _tJointWeights(SchemaAttrText::rigExecJointWeights);
 const TfToken _tPoints("points");
-const TfToken _tRepresentation("rigExec:representation");
-const TfToken _tRangePolicy("rigExec:rangePolicy");
-const TfToken _tFalloffMin("inputs:falloffMin");
-const TfToken _tFalloffMax("inputs:falloffMax");
-const TfToken _tFalloffSamples("inputs:falloffSamples");
-const TfToken _tInvert("inputs:invert");
-const TfToken _tStrength("inputs:strength");
-const TfToken _tScaleX("inputs:scaleX");
-const TfToken _tScaleY("inputs:scaleY");
-const TfToken _tScaleZ("inputs:scaleZ");
-const TfToken _tScaleXPos("inputs:scaleXPos");
-const TfToken _tScaleYPos("inputs:scaleYPos");
-const TfToken _tScaleZPos("inputs:scaleZPos");
-const TfToken _tScaleXNeg("inputs:scaleXNeg");
-const TfToken _tScaleYNeg("inputs:scaleYNeg");
-const TfToken _tScaleZNeg("inputs:scaleZNeg");
-const TfToken _tPlaneAxis("rigExec:planeAxis");
-const TfToken _tPlaneBounds("rigExec:planeBounds");
-const TfToken _tExtentU("inputs:extentU");
-const TfToken _tExtentV("inputs:extentV");
-const TfToken _tCurve("rigExec:curve");
-const TfToken _tSphereType("RigExecSphereWeight");
-const TfToken _tPlaneType("RigExecPlaneWeight");
-const TfToken _tCurveType("RigExecCurveWeight");
-const TfToken _tDense("dense");
-const TfToken _tClamp("clamp");
-const TfToken _tY("y");
-const TfToken _tUnbounded("unbounded");
-const TfToken _tBounded("bounded");
+const TfToken _tRepresentation(SchemaAttrText::rigExecRepresentation);
+const TfToken _tRangePolicy(SchemaAttrText::rigExecRangePolicy);
+const TfToken _tFalloffMin(SchemaAttrText::inputsFalloffMin);
+const TfToken _tFalloffMax(SchemaAttrText::inputsFalloffMax);
+const TfToken _tFalloffSamples(SchemaAttrText::inputsFalloffSamples);
+const TfToken _tInvert(SchemaAttrText::inputsInvert);
+const TfToken _tStrength(SchemaAttrText::inputsStrength);
+const TfToken _tScaleX(SchemaAttrText::inputsScaleX);
+const TfToken _tScaleY(SchemaAttrText::inputsScaleY);
+const TfToken _tScaleZ(SchemaAttrText::inputsScaleZ);
+const TfToken _tScaleXPos(SchemaAttrText::inputsScaleXPos);
+const TfToken _tScaleYPos(SchemaAttrText::inputsScaleYPos);
+const TfToken _tScaleZPos(SchemaAttrText::inputsScaleZPos);
+const TfToken _tScaleXNeg(SchemaAttrText::inputsScaleXNeg);
+const TfToken _tScaleYNeg(SchemaAttrText::inputsScaleYNeg);
+const TfToken _tScaleZNeg(SchemaAttrText::inputsScaleZNeg);
+const TfToken _tPlaneAxis(SchemaAttrText::rigExecPlaneAxis);
+const TfToken _tPlaneBounds(SchemaAttrText::rigExecPlaneBounds);
+const TfToken _tExtentU(SchemaAttrText::inputsExtentU);
+const TfToken _tExtentV(SchemaAttrText::inputsExtentV);
+const TfToken _tCurve(SchemaAttrText::rigExecCurve);
+const TfToken _tSphereType(SchemaTypeName::RigExecSphereWeight);
+const TfToken _tPlaneType(SchemaTypeName::RigExecPlaneWeight);
+const TfToken _tCurveType(SchemaTypeName::RigExecCurveWeight);
+const TfToken _tDense(SchemaValueText::dense);
+const TfToken _tClamp(SchemaValueText::clamp);
+const TfToken _tY(SchemaValueText::y);
+const TfToken _tUnbounded(SchemaValueText::unbounded);
+const TfToken _tBounded(SchemaValueText::bounded);
 
 using _Row = std::vector<std::pair<int, float>>;
 
@@ -104,8 +105,8 @@ GfMatrix4d
 _RigidRest(const UsdPrim &prim, const char *what)
 {
     bool rigid = false;
-    const GfMatrix4d rest = RigExecAuthoredGuideRestSpace(
-        prim, UsdTimeCode::Default(), &rigid);
+    const GfMatrix4d rest =
+        RigExecAuthoredGuideRestSpace(prim, UsdTimeCode::Default(), &rigid);
     if (!rigid) {
         throw std::runtime_error(
             prim.GetPath().GetString() + ": the " + what +
@@ -132,9 +133,9 @@ _CurvePoints(const UsdStagePtr &stage, const UsdPrim &volume,
     const UsdAttribute attr = stage->GetAttributeAtPath(pointsPath);
     if (!attr || attr.GetTypeName() != SdfValueTypeNames->Point3fArray ||
         !attr.Get(&raw, UsdTimeCode::Default())) {
-        throw std::invalid_argument(
-            who + ": rigExec:curve target " + curves[0].GetString() +
-            " has no point3f[] value at Default");
+        throw std::invalid_argument(who + ": rigExec:curve target " +
+                                    curves[0].GetString() +
+                                    " has no point3f[] value at Default");
     }
     GfMatrix4d toAsset(1.0), fromAsset(1.0);
     SdfPathVector structure;
@@ -180,9 +181,9 @@ _VolumeField(const UsdStagePtr &stage, const UsdPrim &volume,
             inputs.params.curve.assign(samples.cbegin(), samples.cend());
         }
     }
-    inputs.scales = GfVec3f(_Float(volume, _tScaleX, 1.0f),
-                            _Float(volume, _tScaleY, 1.0f),
-                            _Float(volume, _tScaleZ, 1.0f));
+    inputs.scales =
+        GfVec3f(_Float(volume, _tScaleX, 1.0f), _Float(volume, _tScaleY, 1.0f),
+                _Float(volume, _tScaleZ, 1.0f));
     std::vector<GfVec3f> curve;
     if (type == _tSphereType) {
         inputs.positiveScales = GfVec3f(_Float(volume, _tScaleXPos, 1.0f),
@@ -210,13 +211,13 @@ _VolumeField(const UsdStagePtr &stage, const UsdPrim &volume,
     if (!packet.valid || packet.values.size() != points.size()) {
         throw std::runtime_error(
             who + ": the volume weight produces no field (check its falloff "
-            "band, scales, representation, range policy and shape "
-            "settings)");
+                  "band, scales, representation, range policy and shape "
+                  "settings)");
     }
     return std::move(packet.values);
 }
 
-}  // namespace
+} // namespace
 
 RigExecGeneratedSkinWeights
 RigExecGenerateSkinWeights(const UsdStagePtr &stage, const SdfPath &skinMover,
@@ -242,11 +243,9 @@ RigExecGenerateSkinWeights(const UsdStagePtr &stage, const SdfPath &skinMover,
     }
     VtVec3fArray setupPoints;
     const UsdAttribute pointsAttr = stage->GetAttributeAtPath(pointsPath);
-    if (!pointsAttr ||
-        !pointsAttr.Get(&setupPoints, UsdTimeCode::Default())) {
-        throw std::invalid_argument(
-            who + ": " + pointsPath.GetString() +
-            " has no point3f[] value at Default");
+    if (!pointsAttr || !pointsAttr.Get(&setupPoints, UsdTimeCode::Default())) {
+        throw std::invalid_argument(who + ": " + pointsPath.GetString() +
+                                    " has no point3f[] value at Default");
     }
     UsdPrim root = mover.GetParent();
     while (root && !root.IsPseudoRoot() && root.GetTypeName() != _tRoot) {
@@ -275,10 +274,10 @@ RigExecGenerateSkinWeights(const UsdStagePtr &stage, const SdfPath &skinMover,
     if (pointIndices) {
         for (const int index : *pointIndices) {
             if (index < 0 || size_t(index) >= count) {
-                throw std::invalid_argument(
-                    who + ": point index " + std::to_string(index) +
-                    " is outside the target's " + std::to_string(count) +
-                    " points");
+                throw std::invalid_argument(who + ": point index " +
+                                            std::to_string(index) +
+                                            " is outside the target's " +
+                                            std::to_string(count) + " points");
             }
             if (!selected[size_t(index)]) {
                 selected[size_t(index)] = true;
@@ -300,9 +299,9 @@ RigExecGenerateSkinWeights(const UsdStagePtr &stage, const SdfPath &skinMover,
     for (size_t j = 0; j < width; ++j) {
         const UsdPrim influence = stage->GetPrimAtPath(influences[j]);
         if (!influence) {
-            throw std::invalid_argument(
-                who + ": rigExec:influences target " +
-                influences[j].GetString() + " does not exist");
+            throw std::invalid_argument(who + ": rigExec:influences target " +
+                                        influences[j].GetString() +
+                                        " does not exist");
         }
         bool owns = false;
         for (const UsdPrim &child : influence.GetChildren()) {
@@ -310,7 +309,8 @@ RigExecGenerateSkinWeights(const UsdStagePtr &stage, const SdfPath &skinMover,
                 continue;
             }
             owns = true;
-            if (count == 0) continue;  // no point to measure
+            if (count == 0)
+                continue; // no point to measure
             const std::vector<float> field =
                 _VolumeField(stage, child, assetPath, points);
             for (size_t p = 0; p < count; ++p) {
@@ -346,7 +346,8 @@ RigExecGenerateSkinWeights(const UsdStagePtr &stage, const SdfPath &skinMover,
                     " points; generate every row first");
             }
             for (size_t p = 0; p < count; ++p) {
-                if (selected[p]) continue;
+                if (selected[p])
+                    continue;
                 for (size_t k = 0; k < size_t(elementSize); ++k) {
                     const size_t slot = p * size_t(elementSize) + k;
                     if (weights[slot] != 0.0f) {
@@ -358,14 +359,16 @@ RigExecGenerateSkinWeights(const UsdStagePtr &stage, const SdfPath &skinMover,
     }
 
     for (size_t p = 0; p < count; ++p) {
-        if (!selected[p]) continue;
+        if (!selected[p])
+            continue;
         double sum = 0.0;
         for (size_t j = 0; j < width; ++j) {
             double &w = fields[p * width + j];
             w = std::min(w, 1.0);
             sum += w;
         }
-        if (!(sum > 0.0)) continue;  // a zero row holds the rest point
+        if (!(sum > 0.0))
+            continue; // a zero row holds the rest point
         for (size_t j = 0; j < width; ++j) {
             const float w = float(fields[p * width + j] / sum);
             if (w > 0.0f) {
@@ -392,4 +395,4 @@ RigExecGenerateSkinWeights(const UsdStagePtr &stage, const SdfPath &skinMover,
     return result;
 }
 
-}  // namespace rigExec
+} // namespace rigExec

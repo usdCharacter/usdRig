@@ -1,5 +1,6 @@
 // Runtime pose scratch allocation, input prologue, and ladder composition.
 
+#include "rigExecSchema/schemaNames.h"
 #include "poseInternal.h"
 #include <algorithm>
 #include <cstring>
@@ -160,10 +161,11 @@ _RrComposeLadder(RrProgram *program, std::vector<int> *moved, size_t begin,
             program->ReadLadder(i, RrLadderRestAvar0 + 4);
         const RrInputValue restAvar5 =
             program->ReadLadder(i, RrLadderRestAvar0 + 5);
-        RrMat4d rest = _RrComposeAvars(restAvar0.f64, restAvar1.f64,
-                                       restAvar2.f64, 1, 1, 1, restAvar3.f64,
-                                       restAvar4.f64, restAvar5.f64, 0, "XYZ") *
-                       program->ReadLadder(i, RrLadderRestSpace).matrix;
+        RrMat4d rest =
+            _RrComposeAvars(restAvar0.f64, restAvar1.f64, restAvar2.f64, 1, 1,
+                            1, restAvar3.f64, restAvar4.f64, restAvar5.f64, 0,
+                            SchemaValueText::xyz) *
+            program->ReadLadder(i, RrLadderRestSpace).matrix;
         rest.Orthonormalize(false);
         const int parent = i < meta.parent.size() ? meta.parent[i] : -1;
         const RrMat4d parentRest =
@@ -208,9 +210,10 @@ _RrComposeLadder(RrProgram *program, std::vector<int> *moved, size_t begin,
                     program->ReadLadder(i, RrLadderDefaultAvar0 + 4);
                 const RrInputValue defAvar5 =
                     program->ReadLadder(i, RrLadderDefaultAvar0 + 5);
-                const RrMat4d offset = _RrComposeAvars(
-                    defAvar0.f64, defAvar1.f64, defAvar2.f64, 1, 1, 1,
-                    defAvar3.f64, defAvar4.f64, defAvar5.f64, 0, "XYZ");
+                const RrMat4d offset =
+                    _RrComposeAvars(defAvar0.f64, defAvar1.f64, defAvar2.f64, 1,
+                                    1, 1, defAvar3.f64, defAvar4.f64,
+                                    defAvar5.f64, 0, SchemaValueText::xyz);
                 scratch->selfD[i] = offset * scratch->restRoundTrip[i] *
                                     parentRest.GetInverse() * parentDefault;
             }
@@ -333,7 +336,7 @@ _RrComposeAvars(double tx, double ty, double tz, double sx, double sy,
     const double angles[3] = {rx, ry, rz};
     std::string sequence = order;
     if (sequence.size() != 3) {
-        sequence = "XYZ";
+        sequence = SchemaValueText::xyz;
     }
     RrMat4d m;
     m.SetIdentity();

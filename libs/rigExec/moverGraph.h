@@ -1,3 +1,4 @@
+#include "rigExecSchema/schemaNames.h"
 #include "rigExecMath/blendLayoutKernel.h"
 // Compiled revision bindings, typed leaves and pure revision kernels.
 #ifndef RIGEXEC_MOVER_GRAPH_H
@@ -53,10 +54,8 @@ template <class Point> struct RigExecSparseWalkMemo;
 /// Metadata is the only way to declare one; no schema attribute stands in
 /// for it. Returns false and fills \p error on an unparseable authored
 /// value; an absent declaration is Base and true.
-bool RigExecResolveReadPhase(
-    const UsdObject &property,
-    RigExecReadPhase *phase,
-    std::string *error);
+bool RigExecResolveReadPhase(const UsdObject &property, RigExecReadPhase *phase,
+                             std::string *error);
 
 /// The compiled rig skin layout of \p moverPrim, through \p cache.
 ///
@@ -67,11 +66,8 @@ bool RigExecResolveReadPhase(
 /// jobs never call it: their SkinTopology head op builds the same layout
 /// from sampled leaves through RigExecBuildSkinTopology.
 std::shared_ptr<const RigExecSkinTopology> RigExecResolveSkinTopology(
-    const UsdPrim &moverPrim,
-    size_t influenceCount,
-    UsdTimeCode time,
-    const RigExecResolvedInputs *resolved,
-    RigExecSkinTopologyCache *cache);
+    const UsdPrim &moverPrim, size_t influenceCount, UsdTimeCode time,
+    const RigExecResolvedInputs *resolved, RigExecSkinTopologyCache *cache);
 
 /// Whether \p moverPrim's skin layout is compiled rig state: none of
 /// rigExec:jointIndices, rigExec:jointWeights and rigExec:elementSize might
@@ -105,14 +101,13 @@ void RigExecBuildSkinTopology(TfSpan<const int> indices,
 /// phase to the authored provider. Pure resolution: reads the stage, authors
 /// nothing.
 RigExecRevisionBinding RigExecResolveRevisionBinding(
-    const UsdPrim &moverPrim,
-    const SdfPath &target,
+    const UsdPrim &moverPrim, const SdfPath &target,
     const std::map<SdfPath, SdfPath> &frameChainHeads);
 
 /// The revision op a mover's schema type performs, or nullopt when the type is
 /// not a point-chain mover.
-std::optional<RigExecRevisionOp> RigExecRevisionOpForSchema(
-    const TfToken &schemaType, const TfToken &curveMode);
+std::optional<RigExecRevisionOp>
+RigExecRevisionOpForSchema(const TfToken &schemaType, const TfToken &curveMode);
 
 /// Assembles a matrix mover's parameter packet.
 ///
@@ -127,8 +122,7 @@ std::optional<RigExecRevisionOp> RigExecRevisionOpForSchema(
 const TfToken &RigExecRevisionKindToken(RigExecRevisionOp op);
 
 RigExecMoverParameters RigExecAssembleMatrixParameters(
-    const UsdPrim &moverPrim,
-    const GfMatrix4d *transform,
+    const UsdPrim &moverPrim, const GfMatrix4d *transform,
     const RigExecWeightPacket *weights,
     UsdTimeCode time = UsdTimeCode::Default(),
     const RigExecResolvedInputs *resolved = nullptr);
@@ -159,12 +153,14 @@ RigExecMoverParameters RigExecAssembleSkinParameters(
 /// Derives a mover's status from its packet: disabled and failed
 /// movers both pass their preceding revision through, and a failure records the
 /// first bad canonical address.
-RigExecMoverStatus RigExecStatusForParameters(
-    const RigExecMoverParameters &parameters, const SdfPath &moverPath);
+RigExecMoverStatus
+RigExecStatusForParameters(const RigExecMoverParameters &parameters,
+                           const SdfPath &moverPath);
 /// The same, with the mover's path already spelled: a step body passes the
 /// text Build captured rather than asking SdfPath for it.
-RigExecMoverStatus RigExecStatusForParameters(
-    const RigExecMoverParameters &parameters, const std::string &moverText);
+RigExecMoverStatus
+RigExecStatusForParameters(const RigExecMoverParameters &parameters,
+                           const std::string &moverText);
 
 /// Applies the matrix operation of \p p to \p pts in place, returning false
 /// when the packet fails atomically (the envelope does not resolve to the
@@ -221,7 +217,8 @@ RigExecMeasureInSpace(const GfMatrix4d &transform, const GfMatrix4d &space)
 /// Remove an explicit neutral solve before applying the animated map.
 /// As above, restore the exact affine column after inverse multiplication.
 inline GfMatrix4d
-RigExecMeasureFromReference(const GfMatrix4d &transform, const GfMatrix4d &reference)
+RigExecMeasureFromReference(const GfMatrix4d &transform,
+                            const GfMatrix4d &reference)
 {
     GfMatrix4d m = reference.GetInverse() * transform;
     m[0][3] = m[1][3] = m[2][3] = 0.0;
@@ -252,7 +249,6 @@ RigExecMeasureInPosedSpace(const GfMatrix4d &transform, const GfMatrix4d &space)
     m[3][3] = 1.0;
     return m;
 }
-
 
 /// The offset a cluster applies, in the frame its POINTS are already in.
 ///
@@ -287,8 +283,7 @@ RigExecMeasureInPosedSpace(const GfMatrix4d &transform, const GfMatrix4d &space)
 /// (1,1,1) and gets \p m back untouched, so it is bit-identical.
 inline GfMatrix4d
 RigExecClusterInPointFrame(const GfMatrix4d &m, const GfMatrix4d &space,
-                           bool posedPoints,
-                           const GfMatrix4d *carry = nullptr)
+                           bool posedPoints, const GfMatrix4d *carry = nullptr)
 {
     if (!posedPoints) {
         return m;
@@ -351,8 +346,7 @@ RigExecClusterInPointFrame(const GfMatrix4d &m, const GfMatrix4d &space,
 /// the measuring space's scale) is NOT applied beside it; the two never
 /// compose.
 inline void
-RigExecCarryWireCurves(std::vector<GfVec3f> *rest,
-                       std::vector<GfVec3f> *posed,
+RigExecCarryWireCurves(std::vector<GfVec3f> *rest, std::vector<GfVec3f> *posed,
                        const GfMatrix4d &carry)
 {
     for (GfVec3f &p : *rest) {
@@ -399,8 +393,9 @@ RigExecMeasureWireDriver(const GfMatrix4d &transform, const GfMatrix4d &space,
         const GfMatrix4d unscaledTransform = transform * unscale;
         const GfMatrix4d unscaledSpace = space * unscale;
         return frame.posedDelta
-            ? RigExecMeasureInPosedSpace(unscaledTransform, unscaledSpace)
-            : RigExecMeasureInSpace(unscaledTransform, unscaledSpace);
+                   ? RigExecMeasureInPosedSpace(unscaledTransform,
+                                                unscaledSpace)
+                   : RigExecMeasureInSpace(unscaledTransform, unscaledSpace);
     }
     return frame.posedDelta ? RigExecMeasureInPosedSpace(transform, space)
                             : RigExecMeasureInSpace(transform, space);
@@ -417,8 +412,8 @@ RigExecMeasureWireDriver(const GfMatrix4d &transform, const GfMatrix4d &space,
 /// Shared by native and frozen parameter assembly; runtime mirrors the same
 /// measurement and per-call selected-pair cache.
 inline void
-RigExecPoseWireDrivers(const std::vector<GfMatrix4d> &table, size_t t,
-                       size_t s, size_t bt, const VtFloatArray &weights,
+RigExecPoseWireDrivers(const std::vector<GfMatrix4d> &table, size_t t, size_t s,
+                       size_t bt, const VtFloatArray &weights,
                        const VtFloatArray &baseWeights,
                        const RigExecWireDriverFrame &frame,
                        std::vector<GfVec3f> *restPoints,
@@ -457,8 +452,8 @@ RigExecPoseWireDrivers(const std::vector<GfMatrix4d> &table, size_t t,
             }
         }
         GfVec3d scale(1.0, 1.0, 1.0);
-        GfMatrix4d m = RigExecMeasureWireDriver(
-            table[ti], table[si], frame, &scale);
+        GfMatrix4d m =
+            RigExecMeasureWireDriver(table[ti], table[si], frame, &scale);
         if (spaceScale) {
             *spaceScale = scale;
         }
@@ -472,10 +467,11 @@ RigExecPoseWireDrivers(const std::vector<GfMatrix4d> &table, size_t t,
         // A base motion moves the curve AND its rest: the wire then deforms
         // by the driver's motion on top of it.
         if (bt > 0) {
-            const GfMatrix4d b = measured(t + s, bt, t + s + bt, bs, j,
-                                          nullptr);
+            const GfMatrix4d b =
+                measured(t + s, bt, t + s + bt, bs, j, nullptr);
             const float wb = baseWeights.empty()
-                ? 1.0f : baseWeights[pick(baseWeights.size(), j)];
+                                 ? 1.0f
+                                 : baseWeights[pick(baseWeights.size(), j)];
             const GfVec3f moved(b.TransformAffine(GfVec3d(rest)));
             rest = rest + (moved - rest) * wb;
         }
@@ -502,10 +498,11 @@ RigExecPoseWireDrivers(const std::vector<GfMatrix4d> &table, size_t t,
 inline bool
 RigExecWireTakesSparseEnvelope(const RigExecWeightPacket &w)
 {
-    return w.valid && w.representation == "sparse" &&
+    return w.valid && w.representation == SchemaValueText::sparse &&
            w.defaultWeight == 0.0f && w.indices.size() == w.values.size() &&
-           (w.rangePolicy.IsEmpty() || w.rangePolicy == "strict" ||
-            w.rangePolicy == "clamp");
+           (w.rangePolicy.IsEmpty() ||
+            w.rangePolicy == SchemaValueText::strict ||
+            w.rangePolicy == SchemaValueText::clamp);
 }
 
 /// RIGEXEC_ENABLE_SIMD (default true), read once when the library loads.
@@ -541,9 +538,8 @@ bool RigExecApplySkinKernel(const RigExecMoverParameters &p,
 /// resolved per range -- a chunked caller resolves it once and hands the same
 /// array to every range, indexed absolutely.
 void RigExecApplyMatrixKernelRange(const RigExecMoverParameters &p,
-                                   const float *envelope,
-                                   size_t begin, size_t end, GfVec3f *pts,
-                                   bool useSimd);
+                                   const float *envelope, size_t begin,
+                                   size_t end, GfVec3f *pts, bool useSimd);
 
 /// Blends \p blended over \p preceding for one vertex range, with
 /// \p envelope the FULL resolved envelope and every array indexed
@@ -595,8 +591,8 @@ struct RigExecSkinTransformsView {
 
 /// The view of \p p's own influence table, which is what an unchunked caller
 /// skins against.
-RigExecSkinTransformsView RigExecSkinTransformsOf(
-    const RigExecMoverParameters &p);
+RigExecSkinTransformsView
+RigExecSkinTransformsOf(const RigExecMoverParameters &p);
 
 /// The layout \p p and \p transforms describe over \p pointCount points.
 ///
@@ -604,10 +600,10 @@ RigExecSkinTransformsView RigExecSkinTransformsOf(
 /// size", because the answer depends on whether the packet carries a
 /// compiled rig layout by handle, and a second copy of that rule is a second
 /// chance to read the wrong array.
-RigExecSkinLayout RigExecSkinLayoutForPacket(
-    const RigExecMoverParameters &p,
-    const RigExecSkinTransformsView &transforms,
-    size_t pointCount);
+RigExecSkinLayout
+RigExecSkinLayoutForPacket(const RigExecMoverParameters &p,
+                           const RigExecSkinTransformsView &transforms,
+                           size_t pointCount);
 
 /// The half of RigExecApplySkinKernel's whole-array validation that does NOT
 /// depend on the influence matrices: the element shape, the index range and
@@ -621,8 +617,7 @@ bool RigExecSkinLayoutIsUsable(const RigExecMoverParameters &p,
                                size_t pointCount);
 
 /// The other half: every influence matrix finite and affine.
-bool RigExecSkinTransformsAreUsable(const GfMatrix4d *transforms,
-                                    size_t count);
+bool RigExecSkinTransformsAreUsable(const GfMatrix4d *transforms, size_t count);
 
 /// One vertex range of the skin operation of \p p, against \p transforms,
 /// written in place over [\p begin, \p end) of \p pts.
@@ -646,9 +641,8 @@ bool RigExecApplySkinKernelRange(const RigExecMoverParameters &p,
 /// own, for a caller that folds the matrices outside the packet.
 bool RigExecApplySkinKernelWithTransforms(
     const RigExecMoverParameters &p,
-    const RigExecSkinTransformsView &transforms,
-    std::vector<GfVec3f> *pts, bool useSimd);
-
+    const RigExecSkinTransformsView &transforms, std::vector<GfVec3f> *pts,
+    bool useSimd);
 
 /// Applies the blend-shape operation of \p p to \p pts in place, returning
 /// false when the packet fails atomically (the deltas or the envelope do not
@@ -663,9 +657,9 @@ bool RigExecApplySkinKernelWithTransforms(
 /// second copy of the blend would have to agree about where the envelope is
 /// folded in, and the rigs that would show a disagreement are the ones no
 /// fixture happened to have.
-bool RigExecApplyBlendShapeKernel(const RigExecMoverParameters &p,
-                                  std::vector<GfVec3f> *pts,
-    RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache = nullptr);
+bool RigExecApplyBlendShapeKernel(
+    const RigExecMoverParameters &p, std::vector<GfVec3f> *pts,
+    RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache = nullptr);
 
 /// Recomputes the derived property \p op maintains -- vertex normals or an
 /// extent -- from \p p and blends it over \p pts in place, returning false
@@ -684,9 +678,9 @@ bool RigExecApplyDerivedKernel(RigExecRevisionOp op,
                                std::vector<GfVec3f> *pts);
 /// Borrow authored output without first copying it; failed calls leave result intact.
 bool RigExecApplyDerivedKernel(RigExecRevisionOp op,
-    const RigExecMoverParameters &p,const GfVec3f *authored,size_t authoredCount,
-    std::vector<GfVec3f> *result);
-
+                               const RigExecMoverParameters &p,
+                               const GfVec3f *authored, size_t authoredCount,
+                               std::vector<GfVec3f> *result);
 
 /// Applies \p op to \p pts in place, returning false when the packet fails
 /// atomically.
@@ -702,11 +696,10 @@ bool RigExecApplyDerivedKernel(RigExecRevisionOp op,
 ///
 /// \p wireBasis is the caller's own memo for a sparse-envelope wire; null
 /// builds the basis for this call only.
-bool RigExecApplyRevisionKernel(RigExecRevisionOp op,
-                                const RigExecMoverParameters &p,
-                                std::vector<GfVec3f> *pts, bool useSimd,
-                                RigExecWireBasisCache *wireBasis,
-    RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache = nullptr);
+bool RigExecApplyRevisionKernel(
+    RigExecRevisionOp op, const RigExecMoverParameters &p,
+    std::vector<GfVec3f> *pts, bool useSimd, RigExecWireBasisCache *wireBasis,
+    RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache = nullptr);
 
 /// Runs one revision of \p op over \p pts in place, envelope included: the
 /// packet check, the full-strength fast path, RigExecApplyRevisionKernel and
@@ -718,28 +711,32 @@ bool RigExecApplyRevisionKernel(RigExecRevisionOp op,
 /// geometry loop. Two hand-written wrappers would have to agree about which
 /// operations blend and which fold the envelope into their own arithmetic.
 /// \p wireBasis as for RigExecApplyRevisionKernel.
-bool RigExecRunRevisionKernel(RigExecRevisionOp op,
-                              const RigExecMoverParameters &p,
-                              std::vector<GfVec3f> *pts, bool useSimd,
-                              RigExecWireBasisCache *wireBasis,
-    RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache = nullptr);
+bool RigExecRunRevisionKernel(
+    RigExecRevisionOp op, const RigExecMoverParameters &p,
+    std::vector<GfVec3f> *pts, bool useSimd, RigExecWireBasisCache *wireBasis,
+    RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache = nullptr);
 
 namespace geometryDetail {
 /// Internal owned staging only: failure may modify output; the caller must
 /// discard it and retain the preceding published version. Never borrowed points.
 /// \p envelope, when given, is the separate-blend envelope its caller already
 /// resolved from the packet over the points' count; null resolves it here.
-bool RunDiscardableRevisionKernel(RigExecRevisionOp,const RigExecMoverParameters &,
-    std::vector<GfVec3f> *,bool,RigExecWireBasisCache *,
-    RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *,
-    const std::vector<float> *envelope = nullptr);
+bool RunDiscardableRevisionKernel(RigExecRevisionOp,
+                                  const RigExecMoverParameters &,
+                                  std::vector<GfVec3f> *, bool,
+                                  RigExecWireBasisCache *,
+                                  RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *,
+                                  const std::vector<float> *envelope = nullptr);
 /// The same revision out of place: reads the \p count entering points at
 /// \p in, which must not alias \p out, and writes the result to \p out.
-bool RunDiscardableRevisionKernel(RigExecRevisionOp,const RigExecMoverParameters &,
-    const GfVec3f *in,size_t count,std::vector<GfVec3f> *out,bool,
-    RigExecWireBasisCache *,RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *,
-    const std::vector<float> *envelope = nullptr);
-}
+bool RunDiscardableRevisionKernel(RigExecRevisionOp,
+                                  const RigExecMoverParameters &,
+                                  const GfVec3f *in, size_t count,
+                                  std::vector<GfVec3f> *out, bool,
+                                  RigExecWireBasisCache *,
+                                  RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *,
+                                  const std::vector<float> *envelope = nullptr);
+} // namespace geometryDetail
 
 /// Whether \p envelope makes the "apply once" blend the identity, so the
 /// copy of the preceding revision, the resolved envelope array and the blend
@@ -758,12 +755,13 @@ bool RunDiscardableRevisionKernel(RigExecRevisionOp,const RigExecMoverParameters
 inline bool
 RigExecEnvelopeIsFullStrength(const RigExecWeightPacket &envelope)
 {
-    return envelope.valid && envelope.representation == "constant" &&
+    return envelope.valid &&
+           envelope.representation == SchemaValueText::constant &&
            envelope.values.empty() && envelope.indices.empty() &&
            envelope.defaultWeight == 1.0f &&
            (envelope.rangePolicy.IsEmpty() ||
-            envelope.rangePolicy == "strict" ||
-            envelope.rangePolicy == "clamp");
+            envelope.rangePolicy == SchemaValueText::strict ||
+            envelope.rangePolicy == SchemaValueText::clamp);
 }
 
 /// A revision's apply-or-fail answer, decided from its packet before any
@@ -804,11 +802,12 @@ bool RigExecRevisionTakesSeparateBlend(RigExecRevisionOp op,
 /// when given, is a wire's `p.weights.ResolvesAll(count)` already answered
 /// by a resolve of the envelope at \p count, so it is not validated a second
 /// time; a lattice validates its envelope here.
-RigExecRevisionAcceptance RigExecRevisionKernelAcceptance(
-    RigExecRevisionOp op, const RigExecMoverParameters &p, size_t count,
-    const bool *envelopeResolves = nullptr);
+RigExecRevisionAcceptance
+RigExecRevisionKernelAcceptance(RigExecRevisionOp op,
+                                const RigExecMoverParameters &p, size_t count,
+                                const bool *envelopeResolves = nullptr);
 
-struct RigExecLatticeBasis;  // rigExecMath/latticeKernel.h
+struct RigExecLatticeBasis; // rigExecMath/latticeKernel.h
 
 /// Ops a revision of a range-pipelined chain may run one step per vertex
 /// group: Matrix, Wire, and -- classified further at Build by lattice
@@ -935,20 +934,18 @@ bool RigExecRunRevisionRange(
     size_t count, size_t begin, size_t end, const float *separateEnvelope,
     std::vector<GfVec3f> *out, bool useSimd, bool *untouched = nullptr);
 
-
 /// A provider's asset frame from its rest landmarks and a rest->pose map:
 /// row-vector frame = rest * M. Identity rest landmarks give M itself.
 GfMatrix4d RigExecWorldFromRest(const std::array<GfVec3d, 4> &restPoints,
                                 const GfMatrix4d &restToPose);
 
-
 /// Reads (and records, for the bake) what \p op needs off the stage,
 /// through the generation's resolved inputs where the live assemblers do.
-void RigExecReadProjectorTarget(
-    const UsdPrim &projectorPrim, RigExecRevisionOp op,
-    const RigExecRevisionBinding &binding,
-    const RigExecResolvedInputs *resolved, UsdTimeCode time,
-    RigExecProjectorReads *reads);
+void RigExecReadProjectorTarget(const UsdPrim &projectorPrim,
+                                RigExecRevisionOp op,
+                                const RigExecRevisionBinding &binding,
+                                const RigExecResolvedInputs *resolved,
+                                UsdTimeCode time, RigExecProjectorReads *reads);
 
 /// Runs a surface projector target (SurfaceProjector or ShaderDials) on its
 /// gathered reads: the shared kernel on \p finalPoints against the authored
@@ -958,23 +955,22 @@ void RigExecReadProjectorTarget(
 bool RigExecRunProjectorTarget(
     RigExecRevisionOp op, const RigExecRevisionBinding &binding,
     const RigExecSurfaceProjectorFrames &frames,
-    const RigExecProjectorReads &reads,
-    const std::vector<GfVec3f> &basePoints,
+    const RigExecProjectorReads &reads, const std::vector<GfVec3f> &basePoints,
     const std::vector<GfVec3f> &finalPoints, const std::string &who,
-    GfMatrix4d *matrix,
-    std::vector<std::string> *diagnostics,
-    RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache = nullptr);
+    GfMatrix4d *matrix, std::vector<std::string> *diagnostics,
+    RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache = nullptr);
 
 /// RigExecReadProjectorTarget then RigExecRunProjectorTarget: what the
 /// dynamic walk and the baked program both call.
-bool RigExecEvaluateProjectorTarget(
-    const UsdPrim &projectorPrim, RigExecRevisionOp op,
-    const RigExecRevisionBinding &binding,
-    const RigExecSurfaceProjectorFrames &frames,
-    const std::vector<GfVec3f> &basePoints,
-    const std::vector<GfVec3f> &finalPoints,
-    const RigExecResolvedInputs *resolved, UsdTimeCode time,
-    GfMatrix4d *matrix, std::vector<std::string> *diagnostics);
+bool RigExecEvaluateProjectorTarget(const UsdPrim &projectorPrim,
+                                    RigExecRevisionOp op,
+                                    const RigExecRevisionBinding &binding,
+                                    const RigExecSurfaceProjectorFrames &frames,
+                                    const std::vector<GfVec3f> &basePoints,
+                                    const std::vector<GfVec3f> &finalPoints,
+                                    const RigExecResolvedInputs *resolved,
+                                    UsdTimeCode time, GfMatrix4d *matrix,
+                                    std::vector<std::string> *diagnostics);
 
 /// Sums blend channels into dense per-point deltas against \p base:
 /// deltas derive against the authored base, never the preceding
@@ -989,13 +985,12 @@ bool RigExecEvaluateProjectorTarget(
 /// non-finite, non-positive or repeated activation, or a sample whose
 /// point count disagrees with \p base -- which fails the mover atomically
 /// rather than applying a partial blend. Nonfinite channel weights contribute zero.
-bool RigExecSumBlendChannels(
-    const std::vector<RigExecBlendChannel> &channels,
-    const std::vector<GfVec3f> &base,
-    std::vector<GfVec3f> *deltas);
-bool RigExecSumBlendChannels(
-    const std::vector<RigExecBlendChannel> &channels,
-    const GfVec3f *base, size_t baseCount, std::vector<GfVec3f> *deltas);
+bool RigExecSumBlendChannels(const std::vector<RigExecBlendChannel> &channels,
+                             const std::vector<GfVec3f> &base,
+                             std::vector<GfVec3f> *deltas);
+bool RigExecSumBlendChannels(const std::vector<RigExecBlendChannel> &channels,
+                             const GfVec3f *base, size_t baseCount,
+                             std::vector<GfVec3f> *deltas);
 
 /// Assembles any revision's parameter packet without a derived stage.
 ///
@@ -1006,13 +1001,11 @@ bool RigExecSumBlendChannels(
 /// needs (cage, surface, topology, bind coords, strength, enable). The kernels
 /// read the same inputs through exec at the current time, so passing anything
 /// else silently diverges on animated input.
-RigExecMoverParameters RigExecAssembleParameters(
-    const UsdPrim &moverPrim,
-    RigExecRevisionOp op,
-    const RigExecRevisionBinding &binding,
-    const RigExecProviderValues &values,
-    UsdTimeCode time = UsdTimeCode::Default());
-
+RigExecMoverParameters
+RigExecAssembleParameters(const UsdPrim &moverPrim, RigExecRevisionOp op,
+                          const RigExecRevisionBinding &binding,
+                          const RigExecProviderValues &values,
+                          UsdTimeCode time = UsdTimeCode::Default());
 
 /// The External arm's plugin call, shared by RigExecAssembleParameters and
 /// the sampled boundary: reads declared leaves and calls the immutable
@@ -1022,7 +1015,6 @@ void RigExecAssembleExternalPayload(const UsdPrim &moverPrim,
                                     const RigExecProviderValues &values,
                                     UsdTimeCode time,
                                     RigExecExternalPayload *payload);
-
 
 /// Whether \p role reads topology, which is compiled rig state: a skin's
 /// jointIndices and elementSize, a mesh's face counts and indices, a
@@ -1078,7 +1070,6 @@ void RigExecRevisionLeafHops(const RigExecRevisionLeafKey &key,
                              const UsdAttribute &attribute,
                              std::vector<SdfPath> *hops, bool *varying);
 
-
 /// RigExecAssembleParameters for a covered operation, from sampled leaves:
 /// the same arms, gates and order, with every stage read replaced by its
 /// leaf. Reads no stage, takes no lock and builds no token from text.
@@ -1086,8 +1077,7 @@ void RigExecRevisionLeafHops(const RigExecRevisionLeafKey &key,
 /// `resolved` and `skinTopologyCache` are not read.
 RigExecMoverParameters RigExecAssembleFromLeaves(
     RigExecRevisionOp op, const RigExecRevisionBinding &binding,
-    const RigExecRevisionLeafView &leaves,
-    const RigExecProviderValues &values);
+    const RigExecRevisionLeafView &leaves, const RigExecProviderValues &values);
 
 /// Whether RigExecAssembleFromLeaves reaches an External revision's payload
 /// over \p leaves and \p values: the enable and the envelope, which the
@@ -1098,10 +1088,11 @@ bool RigExecExternalPayloadIsRead(const RigExecRevisionLeafView &leaves,
 /// RigExecReadProjectorTarget over sampled leaves: the same reads, each
 /// answered by its leaf. The caller holds a valid projector prim (the
 /// program refuses a missing one at Build). Reads no stage.
-void RigExecReadProjectorTargetFromLeaves(
-    RigExecRevisionOp op, const RigExecRevisionBinding &binding,
-    const RigExecRevisionLeafView &leaves, RigExecProjectorReads *reads);
+void RigExecReadProjectorTargetFromLeaves(RigExecRevisionOp op,
+                                          const RigExecRevisionBinding &binding,
+                                          const RigExecRevisionLeafView &leaves,
+                                          RigExecProjectorReads *reads);
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_MOVER_GRAPH_H
+#endif // RIGEXEC_MOVER_GRAPH_H

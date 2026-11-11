@@ -5,6 +5,7 @@
 // retire+rewarm) and cancel only the affected times, falling back to the
 // unpartitioned per-time cancel when no capture index answers. The rewarm
 // queue itself belongs to the warming domain (registryWarming.cpp).
+#include "rigExecSchema/schemaNames.h"
 #include "registry.h"
 
 #include "rigExec/backgroundScheduler.h"
@@ -471,8 +472,10 @@ RigExecImagingRegistry::_OnGuideOnlyObjectsChanged(
                     name == UsdGeomTokens->purpose ||
                     name == UsdGeomTokens->xformOpOrder ||
                     TfStringStartsWith(name.GetString(), "xformOp:") ||
-                    TfStringStartsWith(name.GetString(), "rest:") ||
-                    TfStringStartsWith(name.GetString(), "guide:");
+                    TfStringStartsWith(name.GetString(),
+                                       SchemaNamePrefix::rest) ||
+                    TfStringStartsWith(name.GetString(),
+                                       SchemaNamePrefix::guide);
             }
             if (displayValue) {
                 for (const TfToken &field : notice.GetChangedFields(path)) {
@@ -651,7 +654,8 @@ RigExecImagingRegistry::_OnObjectsChanged(
                 for (const TfToken &field : notice.GetChangedFields(path)) {
                     if (field != "typeName" && field != "default" &&
                         field != "timeSamples" && field != "spline" &&
-                        field != "custom" && field != "variability") {
+                        field != SchemaValueText::custom &&
+                        field != "variability") {
                         _readRootsDirty = true;
                         break;
                     }

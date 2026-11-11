@@ -1,4 +1,6 @@
 // RigExec authoring API implementation. See rigBuilder.h for the contract.
+#include "rigExecSchema/schemaNames.h"
+#include "rigExecSchema/schemaTokens.h"
 #include "rigBuilder.h"
 #include "schemaAuthoring.h"
 
@@ -25,8 +27,8 @@ namespace rigExec {
 
 namespace {
 
-const TfToken _kControlApi("RigExecControlAPI");
-const TfToken _kMoverApi("RigExecMoverAPI");
+const TfToken _kControlApi = SchemaType::RigExecControlAPI;
+const TfToken _kMoverApi = SchemaType::RigExecMoverAPI;
 const TfToken _kNodeGraphApi("NodeGraphNodeAPI");
 
 UsdStageRefPtr
@@ -35,11 +37,10 @@ _GetStageRef(const UsdPrim &prim)
     if (!prim) {
         throw std::runtime_error("invalid prim for schema-backed authoring");
     }
-    UsdStageRefPtr stage =
-        TfCreateRefPtrFromProtectedWeakPtr(prim.GetStage());
+    UsdStageRefPtr stage = TfCreateRefPtrFromProtectedWeakPtr(prim.GetStage());
     if (!stage) {
-        throw std::runtime_error(
-            "prim has no live stage: " + prim.GetPath().GetString());
+        throw std::runtime_error("prim has no live stage: " +
+                                 prim.GetPath().GetString());
     }
     return stage;
 }
@@ -48,10 +49,11 @@ RigExecSchemaPrim
 _Schema(const UsdPrim &prim)
 {
     if (!prim || prim.GetTypeName().IsEmpty()) {
-        throw std::runtime_error("invalid or untyped prim for schema authoring");
+        throw std::runtime_error(
+            "invalid or untyped prim for schema authoring");
     }
-    return RigExecSchemaPrim::Get(
-        _GetStageRef(prim), prim.GetPath(), prim.GetTypeName());
+    return RigExecSchemaPrim::Get(_GetStageRef(prim), prim.GetPath(),
+                                  prim.GetTypeName());
 }
 
 void
@@ -61,9 +63,8 @@ _ApplyApiRequired(const UsdPrim &prim, const TfToken &apiName)
 }
 
 void
-_RequireAttrDefinition(
-    const UsdPrim &prim, const char *name,
-    const SdfValueTypeName &typeName)
+_RequireAttrDefinition(const UsdPrim &prim, const char *name,
+                       const SdfValueTypeName &typeName)
 {
     if (!name || !*name) {
         throw std::invalid_argument("attribute name must not be empty");
@@ -72,16 +73,16 @@ _RequireAttrDefinition(
     const UsdPrimDefinition::Attribute definition =
         prim.GetPrimDefinition().GetAttributeDefinition(attrName);
     if (!definition) {
-        throw std::invalid_argument(
-            "attribute '" + attrName.GetString() +
-            "' is not declared at " + prim.GetPath().GetString());
+        throw std::invalid_argument("attribute '" + attrName.GetString() +
+                                    "' is not declared at " +
+                                    prim.GetPath().GetString());
     }
     if (definition.GetTypeName() != typeName) {
         throw std::invalid_argument(
             "attribute '" + attrName.GetString() + "' at " +
             prim.GetPath().GetString() + " is declared as " +
-            definition.GetTypeName().GetAsToken().GetString() +
-            ", not " + typeName.GetAsToken().GetString());
+            definition.GetTypeName().GetAsToken().GetString() + ", not " +
+            typeName.GetAsToken().GetString());
     }
 }
 
@@ -91,9 +92,8 @@ _RequireAttrDefinition(
 /// `token` as a string or a `float[]` as a double array would still compose
 // but would not round-trip cleanly through the schema's declared types.
 void
-_AuthorAttr(
-    const UsdPrim &prim, const char *name, const SdfValueTypeName &typeName,
-    VtValue value)
+_AuthorAttr(const UsdPrim &prim, const char *name,
+            const SdfValueTypeName &typeName, VtValue value)
 {
     _RequireAttrDefinition(prim, name, typeName);
     _Schema(prim).SetAttribute(TfToken(name), value);
@@ -106,13 +106,12 @@ _ClearAttr(const UsdPrim &prim, const char *name)
 }
 
 void _RequireTargetPath(const SdfPath &path, const char *what);
-void _ClearJointElementsIfTargetsChange(
-    const UsdPrim &prim, const std::vector<SdfPath> &newTargets);
+void _ClearJointElementsIfTargetsChange(const UsdPrim &prim,
+                                        const std::vector<SdfPath> &newTargets);
 
 void
-_SetRel(
-    const UsdPrim &prim, const char *name,
-    const std::vector<SdfPath> &targets)
+_SetRel(const UsdPrim &prim, const char *name,
+        const std::vector<SdfPath> &targets)
 {
     if (!name || !*name) {
         throw std::invalid_argument("relationship name must not be empty");
@@ -130,14 +129,15 @@ _AppendRelTarget(const UsdPrim &prim, const char *name, const SdfPath &target)
 {
     if (target.IsEmpty()) {
         throw std::invalid_argument(
-            std::string("cannot append an empty relationship target to ") + name);
+            std::string("cannot append an empty relationship target to ") +
+            name);
     }
     const UsdRelationship rel = prim.GetRelationship(TfToken(name));
     SdfPathVector targets;
     if (!rel || !rel.GetTargets(&targets)) {
         // The strict setter below produces the precise undeclared/wrong-kind
         // diagnostic without ever inventing a custom relationship.
-        _SetRel(prim, name, { target });
+        _SetRel(prim, name, {target});
         return;
     }
     targets.push_back(target);
@@ -145,7 +145,10 @@ _AppendRelTarget(const UsdPrim &prim, const char *name, const SdfPath &target)
 }
 
 double
-_Clamp01(double x) { return std::min(1.0, std::max(0.0, x)); }
+_Clamp01(double x)
+{
+    return std::min(1.0, std::max(0.0, x));
+}
 
 void
 _RequireNormalizedMoverWeight(float weight)
@@ -160,8 +163,8 @@ void
 _RequireName(const std::string &name, const char *what)
 {
     if (name.empty() || !SdfPath::IsValidIdentifier(name)) {
-        throw std::invalid_argument(
-            std::string(what) + " must be a valid USD identifier");
+        throw std::invalid_argument(std::string(what) +
+                                    " must be a valid USD identifier");
     }
 }
 
@@ -170,8 +173,8 @@ _RequireTargetPath(const SdfPath &path, const char *what)
 {
     if (path.IsEmpty() || !path.IsAbsolutePath() ||
         (!path.IsPrimPath() && !path.IsPropertyPath())) {
-        throw std::invalid_argument(
-            std::string(what) + " must be an absolute prim/property path");
+        throw std::invalid_argument(std::string(what) +
+                                    " must be an absolute prim/property path");
     }
 }
 
@@ -180,27 +183,26 @@ _RequirePrimPath(const SdfPath &path, const char *what)
 {
     if (path.IsEmpty() || !path.IsAbsolutePath() || !path.IsPrimPath() ||
         path == SdfPath::AbsoluteRootPath()) {
-        throw std::invalid_argument(
-            std::string(what) + " must be an absolute prim path");
+        throw std::invalid_argument(std::string(what) +
+                                    " must be an absolute prim path");
     }
 }
 
 void
-_RequireTypedPrim(
-    const UsdStageRefPtr &stage, const SdfPath &path,
-    const TfToken &expectedType, const char *what)
+_RequireTypedPrim(const UsdStageRefPtr &stage, const SdfPath &path,
+                  const TfToken &expectedType, const char *what)
 {
     _RequirePrimPath(path, what);
     const UsdPrim prim = stage ? stage->GetPrimAtPath(path) : UsdPrim();
     if (!prim) {
-        throw std::invalid_argument(
-            std::string(what) + " does not exist: " + path.GetString());
+        throw std::invalid_argument(std::string(what) +
+                                    " does not exist: " + path.GetString());
     }
     if (prim.GetTypeName() != expectedType ||
         prim.GetPrimTypeInfo().GetSchemaTypeName() != expectedType) {
-        throw std::invalid_argument(
-            std::string(what) + " must be a " + expectedType.GetString() +
-            ": " + path.GetString());
+        throw std::invalid_argument(std::string(what) + " must be a " +
+                                    expectedType.GetString() + ": " +
+                                    path.GetString());
     }
 }
 
@@ -220,23 +222,24 @@ _ResolveType(const UsdStageRefPtr &stage, const TfToken &name)
     return t;
 }
 
-}  // namespace
+} // namespace
 
 // Handle base
 
 void
-RigExecHandleBase::SetAttr(
-    const char *name, const TfToken &typeName, VtValue value)
+RigExecHandleBase::SetAttr(const char *name, const TfToken &typeName,
+                           VtValue value)
 {
-    _AuthorAttr(GetPrim(), name, _ResolveType(_stage, typeName), std::move(value));
+    _AuthorAttr(GetPrim(), name, _ResolveType(_stage, typeName),
+                std::move(value));
 }
 
 void
-RigExecHandleBase::SetRel(
-    const char *name, const std::vector<SdfPath> &targets)
+RigExecHandleBase::SetRel(const char *name, const std::vector<SdfPath> &targets)
 {
     if (!IsValid()) {
-        throw std::runtime_error(std::string("invalid handle for relationship ") + name);
+        throw std::runtime_error(
+            std::string("invalid handle for relationship ") + name);
     }
     _SetRel(GetPrim(), name, targets);
 }
@@ -253,36 +256,35 @@ RigExecHandleBase::ApplyApi(const TfToken &apiSchemaName)
 void
 RigExecMoverHandle::SetEnabled(bool enabled)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:enabled", SdfValueTypeNames->Bool,
-        VtValue(enabled));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsEnabled,
+                SdfValueTypeNames->Bool, VtValue(enabled));
 }
 
 void
 RigExecMoverHandle::SetDefaultWeight(float weight)
 {
     _RequireNormalizedMoverWeight(weight);
-    _AuthorAttr(
-        GetPrim(), "inputs:defaultWeight", SdfValueTypeNames->Float,
-        VtValue(weight));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsDefaultWeight,
+                SdfValueTypeNames->Float, VtValue(weight));
 }
 
 void
 RigExecMoverHandle::SetWeightObject(const SdfPath &path)
 {
-    SetRel("rigExec:weightObject", path.IsEmpty() ? std::vector<SdfPath>()
-                                                   : std::vector<SdfPath>{ path });
+    SetRel(SchemaAttrText::rigExecWeightObject,
+           path.IsEmpty() ? std::vector<SdfPath>()
+                          : std::vector<SdfPath>{path});
 }
 
 void
 RigExecMoverHandle::SetMoves(const std::vector<SdfPath> &targets)
 {
-    SetRel("rigExec:moves", targets);
+    SetRel(SchemaAttrText::rigExecMoves, targets);
 }
 
 void
-RigExecMoverHandle::SetReadPhase(
-    const TfToken &propertyName, const std::string &phase)
+RigExecMoverHandle::SetReadPhase(const TfToken &propertyName,
+                                 const std::string &phase)
 {
     _Schema(GetPrim()).SetReadPhase(propertyName, phase);
 }
@@ -294,30 +296,34 @@ namespace {
 void
 _SetRestSpace(RigExecHandleBase *self, const GfMatrix4d &m)
 {
-    _AuthorAttr(
-        self->GetPrim(), "rest:space", SdfValueTypeNames->Matrix4d, VtValue(m));
+    _AuthorAttr(self->GetPrim(), SchemaAttrText::restSpace,
+                SdfValueTypeNames->Matrix4d, VtValue(m));
 }
 
 void
 _SetAvarTranslation(RigExecHandleBase *self, double tx, double ty, double tz)
 {
-    _AuthorAttr(self->GetPrim(), "avars:tx", SdfValueTypeNames->Double, VtValue(tx));
-    _AuthorAttr(self->GetPrim(), "avars:ty", SdfValueTypeNames->Double, VtValue(ty));
-    _AuthorAttr(self->GetPrim(), "avars:tz", SdfValueTypeNames->Double, VtValue(tz));
+    _AuthorAttr(self->GetPrim(), SchemaAttrText::avarsTx,
+                SdfValueTypeNames->Double, VtValue(tx));
+    _AuthorAttr(self->GetPrim(), SchemaAttrText::avarsTy,
+                SdfValueTypeNames->Double, VtValue(ty));
+    _AuthorAttr(self->GetPrim(), SchemaAttrText::avarsTz,
+                SdfValueTypeNames->Double, VtValue(tz));
 }
 
 void
-_SetAvarRotation(
-    RigExecHandleBase *self, double rx, double ry, double rz,
-    const TfToken &order)
+_SetAvarRotation(RigExecHandleBase *self, double rx, double ry, double rz,
+                 const TfToken &order)
 {
-    _AuthorAttr(self->GetPrim(), "avars:rx", SdfValueTypeNames->Double, VtValue(rx));
-    _AuthorAttr(self->GetPrim(), "avars:ry", SdfValueTypeNames->Double, VtValue(ry));
-    _AuthorAttr(self->GetPrim(), "avars:rz", SdfValueTypeNames->Double, VtValue(rz));
+    _AuthorAttr(self->GetPrim(), SchemaAttrText::avarsRx,
+                SdfValueTypeNames->Double, VtValue(rx));
+    _AuthorAttr(self->GetPrim(), SchemaAttrText::avarsRy,
+                SdfValueTypeNames->Double, VtValue(ry));
+    _AuthorAttr(self->GetPrim(), SchemaAttrText::avarsRz,
+                SdfValueTypeNames->Double, VtValue(rz));
     if (!order.IsEmpty()) {
-        _AuthorAttr(
-            self->GetPrim(), "avars:rotationOrder", SdfValueTypeNames->Token,
-            VtValue(order));
+        _AuthorAttr(self->GetPrim(), SchemaAttrText::avarsRotationOrder,
+                    SdfValueTypeNames->Token, VtValue(order));
     }
 }
 
@@ -328,24 +334,23 @@ _SetAvarScale(RigExecHandleBase *self, double sx, double sy, double sz)
     // Validate the complete triplet before authoring its first component.
     // This keeps a stale/mismatched schema from leaving a partial scale
     // opinion when, for example, only two of the three names are declared.
-    static const char *names[3] = {
-        "avars:sx", "avars:sy", "avars:sz"};
+    static const char *names[3] = {SchemaAttrText::avarsSx,
+                                   SchemaAttrText::avarsSy,
+                                   SchemaAttrText::avarsSz};
     const double requested[3] = {sx, sy, sz};
     double normalized[3];
     for (int axis = 0; axis < 3; ++axis) {
-        _RequireAttrDefinition(
-            prim, names[axis], SdfValueTypeNames->Double);
+        _RequireAttrDefinition(prim, names[axis], SdfValueTypeNames->Double);
         if (!RigExecIsFiniteAvarScale(requested[axis])) {
-            throw std::invalid_argument(
-                std::string(names[axis]) + " must be finite at " +
-                prim.GetPath().GetString());
+            throw std::invalid_argument(std::string(names[axis]) +
+                                        " must be finite at " +
+                                        prim.GetPath().GetString());
         }
         normalized[axis] = RigExecNormalizeAvarScale(requested[axis]);
     }
     for (int axis = 0; axis < 3; ++axis) {
-        _AuthorAttr(
-            prim, names[axis], SdfValueTypeNames->Double,
-            VtValue(normalized[axis]));
+        _AuthorAttr(prim, names[axis], SdfValueTypeNames->Double,
+                    VtValue(normalized[axis]));
     }
 }
 
@@ -357,64 +362,100 @@ void
 _SetRotationSign(RigExecHandleBase *self, double sx, double sy, double sz)
 {
     const UsdPrim prim = self->GetPrim();
-    _RequireAttrDefinition(
-        prim, "avars:rotationSign", SdfValueTypeNames->Double3);
+    _RequireAttrDefinition(prim, SchemaAttrText::avarsRotationSign,
+                           SdfValueTypeNames->Double3);
     const double requested[3] = {sx, sy, sz};
     for (int axis = 0; axis < 3; ++axis) {
         if (requested[axis] != 1.0 && requested[axis] != -1.0) {
             throw std::invalid_argument(
                 std::string("avars:rotationSign must be +1 or -1 per axis "
-                            "at ") + prim.GetPath().GetString());
+                            "at ") +
+                prim.GetPath().GetString());
         }
     }
-    _AuthorAttr(prim, "avars:rotationSign", SdfValueTypeNames->Double3,
-                VtValue(GfVec3d(sx, sy, sz)));
+    _AuthorAttr(prim, SchemaAttrText::avarsRotationSign,
+                SdfValueTypeNames->Double3, VtValue(GfVec3d(sx, sy, sz)));
 }
 
 void
 _SetAvarSpin(RigExecHandleBase *self, double degrees)
 {
-    _AuthorAttr(
-        self->GetPrim(), "avars:rspin", SdfValueTypeNames->Double,
-        VtValue(degrees));
+    _AuthorAttr(self->GetPrim(), SchemaAttrText::avarsRspin,
+                SdfValueTypeNames->Double, VtValue(degrees));
 }
 
-}  // namespace
+} // namespace
 
-void RigExecControlHandle::SetRestSpace(const GfMatrix4d &m)
-{ _SetRestSpace(this, m); }
-void RigExecControlHandle::SetAvarTranslation(double tx, double ty, double tz)
-{ _SetAvarTranslation(this, tx, ty, tz); }
-void RigExecControlHandle::SetAvarRotation(
-    double rx, double ry, double rz, const TfToken &order)
-{ _SetAvarRotation(this, rx, ry, rz, order); }
-void RigExecControlHandle::SetAvarScale(double sx, double sy, double sz)
-{ _SetAvarScale(this, sx, sy, sz); }
-void RigExecControlHandle::SetAvarSpin(double degrees)
-{ _SetAvarSpin(this, degrees); }
-void RigExecControlHandle::SetRotationSign(double sx, double sy, double sz)
-{ _SetRotationSign(this, sx, sy, sz); }
+void
+RigExecControlHandle::SetRestSpace(const GfMatrix4d &m)
+{
+    _SetRestSpace(this, m);
+}
+void
+RigExecControlHandle::SetAvarTranslation(double tx, double ty, double tz)
+{
+    _SetAvarTranslation(this, tx, ty, tz);
+}
+void
+RigExecControlHandle::SetAvarRotation(double rx, double ry, double rz,
+                                      const TfToken &order)
+{
+    _SetAvarRotation(this, rx, ry, rz, order);
+}
+void
+RigExecControlHandle::SetAvarScale(double sx, double sy, double sz)
+{
+    _SetAvarScale(this, sx, sy, sz);
+}
+void
+RigExecControlHandle::SetAvarSpin(double degrees)
+{
+    _SetAvarSpin(this, degrees);
+}
+void
+RigExecControlHandle::SetRotationSign(double sx, double sy, double sz)
+{
+    _SetRotationSign(this, sx, sy, sz);
+}
 
 void
 RigExecControlHandle::SetChannelRole(const TfToken &role)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:channelRole", SdfValueTypeNames->Token, VtValue(role));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecChannelRole,
+                SdfValueTypeNames->Token, VtValue(role));
 }
 
-void RigExecJointHandle::SetRestSpace(const GfMatrix4d &m)
-{ _SetRestSpace(this, m); }
-void RigExecJointHandle::SetAvarTranslation(double tx, double ty, double tz)
-{ _SetAvarTranslation(this, tx, ty, tz); }
-void RigExecJointHandle::SetAvarRotation(
-    double rx, double ry, double rz, const TfToken &order)
-{ _SetAvarRotation(this, rx, ry, rz, order); }
-void RigExecJointHandle::SetAvarScale(double sx, double sy, double sz)
-{ _SetAvarScale(this, sx, sy, sz); }
-void RigExecJointHandle::SetAvarSpin(double degrees)
-{ _SetAvarSpin(this, degrees); }
-void RigExecJointHandle::SetRotationSign(double sx, double sy, double sz)
-{ _SetRotationSign(this, sx, sy, sz); }
+void
+RigExecJointHandle::SetRestSpace(const GfMatrix4d &m)
+{
+    _SetRestSpace(this, m);
+}
+void
+RigExecJointHandle::SetAvarTranslation(double tx, double ty, double tz)
+{
+    _SetAvarTranslation(this, tx, ty, tz);
+}
+void
+RigExecJointHandle::SetAvarRotation(double rx, double ry, double rz,
+                                    const TfToken &order)
+{
+    _SetAvarRotation(this, rx, ry, rz, order);
+}
+void
+RigExecJointHandle::SetAvarScale(double sx, double sy, double sz)
+{
+    _SetAvarScale(this, sx, sy, sz);
+}
+void
+RigExecJointHandle::SetAvarSpin(double degrees)
+{
+    _SetAvarSpin(this, degrees);
+}
+void
+RigExecJointHandle::SetRotationSign(double sx, double sy, double sz)
+{
+    _SetRotationSign(this, sx, sy, sz);
+}
 
 // Solvers
 
@@ -425,32 +466,32 @@ RigExecSolverHandle::SetJoints(const std::vector<RigExecJointHandle> &joints)
     paths.reserve(joints.size());
     for (const auto &j : joints) {
         if (!j.IsValid() || j.GetStage() != _stage ||
-            j.GetSchemaTypeName() != TfToken("RigExecJoint")) {
+            j.GetSchemaTypeName() != TfToken(SchemaTypeName::RigExecJoint)) {
             throw std::invalid_argument(
                 "SetJoints requires RigExecJoint handles from this stage");
         }
         paths.push_back(j.GetPath());
     }
     _ClearJointElementsIfTargetsChange(GetPrim(), paths);
-    SetRel("rigExec:joints", paths);
+    SetRel(SchemaAttrText::rigExecJoints, paths);
 }
 
 void
 RigExecSolverHandle::SetJoints(const std::vector<SdfPath> &paths)
 {
     for (const SdfPath &path : paths) {
-        _RequireTypedPrim(
-            _stage, path, TfToken("RigExecJoint"), "solver joint");
+        _RequireTypedPrim(_stage, path, TfToken(SchemaTypeName::RigExecJoint),
+                          "solver joint");
     }
     _ClearJointElementsIfTargetsChange(GetPrim(), paths);
-    SetRel("rigExec:joints", paths);
+    SetRel(SchemaAttrText::rigExecJoints, paths);
 }
 
 void
 RigExecSolverHandle::_SetSingleRel(const char *name, const SdfPath &target)
 {
     SetRel(name, target.IsEmpty() ? std::vector<SdfPath>()
-                                  : std::vector<SdfPath>{ target });
+                                  : std::vector<SdfPath>{target});
 }
 
 void
@@ -461,157 +502,189 @@ RigExecFkChainHandle::SetControls(
     paths.reserve(controls.size());
     for (const auto &c : controls) {
         if (!c.IsValid() || c.GetStage() != _stage ||
-            c.GetSchemaTypeName() != TfToken("RigExecControl")) {
+            c.GetSchemaTypeName() != TfToken(SchemaTypeName::RigExecControl)) {
             throw std::invalid_argument(
                 "SetControls requires RigExecControl handles from this stage");
         }
         paths.push_back(c.GetPath());
     }
-    SetRel("rigExec:controls", paths);
+    SetRel(SchemaAttrText::rigExecControls, paths);
 }
 
 void
 RigExecFkChainHandle::SetControls(const std::vector<SdfPath> &paths)
 {
     for (const SdfPath &path : paths) {
-        _RequireTypedPrim(
-            _stage, path, TfToken("RigExecControl"), "FK control");
+        _RequireTypedPrim(_stage, path, TfToken(SchemaTypeName::RigExecControl),
+                          "FK control");
     }
-    SetRel("rigExec:controls", paths);
+    SetRel(SchemaAttrText::rigExecControls, paths);
 }
 
 void
 RigExecFkChainHandle::SetControlSpace(const TfToken &space)
 {
-    static const TfToken world("world");
-    static const TfToken parentRelative("parentRelative");
+    static const TfToken world(SchemaValueText::world);
+    static const TfToken parentRelative(SchemaValueText::parentRelative);
     if (space != world && space != parentRelative) {
         throw std::invalid_argument(
             "SetControlSpace expects 'world' or 'parentRelative', got '" +
             space.GetString() + "'");
     }
-    _AuthorAttr(
-        GetPrim(), "rigExec:controlSpace", SdfValueTypeNames->Token,
-        VtValue(space));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecControlSpace,
+                SdfValueTypeNames->Token, VtValue(space));
 }
 
-void RigExecTwoBoneIkHandle::SetRootControl(const SdfPath &path)
+void
+RigExecTwoBoneIkHandle::SetRootControl(const SdfPath &path)
 {
-    _RequireTypedPrim(
-        _stage, path, TfToken("RigExecControl"), "TwoBoneIK root control");
-    _SetSingleRel("rigExec:rootControl", path);
+    _RequireTypedPrim(_stage, path, TfToken(SchemaTypeName::RigExecControl),
+                      "TwoBoneIK root control");
+    _SetSingleRel(SchemaAttrText::rigExecRootControl, path);
 }
-void RigExecTwoBoneIkHandle::SetEffectorControl(const SdfPath &path)
+void
+RigExecTwoBoneIkHandle::SetEffectorControl(const SdfPath &path)
 {
-    _RequireTypedPrim(
-        _stage, path, TfToken("RigExecControl"),
-        "TwoBoneIK effector control");
-    _SetSingleRel("rigExec:effectorControl", path);
+    _RequireTypedPrim(_stage, path, TfToken(SchemaTypeName::RigExecControl),
+                      "TwoBoneIK effector control");
+    _SetSingleRel(SchemaAttrText::rigExecEffectorControl, path);
 }
-void RigExecTwoBoneIkHandle::SetPoleControl(const SdfPath &path)
+void
+RigExecTwoBoneIkHandle::SetPoleControl(const SdfPath &path)
 {
     if (!path.IsEmpty()) {
-        _RequireTypedPrim(
-            _stage, path, TfToken("RigExecControl"),
-            "TwoBoneIK pole control");
+        _RequireTypedPrim(_stage, path, TfToken(SchemaTypeName::RigExecControl),
+                          "TwoBoneIK pole control");
     }
-    _SetSingleRel("rigExec:poleControl", path);
+    _SetSingleRel(SchemaAttrText::rigExecPoleControl, path);
 }
 
-void RigExecTwoBoneIkHandle::SetUpperLengthOffset(double offset)
-{ _AuthorAttr(GetPrim(), "rigExec:upperLengthOffset", SdfValueTypeNames->Double, VtValue(offset)); }
-void RigExecTwoBoneIkHandle::SetLowerLengthOffset(double offset)
-{ _AuthorAttr(GetPrim(), "rigExec:lowerLengthOffset", SdfValueTypeNames->Double, VtValue(offset)); }
-void RigExecTwoBoneIkHandle::SetPreferredBendRadians(double radians)
-{ _AuthorAttr(GetPrim(), "rigExec:preferredBendRadians", SdfValueTypeNames->Double, VtValue(radians)); }
-void RigExecTwoBoneIkHandle::SetStretch(float stretch)
-{ _AuthorAttr(GetPrim(), "inputs:stretch", SdfValueTypeNames->Float, VtValue(stretch)); }
-void RigExecTwoBoneIkHandle::SetSoftness(float softness)
-{ _AuthorAttr(GetPrim(), "inputs:softness", SdfValueTypeNames->Float, VtValue(softness)); }
+void
+RigExecTwoBoneIkHandle::SetUpperLengthOffset(double offset)
+{
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecUpperLengthOffset,
+                SdfValueTypeNames->Double, VtValue(offset));
+}
+void
+RigExecTwoBoneIkHandle::SetLowerLengthOffset(double offset)
+{
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecLowerLengthOffset,
+                SdfValueTypeNames->Double, VtValue(offset));
+}
+void
+RigExecTwoBoneIkHandle::SetPreferredBendRadians(double radians)
+{
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecPreferredBendRadians,
+                SdfValueTypeNames->Double, VtValue(radians));
+}
+void
+RigExecTwoBoneIkHandle::SetStretch(float stretch)
+{
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsStretch,
+                SdfValueTypeNames->Float, VtValue(stretch));
+}
+void
+RigExecTwoBoneIkHandle::SetSoftness(float softness)
+{
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsSoftness,
+                SdfValueTypeNames->Float, VtValue(softness));
+}
 
 void
 RigExecTwoBoneIkHandle::SetStretchPolicy(const TfToken &policy)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:stretchPolicy", SdfValueTypeNames->Token, VtValue(policy));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecStretchPolicy,
+                SdfValueTypeNames->Token, VtValue(policy));
 }
 
 void
 RigExecTwoBoneIkHandle::SetUnreachablePolicy(const TfToken &policy)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:unreachablePolicy", SdfValueTypeNames->Token,
-        VtValue(policy));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecUnreachablePolicy,
+                SdfValueTypeNames->Token, VtValue(policy));
 }
 
-void RigExecBlendPointFramesHandle::SetInputA(const SdfPath &path)
-{ _SetSingleRel("rigExec:inputA", path); }
-void RigExecBlendPointFramesHandle::SetInputB(const SdfPath &path)
-{ _SetSingleRel("rigExec:inputB", path); }
+void
+RigExecBlendPointFramesHandle::SetInputA(const SdfPath &path)
+{
+    _SetSingleRel(SchemaAttrText::rigExecInputA, path);
+}
+void
+RigExecBlendPointFramesHandle::SetInputB(const SdfPath &path)
+{
+    _SetSingleRel(SchemaAttrText::rigExecInputB, path);
+}
 
 void
 RigExecBlendPointFramesHandle::SetWeight(float weight)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:weight", SdfValueTypeNames->Float, VtValue(weight));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsWeight,
+                SdfValueTypeNames->Float, VtValue(weight));
 }
 
 void
 RigExecBlendPointFramesHandle::SetRotationBlend(const TfToken &mode)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:rotationBlend", SdfValueTypeNames->Token, VtValue(mode));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecRotationBlend,
+                SdfValueTypeNames->Token, VtValue(mode));
 }
 
 void
 RigExecBlendPointFramesHandle::SetScaleBlend(const TfToken &mode)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:scaleBlend", SdfValueTypeNames->Token, VtValue(mode));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecScaleBlend,
+                SdfValueTypeNames->Token, VtValue(mode));
 }
 
-void RigExecTwistDistributionHandle::SetStart(const SdfPath &path)
-{ _SetSingleRel("rigExec:start", path); }
-void RigExecTwistDistributionHandle::SetEnd(const SdfPath &path)
-{ _SetSingleRel("rigExec:end", path); }
+void
+RigExecTwistDistributionHandle::SetStart(const SdfPath &path)
+{
+    _SetSingleRel(SchemaAttrText::rigExecStart, path);
+}
+void
+RigExecTwistDistributionHandle::SetEnd(const SdfPath &path)
+{
+    _SetSingleRel(SchemaAttrText::rigExecEnd, path);
+}
 
 void
 RigExecTwistDistributionHandle::SetCount(int count)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:count", SdfValueTypeNames->Int, VtValue(count));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecCount, SdfValueTypeNames->Int,
+                VtValue(count));
 }
 
 void
 RigExecTwistDistributionHandle::SetWeights(const std::vector<float> &weights)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:weights", SdfValueTypeNames->FloatArray,
-        VtValue(VtFloatArray(weights.begin(), weights.end())));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecWeights,
+                SdfValueTypeNames->FloatArray,
+                VtValue(VtFloatArray(weights.begin(), weights.end())));
 }
 
 void
 RigExecTwistDistributionHandle::SetTwistTurns(double turns)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:twistTurns", SdfValueTypeNames->Double, VtValue(turns));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsTwistTurns,
+                SdfValueTypeNames->Double, VtValue(turns));
 }
 
 void
 RigExecTwistDistributionHandle::SetDistribution(const TfToken &mode)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:distribution", SdfValueTypeNames->Token, VtValue(mode));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecDistribution,
+                SdfValueTypeNames->Token, VtValue(mode));
 }
 
 void
-RigExecTwistDistributionHandle::SetJointElements(const std::vector<int> &elements)
+RigExecTwistDistributionHandle::SetJointElements(
+    const std::vector<int> &elements)
 {
     // Explicit VtIntArray payload: a raw std::vector is not accepted by this
     // USD build's VtValue for array attributes.
-    _AuthorAttr(
-        GetPrim(), "rigExec:jointElements", SdfValueTypeNames->IntArray,
-        VtValue(VtIntArray(elements.begin(), elements.end())));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecJointElements,
+                SdfValueTypeNames->IntArray,
+                VtValue(VtIntArray(elements.begin(), elements.end())));
 }
 
 void
@@ -620,143 +693,157 @@ RigExecFkChainHandle::SetStartFrame(const SdfPath &path)
     if (!path.IsEmpty()) {
         // A frame provider, not a solver: the chain reads one posed frame.
         const UsdPrim prim = _stage->GetPrimAtPath(path);
-        if (!prim || (prim.GetTypeName() != TfToken("RigExecJoint") &&
-                      prim.GetTypeName() != TfToken("RigExecControl"))) {
+        if (!prim ||
+            (prim.GetTypeName() != TfToken(SchemaTypeName::RigExecJoint) &&
+             prim.GetTypeName() != TfToken(SchemaTypeName::RigExecControl))) {
             throw std::invalid_argument(
                 "SetStartFrame requires a RigExecJoint or RigExecControl on "
-                "this stage, got " + path.GetString());
+                "this stage, got " +
+                path.GetString());
         }
     }
-    _SetSingleRel("rigExec:startFrame", path);
+    _SetSingleRel(SchemaAttrText::rigExecStartFrame, path);
 }
 
 void
 RigExecFkChainHandle::SetStartFramePolicy(const TfToken &policy)
 {
-    static const TfToken none("none");
+    static const TfToken none(SchemaValueText::none);
     static const TfToken parent("parent");
     if (policy != none && policy != parent) {
         throw std::invalid_argument(
             "SetStartFramePolicy expects 'none' or 'parent', got '" +
             policy.GetString() + "'");
     }
-    _AuthorAttr(
-        GetPrim(), "rigExec:startFramePolicy", SdfValueTypeNames->Token,
-        VtValue(policy));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecStartFramePolicy,
+                SdfValueTypeNames->Token, VtValue(policy));
 }
 
-void RigExecRibbonHandle::SetDriverCurve(const SdfPath &path)
-{ _SetSingleRel("rigExec:driverCurve", path); }
-void RigExecRibbonHandle::SetStartFrame(const SdfPath &path)
-{ _SetSingleRel("rigExec:startFrame", path); }
-void RigExecRibbonHandle::SetEndFrame(const SdfPath &path)
-{ _SetSingleRel("rigExec:endFrame", path); }
+void
+RigExecRibbonHandle::SetDriverCurve(const SdfPath &path)
+{
+    _SetSingleRel(SchemaAttrText::rigExecDriverCurve, path);
+}
+void
+RigExecRibbonHandle::SetStartFrame(const SdfPath &path)
+{
+    _SetSingleRel(SchemaAttrText::rigExecStartFrame, path);
+}
+void
+RigExecRibbonHandle::SetEndFrame(const SdfPath &path)
+{
+    _SetSingleRel(SchemaAttrText::rigExecEndFrame, path);
+}
 
 void
 RigExecRibbonHandle::SetTwistFrames(const std::vector<SdfPath> &paths)
 {
-    SetRel("rigExec:twistFrames", paths);
+    SetRel(SchemaAttrText::rigExecTwistFrames, paths);
 }
 
 void
 RigExecRibbonHandle::SetSampleCount(int count)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:sampleCount", SdfValueTypeNames->Int, VtValue(count));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecSampleCount,
+                SdfValueTypeNames->Int, VtValue(count));
 }
 
 void
 RigExecRibbonHandle::SetParameterization(const TfToken &mode)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:parameterization", SdfValueTypeNames->Token,
-        VtValue(mode));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecParameterization,
+                SdfValueTypeNames->Token, VtValue(mode));
 }
 
 void
 RigExecRibbonHandle::SetJointElements(const std::vector<int> &elements)
 {
     // Explicit VtIntArray payload (see TwistDistribution above).
-    _AuthorAttr(
-        GetPrim(), "rigExec:jointElements", SdfValueTypeNames->IntArray,
-        VtValue(VtIntArray(elements.begin(), elements.end())));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecJointElements,
+                SdfValueTypeNames->IntArray,
+                VtValue(VtIntArray(elements.begin(), elements.end())));
 }
 
-void RigExecSplineIkHandle::SetRootControl(const SdfPath &path)
-{ _SetSingleRel("rigExec:rootControl", path); }
-void RigExecSplineIkHandle::SetMidControl(const SdfPath &path)
-{ _SetSingleRel("rigExec:midControl", path); }
-void RigExecSplineIkHandle::SetEndControl(const SdfPath &path)
-{ _SetSingleRel("rigExec:endControl", path); }
+void
+RigExecSplineIkHandle::SetRootControl(const SdfPath &path)
+{
+    _SetSingleRel(SchemaAttrText::rigExecRootControl, path);
+}
+void
+RigExecSplineIkHandle::SetMidControl(const SdfPath &path)
+{
+    _SetSingleRel(SchemaAttrText::rigExecMidControl, path);
+}
+void
+RigExecSplineIkHandle::SetEndControl(const SdfPath &path)
+{
+    _SetSingleRel(SchemaAttrText::rigExecEndControl, path);
+}
 
 void
 RigExecSplineIkHandle::SetVolumeWeights(const std::vector<float> &weights)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:volumeWeights", SdfValueTypeNames->FloatArray,
-        VtValue(VtFloatArray(weights.begin(), weights.end())));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecVolumeWeights,
+                SdfValueTypeNames->FloatArray,
+                VtValue(VtFloatArray(weights.begin(), weights.end())));
 }
 
 void
 RigExecSplineIkHandle::SetRestLength(const TfToken &mode)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:restLength", SdfValueTypeNames->Token, VtValue(mode));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecRestLength,
+                SdfValueTypeNames->Token, VtValue(mode));
 }
 
 void
 RigExecSplineIkHandle::SetPreserveVolume(double amount)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:preserveVolume", SdfValueTypeNames->Double,
-        VtValue(amount));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsPreserveVolume,
+                SdfValueTypeNames->Double, VtValue(amount));
 }
 
 void
 RigExecSplineIkHandle::SetMidFollowWeight(double weight)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:midFollowWeight", SdfValueTypeNames->Double,
-        VtValue(weight));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsMidFollowWeight,
+                SdfValueTypeNames->Double, VtValue(weight));
 }
 
 void
 RigExecSplineIkHandle::SetRoll(double degrees)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:roll", SdfValueTypeNames->Double, VtValue(degrees));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsRoll,
+                SdfValueTypeNames->Double, VtValue(degrees));
 }
 
 void
 RigExecSplineIkHandle::SetTwist(double degrees)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:twist", SdfValueTypeNames->Double, VtValue(degrees));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsTwist,
+                SdfValueTypeNames->Double, VtValue(degrees));
 }
 
 void
 RigExecSplineIkHandle::SetMinLengthRatio(double ratio)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:minLengthRatio", SdfValueTypeNames->Double,
-        VtValue(ratio));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsMinLengthRatio,
+                SdfValueTypeNames->Double, VtValue(ratio));
 }
 
 void
 RigExecSplineIkHandle::SetRootTangent(const TfToken &mode)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:rootTangent", SdfValueTypeNames->Token,
-        VtValue(mode));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecRootTangent,
+                SdfValueTypeNames->Token, VtValue(mode));
 }
 
 void
 RigExecSplineIkHandle::SetJointElements(const std::vector<int> &elements)
 {
     // Explicit VtIntArray payload (see TwistDistribution above).
-    _AuthorAttr(
-        GetPrim(), "rigExec:jointElements", SdfValueTypeNames->IntArray,
-        VtValue(VtIntArray(elements.begin(), elements.end())));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecJointElements,
+                SdfValueTypeNames->IntArray,
+                VtValue(VtIntArray(elements.begin(), elements.end())));
 }
 
 // Constraints
@@ -767,24 +854,24 @@ RigExecConstraintHandle::SetTarget(const SdfPath &target)
     if (target.IsEmpty()) {
         throw std::invalid_argument("constraint target must not be empty");
     }
-    SetRel("rigExec:moves", { target });
+    SetRel(SchemaAttrText::rigExecMoves, {target});
 }
 
 void
 RigExecConstraintHandle::SetLocked(bool locked)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:locked", SdfValueTypeNames->Bool,
-        VtValue(locked));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecLocked,
+                SdfValueTypeNames->Bool, VtValue(locked));
 }
 
 namespace {
 
 void
-_SetConstraintMask(
-    RigExecHandleBase *self, const char *group, bool x, bool y, bool z)
+_SetConstraintMask(RigExecHandleBase *self, const char *group, bool x, bool y,
+                   bool z)
 {
-    const std::string prefix = std::string("inputs:affect") + group;
+    const std::string prefix =
+        std::string(SchemaAttrText::inputsAffect) + group;
     _AuthorAttr(self->GetPrim(), (prefix + "X").c_str(),
                 SdfValueTypeNames->Bool, VtValue(x));
     _AuthorAttr(self->GetPrim(), (prefix + "Y").c_str(),
@@ -794,21 +881,18 @@ _SetConstraintMask(
 }
 
 void
-_SetConstraintOffset(
-    RigExecHandleBase *self, const char *name, double x, double y, double z)
+_SetConstraintOffset(RigExecHandleBase *self, const char *name, double x,
+                     double y, double z)
 {
-    _AuthorAttr(
-        self->GetPrim(), name, SdfValueTypeNames->Double3,
-        VtValue(GfVec3d(x, y, z)));
+    _AuthorAttr(self->GetPrim(), name, SdfValueTypeNames->Double3,
+                VtValue(GfVec3d(x, y, z)));
 }
 
 void
-_SetConstraintRotationOrder(
-    RigExecHandleBase *self, const TfToken &order)
+_SetConstraintRotationOrder(RigExecHandleBase *self, const TfToken &order)
 {
-    _AuthorAttr(
-        self->GetPrim(), "rigExec:rotationOrder", SdfValueTypeNames->Token,
-        VtValue(order));
+    _AuthorAttr(self->GetPrim(), SchemaAttrText::rigExecRotationOrder,
+                SdfValueTypeNames->Token, VtValue(order));
 }
 
 size_t
@@ -823,12 +907,12 @@ _RelationshipTargetCount(const UsdPrim &prim, const char *name)
 }
 
 void
-_ClearSourceOffsetsIfTargetsChange(
-    const UsdPrim &prim, const std::vector<SdfPath> &newTargets)
+_ClearSourceOffsetsIfTargetsChange(const UsdPrim &prim,
+                                   const std::vector<SdfPath> &newTargets)
 {
     SdfPathVector oldTargets;
     const UsdRelationship sources =
-        prim.GetRelationship(TfToken("rigExec:sources"));
+        prim.GetRelationship(TfToken(SchemaAttrText::rigExecSources));
     if (sources && sources.GetTargets(&oldTargets) &&
         oldTargets == newTargets) {
         return;
@@ -838,8 +922,8 @@ _ClearSourceOffsetsIfTargetsChange(
     // constraints do not declare these properties, so consult the composed
     // definition before clearing instead of manufacturing an attribute.
     const UsdPrimDefinition &definition = prim.GetPrimDefinition();
-    for (const char *name : {
-             "inputs:translationOffsets", "inputs:rotationOffsets"}) {
+    for (const char *name : {SchemaAttrText::inputsTranslationOffsets,
+                             SchemaAttrText::inputsRotationOffsets}) {
         const TfToken token(name);
         if (definition.GetAttributeDefinition(token)) {
             _ClearAttr(prim, name);
@@ -848,28 +932,28 @@ _ClearSourceOffsetsIfTargetsChange(
 }
 
 void
-_ClearJointElementsIfTargetsChange(
-    const UsdPrim &prim, const std::vector<SdfPath> &newTargets)
+_ClearJointElementsIfTargetsChange(const UsdPrim &prim,
+                                   const std::vector<SdfPath> &newTargets)
 {
     SdfPathVector oldTargets;
     const UsdRelationship joints =
-        prim.GetRelationship(TfToken("rigExec:joints"));
+        prim.GetRelationship(TfToken(SchemaAttrText::rigExecJoints));
     if (joints && joints.GetTargets(&oldTargets) && oldTargets == newTargets) {
         return;
     }
-    const TfToken elements("rigExec:jointElements");
+    const TfToken elements(SchemaAttrText::rigExecJointElements);
     if (prim.GetPrimDefinition().GetAttributeDefinition(elements)) {
         _ClearAttr(prim, elements.GetText());
     }
 }
 
-}  // namespace
+} // namespace
 
 void
 RigExecConstraintHandle::_SetSingleRel(const char *name, const SdfPath &target)
 {
     SetRel(name, target.IsEmpty() ? std::vector<SdfPath>()
-                                  : std::vector<SdfPath>{ target });
+                                  : std::vector<SdfPath>{target});
 }
 
 void
@@ -881,13 +965,13 @@ RigExecSourceConstraintHandle::SetSources(const std::vector<SdfPath> &paths)
     // Changing the source list invalidates every parallel payload. Clear old
     // values so they cannot silently acquire a new source ordering.
     _ClearSourceOffsetsIfTargetsChange(GetPrim(), paths);
-    _ClearAttr(GetPrim(), "inputs:sourceWeights");
-    SetRel("rigExec:sources", paths);
+    _ClearAttr(GetPrim(), SchemaAttrText::inputsSourceWeights);
+    SetRel(SchemaAttrText::rigExecSources, paths);
 }
 
 void
-RigExecSourceConstraintHandle::SetSources(
-    const std::vector<SdfPath> &paths, const std::vector<float> &weights)
+RigExecSourceConstraintHandle::SetSources(const std::vector<SdfPath> &paths,
+                                          const std::vector<float> &weights)
 {
     if (!weights.empty() && weights.size() != paths.size()) {
         throw std::invalid_argument(
@@ -897,9 +981,9 @@ RigExecSourceConstraintHandle::SetSources(
         _RequireTargetPath(path, "constraint source");
     }
     _ClearSourceOffsetsIfTargetsChange(GetPrim(), paths);
-    SetRel("rigExec:sources", paths);
+    SetRel(SchemaAttrText::rigExecSources, paths);
     if (weights.empty()) {
-        _ClearAttr(GetPrim(), "inputs:sourceWeights");
+        _ClearAttr(GetPrim(), SchemaAttrText::inputsSourceWeights);
     } else {
         SetSourceWeights(weights);
     }
@@ -910,109 +994,150 @@ RigExecSourceConstraintHandle::SetSourceWeights(
     const std::vector<float> &weights)
 {
     const size_t sourceCount =
-        _RelationshipTargetCount(GetPrim(), "rigExec:sources");
+        _RelationshipTargetCount(GetPrim(), SchemaAttrText::rigExecSources);
     if (!weights.empty() && weights.size() != sourceCount) {
-        throw std::invalid_argument(
-            "sourceWeights must be empty or exactly one entry per current source");
+        throw std::invalid_argument("sourceWeights must be empty or exactly "
+                                    "one entry per current source");
     }
     if (weights.empty()) {
-        _ClearAttr(GetPrim(), "inputs:sourceWeights");
+        _ClearAttr(GetPrim(), SchemaAttrText::inputsSourceWeights);
         return;
     }
-    _AuthorAttr(
-        GetPrim(), "inputs:sourceWeights", SdfValueTypeNames->FloatArray,
-        VtValue(VtFloatArray(weights.begin(), weights.end())));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsSourceWeights,
+                SdfValueTypeNames->FloatArray,
+                VtValue(VtFloatArray(weights.begin(), weights.end())));
 }
 
-void RigExecAimConstraintHandle::SetAffectRotation(bool x, bool y, bool z)
-{ _SetConstraintMask(this, "Rotation", x, y, z); }
-void RigExecAimConstraintHandle::SetRotationOffset(double x, double y, double z)
-{ _SetConstraintOffset(this, "inputs:rotationOffset", x, y, z); }
-void RigExecAimConstraintHandle::SetRotationOrder(const TfToken &order)
-{ _SetConstraintRotationOrder(this, order); }
+void
+RigExecAimConstraintHandle::SetAffectRotation(bool x, bool y, bool z)
+{
+    _SetConstraintMask(this, "Rotation", x, y, z);
+}
+void
+RigExecAimConstraintHandle::SetRotationOffset(double x, double y, double z)
+{
+    _SetConstraintOffset(this, SchemaAttrText::inputsRotationOffset, x, y, z);
+}
+void
+RigExecAimConstraintHandle::SetRotationOrder(const TfToken &order)
+{
+    _SetConstraintRotationOrder(this, order);
+}
 
 void
 RigExecAimConstraintHandle::SetAimVector(double x, double y, double z)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:aimVector", SdfValueTypeNames->Double3,
-        VtValue(GfVec3d(x, y, z)));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsAimVector,
+                SdfValueTypeNames->Double3, VtValue(GfVec3d(x, y, z)));
 }
 
 void
 RigExecAimConstraintHandle::SetUpVector(double x, double y, double z)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:upVector", SdfValueTypeNames->Double3,
-        VtValue(GfVec3d(x, y, z)));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsUpVector,
+                SdfValueTypeNames->Double3, VtValue(GfVec3d(x, y, z)));
 }
 
 void
 RigExecAimConstraintHandle::SetWorldUpVector(double x, double y, double z)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:worldUpVector", SdfValueTypeNames->Double3,
-        VtValue(GfVec3d(x, y, z)));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsWorldUpVector,
+                SdfValueTypeNames->Double3, VtValue(GfVec3d(x, y, z)));
 }
 
 void
 RigExecAimConstraintHandle::SetAimTarget(const SdfPath &path)
 {
-    _SetSingleRel("rigExec:aimTarget", path);
+    _SetSingleRel(SchemaAttrText::rigExecAimTarget, path);
 }
 
 void
 RigExecAimConstraintHandle::SetWorldUpObject(const SdfPath &path)
 {
-    _SetSingleRel("rigExec:worldUpObject", path);
+    _SetSingleRel(SchemaAttrText::rigExecWorldUpObject, path);
 }
 
 void
 RigExecAimConstraintHandle::SetWorldUpType(const TfToken &type)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:worldUpType", SdfValueTypeNames->Token, VtValue(type));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecWorldUpType,
+                SdfValueTypeNames->Token, VtValue(type));
 }
 
-void RigExecPositionConstraintHandle::SetAffectTranslation(bool x, bool y, bool z)
-{ _SetConstraintMask(this, "Translation", x, y, z); }
-void RigExecPositionConstraintHandle::SetTranslationOffset(double x, double y, double z)
-{ _SetConstraintOffset(this, "inputs:translationOffset", x, y, z); }
+void
+RigExecPositionConstraintHandle::SetAffectTranslation(bool x, bool y, bool z)
+{
+    _SetConstraintMask(this, "Translation", x, y, z);
+}
+void
+RigExecPositionConstraintHandle::SetTranslationOffset(double x, double y,
+                                                      double z)
+{
+    _SetConstraintOffset(this, SchemaAttrText::inputsTranslationOffset, x, y,
+                         z);
+}
 
-void RigExecRotationConstraintHandle::SetAffectRotation(bool x, bool y, bool z)
-{ _SetConstraintMask(this, "Rotation", x, y, z); }
-void RigExecRotationConstraintHandle::SetRotationOffset(double x, double y, double z)
-{ _SetConstraintOffset(this, "inputs:rotationOffset", x, y, z); }
-void RigExecRotationConstraintHandle::SetRotationOrder(const TfToken &order)
-{ _SetConstraintRotationOrder(this, order); }
+void
+RigExecRotationConstraintHandle::SetAffectRotation(bool x, bool y, bool z)
+{
+    _SetConstraintMask(this, "Rotation", x, y, z);
+}
+void
+RigExecRotationConstraintHandle::SetRotationOffset(double x, double y, double z)
+{
+    _SetConstraintOffset(this, SchemaAttrText::inputsRotationOffset, x, y, z);
+}
+void
+RigExecRotationConstraintHandle::SetRotationOrder(const TfToken &order)
+{
+    _SetConstraintRotationOrder(this, order);
+}
 
-void RigExecScaleConstraintHandle::SetAffectScale(bool x, bool y, bool z)
-{ _SetConstraintMask(this, "Scale", x, y, z); }
-void RigExecScaleConstraintHandle::SetScaleOffset(double x, double y, double z)
-{ _SetConstraintOffset(this, "inputs:scaleOffset", x, y, z); }
+void
+RigExecScaleConstraintHandle::SetAffectScale(bool x, bool y, bool z)
+{
+    _SetConstraintMask(this, "Scale", x, y, z);
+}
+void
+RigExecScaleConstraintHandle::SetScaleOffset(double x, double y, double z)
+{
+    _SetConstraintOffset(this, SchemaAttrText::inputsScaleOffset, x, y, z);
+}
 
-void RigExecParentConstraintHandle::SetAffectTranslation(bool x, bool y, bool z)
-{ _SetConstraintMask(this, "Translation", x, y, z); }
-void RigExecParentConstraintHandle::SetAffectRotation(bool x, bool y, bool z)
-{ _SetConstraintMask(this, "Rotation", x, y, z); }
-void RigExecParentConstraintHandle::SetAffectScale(bool x, bool y, bool z)
-{ _SetConstraintMask(this, "Scale", x, y, z); }
-void RigExecParentConstraintHandle::SetRotationOrder(const TfToken &order)
-{ _SetConstraintRotationOrder(this, order); }
+void
+RigExecParentConstraintHandle::SetAffectTranslation(bool x, bool y, bool z)
+{
+    _SetConstraintMask(this, "Translation", x, y, z);
+}
+void
+RigExecParentConstraintHandle::SetAffectRotation(bool x, bool y, bool z)
+{
+    _SetConstraintMask(this, "Rotation", x, y, z);
+}
+void
+RigExecParentConstraintHandle::SetAffectScale(bool x, bool y, bool z)
+{
+    _SetConstraintMask(this, "Scale", x, y, z);
+}
+void
+RigExecParentConstraintHandle::SetRotationOrder(const TfToken &order)
+{
+    _SetConstraintRotationOrder(this, order);
+}
 
 void
 RigExecParentConstraintHandle::SetTranslationOffsets(
     const std::vector<GfVec3d> &offsets)
 {
     const size_t sourceCount =
-        _RelationshipTargetCount(GetPrim(), "rigExec:sources");
+        _RelationshipTargetCount(GetPrim(), SchemaAttrText::rigExecSources);
     if (!offsets.empty() && offsets.size() != sourceCount) {
         throw std::invalid_argument(
             "translationOffsets must be empty or parallel to current sources");
     }
-    _AuthorAttr(
-        GetPrim(), "inputs:translationOffsets", SdfValueTypeNames->Double3Array,
-        VtValue(VtArray<GfVec3d>(offsets.begin(), offsets.end())));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsTranslationOffsets,
+                SdfValueTypeNames->Double3Array,
+                VtValue(VtArray<GfVec3d>(offsets.begin(), offsets.end())));
 }
 
 void
@@ -1020,30 +1145,30 @@ RigExecParentConstraintHandle::SetRotationOffsets(
     const std::vector<GfVec3d> &degrees)
 {
     const size_t sourceCount =
-        _RelationshipTargetCount(GetPrim(), "rigExec:sources");
+        _RelationshipTargetCount(GetPrim(), SchemaAttrText::rigExecSources);
     if (!degrees.empty() && degrees.size() != sourceCount) {
         throw std::invalid_argument(
             "rotationOffsets must be empty or parallel to current sources");
     }
-    _AuthorAttr(
-        GetPrim(), "inputs:rotationOffsets", SdfValueTypeNames->Double3Array,
-        VtValue(VtArray<GfVec3d>(degrees.begin(), degrees.end())));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsRotationOffsets,
+                SdfValueTypeNames->Double3Array,
+                VtValue(VtArray<GfVec3d>(degrees.begin(), degrees.end())));
 }
 
 void
 RigExecSingleChainIkConstraintHandle::SetFirstJoint(const SdfPath &path)
 {
-    _RequireTypedPrim(
-        _stage, path, TfToken("RigExecJoint"), "IK firstJoint");
-    _SetSingleRel("rigExec:firstJoint", path);
+    _RequireTypedPrim(_stage, path, TfToken(SchemaTypeName::RigExecJoint),
+                      "IK firstJoint");
+    _SetSingleRel(SchemaAttrText::rigExecFirstJoint, path);
 }
 
 void
 RigExecSingleChainIkConstraintHandle::SetEndJoint(const SdfPath &path)
 {
-    _RequireTypedPrim(
-        _stage, path, TfToken("RigExecJoint"), "IK endJoint");
-    _SetSingleRel("rigExec:endJoint", path);
+    _RequireTypedPrim(_stage, path, TfToken(SchemaTypeName::RigExecJoint),
+                      "IK endJoint");
+    _SetSingleRel(SchemaAttrText::rigExecEndJoint, path);
 }
 
 void
@@ -1052,7 +1177,7 @@ RigExecSingleChainIkConstraintHandle::SetEffector(const SdfPath &path)
     if (path.IsEmpty()) {
         throw std::invalid_argument("effector must not be empty");
     }
-    _SetSingleRel("rigExec:effector", path);
+    _SetSingleRel(SchemaAttrText::rigExecEffector, path);
 }
 
 void
@@ -1063,10 +1188,10 @@ RigExecSingleChainIkConstraintHandle::SetMoves(
         throw std::invalid_argument("IK moves chain must not be empty");
     }
     for (const SdfPath &path : paths) {
-        _RequireTypedPrim(
-            _stage, path, TfToken("RigExecJoint"), "IK moves joint");
+        _RequireTypedPrim(_stage, path, TfToken(SchemaTypeName::RigExecJoint),
+                          "IK moves joint");
     }
-    SetRel("rigExec:moves", paths);
+    SetRel(SchemaAttrText::rigExecMoves, paths);
 }
 
 void
@@ -1076,72 +1201,70 @@ RigExecSingleChainIkConstraintHandle::SetPoleVectorObjects(
     for (const SdfPath &path : paths) {
         _RequireTargetPath(path, "pole-vector object");
     }
-    _ClearAttr(GetPrim(), "inputs:poleVectorWeights");
-    SetRel("rigExec:poleVectorObjects", paths);
+    _ClearAttr(GetPrim(), SchemaAttrText::inputsPoleVectorWeights);
+    SetRel(SchemaAttrText::rigExecPoleVectorObjects, paths);
 }
 
 void
 RigExecSingleChainIkConstraintHandle::SetPoleVectorWeights(
     const std::vector<float> &weights)
 {
-    const size_t objectCount =
-        _RelationshipTargetCount(GetPrim(), "rigExec:poleVectorObjects");
+    const size_t objectCount = _RelationshipTargetCount(
+        GetPrim(), SchemaAttrText::rigExecPoleVectorObjects);
     if (!weights.empty() && weights.size() != objectCount) {
         throw std::invalid_argument(
             "poleVectorWeights must be empty or parallel to poleVectorObjects");
     }
     if (weights.empty()) {
-        _ClearAttr(GetPrim(), "inputs:poleVectorWeights");
+        _ClearAttr(GetPrim(), SchemaAttrText::inputsPoleVectorWeights);
         return;
     }
-    _AuthorAttr(
-        GetPrim(), "inputs:poleVectorWeights", SdfValueTypeNames->FloatArray,
-        VtValue(VtFloatArray(weights.begin(), weights.end())));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsPoleVectorWeights,
+                SdfValueTypeNames->FloatArray,
+                VtValue(VtFloatArray(weights.begin(), weights.end())));
 }
 
 void
-RigExecSingleChainIkConstraintHandle::SetPoleVector(double x, double y, double z)
+RigExecSingleChainIkConstraintHandle::SetPoleVector(double x, double y,
+                                                    double z)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:poleVector", SdfValueTypeNames->Double3,
-        VtValue(GfVec3d(x, y, z)));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsPoleVector,
+                SdfValueTypeNames->Double3, VtValue(GfVec3d(x, y, z)));
 }
 
 void
 RigExecSingleChainIkConstraintHandle::SetTwistDegrees(double degrees)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:twistDegrees", SdfValueTypeNames->Double,
-        VtValue(degrees));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsTwistDegrees,
+                SdfValueTypeNames->Double, VtValue(degrees));
 }
 
 void
 RigExecSingleChainIkConstraintHandle::SetSolverMode(const TfToken &mode)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:solverMode", SdfValueTypeNames->Token, VtValue(mode));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecSolverMode,
+                SdfValueTypeNames->Token, VtValue(mode));
 }
 
 void
 RigExecSingleChainIkConstraintHandle::SetPoleVectorMode(const TfToken &mode)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:poleVectorMode", SdfValueTypeNames->Token, VtValue(mode));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecPoleVectorMode,
+                SdfValueTypeNames->Token, VtValue(mode));
 }
 
 void
 RigExecSingleChainIkConstraintHandle::SetEvaluationMode(const TfToken &mode)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:evaluationMode", SdfValueTypeNames->Token,
-        VtValue(mode));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecEvaluationMode,
+                SdfValueTypeNames->Token, VtValue(mode));
 }
 
 void
 RigExecSingleChainIkConstraintHandle::SetOrientationMode(const TfToken &mode)
 {
-    _AuthorAttr(GetPrim(), "rigExec:orientationMode", SdfValueTypeNames->Token,
-                VtValue(mode));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecOrientationMode,
+                SdfValueTypeNames->Token, VtValue(mode));
 }
 
 // Weight objects
@@ -1152,37 +1275,39 @@ RigExecWeightHandle::SetTarget(const SdfPath &target)
     if (target.IsEmpty()) {
         throw std::invalid_argument("weight target must not be empty");
     }
-    SetRel("rigExec:weightTarget", { target });
+    SetRel(SchemaAttrText::rigExecWeightTarget, {target});
 }
 
 void
 RigExecWeightHandle::SetRepresentation(const TfToken &rep)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:representation", SdfValueTypeNames->Token, VtValue(rep));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecRepresentation,
+                SdfValueTypeNames->Token, VtValue(rep));
 }
 
 void
 RigExecWeightHandle::SetRangePolicy(const TfToken &policy)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:rangePolicy", SdfValueTypeNames->Token, VtValue(policy));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecRangePolicy,
+                SdfValueTypeNames->Token, VtValue(policy));
 }
 
 void
 RigExecStaticWeightHandle::SetValues(const std::vector<float> &values)
 {
     VtIntArray oldIndices;
-    GetPrim().GetAttribute(TfToken("rigExec:indices")).Get(&oldIndices);
+    GetPrim()
+        .GetAttribute(TfToken(SchemaAttrText::rigExecIndices))
+        .Get(&oldIndices);
     if (!oldIndices.empty() && oldIndices.size() != values.size()) {
-        _ClearAttr(GetPrim(), "rigExec:indices");
+        _ClearAttr(GetPrim(), SchemaAttrText::rigExecIndices);
     }
-    _AuthorAttr(
-        GetPrim(), "rigExec:values", SdfValueTypeNames->FloatArray,
-        VtValue(VtFloatArray(values.begin(), values.end())));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecValues,
+                SdfValueTypeNames->FloatArray,
+                VtValue(VtFloatArray(values.begin(), values.end())));
     if (oldIndices.empty() || oldIndices.size() != values.size()) {
-        SetRepresentation(
-            values.empty() ? TfToken("constant") : TfToken("dense"));
+        SetRepresentation(values.empty() ? TfToken(SchemaValueText::constant)
+                                         : TfToken(SchemaValueText::dense));
     }
 }
 
@@ -1196,26 +1321,26 @@ RigExecStaticWeightHandle::SetIndices(const std::vector<int> &indices)
         }
     }
     VtFloatArray values;
-    GetPrim().GetAttribute(TfToken("rigExec:values")).Get(&values);
+    GetPrim().GetAttribute(TfToken(SchemaAttrText::rigExecValues)).Get(&values);
     if (!indices.empty() && indices.size() != values.size()) {
         throw std::invalid_argument(
             "static sparse indices must be parallel to current values");
     }
     if (indices.empty()) {
-        _ClearAttr(GetPrim(), "rigExec:indices");
-        SetRepresentation(
-            values.empty() ? TfToken("constant") : TfToken("dense"));
+        _ClearAttr(GetPrim(), SchemaAttrText::rigExecIndices);
+        SetRepresentation(values.empty() ? TfToken(SchemaValueText::constant)
+                                         : TfToken(SchemaValueText::dense));
         return;
     }
-    _AuthorAttr(
-        GetPrim(), "rigExec:indices", SdfValueTypeNames->IntArray,
-        VtValue(VtIntArray(indices.begin(), indices.end())));
-    SetRepresentation(TfToken("sparse"));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecIndices,
+                SdfValueTypeNames->IntArray,
+                VtValue(VtIntArray(indices.begin(), indices.end())));
+    SetRepresentation(TfToken(SchemaValueText::sparse));
 }
 
 void
-RigExecStaticWeightHandle::SetSparseValues(
-    const std::vector<float> &values, const std::vector<int> &indices)
+RigExecStaticWeightHandle::SetSparseValues(const std::vector<float> &values,
+                                           const std::vector<int> &indices)
 {
     if (indices.empty() || indices.size() != values.size()) {
         throw std::invalid_argument(
@@ -1227,90 +1352,101 @@ RigExecStaticWeightHandle::SetSparseValues(
                 "static sparse weight indices must be non-negative");
         }
     }
-    _AuthorAttr(
-        GetPrim(), "rigExec:values", SdfValueTypeNames->FloatArray,
-        VtValue(VtFloatArray(values.begin(), values.end())));
-    _AuthorAttr(
-        GetPrim(), "rigExec:indices", SdfValueTypeNames->IntArray,
-        VtValue(VtIntArray(indices.begin(), indices.end())));
-    SetRepresentation(TfToken("sparse"));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecValues,
+                SdfValueTypeNames->FloatArray,
+                VtValue(VtFloatArray(values.begin(), values.end())));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecIndices,
+                SdfValueTypeNames->IntArray,
+                VtValue(VtIntArray(indices.begin(), indices.end())));
+    SetRepresentation(TfToken(SchemaValueText::sparse));
 }
 
 void
 RigExecStaticWeightHandle::SetDefaultWeight(float weight)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:defaultWeight", SdfValueTypeNames->Float, VtValue(weight));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecDefaultWeight,
+                SdfValueTypeNames->Float, VtValue(weight));
 }
 
 void
 RigExecDynamicWeightHandle::SetBaseWeight(const SdfPath &path)
 {
-    SetRel("rigExec:baseWeight", path.IsEmpty() ? std::vector<SdfPath>()
-                                                 : std::vector<SdfPath>{ path });
+    SetRel(SchemaAttrText::rigExecBaseWeight, path.IsEmpty()
+                                                  ? std::vector<SdfPath>()
+                                                  : std::vector<SdfPath>{path});
 }
 
 void
 RigExecDynamicWeightHandle::SetDriver(float driver)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:driver", SdfValueTypeNames->Float, VtValue(driver));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsDriver,
+                SdfValueTypeNames->Float, VtValue(driver));
 }
 
 void
 RigExecDynamicWeightHandle::SetScale(float scale)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:scale", SdfValueTypeNames->Float, VtValue(scale));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsScale,
+                SdfValueTypeNames->Float, VtValue(scale));
 }
 
 void
 RigExecDynamicWeightHandle::SetBias(float bias)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:bias", SdfValueTypeNames->Float, VtValue(bias));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsBias, SdfValueTypeNames->Float,
+                VtValue(bias));
 }
 
-
-void RigExecVolumeWeightHandle::SetRestSpace(const GfMatrix4d &m)
-{ _SetRestSpace(this, m); }
-void RigExecVolumeWeightHandle::SetAvarTranslation(double tx, double ty, double tz)
-{ _SetAvarTranslation(this, tx, ty, tz); }
-void RigExecVolumeWeightHandle::SetAvarRotation(
-    double rx, double ry, double rz, const TfToken &order)
-{ _SetAvarRotation(this, rx, ry, rz, order); }
-void RigExecVolumeWeightHandle::SetAvarSpin(double degrees)
-{ _SetAvarSpin(this, degrees); }
+void
+RigExecVolumeWeightHandle::SetRestSpace(const GfMatrix4d &m)
+{
+    _SetRestSpace(this, m);
+}
+void
+RigExecVolumeWeightHandle::SetAvarTranslation(double tx, double ty, double tz)
+{
+    _SetAvarTranslation(this, tx, ty, tz);
+}
+void
+RigExecVolumeWeightHandle::SetAvarRotation(double rx, double ry, double rz,
+                                           const TfToken &order)
+{
+    _SetAvarRotation(this, rx, ry, rz, order);
+}
+void
+RigExecVolumeWeightHandle::SetAvarSpin(double degrees)
+{
+    _SetAvarSpin(this, degrees);
+}
 
 void
 RigExecVolumeWeightHandle::SetFalloff(float falloffMin, float falloffMax)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:falloffMin", SdfValueTypeNames->Float, VtValue(falloffMin));
-    _AuthorAttr(
-        GetPrim(), "inputs:falloffMax", SdfValueTypeNames->Float, VtValue(falloffMax));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsFalloffMin,
+                SdfValueTypeNames->Float, VtValue(falloffMin));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsFalloffMax,
+                SdfValueTypeNames->Float, VtValue(falloffMax));
 }
 
 void
 RigExecVolumeWeightHandle::SetInvert(float invert)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:invert", SdfValueTypeNames->Float, VtValue(invert));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsInvert,
+                SdfValueTypeNames->Float, VtValue(invert));
 }
 
 void
 RigExecVolumeWeightHandle::SetStrength(float strength)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:strength", SdfValueTypeNames->Float, VtValue(strength));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsStrength,
+                SdfValueTypeNames->Float, VtValue(strength));
 }
 
 void
 RigExecVolumeWeightHandle::SetFalloffProfile(const TfToken &profile)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:falloffProfile", SdfValueTypeNames->Token,
-        VtValue(profile));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecFalloffProfile,
+                SdfValueTypeNames->Token, VtValue(profile));
 }
 
 void
@@ -1328,11 +1464,11 @@ RigExecVolumeWeightHandle::SetFalloffCurve(
     }
     const RigExecSchemaPrim schema = _Schema(GetPrim());
     // Replacing a curve must also remove knots from the previous curve.
-    schema.ClearAttribute(TfToken("rigExec:falloffCurve"));
+    schema.ClearAttribute(TfToken(SchemaAttrText::rigExecFalloffCurve));
     for (const auto &knot : knots) {
-        schema.SetAttribute(
-            TfToken("rigExec:falloffCurve"), VtValue(float(knot.second)),
-            UsdTimeCode(_Clamp01(knot.first)));
+        schema.SetAttribute(TfToken(SchemaAttrText::rigExecFalloffCurve),
+                            VtValue(float(knot.second)),
+                            UsdTimeCode(_Clamp01(knot.first)));
     }
 }
 
@@ -1340,58 +1476,71 @@ void
 RigExecVolumeWeightHandle::SetReadPhase(const TfToken &phase)
 {
     if (phase.IsEmpty()) {
-        throw std::invalid_argument("volume weight read phase must not be empty");
+        throw std::invalid_argument(
+            "volume weight read phase must not be empty");
     }
     _Schema(GetPrim()).SetReadPhase(
-        TfToken("rigExec:weightTarget"), phase.GetString());
+        TfToken(SchemaAttrText::rigExecWeightTarget), phase.GetString());
 }
 
 void
 RigExecVolumeWeightHandle::SetSampleSource(const SdfPath &path)
 {
-    SetRel("rigExec:sampleSource", path.IsEmpty() ? std::vector<SdfPath>()
-                                                   : std::vector<SdfPath>{ path });
+    SetRel(SchemaAttrText::rigExecSampleSource,
+           path.IsEmpty() ? std::vector<SdfPath>()
+                          : std::vector<SdfPath>{path});
 }
 
 void
 RigExecSphereWeightHandle::SetScales(float sx, float sy, float sz)
 {
-    _AuthorAttr(GetPrim(), "inputs:scaleX", SdfValueTypeNames->Float, VtValue(sx));
-    _AuthorAttr(GetPrim(), "inputs:scaleY", SdfValueTypeNames->Float, VtValue(sy));
-    _AuthorAttr(GetPrim(), "inputs:scaleZ", SdfValueTypeNames->Float, VtValue(sz));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsScaleX,
+                SdfValueTypeNames->Float, VtValue(sx));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsScaleY,
+                SdfValueTypeNames->Float, VtValue(sy));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsScaleZ,
+                SdfValueTypeNames->Float, VtValue(sz));
 }
 
 void
-RigExecSphereWeightHandle::SetDirectionalScales(
-    float px, float py, float pz, float nx, float ny, float nz)
+RigExecSphereWeightHandle::SetDirectionalScales(float px, float py, float pz,
+                                                float nx, float ny, float nz)
 {
-    _AuthorAttr(GetPrim(), "inputs:scaleXPos", SdfValueTypeNames->Float, VtValue(px));
-    _AuthorAttr(GetPrim(), "inputs:scaleYPos", SdfValueTypeNames->Float, VtValue(py));
-    _AuthorAttr(GetPrim(), "inputs:scaleZPos", SdfValueTypeNames->Float, VtValue(pz));
-    _AuthorAttr(GetPrim(), "inputs:scaleXNeg", SdfValueTypeNames->Float, VtValue(nx));
-    _AuthorAttr(GetPrim(), "inputs:scaleYNeg", SdfValueTypeNames->Float, VtValue(ny));
-    _AuthorAttr(GetPrim(), "inputs:scaleZNeg", SdfValueTypeNames->Float, VtValue(nz));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsScaleXPos,
+                SdfValueTypeNames->Float, VtValue(px));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsScaleYPos,
+                SdfValueTypeNames->Float, VtValue(py));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsScaleZPos,
+                SdfValueTypeNames->Float, VtValue(pz));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsScaleXNeg,
+                SdfValueTypeNames->Float, VtValue(nx));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsScaleYNeg,
+                SdfValueTypeNames->Float, VtValue(ny));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsScaleZNeg,
+                SdfValueTypeNames->Float, VtValue(nz));
 }
 
 void
 RigExecPlaneWeightHandle::SetAxis(const TfToken &axis)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:planeAxis", SdfValueTypeNames->Token, VtValue(axis));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecPlaneAxis,
+                SdfValueTypeNames->Token, VtValue(axis));
 }
 
 void
 RigExecPlaneWeightHandle::SetBounds(const TfToken &bounds)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:planeBounds", SdfValueTypeNames->Token, VtValue(bounds));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecPlaneBounds,
+                SdfValueTypeNames->Token, VtValue(bounds));
 }
 
 void
 RigExecPlaneWeightHandle::SetExtents(float extentU, float extentV)
 {
-    _AuthorAttr(GetPrim(), "inputs:extentU", SdfValueTypeNames->Float, VtValue(extentU));
-    _AuthorAttr(GetPrim(), "inputs:extentV", SdfValueTypeNames->Float, VtValue(extentV));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsExtentU,
+                SdfValueTypeNames->Float, VtValue(extentU));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsExtentV,
+                SdfValueTypeNames->Float, VtValue(extentV));
 }
 
 void
@@ -1400,42 +1549,45 @@ RigExecCurveWeightHandle::SetCurve(const SdfPath &path)
     if (path.IsEmpty()) {
         throw std::invalid_argument("curve weight needs a curve source");
     }
-    SetRel("rigExec:curve", { path });
+    SetRel(SchemaAttrText::rigExecCurve, {path});
 }
 
 void
 RigExecCurveWeightHandle::SetScales(float sx, float sy, float sz)
 {
-    _AuthorAttr(GetPrim(), "inputs:scaleX", SdfValueTypeNames->Float, VtValue(sx));
-    _AuthorAttr(GetPrim(), "inputs:scaleY", SdfValueTypeNames->Float, VtValue(sy));
-    _AuthorAttr(GetPrim(), "inputs:scaleZ", SdfValueTypeNames->Float, VtValue(sz));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsScaleX,
+                SdfValueTypeNames->Float, VtValue(sx));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsScaleY,
+                SdfValueTypeNames->Float, VtValue(sy));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsScaleZ,
+                SdfValueTypeNames->Float, VtValue(sz));
 }
 
 void
 RigExecCombineWeightHandle::SetInputWeights(const std::vector<SdfPath> &paths)
 {
-    SetRel("rigExec:inputWeights", paths);
+    SetRel(SchemaAttrText::rigExecInputWeights, paths);
 }
 
 void
 RigExecCombineWeightHandle::SetCombineMode(const TfToken &mode)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:combineMode", SdfValueTypeNames->Token, VtValue(mode));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecCombineMode,
+                SdfValueTypeNames->Token, VtValue(mode));
 }
 
 void
 RigExecCombineWeightHandle::SetStrength(float strength)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:strength", SdfValueTypeNames->Float, VtValue(strength));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsStrength,
+                SdfValueTypeNames->Float, VtValue(strength));
 }
 
 void
 RigExecCombineWeightHandle::SetInvert(float invert)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:invert", SdfValueTypeNames->Float, VtValue(invert));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsInvert,
+                SdfValueTypeNames->Float, VtValue(invert));
 }
 
 // Blend inputs / samples
@@ -1443,8 +1595,8 @@ RigExecCombineWeightHandle::SetInvert(float invert)
 void
 RigExecBlendInputHandle::SetWeight(float weight)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:weight", SdfValueTypeNames->Float, VtValue(weight));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsWeight,
+                SdfValueTypeNames->Float, VtValue(weight));
 }
 
 RigExecBlendSampleHandle
@@ -1457,32 +1609,35 @@ RigExecBlendInputHandle::AddSample(const std::string &name, float activation)
     const SdfPath samplePath = _path.AppendChild(TfToken(name));
     UsdPrim existing = _stage->GetPrimAtPath(samplePath);
     if (existing) {
-        throw std::invalid_argument(
-            "blend sample already exists: " + samplePath.GetString());
+        throw std::invalid_argument("blend sample already exists: " +
+                                    samplePath.GetString());
     }
-    UsdPrim prim = RigExecSchemaPrim::Define(
-        _stage, samplePath, TfToken("RigExecBlendSample")).GetPrim();
+    UsdPrim prim =
+        RigExecSchemaPrim::Define(_stage, samplePath,
+                                  TfToken(SchemaTypeName::RigExecBlendSample))
+            .GetPrim();
     _ApplyApiRequired(prim, _kNodeGraphApi);
-    _AuthorAttr(
-        prim, "rigExec:activation", SdfValueTypeNames->Float, VtValue(activation));
-    _AppendRelTarget(GetPrim(), "rigExec:samples", samplePath);
+    _AuthorAttr(prim, SchemaAttrText::rigExecActivation,
+                SdfValueTypeNames->Float, VtValue(activation));
+    _AppendRelTarget(GetPrim(), SchemaAttrText::rigExecSamples, samplePath);
     return RigExecBlendSampleHandle(_stage, samplePath);
 }
 
 void
 RigExecBlendSampleHandle::SetActivation(float activation)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:activation", SdfValueTypeNames->Float, VtValue(activation));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecActivation,
+                SdfValueTypeNames->Float, VtValue(activation));
 }
 
 void
 RigExecBlendSampleHandle::SetTargetPoints(const SdfPath &path)
 {
     if (path.IsEmpty()) {
-        throw std::invalid_argument("blend sample needs a target points property");
+        throw std::invalid_argument(
+            "blend sample needs a target points property");
     }
-    SetRel("rigExec:targetPoints", { path });
+    SetRel(SchemaAttrText::rigExecTargetPoints, {path});
 }
 
 void
@@ -1495,21 +1650,22 @@ RigExecBlendSampleHandle::SetBlendShape(const SdfPath &path)
     // compiler refuses a sample that names two shapes, and a builder that
     // silently produced one would be handing the caller a rig that does not
     // compile for a reason nothing in the calling code mentions.
-    if (UsdRelationship dense =
-            GetPrim().GetRelationship(TfToken("rigExec:targetPoints"))) {
+    if (UsdRelationship dense = GetPrim().GetRelationship(
+            TfToken(SchemaAttrText::rigExecTargetPoints))) {
         dense.ClearTargets(false);
     }
-    SetRel("rigExec:blendShape", { path });
+    SetRel(SchemaAttrText::rigExecBlendShape, {path});
 }
 
 void
 RigExecBlendSampleHandle::SetReadPhase(const TfToken &phase)
 {
     if (phase.IsEmpty()) {
-        throw std::invalid_argument("blend sample read phase must not be empty");
+        throw std::invalid_argument(
+            "blend sample read phase must not be empty");
     }
     _Schema(GetPrim()).SetReadPhase(
-        TfToken("rigExec:targetPoints"), phase.GetString());
+        TfToken(SchemaAttrText::rigExecTargetPoints), phase.GetString());
 }
 
 void
@@ -1520,10 +1676,10 @@ RigExecBlendInputHandle::ConnectWeight(const SdfPath &output)
     // number it holds is then ignored while the connection stands, which is
     // the right fallback: a stage read without the interpolator compiled
     // shows the channel at rest rather than at some stale weight.
-    _AuthorAttr(GetPrim(), "inputs:weight", SdfValueTypeNames->Float,
-                VtValue(0.f));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsWeight,
+                SdfValueTypeNames->Float, VtValue(0.f));
     UsdAttribute attr =
-        GetPrim().GetAttribute(TfToken("inputs:weight"));
+        GetPrim().GetAttribute(TfToken(SchemaAttrText::inputsWeight));
     if (output.IsEmpty()) {
         attr.ClearConnections();
         return;
@@ -1533,7 +1689,7 @@ RigExecBlendInputHandle::ConnectWeight(const SdfPath &output)
             "blend input weight must connect to a PROPERTY, got: " +
             output.GetString());
     }
-    attr.SetConnections({ output });
+    attr.SetConnections({output});
 }
 
 // Pose interpolators
@@ -1550,7 +1706,7 @@ RigExecPoseInterpolatorHandle::SetDriver(const SdfPath &path)
     if (path.IsEmpty()) {
         throw std::invalid_argument("pose interpolator needs a driver");
     }
-    SetRel("rigExec:driver", { path });
+    SetRel(SchemaAttrText::rigExecDriver, {path});
 }
 
 void
@@ -1559,7 +1715,7 @@ RigExecPoseInterpolatorHandle::SetDrivers(const std::vector<SdfPath> &paths)
     if (paths.empty()) {
         throw std::invalid_argument("pose interpolator needs a driver");
     }
-    SetRel("rigExec:driver", paths);
+    SetRel(SchemaAttrText::rigExecDriver, paths);
 }
 
 void
@@ -1577,21 +1733,23 @@ RigExecPoseInterpolatorHandle::SetDriverAttributes(
                 property.GetString());
         }
     }
-    SetRel("rigExec:driverAttributes", properties);
+    SetRel(SchemaAttrText::rigExecDriverAttributes, properties);
 }
 
 void
 RigExecPoseInterpolatorHandle::SetKernel(const TfToken &kernel)
 {
-    if (kernel != TfToken("gaussian") && kernel != TfToken("linear") &&
+    if (kernel != TfToken("gaussian") &&
+        kernel != TfToken(SchemaValueText::linear) &&
         kernel != TfToken("exponential") && kernel != TfToken("cubic") &&
         kernel != TfToken("quintic")) {
         throw std::invalid_argument(
             "pose interpolator kernel must be gaussian, linear, exponential, "
-            "cubic or quintic, got: " + kernel.GetString());
+            "cubic or quintic, got: " +
+            kernel.GetString());
     }
-    _AuthorAttr(GetPrim(), "rigExec:kernel", SdfValueTypeNames->Token,
-                VtValue(kernel));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecKernel,
+                SdfValueTypeNames->Token, VtValue(kernel));
 }
 
 void
@@ -1601,10 +1759,11 @@ RigExecPoseInterpolatorHandle::SetSolver(const TfToken &solver)
         solver != TfToken("interpolative")) {
         throw std::invalid_argument(
             "pose interpolator solver must be pose, additive or "
-            "interpolative, got: " + solver.GetString());
+            "interpolative, got: " +
+            solver.GetString());
     }
-    _AuthorAttr(GetPrim(), "rigExec:solver", SdfValueTypeNames->Token,
-                VtValue(solver));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecSolver,
+                SdfValueTypeNames->Token, VtValue(solver));
 }
 
 void
@@ -1614,10 +1773,11 @@ RigExecPoseInterpolatorHandle::SetDistanceMethod(const TfToken &method)
         method != TfToken("swingAngle") && method != TfToken("twistAngle")) {
         throw std::invalid_argument(
             "distance method must be euclidean, quaternion, swingAngle or "
-            "twistAngle, got: " + method.GetString());
+            "twistAngle, got: " +
+            method.GetString());
     }
-    _AuthorAttr(GetPrim(), "rigExec:distanceMethod", SdfValueTypeNames->Token,
-                VtValue(method));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecDistanceMethod,
+                SdfValueTypeNames->Token, VtValue(method));
 }
 
 void
@@ -1628,7 +1788,7 @@ RigExecPoseInterpolatorHandle::SetNormalizeMethod(const TfToken &method)
             "normalize method must be onlyAboveOne or always, got: " +
             method.GetString());
     }
-    _AuthorAttr(GetPrim(), "rigExec:normalizeMethod",
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecNormalizeMethod,
                 SdfValueTypeNames->Token, VtValue(method));
 }
 
@@ -1638,10 +1798,10 @@ RigExecPoseInterpolatorHandle::SetRadius(float radius, bool automatic)
     if (!(radius >= 0.f)) {
         throw std::invalid_argument("a radius must not be negative");
     }
-    _AuthorAttr(GetPrim(), "rigExec:radius", SdfValueTypeNames->Float,
-                VtValue(radius));
-    _AuthorAttr(GetPrim(), "rigExec:automaticRadius", SdfValueTypeNames->Bool,
-                VtValue(automatic));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecRadius,
+                SdfValueTypeNames->Float, VtValue(radius));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecAutomaticRadius,
+                SdfValueTypeNames->Bool, VtValue(automatic));
 }
 
 void
@@ -1650,37 +1810,37 @@ RigExecPoseInterpolatorHandle::SetWeightThreshold(float threshold)
     if (!std::isfinite(threshold)) {
         throw std::invalid_argument("a weight threshold must be finite");
     }
-    _AuthorAttr(GetPrim(), "rigExec:weightThreshold",
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecWeightThreshold,
                 SdfValueTypeNames->Float, VtValue(threshold));
 }
 
 void
-RigExecPoseInterpolatorHandle::SetChannels(
-    bool enableRotation, bool enableTranslation)
+RigExecPoseInterpolatorHandle::SetChannels(bool enableRotation,
+                                           bool enableTranslation)
 {
     if (!enableRotation && !enableTranslation) {
         throw std::invalid_argument(
             "a pose interpolator with neither channel enabled measures "
             "nothing: every pose is equally close and the weights peg at 1/n");
     }
-    _AuthorAttr(GetPrim(), "rigExec:enableRotation", SdfValueTypeNames->Bool,
-                VtValue(enableRotation));
-    _AuthorAttr(GetPrim(), "rigExec:enableTranslation",
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecEnableRotation,
+                SdfValueTypeNames->Bool, VtValue(enableRotation));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecEnableTranslation,
                 SdfValueTypeNames->Bool, VtValue(enableTranslation));
 }
 
 void
 RigExecPoseInterpolatorHandle::SetAllowNegativeWeights(bool allow)
 {
-    _AuthorAttr(GetPrim(), "rigExec:allowNegativeWeights",
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecAllowNegativeWeights,
                 SdfValueTypeNames->Bool, VtValue(allow));
 }
 
 void
 RigExecPoseInterpolatorHandle::SetNormalize(bool normalize)
 {
-    _AuthorAttr(GetPrim(), "rigExec:normalize", SdfValueTypeNames->Bool,
-                VtValue(normalize));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecNormalize,
+                SdfValueTypeNames->Bool, VtValue(normalize));
 }
 
 void
@@ -1691,46 +1851,46 @@ RigExecPoseInterpolatorHandle::SetRegularization(float regularization)
             "regularization is added to the matrix diagonal and must not be "
             "negative");
     }
-    _AuthorAttr(GetPrim(), "rigExec:regularization", SdfValueTypeNames->Float,
-                VtValue(regularization));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecRegularization,
+                SdfValueTypeNames->Float, VtValue(regularization));
 }
 
 void
 RigExecPoseInterpolatorHandle::SetTwistAxis(const TfToken &axis)
 {
     if (axis != TfToken("X") && axis != TfToken("Y") && axis != TfToken("Z")) {
-        throw std::invalid_argument(
-            "twist axis must be X, Y or Z, got: " + axis.GetString());
+        throw std::invalid_argument("twist axis must be X, Y or Z, got: " +
+                                    axis.GetString());
     }
-    _AuthorAttr(GetPrim(), "rigExec:twistAxis", SdfValueTypeNames->Token,
-                VtValue(axis));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecTwistAxis,
+                SdfValueTypeNames->Token, VtValue(axis));
 }
 
 void
 RigExecPoseInterpolatorHandle::SetEnabled(bool enabled)
 {
-    _AuthorAttr(GetPrim(), "inputs:enabled", SdfValueTypeNames->Bool,
-                VtValue(enabled));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsEnabled,
+                SdfValueTypeNames->Bool, VtValue(enabled));
 }
 
 RigExecPoseHandle
 RigExecPoseInterpolatorHandle::AddPose(const std::string &name)
 {
     if (name.empty() || !SdfPath::IsValidIdentifier(name)) {
-        throw std::invalid_argument(
-            "pose name must be a valid USD identifier");
+        throw std::invalid_argument("pose name must be a valid USD identifier");
     }
     const SdfPath posePath = _path.AppendChild(TfToken(name));
     if (_stage->GetPrimAtPath(posePath)) {
-        throw std::invalid_argument(
-            "pose already exists: " + posePath.GetString());
+        throw std::invalid_argument("pose already exists: " +
+                                    posePath.GetString());
     }
     UsdPrim prim = RigExecSchemaPrim::Define(
-        _stage, posePath, TfToken("RigExecPose")).GetPrim();
+                       _stage, posePath, TfToken(SchemaTypeName::RigExecPose))
+                       .GetPrim();
     _ApplyApiRequired(prim, _kNodeGraphApi);
     // outputs:weight is authored up front so the connection a blend input
     // makes to it resolves on a stage that has never been compiled.
-    _AuthorAttr(prim, "outputs:weight", SdfValueTypeNames->Float,
+    _AuthorAttr(prim, SchemaAttrText::outputsWeight, SdfValueTypeNames->Float,
                 VtValue(0.f));
     return RigExecPoseHandle(_stage, posePath);
 }
@@ -1744,22 +1904,22 @@ RigExecPoseHandle::SetPoseType(const TfToken &poseType)
             "pose type must be swing, twist or whole, got: " +
             poseType.GetString());
     }
-    _AuthorAttr(GetPrim(), "rigExec:poseType", SdfValueTypeNames->Token,
-                VtValue(poseType));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecPoseType,
+                SdfValueTypeNames->Token, VtValue(poseType));
 }
 
 void
 RigExecPoseHandle::SetRotation(const GfQuatf &rotation)
 {
-    _AuthorAttr(GetPrim(), "rigExec:rotation", SdfValueTypeNames->Quatf,
-                VtValue(rotation));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecRotation,
+                SdfValueTypeNames->Quatf, VtValue(rotation));
 }
 
 void
 RigExecPoseHandle::SetTranslation(const GfVec3f &translation)
 {
-    _AuthorAttr(GetPrim(), "rigExec:translation", SdfValueTypeNames->Float3,
-                VtValue(translation));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecTranslation,
+                SdfValueTypeNames->Float3, VtValue(translation));
 }
 
 void
@@ -1770,16 +1930,16 @@ RigExecPoseHandle::SetRadii(float rotationRadius, float translationRadius)
             "a falloff radius must not be negative; zero means measure one "
             "from the poses");
     }
-    _AuthorAttr(GetPrim(), "rigExec:rotationRadius", SdfValueTypeNames->Float,
-                VtValue(rotationRadius));
-    _AuthorAttr(GetPrim(), "rigExec:translationRadius",
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecRotationRadius,
+                SdfValueTypeNames->Float, VtValue(rotationRadius));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecTranslationRadius,
                 SdfValueTypeNames->Float, VtValue(translationRadius));
 }
 
 void
 RigExecPoseHandle::SetRotations(const std::vector<GfQuatf> &rotations)
 {
-    _AuthorAttr(GetPrim(), "rigExec:rotations",
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecRotations,
                 SdfValueTypeNames->QuatfArray,
                 VtValue(VtQuatfArray(rotations.begin(), rotations.end())));
 }
@@ -1790,25 +1950,26 @@ RigExecPoseHandle::SetScale(float scale)
     if (!std::isfinite(scale)) {
         throw std::invalid_argument("a pose scale must be finite");
     }
-    _AuthorAttr(GetPrim(), "rigExec:scale", SdfValueTypeNames->Float,
-                VtValue(scale));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecScale,
+                SdfValueTypeNames->Float, VtValue(scale));
 }
 
 void
 RigExecPoseHandle::SetFalloff(float falloff)
 {
-    _AuthorAttr(GetPrim(), "rigExec:falloff", SdfValueTypeNames->Float,
-                VtValue(falloff));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecFalloff,
+                SdfValueTypeNames->Float, VtValue(falloff));
 }
 
 void
-RigExecPoseHandle::SetPoseControls(
-    const std::vector<SdfPath> &properties, const std::vector<double> &values)
+RigExecPoseHandle::SetPoseControls(const std::vector<SdfPath> &properties,
+                                   const std::vector<double> &values)
 {
     if (properties.size() != values.size()) {
         throw std::invalid_argument(
             "rigExec:poseControlValues is parallel to rigExec:poseControls; "
-            "got " + std::to_string(properties.size()) + " controls and " +
+            "got " +
+            std::to_string(properties.size()) + " controls and " +
             std::to_string(values.size()) + " values");
     }
     for (const SdfPath &path : properties) {
@@ -1819,23 +1980,23 @@ RigExecPoseHandle::SetPoseControls(
                 path.GetString());
         }
     }
-    SetRel("rigExec:poseControls", properties);
+    SetRel(SchemaAttrText::rigExecPoseControls, properties);
     VtArray<double> array(values.begin(), values.end());
-    _AuthorAttr(GetPrim(), "rigExec:poseControlValues",
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecPoseControlValues,
                 SdfValueTypeNames->DoubleArray, VtValue(array));
 }
 
 void
 RigExecPoseHandle::SetEnabled(bool enabled)
 {
-    _AuthorAttr(GetPrim(), "inputs:enabled", SdfValueTypeNames->Bool,
-                VtValue(enabled));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsEnabled,
+                SdfValueTypeNames->Bool, VtValue(enabled));
 }
 
 SdfPath
 RigExecPoseHandle::GetWeightOutput() const
 {
-    return _path.AppendProperty(TfToken("outputs:weight"));
+    return _path.AppendProperty(TfToken(SchemaAttrText::outputsWeight));
 }
 
 // Mover handles
@@ -1846,16 +2007,18 @@ RigExecMatrixMoverHandle::SetTransformProvider(const SdfPath &path)
     if (path.IsEmpty()) {
         throw std::invalid_argument("matrix mover needs a transform provider");
     }
-    SetRel("rigExec:transform", { path });
+    SetRel(SchemaAttrText::rigExecTransform, {path});
 }
 
 void
 RigExecMatrixMoverHandle::SetReadPhase(const TfToken &phase)
 {
     if (phase.IsEmpty()) {
-        throw std::invalid_argument("matrix mover read phase must not be empty");
+        throw std::invalid_argument(
+            "matrix mover read phase must not be empty");
     }
-    RigExecMoverHandle::SetReadPhase(TfToken("rigExec:transform"), phase.GetString());
+    RigExecMoverHandle::SetReadPhase(TfToken(SchemaAttrText::rigExecTransform),
+                                     phase.GetString());
 }
 
 void
@@ -1864,13 +2027,13 @@ RigExecSkinMoverHandle::SetInfluences(const std::vector<SdfPath> &providers)
     if (providers.empty()) {
         throw std::invalid_argument("skin mover needs at least one influence");
     }
-    SetRel("rigExec:influences", providers);
+    SetRel(SchemaAttrText::rigExecInfluences, providers);
 }
 
 void
-RigExecSkinMoverHandle::SetJointInfluences(
-    const std::vector<int> &indices, const std::vector<float> &weights,
-    int elementSize)
+RigExecSkinMoverHandle::SetJointInfluences(const std::vector<int> &indices,
+                                           const std::vector<float> &weights,
+                                           int elementSize)
 {
     if (elementSize < 1) {
         throw std::invalid_argument(
@@ -1896,15 +2059,14 @@ RigExecSkinMoverHandle::SetJointInfluences(
                 "skin mover jointWeights must be finite and non-negative");
         }
     }
-    _AuthorAttr(
-        GetPrim(), "rigExec:elementSize", SdfValueTypeNames->Int,
-        VtValue(elementSize));
-    _AuthorAttr(
-        GetPrim(), "rigExec:jointIndices", SdfValueTypeNames->IntArray,
-        VtValue(VtIntArray(indices.begin(), indices.end())));
-    _AuthorAttr(
-        GetPrim(), "rigExec:jointWeights", SdfValueTypeNames->FloatArray,
-        VtValue(VtFloatArray(weights.begin(), weights.end())));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecElementSize,
+                SdfValueTypeNames->Int, VtValue(elementSize));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecJointIndices,
+                SdfValueTypeNames->IntArray,
+                VtValue(VtIntArray(indices.begin(), indices.end())));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecJointWeights,
+                SdfValueTypeNames->FloatArray,
+                VtValue(VtFloatArray(weights.begin(), weights.end())));
 }
 
 void
@@ -1915,9 +2077,8 @@ RigExecSkinMoverHandle::SetSkinningMethod(const TfToken &method)
             "skin mover skinningMethod must be classicLinear or "
             "dualQuaternion");
     }
-    _AuthorAttr(
-        GetPrim(), "rigExec:skinningMethod", SdfValueTypeNames->Token,
-        VtValue(method));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecSkinningMethod,
+                SdfValueTypeNames->Token, VtValue(method));
 }
 
 void
@@ -1926,7 +2087,8 @@ RigExecSkinMoverHandle::SetReadPhase(const TfToken &phase)
     if (phase.IsEmpty()) {
         throw std::invalid_argument("skin mover read phase must not be empty");
     }
-    RigExecMoverHandle::SetReadPhase(TfToken("rigExec:influences"), phase.GetString());
+    RigExecMoverHandle::SetReadPhase(TfToken(SchemaAttrText::rigExecInfluences),
+                                     phase.GetString());
 }
 
 void
@@ -1935,35 +2097,37 @@ RigExecLatticeMoverHandle::SetCage(const SdfPath &path)
     if (path.IsEmpty()) {
         throw std::invalid_argument("lattice mover needs a cage prim");
     }
-    SetRel("rigExec:cage", { path });
+    SetRel(SchemaAttrText::rigExecCage, {path});
 }
 
 void
 RigExecLatticeMoverHandle::SetBasis(const TfToken &basis)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:basis", SdfValueTypeNames->Token, VtValue(basis));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecBasis,
+                SdfValueTypeNames->Token, VtValue(basis));
 }
 
 void
 RigExecLatticeMoverHandle::SetDivisions(int x, int y, int z)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:divisions", SdfValueTypeNames->Int3,
-        VtValue(GfVec3i(x, y, z)));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecDivisions,
+                SdfValueTypeNames->Int3, VtValue(GfVec3i(x, y, z)));
 }
 
 void
 RigExecLatticeMoverHandle::SetReadPhase(const TfToken &phase)
 {
     if (phase.IsEmpty()) {
-        throw std::invalid_argument("lattice mover read phase must not be empty");
+        throw std::invalid_argument(
+            "lattice mover read phase must not be empty");
     }
-    RigExecMoverHandle::SetReadPhase(TfToken("rigExec:cage"), phase.GetString());
+    RigExecMoverHandle::SetReadPhase(TfToken(SchemaAttrText::rigExecCage),
+                                     phase.GetString());
 }
 
 RigExecBlendInputHandle
-RigExecBlendShapeMoverHandle::AddBlendInput(const std::string &name, float weight)
+RigExecBlendShapeMoverHandle::AddBlendInput(const std::string &name,
+                                            float weight)
 {
     if (name.empty() || !SdfPath::IsValidIdentifier(name)) {
         throw std::invalid_argument(
@@ -1972,32 +2136,35 @@ RigExecBlendShapeMoverHandle::AddBlendInput(const std::string &name, float weigh
     const SdfPath inputPath = _path.AppendChild(TfToken(name));
     UsdPrim existing = _stage->GetPrimAtPath(inputPath);
     if (existing) {
-        throw std::invalid_argument(
-            "blend input already exists: " + inputPath.GetString());
+        throw std::invalid_argument("blend input already exists: " +
+                                    inputPath.GetString());
     }
-    UsdPrim prim = RigExecSchemaPrim::Define(
-        _stage, inputPath, TfToken("RigExecBlendInput")).GetPrim();
+    UsdPrim prim =
+        RigExecSchemaPrim::Define(_stage, inputPath,
+                                  TfToken(SchemaTypeName::RigExecBlendInput))
+            .GetPrim();
     _ApplyApiRequired(prim, _kNodeGraphApi);
-    _AuthorAttr(prim, "inputs:weight", SdfValueTypeNames->Float, VtValue(weight));
-    _AppendRelTarget(GetPrim(), "rigExec:blendInputs", inputPath);
+    _AuthorAttr(prim, SchemaAttrText::inputsWeight, SdfValueTypeNames->Float,
+                VtValue(weight));
+    _AppendRelTarget(GetPrim(), SchemaAttrText::rigExecBlendInputs, inputPath);
     return RigExecBlendInputHandle(_stage, inputPath);
 }
 
 void
-RigExecBlendShapeMoverHandle::SetBlendInputs(
-    const std::vector<SdfPath> &paths)
+RigExecBlendShapeMoverHandle::SetBlendInputs(const std::vector<SdfPath> &paths)
 {
     for (const SdfPath &path : paths) {
-        _RequireTypedPrim(
-            _stage, path, TfToken("RigExecBlendInput"), "blend input");
+        _RequireTypedPrim(_stage, path,
+                          TfToken(SchemaTypeName::RigExecBlendInput),
+                          "blend input");
     }
-    SetRel("rigExec:blendInputs", paths);
+    SetRel(SchemaAttrText::rigExecBlendInputs, paths);
 }
 
 void
 RigExecMlMoverHandle::SetDrivers(const std::vector<SdfPath> &paths)
 {
-    SetRel("rigExec:driver", paths);
+    SetRel(SchemaAttrText::rigExecDriver, paths);
 }
 
 void
@@ -2011,7 +2178,7 @@ RigExecMlMoverHandle::SetDriverAttributes(
                 property.GetString());
         }
     }
-    SetRel("rigExec:driverAttributes", properties);
+    SetRel(SchemaAttrText::rigExecDriverAttributes, properties);
 }
 
 void
@@ -2030,13 +2197,17 @@ RigExecMlMoverHandle::SetNetwork(const std::vector<int> &layerSizes,
     VtIntArray codes;
     for (const TfToken &activation : activations) {
         const std::string &name = activation.GetString();
-        const int code = name == "linear" ? 0 : name == "relu" ? 1 :
-                         name == "leakyRelu" ? 2 : name == "tanh" ? 3 :
-                         name == "sigmoid" ? 4 : -1;
+        const int code = name == SchemaValueText::linear ? 0
+                         : name == "relu"                ? 1
+                         : name == "leakyRelu"           ? 2
+                         : name == "tanh"                ? 3
+                         : name == "sigmoid"             ? 4
+                                                         : -1;
         if (code < 0) {
             throw std::invalid_argument(
                 "ML activation must be linear, relu, leakyRelu, tanh or "
-                "sigmoid, got: " + name);
+                "sigmoid, got: " +
+                name);
         }
         codes.push_back(code);
     }
@@ -2045,16 +2216,19 @@ RigExecMlMoverHandle::SetNetwork(const std::vector<int> &layerSizes,
             throw std::invalid_argument("ML layer sizes must be positive");
         }
     }
-    _AuthorAttr(GetPrim(), "rigExec:layerSizes", SdfValueTypeNames->IntArray,
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecLayerSizes,
+                SdfValueTypeNames->IntArray,
                 VtValue(VtIntArray(layerSizes.begin(), layerSizes.end())));
-    _AuthorAttr(GetPrim(), "rigExec:layerActivations",
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecLayerActivations,
                 SdfValueTypeNames->IntArray, VtValue(codes));
-    _AuthorAttr(GetPrim(), "rigExec:layerAlphas",
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecLayerAlphas,
                 SdfValueTypeNames->FloatArray,
                 VtValue(VtFloatArray(alphas.begin(), alphas.end())));
-    _AuthorAttr(GetPrim(), "rigExec:weights", SdfValueTypeNames->FloatArray,
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecWeights,
+                SdfValueTypeNames->FloatArray,
                 VtValue(VtFloatArray(weights.begin(), weights.end())));
-    _AuthorAttr(GetPrim(), "rigExec:biases", SdfValueTypeNames->FloatArray,
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecBiases,
+                SdfValueTypeNames->FloatArray,
                 VtValue(VtFloatArray(biases.begin(), biases.end())));
 }
 
@@ -2062,9 +2236,10 @@ void
 RigExecMlMoverHandle::SetInputNormalization(const std::vector<float> &mean,
                                             const std::vector<float> &scale)
 {
-    _AuthorAttr(GetPrim(), "rigExec:inputMean", SdfValueTypeNames->FloatArray,
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecInputMean,
+                SdfValueTypeNames->FloatArray,
                 VtValue(VtFloatArray(mean.begin(), mean.end())));
-    _AuthorAttr(GetPrim(), "rigExec:inputScale",
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecInputScale,
                 SdfValueTypeNames->FloatArray,
                 VtValue(VtFloatArray(scale.begin(), scale.end())));
 }
@@ -2072,7 +2247,7 @@ RigExecMlMoverHandle::SetInputNormalization(const std::vector<float> &mean,
 void
 RigExecMlMoverHandle::SetOutputDefaults(const std::vector<float> &defaults)
 {
-    _AuthorAttr(GetPrim(), "rigExec:outputDefaults",
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecOutputDefaults,
                 SdfValueTypeNames->FloatArray,
                 VtValue(VtFloatArray(defaults.begin(), defaults.end())));
 }
@@ -2080,7 +2255,7 @@ RigExecMlMoverHandle::SetOutputDefaults(const std::vector<float> &defaults)
 void
 RigExecMlMoverHandle::SetMask(float mask)
 {
-    _AuthorAttr(GetPrim(), "inputs:mask", SdfValueTypeNames->Float,
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsMask, SdfValueTypeNames->Float,
                 VtValue(mask));
 }
 
@@ -2093,17 +2268,19 @@ RigExecMlMoverHandle::AddOutput(const std::string &name)
     }
     const SdfPath outputPath = _path.AppendChild(TfToken(name));
     if (_stage->GetPrimAtPath(outputPath)) {
-        throw std::invalid_argument(
-            "ML output already exists: " + outputPath.GetString());
+        throw std::invalid_argument("ML output already exists: " +
+                                    outputPath.GetString());
     }
-    UsdPrim prim = RigExecSchemaPrim::Define(
-        _stage, outputPath, TfToken("RigExecMlOutput")).GetPrim();
+    UsdPrim prim =
+        RigExecSchemaPrim::Define(_stage, outputPath,
+                                  TfToken(SchemaTypeName::RigExecMlOutput))
+            .GetPrim();
     _ApplyApiRequired(prim, _kNodeGraphApi);
     // Authored up front so a blend input's connection resolves on a stage
     // that has never been compiled.
-    _AuthorAttr(prim, "outputs:weight", SdfValueTypeNames->Float,
+    _AuthorAttr(prim, SchemaAttrText::outputsWeight, SdfValueTypeNames->Float,
                 VtValue(0.f));
-    return outputPath.AppendProperty(TfToken("outputs:weight"));
+    return outputPath.AppendProperty(TfToken(SchemaAttrText::outputsWeight));
 }
 
 SdfPath
@@ -2126,27 +2303,28 @@ RigExecCurveMoverHandle::SetDriverCurve(const SdfPath &path)
     if (path.IsEmpty()) {
         throw std::invalid_argument("curve mover needs a driver curve");
     }
-    SetRel("rigExec:driverCurve", { path });
+    SetRel(SchemaAttrText::rigExecDriverCurve, {path});
 }
 
 void
 RigExecCurveMoverHandle::SetDriverFrames(const std::vector<SdfPath> &paths)
 {
-    SetRel("rigExec:driverFrames", paths);
+    SetRel(SchemaAttrText::rigExecDriverFrames, paths);
 }
 
 void
 RigExecCurveMoverHandle::SetBindCoordinates(const SdfPath &path)
 {
-    SetRel("rigExec:bindCoordinates", path.IsEmpty() ? std::vector<SdfPath>()
-                                                      : std::vector<SdfPath>{ path });
+    SetRel(SchemaAttrText::rigExecBindCoordinates,
+           path.IsEmpty() ? std::vector<SdfPath>()
+                          : std::vector<SdfPath>{path});
 }
 
 void
 RigExecCurveMoverHandle::SetMode(const TfToken &mode)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:mode", SdfValueTypeNames->Token, VtValue(mode));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecMode,
+                SdfValueTypeNames->Token, VtValue(mode));
 }
 
 void
@@ -2155,7 +2333,8 @@ RigExecCurveMoverHandle::SetReadPhase(const TfToken &phase)
     if (phase.IsEmpty()) {
         throw std::invalid_argument("curve mover read phase must not be empty");
     }
-    RigExecMoverHandle::SetReadPhase(TfToken("rigExec:driverCurve"), phase.GetString());
+    RigExecMoverHandle::SetReadPhase(
+        TfToken(SchemaAttrText::rigExecDriverCurve), phase.GetString());
 }
 
 void
@@ -2164,23 +2343,25 @@ RigExecSurfaceMoverHandle::SetSurface(const SdfPath &path)
     if (path.IsEmpty()) {
         throw std::invalid_argument("surface mover needs a surface prim");
     }
-    SetRel("rigExec:surface", { path });
+    SetRel(SchemaAttrText::rigExecSurface, {path});
 }
 
 void
 RigExecSurfaceMoverHandle::SetMode(const TfToken &mode)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:mode", SdfValueTypeNames->Token, VtValue(mode));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecMode,
+                SdfValueTypeNames->Token, VtValue(mode));
 }
 
 void
 RigExecSurfaceMoverHandle::SetReadPhase(const TfToken &phase)
 {
     if (phase.IsEmpty()) {
-        throw std::invalid_argument("surface mover read phase must not be empty");
+        throw std::invalid_argument(
+            "surface mover read phase must not be empty");
     }
-    RigExecMoverHandle::SetReadPhase(TfToken("rigExec:surface"), phase.GetString());
+    RigExecMoverHandle::SetReadPhase(TfToken(SchemaAttrText::rigExecSurface),
+                                     phase.GetString());
 }
 
 void
@@ -2189,7 +2370,7 @@ RigExecPatchMoverHandle::SetPatch(const SdfPath &path)
     if (path.IsEmpty()) {
         throw std::invalid_argument("patch mover needs a patch prim");
     }
-    SetRel("rigExec:patch", { path });
+    SetRel(SchemaAttrText::rigExecPatch, {path});
 }
 
 void
@@ -2198,7 +2379,7 @@ RigExecPatchMoverHandle::SetUvPoints(const SdfPath &path)
     if (path.IsEmpty()) {
         throw std::invalid_argument("patch mover needs a UV points target");
     }
-    SetRel("rigExec:uvPoints", { path });
+    SetRel(SchemaAttrText::rigExecUvPoints, {path});
 }
 
 void
@@ -2210,22 +2391,25 @@ RigExecPatchMoverHandle::SetReadPhase(const TfToken &phase)
 void
 RigExecPatchMoverHandle::SetUvShapes(const std::vector<SdfPath> &paths)
 {
-    SetRel("rigExec:uvShapes", paths);
+    SetRel(SchemaAttrText::rigExecUvShapes, paths);
 }
 
 void
 RigExecPatchMoverHandle::SetUvShapesReadPhase(const TfToken &phase)
 {
     if (phase.IsEmpty()) {
-        throw std::invalid_argument("patch mover UV shapes read phase must not be empty");
+        throw std::invalid_argument(
+            "patch mover UV shapes read phase must not be empty");
     }
-    RigExecMoverHandle::SetReadPhase(TfToken("rigExec:uvShapes"), phase.GetString());
+    RigExecMoverHandle::SetReadPhase(TfToken(SchemaAttrText::rigExecUvShapes),
+                                     phase.GetString());
 }
 
 void
 RigExecPatchMoverHandle::SetUvWeights(const std::vector<float> &weights)
 {
-    _AuthorAttr(GetPrim(), "inputs:uvWeights", SdfValueTypeNames->FloatArray,
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsUvWeights,
+                SdfValueTypeNames->FloatArray,
                 VtValue(VtFloatArray(weights.begin(), weights.end())));
 }
 
@@ -2246,9 +2430,11 @@ RigExecPatchMoverHandle::SetUvContacts(const std::vector<int> &lower,
             }
         }
     }
-    _AuthorAttr(GetPrim(), "rigExec:uvContactLower", SdfValueTypeNames->IntArray,
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecUvContactLower,
+                SdfValueTypeNames->IntArray,
                 VtValue(VtIntArray(lower.begin(), lower.end())));
-    _AuthorAttr(GetPrim(), "rigExec:uvContactUpper", SdfValueTypeNames->IntArray,
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecUvContactUpper,
+                SdfValueTypeNames->IntArray,
                 VtValue(VtIntArray(upper.begin(), upper.end())));
 }
 
@@ -2264,9 +2450,10 @@ RigExecPatchMoverHandle::ConnectUvWeights(const std::vector<SdfPath> &sources)
     }
     // The attribute has to exist before it can carry connections; while they
     // stand its own array is ignored.
-    _AuthorAttr(GetPrim(), "inputs:uvWeights", SdfValueTypeNames->FloatArray,
-                VtValue(VtFloatArray()));
-    UsdAttribute attr = GetPrim().GetAttribute(TfToken("inputs:uvWeights"));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsUvWeights,
+                SdfValueTypeNames->FloatArray, VtValue(VtFloatArray()));
+    UsdAttribute attr =
+        GetPrim().GetAttribute(TfToken(SchemaAttrText::inputsUvWeights));
     if (sources.empty()) {
         attr.ClearConnections();
         return;
@@ -2280,16 +2467,19 @@ RigExecPatchMoverHandle::SetPatchReadPhase(const TfToken &phase)
     if (phase.IsEmpty()) {
         throw std::invalid_argument("patch mover read phase must not be empty");
     }
-    RigExecMoverHandle::SetReadPhase(TfToken("rigExec:patch"), phase.GetString());
+    RigExecMoverHandle::SetReadPhase(TfToken(SchemaAttrText::rigExecPatch),
+                                     phase.GetString());
 }
 
 void
 RigExecPatchMoverHandle::SetUvPointsReadPhase(const TfToken &phase)
 {
     if (phase.IsEmpty()) {
-        throw std::invalid_argument("patch mover UV points read phase must not be empty");
+        throw std::invalid_argument(
+            "patch mover UV points read phase must not be empty");
     }
-    RigExecMoverHandle::SetReadPhase(TfToken("rigExec:uvPoints"), phase.GetString());
+    RigExecMoverHandle::SetReadPhase(TfToken(SchemaAttrText::rigExecUvPoints),
+                                     phase.GetString());
 }
 
 void
@@ -2307,22 +2497,24 @@ RigExecVolumeCorrectMoverHandle::SetStrength(float strength)
 void
 RigExecFloatMathMoverHandle::SetOperation(const TfToken &op)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:operation", SdfValueTypeNames->Token, VtValue(op));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecOperation,
+                SdfValueTypeNames->Token, VtValue(op));
 }
 
 void
 RigExecFloatMathMoverHandle::SetValue(float value)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:value", SdfValueTypeNames->Float, VtValue(value));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsValue,
+                SdfValueTypeNames->Float, VtValue(value));
 }
 
 void
 RigExecFloatMathMoverHandle::SetBounds(float min, float max)
 {
-    _AuthorAttr(GetPrim(), "inputs:min", SdfValueTypeNames->Float, VtValue(min));
-    _AuthorAttr(GetPrim(), "inputs:max", SdfValueTypeNames->Float, VtValue(max));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsMin, SdfValueTypeNames->Float,
+                VtValue(min));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsMax, SdfValueTypeNames->Float,
+                VtValue(max));
 }
 
 void
@@ -2334,22 +2526,24 @@ RigExecFloatMathMoverHandle::SetWeight(float weight)
 void
 RigExecVec3fMathMoverHandle::SetOperation(const TfToken &op)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:operation", SdfValueTypeNames->Token, VtValue(op));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecOperation,
+                SdfValueTypeNames->Token, VtValue(op));
 }
 
 void
 RigExecVec3fMathMoverHandle::SetValue(GfVec3f value)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:value", SdfValueTypeNames->Float3, VtValue(value));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsValue,
+                SdfValueTypeNames->Float3, VtValue(value));
 }
 
 void
 RigExecVec3fMathMoverHandle::SetBounds(GfVec3f min, GfVec3f max)
 {
-    _AuthorAttr(GetPrim(), "inputs:min", SdfValueTypeNames->Float3, VtValue(min));
-    _AuthorAttr(GetPrim(), "inputs:max", SdfValueTypeNames->Float3, VtValue(max));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsMin, SdfValueTypeNames->Float3,
+                VtValue(min));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsMax, SdfValueTypeNames->Float3,
+                VtValue(max));
 }
 
 void
@@ -2361,15 +2555,15 @@ RigExecVec3fMathMoverHandle::SetWeight(float weight)
 void
 RigExecMatrixMathMoverHandle::SetOperation(const TfToken &op)
 {
-    _AuthorAttr(
-        GetPrim(), "rigExec:operation", SdfValueTypeNames->Token, VtValue(op));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecOperation,
+                SdfValueTypeNames->Token, VtValue(op));
 }
 
 void
 RigExecMatrixMathMoverHandle::SetValue(GfMatrix4d value)
 {
-    _AuthorAttr(
-        GetPrim(), "inputs:value", SdfValueTypeNames->Matrix4d, VtValue(value));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsValue,
+                SdfValueTypeNames->Matrix4d, VtValue(value));
 }
 
 void
@@ -2381,25 +2575,23 @@ RigExecMatrixMathMoverHandle::SetWeight(float weight)
 // Mover chains
 
 SdfPath
-RigExecMoverChain::_AddMoverPrim(
-    const std::string &typeName, const std::string &name, const SdfPath &target)
+RigExecMoverChain::_AddMoverPrim(const std::string &typeName,
+                                 const std::string &name, const SdfPath &target)
 {
     _RequireName(name, "mover name");
-    const SdfPath effectiveTarget =
-        target.IsEmpty() ? _defaultTarget : target;
+    const SdfPath effectiveTarget = target.IsEmpty() ? _defaultTarget : target;
     _RequireTargetPath(effectiveTarget, "mover target");
     if (!_stage || !_stage->GetPrimAtPath(_scope)) {
-        throw std::runtime_error(
-            "mover chain scope no longer exists: " + _scope.GetString());
+        throw std::runtime_error("mover chain scope no longer exists: " +
+                                 _scope.GetString());
     }
     const SdfPath path = _scope.AppendChild(TfToken(name));
     UsdPrim existing = _stage->GetPrimAtPath(path);
     if (existing) {
-        throw std::invalid_argument(
-            "prim already exists: " + path.GetString());
+        throw std::invalid_argument("prim already exists: " + path.GetString());
     }
-    UsdPrim prim = RigExecSchemaPrim::Define(
-        _stage, path, TfToken(typeName)).GetPrim();
+    UsdPrim prim =
+        RigExecSchemaPrim::Define(_stage, path, TfToken(typeName)).GetPrim();
     try {
         // RigExecMoverAPI carries the write set, enable, and common envelope
         // (inputs:defaultWeight / rigExec:weightObject); the node-graph API
@@ -2407,7 +2599,7 @@ RigExecMoverChain::_AddMoverPrim(
         // failed add leaves no half-authored mover behind.
         _ApplyApiRequired(prim, _kMoverApi);
         _ApplyApiRequired(prim, _kNodeGraphApi);
-        _SetRel(prim, "rigExec:moves", { effectiveTarget });
+        _SetRel(prim, SchemaAttrText::rigExecMoves, {effectiveTarget});
     } catch (...) {
         _stage->RemovePrim(path);
         throw;
@@ -2416,30 +2608,35 @@ RigExecMoverChain::_AddMoverPrim(
 }
 
 RigExecMatrixMoverHandle
-RigExecMoverChain::AddMatrixMover(
-    const std::string &name, const SdfPath &transformProvider,
-    const SdfPath &weightObject, const SdfPath &target, const TfToken &readPhase)
+RigExecMoverChain::AddMatrixMover(const std::string &name,
+                                  const SdfPath &transformProvider,
+                                  const SdfPath &weightObject,
+                                  const SdfPath &target,
+                                  const TfToken &readPhase)
 {
     _RequireTargetPath(transformProvider, "matrix mover transform provider");
     if (!weightObject.IsEmpty()) {
         _RequireTargetPath(weightObject, "matrix mover weight object");
     }
-    RigExecMatrixMoverHandle handle(_stage, _AddMoverPrim("RigExecMatrixMover", name, target));
+    RigExecMatrixMoverHandle handle(
+        _stage,
+        _AddMoverPrim(SchemaTypeName::RigExecMatrixMover, name, target));
     handle.SetTransformProvider(transformProvider);
     if (!weightObject.IsEmpty()) {
         handle.SetWeightObject(weightObject);
     }
     if (!readPhase.IsEmpty()) {
         handle.RigExecMoverHandle::SetReadPhase(
-            TfToken("rigExec:transform"), readPhase.GetString());
+            TfToken(SchemaAttrText::rigExecTransform), readPhase.GetString());
     }
     return handle;
 }
 
 RigExecSkinMoverHandle
-RigExecMoverChain::AddSkinMover(
-    const std::string &name, const std::vector<SdfPath> &influences,
-    const SdfPath &weightObject, const SdfPath &target, const TfToken &readPhase)
+RigExecMoverChain::AddSkinMover(const std::string &name,
+                                const std::vector<SdfPath> &influences,
+                                const SdfPath &weightObject,
+                                const SdfPath &target, const TfToken &readPhase)
 {
     if (influences.empty()) {
         throw std::invalid_argument("skin mover needs at least one influence");
@@ -2450,30 +2647,34 @@ RigExecMoverChain::AddSkinMover(
     if (!weightObject.IsEmpty()) {
         _RequireTargetPath(weightObject, "skin mover weight object");
     }
-    RigExecSkinMoverHandle handle(_stage, _AddMoverPrim("RigExecSkinMover", name, target));
+    RigExecSkinMoverHandle handle(
+        _stage, _AddMoverPrim(SchemaTypeName::RigExecSkinMover, name, target));
     handle.SetInfluences(influences);
     if (!weightObject.IsEmpty()) {
         handle.SetWeightObject(weightObject);
     }
     if (!readPhase.IsEmpty()) {
         handle.RigExecMoverHandle::SetReadPhase(
-            TfToken("rigExec:influences"), readPhase.GetString());
+            TfToken(SchemaAttrText::rigExecInfluences), readPhase.GetString());
     }
     return handle;
 }
 
 RigExecLatticeMoverHandle
-RigExecMoverChain::AddLatticeMover(
-    const std::string &name, const SdfPath &cagePrim, int divX, int divY,
-    int divZ, const TfToken &basis, const SdfPath &target,
-    const TfToken &readPhase)
+RigExecMoverChain::AddLatticeMover(const std::string &name,
+                                   const SdfPath &cagePrim, int divX, int divY,
+                                   int divZ, const TfToken &basis,
+                                   const SdfPath &target,
+                                   const TfToken &readPhase)
 {
     _RequireTargetPath(cagePrim, "lattice mover cage");
     if (divX < 2 || divY < 2 || divZ < 2) {
         throw std::invalid_argument(
             "lattice mover divisions must be at least 2 on every axis");
     }
-    RigExecLatticeMoverHandle handle(_stage, _AddMoverPrim("RigExecLatticeMover", name, target));
+    RigExecLatticeMoverHandle handle(
+        _stage,
+        _AddMoverPrim(SchemaTypeName::RigExecLatticeMover, name, target));
     handle.SetCage(cagePrim);
     if (!basis.IsEmpty()) {
         handle.SetBasis(basis);
@@ -2481,19 +2682,22 @@ RigExecMoverChain::AddLatticeMover(
     handle.SetDivisions(divX, divY, divZ);
     if (!readPhase.IsEmpty()) {
         handle.RigExecMoverHandle::SetReadPhase(
-            TfToken("rigExec:cage"), readPhase.GetString());
+            TfToken(SchemaAttrText::rigExecCage), readPhase.GetString());
     }
     return handle;
 }
 
 RigExecBlendShapeMoverHandle
-RigExecMoverChain::AddBlendShapeMover(
-    const std::string &name, const SdfPath &weightObject, const SdfPath &target)
+RigExecMoverChain::AddBlendShapeMover(const std::string &name,
+                                      const SdfPath &weightObject,
+                                      const SdfPath &target)
 {
     if (!weightObject.IsEmpty()) {
         _RequireTargetPath(weightObject, "blend-shape weight object");
     }
-    RigExecBlendShapeMoverHandle handle(_stage, _AddMoverPrim("RigExecBlendShapeMover", name, target));
+    RigExecBlendShapeMoverHandle handle(
+        _stage,
+        _AddMoverPrim(SchemaTypeName::RigExecBlendShapeMover, name, target));
     if (!weightObject.IsEmpty()) {
         handle.SetWeightObject(weightObject);
     }
@@ -2504,14 +2708,16 @@ RigExecMlMoverHandle
 RigExecMoverChain::AddMlMover(const std::string &name, const SdfPath &target)
 {
     return RigExecMlMoverHandle(
-        _stage, _AddMoverPrim("RigExecMlMover", name, target));
+        _stage, _AddMoverPrim(SchemaTypeName::RigExecMlMover, name, target));
 }
 
 RigExecCurveMoverHandle
-RigExecMoverChain::AddCurveMover(
-    const std::string &name, const SdfPath &driverCurve,
-    const std::vector<SdfPath> &driverFrames, const SdfPath &bindCoordinates,
-    const TfToken &mode, const SdfPath &target, const TfToken &readPhase)
+RigExecMoverChain::AddCurveMover(const std::string &name,
+                                 const SdfPath &driverCurve,
+                                 const std::vector<SdfPath> &driverFrames,
+                                 const SdfPath &bindCoordinates,
+                                 const TfToken &mode, const SdfPath &target,
+                                 const TfToken &readPhase)
 {
     _RequireTargetPath(driverCurve, "curve mover driver curve");
     for (const SdfPath &driverFrame : driverFrames) {
@@ -2520,7 +2726,8 @@ RigExecMoverChain::AddCurveMover(
     if (!bindCoordinates.IsEmpty()) {
         _RequireTargetPath(bindCoordinates, "curve mover bind coordinates");
     }
-    RigExecCurveMoverHandle handle(_stage, _AddMoverPrim("RigExecCurveMover", name, target));
+    RigExecCurveMoverHandle handle(
+        _stage, _AddMoverPrim(SchemaTypeName::RigExecCurveMover, name, target));
     handle.SetDriverCurve(driverCurve);
     handle.SetDriverFrames(driverFrames);
     if (!bindCoordinates.IsEmpty()) {
@@ -2531,101 +2738,137 @@ RigExecMoverChain::AddCurveMover(
     }
     if (!readPhase.IsEmpty()) {
         handle.RigExecMoverHandle::SetReadPhase(
-            TfToken("rigExec:driverCurve"), readPhase.GetString());
+            TfToken(SchemaAttrText::rigExecDriverCurve), readPhase.GetString());
     }
     return handle;
 }
 
 RigExecCurveMoverHandle
-RigExecMoverChain::AddCurveMover(
-    const std::string &name, const SdfPath &driverCurve,
-    const SdfPath &driverFrame, const SdfPath &bindCoordinates,
-    const TfToken &mode, const SdfPath &target, const TfToken &readPhase)
+RigExecMoverChain::AddCurveMover(const std::string &name,
+                                 const SdfPath &driverCurve,
+                                 const SdfPath &driverFrame,
+                                 const SdfPath &bindCoordinates,
+                                 const TfToken &mode, const SdfPath &target,
+                                 const TfToken &readPhase)
 {
-    return AddCurveMover(
-        name, driverCurve,
-        driverFrame.IsEmpty() ? std::vector<SdfPath>()
-                              : std::vector<SdfPath>{ driverFrame },
-        bindCoordinates, mode, target, readPhase);
+    return AddCurveMover(name, driverCurve,
+                         driverFrame.IsEmpty()
+                             ? std::vector<SdfPath>()
+                             : std::vector<SdfPath>{driverFrame},
+                         bindCoordinates, mode, target, readPhase);
 }
 
 RigExecSurfaceMoverHandle
-RigExecMoverChain::AddSurfaceMover(
-    const std::string &name, const SdfPath &surfacePrim, const TfToken &mode,
-    const SdfPath &target, const TfToken &readPhase)
+RigExecMoverChain::AddSurfaceMover(const std::string &name,
+                                   const SdfPath &surfacePrim,
+                                   const TfToken &mode, const SdfPath &target,
+                                   const TfToken &readPhase)
 {
     _RequireTargetPath(surfacePrim, "surface mover surface");
-    RigExecSurfaceMoverHandle handle(_stage, _AddMoverPrim("RigExecSurfaceMover", name, target));
+    RigExecSurfaceMoverHandle handle(
+        _stage,
+        _AddMoverPrim(SchemaTypeName::RigExecSurfaceMover, name, target));
     handle.SetSurface(surfacePrim);
     if (!mode.IsEmpty()) {
         handle.SetMode(mode);
     }
     if (!readPhase.IsEmpty()) {
         handle.RigExecMoverHandle::SetReadPhase(
-            TfToken("rigExec:surface"), readPhase.GetString());
+            TfToken(SchemaAttrText::rigExecSurface), readPhase.GetString());
     }
     return handle;
 }
 
 RigExecPatchMoverHandle
-RigExecMoverChain::AddPatchMover(
-    const std::string &name, const SdfPath &patchPrim, const SdfPath &uvPoints,
-    const SdfPath &target, const TfToken &patchReadPhase,
-    const TfToken &uvPointsReadPhase)
+RigExecMoverChain::AddPatchMover(const std::string &name,
+                                 const SdfPath &patchPrim,
+                                 const SdfPath &uvPoints, const SdfPath &target,
+                                 const TfToken &patchReadPhase,
+                                 const TfToken &uvPointsReadPhase)
 {
     _RequireTargetPath(patchPrim, "patch mover patch");
     _RequireTargetPath(uvPoints, "patch mover uvPoints");
-    RigExecPatchMoverHandle handle(_stage, _AddMoverPrim("RigExecPatchMover", name, target));
+    RigExecPatchMoverHandle handle(
+        _stage, _AddMoverPrim(SchemaTypeName::RigExecPatchMover, name, target));
     handle.SetPatch(patchPrim);
     handle.SetUvPoints(uvPoints);
     if (!patchReadPhase.IsEmpty()) {
         handle.RigExecMoverHandle::SetReadPhase(
-            TfToken("rigExec:patch"), patchReadPhase.GetString());
+            TfToken(SchemaAttrText::rigExecPatch), patchReadPhase.GetString());
     }
     if (!uvPointsReadPhase.IsEmpty()) {
         handle.RigExecMoverHandle::SetReadPhase(
-            TfToken("rigExec:uvPoints"), uvPointsReadPhase.GetString());
+            TfToken(SchemaAttrText::rigExecUvPoints),
+            uvPointsReadPhase.GetString());
     }
     return handle;
 }
 
 RigExecSmoothMoverHandle
-RigExecMoverChain::AddSmoothMover(
-    const std::string &name, float defaultWeight, const SdfPath &target)
+RigExecMoverChain::AddSmoothMover(const std::string &name, float defaultWeight,
+                                  const SdfPath &target)
 {
     _RequireNormalizedMoverWeight(defaultWeight);
-    RigExecSmoothMoverHandle handle(_stage, _AddMoverPrim("RigExecSmoothMover", name, target));
+    RigExecSmoothMoverHandle handle(
+        _stage,
+        _AddMoverPrim(SchemaTypeName::RigExecSmoothMover, name, target));
     handle.SetDefaultWeight(defaultWeight);
     return handle;
 }
 
-void RigExecDeltaMushMoverHandle::SetRestPoints(const std::vector<GfVec3f> &points) {
-    _AuthorAttr(GetPrim(), "inputs:restPoints", SdfValueTypeNames->Point3fArray,
-                VtValue(VtVec3fArray(points.begin(),points.end())));
+void
+RigExecDeltaMushMoverHandle::SetRestPoints(const std::vector<GfVec3f> &points)
+{
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsRestPoints,
+                SdfValueTypeNames->Point3fArray,
+                VtValue(VtVec3fArray(points.begin(), points.end())));
 }
-void RigExecDeltaMushMoverHandle::SetIterations(int n) {
-    if (n<0 || n>1000) throw std::invalid_argument("delta mush iterations must be in [0,1000]");
-    _AuthorAttr(GetPrim(),"inputs:iterations",SdfValueTypeNames->Int,VtValue(n));
+void
+RigExecDeltaMushMoverHandle::SetIterations(int n)
+{
+    if (n < 0 || n > 1000)
+        throw std::invalid_argument(
+            "delta mush iterations must be in [0,1000]");
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsIterations,
+                SdfValueTypeNames->Int, VtValue(n));
 }
-void RigExecDeltaMushMoverHandle::SetStep(float v) {
+void
+RigExecDeltaMushMoverHandle::SetStep(float v)
+{
     _RequireNormalizedMoverWeight(v);
-    _AuthorAttr(GetPrim(),"inputs:step",SdfValueTypeNames->Float,VtValue(v));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsStep, SdfValueTypeNames->Float,
+                VtValue(v));
 }
-void RigExecDeltaMushMoverHandle::SetPinBorders(bool v) {
-    _AuthorAttr(GetPrim(),"inputs:pinBorders",SdfValueTypeNames->Bool,VtValue(v));
+void
+RigExecDeltaMushMoverHandle::SetPinBorders(bool v)
+{
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsPinBorders,
+                SdfValueTypeNames->Bool, VtValue(v));
 }
-void RigExecDeltaMushMoverHandle::SetDistanceWeight(float v) {
-    if (!std::isfinite(v) || v<0 || v>10) throw std::invalid_argument("delta mush distance weight must be in [0,10]");
-    _AuthorAttr(GetPrim(),"inputs:distanceWeight",SdfValueTypeNames->Float,VtValue(v));
+void
+RigExecDeltaMushMoverHandle::SetDistanceWeight(float v)
+{
+    if (!std::isfinite(v) || v < 0 || v > 10)
+        throw std::invalid_argument(
+            "delta mush distance weight must be in [0,10]");
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsDistanceWeight,
+                SdfValueTypeNames->Float, VtValue(v));
 }
-void RigExecDeltaMushMoverHandle::SetDisplacement(float v) {
+void
+RigExecDeltaMushMoverHandle::SetDisplacement(float v)
+{
     _RequireNormalizedMoverWeight(v);
-    _AuthorAttr(GetPrim(),"inputs:displacement",SdfValueTypeNames->Float,VtValue(v));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsDisplacement,
+                SdfValueTypeNames->Float, VtValue(v));
 }
 RigExecDeltaMushMoverHandle
-RigExecMoverChain::AddDeltaMushMover(const std::string &name, float weight, const SdfPath &target) {
+RigExecMoverChain::AddDeltaMushMover(const std::string &name, float weight,
+                                     const SdfPath &target)
+{
     _RequireNormalizedMoverWeight(weight);
-    RigExecDeltaMushMoverHandle handle(_stage,_AddMoverPrim("RigExecDeltaMushMover",name,target));
+    RigExecDeltaMushMoverHandle handle(
+        _stage,
+        _AddMoverPrim(SchemaTypeName::RigExecDeltaMushMover, name, target));
     handle.SetDefaultWeight(weight);
     return handle;
 }
@@ -2639,7 +2882,8 @@ RigExecWrinkleMoverHandle::SetRestPoints(const std::vector<GfVec3f> &points)
             throw std::invalid_argument("wrinkle rest points must be finite");
         }
     }
-    _AuthorAttr(GetPrim(), "inputs:restPoints", SdfValueTypeNames->Point3fArray,
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsRestPoints,
+                SdfValueTypeNames->Point3fArray,
                 VtValue(VtVec3fArray(points.begin(), points.end())));
 }
 
@@ -2649,84 +2893,92 @@ RigExecWrinkleMoverHandle::SetIterations(int iterations)
     if (iterations < 0 || iterations > 1000) {
         throw std::invalid_argument("wrinkle iterations must be in [0,1000]");
     }
-    _AuthorAttr(GetPrim(), "inputs:iterations", SdfValueTypeNames->Int,
-                VtValue(iterations));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsIterations,
+                SdfValueTypeNames->Int, VtValue(iterations));
 }
 
 void
 RigExecWrinkleMoverHandle::SetTopology(const TfToken &topology)
 {
     if (topology != TfToken("cloth") && topology != TfToken("surfaceStruts")) {
-        throw std::invalid_argument("wrinkle topology must be cloth or surfaceStruts");
+        throw std::invalid_argument(
+            "wrinkle topology must be cloth or surfaceStruts");
     }
-    _AuthorAttr(GetPrim(), "inputs:topology", SdfValueTypeNames->Token,
-                VtValue(topology));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsTopology,
+                SdfValueTypeNames->Token, VtValue(topology));
 }
 
 void
 RigExecWrinkleMoverHandle::SetNeighborDistance(int distance)
 {
     if (distance < 1 || distance > 8) {
-        throw std::invalid_argument("wrinkle neighbor distance must be in [1,8]");
+        throw std::invalid_argument(
+            "wrinkle neighbor distance must be in [1,8]");
     }
-    _AuthorAttr(GetPrim(), "inputs:neighborDistance", SdfValueTypeNames->Int,
-                VtValue(distance));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsNeighborDistance,
+                SdfValueTypeNames->Int, VtValue(distance));
 }
 
 void
 RigExecWrinkleMoverHandle::SetRestLengthScale(float scale)
 {
     if (!std::isfinite(scale) || scale <= 0.0f) {
-        throw std::invalid_argument("wrinkle rest length scale must be finite and positive");
+        throw std::invalid_argument(
+            "wrinkle rest length scale must be finite and positive");
     }
-    _AuthorAttr(GetPrim(), "inputs:restLengthScale", SdfValueTypeNames->Float,
-                VtValue(scale));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsRestLengthScale,
+                SdfValueTypeNames->Float, VtValue(scale));
 }
 
 void
 RigExecWrinkleMoverHandle::SetStretchStiffness(float stiffness)
 {
     if (!std::isfinite(stiffness) || stiffness < 0.0f || stiffness > 1.0f) {
-        throw std::invalid_argument("wrinkle stretch stiffness must be finite and in [0,1]");
+        throw std::invalid_argument(
+            "wrinkle stretch stiffness must be finite and in [0,1]");
     }
-    _AuthorAttr(GetPrim(), "inputs:stretchStiffness", SdfValueTypeNames->Float,
-                VtValue(stiffness));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsStretchStiffness,
+                SdfValueTypeNames->Float, VtValue(stiffness));
 }
 
 void
 RigExecWrinkleMoverHandle::SetCompressionStiffness(float stiffness)
 {
     if (!std::isfinite(stiffness) || stiffness < 0.0f || stiffness > 1.0f) {
-        throw std::invalid_argument("wrinkle compression stiffness must be finite and in [0,1]");
+        throw std::invalid_argument(
+            "wrinkle compression stiffness must be finite and in [0,1]");
     }
-    _AuthorAttr(GetPrim(), "inputs:compressionStiffness", SdfValueTypeNames->Float,
-                VtValue(stiffness));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsCompressionStiffness,
+                SdfValueTypeNames->Float, VtValue(stiffness));
 }
 
 void
 RigExecWrinkleMoverHandle::SetBendStiffness(float stiffness)
 {
     if (!std::isfinite(stiffness) || stiffness < 0.0f || stiffness > 1.0f) {
-        throw std::invalid_argument("wrinkle bend stiffness must be finite and in [0,1]");
+        throw std::invalid_argument(
+            "wrinkle bend stiffness must be finite and in [0,1]");
     }
-    _AuthorAttr(GetPrim(), "inputs:bendStiffness", SdfValueTypeNames->Float,
-                VtValue(stiffness));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsBendStiffness,
+                SdfValueTypeNames->Float, VtValue(stiffness));
 }
 
 void
 RigExecWrinkleMoverHandle::SetMaxDisplacement(float radius)
 {
     if (!std::isfinite(radius) || radius < 0.0f) {
-        throw std::invalid_argument("wrinkle maximum displacement must be finite and nonnegative");
+        throw std::invalid_argument(
+            "wrinkle maximum displacement must be finite and nonnegative");
     }
-    _AuthorAttr(GetPrim(), "inputs:maxDisplacement", SdfValueTypeNames->Float,
-                VtValue(radius));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsMaxDisplacement,
+                SdfValueTypeNames->Float, VtValue(radius));
 }
 
 void
 RigExecWrinkleMoverHandle::SetPinBorders(bool pin)
 {
-    _AuthorAttr(GetPrim(), "inputs:pinBorders", SdfValueTypeNames->Bool, VtValue(pin));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsPinBorders,
+                SdfValueTypeNames->Bool, VtValue(pin));
 }
 
 void
@@ -2736,56 +2988,62 @@ RigExecWrinkleMoverHandle::SetPinPoints(const std::vector<int> &indices)
     std::sort(sorted.begin(), sorted.end());
     if ((!sorted.empty() && sorted.front() < 0) ||
         std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end()) {
-        throw std::invalid_argument("wrinkle pin points must be unique nonnegative indices");
+        throw std::invalid_argument(
+            "wrinkle pin points must be unique nonnegative indices");
     }
-    _AuthorAttr(GetPrim(), "inputs:pinPoints", SdfValueTypeNames->IntArray,
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsPinPoints,
+                SdfValueTypeNames->IntArray,
                 VtValue(VtIntArray(indices.begin(), indices.end())));
 }
 
 void
 RigExecWrinkleMoverHandle::SetTangentPlaneCollisions(bool enabled)
 {
-    _AuthorAttr(GetPrim(), "inputs:tangentPlaneCollisions", SdfValueTypeNames->Bool,
-                VtValue(enabled));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsTangentPlaneCollisions,
+                SdfValueTypeNames->Bool, VtValue(enabled));
 }
 
 void
 RigExecWrinkleMoverHandle::SetTangentPlaneInset(float inset)
 {
     if (!std::isfinite(inset) || inset < 0.0f) {
-        throw std::invalid_argument("wrinkle tangent plane inset must be finite and nonnegative");
+        throw std::invalid_argument(
+            "wrinkle tangent plane inset must be finite and nonnegative");
     }
-    _AuthorAttr(GetPrim(), "inputs:tangentPlaneInset", SdfValueTypeNames->Float,
-                VtValue(inset));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsTangentPlaneInset,
+                SdfValueTypeNames->Float, VtValue(inset));
 }
 
 void
 RigExecWrinkleMoverHandle::SetWrinkleScale(float scale)
 {
     if (!std::isfinite(scale) || scale < 0.0f) {
-        throw std::invalid_argument("wrinkle scale must be finite and nonnegative");
+        throw std::invalid_argument(
+            "wrinkle scale must be finite and nonnegative");
     }
-    _AuthorAttr(GetPrim(), "inputs:wrinkleScale", SdfValueTypeNames->Float,
-                VtValue(scale));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsWrinkleScale,
+                SdfValueTypeNames->Float, VtValue(scale));
 }
 
 void
 RigExecWrinkleMoverHandle::SetSmoothingIterations(int iterations)
 {
     if (iterations < 0 || iterations > 100) {
-        throw std::invalid_argument("wrinkle smoothing iterations must be in [0,100]");
+        throw std::invalid_argument(
+            "wrinkle smoothing iterations must be in [0,100]");
     }
-    _AuthorAttr(GetPrim(), "inputs:smoothingIterations", SdfValueTypeNames->Int,
-                VtValue(iterations));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsSmoothingIterations,
+                SdfValueTypeNames->Int, VtValue(iterations));
 }
 
 RigExecWrinkleMoverHandle
-RigExecMoverChain::AddWrinkleMover(
-    const std::string &name, float defaultWeight, const SdfPath &target)
+RigExecMoverChain::AddWrinkleMover(const std::string &name, float defaultWeight,
+                                   const SdfPath &target)
 {
     _RequireNormalizedMoverWeight(defaultWeight);
     RigExecWrinkleMoverHandle handle(
-        _stage, _AddMoverPrim("RigExecWrinkleMover", name, target));
+        _stage,
+        _AddMoverPrim(SchemaTypeName::RigExecWrinkleMover, name, target));
     handle.SetDefaultWeight(defaultWeight);
     return handle;
 }
@@ -2796,7 +3054,8 @@ void
 _RequireFiniteAtLeast(double value, double lo, const char *what)
 {
     if (!std::isfinite(value) || value < lo) {
-        throw std::invalid_argument(std::string(what) + " must be finite and at least " +
+        throw std::invalid_argument(std::string(what) +
+                                    " must be finite and at least " +
                                     std::to_string(lo));
     }
 }
@@ -2806,175 +3065,313 @@ _RequireIntIn(int value, int lo, int hi, const char *what)
 {
     if (value < lo || value > hi) {
         throw std::invalid_argument(std::string(what) + " must be in [" +
-                                    std::to_string(lo) + "," + std::to_string(hi) + "]");
+                                    std::to_string(lo) + "," +
+                                    std::to_string(hi) + "]");
     }
 }
 
-}  // namespace
+} // namespace
 
 void
 RigExecClothMoverHandle::SetColliders(const std::vector<SdfPath> &meshes)
 {
-    SetRel("rigExec:colliders", meshes);
+    SetRel(SchemaAttrText::rigExecColliders, meshes);
 }
 
 namespace {
-SdfPath _ClothDataPrim(const UsdStageRefPtr &stage, const SdfPath &parent,
-                       const std::string &name, const char *type)
+SdfPath
+_ClothDataPrim(const UsdStageRefPtr &stage, const SdfPath &parent,
+               const std::string &name, const char *type)
 {
     _RequireName(name, "cloth data name");
     const SdfPath path = parent.AppendChild(TfToken(name));
     const UsdPrim existing = stage->GetPrimAtPath(path);
     if (existing && existing.GetTypeName() != TfToken(type))
-        throw std::invalid_argument("cloth data name already has a different type");
+        throw std::invalid_argument(
+            "cloth data name already has a different type");
     stage->DefinePrim(path, TfToken(type));
     return path;
 }
-void _ClothMode(const TfToken &mode)
+void
+_ClothMode(const TfToken &mode)
 {
     if (mode != TfToken("hard") && mode != TfToken("soft"))
-        throw std::invalid_argument("cloth constraint mode must be hard or soft");
+        throw std::invalid_argument(
+            "cloth constraint mode must be hard or soft");
 }
-}
+} // namespace
 
-void RigExecClothMoverHandle::SetRestShape(const SdfPath &path)
-{ SetRel("rigExec:restShape", path.IsEmpty() ? std::vector<SdfPath>() : std::vector<SdfPath>{path}); }
-void RigExecClothMoverHandle::SetUvSet(const SdfPath &path)
-{ SetRel("rigExec:uvSet", path.IsEmpty() ? std::vector<SdfPath>() : std::vector<SdfPath>{path}); }
-void RigExecClothMoverHandle::SetConstraints(const std::vector<SdfPath> &paths)
-{ SetRel("rigExec:constraints", paths); }
-
-RigExecClothConstraintHandle RigExecClothMoverHandle::AddConstraint(
-    const std::string &name, const TfToken &kind, const TfToken &mode)
+void
+RigExecClothMoverHandle::SetRestShape(const SdfPath &path)
 {
-    const std::vector<TfToken> kinds = {TfToken("stretch"), TfToken("bend"), TfToken("damping"),
-        TfToken("pin"), TfToken("attachment"), TfToken("collision"), TfToken("selfCollision"), TfToken("tether")};
+    SetRel(SchemaAttrText::rigExecRestShape, path.IsEmpty()
+                                                 ? std::vector<SdfPath>()
+                                                 : std::vector<SdfPath>{path});
+}
+void
+RigExecClothMoverHandle::SetUvSet(const SdfPath &path)
+{
+    SetRel(SchemaAttrText::rigExecUvSet, path.IsEmpty()
+                                             ? std::vector<SdfPath>()
+                                             : std::vector<SdfPath>{path});
+}
+void
+RigExecClothMoverHandle::SetConstraints(const std::vector<SdfPath> &paths)
+{
+    SetRel(SchemaAttrText::rigExecConstraints, paths);
+}
+
+RigExecClothConstraintHandle
+RigExecClothMoverHandle::AddConstraint(const std::string &name,
+                                       const TfToken &kind, const TfToken &mode)
+{
+    const std::vector<TfToken> kinds = {
+        TfToken("stretch"),       TfToken("bend"),       TfToken("damping"),
+        TfToken("pin"),           TfToken("attachment"), TfToken("collision"),
+        TfToken("selfCollision"), TfToken("tether")};
     if (std::find(kinds.begin(), kinds.end(), kind) == kinds.end())
         throw std::invalid_argument("unknown cloth constraint kind");
     _ClothMode(mode);
-    const SdfPath path = _ClothDataPrim(_stage, _path, name, "RigExecClothConstraintSet");
+    const SdfPath path = _ClothDataPrim(
+        _stage, _path, name, SchemaTypeName::RigExecClothConstraintSet);
     RigExecClothConstraintHandle handle(_stage, path);
-    _AuthorAttr(handle.GetPrim(), "rigExec:kind", SdfValueTypeNames->Token, VtValue(kind));
+    _AuthorAttr(handle.GetPrim(), SchemaAttrText::rigExecKind,
+                SdfValueTypeNames->Token, VtValue(kind));
     handle.SetMode(mode);
     SdfPathVector targets;
-    GetPrim().GetRelationship(TfToken("rigExec:constraints")).GetTargets(&targets);
-    if (std::find(targets.begin(), targets.end(), path) == targets.end()) targets.push_back(path);
+    GetPrim()
+        .GetRelationship(TfToken(SchemaAttrText::rigExecConstraints))
+        .GetTargets(&targets);
+    if (std::find(targets.begin(), targets.end(), path) == targets.end())
+        targets.push_back(path);
     SetConstraints(targets);
     return handle;
 }
-RigExecClothBindingHandle RigExecClothMoverHandle::AddBinding(const std::string &name)
-{ return {_stage, _ClothDataPrim(_stage, _path, name, "RigExecClothBinding")}; }
-RigExecClothMapHandle RigExecClothMoverHandle::AddMap(const std::string &name)
-{ return {_stage, _ClothDataPrim(_stage, _path, name, "RigExecClothMap")}; }
-
-void RigExecClothBindingHandle::SetVertices(const std::vector<int> &indices)
+RigExecClothBindingHandle
+RigExecClothMoverHandle::AddBinding(const std::string &name)
 {
-    for (int i : indices) _RequireFiniteAtLeast(i, 0, "cloth vertex index");
-    _AuthorAttr(GetPrim(), "rigExec:mode", SdfValueTypeNames->Token, VtValue(TfToken("vertex")));
-    _AuthorAttr(GetPrim(), "rigExec:indices", SdfValueTypeNames->IntArray, VtValue(VtIntArray(indices.begin(), indices.end())));
-    _AuthorAttr(GetPrim(), "rigExec:coordinates", SdfValueTypeNames->Float3Array, VtValue(VtVec3fArray()));
+    return {_stage, _ClothDataPrim(_stage, _path, name,
+                                   SchemaTypeName::RigExecClothBinding)};
 }
-void RigExecClothBindingHandle::SetBarycentric(const std::vector<int> &triangles,
-                                             const std::vector<GfVec3f> &weights)
+RigExecClothMapHandle
+RigExecClothMoverHandle::AddMap(const std::string &name)
 {
-    if (triangles.size() != weights.size()) throw std::invalid_argument("cloth binding sizes differ");
+    return {_stage, _ClothDataPrim(_stage, _path, name,
+                                   SchemaTypeName::RigExecClothMap)};
+}
+
+void
+RigExecClothBindingHandle::SetVertices(const std::vector<int> &indices)
+{
+    for (int i : indices)
+        _RequireFiniteAtLeast(i, 0, "cloth vertex index");
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecMode,
+                SdfValueTypeNames->Token, VtValue(TfToken("vertex")));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecIndices,
+                SdfValueTypeNames->IntArray,
+                VtValue(VtIntArray(indices.begin(), indices.end())));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecCoordinates,
+                SdfValueTypeNames->Float3Array, VtValue(VtVec3fArray()));
+}
+void
+RigExecClothBindingHandle::SetBarycentric(const std::vector<int> &triangles,
+                                          const std::vector<GfVec3f> &weights)
+{
+    if (triangles.size() != weights.size())
+        throw std::invalid_argument("cloth binding sizes differ");
     for (size_t i = 0; i < triangles.size(); ++i) {
         _RequireFiniteAtLeast(triangles[i], 0, "cloth triangle index");
         float sum = 0;
-        for (int k = 0; k < 3; ++k) { _RequireFiniteAtLeast(weights[i][k], 0, "barycentric weight"); sum += weights[i][k]; }
-        if (std::abs(sum - 1) > 1e-5f) throw std::invalid_argument("barycentric weights must sum to one");
+        for (int k = 0; k < 3; ++k) {
+            _RequireFiniteAtLeast(weights[i][k], 0, "barycentric weight");
+            sum += weights[i][k];
+        }
+        if (std::abs(sum - 1) > 1e-5f)
+            throw std::invalid_argument("barycentric weights must sum to one");
     }
-    _AuthorAttr(GetPrim(), "rigExec:mode", SdfValueTypeNames->Token, VtValue(TfToken("barycentric")));
-    _AuthorAttr(GetPrim(), "rigExec:indices", SdfValueTypeNames->IntArray, VtValue(VtIntArray(triangles.begin(), triangles.end())));
-    _AuthorAttr(GetPrim(), "rigExec:coordinates", SdfValueTypeNames->Float3Array, VtValue(VtVec3fArray(weights.begin(), weights.end())));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecMode,
+                SdfValueTypeNames->Token, VtValue(TfToken("barycentric")));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecIndices,
+                SdfValueTypeNames->IntArray,
+                VtValue(VtIntArray(triangles.begin(), triangles.end())));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecCoordinates,
+                SdfValueTypeNames->Float3Array,
+                VtValue(VtVec3fArray(weights.begin(), weights.end())));
 }
-void RigExecClothBindingHandle::SetUV(const std::vector<GfVec3f> &coordinates,
-                                     const std::vector<int> &triangles)
+void
+RigExecClothBindingHandle::SetUV(const std::vector<GfVec3f> &coordinates,
+                                 const std::vector<int> &triangles)
 {
     if (!triangles.empty() && triangles.size() != coordinates.size())
         throw std::invalid_argument("UV triangle hints must match coordinates");
-    for (int i : triangles) _RequireFiniteAtLeast(i, -1, "UV triangle hint");
+    for (int i : triangles)
+        _RequireFiniteAtLeast(i, -1, "UV triangle hint");
     for (const auto &p : coordinates)
-        for (int k = 0; k < 3; ++k) if (!std::isfinite(p[k])) throw std::invalid_argument("UV coordinate must be finite");
-    _AuthorAttr(GetPrim(), "rigExec:mode", SdfValueTypeNames->Token, VtValue(TfToken("uv")));
-    _AuthorAttr(GetPrim(), "rigExec:indices", SdfValueTypeNames->IntArray, VtValue(VtIntArray(triangles.begin(), triangles.end())));
-    _AuthorAttr(GetPrim(), "rigExec:coordinates", SdfValueTypeNames->Float3Array, VtValue(VtVec3fArray(coordinates.begin(), coordinates.end())));
+        for (int k = 0; k < 3; ++k)
+            if (!std::isfinite(p[k]))
+                throw std::invalid_argument("UV coordinate must be finite");
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecMode,
+                SdfValueTypeNames->Token, VtValue(TfToken("uv")));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecIndices,
+                SdfValueTypeNames->IntArray,
+                VtValue(VtIntArray(triangles.begin(), triangles.end())));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecCoordinates,
+                SdfValueTypeNames->Float3Array,
+                VtValue(VtVec3fArray(coordinates.begin(), coordinates.end())));
 }
-void RigExecClothBindingHandle::SetUvSet(const SdfPath &path)
-{ SetRel("rigExec:uvSet", path.IsEmpty() ? std::vector<SdfPath>() : std::vector<SdfPath>{path}); }
-void RigExecClothMapHandle::SetValues(const std::vector<float> &values)
+void
+RigExecClothBindingHandle::SetUvSet(const SdfPath &path)
 {
-    for (float v : values) _RequireFiniteAtLeast(v, 0, "cloth map value");
-    _AuthorAttr(GetPrim(), "inputs:values", SdfValueTypeNames->FloatArray, VtValue(VtFloatArray(values.begin(), values.end())));
+    SetRel(SchemaAttrText::rigExecUvSet, path.IsEmpty()
+                                             ? std::vector<SdfPath>()
+                                             : std::vector<SdfPath>{path});
 }
-void RigExecClothMapHandle::SetValuesSource(const SdfPath &path)
-{ SetRel("rigExec:values", path.IsEmpty() ? std::vector<SdfPath>() : std::vector<SdfPath>{path}); }
-void RigExecClothMapHandle::SetBinding(const SdfPath &path)
-{ SetRel("rigExec:binding", path.IsEmpty() ? std::vector<SdfPath>() : std::vector<SdfPath>{path}); }
-void RigExecClothMapHandle::SetSourceMesh(const SdfPath &path)
-{ SetRel("rigExec:sourceMesh", path.IsEmpty() ? std::vector<SdfPath>() : std::vector<SdfPath>{path}); }
-void RigExecClothConstraintHandle::SetMode(const TfToken &mode)
-{ _ClothMode(mode); _AuthorAttr(GetPrim(), "rigExec:mode", SdfValueTypeNames->Token, VtValue(mode)); }
-void RigExecClothConstraintHandle::SetStrength(float minimum, float maximum)
+void
+RigExecClothMapHandle::SetValues(const std::vector<float> &values)
+{
+    for (float v : values)
+        _RequireFiniteAtLeast(v, 0, "cloth map value");
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsValues,
+                SdfValueTypeNames->FloatArray,
+                VtValue(VtFloatArray(values.begin(), values.end())));
+}
+void
+RigExecClothMapHandle::SetValuesSource(const SdfPath &path)
+{
+    SetRel(SchemaAttrText::rigExecValues, path.IsEmpty()
+                                              ? std::vector<SdfPath>()
+                                              : std::vector<SdfPath>{path});
+}
+void
+RigExecClothMapHandle::SetBinding(const SdfPath &path)
+{
+    SetRel(SchemaAttrText::rigExecBinding, path.IsEmpty()
+                                               ? std::vector<SdfPath>()
+                                               : std::vector<SdfPath>{path});
+}
+void
+RigExecClothMapHandle::SetSourceMesh(const SdfPath &path)
+{
+    SetRel(SchemaAttrText::rigExecSourceMesh, path.IsEmpty()
+                                                  ? std::vector<SdfPath>()
+                                                  : std::vector<SdfPath>{path});
+}
+void
+RigExecClothConstraintHandle::SetMode(const TfToken &mode)
+{
+    _ClothMode(mode);
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecMode,
+                SdfValueTypeNames->Token, VtValue(mode));
+}
+void
+RigExecClothConstraintHandle::SetStrength(float minimum, float maximum)
 {
     _RequireFiniteAtLeast(minimum, 0, "minimum strength");
     _RequireFiniteAtLeast(maximum, minimum, "maximum strength");
-    _AuthorAttr(GetPrim(), "inputs:minStrength", SdfValueTypeNames->Float, VtValue(minimum));
-    _AuthorAttr(GetPrim(), "inputs:maxStrength", SdfValueTypeNames->Float, VtValue(maximum));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsMinStrength,
+                SdfValueTypeNames->Float, VtValue(minimum));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsMaxStrength,
+                SdfValueTypeNames->Float, VtValue(maximum));
 }
-void RigExecClothConstraintHandle::SetCompliance(float compliance)
-{ _RequireFiniteAtLeast(compliance, 0, "compliance"); _AuthorAttr(GetPrim(), "inputs:compliance", SdfValueTypeNames->Float, VtValue(compliance)); }
-void RigExecClothConstraintHandle::SetMaterialDirections(float warp, float weft, float normal)
+void
+RigExecClothConstraintHandle::SetCompliance(float compliance)
 {
-    for (float v : {warp, weft, normal}) _RequireFiniteAtLeast(v, 0, "material strength");
-    _AuthorAttr(GetPrim(), "inputs:warp", SdfValueTypeNames->Float, VtValue(warp));
-    _AuthorAttr(GetPrim(), "inputs:weft", SdfValueTypeNames->Float, VtValue(weft));
-    _AuthorAttr(GetPrim(), "inputs:normal", SdfValueTypeNames->Float, VtValue(normal));
+    _RequireFiniteAtLeast(compliance, 0, "compliance");
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsCompliance,
+                SdfValueTypeNames->Float, VtValue(compliance));
 }
-void RigExecClothConstraintHandle::SetForceCurve(const std::vector<GfVec2f> &keys)
+void
+RigExecClothConstraintHandle::SetMaterialDirections(float warp, float weft,
+                                                    float normal)
+{
+    for (float v : {warp, weft, normal})
+        _RequireFiniteAtLeast(v, 0, "material strength");
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsWarp, SdfValueTypeNames->Float,
+                VtValue(warp));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsWeft, SdfValueTypeNames->Float,
+                VtValue(weft));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsNormal,
+                SdfValueTypeNames->Float, VtValue(normal));
+}
+void
+RigExecClothConstraintHandle::SetForceCurve(const std::vector<GfVec2f> &keys)
 {
     float previous = -1;
     for (const auto &key : keys) {
-        _RequireFiniteAtLeast(key[0], 0, "force"); _RequireFiniteAtLeast(key[1], 0, "strength blend");
-        if (key[0] <= previous || key[1] > 1) throw std::invalid_argument("invalid force-to-strength curve");
+        _RequireFiniteAtLeast(key[0], 0, "force");
+        _RequireFiniteAtLeast(key[1], 0, "strength blend");
+        if (key[0] <= previous || key[1] > 1)
+            throw std::invalid_argument("invalid force-to-strength curve");
         previous = key[0];
     }
-    _AuthorAttr(GetPrim(), "rigExec:forceCurve", SdfValueTypeNames->Float2Array, VtValue(VtVec2fArray(keys.begin(), keys.end())));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecForceCurve,
+                SdfValueTypeNames->Float2Array,
+                VtValue(VtVec2fArray(keys.begin(), keys.end())));
 }
-void RigExecClothConstraintHandle::SetSourceBinding(const SdfPath &path)
-{ SetRel("rigExec:sourceBinding", path.IsEmpty() ? std::vector<SdfPath>() : std::vector<SdfPath>{path}); }
-void RigExecClothConstraintHandle::SetTargetBinding(const SdfPath &path)
-{ SetRel("rigExec:targetBinding", path.IsEmpty() ? std::vector<SdfPath>() : std::vector<SdfPath>{path}); }
-void RigExecClothConstraintHandle::SetTargetMesh(const SdfPath &path)
-{ SetRel("rigExec:targetMesh", path.IsEmpty() ? std::vector<SdfPath>() : std::vector<SdfPath>{path}); }
-void RigExecClothConstraintHandle::SetMap(const TfToken &channel, const SdfPath &path)
+void
+RigExecClothConstraintHandle::SetSourceBinding(const SdfPath &path)
 {
-    const std::vector<std::string> channels = {"mask", "minStrength", "maxStrength", "warp", "weft", "normal", "thickness", "friction"};
-    if (std::find(channels.begin(), channels.end(), channel.GetString()) == channels.end())
+    SetRel(SchemaAttrText::rigExecSourceBinding,
+           path.IsEmpty() ? std::vector<SdfPath>()
+                          : std::vector<SdfPath>{path});
+}
+void
+RigExecClothConstraintHandle::SetTargetBinding(const SdfPath &path)
+{
+    SetRel(SchemaAttrText::rigExecTargetBinding,
+           path.IsEmpty() ? std::vector<SdfPath>()
+                          : std::vector<SdfPath>{path});
+}
+void
+RigExecClothConstraintHandle::SetTargetMesh(const SdfPath &path)
+{
+    SetRel(SchemaAttrText::rigExecTargetMesh, path.IsEmpty()
+                                                  ? std::vector<SdfPath>()
+                                                  : std::vector<SdfPath>{path});
+}
+void
+RigExecClothConstraintHandle::SetMap(const TfToken &channel,
+                                     const SdfPath &path)
+{
+    const std::vector<std::string> channels = {
+        "mask", "minStrength", "maxStrength", "warp",
+        "weft", "normal",      "thickness",   "friction"};
+    if (std::find(channels.begin(), channels.end(), channel.GetString()) ==
+        channels.end())
         throw std::invalid_argument("unknown cloth map channel");
     SetRel(("rigExec:" + channel.GetString() + "Map").c_str(),
-           path.IsEmpty() ? std::vector<SdfPath>() : std::vector<SdfPath>{path});
+           path.IsEmpty() ? std::vector<SdfPath>()
+                          : std::vector<SdfPath>{path});
 }
-void RigExecClothConstraintHandle::SetRestLength(float length)
+void
+RigExecClothConstraintHandle::SetRestLength(float length)
 {
     _RequireFiniteAtLeast(length, -1, "rest length");
-    if (length < 0 && length != -1) throw std::invalid_argument("rest length must be -1 or nonnegative");
-    _AuthorAttr(GetPrim(), "inputs:restLength", SdfValueTypeNames->Float, VtValue(length));
+    if (length < 0 && length != -1)
+        throw std::invalid_argument("rest length must be -1 or nonnegative");
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsRestLength,
+                SdfValueTypeNames->Float, VtValue(length));
 }
-void RigExecClothConstraintHandle::SetContact(float thickness, float friction)
+void
+RigExecClothConstraintHandle::SetContact(float thickness, float friction)
 {
-    _RequireFiniteAtLeast(thickness, 0, "thickness"); _RequireFiniteAtLeast(friction, 0, "friction");
-    _AuthorAttr(GetPrim(), "inputs:thickness", SdfValueTypeNames->Float, VtValue(thickness));
-    _AuthorAttr(GetPrim(), "inputs:friction", SdfValueTypeNames->Float, VtValue(friction));
+    _RequireFiniteAtLeast(thickness, 0, "thickness");
+    _RequireFiniteAtLeast(friction, 0, "friction");
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsThickness,
+                SdfValueTypeNames->Float, VtValue(thickness));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsFriction,
+                SdfValueTypeNames->Float, VtValue(friction));
 }
 
 void
 RigExecClothMoverHandle::SetCollidersReadPhase(const TfToken &phase)
 {
     if (phase.IsEmpty()) {
-        throw std::invalid_argument("cloth collider read phase must not be empty");
+        throw std::invalid_argument(
+            "cloth collider read phase must not be empty");
     }
-    RigExecMoverHandle::SetReadPhase(TfToken("rigExec:colliders"), phase.GetString());
+    RigExecMoverHandle::SetReadPhase(TfToken(SchemaAttrText::rigExecColliders),
+                                     phase.GetString());
 }
 
 void
@@ -2985,7 +3382,8 @@ RigExecClothMoverHandle::SetPinWeights(const std::vector<float> &weights)
             throw std::invalid_argument("cloth pin weights must be in [0,1]");
         }
     }
-    _AuthorAttr(GetPrim(), "rigExec:pinWeights", SdfValueTypeNames->FloatArray,
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecPinWeights,
+                SdfValueTypeNames->FloatArray,
                 VtValue(VtFloatArray(weights.begin(), weights.end())));
 }
 
@@ -2993,65 +3391,71 @@ void
 RigExecClothMoverHandle::SetWindowFrames(int frames)
 {
     _RequireIntIn(frames, 1, 1024, "cloth window frames");
-    _AuthorAttr(GetPrim(), "rigExec:windowFrames", SdfValueTypeNames->Int, VtValue(frames));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecWindowFrames,
+                SdfValueTypeNames->Int, VtValue(frames));
 }
 
 void
 RigExecClothMoverHandle::SetMaxWindowFrames(int frames)
 {
     _RequireIntIn(frames, 1, 1024, "cloth max window frames");
-    _AuthorAttr(GetPrim(), "rigExec:maxWindowFrames", SdfValueTypeNames->Int, VtValue(frames));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecMaxWindowFrames,
+                SdfValueTypeNames->Int, VtValue(frames));
 }
 
 void
 RigExecClothMoverHandle::SetSubsteps(int substeps)
 {
     _RequireIntIn(substeps, 1, 256, "cloth substeps");
-    _AuthorAttr(GetPrim(), "rigExec:substeps", SdfValueTypeNames->Int, VtValue(substeps));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecSubsteps,
+                SdfValueTypeNames->Int, VtValue(substeps));
 }
 
 void
 RigExecClothMoverHandle::SetIterations(int iterations)
 {
     _RequireIntIn(iterations, 1, 64, "cloth iterations");
-    _AuthorAttr(GetPrim(), "rigExec:iterations", SdfValueTypeNames->Int, VtValue(iterations));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecIterations,
+                SdfValueTypeNames->Int, VtValue(iterations));
 }
 
 void
 RigExecClothMoverHandle::SetTethers(bool tethers)
 {
-    _AuthorAttr(GetPrim(), "rigExec:tethers", SdfValueTypeNames->Bool, VtValue(tethers));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecTethers,
+                SdfValueTypeNames->Bool, VtValue(tethers));
 }
 
 void
 RigExecClothMoverHandle::SetTetherSlack(float slack)
 {
     _RequireFiniteAtLeast(slack, 0.0, "cloth tether slack");
-    _AuthorAttr(GetPrim(), "rigExec:tetherSlack", SdfValueTypeNames->Float, VtValue(slack));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecTetherSlack,
+                SdfValueTypeNames->Float, VtValue(slack));
 }
 
 void
 RigExecClothMoverHandle::SetFrameRate(double framesPerSecond)
 {
     _RequireFiniteAtLeast(framesPerSecond, 0.0, "cloth frame rate");
-    _AuthorAttr(GetPrim(), "rigExec:frameRate", SdfValueTypeNames->Double,
-                VtValue(framesPerSecond));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecFrameRate,
+                SdfValueTypeNames->Double, VtValue(framesPerSecond));
 }
 
 void
 RigExecClothMoverHandle::SetStretchCompliance(float compliance)
 {
     _RequireFiniteAtLeast(compliance, 0.0, "cloth stretch compliance");
-    _AuthorAttr(GetPrim(), "inputs:stretchCompliance", SdfValueTypeNames->Float,
-                VtValue(compliance));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsStretchCompliance,
+                SdfValueTypeNames->Float, VtValue(compliance));
 }
 
 void
 RigExecClothMoverHandle::SetBendCompliance(float compliance)
 {
     _RequireFiniteAtLeast(compliance, 0.0, "cloth bend compliance");
-    _AuthorAttr(GetPrim(), "inputs:bendCompliance", SdfValueTypeNames->Float,
-                VtValue(compliance));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsBendCompliance,
+                SdfValueTypeNames->Float, VtValue(compliance));
 }
 
 void
@@ -3060,52 +3464,57 @@ RigExecClothMoverHandle::SetGravity(float x, float y, float z)
     if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
         throw std::invalid_argument("cloth gravity must be finite");
     }
-    _AuthorAttr(GetPrim(), "inputs:gravity", SdfValueTypeNames->Float3,
-                VtValue(GfVec3f(x, y, z)));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsGravity,
+                SdfValueTypeNames->Float3, VtValue(GfVec3f(x, y, z)));
 }
 
 void
 RigExecClothMoverHandle::SetDamping(float damping)
 {
     _RequireFiniteAtLeast(damping, 0.0, "cloth damping");
-    _AuthorAttr(GetPrim(), "inputs:damping", SdfValueTypeNames->Float, VtValue(damping));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsDamping,
+                SdfValueTypeNames->Float, VtValue(damping));
 }
 
 void
 RigExecClothMoverHandle::SetAttract(float attract)
 {
     _RequireNormalizedMoverWeight(attract);
-    _AuthorAttr(GetPrim(), "inputs:attract", SdfValueTypeNames->Float, VtValue(attract));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsAttract,
+                SdfValueTypeNames->Float, VtValue(attract));
 }
 
 void
 RigExecClothMoverHandle::SetThickness(float thickness)
 {
     _RequireFiniteAtLeast(thickness, 0.0, "cloth thickness");
-    _AuthorAttr(GetPrim(), "inputs:thickness", SdfValueTypeNames->Float, VtValue(thickness));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsThickness,
+                SdfValueTypeNames->Float, VtValue(thickness));
 }
 
 void
 RigExecClothMoverHandle::SetCollisionDepth(float depth)
 {
     _RequireFiniteAtLeast(depth, 0.0, "cloth collision depth");
-    _AuthorAttr(GetPrim(), "inputs:collisionDepth", SdfValueTypeNames->Float, VtValue(depth));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsCollisionDepth,
+                SdfValueTypeNames->Float, VtValue(depth));
 }
 
 void
 RigExecClothMoverHandle::SetFriction(float friction)
 {
     _RequireNormalizedMoverWeight(friction);
-    _AuthorAttr(GetPrim(), "inputs:friction", SdfValueTypeNames->Float, VtValue(friction));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsFriction,
+                SdfValueTypeNames->Float, VtValue(friction));
 }
 
 RigExecClothMoverHandle
-RigExecMoverChain::AddClothMover(
-    const std::string &name, float defaultWeight, const SdfPath &target)
+RigExecMoverChain::AddClothMover(const std::string &name, float defaultWeight,
+                                 const SdfPath &target)
 {
     _RequireNormalizedMoverWeight(defaultWeight);
     RigExecClothMoverHandle handle(
-        _stage, _AddMoverPrim("RigExecClothMover", name, target));
+        _stage, _AddMoverPrim(SchemaTypeName::RigExecClothMover, name, target));
     handle.SetDefaultWeight(defaultWeight);
     return handle;
 }
@@ -3113,46 +3522,54 @@ RigExecMoverChain::AddClothMover(
 void
 RigExecHarmonicsConstraintHandle::SetSpace(const SdfPath &space)
 {
-    _SetSingleRel("rigExec:space", space);
+    _SetSingleRel(SchemaAttrText::rigExecSpace, space);
 }
 
 void
 RigExecHarmonicsConstraintHandle::SetWaves(double waves)
 {
     if (!std::isfinite(waves) || !(waves > 0.0)) {
-        throw std::invalid_argument("harmonics waves must be finite and above zero");
+        throw std::invalid_argument(
+            "harmonics waves must be finite and above zero");
     }
-    _AuthorAttr(GetPrim(), "rigExec:waves", SdfValueTypeNames->Double, VtValue(waves));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecWaves,
+                SdfValueTypeNames->Double, VtValue(waves));
 }
 
 void
 RigExecHarmonicsConstraintHandle::SetWaveLength(double frames)
 {
     if (!std::isfinite(frames) || !(frames > 0.0)) {
-        throw std::invalid_argument("harmonics wave length must be finite and above zero");
+        throw std::invalid_argument(
+            "harmonics wave length must be finite and above zero");
     }
-    _AuthorAttr(GetPrim(), "rigExec:waveLength", SdfValueTypeNames->Double, VtValue(frames));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecWaveLength,
+                SdfValueTypeNames->Double, VtValue(frames));
 }
 
 void
 RigExecHarmonicsConstraintHandle::SetFrequency(double frequency)
 {
     if (!std::isfinite(frequency) || !(frequency > 0.0)) {
-        throw std::invalid_argument("harmonics frequency must be finite and above zero");
+        throw std::invalid_argument(
+            "harmonics frequency must be finite and above zero");
     }
-    _AuthorAttr(GetPrim(), "rigExec:frequency", SdfValueTypeNames->Double, VtValue(frequency));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecFrequency,
+                SdfValueTypeNames->Double, VtValue(frequency));
 }
 
 void
 RigExecHarmonicsConstraintHandle::SetIgnoreFirstFrame(bool ignore)
 {
-    _AuthorAttr(GetPrim(), "rigExec:ignoreFirstFrame", SdfValueTypeNames->Bool, VtValue(ignore));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecIgnoreFirstFrame,
+                SdfValueTypeNames->Bool, VtValue(ignore));
 }
 
 void
 RigExecHarmonicsConstraintHandle::SetMatchVelocity(bool match)
 {
-    _AuthorAttr(GetPrim(), "rigExec:matchVelocity", SdfValueTypeNames->Bool, VtValue(match));
+    _AuthorAttr(GetPrim(), SchemaAttrText::rigExecMatchVelocity,
+                SdfValueTypeNames->Bool, VtValue(match));
 }
 
 void
@@ -3161,7 +3578,8 @@ RigExecHarmonicsConstraintHandle::SetAmplitude(double amplitude)
     if (!std::isfinite(amplitude)) {
         throw std::invalid_argument("harmonics amplitude must be finite");
     }
-    _AuthorAttr(GetPrim(), "inputs:amplitude", SdfValueTypeNames->Double, VtValue(amplitude));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsAmplitude,
+                SdfValueTypeNames->Double, VtValue(amplitude));
 }
 
 void
@@ -3170,44 +3588,51 @@ RigExecHarmonicsConstraintHandle::SetAxisAmplitude(double x, double y, double z)
     if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
         throw std::invalid_argument("harmonics axis amplitude must be finite");
     }
-    _AuthorAttr(GetPrim(), "inputs:axisAmplitude", SdfValueTypeNames->Double3,
-                VtValue(GfVec3d(x, y, z)));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsAxisAmplitude,
+                SdfValueTypeNames->Double3, VtValue(GfVec3d(x, y, z)));
 }
 
 void
 RigExecHarmonicsConstraintHandle::SetDecay(double decay)
 {
     _RequireFiniteAtLeast(decay, 0.0, "harmonics decay");
-    _AuthorAttr(GetPrim(), "inputs:decay", SdfValueTypeNames->Double, VtValue(decay));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsDecay,
+                SdfValueTypeNames->Double, VtValue(decay));
 }
 
 void
 RigExecHarmonicsConstraintHandle::SetTermination(double termination)
 {
-    if (!std::isfinite(termination) || termination < 0.0 || termination >= 1.0) {
+    if (!std::isfinite(termination) || termination < 0.0 ||
+        termination >= 1.0) {
         throw std::invalid_argument("harmonics termination must be in [0,1)");
     }
-    _AuthorAttr(GetPrim(), "inputs:termination", SdfValueTypeNames->Double,
-                VtValue(termination));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsTermination,
+                SdfValueTypeNames->Double, VtValue(termination));
 }
 
 RigExecVolumeCorrectMoverHandle
-RigExecMoverChain::AddVolumeCorrectMover(
-    const std::string &name, float defaultWeight, const SdfPath &target)
+RigExecMoverChain::AddVolumeCorrectMover(const std::string &name,
+                                         float defaultWeight,
+                                         const SdfPath &target)
 {
     _RequireNormalizedMoverWeight(defaultWeight);
-    RigExecVolumeCorrectMoverHandle handle(_stage, _AddMoverPrim("RigExecVolumeCorrectMover", name, target));
+    RigExecVolumeCorrectMoverHandle handle(
+        _stage,
+        _AddMoverPrim(SchemaTypeName::RigExecVolumeCorrectMover, name, target));
     handle.SetDefaultWeight(defaultWeight);
     return handle;
 }
 
 RigExecFloatMathMoverHandle
-RigExecMoverChain::AddFloatMathMover(
-    const std::string &name, const TfToken &operation, float value,
-    const SdfPath &target, float defaultWeight)
+RigExecMoverChain::AddFloatMathMover(const std::string &name,
+                                     const TfToken &operation, float value,
+                                     const SdfPath &target, float defaultWeight)
 {
     _RequireNormalizedMoverWeight(defaultWeight);
-    RigExecFloatMathMoverHandle handle(_stage, _AddMoverPrim("RigExecFloatMathMover", name, target));
+    RigExecFloatMathMoverHandle handle(
+        _stage,
+        _AddMoverPrim(SchemaTypeName::RigExecFloatMathMover, name, target));
     if (!operation.IsEmpty()) {
         handle.SetOperation(operation);
     }
@@ -3217,12 +3642,14 @@ RigExecMoverChain::AddFloatMathMover(
 }
 
 RigExecVec3fMathMoverHandle
-RigExecMoverChain::AddVec3fMathMover(
-    const std::string &name, const TfToken &operation, GfVec3f value,
-    const SdfPath &target, float defaultWeight)
+RigExecMoverChain::AddVec3fMathMover(const std::string &name,
+                                     const TfToken &operation, GfVec3f value,
+                                     const SdfPath &target, float defaultWeight)
 {
     _RequireNormalizedMoverWeight(defaultWeight);
-    RigExecVec3fMathMoverHandle handle(_stage, _AddMoverPrim("RigExecVec3fMathMover", name, target));
+    RigExecVec3fMathMoverHandle handle(
+        _stage,
+        _AddMoverPrim(SchemaTypeName::RigExecVec3fMathMover, name, target));
     if (!operation.IsEmpty()) {
         handle.SetOperation(operation);
     }
@@ -3232,12 +3659,15 @@ RigExecMoverChain::AddVec3fMathMover(
 }
 
 RigExecMatrixMathMoverHandle
-RigExecMoverChain::AddMatrixMathMover(
-    const std::string &name, const TfToken &operation, GfMatrix4d value,
-    const SdfPath &target, float defaultWeight)
+RigExecMoverChain::AddMatrixMathMover(const std::string &name,
+                                      const TfToken &operation,
+                                      GfMatrix4d value, const SdfPath &target,
+                                      float defaultWeight)
 {
     _RequireNormalizedMoverWeight(defaultWeight);
-    RigExecMatrixMathMoverHandle handle(_stage, _AddMoverPrim("RigExecMatrixMathMover", name, target));
+    RigExecMatrixMathMoverHandle handle(
+        _stage,
+        _AddMoverPrim(SchemaTypeName::RigExecMatrixMathMover, name, target));
     if (!operation.IsEmpty()) {
         handle.SetOperation(operation);
     }
@@ -3253,9 +3683,8 @@ RigExecMoverChain::AddMatrixMathMover(
 namespace {
 
 std::vector<SdfPath>
-_InferSingleChainIkJoints(
-    const UsdStageRefPtr &stage, const SdfPath &firstJoint,
-    const SdfPath &endJoint)
+_InferSingleChainIkJoints(const UsdStageRefPtr &stage,
+                          const SdfPath &firstJoint, const SdfPath &endJoint)
 {
     if (!stage) {
         throw std::invalid_argument("SingleChainIK needs a valid stage");
@@ -3267,9 +3696,10 @@ _InferSingleChainIkJoints(
     SdfPath cursor = endJoint;
     while (cursor != SdfPath::AbsoluteRootPath()) {
         const UsdPrim joint = stage->GetPrimAtPath(cursor);
-        if (!joint || joint.GetTypeName() != TfToken("RigExecJoint") ||
+        if (!joint ||
+            joint.GetTypeName() != TfToken(SchemaTypeName::RigExecJoint) ||
             joint.GetPrimTypeInfo().GetSchemaTypeName() !=
-                TfToken("RigExecJoint")) {
+                TfToken(SchemaTypeName::RigExecJoint)) {
             throw std::invalid_argument(
                 "SingleChainIK ancestry contains non-RigExecJoint " +
                 cursor.GetString());
@@ -3281,8 +3711,8 @@ _InferSingleChainIkJoints(
         cursor = cursor.GetParentPath();
     }
     if (reversed.empty() || reversed.back() != firstJoint) {
-        throw std::invalid_argument(
-            "SingleChainIK endJoint must be a namespace descendant of firstJoint");
+        throw std::invalid_argument("SingleChainIK endJoint must be a "
+                                    "namespace descendant of firstJoint");
     }
     if (reversed.size() < 2) {
         throw std::invalid_argument("SingleChainIK needs at least two joints");
@@ -3292,95 +3722,105 @@ _InferSingleChainIkJoints(
 }
 
 void
-_PreflightExistingPrim(
-    const UsdStageRefPtr &stage, const SdfPath &path, const char *what)
+_PreflightExistingPrim(const UsdStageRefPtr &stage, const SdfPath &path,
+                       const char *what)
 {
     _RequirePrimPath(path, what);
     if (!stage || !stage->GetPrimAtPath(path)) {
-        throw std::invalid_argument(
-            std::string(what) + " does not exist: " + path.GetString());
+        throw std::invalid_argument(std::string(what) +
+                                    " does not exist: " + path.GetString());
     }
 }
 
-}  // namespace
+} // namespace
 
 RigExecHarmonicsConstraintHandle
-RigExecMoverChain::AddHarmonicsConstraint(const std::string &name, const SdfPath &target)
+RigExecMoverChain::AddHarmonicsConstraint(const std::string &name,
+                                          const SdfPath &target)
 {
     return RigExecHarmonicsConstraintHandle(
-        _stage, _AddMoverPrim("RigExecHarmonicsConstraint", name, target));
+        _stage, _AddMoverPrim(SchemaTypeName::RigExecHarmonicsConstraint, name,
+                              target));
 }
 
 RigExecAimConstraintHandle
-RigExecMoverChain::AddAimConstraint(const std::string &name, const SdfPath &target)
+RigExecMoverChain::AddAimConstraint(const std::string &name,
+                                    const SdfPath &target)
 {
     return RigExecAimConstraintHandle(
-        _stage, _AddMoverPrim("RigExecAimConstraint", name, target));
+        _stage,
+        _AddMoverPrim(SchemaTypeName::RigExecAimConstraint, name, target));
 }
 
 RigExecPositionConstraintHandle
-RigExecMoverChain::AddPositionConstraint(const std::string &name, const SdfPath &target)
+RigExecMoverChain::AddPositionConstraint(const std::string &name,
+                                         const SdfPath &target)
 {
     return RigExecPositionConstraintHandle(
-        _stage, _AddMoverPrim("RigExecPositionConstraint", name, target));
+        _stage,
+        _AddMoverPrim(SchemaTypeName::RigExecPositionConstraint, name, target));
 }
 
 RigExecRotationConstraintHandle
-RigExecMoverChain::AddRotationConstraint(const std::string &name, const SdfPath &target)
+RigExecMoverChain::AddRotationConstraint(const std::string &name,
+                                         const SdfPath &target)
 {
     return RigExecRotationConstraintHandle(
-        _stage, _AddMoverPrim("RigExecRotationConstraint", name, target));
+        _stage,
+        _AddMoverPrim(SchemaTypeName::RigExecRotationConstraint, name, target));
 }
 
 RigExecScaleConstraintHandle
-RigExecMoverChain::AddScaleConstraint(const std::string &name, const SdfPath &target)
+RigExecMoverChain::AddScaleConstraint(const std::string &name,
+                                      const SdfPath &target)
 {
     return RigExecScaleConstraintHandle(
-        _stage, _AddMoverPrim("RigExecScaleConstraint", name, target));
+        _stage,
+        _AddMoverPrim(SchemaTypeName::RigExecScaleConstraint, name, target));
 }
 
 RigExecParentConstraintHandle
-RigExecMoverChain::AddParentConstraint(const std::string &name, const SdfPath &target)
+RigExecMoverChain::AddParentConstraint(const std::string &name,
+                                       const SdfPath &target)
 {
     return RigExecParentConstraintHandle(
-        _stage, _AddMoverPrim("RigExecParentConstraint", name, target));
+        _stage,
+        _AddMoverPrim(SchemaTypeName::RigExecParentConstraint, name, target));
 }
 
 RigExecSingleChainIkConstraintHandle
 RigExecMoverChain::AddSingleChainIkConstraint(
-    const std::string &name, const SdfPath &firstJoint,
-    const SdfPath &endJoint, const SdfPath &effector,
-    const std::vector<SdfPath> &poleVectorObjects)
+    const std::string &name, const SdfPath &firstJoint, const SdfPath &endJoint,
+    const SdfPath &effector, const std::vector<SdfPath> &poleVectorObjects)
 {
     const std::vector<SdfPath> moves =
         _InferSingleChainIkJoints(_stage, firstJoint, endJoint);
-    return AddSingleChainIkConstraint(
-        name, moves, firstJoint, endJoint, effector, poleVectorObjects);
+    return AddSingleChainIkConstraint(name, moves, firstJoint, endJoint,
+                                      effector, poleVectorObjects);
 }
 
 RigExecSingleChainIkConstraintHandle
 RigExecMoverChain::AddSingleChainIkConstraint(
     const std::string &name, const std::vector<SdfPath> &moves,
-    const SdfPath &firstJoint, const SdfPath &endJoint,
-    const SdfPath &effector,
+    const SdfPath &firstJoint, const SdfPath &endJoint, const SdfPath &effector,
     const std::vector<SdfPath> &poleVectorObjects)
 {
     _RequireName(name, "SingleChainIK name");
     const std::vector<SdfPath> inferred =
         _InferSingleChainIkJoints(_stage, firstJoint, endJoint);
     if (moves != inferred) {
-        throw std::invalid_argument(
-            "SingleChainIK moves must exactly equal the ordered inferred chain");
+        throw std::invalid_argument("SingleChainIK moves must exactly equal "
+                                    "the ordered inferred chain");
     }
     _PreflightExistingPrim(_stage, effector, "SingleChainIK effector");
     for (const SdfPath &pole : poleVectorObjects) {
-        _PreflightExistingPrim(
-            _stage, pole, "SingleChainIK pole-vector object");
+        _PreflightExistingPrim(_stage, pole,
+                               "SingleChainIK pole-vector object");
     }
 
     RigExecSingleChainIkConstraintHandle handle(
-        _stage, _AddMoverPrim(
-            "RigExecSingleChainIkConstraint", name, inferred.front()));
+        _stage, _AddMoverPrim(SchemaTypeName::RigExecSingleChainIkConstraint,
+                              name, inferred.front()));
     handle.SetMoves(inferred);
     handle.SetFirstJoint(firstJoint);
     handle.SetEndJoint(endJoint);
@@ -3390,8 +3830,8 @@ RigExecMoverChain::AddSingleChainIkConstraint(
 }
 
 RigExecMoverChain
-RigExecMoverChain::Under(
-    const RigExecHandleBase &mover, const SdfPath &defaultTarget) const
+RigExecMoverChain::Under(const RigExecHandleBase &mover,
+                         const SdfPath &defaultTarget) const
 {
     if (!mover.IsValid() || mover.GetStage() != _stage) {
         throw std::invalid_argument(
@@ -3419,21 +3859,23 @@ RigExecMoverChain::Under(
 // Top-level builder
 
 RigExecRigBuilder
-RigExecRigBuilder::Create(
-    UsdStageRefPtr stage, const SdfPath &rigRoot, const TfToken &partition)
+RigExecRigBuilder::Create(UsdStageRefPtr stage, const SdfPath &rigRoot,
+                          const TfToken &partition)
 {
     if (!stage) {
-        throw std::invalid_argument("RigExecRigBuilder::Create needs a valid stage");
+        throw std::invalid_argument(
+            "RigExecRigBuilder::Create needs a valid stage");
     }
     _RequirePrimPath(rigRoot, "rig root");
 
     UsdPrim root = RigExecSchemaPrim::Define(
-        stage, rigRoot, TfToken("RigExecRoot")).GetPrim();
+                       stage, rigRoot, TfToken(SchemaTypeName::RigExecRoot))
+                       .GetPrim();
 
     RigExecRigBuilder builder(std::move(stage), rigRoot);
     if (!partition.IsEmpty()) {
-        _AuthorAttr(
-            root, "rigExec:partition", SdfValueTypeNames->Token, VtValue(partition));
+        _AuthorAttr(root, SchemaAttrText::rigExecPartition,
+                    SdfValueTypeNames->Token, VtValue(partition));
     }
     return builder;
 }
@@ -3449,27 +3891,27 @@ RigExecRigBuilder::_EnsureScope(const char *scopeName)
 }
 
 UsdPrim
-RigExecRigBuilder::_DefineTyped(
-    const SdfPath &parent, const std::string &typeName, const std::string &name)
+RigExecRigBuilder::_DefineTyped(const SdfPath &parent,
+                                const std::string &typeName,
+                                const std::string &name)
 {
     _RequireName(name, "prim name");
     const SdfPath path = parent.AppendChild(TfToken(name));
     if (_stage->GetPrimAtPath(path)) {
-        throw std::invalid_argument(
-            "rig object already exists: " + path.GetString());
+        throw std::invalid_argument("rig object already exists: " +
+                                    path.GetString());
     }
     UsdPrim prim = _DefineTypedAt(path, typeName);
     try {
         // Every object created by an Add* call participates in the node graph.
         // Controls and movers additionally carry their semantic applied API.
-        if (typeName == "RigExecControl") {
+        if (typeName == SchemaTypeName::RigExecControl) {
             _ApplyApiRequired(prim, _kControlApi);
         }
         if (typeName.size() >= 5 &&
             (typeName.compare(typeName.size() - 5, 5, "Mover") == 0 ||
              (typeName.size() >= 10 &&
-              typeName.compare(
-                  typeName.size() - 10, 10, "Constraint") == 0))) {
+              typeName.compare(typeName.size() - 10, 10, "Constraint") == 0))) {
             _ApplyApiRequired(prim, _kMoverApi);
         }
         _ApplyApiRequired(prim, _kNodeGraphApi);
@@ -3481,8 +3923,8 @@ RigExecRigBuilder::_DefineTyped(
 }
 
 UsdPrim
-RigExecRigBuilder::_DefineTypedAt(
-    const SdfPath &path, const std::string &typeName)
+RigExecRigBuilder::_DefineTypedAt(const SdfPath &path,
+                                  const std::string &typeName)
 {
     _RequirePrimPath(path, "rig object path");
     if (path == _root || !path.HasPrefix(_root)) {
@@ -3492,24 +3934,23 @@ RigExecRigBuilder::_DefineTypedAt(
     }
     const SdfPath parent = path.GetParentPath();
     if (!_stage->GetPrimAtPath(parent)) {
-        throw std::invalid_argument(
-            "rig object parent must already exist: " + parent.GetString());
+        throw std::invalid_argument("rig object parent must already exist: " +
+                                    parent.GetString());
     }
-    return RigExecSchemaPrim::Define(
-        _stage, path, TfToken(typeName)).GetPrim();
+    return RigExecSchemaPrim::Define(_stage, path, TfToken(typeName)).GetPrim();
 }
 
 RigExecControlHandle
-RigExecRigBuilder::AddControl(
-    const std::string &name, const GfMatrix4d &restSpace,
-    const RigExecControlHandle *parentControl)
+RigExecRigBuilder::AddControl(const std::string &name,
+                              const GfMatrix4d &restSpace,
+                              const RigExecControlHandle *parentControl)
 {
     _RequireName(name, "control name");
     SdfPath scope;
     if (parentControl) {
-        if (!parentControl->IsValid() ||
-            parentControl->GetStage() != _stage ||
-            parentControl->GetSchemaTypeName() != TfToken("RigExecControl")) {
+        if (!parentControl->IsValid() || parentControl->GetStage() != _stage ||
+            parentControl->GetSchemaTypeName() !=
+                TfToken(SchemaTypeName::RigExecControl)) {
             throw std::invalid_argument(
                 "parentControl must be a valid RigExecControl on this stage");
         }
@@ -3524,7 +3965,7 @@ RigExecRigBuilder::AddControl(
     } else {
         scope = _EnsureScope("Controls");
     }
-    UsdPrim prim = _DefineTyped(scope, "RigExecControl", name);
+    UsdPrim prim = _DefineTyped(scope, SchemaTypeName::RigExecControl, name);
     _ApplyApiRequired(prim, _kControlApi);
     _ApplyApiRequired(prim, _kNodeGraphApi);
     RigExecControlHandle handle(_stage, prim.GetPath());
@@ -3535,15 +3976,16 @@ RigExecRigBuilder::AddControl(
 }
 
 RigExecJointHandle
-RigExecRigBuilder::AddJoint(
-    const std::string &name, const GfMatrix4d &restSpace,
-    const RigExecJointHandle *parentJoint)
+RigExecRigBuilder::AddJoint(const std::string &name,
+                            const GfMatrix4d &restSpace,
+                            const RigExecJointHandle *parentJoint)
 {
     _RequireName(name, "joint name");
     SdfPath parent;
     if (parentJoint) {
         if (!parentJoint->IsValid() || parentJoint->GetStage() != _stage ||
-            parentJoint->GetSchemaTypeName() != TfToken("RigExecJoint")) {
+            parentJoint->GetSchemaTypeName() !=
+                TfToken(SchemaTypeName::RigExecJoint)) {
             throw std::invalid_argument(
                 "parentJoint must be a valid RigExecJoint on this stage");
         }
@@ -3558,7 +4000,7 @@ RigExecRigBuilder::AddJoint(
     } else {
         parent = _EnsureScope("Joints");
     }
-    UsdPrim prim = _DefineTyped(parent, "RigExecJoint", name);
+    UsdPrim prim = _DefineTyped(parent, SchemaTypeName::RigExecJoint, name);
     _ApplyApiRequired(prim, _kNodeGraphApi);
     RigExecJointHandle handle(_stage, prim.GetPath());
     if (restSpace != GfMatrix4d()) {
@@ -3572,30 +4014,31 @@ RigExecRigBuilder::AddFkChain(const std::string &name)
 {
     _RequireName(name, "FK chain name");
     const SdfPath scope = _EnsureScope("Solvers");
-    UsdPrim prim = _DefineTyped(scope, "RigExecFkChain", name);
+    UsdPrim prim = _DefineTyped(scope, SchemaTypeName::RigExecFkChain, name);
     _ApplyApiRequired(prim, _kNodeGraphApi);
     return RigExecFkChainHandle(_stage, prim.GetPath());
 }
 
 RigExecTwoBoneIkHandle
-RigExecRigBuilder::AddTwoBoneIk(
-    const std::string &name, const SdfPath &rootControl,
-    const SdfPath &effectorControl, const SdfPath &poleControl)
+RigExecRigBuilder::AddTwoBoneIk(const std::string &name,
+                                const SdfPath &rootControl,
+                                const SdfPath &effectorControl,
+                                const SdfPath &poleControl)
 {
     _RequireName(name, "TwoBoneIK name");
-    _RequireTypedPrim(
-        _stage, rootControl, TfToken("RigExecControl"),
-        "TwoBoneIK root control");
-    _RequireTypedPrim(
-        _stage, effectorControl, TfToken("RigExecControl"),
-        "TwoBoneIK effector control");
+    _RequireTypedPrim(_stage, rootControl,
+                      TfToken(SchemaTypeName::RigExecControl),
+                      "TwoBoneIK root control");
+    _RequireTypedPrim(_stage, effectorControl,
+                      TfToken(SchemaTypeName::RigExecControl),
+                      "TwoBoneIK effector control");
     if (!poleControl.IsEmpty()) {
-        _RequireTypedPrim(
-            _stage, poleControl, TfToken("RigExecControl"),
-            "TwoBoneIK pole control");
+        _RequireTypedPrim(_stage, poleControl,
+                          TfToken(SchemaTypeName::RigExecControl),
+                          "TwoBoneIK pole control");
     }
     const SdfPath scope = _EnsureScope("Solvers");
-    UsdPrim prim = _DefineTyped(scope, "RigExecTwoBoneIk", name);
+    UsdPrim prim = _DefineTyped(scope, SchemaTypeName::RigExecTwoBoneIk, name);
     _ApplyApiRequired(prim, _kNodeGraphApi);
     RigExecTwoBoneIkHandle handle(_stage, prim.GetPath());
     handle.SetRootControl(rootControl);
@@ -3605,15 +4048,16 @@ RigExecRigBuilder::AddTwoBoneIk(
 }
 
 RigExecBlendPointFramesHandle
-RigExecRigBuilder::AddBlendPointFrames(
-    const std::string &name, const SdfPath &inputA, const SdfPath &inputB,
-    float weight)
+RigExecRigBuilder::AddBlendPointFrames(const std::string &name,
+                                       const SdfPath &inputA,
+                                       const SdfPath &inputB, float weight)
 {
     _RequireName(name, "frame blend name");
     _RequireTargetPath(inputA, "frame blend inputA");
     _RequireTargetPath(inputB, "frame blend inputB");
     const SdfPath scope = _EnsureScope("Solvers");
-    UsdPrim prim = _DefineTyped(scope, "RigExecBlendPointFrames", name);
+    UsdPrim prim =
+        _DefineTyped(scope, SchemaTypeName::RigExecBlendPointFrames, name);
     _ApplyApiRequired(prim, _kNodeGraphApi);
     RigExecBlendPointFramesHandle handle(_stage, prim.GetPath());
     handle.SetInputA(inputA);
@@ -3623,17 +4067,20 @@ RigExecRigBuilder::AddBlendPointFrames(
 }
 
 RigExecTwistDistributionHandle
-RigExecRigBuilder::AddTwistDistribution(
-    const std::string &name, const SdfPath &start, const SdfPath &end, int count)
+RigExecRigBuilder::AddTwistDistribution(const std::string &name,
+                                        const SdfPath &start,
+                                        const SdfPath &end, int count)
 {
     _RequireName(name, "twist distribution name");
     _RequireTargetPath(start, "twist distribution start");
     _RequireTargetPath(end, "twist distribution end");
     if (count < 1) {
-        throw std::invalid_argument("twist distribution count must be positive");
+        throw std::invalid_argument(
+            "twist distribution count must be positive");
     }
     const SdfPath scope = _EnsureScope("Solvers");
-    UsdPrim prim = _DefineTyped(scope, "RigExecTwistDistribution", name);
+    UsdPrim prim =
+        _DefineTyped(scope, SchemaTypeName::RigExecTwistDistribution, name);
     _ApplyApiRequired(prim, _kNodeGraphApi);
     RigExecTwistDistributionHandle handle(_stage, prim.GetPath());
     handle.SetStart(start);
@@ -3643,8 +4090,8 @@ RigExecRigBuilder::AddTwistDistribution(
 }
 
 RigExecRibbonHandle
-RigExecRigBuilder::AddRibbon(
-    const std::string &name, const SdfPath &driverCurve, int sampleCount)
+RigExecRigBuilder::AddRibbon(const std::string &name,
+                             const SdfPath &driverCurve, int sampleCount)
 {
     _RequireName(name, "ribbon name");
     _RequireTargetPath(driverCurve, "ribbon driver curve");
@@ -3652,7 +4099,7 @@ RigExecRigBuilder::AddRibbon(
         throw std::invalid_argument("ribbon sample count must be positive");
     }
     const SdfPath scope = _EnsureScope("Solvers");
-    UsdPrim prim = _DefineTyped(scope, "RigExecRibbon", name);
+    UsdPrim prim = _DefineTyped(scope, SchemaTypeName::RigExecRibbon, name);
     _ApplyApiRequired(prim, _kNodeGraphApi);
     RigExecRibbonHandle handle(_stage, prim.GetPath());
     handle.SetDriverCurve(driverCurve);
@@ -3661,22 +4108,23 @@ RigExecRigBuilder::AddRibbon(
 }
 
 RigExecSplineIkHandle
-RigExecRigBuilder::AddSplineIk(
-    const std::string &name, const SdfPath &rootControl,
-    const SdfPath &midControl, const SdfPath &endControl)
+RigExecRigBuilder::AddSplineIk(const std::string &name,
+                               const SdfPath &rootControl,
+                               const SdfPath &midControl,
+                               const SdfPath &endControl)
 {
     _RequireName(name, "spline IK name");
-    _RequireTypedPrim(
-        _stage, rootControl, TfToken("RigExecControl"),
-        "spline IK root control");
-    _RequireTypedPrim(
-        _stage, midControl, TfToken("RigExecControl"),
-        "spline IK mid control");
-    _RequireTypedPrim(
-        _stage, endControl, TfToken("RigExecControl"),
-        "spline IK end control");
+    _RequireTypedPrim(_stage, rootControl,
+                      TfToken(SchemaTypeName::RigExecControl),
+                      "spline IK root control");
+    _RequireTypedPrim(_stage, midControl,
+                      TfToken(SchemaTypeName::RigExecControl),
+                      "spline IK mid control");
+    _RequireTypedPrim(_stage, endControl,
+                      TfToken(SchemaTypeName::RigExecControl),
+                      "spline IK end control");
     const SdfPath scope = _EnsureScope("Solvers");
-    UsdPrim prim = _DefineTyped(scope, "RigExecSplineIk", name);
+    UsdPrim prim = _DefineTyped(scope, SchemaTypeName::RigExecSplineIk, name);
     _ApplyApiRequired(prim, _kNodeGraphApi);
     RigExecSplineIkHandle handle(_stage, prim.GetPath());
     handle.SetRootControl(rootControl);
@@ -3685,12 +4133,12 @@ RigExecRigBuilder::AddSplineIk(
     return handle;
 }
 
-
 RigExecStaticWeightHandle
-RigExecRigBuilder::AddStaticWeight(
-    const std::string &name, const SdfPath &target,
-    const std::vector<float> &values, const std::vector<int> &indices,
-    float defaultWeight)
+RigExecRigBuilder::AddStaticWeight(const std::string &name,
+                                   const SdfPath &target,
+                                   const std::vector<float> &values,
+                                   const std::vector<int> &indices,
+                                   float defaultWeight)
 {
     _RequireName(name, "static weight name");
     _RequireTargetPath(target, "static weight target");
@@ -3705,7 +4153,8 @@ RigExecRigBuilder::AddStaticWeight(
         }
     }
     const SdfPath scope = _EnsureScope("Weights");
-    UsdPrim prim = _DefineTyped(scope, "RigExecStaticWeight", name);
+    UsdPrim prim =
+        _DefineTyped(scope, SchemaTypeName::RigExecStaticWeight, name);
     _ApplyApiRequired(prim, _kNodeGraphApi);
     RigExecStaticWeightHandle handle(_stage, prim.GetPath());
     handle.SetTarget(target);
@@ -3713,17 +4162,19 @@ RigExecRigBuilder::AddStaticWeight(
     // object cannot retain stale values or indices from its previous mode.
     handle.SetValues(values);
     handle.SetIndices(indices);
-    handle.SetRepresentation(
-        !indices.empty() ? TfToken("sparse")
-                         : (!values.empty() ? TfToken("dense")
-                                            : TfToken("constant")));
+    handle.SetRepresentation(!indices.empty()
+                                 ? TfToken(SchemaValueText::sparse)
+                                 : (!values.empty()
+                                        ? TfToken(SchemaValueText::dense)
+                                        : TfToken(SchemaValueText::constant)));
     handle.SetDefaultWeight(defaultWeight);
     return handle;
 }
 
 RigExecDynamicWeightHandle
-RigExecRigBuilder::AddDynamicWeight(
-    const std::string &name, const SdfPath &target, const SdfPath &baseWeight)
+RigExecRigBuilder::AddDynamicWeight(const std::string &name,
+                                    const SdfPath &target,
+                                    const SdfPath &baseWeight)
 {
     _RequireName(name, "dynamic weight name");
     _RequireTargetPath(target, "dynamic weight target");
@@ -3731,7 +4182,8 @@ RigExecRigBuilder::AddDynamicWeight(
         _RequireTargetPath(baseWeight, "dynamic base weight");
     }
     const SdfPath scope = _EnsureScope("Weights");
-    UsdPrim prim = _DefineTyped(scope, "RigExecDynamicWeight", name);
+    UsdPrim prim =
+        _DefineTyped(scope, SchemaTypeName::RigExecDynamicWeight, name);
     _ApplyApiRequired(prim, _kNodeGraphApi);
     RigExecDynamicWeightHandle handle(_stage, prim.GetPath());
     handle.SetTarget(target);
@@ -3740,50 +4192,49 @@ RigExecRigBuilder::AddDynamicWeight(
 }
 
 RigExecSphereWeightHandle
-RigExecRigBuilder::AddSphereWeight(
-    const std::string &name, const SdfPath &target, float falloffMin,
-    float falloffMax)
+RigExecRigBuilder::AddSphereWeight(const std::string &name,
+                                   const SdfPath &target, float falloffMin,
+                                   float falloffMax)
 {
     _RequireName(name, "sphere weight name");
     _RequireTargetPath(target, "sphere weight target");
     const SdfPath scope = _EnsureScope("Weights");
-    return DefineSphereWeight(
-        scope.AppendChild(TfToken(name)), target, falloffMin, falloffMax);
+    return DefineSphereWeight(scope.AppendChild(TfToken(name)), target,
+                              falloffMin, falloffMax);
 }
 
 RigExecPlaneWeightHandle
-RigExecRigBuilder::AddPlaneWeight(
-    const std::string &name, const SdfPath &target, float falloffMin,
-    float falloffMax)
+RigExecRigBuilder::AddPlaneWeight(const std::string &name,
+                                  const SdfPath &target, float falloffMin,
+                                  float falloffMax)
 {
     _RequireName(name, "plane weight name");
     _RequireTargetPath(target, "plane weight target");
     const SdfPath scope = _EnsureScope("Weights");
-    return DefinePlaneWeight(
-        scope.AppendChild(TfToken(name)), target, falloffMin, falloffMax);
+    return DefinePlaneWeight(scope.AppendChild(TfToken(name)), target,
+                             falloffMin, falloffMax);
 }
 
 RigExecCurveWeightHandle
-RigExecRigBuilder::AddCurveWeight(
-    const std::string &name, const SdfPath &target, const SdfPath &curve,
-    float falloffMin, float falloffMax)
+RigExecRigBuilder::AddCurveWeight(const std::string &name,
+                                  const SdfPath &target, const SdfPath &curve,
+                                  float falloffMin, float falloffMax)
 {
     _RequireName(name, "curve weight name");
     _RequireTargetPath(target, "curve weight target");
     _RequireTargetPath(curve, "curve weight source");
     const SdfPath scope = _EnsureScope("Weights");
-    return DefineCurveWeight(
-        scope.AppendChild(TfToken(name)), target, curve,
-        falloffMin, falloffMax);
+    return DefineCurveWeight(scope.AppendChild(TfToken(name)), target, curve,
+                             falloffMin, falloffMax);
 }
 
 RigExecSphereWeightHandle
-RigExecRigBuilder::DefineSphereWeight(
-    const SdfPath &path, const SdfPath &target, float falloffMin,
-    float falloffMax)
+RigExecRigBuilder::DefineSphereWeight(const SdfPath &path,
+                                      const SdfPath &target, float falloffMin,
+                                      float falloffMax)
 {
     _RequireTargetPath(target, "sphere weight target");
-    UsdPrim prim = _DefineTypedAt(path, "RigExecSphereWeight");
+    UsdPrim prim = _DefineTypedAt(path, SchemaTypeName::RigExecSphereWeight);
     _ApplyApiRequired(prim, _kNodeGraphApi);
     RigExecSphereWeightHandle handle(_stage, path);
     handle.SetTarget(target);
@@ -3792,12 +4243,11 @@ RigExecRigBuilder::DefineSphereWeight(
 }
 
 RigExecPlaneWeightHandle
-RigExecRigBuilder::DefinePlaneWeight(
-    const SdfPath &path, const SdfPath &target, float falloffMin,
-    float falloffMax)
+RigExecRigBuilder::DefinePlaneWeight(const SdfPath &path, const SdfPath &target,
+                                     float falloffMin, float falloffMax)
 {
     _RequireTargetPath(target, "plane weight target");
-    UsdPrim prim = _DefineTypedAt(path, "RigExecPlaneWeight");
+    UsdPrim prim = _DefineTypedAt(path, SchemaTypeName::RigExecPlaneWeight);
     _ApplyApiRequired(prim, _kNodeGraphApi);
     RigExecPlaneWeightHandle handle(_stage, path);
     handle.SetTarget(target);
@@ -3806,13 +4256,13 @@ RigExecRigBuilder::DefinePlaneWeight(
 }
 
 RigExecCurveWeightHandle
-RigExecRigBuilder::DefineCurveWeight(
-    const SdfPath &path, const SdfPath &target, const SdfPath &curve,
-    float falloffMin, float falloffMax)
+RigExecRigBuilder::DefineCurveWeight(const SdfPath &path, const SdfPath &target,
+                                     const SdfPath &curve, float falloffMin,
+                                     float falloffMax)
 {
     _RequireTargetPath(target, "curve weight target");
     _RequireTargetPath(curve, "curve weight source");
-    UsdPrim prim = _DefineTypedAt(path, "RigExecCurveWeight");
+    UsdPrim prim = _DefineTypedAt(path, SchemaTypeName::RigExecCurveWeight);
     _ApplyApiRequired(prim, _kNodeGraphApi);
     RigExecCurveWeightHandle handle(_stage, path);
     handle.SetTarget(target);
@@ -3822,9 +4272,10 @@ RigExecRigBuilder::DefineCurveWeight(
 }
 
 RigExecCombineWeightHandle
-RigExecRigBuilder::AddCombineWeight(
-    const std::string &name, const SdfPath &target,
-    const std::vector<SdfPath> &inputWeights, const TfToken &mode)
+RigExecRigBuilder::AddCombineWeight(const std::string &name,
+                                    const SdfPath &target,
+                                    const std::vector<SdfPath> &inputWeights,
+                                    const TfToken &mode)
 {
     _RequireName(name, "combine weight name");
     _RequireTargetPath(target, "combine weight target");
@@ -3836,7 +4287,8 @@ RigExecRigBuilder::AddCombineWeight(
         _RequireTargetPath(input, "combine input weight");
     }
     const SdfPath scope = _EnsureScope("Weights");
-    UsdPrim prim = _DefineTyped(scope, "RigExecCombineWeight", name);
+    UsdPrim prim =
+        _DefineTyped(scope, SchemaTypeName::RigExecCombineWeight, name);
     _ApplyApiRequired(prim, _kNodeGraphApi);
     RigExecCombineWeightHandle handle(_stage, prim.GetPath());
     handle.SetTarget(target);
@@ -3852,7 +4304,7 @@ RigExecRigBuilder::AddBlendInput(const std::string &name, float weight)
 {
     _RequireName(name, "blend input name");
     const SdfPath scope = _EnsureScope("BlendInputs");
-    UsdPrim prim = _DefineTyped(scope, "RigExecBlendInput", name);
+    UsdPrim prim = _DefineTyped(scope, SchemaTypeName::RigExecBlendInput, name);
     _ApplyApiRequired(prim, _kNodeGraphApi);
     RigExecBlendInputHandle handle(_stage, prim.GetPath());
     handle.SetWeight(weight);
@@ -3864,7 +4316,8 @@ RigExecRigBuilder::AddAnimatedMaps(const std::string &name)
 {
     _RequireName(name, "animated maps name");
     const SdfPath scope = _EnsureScope("AnimatedMaps");
-    UsdPrim prim = _DefineTyped(scope, "RigExecAnimatedMaps", name);
+    UsdPrim prim =
+        _DefineTyped(scope, SchemaTypeName::RigExecAnimatedMaps, name);
     _ApplyApiRequired(prim, _kNodeGraphApi);
     return RigExecAnimatedMapsHandle(_stage, prim.GetPath());
 }
@@ -3879,31 +4332,28 @@ RigExecAnimatedMapsHandle::SetInputs(const std::vector<SdfPath> &properties)
                 property.GetString());
         }
     }
-    SetRel("rigExec:driverAttributes", properties);
+    SetRel(SchemaAttrText::rigExecDriverAttributes, properties);
 }
 
 void
 RigExecAnimatedMapsHandle::SetMeshes(const std::vector<SdfPath> &meshes)
 {
-    SetRel("rigExec:meshes", meshes);
+    SetRel(SchemaAttrText::rigExecMeshes, meshes);
 }
 
 void
 RigExecAnimatedMapsHandle::SetEnabled(bool enabled)
 {
-    _AuthorAttr(GetPrim(), "inputs:enabled", SdfValueTypeNames->Bool,
-                VtValue(enabled));
+    _AuthorAttr(GetPrim(), SchemaAttrText::inputsEnabled,
+                SdfValueTypeNames->Bool, VtValue(enabled));
 }
 
 SdfPath
-RigExecAnimatedMapsHandle::AddMap(const std::string &name,
-                                  const std::vector<int> &inputs,
-                                  const std::vector<float> &from,
-                                  const std::vector<float> &to,
-                                  const std::vector<float> &slope,
-                                  const std::vector<float> &cut,
-                                  const std::string &primvarName,
-                                  bool clampOutput)
+RigExecAnimatedMapsHandle::AddMap(
+    const std::string &name, const std::vector<int> &inputs,
+    const std::vector<float> &from, const std::vector<float> &to,
+    const std::vector<float> &slope, const std::vector<float> &cut,
+    const std::string &primvarName, bool clampOutput)
 {
     if (name.empty() || !SdfPath::IsValidIdentifier(name)) {
         throw std::invalid_argument(
@@ -3916,41 +4366,50 @@ RigExecAnimatedMapsHandle::AddMap(const std::string &name,
     }
     const SdfPath mapPath = _path.AppendChild(TfToken(name));
     if (_stage->GetPrimAtPath(mapPath)) {
-        throw std::invalid_argument(
-            "animated map already exists: " + mapPath.GetString());
+        throw std::invalid_argument("animated map already exists: " +
+                                    mapPath.GetString());
     }
-    UsdPrim prim = RigExecSchemaPrim::Define(
-        _stage, mapPath, TfToken("RigExecAnimatedMap")).GetPrim();
+    UsdPrim prim =
+        RigExecSchemaPrim::Define(_stage, mapPath,
+                                  TfToken(SchemaTypeName::RigExecAnimatedMap))
+            .GetPrim();
     _ApplyApiRequired(prim, _kNodeGraphApi);
-    _AuthorAttr(prim, "rigExec:rowInputs", SdfValueTypeNames->IntArray,
+    _AuthorAttr(prim, SchemaAttrText::rigExecRowInputs,
+                SdfValueTypeNames->IntArray,
                 VtValue(VtIntArray(inputs.begin(), inputs.end())));
-    _AuthorAttr(prim, "rigExec:rowFrom", SdfValueTypeNames->FloatArray,
+    _AuthorAttr(prim, SchemaAttrText::rigExecRowFrom,
+                SdfValueTypeNames->FloatArray,
                 VtValue(VtFloatArray(from.begin(), from.end())));
-    _AuthorAttr(prim, "rigExec:rowTo", SdfValueTypeNames->FloatArray,
+    _AuthorAttr(prim, SchemaAttrText::rigExecRowTo,
+                SdfValueTypeNames->FloatArray,
                 VtValue(VtFloatArray(to.begin(), to.end())));
-    _AuthorAttr(prim, "rigExec:rowSlope", SdfValueTypeNames->FloatArray,
+    _AuthorAttr(prim, SchemaAttrText::rigExecRowSlope,
+                SdfValueTypeNames->FloatArray,
                 VtValue(VtFloatArray(slope.begin(), slope.end())));
-    _AuthorAttr(prim, "rigExec:rowCut", SdfValueTypeNames->FloatArray,
+    _AuthorAttr(prim, SchemaAttrText::rigExecRowCut,
+                SdfValueTypeNames->FloatArray,
                 VtValue(VtFloatArray(cut.begin(), cut.end())));
     if (!primvarName.empty()) {
-        _AuthorAttr(prim, "rigExec:primvarName", SdfValueTypeNames->Token,
-                    VtValue(TfToken(primvarName)));
+        _AuthorAttr(prim, SchemaAttrText::rigExecPrimvarName,
+                    SdfValueTypeNames->Token, VtValue(TfToken(primvarName)));
     }
     if (!clampOutput) {
-        _AuthorAttr(prim, "rigExec:clampOutput", SdfValueTypeNames->Bool,
-                    VtValue(false));
+        _AuthorAttr(prim, SchemaAttrText::rigExecClampOutput,
+                    SdfValueTypeNames->Bool, VtValue(false));
     }
-    _AuthorAttr(prim, "outputs:value", SdfValueTypeNames->Float, VtValue(0.f));
-    return mapPath.AppendProperty(TfToken("outputs:value"));
+    _AuthorAttr(prim, SchemaAttrText::outputsValue, SdfValueTypeNames->Float,
+                VtValue(0.f));
+    return mapPath.AppendProperty(TfToken(SchemaAttrText::outputsValue));
 }
 
 RigExecPoseInterpolatorHandle
-RigExecRigBuilder::AddPoseInterpolator(
-    const std::string &name, const SdfPath &driver)
+RigExecRigBuilder::AddPoseInterpolator(const std::string &name,
+                                       const SdfPath &driver)
 {
     _RequireName(name, "pose interpolator name");
     const SdfPath scope = _EnsureScope("PoseInterpolators");
-    UsdPrim prim = _DefineTyped(scope, "RigExecPoseInterpolator", name);
+    UsdPrim prim =
+        _DefineTyped(scope, SchemaTypeName::RigExecPoseInterpolator, name);
     _ApplyApiRequired(prim, _kNodeGraphApi);
     RigExecPoseInterpolatorHandle handle(_stage, prim.GetPath());
     handle.SetDriver(driver);
@@ -3958,7 +4417,8 @@ RigExecRigBuilder::AddPoseInterpolator(
 }
 
 RigExecMoverChain
-RigExecRigBuilder::NewMoverChain(const std::string &name, const SdfPath &defaultTarget)
+RigExecRigBuilder::NewMoverChain(const std::string &name,
+                                 const SdfPath &defaultTarget)
 {
     _RequireName(name, "mover chain name");
     if (!defaultTarget.IsEmpty()) {
@@ -3970,4 +4430,4 @@ RigExecRigBuilder::NewMoverChain(const std::string &name, const SdfPath &default
     return RigExecMoverChain(_stage, chainPath, defaultTarget);
 }
 
-}  // namespace rigExec
+} // namespace rigExec

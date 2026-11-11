@@ -200,6 +200,11 @@ cycle handling, and native/frozen/runtime parity. See
   `libs/rigExecSchema/schemaTokens.h` for the codeless RigExec schema,
   `TF_DEFINE_PRIVATE_TOKENS`), never through string literals at the use
   site. Declare each token once at namespace scope and reuse it.
+  `libs/rigExecSchema/schemaNames.h` spells every RigExec type, attribute,
+  value token and provider computation name once as plain text, so the
+  binary runtime (no OpenUSD library) compares the same spelling;
+  `schemaTokens.h` interns those constants for stage-side code. Keep both in
+  step with `schema.usda`.
 - Avoid raw pointers. Owned objects go through `std::unique_ptr` /
   `std::shared_ptr`; a required non-null parameter takes a reference (or a
   const reference for a read-only borrow); a raw pointer appears only as
@@ -351,8 +356,19 @@ exceptions are accepted:
   `std::free` behind `ISzAlloc` and `FreeBuffer`) is not a `new`
   expression; leave it alone.
 
-No checker or CI job enforces this rule; review does. Keep the exceptions
-above in sync with the code they describe.
+The same rule covers raw pointers: an object that a local pointer owns goes
+through `std::unique_ptr`, and a raw pointer is only borrowed or optional
+access. `tools/check_allocations.py` runs in CI and fails on a new `new`
+expression in the owned sources: bare `new T`, `new T{}`, `new T[n]`, one
+split across lines, and placement `new (buffer) T`, which is reported as its
+own kind. Comments, string literals and `operator new` definitions are not
+hits. The deliberate exceptions sit in `tools/allocations_allowlist.txt`, one
+`file | kind | line` entry each. The scan is textual, so review still judges
+the ownership shape a `make_shared` hides, a `TfRefPtr` built from a raw
+pointer, or a passkey gate that is really an aggregate.
+`testRigExecAllocationChecker` runs the checker's `--self-test` over synthetic
+sources of every form above; extend `_SELF_CASES` when the extractor changes.
+Keep the exceptions above in sync with the code they describe.
 
 ### Build and test
 

@@ -58,17 +58,6 @@ libs/rigExec/bakedOpGraph.cpp | env | B->opWorkspace.verifyReset=TfGetenvBool("R
 libs/rigExec/bakedPose.cpp | token-text | TfToken value(fallback);
 libs/rigExec/bakedPose.cpp | token-text | return TfToken(port);
 
-libs/rigExec/bakedProgram.cpp | token-text | const TfToken kRestAvarTokens[6] = {TfToken("rest:tx"), TfToken("rest:ty"),
-libs/rigExec/bakedProgram.cpp | token-text | TfToken("rest:tz"), TfToken("rest:rx"),
-libs/rigExec/bakedProgram.cpp | token-text | TfToken("rest:ry"), TfToken("rest:rz")};
-libs/rigExec/bakedProgram.cpp | token-text | TfToken("default:tx"), TfToken("default:ty"), TfToken("default:tz"),
-libs/rigExec/bakedProgram.cpp | token-text | TfToken("default:rx"), TfToken("default:ry"), TfToken("default:rz")};
-libs/rigExec/bakedProgram.cpp | token-text | TfToken(RigExecBakedAvarNames[0]), TfToken(RigExecBakedAvarNames[1]),
-libs/rigExec/bakedProgram.cpp | token-text | TfToken(RigExecBakedAvarNames[2]), TfToken(RigExecBakedAvarNames[3]),
-libs/rigExec/bakedProgram.cpp | token-text | TfToken(RigExecBakedAvarNames[4]), TfToken(RigExecBakedAvarNames[5]),
-libs/rigExec/bakedProgram.cpp | token-text | TfToken(RigExecBakedAvarNames[6]), TfToken(RigExecBakedAvarNames[7]),
-libs/rigExec/bakedProgram.cpp | token-text | TfToken(RigExecBakedAvarNames[8]), TfToken(RigExecBakedAvarNames[9]),
-libs/rigExec/bakedProgram.cpp | token-text | TfToken(RigExecBakedAvarNames[10])};
 libs/rigExec/bakedProgram.cpp | env | TfGetenvBool("RIGEXEC_BAKED_PROGRAM_DIGEST", false);
 libs/rigExec/bakedProgram.cpp | env | B.gpuDeformStats = TfGetenvBool("RIGEXEC_GPU_DEFORM_STATS", false);
 libs/rigExec/bakedProgram.cpp | env | B.purityAudit = TfGetenvBool("RIGEXEC_PURITY_AUDIT", false);
@@ -77,8 +66,6 @@ libs/rigExec/bakedProgram.cpp | env | B.pathLeafGating = TfGetenvBool("RIGEXEC_P
 libs/rigExec/bakedProgram.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_PATH_LEAF_GATING", false);
 libs/rigExec/bakedProgram.cpp | env | B.sparseSampling = TfGetenvBool("RIGEXEC_SPARSE_SAMPLING", true);
 libs/rigExec/bakedProgram.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_SPARSE_SAMPLING", false);
-libs/rigExec/bakedProgram.cpp | token-text | TfToken("inputs:sourceWeights"), TfToken("inputs:translationOffsets"),
-libs/rigExec/bakedProgram.cpp | token-text | TfToken("inputs:rotationOffsets"), TfToken("inputs:poleVectorWeights")};
 
 libs/rigExec/bakedProperties.cpp | token-text | TfToken("frozenOracleHop:" + leaf.path.GetName()));
 
@@ -91,9 +78,9 @@ libs/rigExec/bakedSchedule.cpp | env | const int value = TfGetenvInt("RIGEXEC_BA
 libs/rigExec/bakedSchedule.cpp | env | const int value = TfGetenvInt("RIGEXEC_BAKED_STEP_TIMING", 0);
 libs/rigExec/bakedSchedule.cpp | env | B.traceAllSteps = TfGetenvBool("RIGEXEC_TRACE_ALL_STEPS", false);
 
-libs/rigExec/bakedSpaces.cpp | token-text | TfToken("rigExec:providerRaw:"+input.attribute.GetName())));
-libs/rigExec/bakedSpaces.cpp | env | if(!TfGetenvBool("RIGEXEC_PROVIDER_PRUNE",true)) return true;
-libs/rigExec/bakedSpaces.cpp | env | const bool verify=TfGetenvBool("RIGEXEC_VERIFY_PROVIDER_PRUNE",false);
+libs/rigExec/bakedSpaces.cpp | token-text | TfToken("rigExec:providerRaw:" + input.attribute.GetName())));
+libs/rigExec/bakedSpaces.cpp | env | if (!TfGetenvBool("RIGEXEC_PROVIDER_PRUNE", true))
+libs/rigExec/bakedSpaces.cpp | env | const bool verify = TfGetenvBool("RIGEXEC_VERIFY_PROVIDER_PRUNE", false);
 
 libs/rigExec/bakedVerify.cpp | env | TfGetenvBool("RIGEXEC_BAKED_VERIFY_CONES", false);
 
@@ -127,7 +114,10 @@ libs/rigExec/frameCacheSparsity.h | lock | mutable std::mutex _mutex;
 
 libs/rigExec/frozenDigest.cpp | local-static | static const std::vector<RigExecPurityFinding> audit = {
 
-libs/rigExec/frozenSnapshot.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_CLONE_KEYS", false);
+libs/rigExec/frozenSampling.cpp | token-text | TfToken("rigExec:override:" + o.computation.GetString()));
+libs/rigExec/frozenSampling.cpp | token-text | TfToken("rigExec:override:" + o.computation.GetString()));
+
+libs/rigExec/frozenSnapshot.cpp | env | program->verifyCloneKeys = TfGetenvBool("RIGEXEC_VERIFY_CLONE_KEYS", false);
 
 libs/rigExec/gpuCloth.cpp | env | const char *value = std::getenv("RIGEXEC_GPU_CLOTH");
 libs/rigExec/gpuCloth.cpp | env | const char *value = std::getenv("RIGEXEC_GPU_CLOTH_MIN_POINTS");
@@ -195,8 +185,6 @@ libs/rigExec/profiler.h | lock | mutable std::mutex _mutex;
 
 libs/rigExec/rigEvaluator.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_SCOPED_CLEARS", false);
 
-libs/rigExec/rigEvaluatorCompile.cpp | token-text | TfToken("primvars:" + name.GetString()));
-
 libs/rigExec/rigEvaluatorDependencies.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_POSEINFO", false);
 
 libs/rigExec/rigEvaluatorDigest.cpp | token-text | tokens[i] = TfToken(names[i], TfToken::Immortal);
@@ -229,10 +217,4 @@ libs/rigExecRuntime/inputs.cpp | env | const char *value = std::getenv(name);
 
 libs/rigExecRuntime/open.cpp | env | const char *value = std::getenv(name);
 
-libs/rigExecScene/sceneDescriptors.cpp | token-text | if (!scene.primvarNames.count(primvar)) scene.primvarNames.emplace(primvar, TfToken(primvar));
-
-# The 2D bone channel-name table: namespace scope, interned once at load.
-libs/rigExecScene/skeleton2dTranslation.h | token-text | TfToken("avars:tx"), TfToken("avars:ty"), TfToken("avars:rz"), TfToken("avars:sx"),
-libs/rigExecScene/skeleton2dTranslation.h | token-text | TfToken("bone2d:sideFlip"), TfToken("bone2d:endFlip"), TfToken("bone2d:lock"),
-libs/rigExecScene/skeleton2dTranslation.h | token-text | TfToken("bone2d:lockX"), TfToken("bone2d:lockY"), TfToken("bone2d:lockAngle"),
-libs/rigExecScene/skeleton2dTranslation.h | token-text | TfToken("bone2d:offsetX"), TfToken("bone2d:offsetY"), TfToken("bone2d:targetIndex")};
+libs/rigExecScene/sceneDescriptors.cpp | token-text | scene.primvarNames.emplace(primvar, TfToken(primvar));

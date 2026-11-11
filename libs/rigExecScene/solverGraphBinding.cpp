@@ -1,3 +1,4 @@
+#include "rigExecSchema/schemaNames.h"
 #include "solverGraphBinding.h"
 #include "skeleton2dTranslation.h"
 #include "rigExec/types.h"
@@ -6,247 +7,453 @@
 #include "pxr/base/tf/staticTokens.h"
 namespace rigExec {
 TF_DEFINE_PRIVATE_TOKENS(_tokens,
-    ((rigExecEnd,"rigExec:end")) ((rigExecEffectorControl,"rigExec:effectorControl"))
-    ((rigExecEndControl,"rigExec:endControl")) ((rigExecStart,"rigExec:start"))
-    ((rigExecRootControl,"rigExec:rootControl")) ((rigExecControls,"rigExec:controls"))
-    ((rigExecStartFrame,"rigExec:startFrame")) ((rigExecMidControl,"rigExec:midControl"))
-    ((rigExecPoleControl,"rigExec:poleControl")) ((rigExecSpace,"rigExec:space"))
-    ((rigExecInputA,"rigExec:inputA")) ((rigExecInputB,"rigExec:inputB")) (base) (preceding)
+    ((rigExecEnd,SchemaAttrText::rigExecEnd)) ((rigExecEffectorControl,SchemaAttrText::rigExecEffectorControl))
+    ((rigExecEndControl,SchemaAttrText::rigExecEndControl)) ((rigExecStart,SchemaAttrText::rigExecStart))
+    ((rigExecRootControl,SchemaAttrText::rigExecRootControl)) ((rigExecControls,SchemaAttrText::rigExecControls))
+    ((rigExecStartFrame,SchemaAttrText::rigExecStartFrame)) ((rigExecMidControl,SchemaAttrText::rigExecMidControl))
+    ((rigExecPoleControl,SchemaAttrText::rigExecPoleControl)) ((rigExecSpace,SchemaAttrText::rigExecSpace))
+    ((rigExecInputA,SchemaAttrText::rigExecInputA)) ((rigExecInputB,SchemaAttrText::rigExecInputB)) (base) (preceding)
 );
 namespace {
-void Add(std::vector<RigExecValueId> *reads,RigExecValueId id) {
-    if(id!=UINT64_MAX)reads->push_back(id);
+void
+Add(std::vector<RigExecValueId> *reads, RigExecValueId id)
+{
+    if (id != UINT64_MAX)
+        reads->push_back(id);
 }
-bool Fail(std::string *error,const char *message) {if(error)*error=message;return false;}
-bool Frame(const RigExecTypedValueStore &store,RigExecValueId id,RigExecPointFrame *out) {
-    if(id==UINT64_MAX)return true;
+bool
+Fail(std::string *error, const char *message)
+{
+    if (error)
+        *error = message;
+    return false;
+}
+bool
+Frame(const RigExecTypedValueStore &store, RigExecValueId id,
+      RigExecPointFrame *out)
+{
+    if (id == UINT64_MAX)
+        return true;
     VtValue value;
-    if(!RigExecReadSceneGraphValue(store,id,&value) || !value.IsHolding<RigExecPointFrame>())return false;
-    *out=value.UncheckedGet<RigExecPointFrame>();return true;
+    if (!RigExecReadSceneGraphValue(store, id, &value) ||
+        !value.IsHolding<RigExecPointFrame>())
+        return false;
+    *out = value.UncheckedGet<RigExecPointFrame>();
+    return true;
 }
-const RigExecPointFrameArray *Aggregate(const RigExecTypedValueStore &store,RigExecValueId id) {
-    if(id>=store.values.size() || store.values[size_t(id)].blocked)return nullptr;
-    const auto *value=store.Read<VtValue>(id);
-    return value && value->IsHolding<RigExecPointFrameArray>() ? &value->UncheckedGet<RigExecPointFrameArray>() : nullptr;
+const RigExecPointFrameArray *
+Aggregate(const RigExecTypedValueStore &store, RigExecValueId id)
+{
+    if (id >= store.values.size() || store.values[size_t(id)].blocked)
+        return nullptr;
+    const auto *value = store.Read<VtValue>(id);
+    return value && value->IsHolding<RigExecPointFrameArray>()
+               ? &value->UncheckedGet<RigExecPointFrameArray>()
+               : nullptr;
 }
-}
-bool RigExecBindGraphInputs(const std::map<std::string,RigExecSceneBoundInput> &inputs,
-    const std::map<std::string,RigExecSceneTypedRead> &typed,const SdfPath &reader,
-    const RigExecSceneGraphBindingContext &context,RigExecBoundGraphInputs *out,
-    std::vector<RigExecValueId> *reads,std::string *error) {
-    if(!out || !reads || !context.resolve)return Fail(error,"invalid graph input binding context");
+} // namespace
+bool
+RigExecBindGraphInputs(
+    const std::map<std::string, RigExecSceneBoundInput> &inputs,
+    const std::map<std::string, RigExecSceneTypedRead> &typed,
+    const SdfPath &reader, const RigExecSceneGraphBindingContext &context,
+    RigExecBoundGraphInputs *out, std::vector<RigExecValueId> *reads,
+    std::string *error)
+{
+    if (!out || !reads || !context.resolve)
+        return Fail(error, "invalid graph input binding context");
     out->clear();
-    for(const auto &[name,input]:inputs) {
+    for (const auto &[name, input] : inputs) {
         RigExecBoundGraphInput bound;
-        const auto traversal=typed.find(name);
-        if(traversal!=typed.end()) {
-            bound.typed=true;
-            if(!RigExecBindGraphTypedRead(traversal->second,context,&bound.traversal,error))return false;
-            for(const auto *hops:{&bound.traversal.hops,&bound.traversal.doubleHops})
-                for(const auto &hop:*hops) {Add(reads,hop.raw);Add(reads,hop.overlay);}
+        const auto traversal = typed.find(name);
+        if (traversal != typed.end()) {
+            bound.typed = true;
+            if (!RigExecBindGraphTypedRead(traversal->second, context,
+                                           &bound.traversal, error))
+                return false;
+            for (const auto *hops :
+                 {&bound.traversal.hops, &bound.traversal.doubleHops})
+                for (const auto &hop : *hops) {
+                    Add(reads, hop.raw);
+                    Add(reads, hop.overlay);
+                }
         } else {
             RigExecSceneGraphReadRequest request;
-            request.consumer=input.consumer;request.source=input.source;request.reader=reader;
-            request.phase=input.readPhase;request.raw=input.route==RigExecSceneReadRoute::Raw;
-            if(!context.resolve(request,&bound.direct,error))return false;
-            if(bound.direct==UINT64_MAX)return Fail(error,"graph input resolver returned no value ID");
-            Add(reads,bound.direct);
+            request.consumer = input.consumer;
+            request.source = input.source;
+            request.reader = reader;
+            request.phase = input.readPhase;
+            request.raw = input.route == RigExecSceneReadRoute::Raw;
+            if (!context.resolve(request, &bound.direct, error))
+                return false;
+            if (bound.direct == UINT64_MAX)
+                return Fail(error, "graph input resolver returned no value ID");
+            Add(reads, bound.direct);
         }
-        out->emplace(name,std::move(bound));
+        out->emplace(name, std::move(bound));
     }
     return true;
 }
-bool RigExecReadBoundGraphInput(const RigExecBoundGraphInputs &inputs,const char *name,
-    const RigExecTypedValueStore &store,VtValue *out,std::string *error) {
-    if(!out)return Fail(error,"null graph input output");*out=VtValue();
-    const auto found=inputs.find(name);if(found==inputs.end())return true;
-    if(!found->second.typed) {RigExecReadSceneGraphValue(store,found->second.direct,out);return true;}
+bool
+RigExecReadBoundGraphInput(const RigExecBoundGraphInputs &inputs,
+                           const char *name,
+                           const RigExecTypedValueStore &store, VtValue *out,
+                           std::string *error)
+{
+    if (!out)
+        return Fail(error, "null graph input output");
+    *out = VtValue();
+    const auto found = inputs.find(name);
+    if (found == inputs.end())
+        return true;
+    if (!found->second.typed) {
+        RigExecReadSceneGraphValue(store, found->second.direct, out);
+        return true;
+    }
     std::string unavailable;
-    if(RigExecReadGraphTypedRead(found->second.traversal,store,out,&unavailable))return true;
-    if(unavailable.empty())return true;
-    if(error)*error=unavailable;return false;
+    if (RigExecReadGraphTypedRead(found->second.traversal, store, out,
+                                  &unavailable))
+        return true;
+    if (unavailable.empty())
+        return true;
+    if (error)
+        *error = unavailable;
+    return false;
 }
-bool RigExecBindSolverGraph(const RigExecSceneSolverDescriptor &source,
-    const RigExecSceneGraphBindingContext &context,RigExecValueId output,
-    RigExecSolverGraphBinding *destination,std::string *error) {
-    if(!destination || !context.resolve || output==UINT64_MAX)return Fail(error,"invalid solver graph destination");
-    RigExecSolverGraphBinding bound;bound.record=source.record;bound.output=output;
-    bound.hasSpace=!source.space.IsEmpty();bound.spaceRest=source.spaceRest;
-    if(!RigExecBindGraphInputs(source.inputs,source.typedReads,source.path,context,&bound.inputs,&bound.reads,error))return false;
+bool
+RigExecBindSolverGraph(const RigExecSceneSolverDescriptor &source,
+                       const RigExecSceneGraphBindingContext &context,
+                       RigExecValueId output,
+                       RigExecSolverGraphBinding *destination,
+                       std::string *error)
+{
+    if (!destination || !context.resolve || output == UINT64_MAX)
+        return Fail(error, "invalid solver graph destination");
+    RigExecSolverGraphBinding bound;
+    bound.record = source.record;
+    bound.output = output;
+    bound.hasSpace = !source.space.IsEmpty();
+    bound.spaceRest = source.spaceRest;
+    if (!RigExecBindGraphInputs(source.inputs, source.typedReads, source.path,
+                                context, &bound.inputs, &bound.reads, error))
+        return false;
     bound.bone2dChannels.resize(source.bone2dChannelReads.size());
-    for(size_t k=0;k<source.bone2dChannelReads.size();++k) {
-        if(!RigExecBindGraphTypedRead(source.bone2dChannelReads[k],context,&bound.bone2dChannels[k],error))return false;
-        for(const auto *hops:{&bound.bone2dChannels[k].hops,&bound.bone2dChannels[k].doubleHops})
-            for(const auto &hop:*hops) {Add(&bound.reads,hop.raw);Add(&bound.reads,hop.overlay);}
+    for (size_t k = 0; k < source.bone2dChannelReads.size(); ++k) {
+        if (!RigExecBindGraphTypedRead(source.bone2dChannelReads[k], context,
+                                       &bound.bone2dChannels[k], error))
+            return false;
+        for (const auto *hops : {&bound.bone2dChannels[k].hops,
+                                 &bound.bone2dChannels[k].doubleHops})
+            for (const auto &hop : *hops) {
+                Add(&bound.reads, hop.raw);
+                Add(&bound.reads, hop.overlay);
+            }
     }
     bound.bone2dSelectors.resize(source.bone2dSelectorReads.size());
-    bound.bone2dSelectorFallbacks=source.bone2dSelectorFallbacks;
-    for(size_t g=0;g<source.bone2dSelectorReads.size();++g) {
-        if(!RigExecBindGraphTypedRead(source.bone2dSelectorReads[g],context,&bound.bone2dSelectors[g],error))return false;
-        for(const auto *hops:{&bound.bone2dSelectors[g].hops,&bound.bone2dSelectors[g].doubleHops})
-            for(const auto &hop:*hops) {Add(&bound.reads,hop.raw);Add(&bound.reads,hop.overlay);}
+    bound.bone2dSelectorFallbacks = source.bone2dSelectorFallbacks;
+    for (size_t g = 0; g < source.bone2dSelectorReads.size(); ++g) {
+        if (!RigExecBindGraphTypedRead(source.bone2dSelectorReads[g], context,
+                                       &bound.bone2dSelectors[g], error))
+            return false;
+        for (const auto *hops : {&bound.bone2dSelectors[g].hops,
+                                 &bound.bone2dSelectors[g].doubleHops})
+            for (const auto &hop : *hops) {
+                Add(&bound.reads, hop.raw);
+                Add(&bound.reads, hop.overlay);
+            }
     }
     bound.jointGroupSelectors.resize(source.jointGroupSelectorReads.size());
-    for(size_t g=0;g<source.jointGroupSelectorReads.size();++g) {
-        if(!RigExecBindGraphTypedRead(source.jointGroupSelectorReads[g],context,&bound.jointGroupSelectors[g],error))return false;
-        for(const auto *hops:{&bound.jointGroupSelectors[g].hops,&bound.jointGroupSelectors[g].doubleHops})
-            for(const auto &hop:*hops) {Add(&bound.reads,hop.raw);Add(&bound.reads,hop.overlay);}
+    for (size_t g = 0; g < source.jointGroupSelectorReads.size(); ++g) {
+        if (!RigExecBindGraphTypedRead(source.jointGroupSelectorReads[g],
+                                       context, &bound.jointGroupSelectors[g],
+                                       error))
+            return false;
+        for (const auto *hops : {&bound.jointGroupSelectors[g].hops,
+                                 &bound.jointGroupSelectors[g].doubleHops})
+            for (const auto &hop : *hops) {
+                Add(&bound.reads, hop.raw);
+                Add(&bound.reads, hop.overlay);
+            }
     }
-    const auto bind=[&](const SdfPath &path,const TfToken &name,RigExecValueId *id,bool aggregate=false,bool *required=nullptr) {
-        if(path.IsEmpty() || source.record.degenerate)return true;
+    const auto bind = [&](const SdfPath &path, const TfToken &name,
+                          RigExecValueId *id, bool aggregate = false,
+                          bool *required = nullptr) {
+        if (path.IsEmpty() || source.record.degenerate)
+            return true;
         RigExecSceneGraphReadRequest request;
-        request.consumer=source.path.AppendProperty(name);request.source=path;request.reader=source.path;
-        request.domain=aggregate?RigExecSceneValueDomain::SolverAggregate:RigExecSceneValueDomain::Pose;
-        const auto relation=source.frameBindings.find(name.GetString());
-        request.phase=relation==source.frameBindings.end()?_tokens->base:relation->second.phase;
-        if(required)*required=request.phase!="base";
-        if(!context.resolve(request,id,error))return false;
-        if(*id==UINT64_MAX)return Fail(error,"solver resolver returned no value ID");
-        Add(&bound.reads,*id);return true;
+        request.consumer = source.path.AppendProperty(name);
+        request.source = path;
+        request.reader = source.path;
+        request.domain = aggregate ? RigExecSceneValueDomain::SolverAggregate
+                                   : RigExecSceneValueDomain::Pose;
+        const auto relation = source.frameBindings.find(name.GetString());
+        request.phase = relation == source.frameBindings.end()
+                            ? _tokens->base
+                            : relation->second.phase;
+        if (required)
+            *required = request.phase != "base";
+        if (!context.resolve(request, id, error))
+            return false;
+        if (*id == UINT64_MAX)
+            return Fail(error, "solver resolver returned no value ID");
+        Add(&bound.reads, *id);
+        return true;
     };
-    for(const auto &control:source.controls) {
+    for (const auto &control : source.controls) {
         bound.controls.push_back(UINT64_MAX);
-        if(!bind(control,_tokens->rigExecControls,&bound.controls.back()))return false;
+        if (!bind(control, _tokens->rigExecControls, &bound.controls.back()))
+            return false;
     }
-    const bool twist=source.record.kind==RigExecSolverKind::TwistDistribution;
-    const bool ik=source.record.kind==RigExecSolverKind::TwoBoneIk;
-    if(!bind(source.start,_tokens->rigExecStartFrame,&bound.start) ||
-       !bind(source.root,twist?_tokens->rigExecStart:_tokens->rigExecRootControl,&bound.root) ||
-       !bind(source.mid,_tokens->rigExecMidControl,&bound.mid) ||
-       !bind(source.end,twist?_tokens->rigExecEnd:ik?_tokens->rigExecEffectorControl:_tokens->rigExecEndControl,&bound.end) ||
-       !bind(source.pole,_tokens->rigExecPoleControl,&bound.pole) || !bind(source.space,_tokens->rigExecSpace,&bound.space) ||
-       !bind(source.blendA,_tokens->rigExecInputA,&bound.blendA,true,&bound.blendARequired) ||
-       !bind(source.blendB,_tokens->rigExecInputB,&bound.blendB,true,&bound.blendBRequired))return false;
-    const auto rest=[&](const SdfPath &path,RigExecValueId *id,bool live=false,bool *liveRest=nullptr) {
-        if(path.IsEmpty() || source.record.degenerate)return true;
+    const bool twist =
+        source.record.kind == RigExecSolverKind::TwistDistribution;
+    const bool ik = source.record.kind == RigExecSolverKind::TwoBoneIk;
+    if (!bind(source.start, _tokens->rigExecStartFrame, &bound.start) ||
+        !bind(source.root,
+              twist ? _tokens->rigExecStart : _tokens->rigExecRootControl,
+              &bound.root) ||
+        !bind(source.mid, _tokens->rigExecMidControl, &bound.mid) ||
+        !bind(source.end,
+              twist ? _tokens->rigExecEnd
+              : ik  ? _tokens->rigExecEffectorControl
+                    : _tokens->rigExecEndControl,
+              &bound.end) ||
+        !bind(source.pole, _tokens->rigExecPoleControl, &bound.pole) ||
+        !bind(source.space, _tokens->rigExecSpace, &bound.space) ||
+        !bind(source.blendA, _tokens->rigExecInputA, &bound.blendA, true,
+              &bound.blendARequired) ||
+        !bind(source.blendB, _tokens->rigExecInputB, &bound.blendB, true,
+              &bound.blendBRequired))
+        return false;
+    const auto rest = [&](const SdfPath &path, RigExecValueId *id,
+                          bool live = false, bool *liveRest = nullptr) {
+        if (path.IsEmpty() || source.record.degenerate)
+            return true;
         RigExecSceneGraphReadRequest request;
-        request.consumer=source.path;request.source=path;request.reader=source.path;
-        request.domain=RigExecSceneValueDomain::Pose;request.computation="computeRestFrame";
-        request.phase=live?_tokens->preceding:_tokens->base;request.liveRest=liveRest;
-        if(!context.resolve(request,id,error))return false;
-        if(*id==UINT64_MAX)return Fail(error,"solver resolver returned no value ID");
-        Add(&bound.reads,*id);return true;
+        request.consumer = source.path;
+        request.source = path;
+        request.reader = source.path;
+        request.domain = RigExecSceneValueDomain::Pose;
+        request.computation = SchemaComputationText::computeRestFrame;
+        request.phase = live ? _tokens->preceding : _tokens->base;
+        request.liveRest = liveRest;
+        if (!context.resolve(request, id, error))
+            return false;
+        if (*id == UINT64_MAX)
+            return Fail(error, "solver resolver returned no value ID");
+        Add(&bound.reads, *id);
+        return true;
     };
-    for(const auto &control:source.controls) {
+    for (const auto &control : source.controls) {
         bound.controlRests.push_back(UINT64_MAX);
-        if(!rest(control,&bound.controlRests.back()))return false;
+        if (!rest(control, &bound.controlRests.back()))
+            return false;
     }
-    for(const auto &joint:source.joints) {
+    for (const auto &joint : source.joints) {
         bound.jointRests.push_back(UINT64_MAX);
-        bool liveRest=false;
-        if(!rest(joint,&bound.jointRests.back(),true,&liveRest))return false;
+        bool liveRest = false;
+        if (!rest(joint, &bound.jointRests.back(), true, &liveRest))
+            return false;
         bound.jointRestLive.push_back(liveRest);
     }
-    bound.jointElements=source.jointElements;
-    if(!rest(source.start,&bound.startRest) || !rest(source.root,&bound.rootRest) ||
-       !rest(source.mid,&bound.midRest) || !rest(source.end,&bound.endRest) ||
-       !rest(source.space,&bound.spaceRestId))return false;
-    if(source.record.kind==RigExecSolverKind::Ribbon && !source.ribbonPoints.IsEmpty()) {
+    bound.jointElements = source.jointElements;
+    if (!rest(source.start, &bound.startRest) ||
+        !rest(source.root, &bound.rootRest) ||
+        !rest(source.mid, &bound.midRest) ||
+        !rest(source.end, &bound.endRest) ||
+        !rest(source.space, &bound.spaceRestId))
+        return false;
+    if (source.record.kind == RigExecSolverKind::Ribbon &&
+        !source.ribbonPoints.IsEmpty()) {
         RigExecSceneGraphReadRequest request;
-        request.consumer=source.path;request.source=source.ribbonPoints;request.reader=source.path;
-        request.domain=RigExecSceneValueDomain::Points;request.raw=true;request.atDefault=true;
-        if(!context.resolve(request,&bound.ribbonRestPoints,error))return false;
-        if(bound.ribbonRestPoints==UINT64_MAX)return Fail(error,"ribbon rest resolver returned no value ID");
-        Add(&bound.reads,bound.ribbonRestPoints);
+        request.consumer = source.path;
+        request.source = source.ribbonPoints;
+        request.reader = source.path;
+        request.domain = RigExecSceneValueDomain::Points;
+        request.raw = true;
+        request.atDefault = true;
+        if (!context.resolve(request, &bound.ribbonRestPoints, error))
+            return false;
+        if (bound.ribbonRestPoints == UINT64_MAX)
+            return Fail(error, "ribbon rest resolver returned no value ID");
+        Add(&bound.reads, bound.ribbonRestPoints);
     }
-    std::sort(bound.reads.begin(),bound.reads.end());bound.reads.erase(std::unique(bound.reads.begin(),bound.reads.end()),bound.reads.end());
-    *destination=std::move(bound);return true;
+    std::sort(bound.reads.begin(), bound.reads.end());
+    bound.reads.erase(std::unique(bound.reads.begin(), bound.reads.end()),
+                      bound.reads.end());
+    *destination = std::move(bound);
+    return true;
 }
-bool RigExecRunSolverGraph(const RigExecSolverGraphBinding &bound,RigExecTypedValueStore *store,
-    RigExecSolverWorkspace *workspace,std::string *error) {
-    if(!store || !workspace || bound.output>=store->values.size())return Fail(error,"invalid solver graph storage");
-    RigExecSolverInputs input;RigExecPointFrameArray output;auto record=bound.record;
-    const auto fail=[&](const std::string &message) {store->Publish(bound.output,VtValue(output),true,false,0,message);if(error)*error=message;return false;};
-    if(!bound.record.degenerate) {
+bool
+RigExecRunSolverGraph(const RigExecSolverGraphBinding &bound,
+                      RigExecTypedValueStore *store,
+                      RigExecSolverWorkspace *workspace, std::string *error)
+{
+    if (!store || !workspace || bound.output >= store->values.size())
+        return Fail(error, "invalid solver graph storage");
+    RigExecSolverInputs input;
+    RigExecPointFrameArray output;
+    auto record = bound.record;
+    const auto fail = [&](const std::string &message) {
+        store->Publish(bound.output, VtValue(output), true, false, 0, message);
+        if (error)
+            *error = message;
+        return false;
+    };
+    if (!bound.record.degenerate) {
         record.controlRests.resize(bound.controlRests.size());
-        for(size_t i=0;i<bound.controlRests.size();++i) {
+        for (size_t i = 0; i < bound.controlRests.size(); ++i) {
             RigExecPointFrame frame;
-            if(!Frame(*store,bound.controlRests[i],&frame))return fail("solver control rest producer unavailable");
-            record.controlRests[i]=frame.points;
+            if (!Frame(*store, bound.controlRests[i], &frame))
+                return fail("solver control rest producer unavailable");
+            record.controlRests[i] = frame.points;
         }
-        record.jointRests.resize(bound.jointRests.size());record.restIsLive.assign(bound.jointRests.size(),false);
+        record.jointRests.resize(bound.jointRests.size());
+        record.restIsLive.assign(bound.jointRests.size(), false);
         std::vector<RigExecPointFrame> jointFrames(bound.jointRests.size());
-        for(size_t i=0;i<bound.jointRests.size();++i) {
-            if(!Frame(*store,bound.jointRests[i],&jointFrames[i]))return fail("solver joint rest producer unavailable");
-            record.jointRests[i]=jointFrames[i].points;
-            record.restIsLive[i]=i<bound.jointRestLive.size() && bound.jointRestLive[i];
+        for (size_t i = 0; i < bound.jointRests.size(); ++i) {
+            if (!Frame(*store, bound.jointRests[i], &jointFrames[i]))
+                return fail("solver joint rest producer unavailable");
+            record.jointRests[i] = jointFrames[i].points;
+            record.restIsLive[i] =
+                i < bound.jointRestLive.size() && bound.jointRestLive[i];
         }
-        RigExecPointFrame startRest,rootRest,midRest,endRest,spaceRest;
-        if(!Frame(*store,bound.startRest,&startRest) || !Frame(*store,bound.rootRest,&rootRest) ||
-           !Frame(*store,bound.midRest,&midRest) || !Frame(*store,bound.endRest,&endRest) ||
-           !Frame(*store,bound.spaceRestId,&spaceRest))return fail("solver endpoint rest producer unavailable");
-        if(bound.startRest!=UINT64_MAX)record.startRest=startRest.points;
-        if(bound.rootRest!=UINT64_MAX) {record.twistStartRest=rootRest.points;record.splineRootRest=rootRest;}
-        if(bound.midRest!=UINT64_MAX)record.splineMidRest=midRest;
-        if(bound.endRest!=UINT64_MAX) {record.twistEndRest=endRest.points;record.splineEndRest=endRest;}
-        if(record.kind==RigExecSolverKind::TwoBoneIk)
-            for(size_t i=0;i<jointFrames.size();++i) {
-                if(i>=bound.jointElements.size() || bound.jointElements[i]<0 || bound.jointElements[i]>=3)
+        RigExecPointFrame startRest, rootRest, midRest, endRest, spaceRest;
+        if (!Frame(*store, bound.startRest, &startRest) ||
+            !Frame(*store, bound.rootRest, &rootRest) ||
+            !Frame(*store, bound.midRest, &midRest) ||
+            !Frame(*store, bound.endRest, &endRest) ||
+            !Frame(*store, bound.spaceRestId, &spaceRest))
+            return fail("solver endpoint rest producer unavailable");
+        if (bound.startRest != UINT64_MAX)
+            record.startRest = startRest.points;
+        if (bound.rootRest != UINT64_MAX) {
+            record.twistStartRest = rootRest.points;
+            record.splineRootRest = rootRest;
+        }
+        if (bound.midRest != UINT64_MAX)
+            record.splineMidRest = midRest;
+        if (bound.endRest != UINT64_MAX) {
+            record.twistEndRest = endRest.points;
+            record.splineEndRest = endRest;
+        }
+        if (record.kind == RigExecSolverKind::TwoBoneIk)
+            for (size_t i = 0; i < jointFrames.size(); ++i) {
+                if (i >= bound.jointElements.size() ||
+                    bound.jointElements[i] < 0 || bound.jointElements[i] >= 3)
                     return fail("two-bone IK rest element binding invalid");
-                record.ikRests[size_t(bound.jointElements[i])]=jointFrames[i].points;
+                record.ikRests[size_t(bound.jointElements[i])] =
+                    jointFrames[i].points;
             }
-        if(record.kind==RigExecSolverKind::SplineIk) {
-            record.splineRestFrames.resize(record.splineCount);record.splineJointRests.resize(record.splineCount);
-            for(size_t i=0;i<jointFrames.size();++i) {
-                if(i>=bound.jointElements.size() || bound.jointElements[i]<0 || size_t(bound.jointElements[i])>=record.splineCount)
+        if (record.kind == RigExecSolverKind::SplineIk) {
+            record.splineRestFrames.resize(record.splineCount);
+            record.splineJointRests.resize(record.splineCount);
+            for (size_t i = 0; i < jointFrames.size(); ++i) {
+                if (i >= bound.jointElements.size() ||
+                    bound.jointElements[i] < 0 ||
+                    size_t(bound.jointElements[i]) >= record.splineCount)
                     return fail("spline IK rest element binding invalid");
-                const auto element=size_t(bound.jointElements[i]);
-                record.splineRestFrames[element]=jointFrames[i];record.splineJointRests[element]=jointFrames[i].points;
+                const auto element = size_t(bound.jointElements[i]);
+                record.splineRestFrames[element] = jointFrames[i];
+                record.splineJointRests[element] = jointFrames[i].points;
             }
-            record.splineRest=RigExecSplineIkMakeRest(record.splineRestFrames,record.splineRootRest,record.splineMidRest,
-                record.splineEndRest,record.splineRestWeights,record.splineRestMode);
+            record.splineRest = RigExecSplineIkMakeRest(
+                record.splineRestFrames, record.splineRootRest,
+                record.splineMidRest, record.splineEndRest,
+                record.splineRestWeights, record.splineRestMode);
         }
-        if(record.kind==RigExecSolverKind::Ribbon && bound.ribbonRestPoints!=UINT64_MAX) {
-            VtValue restPoints;RigExecReadSceneGraphValue(*store,bound.ribbonRestPoints,&restPoints);
+        if (record.kind == RigExecSolverKind::Ribbon &&
+            bound.ribbonRestPoints != UINT64_MAX) {
+            VtValue restPoints;
+            RigExecReadSceneGraphValue(*store, bound.ribbonRestPoints,
+                                       &restPoints);
             record.ribbonRestPoints.clear();
-            if(restPoints.IsHolding<VtVec3fArray>()) {
-                const auto &points=restPoints.UncheckedGet<VtVec3fArray>();
-                record.ribbonRestPoints.assign(points.begin(),points.end());
+            if (restPoints.IsHolding<VtVec3fArray>()) {
+                const auto &points = restPoints.UncheckedGet<VtVec3fArray>();
+                record.ribbonRestPoints.assign(points.begin(), points.end());
             }
         }
         input.controls.resize(bound.controls.size());
-        for(size_t i=0;i<bound.controls.size();++i)if(!Frame(*store,bound.controls[i],&input.controls[i]))return fail("solver control producer unavailable");
-        if(!Frame(*store,bound.start,&input.start) || !Frame(*store,bound.root,&input.root) ||
-           !Frame(*store,bound.mid,&input.mid) || !Frame(*store,bound.end,&input.end) ||
-           !Frame(*store,bound.pole,&input.pole) || !Frame(*store,bound.space,&input.space))return fail("solver frame producer unavailable");
-        input.hasSpace=bound.hasSpace;input.spaceRest=bound.spaceRestId==UINT64_MAX?bound.spaceRest:spaceRest.points;
-        input.blendA=Aggregate(*store,bound.blendA);input.blendB=Aggregate(*store,bound.blendB);
-        if((bound.blendARequired && !input.blendA) || (bound.blendBRequired && !input.blendB))return fail("solver aggregate producer unavailable");
-        const auto read=[&](const char *name,VtValue *value) {return RigExecReadBoundGraphInput(bound.inputs,name,*store,value,error);};
-        if(!RigExecRefreshSolverParameters(bound.record.kind,read,&input,error)) {return fail(error && !error->empty()?*error:std::string("solver parameter refresh failed"));}
-        if(record.kind==RigExecSolverKind::Skeleton2d) {
-            input.bone2dChannels.assign(bound.bone2dChannels.size()/kRigExecBone2dChannelCount,RigExecBone2dChannels());
-            for(size_t k=0;k<bound.bone2dChannels.size();++k) {
-                VtValue value;std::string unavailable;
-                if(!RigExecReadGraphTypedRead(bound.bone2dChannels[k],*store,&value,&unavailable)) {
-                    if(!unavailable.empty())return fail(unavailable);
+        for (size_t i = 0; i < bound.controls.size(); ++i)
+            if (!Frame(*store, bound.controls[i], &input.controls[i]))
+                return fail("solver control producer unavailable");
+        if (!Frame(*store, bound.start, &input.start) ||
+            !Frame(*store, bound.root, &input.root) ||
+            !Frame(*store, bound.mid, &input.mid) ||
+            !Frame(*store, bound.end, &input.end) ||
+            !Frame(*store, bound.pole, &input.pole) ||
+            !Frame(*store, bound.space, &input.space))
+            return fail("solver frame producer unavailable");
+        input.hasSpace = bound.hasSpace;
+        input.spaceRest = bound.spaceRestId == UINT64_MAX ? bound.spaceRest
+                                                          : spaceRest.points;
+        input.blendA = Aggregate(*store, bound.blendA);
+        input.blendB = Aggregate(*store, bound.blendB);
+        if ((bound.blendARequired && !input.blendA) ||
+            (bound.blendBRequired && !input.blendB))
+            return fail("solver aggregate producer unavailable");
+        const auto read = [&](const char *name, VtValue *value) {
+            return RigExecReadBoundGraphInput(bound.inputs, name, *store, value,
+                                              error);
+        };
+        if (!RigExecRefreshSolverParameters(bound.record.kind, read, &input,
+                                            error)) {
+            return fail(error && !error->empty()
+                            ? *error
+                            : std::string("solver parameter refresh failed"));
+        }
+        if (record.kind == RigExecSolverKind::Skeleton2d) {
+            input.bone2dChannels.assign(bound.bone2dChannels.size() /
+                                            kRigExecBone2dChannelCount,
+                                        RigExecBone2dChannels());
+            for (size_t k = 0; k < bound.bone2dChannels.size(); ++k) {
+                VtValue value;
+                std::string unavailable;
+                if (!RigExecReadGraphTypedRead(bound.bone2dChannels[k], *store,
+                                               &value, &unavailable)) {
+                    if (!unavailable.empty())
+                        return fail(unavailable);
                     continue;
                 }
-                RigExecSetBone2dChannel(&input.bone2dChannels[k/kRigExecBone2dChannelCount],
-                    k%kRigExecBone2dChannelCount,value);
+                RigExecSetBone2dChannel(
+                    &input.bone2dChannels[k / kRigExecBone2dChannelCount],
+                    k % kRigExecBone2dChannelCount, value);
             }
-            input.bone2dSelectors=bound.bone2dSelectorFallbacks;
-            input.bone2dSelectors.resize(bound.bone2dSelectors.size(),0.0);
-            for(size_t g=0;g<bound.bone2dSelectors.size();++g) {
-                VtValue value;std::string unavailable;
-                if(!RigExecReadGraphTypedRead(bound.bone2dSelectors[g],*store,&value,&unavailable)) {
-                    if(!unavailable.empty())return fail(unavailable);
+            input.bone2dSelectors = bound.bone2dSelectorFallbacks;
+            input.bone2dSelectors.resize(bound.bone2dSelectors.size(), 0.0);
+            for (size_t g = 0; g < bound.bone2dSelectors.size(); ++g) {
+                VtValue value;
+                std::string unavailable;
+                if (!RigExecReadGraphTypedRead(bound.bone2dSelectors[g], *store,
+                                               &value, &unavailable)) {
+                    if (!unavailable.empty())
+                        return fail(unavailable);
                     continue;
                 }
-                if(value.IsHolding<double>())input.bone2dSelectors[g]=value.UncheckedGet<double>();
+                if (value.IsHolding<double>())
+                    input.bone2dSelectors[g] = value.UncheckedGet<double>();
             }
         }
-        input.jointGroupSelectors.assign(bound.jointGroupSelectors.size(),0.0);
-        for(size_t g=0;g<bound.jointGroupSelectors.size();++g) {
-            VtValue value;std::string unavailable;
-            if(!RigExecReadGraphTypedRead(bound.jointGroupSelectors[g],*store,&value,&unavailable)) {
-                if(!unavailable.empty())return fail(unavailable);
+        input.jointGroupSelectors.assign(bound.jointGroupSelectors.size(), 0.0);
+        for (size_t g = 0; g < bound.jointGroupSelectors.size(); ++g) {
+            VtValue value;
+            std::string unavailable;
+            if (!RigExecReadGraphTypedRead(bound.jointGroupSelectors[g], *store,
+                                           &value, &unavailable)) {
+                if (!unavailable.empty())
+                    return fail(unavailable);
                 continue;
             }
-            if(value.IsHolding<double>())input.jointGroupSelectors[g]=value.UncheckedGet<double>();
+            if (value.IsHolding<double>())
+                input.jointGroupSelectors[g] = value.UncheckedGet<double>();
         }
     }
-    const bool valid=RigExecRunSolver(record,input,workspace,&output,error);
-    store->Publish(bound.output,VtValue(output),!valid,false,output.frames.size(),valid?std::string():error?*error:"solver kernel failed");return valid;
+    const bool valid =
+        RigExecRunSolver(record, input, workspace, &output, error);
+    store->Publish(bound.output, VtValue(output), !valid, false,
+                   output.frames.size(),
+                   valid   ? std::string()
+                   : error ? *error
+                           : "solver kernel failed");
+    return valid;
 }
-}
+} // namespace rigExec

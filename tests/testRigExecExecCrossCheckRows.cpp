@@ -1,3 +1,4 @@
+#include "rigExecSchema/schemaNames.h"
 #include "rigExec/bakedExecCrossCheckRows.h"
 #include "rigExec/bakedProgram.h"
 #include "rigExec/bakedProgramImpl.h"
@@ -99,7 +100,7 @@ main(int argc, char **argv)
     CHECK(stage);
     SdfPath rigPath;
     for (const auto &prim : stage->Traverse())
-        if (prim.GetTypeName() == "RigExecRoot") {
+        if (prim.GetTypeName() == SchemaTypeName::RigExecRoot) {
             rigPath = prim.GetPath();
             break;
         }

@@ -1,3 +1,4 @@
+#include "rigExecSchema/schemaTokens.h"
 // RigExecFrameCache, Stream A: the (compiledRigSignature, controlDigest) store.
 // The key, entry, and stats types keep the semantics Stream 0 asserted, so
 // those tests stand unchanged below. The stub half of the Stream 0 file is
@@ -47,12 +48,12 @@ using namespace rigExec;
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
@@ -76,8 +77,7 @@ MakePose(double tag, size_t joints)
 bool
 PosesMatch(const RigExecRigPose &a, const RigExecRigPose &b)
 {
-    return a.valid == b.valid &&
-           a.jointFramesBase == b.jointFramesBase &&
+    return a.valid == b.valid && a.jointFramesBase == b.jointFramesBase &&
            a.jointFramesFinal == b.jointFramesFinal &&
            a.jointMatricesFinal == b.jointMatricesFinal &&
            a.controlFrames == b.controlFrames &&
@@ -104,7 +104,7 @@ MakeOverride(const char *prim, double value)
 {
     RigExecValueOverride o;
     o.prim = SdfPath(prim);
-    o.computation = TfToken("computePointFrame");
+    o.computation = SchemaComputation::computePointFrame;
     o.value = VtValue(value);
     return o;
 }
@@ -113,7 +113,10 @@ MakeOverride(const char *prim, double value)
 // carrying one must bypass the cache.
 struct Unhashable {
     int x = 0;
-    bool operator==(const Unhashable &o) const { return x == o.x; }
+    bool operator==(const Unhashable &o) const
+    {
+        return x == o.x;
+    }
 };
 
 // Two digests, both significant: keys differing in either half are different
@@ -154,8 +157,7 @@ void
 TestEqualKeysHashEqual()
 {
     const RigExecFrameCacheKeyHash hash;
-    CHECK(hash(RigExecFrameCacheKey{3, 5}) ==
-          hash(RigExecFrameCacheKey{3, 5}));
+    CHECK(hash(RigExecFrameCacheKey{3, 5}) == hash(RigExecFrameCacheKey{3, 5}));
 }
 
 // Time rides the entry, never the key: the same key names the same inputs at
@@ -396,10 +398,8 @@ TestDigestSeesDuplicateValues()
     // One of the pair moved: moves too.
     const RigExecFrameInputs half =
         MakeInputs({{"/Rig/A", 10.2}, {"/Rig/B", 11.7}});
-    CHECK(RigExecControlStateDigest(before) !=
-          RigExecControlStateDigest(half));
-    CHECK(RigExecControlStateDigest(after) !=
-          RigExecControlStateDigest(half));
+    CHECK(RigExecControlStateDigest(before) != RigExecControlStateDigest(half));
+    CHECK(RigExecControlStateDigest(after) != RigExecControlStateDigest(half));
     // Swapped values across paths: order matters.
     const RigExecFrameInputs ab =
         MakeInputs({{"/Rig/A", 1.0}, {"/Rig/B", 2.0}});
@@ -491,15 +491,15 @@ TestDigestSeesOverrides()
     CHECK(RigExecControlStateDigest(inputs, held) !=
           RigExecControlStateDigest(inputs, elsewhere));
 
-    const std::vector<RigExecValueOverride> fwd{
-        MakeOverride("/Rig/C", 2.0), MakeOverride("/Rig/D", 3.0)};
-    const std::vector<RigExecValueOverride> rev{
-        MakeOverride("/Rig/D", 3.0), MakeOverride("/Rig/C", 2.0)};
+    const std::vector<RigExecValueOverride> fwd{MakeOverride("/Rig/C", 2.0),
+                                                MakeOverride("/Rig/D", 3.0)};
+    const std::vector<RigExecValueOverride> rev{MakeOverride("/Rig/D", 3.0),
+                                                MakeOverride("/Rig/C", 2.0)};
     CHECK(RigExecControlStateDigest(inputs, fwd) ==
           RigExecControlStateDigest(inputs, rev));
 
-    const std::vector<RigExecValueOverride> dup{
-        MakeOverride("/Rig/C", 2.0), MakeOverride("/Rig/C", 5.0)};
+    const std::vector<RigExecValueOverride> dup{MakeOverride("/Rig/C", 2.0),
+                                                MakeOverride("/Rig/C", 5.0)};
     const std::vector<RigExecValueOverride> last{MakeOverride("/Rig/C", 5.0)};
     CHECK(RigExecControlStateDigest(inputs, dup) ==
           RigExecControlStateDigest(inputs, last));
@@ -564,14 +564,14 @@ TestRecordedOrderAndStaticTableFoldAsPlain()
         t->digestible.push_back(RigExecSampleDigestible(sample) ? 1 : 0);
         t->samples.push_back(sample);
     };
-    entry(table.get(), "/Rig/B.rigExec:providerRaw:rest:tx", VtValue(0.5),
-          true, false);
+    entry(table.get(), "/Rig/B.rigExec:providerRaw:rest:tx", VtValue(0.5), true,
+          false);
     entry(table.get(), "/Rig/A.rigExec:providerRaw:parent:space",
           VtValue(GfMatrix4d(2.0)), true, false);
     entry(table.get(), "/Rig/C.rigExec:providerRaw:avars:rotationOrder",
           VtValue(TfToken("zxy")), true, false);
-    entry(table.get(), "/Rig/D.rigExec:providerRaw:rest:rz", VtValue(),
-          false, true);
+    entry(table.get(), "/Rig/D.rigExec:providerRaw:rest:rz", VtValue(), false,
+          true);
 
     RigExecFrameInputs inputs;
     inputs.time = UsdTimeCode(3.0);
@@ -579,8 +579,7 @@ TestRecordedOrderAndStaticTableFoldAsPlain()
     for (const RigExecSampledInput &sample : table->samples) {
         inputs.values.push_back(sample);
     }
-    inputs.Add(SdfPath("/Rig/A.avars:ty"),
-               VtValue(VtFloatArray{1.0f, -0.0f}));
+    inputs.Add(SdfPath("/Rig/A.avars:ty"), VtValue(VtFloatArray{1.0f, -0.0f}));
     // A later sample at a served path: the served one wins.
     inputs.Add(SdfPath("/Rig/B.rigExec:providerRaw:rest:tx"), VtValue(9.0));
     inputs.Add(SdfPath("/Rig/E.inputs:weight"), VtValue(),
@@ -627,8 +626,8 @@ TestRecordedOrderAndStaticTableFoldAsPlain()
     // A fresh sample's value moves the digest through the recorded order.
     RigExecFrameInputs moved = inputs;
     moved.values[0].value = VtValue(1.5);
-    CHECK(RigExecFrameDigestOrderMatches(moved.digestOrder.get(),
-                                         moved.values));
+    CHECK(
+        RigExecFrameDigestOrderMatches(moved.digestOrder.get(), moved.values));
     CHECK(RigExecControlStateDigest(moved) ==
           RigExecControlStateDigest(plainOf(moved)));
     CHECK(RigExecControlStateDigest(moved) != plainDigest);
@@ -636,8 +635,8 @@ TestRecordedOrderAndStaticTableFoldAsPlain()
     // Another path sequence than the recorded one folds plainly.
     RigExecFrameInputs grown = inputs;
     grown.Add(SdfPath("/Rig/F.inputs:x"), VtValue(2.0));
-    CHECK(!RigExecFrameDigestOrderMatches(grown.digestOrder.get(),
-                                          grown.values));
+    CHECK(
+        !RigExecFrameDigestOrderMatches(grown.digestOrder.get(), grown.values));
     CHECK(RigExecControlStateDigest(grown) ==
           RigExecControlStateDigest(plainOf(grown)));
     CHECK(RigExecControlStateDigest(grown) != plainDigest);
@@ -692,15 +691,15 @@ TestRefusalDigestKeysTimeAndOverrides()
     CHECK(RigExecRefusalControlDigest(UsdTimeCode(2.0), 7, held) !=
           RigExecRefusalControlDigest(UsdTimeCode(2.0), 7, moved));
 
-    const std::vector<RigExecValueOverride> fwd{
-        MakeOverride("/Rig/C", 2.0), MakeOverride("/Rig/D", 3.0)};
-    const std::vector<RigExecValueOverride> rev{
-        MakeOverride("/Rig/D", 3.0), MakeOverride("/Rig/C", 2.0)};
+    const std::vector<RigExecValueOverride> fwd{MakeOverride("/Rig/C", 2.0),
+                                                MakeOverride("/Rig/D", 3.0)};
+    const std::vector<RigExecValueOverride> rev{MakeOverride("/Rig/D", 3.0),
+                                                MakeOverride("/Rig/C", 2.0)};
     CHECK(RigExecRefusalControlDigest(UsdTimeCode(2.0), 7, fwd) ==
           RigExecRefusalControlDigest(UsdTimeCode(2.0), 7, rev));
 
-    const std::vector<RigExecValueOverride> dup{
-        MakeOverride("/Rig/C", 2.0), MakeOverride("/Rig/C", 5.0)};
+    const std::vector<RigExecValueOverride> dup{MakeOverride("/Rig/C", 2.0),
+                                                MakeOverride("/Rig/C", 5.0)};
     const std::vector<RigExecValueOverride> last{MakeOverride("/Rig/C", 5.0)};
     CHECK(RigExecRefusalControlDigest(UsdTimeCode(2.0), 7, dup) ==
           RigExecRefusalControlDigest(UsdTimeCode(2.0), 7, last));
@@ -771,8 +770,8 @@ TestDigestSeesUpstream()
 
     // The constant fold and the burst form carry the block as well.
     CHECK(RigExecControlStateDigestWithConstants(plain, none, fwd, 9) ==
-          RigExecFoldConstantDigest(
-              RigExecControlStateDigest(plain, none, fwd), 9));
+          RigExecFoldConstantDigest(RigExecControlStateDigest(plain, none, fwd),
+                                    9));
     CHECK(RigExecControlStateDigestWithConstants(plain, none, fwd, 9) !=
           RigExecControlStateDigestWithConstants(plain, none, 9));
     CHECK(RigExecControlStateDigestWithBurstCache(placed, none, nullptr) ==
@@ -784,10 +783,10 @@ TestDigestSeesUpstream()
     CHECK(RigExecRefusalControlDigest(UsdTimeCode(2.0), 7, none,
                                       placed.upstream) !=
           RigExecRefusalControlDigest(UsdTimeCode(2.0), 7, none));
-    CHECK(RigExecRefusalControlDigest(UsdTimeCode(2.0), 7, none,
-                                      placed.upstream) !=
-          RigExecRefusalControlDigest(UsdTimeCode(2.0), 7, none,
-                                      moved.upstream));
+    CHECK(
+        RigExecRefusalControlDigest(UsdTimeCode(2.0), 7, none,
+                                    placed.upstream) !=
+        RigExecRefusalControlDigest(UsdTimeCode(2.0), 7, none, moved.upstream));
     CHECK(RigExecRefusalControlDigest(UsdTimeCode(2.0), 7, none,
                                       placed.upstream) ==
           RigExecRefusalControlDigest(UsdTimeCode(2.0), 7, none,
@@ -840,13 +839,12 @@ TestDigestFoldsUpstreamArrayHashes()
     CHECK(with(VtValue(weights), 0) == with(VtValue(same), 0));
     CHECK(with(VtValue(weights), 0) != with(VtValue(other), 0));
     // RigExecUpstreamValuesOf hashes an array and leaves a scalar at 0.
-    const std::vector<RigExecUpstreamValue> converted =
-        RigExecUpstreamValuesOf(
-            {RigExecValueOverride{SdfPath("/Rig/S"), TfToken(),
-                                  TfToken("rigExec:jointWeights"),
-                                  VtValue(weights)},
-             RigExecValueOverride{SdfPath("/Rig/U"), TfToken(),
-                                  TfToken("avars:rz"), VtValue(30.0)}});
+    const std::vector<RigExecUpstreamValue> converted = RigExecUpstreamValuesOf(
+        {RigExecValueOverride{SdfPath("/Rig/S"), TfToken(),
+                              TfToken("rigExec:jointWeights"),
+                              VtValue(weights)},
+         RigExecValueOverride{SdfPath("/Rig/U"), TfToken(), TfToken("avars:rz"),
+                              VtValue(30.0)}});
     CHECK(converted.size() == 2);
     CHECK(converted.size() == 2 && converted[0].foldHash == hash &&
           converted[1].foldHash == 0);
@@ -966,7 +964,8 @@ TestConcurrentLookupDuringPublish()
     constexpr int kKeys = 16;
     for (int i = 0; i < kKeys; ++i) {
         const RigExecFrameCacheKey key{7, uint64_t(i)};
-        CHECK(cache.Publish(key, UsdTimeCode(double(i)), MakePose(double(i), 1)));
+        CHECK(
+            cache.Publish(key, UsdTimeCode(double(i)), MakePose(double(i), 1)));
     }
 
     constexpr int kThreads = 4;
@@ -1058,7 +1057,8 @@ TestClearDuringConcurrentPublishKeepsAccountingHonest()
     for (int t = 0; t < kThreads; ++t) {
         workers.emplace_back([&, t]() {
             for (int n = 0; n < kOps; ++n) {
-                const RigExecFrameCacheKey key{5, uint64_t((n * 7 + t) % kKeys)};
+                const RigExecFrameCacheKey key{5,
+                                               uint64_t((n * 7 + t) % kKeys)};
                 if (n % 5 == 4) {
                     cache.Evict(key);
                 } else {
@@ -1096,7 +1096,7 @@ TestClearDuringConcurrentPublishKeepsAccountingHonest()
     CHECK(cache.Stats().entryCount == 1);
 }
 
-}  // namespace
+} // namespace
 
 int
 main()

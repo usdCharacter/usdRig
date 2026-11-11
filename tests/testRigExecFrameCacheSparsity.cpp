@@ -1,3 +1,4 @@
+#include "rigExecSchema/schemaTokens.h"
 // RigExec sparse cross-frame reuse, Stream D: the output-affected index, the
 // task-list cache, retained-frame planning, candidate lookup, capture-index
 // compiled rig invalidation, and executed-cluster counts.
@@ -35,12 +36,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
@@ -144,43 +145,49 @@ MakeRetained(uint64_t compiledRig, size_t clusters, UsdTimeCode time,
     return state;
 }
 
-}  // namespace
+} // namespace
 
-void TestSparseCones()
+void
+TestSparseCones()
 {
     RigExecBakedProgramImpl program{};
-    constexpr size_t count=10000;
+    constexpr size_t count = 10000;
     program.clustering.clusters.resize(count);
-    for(size_t c=0;c<count;++c) {
-        if(c%4==3)continue;
-        program.clustering.clusters[c].succs.push_back(int(c+1));
-        program.clustering.clusters[c+1].preds.push_back(int(c));
+    for (size_t c = 0; c < count; ++c) {
+        if (c % 4 == 3)
+            continue;
+        program.clustering.clusters[c].succs.push_back(int(c + 1));
+        program.clustering.clusters[c + 1].preds.push_back(int(c));
     }
     RigExecBakedBuildCones(&program);
-    const auto &cones=program.cones.Cone();
-    CHECK(cones.size()==count);
+    const auto &cones = program.cones.Cone();
+    CHECK(cones.size() == count);
     CHECK(cones[0].words.empty());
-    CHECK(cones[0].WordCount()==(count+63)/64);
-    CHECK(SetIs(cones[0],{0,1,2,3}));
-    CHECK(SetIs(cones[9998],{9998,9999}));
+    CHECK(cones[0].WordCount() == (count + 63) / 64);
+    CHECK(SetIs(cones[0], {0, 1, 2, 3}));
+    CHECK(SetIs(cones[9998], {9998, 9999}));
     RigExecOutputAffectedIndex index;
-    index.Build(program,1);
-    CHECK(SetIs(index.AffectedClusters(std::vector<int>{0,9998}),{0,1,2,3,9998,9999}));
-    CHECK(SetIs(index.AffectedClusters(cones[9998]),{9998,9999}));
-    RigExecBakedClusterSet sparse=cones[0],dense;
-    dense.Resize(count+64);dense.Set(10001);
+    index.Build(program, 1);
+    CHECK(SetIs(index.AffectedClusters(std::vector<int>{0, 9998}),
+                {0, 1, 2, 3, 9998, 9999}));
+    CHECK(SetIs(index.AffectedClusters(cones[9998]), {9998, 9999}));
+    RigExecBakedClusterSet sparse = cones[0], dense;
+    dense.Resize(count + 64);
+    dense.Set(10001);
     CHECK(sparse.Union(dense));
-    CHECK(SetIs(sparse,{0,1,2,3,10001}));
+    CHECK(SetIs(sparse, {0, 1, 2, 3, 10001}));
     CHECK(!sparse.Union(sparse));
     CHECK(dense.Union(sparse));
-    CHECK(SetIs(dense,{0,1,2,3,10001}));
-    CHECK(SetIs(RigExecIntersectClusterSets(sparse,cones[0]),{0,1,2,3}));
-    sparse.Clear();CHECK(!sparse.Any());CHECK(sparse.Count()==0);
+    CHECK(SetIs(dense, {0, 1, 2, 3, 10001}));
+    CHECK(SetIs(RigExecIntersectClusterSets(sparse, cones[0]), {0, 1, 2, 3}));
+    sparse.Clear();
+    CHECK(!sparse.Any());
+    CHECK(sparse.Count() == 0);
     // Dense fallback preserves every bit, including the last partial word.
-    dense.SetAll(count+65);
+    dense.SetAll(count + 65);
     CHECK(sparse.Union(dense));
-    CHECK(sparse.words==dense.words);
-    CHECK(sparse.Count()==count+65);
+    CHECK(sparse.words == dense.words);
+    CHECK(sparse.Count() == count + 65);
 }
 
 // The D2 decision answers from the Stream 0 numbers: GO at ~80 full biped
@@ -189,17 +196,16 @@ void TestSparseCones()
 void
 TestGoNoGo()
 {
-    const RigExecSparsityDecision stream0 =
-        RigExecStream0SparsityDecision();
+    const RigExecSparsityDecision stream0 = RigExecStream0SparsityDecision();
     CHECK(stream0.go);
     CHECK(stream0.fullFramesAtCap >= 80);
     CHECK(!stream0.memo.empty());
 
     // The 9mesh numbers go too, with room to spare.
-    const RigExecSparsityDecision mesh9 = RigExecDecideSparsity(
-        kRigExecSparsityStream0Mesh9ArenaBytes,
-        kRigExecSparsityStream0Mesh9PoseBytes,
-        kRigExecFrameCacheDefaultByteCap);
+    const RigExecSparsityDecision mesh9 =
+        RigExecDecideSparsity(kRigExecSparsityStream0Mesh9ArenaBytes,
+                              kRigExecSparsityStream0Mesh9PoseBytes,
+                              kRigExecFrameCacheDefaultByteCap);
     CHECK(mesh9.go);
     CHECK(mesh9.fullFramesAtCap >= 100);
 
@@ -245,11 +251,9 @@ TestOutputAffectedIndex()
 
     const size_t walks = index.Walks();
     CHECK(SetIs(index.AffectedByControls({"/Ctl/A"}), {1, 3, 4}));
-    CHECK(SetIs(index.AffectedByControls({"/Ctl/A", "/Ctl/B"}),
-                {1, 2, 3, 4}));
+    CHECK(SetIs(index.AffectedByControls({"/Ctl/A", "/Ctl/B"}), {1, 2, 3, 4}));
     // An unknown control reaches everything: the conservative answer.
-    CHECK(SetIs(index.AffectedByControls({"/Ctl/Nope"}),
-                {0, 1, 2, 3, 4, 5}));
+    CHECK(SetIs(index.AffectedByControls({"/Ctl/Nope"}), {0, 1, 2, 3, 4, 5}));
     CHECK(SetIs(index.AffectedByControls({}), {}));
     CHECK(index.Walks() == walks + 4);
 
@@ -410,34 +414,30 @@ TestTaskListCache()
 void
 TestChangedControls()
 {
-    const RigExecRetainedFrameState cached =
-        MakeRetained(7, 6, UsdTimeCode(1.0), {{"/Ctl/A", 1.0}, {"/Ctl/B", 2.0}});
+    const RigExecRetainedFrameState cached = MakeRetained(
+        7, 6, UsdTimeCode(1.0), {{"/Ctl/A", 1.0}, {"/Ctl/B", 2.0}});
 
     const std::vector<RigExecValueOverride> noOverrides;
     CHECK(RigExecChangedControls(cached, cached.inputs, noOverrides).empty());
 
     CHECK(RigExecChangedControls(
               cached,
-              MakeInputs(UsdTimeCode(1.0),
-                         {{"/Ctl/A", 1.5}, {"/Ctl/B", 2.0}}),
+              MakeInputs(UsdTimeCode(1.0), {{"/Ctl/A", 1.5}, {"/Ctl/B", 2.0}}),
               noOverrides) == std::vector<RigExecControlId>{"/Ctl/A"});
     // Time is not a control: the plan reads it separately.
     CHECK(RigExecChangedControls(
               cached,
-              MakeInputs(UsdTimeCode(2.0),
-                         {{"/Ctl/A", 1.0}, {"/Ctl/B", 2.0}}),
-              noOverrides).empty());
+              MakeInputs(UsdTimeCode(2.0), {{"/Ctl/A", 1.0}, {"/Ctl/B", 2.0}}),
+              noOverrides)
+              .empty());
     // Added and dropped paths are changes.
     CHECK(RigExecChangedControls(
-              cached,
-              MakeInputs(UsdTimeCode(1.0), {{"/Ctl/A", 1.0}}),
+              cached, MakeInputs(UsdTimeCode(1.0), {{"/Ctl/A", 1.0}}),
               noOverrides) == std::vector<RigExecControlId>{"/Ctl/B"});
     CHECK(RigExecChangedControls(
               cached,
               MakeInputs(UsdTimeCode(1.0),
-                         {{"/Ctl/A", 1.0},
-                          {"/Ctl/B", 2.0},
-                          {"/Ctl/C", 3.0}}),
+                         {{"/Ctl/A", 1.0}, {"/Ctl/B", 2.0}, {"/Ctl/C", 3.0}}),
               noOverrides) == std::vector<RigExecControlId>{"/Ctl/C"});
 
     // A value that stopped reading is a change; two valueless samples agree.
@@ -450,13 +450,13 @@ TestChangedControls()
     // Source equality preserves floating bits, including signed zero.
     CHECK(RigExecChangedControls(
               cached,
-              MakeInputs(UsdTimeCode(1.0),
-                         {{"/Ctl/A", 1.0}, {"/Ctl/B", 2.0}}),
-              noOverrides).empty());
+              MakeInputs(UsdTimeCode(1.0), {{"/Ctl/A", 1.0}, {"/Ctl/B", 2.0}}),
+              noOverrides)
+              .empty());
     RigExecFrameInputs negZero = MakeInputs(UsdTimeCode(1.0), {});
     negZero.Add(SdfPath("/Zero"), VtValue(0.0));
-    RigExecRetainedFrameState cachedZero = MakeRetained(7, 6,
-        UsdTimeCode(1.0), {});
+    RigExecRetainedFrameState cachedZero =
+        MakeRetained(7, 6, UsdTimeCode(1.0), {});
     cachedZero.inputs = negZero;
     RigExecFrameInputs negZeroReq = MakeInputs(UsdTimeCode(1.0), {});
     negZeroReq.Add(SdfPath("/Zero"), VtValue(-0.0));
@@ -479,17 +479,16 @@ TestChangedControls()
     // added override, and a lifted one each name their control.
     RigExecValueOverride before, moved, added;
     before.prim = SdfPath("/Ctl/A");
-    before.computation = TfToken("computePointFrame");
+    before.computation = SchemaComputation::computePointFrame;
     before.value = VtValue(1.0);
     moved = before;
     moved.value = VtValue(9.0);
     added.prim = SdfPath("/Ctl/Z");
-    added.computation = TfToken("computePointFrame");
+    added.computation = SchemaComputation::computePointFrame;
     added.value = VtValue(0.0);
     RigExecRetainedFrameState cachedOvr = cached;
     cachedOvr.overrides = {before};
-    CHECK(RigExecChangedControls(cachedOvr, cached.inputs, {before})
-              .empty());
+    CHECK(RigExecChangedControls(cachedOvr, cached.inputs, {before}).empty());
     const std::string movedId = "/Ctl/A|computePointFrame|";
     CHECK(RigExecChangedControls(cachedOvr, cached.inputs, {moved}) ==
           std::vector<RigExecControlId>{movedId});
@@ -513,18 +512,21 @@ TestPlanSparseReuse()
     const auto cached = MakeRetained(7, 6, UsdTimeCode(1.0),
                                      {{"/Ctl/A", 1.0}, {"/Ctl/B", 2.0}});
     CHECK(RigExecCanReuseRetainedPose(index, cached, 7, cached.inputs, {}));
-    const auto moved = MakeInputs(UsdTimeCode(1.0),
-                                  {{"/Ctl/A", 1.5}, {"/Ctl/B", 2.0}});
+    const auto moved =
+        MakeInputs(UsdTimeCode(1.0), {{"/Ctl/A", 1.5}, {"/Ctl/B", 2.0}});
     CHECK(!RigExecCanReuseRetainedPose(index, cached, 7, moved, {}));
-    CHECK(SetIs(index.AffectedByControls(RigExecChangedControls(cached, moved, {})),
-                {1, 3, 4}));
+    CHECK(SetIs(
+        index.AffectedByControls(RigExecChangedControls(cached, moved, {})),
+        {1, 3, 4}));
     CHECK(!RigExecCanReuseRetainedPose(index, cached, 8, cached.inputs, {}));
     auto otherCompiledRig = cached;
     otherCompiledRig.compiledRigSignature = 8;
-    CHECK(!RigExecCanReuseRetainedPose(index, otherCompiledRig, 7, cached.inputs, {}));
+    CHECK(!RigExecCanReuseRetainedPose(index, otherCompiledRig, 7,
+                                       cached.inputs, {}));
     auto otherShape = cached;
     ++otherShape.clusterCount;
-    CHECK(!RigExecCanReuseRetainedPose(index, otherShape, 7, cached.inputs, {}));
+    CHECK(
+        !RigExecCanReuseRetainedPose(index, otherShape, 7, cached.inputs, {}));
     RigExecOutputAffectedIndex empty;
     CHECK(!RigExecCanReuseRetainedPose(empty, cached, 7, cached.inputs, {}));
     auto unknown = cached.inputs;
@@ -544,8 +546,8 @@ TestUpstreamMissesSparseReuse()
     index.MapControl("/Ctl/A", {1});
     const std::vector<RigExecValueOverride> noOverrides;
     const auto up = [](double value) {
-        return RigExecUpstreamValue{SdfPath("/Ctl/U.avars:rz"),
-                                    VtValue(value), 0};
+        return RigExecUpstreamValue{SdfPath("/Ctl/U.avars:rz"), VtValue(value),
+                                    0};
     };
 
     RigExecRetainedFrameState cached =
@@ -571,8 +573,9 @@ TestUpstreamMissesSparseReuse()
     movedA.values.clear();
     movedA.Add(SdfPath("/Ctl/A"), VtValue(1.5));
     CHECK(!RigExecCanReuseRetainedPose(index, cached, 7, movedA, noOverrides));
-    CHECK(SetIs(index.AffectedByControls(RigExecChangedControls(cached, movedA, {})),
-                {1, 3, 4}));
+    CHECK(SetIs(
+        index.AffectedByControls(RigExecChangedControls(cached, movedA, {})),
+        {1, 3, 4}));
 
     CHECK(RigExecSameUpstream(cached.inputs.upstream, same.upstream));
     CHECK(!RigExecSameUpstream(cached.inputs.upstream, moved.upstream));
@@ -593,12 +596,14 @@ TestUpstreamMissesSparseReuse()
     arrayCached.inputs.upstream = {upArray(painted)};
     RigExecFrameInputs arraySame = arrayCached.inputs;
     arraySame.upstream = {upArray(VtFloatArray(10, 0.5f))};
-    CHECK(RigExecCanReuseRetainedPose(index, arrayCached, 7, arraySame, noOverrides));
+    CHECK(RigExecCanReuseRetainedPose(index, arrayCached, 7, arraySame,
+                                      noOverrides));
     RigExecFrameInputs arrayMoved = arrayCached.inputs;
     VtFloatArray repainted = painted;
     repainted[3] = 0.75f;
     arrayMoved.upstream = {upArray(repainted)};
-    CHECK(!RigExecCanReuseRetainedPose(index, arrayCached, 7, arrayMoved, noOverrides));
+    CHECK(!RigExecCanReuseRetainedPose(index, arrayCached, 7, arrayMoved,
+                                       noOverrides));
     RigExecFrameInputs arrayRehashed = arrayCached.inputs;
     arrayRehashed.upstream[0].foldHash += 1;
     CHECK(!RigExecSameUpstream(arrayCached.inputs.upstream,
@@ -643,10 +648,9 @@ TestRetainedBytesShareTheStaticTable()
     inputs.Add(fresh, VtValue(mesh));
     const size_t bytes =
         RigExecCaptureRetainedState(inputs, {}, 7, 3, 0).RetainedBytes();
-    const size_t expected = sizeof(RigExecRetainedFrameState) +
-                            points.GetString().size() +
-                            fresh.GetString().size() + 2 * sizeof(bool) +
-                            1000 * sizeof(GfVec3f);
+    const size_t expected =
+        sizeof(RigExecRetainedFrameState) + points.GetString().size() +
+        fresh.GetString().size() + 2 * sizeof(bool) + 1000 * sizeof(GfVec3f);
     CHECK(bytes == expected);
 
     RigExecFrameInputs stray = inputs;
@@ -655,8 +659,8 @@ TestRetainedBytesShareTheStaticTable()
           expected + 1000 * sizeof(GfVec3f));
     RigExecFrameInputs untabled = inputs;
     untabled.staticSamples.reset();
-    CHECK(RigExecCaptureRetainedState(untabled, {}, 7, 3, 0)
-              .RetainedBytes() == expected + 1000 * sizeof(GfVec3f));
+    CHECK(RigExecCaptureRetainedState(untabled, {}, 7, 3, 0).RetainedBytes() ==
+          expected + 1000 * sizeof(GfVec3f));
 }
 
 // Retained bytes are the same number whether the path text comes from the
@@ -710,17 +714,16 @@ TestRetainedBytesUnchangedByTheOrder()
         }
         return total;
     };
-    const size_t expected = sizeof(RigExecRetainedFrameState) +
-                            points.size() + 2 * tx.size() + ty.size() +
-                            4 * sizeof(bool) + 5 * sizeof(GfVec3f) +
-                            2 * sizeof(VtValue);
+    const size_t expected = sizeof(RigExecRetainedFrameState) + points.size() +
+                            2 * tx.size() + ty.size() + 4 * sizeof(bool) +
+                            5 * sizeof(GfVec3f) + 2 * sizeof(VtValue);
     CHECK(reference(inputs) == expected);
     const auto bytes = [](const RigExecFrameInputs &sampled) {
         return RigExecCaptureRetainedState(sampled, {}, 7, 3, 0)
             .RetainedBytes();
     };
-    CHECK(RigExecCaptureRetainedState(inputs, {}, 7, 3, 0)
-              .inputs.digestOrder == inputs.digestOrder);
+    CHECK(RigExecCaptureRetainedState(inputs, {}, 7, 3, 0).inputs.digestOrder ==
+          inputs.digestOrder);
     CHECK(bytes(inputs) == expected);
     RigExecFrameInputs plain = inputs;
     plain.digestOrder.reset();
@@ -741,8 +744,8 @@ TestRetainedBytesUnchangedByTheOrder()
     // matches: every sample counts its own text.
     RigExecFrameInputs grown = inputs;
     grown.Add(SdfPath(rz), VtValue(4.0));
-    CHECK(!RigExecFrameDigestOrderMatches(grown.digestOrder.get(),
-                                          grown.values));
+    CHECK(
+        !RigExecFrameDigestOrderMatches(grown.digestOrder.get(), grown.values));
     CHECK(bytes(grown) == reference(grown));
     CHECK(bytes(grown) ==
           expected + rz.size() + sizeof(bool) + sizeof(VtValue));
@@ -774,8 +777,8 @@ TestVaryingRevisionLeavesMissSparseReuse()
     // Listed on one side only, or listed past the leaves: a miss.
     RigExecFrameInputs unlisted = cached.inputs;
     unlisted.varyingRevisionLeaves.clear();
-    CHECK(!RigExecCanReuseRetainedPose(index, cached, 7, unlisted,
-                                       noOverrides));
+    CHECK(
+        !RigExecCanReuseRetainedPose(index, cached, 7, unlisted, noOverrides));
     RigExecRetainedFrameState absent = cached;
     absent.inputs.varyingRevisionLeaves = {{0u, 2u}};
     RigExecFrameInputs absentSame = absent.inputs;
@@ -810,7 +813,6 @@ TestPlanTimeRule()
 // counts them: hits run zero, partials run their strict subset, misses run
 // nothing, and a runner that hands the generation back stops the run.
 
-
 // Cluster ids number level-packing bins, not dependencies: a cluster can
 // have a higher-numbered predecessor. Here 3 -> 0 -> 1 and 2 -> 1, so a walk
 // in increasing id would run 0 before 3 and 1 before 2 -- each against a
@@ -820,7 +822,6 @@ TestPlanTimeRule()
 //   3 -> 0 -> 1
 //        2 -> 1
 //   4 (no edges)
-
 
 // The cache's sparsity hooks: retained handles publish and serve beside the
 // pose with accounted bytes, pose-only entries serve a null handle, and
@@ -839,8 +840,7 @@ TestRetainedPublishAndCompiledRigEviction()
     CHECK(retainedBytes > 0);
 
     const RigExecFrameCacheKey key{7, 11};
-    CHECK(cache.Publish(key, UsdTimeCode(1.0), pose, retainedBytes,
-                        retained));
+    CHECK(cache.Publish(key, UsdTimeCode(1.0), pose, retainedBytes, retained));
     CHECK(cache.Stats().bytes == poseBytes + retainedBytes);
 
     RigExecRigPose served;
@@ -857,8 +857,7 @@ TestRetainedPublishAndCompiledRigEviction()
     // A pose-only entry serves a null handle.
     const RigExecFrameCacheKey poseOnly{7, 12};
     CHECK(cache.Publish(poseOnly, UsdTimeCode(1.0), pose));
-    std::shared_ptr<const void> noHandle =
-        std::make_shared<int>(1);
+    std::shared_ptr<const void> noHandle = std::make_shared<int>(1);
     CHECK(cache.Lookup(poseOnly, &served, &noHandle));
     CHECK(!noHandle);
 
@@ -867,13 +866,12 @@ TestRetainedPublishAndCompiledRigEviction()
     RigExecRigPose invalid;
     CHECK(!cache.Publish({7, 13}, UsdTimeCode(1.0), invalid, 64, retained));
     // Oversized retained entries are dropped, never partially stored.
-    CHECK(!cache.Publish({7, 13}, UsdTimeCode(1.0), pose,
-                         cache.GetByteCap(), retained));
+    CHECK(!cache.Publish({7, 13}, UsdTimeCode(1.0), pose, cache.GetByteCap(),
+                         retained));
 
     // Retained bytes count toward the cap: one full entry fits, two evict.
     cache.Clear();
-    CHECK(cache.Publish(key, UsdTimeCode(1.0), pose, retainedBytes,
-                        retained));
+    CHECK(cache.Publish(key, UsdTimeCode(1.0), pose, retainedBytes, retained));
     cache.SetByteCap(poseBytes + retainedBytes);
     CHECK(cache.Stats().entryCount == 1);
     CHECK(cache.Publish(poseOnly, UsdTimeCode(2.0), pose));
@@ -884,8 +882,8 @@ TestRetainedPublishAndCompiledRigEviction()
     cache.Clear();
     cache.SetByteCap(kRigExecFrameCacheDefaultByteCap);
     CHECK(cache.Publish({7, 1}, UsdTimeCode(1.0), pose));
-    CHECK(cache.Publish({7, 2}, UsdTimeCode(2.0), pose, retainedBytes,
-                        retained));
+    CHECK(
+        cache.Publish({7, 2}, UsdTimeCode(2.0), pose, retainedBytes, retained));
     CHECK(cache.Publish({8, 1}, UsdTimeCode(1.0), pose));
     CHECK(cache.EvictCompiledRig(7) == 2);
     CHECK(!cache.Lookup({7, 1}, &served));
@@ -932,11 +930,11 @@ MakeSingleMeshRig()
     UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const UsdPrim alongX = stage->DefinePrim(
-        SdfPath("/Asset/Rig/AlongX"), TfToken("RigExecControl"));
+    const UsdPrim alongX = stage->DefinePrim(SdfPath("/Asset/Rig/AlongX"),
+                                             TfToken("RigExecControl"));
     alongX.GetAttribute(TfToken("avars:tx")).Set(10.0);
-    const UsdPrim alongY = stage->DefinePrim(
-        SdfPath("/Asset/Rig/AlongY"), TfToken("RigExecControl"));
+    const UsdPrim alongY = stage->DefinePrim(SdfPath("/Asset/Rig/AlongY"),
+                                             TfToken("RigExecControl"));
     alongY.GetAttribute(TfToken("avars:ty")).Set(20.0);
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
 
@@ -945,35 +943,37 @@ MakeSingleMeshRig()
         stage->DefinePrim(SdfPath("/Asset/Geom/Mesh_0"), TfToken("Mesh"));
     VtVec3fArray base(points);
     for (size_t i = 0; i < points; ++i) {
-        base[i] = GfVec3f(float(i) * 0.5f, float(i) * -0.25f,
-                          -float(i) * 0.125f);
+        base[i] =
+            GfVec3f(float(i) * 0.5f, float(i) * -0.25f, -float(i) * 0.125f);
     }
     prim.GetAttribute(TfToken("points")).Set(base);
 
-    const UsdPrim skin = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Skin_0"), TfToken("RigExecSkinMover"));
+    const UsdPrim skin = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Skin_0"),
+                                           TfToken("RigExecSkinMover"));
     skin.ApplyAPI(TfToken("RigExecMoverAPI"));
     skin.GetRelationship(TfToken("rigExec:moves"))
         .SetTargets({SdfPath("/Asset/Geom/Mesh_0.points")});
     skin.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
     skin.CreateRelationship(TfToken("rigExec:influences"))
         .SetTargets({alongX.GetPath(), alongY.GetPath()});
-    skin.CreateAttribute(TfToken("rigExec:elementSize"),
-                         SdfValueTypeNames->Int).Set(2);
+    skin.CreateAttribute(TfToken("rigExec:elementSize"), SdfValueTypeNames->Int)
+        .Set(2);
     VtIntArray indices(points * 2);
     for (size_t i = 0; i < points; ++i) {
         indices[i * 2] = 0;
         indices[i * 2 + 1] = 1;
     }
     skin.CreateAttribute(TfToken("rigExec:jointIndices"),
-                         SdfValueTypeNames->IntArray).Set(indices);
+                         SdfValueTypeNames->IntArray)
+        .Set(indices);
     VtFloatArray weights(points * 2);
     for (size_t i = 0; i < points; ++i) {
         weights[i * 2] = 0.1f;
         weights[i * 2 + 1] = 0.9f;
     }
     skin.CreateAttribute(TfToken("rigExec:jointWeights"),
-                         SdfValueTypeNames->FloatArray).Set(weights);
+                         SdfValueTypeNames->FloatArray)
+        .Set(weights);
     return stage;
 }
 
@@ -993,12 +993,12 @@ struct CaptureListener : public TfWeakBase {
     {
         ++notices;
         oracleHit = program->IsInvalidatedBy(notice);
-        routedHit = RigExecNoteCaptureIndex(*cache, *memo, compiledRig, *program,
-                                            notice);
+        routedHit = RigExecNoteCaptureIndex(*cache, *memo, compiledRig,
+                                            *program, notice);
     }
 };
 
-}  // namespace
+} // namespace
 
 // Union tolerates mismatched widths: a narrower other reads as zero past
 // its end, a wider one grows the set, and `grew` still answers whether any
@@ -1078,8 +1078,7 @@ TestCaptureIndexCompiledRigInvalidation()
         CHECK(false);
         return;
     }
-    const uint64_t compiledRig =
-        uint64_t(evaluator.GetCompiledRigSignature());
+    const uint64_t compiledRig = uint64_t(evaluator.GetCompiledRigSignature());
 
     RigExecFrameCache cache;
     RigExecTaskListCache memo;
@@ -1099,7 +1098,7 @@ TestCaptureIndexCompiledRigInvalidation()
     listener.compiledRig = compiledRig;
     listener.program = program.get();
     TfNotice::Key key = TfNotice::Register(TfCreateWeakPtr(&listener),
-                                              &CaptureListener::Handle);
+                                           &CaptureListener::Handle);
 
     // An edit the bake never read: prims and properties under a path the
     // index does not name. Misses, and keeps every entry.
@@ -1166,11 +1165,9 @@ TestKnownEmptyVsUnknown()
 
     CHECK(index.SeedsForControl("/Ctl/Empty").empty());
     CHECK(SetIs(index.AffectedByControls({"/Ctl/Empty"}), {}));
-    CHECK(SetIs(index.AffectedByControls({"/Ctl/Nope"}),
-                {0, 1, 2, 3, 4, 5}));
+    CHECK(SetIs(index.AffectedByControls({"/Ctl/Nope"}), {0, 1, 2, 3, 4, 5}));
     // A known-empty member contributes nothing to a union.
-    CHECK(SetIs(index.AffectedByControls({"/Ctl/Empty", "/Ctl/A"}),
-                {1, 3, 4}));
+    CHECK(SetIs(index.AffectedByControls({"/Ctl/Empty", "/Ctl/A"}), {1, 3, 4}));
     // But it does not dilute a foreign member's conservatism.
     CHECK(SetIs(index.AffectedByControls({"/Ctl/Empty", "/Ctl/Nope"}),
                 {0, 1, 2, 3, 4, 5}));
@@ -1179,7 +1176,8 @@ TestKnownEmptyVsUnknown()
     const RigExecRetainedFrameState cached = MakeRetained(
         7, 6, UsdTimeCode(1.0), {{"/Ctl/Empty", 1.0}, {"/Ctl/A", 1.0}});
     const std::vector<RigExecValueOverride> noOverrides;
-    CHECK(RigExecCanReuseRetainedPose(index, cached, 7,
+    CHECK(RigExecCanReuseRetainedPose(
+        index, cached, 7,
         MakeInputs(UsdTimeCode(1.0), {{"/Ctl/Empty", 2.0}, {"/Ctl/A", 1.0}}),
         noOverrides));
 }
@@ -1195,30 +1193,26 @@ TestNoticeAdapterPaths()
     // A property contributes itself plus its prim; the ancestors it
     // shadows contribute nothing.
     CHECK(RigExecNoticeControlIdsFromPaths(
-              none,
-              {SdfPath("/A/B.attr"), SdfPath("/A/B"), SdfPath("/A")},
+              none, {SdfPath("/A/B.attr"), SdfPath("/A/B"), SdfPath("/A")},
               none) == Ids({"/A/B", "/A/B.attr"}));
     // A lone prim path is an unspecified change under it: kept.
     CHECK(RigExecNoticeControlIdsFromPaths(none, {SdfPath("/X")}, none) ==
           Ids({"/X"}));
     // Twins never shadow each other into silence.
-    CHECK(RigExecNoticeControlIdsFromPaths(
-              none, {SdfPath("/P"), SdfPath("/P")}, none) == Ids({"/P"}));
+    CHECK(RigExecNoticeControlIdsFromPaths(none, {SdfPath("/P"), SdfPath("/P")},
+                                           none) == Ids({"/P"}));
     // Empty paths normalize to nothing.
-    CHECK(RigExecNoticeControlIdsFromPaths(
-              none, {SdfPath::EmptyPath()}, none)
+    CHECK(RigExecNoticeControlIdsFromPaths(none, {SdfPath::EmptyPath()}, none)
               .empty());
     // Resynced paths are never filtered, even with info beneath them.
-    CHECK(RigExecNoticeControlIdsFromPaths(
-              {SdfPath("/R")}, {SdfPath("/R.a")}, none) ==
-          Ids({"/R", "/R.a"}));
+    CHECK(RigExecNoticeControlIdsFromPaths({SdfPath("/R")}, {SdfPath("/R.a")},
+                                           none) == Ids({"/R", "/R.a"}));
     // A resync at the prim names the change its info twin only echoes.
-    CHECK(RigExecNoticeControlIdsFromPaths(
-              {SdfPath("/R")}, {SdfPath("/R")}, none) == Ids({"/R"}));
+    CHECK(RigExecNoticeControlIdsFromPaths({SdfPath("/R")}, {SdfPath("/R")},
+                                           none) == Ids({"/R"}));
     // Resolved-asset resyncs contribute like any resync.
-    CHECK(RigExecNoticeControlIdsFromPaths(none, none,
-                                           {SdfPath("/Ext/File")}) ==
-          Ids({"/Ext/File"}));
+    CHECK(RigExecNoticeControlIdsFromPaths(
+              none, none, {SdfPath("/Ext/File")}) == Ids({"/Ext/File"}));
 }
 
 // The adapter against a real notice: a value edit's packaging carries
@@ -1279,8 +1273,7 @@ TestOverrideSeeds()
     RigExecValueOverride place;
     place.prim = SdfPath("/P");
     place.attribute = TfToken("a");
-    CHECK(RigExecOverrideSeeds(program, place) ==
-          std::vector<int>({0, 1}));
+    CHECK(RigExecOverrideSeeds(program, place) == std::vector<int>({0, 1}));
 
     RigExecValueOverride computation;
     computation.prim = SdfPath("/P");
@@ -1323,7 +1316,6 @@ TestOverrideSeeds()
 // the always-dirty set plus the varying closure (not just Always), and
 // standing overrides dirty the override closure even when no value moved.
 
-
 namespace {
 
 // The nested space-switch rig of testRigExecFrozenContext: S sits under P
@@ -1353,7 +1345,7 @@ MakeNestedSpaceSwitchRig()
     const double sActive[4] = {0.5, 0.0, 1.0, 0.5};
     const auto spaces = [&stage](const char *name, const UsdPrim &target,
                                  const UsdPrim &source,
-                                 const double (&keys)[4]) {
+                                 const double(&keys)[4]) {
         const UsdPrim prim = stage->DefinePrim(
             SdfPath("/Asset/Rig/Movers").AppendChild(TfToken(name)),
             TfToken("RigExecSpaceSwitch"));
@@ -1378,7 +1370,7 @@ MakeNestedSpaceSwitchRig()
     return stage;
 }
 
-}  // namespace
+} // namespace
 
 // Warm frozen jobs use the same value-cutoff engine as live evaluation,
 // including provider versions read by nested space switches.
@@ -1395,23 +1387,27 @@ TestRecomposedVersionSeedsSparseReuse()
     std::string error;
     std::shared_ptr<const RigExecFrozenProgram> frozen;
     CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
-    if (!frozen) return;
+    if (!frozen)
+        return;
     auto workspace = RigExecCreateFrozenWorkspace(frozen);
     CHECK(workspace != nullptr);
     RigExecFrozenEvalContext context;
     context.frozen = frozen.get();
     context.workspace = workspace.get();
-    context.compiledRigSignature = uint64_t(evaluator.GetCompiledRigSignature());
+    context.compiledRigSignature =
+        uint64_t(evaluator.GetCompiledRigSignature());
     context.slotCount = frozen->program->paths.size();
     const auto run = [&](const std::vector<RigExecValueOverride> &overrides) {
         evaluator.SetInteractiveOverrides(overrides);
         RigExecFrameInputs inputs;
-        CHECK(RigExecSampleFrameInputs(evaluator, time, overrides, &inputs, &error));
+        CHECK(RigExecSampleFrameInputs(evaluator, time, overrides, &inputs,
+                                       &error));
         context.varyingInputCount = inputs.values.size();
         const RigExecRigPose live = evaluator.Evaluate(time);
         RigExecFrozenRunReport report;
         const RigExecRigPose pose = RigExecEvaluateFrozen(
-            context, inputs, RigExecMakeProductionStepRunner(), nullptr, rig, &report);
+            context, inputs, RigExecMakeProductionStepRunner(), nullptr, rig,
+            &report);
         CHECK(live.valid && pose.valid && report.ran);
         RigExecRigPose diff;
         RigExecComparePoses(live, pose, &diff);
@@ -1434,7 +1430,9 @@ TestRecomposedVersionSeedsSparseReuse()
     CHECK(RigExecSampleFrameInputs(evaluator, time, {}, &inputs, &error));
     context.varyingInputCount = inputs.values.size();
     ++context.compiledRigSignature;
-    CHECK(!RigExecEvaluateFrozen(context, inputs, RigExecMakeProductionStepRunner()).valid);
+    CHECK(!RigExecEvaluateFrozen(context, inputs,
+                                 RigExecMakeProductionStepRunner())
+               .valid);
     --context.compiledRigSignature;
     CHECK(run({}) == 0);
 }

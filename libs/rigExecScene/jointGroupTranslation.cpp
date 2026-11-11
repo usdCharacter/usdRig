@@ -1,3 +1,4 @@
+#include "rigExecSchema/schemaNames.h"
 #include "jointGroupTranslation.h"
 #include "sceneCompileInputs.h"
 #include "rigExec/pathText.h"
@@ -11,13 +12,13 @@ namespace rigExec {
 
 TF_DEFINE_PRIVATE_TOKENS(_tokens,
     (RigExecJointGroupAPI) (explicitOnly)
-    ((jointGroups, "rigExec:jointGroups"))
-    ((includes, "collection:members:includes"))
-    ((excludes, "collection:members:excludes"))
-    ((expansionRule, "collection:members:expansionRule"))
-    ((expression, "collection:members:membershipExpression"))
-    ((enabled, "rigExec:enabled"))
-    ((activeMember, "rigExec:activeMember"))
+    ((jointGroups, SchemaAttrText::rigExecJointGroups))
+    ((includes, CollectionMemberText::includes))
+    ((excludes, CollectionMemberText::excludes))
+    ((expansionRule, CollectionMemberText::expansionRule))
+    ((expression, CollectionMemberText::membershipExpression))
+    ((enabled, SchemaAttrText::rigExecEnabled))
+    ((activeMember, SchemaAttrText::rigExecActiveMember))
 );
 
 namespace {
@@ -26,14 +27,16 @@ std::string
 Text(const SdfPath &path)
 {
     std::string text;
-    if (!RigExecSpellPathText(path, &text)) text = path.GetAsString();
+    if (!RigExecSpellPathText(path, &text))
+        text = path.GetAsString();
     return text;
 }
 
 bool
 Fail(std::string *error, const std::string &message)
 {
-    if (error) *error = message;
+    if (error)
+        *error = message;
     return false;
 }
 
@@ -45,11 +48,14 @@ Uniform(const RigExecSceneCompileInputs &source, const SdfPath &property,
 {
     *value = fallback;
     const auto *attribute = source.Attribute(property);
-    if (!attribute) return true;
-    if (!attribute->fact.sampleTimes.empty() || !attribute->fact.spline.IsEmpty() ||
+    if (!attribute)
+        return true;
+    if (!attribute->fact.sampleTimes.empty() ||
+        !attribute->fact.spline.IsEmpty() ||
         attribute->fact.mightBeTimeVarying) {
-        return Fail(error, Text(property) + " is a setup value and must not be animated "
-                                            "(an edit recompiles the solver)");
+        return Fail(error, Text(property) +
+                               " is a setup value and must not be animated "
+                               "(an edit recompiles the solver)");
     }
     RigExecSceneBoundInput binding;
     VtValue boxed;
@@ -57,31 +63,36 @@ Uniform(const RigExecSceneCompileInputs &source, const SdfPath &property,
         !source.Read(binding, UsdTimeCode::Default(), &boxed, nullptr, error)) {
         return false;
     }
-    if (boxed.IsHolding<T>()) *value = boxed.UncheckedGet<T>();
+    if (boxed.IsHolding<T>())
+        *value = boxed.UncheckedGet<T>();
     return true;
 }
 
-}  // namespace
+} // namespace
 
 bool
-RigExecTranslateSceneJointGroups(const RigExecSceneDescriptors &scene,
-    const SdfPath &solver, const std::map<SdfPath, int32_t> &jointIndex,
-    const std::string &who, std::vector<RigExecJointGroup> *groups,
-    std::vector<int32_t> *members, std::vector<RigExecSceneTypedRead> *selectorReads,
-    std::string *error)
+RigExecTranslateSceneJointGroups(
+    const RigExecSceneDescriptors &scene, const SdfPath &solver,
+    const std::map<SdfPath, int32_t> &jointIndex, const std::string &who,
+    std::vector<RigExecJointGroup> *groups, std::vector<int32_t> *members,
+    std::vector<RigExecSceneTypedRead> *selectorReads, std::string *error)
 {
     groups->clear();
     members->clear();
     selectorReads->clear();
     const RigExecSceneCompileInputs source(scene);
     std::set<SdfPath> grouped;
-    for (const SdfPath &groupPath : source.Targets(solver.AppendProperty(_tokens->jointGroups))) {
+    for (const SdfPath &groupPath :
+         source.Targets(solver.AppendProperty(_tokens->jointGroups))) {
         const auto *node = source.Node(groupPath);
         if (!node || !node->fact.active ||
-            std::find(node->fact.appliedSchemas.begin(), node->fact.appliedSchemas.end(),
-                      _tokens->RigExecJointGroupAPI) == node->fact.appliedSchemas.end()) {
-            return Fail(error, who + ": rigExec:jointGroups target " + Text(groupPath) +
-                                   " is not an active prim with RigExecJointGroupAPI");
+            std::find(node->fact.appliedSchemas.begin(),
+                      node->fact.appliedSchemas.end(),
+                      _tokens->RigExecJointGroupAPI) ==
+                node->fact.appliedSchemas.end()) {
+            return Fail(
+                error, who + ": rigExec:jointGroups target " + Text(groupPath) +
+                           " is not an active prim with RigExecJointGroupAPI");
         }
         TfToken expansion;
         if (!Uniform(source, groupPath.AppendProperty(_tokens->expansionRule),
@@ -89,29 +100,36 @@ RigExecTranslateSceneJointGroups(const RigExecSceneDescriptors &scene,
             return false;
         }
         if (expansion != _tokens->explicitOnly) {
-            return Fail(error, who + ": group " + Text(groupPath) +
-                                   " must list its members explicitly "
-                                   "(collection:members:expansionRule = explicitOnly)");
+            return Fail(
+                error, who + ": group " + Text(groupPath) +
+                           " must list its members explicitly "
+                           "(collection:members:expansionRule = explicitOnly)");
         }
-        if (const auto *expression =
-                source.Attribute(groupPath.AppendProperty(_tokens->expression))) {
+        if (const auto *expression = source.Attribute(
+                groupPath.AppendProperty(_tokens->expression))) {
             if (expression->fact.hasAuthoredValue) {
-                return Fail(error, who + ": group " + Text(groupPath) +
-                                       " authors collection:members:membershipExpression; "
-                                       "a joint group lists its members explicitly");
+                return Fail(
+                    error,
+                    who + ": group " + Text(groupPath) +
+                        " authors collection:members:membershipExpression; "
+                        "a joint group lists its members explicitly");
             }
         }
-        const SdfPathVector excluded = source.Targets(groupPath.AppendProperty(_tokens->excludes));
+        const SdfPathVector excluded =
+            source.Targets(groupPath.AppendProperty(_tokens->excludes));
         RigExecJointGroup group;
         group.memberBegin = uint32_t(members->size());
-        for (const SdfPath &member : source.Targets(groupPath.AppendProperty(_tokens->includes))) {
-            if (std::find(excluded.begin(), excluded.end(), member) != excluded.end()) {
+        for (const SdfPath &member :
+             source.Targets(groupPath.AppendProperty(_tokens->includes))) {
+            if (std::find(excluded.begin(), excluded.end(), member) !=
+                excluded.end()) {
                 continue;
             }
             const auto found = jointIndex.find(member);
             if (found == jointIndex.end()) {
-                return Fail(error, who + ": group " + Text(groupPath) + " has member " +
-                                       Text(member) + ", which is not a joint of this solver");
+                return Fail(error, who + ": group " + Text(groupPath) +
+                                       " has member " + Text(member) +
+                                       ", which is not a joint of this solver");
             }
             if (!grouped.insert(member).second) {
                 return Fail(error, who + ": " + Text(member) +
@@ -120,12 +138,13 @@ RigExecTranslateSceneJointGroups(const RigExecSceneDescriptors &scene,
             members->push_back(found->second);
         }
         group.memberCount = uint32_t(members->size()) - group.memberBegin;
-        if (!Uniform(source, groupPath.AppendProperty(_tokens->enabled), true, &group.enabled,
-                     error)) {
+        if (!Uniform(source, groupPath.AppendProperty(_tokens->enabled), true,
+                     &group.enabled, error)) {
             return false;
         }
         RigExecSceneTypedRead activeRead;
-        if (!RigExecBindSceneTypedRead(scene, groupPath.AppendProperty(_tokens->activeMember),
+        if (!RigExecBindSceneTypedRead(
+                scene, groupPath.AppendProperty(_tokens->activeMember),
                 SdfValueTypeNames->Double, &activeRead, error)) {
             return false;
         }
@@ -135,4 +154,4 @@ RigExecTranslateSceneJointGroups(const RigExecSceneDescriptors &scene,
     return true;
 }
 
-}  // namespace rigExec
+} // namespace rigExec

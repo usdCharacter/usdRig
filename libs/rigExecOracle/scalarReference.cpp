@@ -1,3 +1,4 @@
+#include "rigExecSchema/schemaNames.h"
 #include "rigExec/scalarReference.h"
 #include "rigExec/rigEvaluatorInternal.h"
 #include "rigExec/rigEvaluatorConstraints.h"
@@ -7,24 +8,28 @@
 namespace rigExec {
 using namespace evaluatorDetail;
 namespace {
-const TfToken _kGeoWeightObject("rigExec:weightObject");
-const TfToken _kGeoInputsDefaultWeight("inputs:defaultWeight");
-bool _IsEnabled(const RigExecOraclePrim &mover, UsdTimeCode time) {
+const TfToken _kGeoWeightObject(SchemaAttrText::rigExecWeightObject);
+const TfToken _kGeoInputsDefaultWeight(SchemaAttrText::inputsDefaultWeight);
+bool
+_IsEnabled(const RigExecOraclePrim &mover, UsdTimeCode time)
+{
     bool enabled = true;
-    if (const auto a = mover.GetAttribute(_enabledAttr)) a.Get(&enabled,time);
+    if (const auto a = mover.GetAttribute(_enabledAttr))
+        a.Get(&enabled, time);
     return enabled;
 }
-}
+} // namespace
 VtVec3fArray
 RigExecScalarChainReference(
-    const RigExecScalarReferenceContext &context,
-    const SdfPath &target,
+    const RigExecScalarReferenceContext &context, const SdfPath &target,
     const std::vector<const RigExecMoverRecord *> &chain,
-    const std::unordered_map<SdfPath, GfMatrix4d, SdfPath::Hash> &baseProviderMatrices,
-    const std::unordered_map<SdfPath, GfMatrix4d, SdfPath::Hash> &finalProviderMatrices,
-    UsdTimeCode time,
-    std::vector<std::string> *diagnostics,
-    const std::unordered_map<SdfPath, GfMatrix4d, SdfPath::Hash> &geometryConstraintDeltas)
+    const std::unordered_map<SdfPath, GfMatrix4d, SdfPath::Hash>
+        &baseProviderMatrices,
+    const std::unordered_map<SdfPath, GfMatrix4d, SdfPath::Hash>
+        &finalProviderMatrices,
+    UsdTimeCode time, std::vector<std::string> *diagnostics,
+    const std::unordered_map<SdfPath, GfMatrix4d, SdfPath::Hash>
+        &geometryConstraintDeltas)
 {
     // The oracle resolves a read phase ITSELF, from the authored metadata,
     // and reads the same recorded snapshots. That keeps it independent of
@@ -36,10 +41,13 @@ RigExecScalarChainReference(
     // The base revision is retained: blend-shape deltas
     // derive against base points, not the preceding revision.
     VtVec3fArray points;
-    const RigExecOracleAttribute baseAttr = context.stage->GetAttributeAtPath(target);
+    const RigExecOracleAttribute baseAttr =
+        context.stage->GetAttributeAtPath(target);
     const auto upstream = context.upstream.find(target);
-    const bool upstreamRead = upstream != context.upstream.end() && upstream->second.IsHolding<VtVec3fArray>();
-    if (upstreamRead) points = upstream->second.UncheckedGet<VtVec3fArray>();
+    const bool upstreamRead = upstream != context.upstream.end() &&
+                              upstream->second.IsHolding<VtVec3fArray>();
+    if (upstreamRead)
+        points = upstream->second.UncheckedGet<VtVec3fArray>();
     if (!upstreamRead && (!baseAttr || !baseAttr.Get(&points, time))) {
         diagnostics->push_back("no base value for " + target.GetString());
         return points;
@@ -48,9 +56,10 @@ RigExecScalarChainReference(
 
     for (size_t index = 0; index < chain.size(); ++index) {
         const RigExecMoverRecord *mover = chain[index];
-        const RigExecOraclePrim prim = context.stage->GetPrimAtPath(mover->moverPath);
+        const RigExecOraclePrim prim =
+            context.stage->GetPrimAtPath(mover->moverPath);
         if (!prim || !_IsEnabled(prim, time)) {
-            continue;  // pass-through
+            continue; // pass-through
         }
 
         // Resolve the common envelope against the PRECEDING revision. A
@@ -64,29 +73,39 @@ RigExecScalarChainReference(
             rel.GetTargets(&weightObjects);
         }
         if (!weightObjects.empty()) {
-            const std::vector<GfVec3f> currentPoints(
-                preceding.begin(), preceding.end());
+            const std::vector<GfVec3f> currentPoints(preceding.begin(),
+                                                     preceding.end());
             std::string error;
-            if (!context.weights) error="no weight reference adapter";
-            if (!context.weights || !context.weights(mover->moverPath, weightObjects[0], points.size(),
-                                 &envelope, &error, &currentPoints)) {
+            if (!context.weights)
+                error = "no weight reference adapter";
+            if (!context.weights ||
+                !context.weights(mover->moverPath, weightObjects[0],
+                                 points.size(), &envelope, &error,
+                                 &currentPoints)) {
                 if (context.currentPhaseWeight &&
                     context.currentPhaseWeight(mover->moverPath)) {
                     // The producer-level refusal already has this canonical route.
                     // Form it from the independent error; a different reason remains
                     // a distinct diagnostic and cannot be hidden by deduplication.
-                    const std::string message = "current-phase weight failed: " + error;
-                    if (std::find(diagnostics->begin(), diagnostics->end(), message) ==
-                        diagnostics->end()) diagnostics->push_back(message);
+                    const std::string message =
+                        "current-phase weight failed: " + error;
+                    if (std::find(diagnostics->begin(), diagnostics->end(),
+                                  message) == diagnostics->end())
+                        diagnostics->push_back(message);
                 } else {
-                    diagnostics->push_back(
-                        "MoverFailed " + mover->moverPath.GetString() + ": " +
-                        error);
+                    diagnostics->push_back("MoverFailed " +
+                                           mover->moverPath.GetString() + ": " +
+                                           error);
                 }
                 continue;
             }
         } else {
-            const float scalar = [&]() { float v=1.0f;context.resolved.GetAttribute(prim.GetAttribute(_kGeoInputsDefaultWeight),time,&v);return v; }();
+            const float scalar = [&]() {
+                float v = 1.0f;
+                context.resolved.GetAttribute(
+                    prim.GetAttribute(_kGeoInputsDefaultWeight), time, &v);
+                return v;
+            }();
             if (!std::isfinite(scalar) || scalar < 0.0f || scalar > 1.0f) {
                 diagnostics->push_back(
                     "MoverFailed " + mover->moverPath.GetString() +
@@ -99,11 +118,11 @@ RigExecScalarChainReference(
         bool envelopeApplied = false;
         if (_IsSourceFrameConstraintType(prim.GetTypeName())) {
             const auto delta = geometryConstraintDeltas.find(mover->moverPath);
-            if (delta == geometryConstraintDeltas.end()) continue;
+            if (delta == geometryConstraintDeltas.end())
+                continue;
             for (auto &point : points)
                 point = GfVec3f(delta->second.TransformAffine(GfVec3d(point)));
-        } else if (const RigExecMoverHandler *oracleHandler =
-                       mover->handler) {
+        } else if (const RigExecMoverHandler *oracleHandler = mover->handler) {
             // The parity-oracle branch, from the mover's own row (see movers/).
             // A type with no row, or a row with no oracle, falls through to
             // the shared envelope blend over the unmodified points.
@@ -112,27 +131,32 @@ RigExecScalarChainReference(
                 // recorded snapshot, resolved through this revision
                 // compiled binding -- the one piece of evaluator
                 // compile state the oracle needs.
-                const auto sampleSnapshot = [&context, mover](const SdfPath &input, const SdfPath &sample) {
-                    return context.sampleSnapshot ? context.sampleSnapshot(mover->moverPath, input, sample) : nullptr;
+                const auto sampleSnapshot = [&context,
+                                             mover](const SdfPath &input,
+                                                    const SdfPath &sample) {
+                    return context.sampleSnapshot
+                               ? context.sampleSnapshot(mover->moverPath, input,
+                                                        sample)
+                               : nullptr;
                 };
-                const RigExecMoverOracleContext oracleCtx{
-                    context.stage,
-                    prim,
-                    mover->moverPath,
-                    target,
-                    time,
-                    context.resolved,
-                    context.phasedPoints,
-                    context.phasedMatrix,
-                    baseProviderMatrices,
-                    finalProviderMatrices,
-                    diagnostics,
-                    &points,
-                    basePoints,
-                    sampleSnapshot,
-                    index > 0 ? &preceding : nullptr,
-                    &envelope,
-                    context.boundFrames};
+                const RigExecMoverOracleContext oracleCtx{context.stage,
+                                                          prim,
+                                                          mover->moverPath,
+                                                          target,
+                                                          time,
+                                                          context.resolved,
+                                                          context.phasedPoints,
+                                                          context.phasedMatrix,
+                                                          baseProviderMatrices,
+                                                          finalProviderMatrices,
+                                                          diagnostics,
+                                                          &points,
+                                                          basePoints,
+                                                          sampleSnapshot,
+                                                          index > 0 ? &preceding
+                                                                    : nullptr,
+                                                          &envelope,
+                                                          context.boundFrames};
                 const auto result = oracleHandler->oracle(oracleCtx);
                 if (result == RigExecOracleResult::PassThrough) {
                     continue;
@@ -152,10 +176,11 @@ RigExecScalarChainReference(
             points = preceding;
             continue;
         }
-        if (!envelopeApplied) for (size_t i = 0; i < points.size(); ++i) {
-            points[i] = RigExecBlendEnvelope(
-                preceding[i], points[i], envelope[i]);
-        }
+        if (!envelopeApplied)
+            for (size_t i = 0; i < points.size(); ++i) {
+                points[i] =
+                    RigExecBlendEnvelope(preceding[i], points[i], envelope[i]);
+            }
         if (context.revisionObserver)
             context.revisionObserver(index, mover->moverPath, points);
     }

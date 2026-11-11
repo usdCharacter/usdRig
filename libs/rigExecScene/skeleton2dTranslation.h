@@ -4,6 +4,7 @@
 #ifndef RIGEXEC_SCENE_SKELETON2D_TRANSLATION_H
 #define RIGEXEC_SCENE_SKELETON2D_TRANSLATION_H
 
+#include "rigExecSchema/schemaNames.h"
 #include "sceneDescriptors.h"
 #include "sceneTypedReads.h"
 #include "rigExecMath/pointFrame.h"
@@ -22,23 +23,33 @@ namespace rigExec {
 /// the others double. Namespace-scope tokens, interned once when the
 /// library loads; pass these tokens, never their text, so binding a channel
 /// builds no token.
-inline const std::array<TfToken, kRigExecBone2dChannelCount> RigExecBone2dChannelNames = {
-    TfToken("avars:tx"), TfToken("avars:ty"), TfToken("avars:rz"), TfToken("avars:sx"),
-    TfToken("bone2d:sideFlip"), TfToken("bone2d:endFlip"), TfToken("bone2d:lock"),
-    TfToken("bone2d:lockX"), TfToken("bone2d:lockY"), TfToken("bone2d:lockAngle"),
-    TfToken("bone2d:offsetX"), TfToken("bone2d:offsetY"), TfToken("bone2d:targetIndex")};
+inline const std::array<TfToken, kRigExecBone2dChannelCount>
+    RigExecBone2dChannelNames = {TfToken(SchemaAttrText::avarsTx),
+                                 TfToken(SchemaAttrText::avarsTy),
+                                 TfToken(SchemaAttrText::avarsRz),
+                                 TfToken(SchemaAttrText::avarsSx),
+                                 TfToken(SchemaAttrText::bone2dSideFlip),
+                                 TfToken(SchemaAttrText::bone2dEndFlip),
+                                 TfToken(SchemaAttrText::bone2dLock),
+                                 TfToken(SchemaAttrText::bone2dLockX),
+                                 TfToken(SchemaAttrText::bone2dLockY),
+                                 TfToken(SchemaAttrText::bone2dLockAngle),
+                                 TfToken(SchemaAttrText::bone2dOffsetX),
+                                 TfToken(SchemaAttrText::bone2dOffsetY),
+                                 TfToken(SchemaAttrText::bone2dTargetIndex)};
 /// The fallback each channel reads when it is unauthored.
-inline constexpr double kRigExecBone2dChannelDefaults[kRigExecBone2dChannelCount] = {
-    0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, -1};
+inline constexpr double
+    kRigExecBone2dChannelDefaults[kRigExecBone2dChannelCount] = {
+        0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, -1};
 
 /// Structural facts plus the per-bone value reads of one skeleton. Rests
 /// are not here: they follow the solver rest route (restSlots), so a rest
 /// edit refreshes the record without a recompile.
 struct RigExecSceneSkeleton2dDescriptor {
     SdfPath path;
-    SdfPathVector joints;                     ///< rigExec:joints order (output order)
-    std::vector<uint32_t> solveOrder;         ///< rigExec:joints index per solve entry
-    std::vector<RigExecBone2dSetup> setup;    ///< in solveOrder; digested
+    SdfPathVector joints;             ///< rigExec:joints order (output order)
+    std::vector<uint32_t> solveOrder; ///< rigExec:joints index per solve entry
+    std::vector<RigExecBone2dSetup> setup; ///< in solveOrder; digested
     /// Per bone, in rigExec:joints order, kRigExecBone2dChannelCount reads
     /// in RigExecBone2dChannelNames order. A channel that property movers
     /// revise reads that chain's result.
@@ -73,25 +84,27 @@ struct RigExecSceneSkeleton2dDescriptor {
 /// target and no parent bone; and for time-sampled uniform settings.
 /// A pose step below the skeleton that writes a bone hands its frame to the
 /// skeleton as that bone's rest, in every evaluator.
-bool RigExecTranslateSceneSkeleton2d(const RigExecSceneDescriptors &scene,
-    const SdfPath &path, const SdfPath &start,
-    const std::map<SdfPath, RigExecPointFrame> &rests,
+bool RigExecTranslateSceneSkeleton2d(
+    const RigExecSceneDescriptors &scene, const SdfPath &path,
+    const SdfPath &start, const std::map<SdfPath, RigExecPointFrame> &rests,
     RigExecSceneSkeleton2dDescriptor *output, std::string *error = nullptr);
 
 /// Sets channel \p c of \p channels from a typed read's value; an empty or
 /// mistyped value leaves the channel as it is.
-inline void RigExecSetBone2dChannel(RigExecBone2dChannels *channels, size_t c,
-    const VtValue &value)
+inline void
+RigExecSetBone2dChannel(RigExecBone2dChannels *channels, size_t c,
+                        const VtValue &value)
 {
     if (RigExecBone2dChannelIsBool(c)) {
         if (value.IsHolding<bool>()) {
-            RigExecBone2dSetChannel(channels, c, value.UncheckedGet<bool>() ? 1.0 : 0.0);
+            RigExecBone2dSetChannel(channels, c,
+                                    value.UncheckedGet<bool>() ? 1.0 : 0.0);
         }
     } else if (value.IsHolding<double>()) {
         RigExecBone2dSetChannel(channels, c, value.UncheckedGet<double>());
     }
 }
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_SCENE_SKELETON2D_TRANSLATION_H
+#endif // RIGEXEC_SCENE_SKELETON2D_TRANSLATION_H

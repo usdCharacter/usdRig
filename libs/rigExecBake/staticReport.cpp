@@ -1,4 +1,5 @@
 // .rigexec time-variance audit.
+#include "rigExecSchema/schemaNames.h"
 #include "rigExecBake/staticReport.h"
 #include "rigExecBake/computedCapture.h"
 #include "rigExecBake/pathTable.h"
@@ -136,7 +137,8 @@ _Revision(const RigExecBakedProgramImpl &program, double time,
                     !_CanAnswer(program, sample.pointBinding)) {
                     if (!slotDriven(sample.points.GetPath())) {
                         _Attribute(sample.points,
-                                   "blend sample points " + sample.samplePath.GetString(),
+                                   "blend sample points " +
+                                       sample.samplePath.GetString(),
                                    entries);
                     }
                 }
@@ -155,18 +157,19 @@ _Revision(const RigExecBakedProgramImpl &program, double time,
         }
     }
     const RigExecRevisionBinding &binding = revision.binding;
-    const std::string field = "revision binding " +
-                              revision.moverPath.GetString();
+    const std::string field =
+        "revision binding " + revision.moverPath.GetString();
     const std::set<SdfPath> bindingPaths = {
         binding.cagePoints,       binding.surfacePoints,
         binding.bindCoords,       binding.driverCurvePoints,
         binding.driverCurveOrder, binding.driverCurveKnots,
         binding.topologyCounts,   binding.topologyIndices};
     for (const SdfPath &path : bindingPaths) {
-        if (!slotDriven(path)) _Attribute(stage, path, field, entries);
+        if (!slotDriven(path))
+            _Attribute(stage, path, field, entries);
     }
-    const std::string readField = "revision read " +
-                                  revision.moverPath.GetString();
+    const std::string readField =
+        "revision read " + revision.moverPath.GetString();
     RigExecBakeEnumerateRevisionReads(
         program, chainIndex, revisionIndex, derived, time,
         [&](RigExecBakeRevisionRead &&read) {
@@ -175,8 +178,7 @@ _Revision(const RigExecBakedProgramImpl &program, double time,
                 !read.path.IsPropertyPath()) {
                 return;
             }
-            const UsdAttribute attribute =
-                stage->GetAttributeAtPath(read.path);
+            const UsdAttribute attribute = stage->GetAttributeAtPath(read.path);
             if (RigExecBakedAnimatedOrConnected(attribute) &&
                 !slotDriven(read.path)) {
                 entries->emplace(readField, read.path.GetString());
@@ -184,7 +186,7 @@ _Revision(const RigExecBakedProgramImpl &program, double time,
         });
 }
 
-}  // namespace
+} // namespace
 
 bool
 RigExecBakeStaticReport(RigExecRigEvaluator &evaluator,
@@ -302,17 +304,16 @@ RigExecBakeStaticReport(RigExecRigEvaluator &evaluator,
         }
         const std::string field =
             "constraint arrays " + arrays.prim.GetPath().GetString();
-        std::vector<const char *> names = {"inputs:sourceWeights"};
+        std::vector<const char *> names = {SchemaAttrText::inputsSourceWeights};
         if (arrays.parentOffsets) {
-            names.push_back("inputs:translationOffsets");
-            names.push_back("inputs:rotationOffsets");
+            names.push_back(SchemaAttrText::inputsTranslationOffsets);
+            names.push_back(SchemaAttrText::inputsRotationOffsets);
         }
         if (arrays.readPole) {
-            names.push_back("inputs:poleVectorWeights");
+            names.push_back(SchemaAttrText::inputsPoleVectorWeights);
         }
         for (const char *name : names) {
-            _Attribute(arrays.prim.GetAttribute(TfToken(name)), field,
-                       &found);
+            _Attribute(arrays.prim.GetAttribute(TfToken(name)), field, &found);
         }
     }
 
@@ -383,4 +384,4 @@ RigExecBakeStaticReport(RigExecRigEvaluator &evaluator,
     return true;
 }
 
-}  // namespace rigExec
+} // namespace rigExec

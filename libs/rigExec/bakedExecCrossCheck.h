@@ -10,6 +10,12 @@ namespace rigExec {
 
 enum class RigExecExecCheckSkip { None, NoEquivalent, ArrayInput, Unusable };
 
+/// Diagnostic spelling of a skip reason. Row keys and the step-kind fallback
+/// read it here instead of re-spelling the label.
+namespace RigExecExecCheckSkipText {
+inline constexpr const char *const noEquivalent = "NoEquivalent";
+}
+
 struct RigExecExecCheckDescriptor {
     std::string key;
     uint32_t kind = 0;
@@ -24,7 +30,9 @@ struct RigExecExecCheckDescriptor {
     /// Owning-thread acquisition of independent ORIGINAL input context.
     /// The returned numerical witness owns its inputs and performs no stage reads.
     std::function<bool(const UsdStageRefPtr &, UsdTimeCode,
-        const std::vector<RigExecValueOverride> &, Reference *, std::string *)> acquireReference;
+                       const std::vector<RigExecValueOverride> &, Reference *,
+                       std::string *)>
+        acquireReference;
 };
 struct RigExecExecCheckInput {
     VtValue expected;
@@ -36,7 +44,10 @@ struct RigExecExecCrossCheckReport {
     std::map<uint32_t, size_t> checkedByKind;
     std::map<RigExecExecCheckSkip, size_t> skipped;
     std::vector<std::string> diagnostics;
-    bool Passed() const { return failed == 0 && dropped == 0; }
+    bool Passed() const
+    {
+        return failed == 0 && dropped == 0;
+    }
 };
 
 /// Owning-thread verification only. Each request contains exactly one public
@@ -45,11 +56,19 @@ struct RigExecExecCrossCheckReport {
 /// No network, sampling, or stage access occurs in the production executor.
 class RigExecBakedExecCrossCheck {
 public:
-    explicit RigExecBakedExecCrossCheck(const UsdStageRefPtr &stage) : _stage(stage) {}
+    explicit RigExecBakedExecCrossCheck(const UsdStageRefPtr &stage)
+        : _stage(stage)
+    {
+    }
     bool Add(RigExecExecCheckDescriptor row, std::string *error = nullptr);
-    RigExecExecCrossCheckReport Evaluate(UsdTimeCode time,
-        const std::vector<RigExecExecCheckInput> &inputs);
-    size_t Size() const { return _rows.size(); }
+    RigExecExecCrossCheckReport
+    Evaluate(UsdTimeCode time,
+             const std::vector<RigExecExecCheckInput> &inputs);
+    size_t Size() const
+    {
+        return _rows.size();
+    }
+
 private:
     struct Row {
         RigExecExecCheckDescriptor descriptor;
@@ -58,5 +77,5 @@ private:
     UsdStageRefPtr _stage;
     std::vector<Row> _rows;
 };
-}
+} // namespace rigExec
 #endif
