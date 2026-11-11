@@ -1,4 +1,4 @@
-# The RigExec documentation site: MkDocs + Material, built from docs/.
+# The usdRig documentation site: MkDocs + Material, built from docs/.
 #
 #   pip install -r docs/requirements.txt
 #   python -m mkdocs serve        # live preview at http://127.0.0.1:8000
@@ -13,14 +13,15 @@
 
 site_name: usdRig
 site_description: >-
-  An experimental character-rig evaluator for OpenUSD: controls, solvers,
-  constraints and deformers evaluated live and published through Hydra.
+  usdRig is a character-rigging project for OpenUSD. Its RigExec engine
+  evaluates controls, solvers, constraints and deformers live and publishes
+  the result through Hydra.
 site_url: https://usdcharacter.github.io/usdRig/
 repo_url: https://github.com/usdCharacter/usdRig
 repo_name: usdCharacter/usdRig
 edit_uri: edit/main/docs/
 copyright: >-
-  RigExec is MIT licensed. Third-party material keeps its own terms.
+  usdRig is MIT licensed. Third-party material keeps its own terms.
 
 docs_dir: docs
 site_dir: site
