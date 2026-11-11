@@ -25,6 +25,8 @@ const std::map<std::string, TfToken, std::less<>> _tokens = [] {
                            SchemaComputationText::computePointFrame,
                            SchemaComputationText::computeRestFrame,
                            SchemaComputationText::computePointFrameArray,
+                           SchemaComputationText::computeMatrix,
+                           SchemaComputationText::computedDefaultSpace,
                            SchemaComputationText::computeWeightPacket,
                            SchemaComputationText::computeFalloffLut,
                            SchemaAttrText::posedSpace,
@@ -145,10 +147,18 @@ const std::map<std::string, TfToken, std::less<>> _tokens = [] {
         result.emplace(name, TfToken(name));
     return result;
 }();
-const TfToken &
+TfToken
 Token(const char *name)
 {
-    return _tokens.find(name)->second;
+    const auto found = _tokens.find(name);
+    if (found == _tokens.end()) {
+        // A name absent from the table is a bug: an empty computation or
+        // attribute name makes the row silently fail.
+        TF_CODING_ERROR("bakedExecCrossCheckRows: interned name '%s' missing",
+                        name);
+        return TfToken(name);
+    }
+    return found->second;
 }
 // Step kinds that have a row-level witness here are keyed by the schedule's
 // shared kind name; the rest are keyed as having no equivalent.
