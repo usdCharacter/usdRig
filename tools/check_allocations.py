@@ -10,6 +10,12 @@ comment, a string literal or an `operator new` definition is a hit: bare
 `new T`, `new T{}`, `new T`, `new T[n]`, an allocation split across lines,
 and placement `new (buffer) T` (reported as its own kind so a reviewer sees
 the buffer it lands in). `make_unique`/`make_shared` are the replacements.
+Macro bodies are scanned: `#define MAKE_WIDGET() new Widget()` is a hit.
+Only `#include` is exempt, since `#include <new>` names the allocator header
+rather than allocating. A raw string ends at its own delimiter, so a bare `)`
+inside `R"tag(...)tag"` does not close it. Blanked regions keep their
+newlines, so every hit reports the line it is really on, and a region with no
+newline is replaced by a space so `new/**/Widget()` is still a hit.
 Every hit must appear in tools/allocations_allowlist.txt; a hit that does not
 fails the check. Entries match by file, kind, and the line's text, so
 unrelated edits that move a line do not break the check.
@@ -52,15 +58,27 @@ ALLOWLIST = "tools/allocations_allowlist.txt"
 _NEW = re.compile(r"\bnew\b")
 # `operator new` and `operator new[]` are the allocator itself, not a hit.
 _OPERATOR_NEW = re.compile(r"operator\s+new\b")
+# An include names the allocator header; every other directive's body can
+# still hold an allocation the rule bans.
+_INCLUDE = re.compile(r"#\s*include\b")
 
 
 def _code_of(text):
     """Return the source with comments and string contents blanked out.
 
-    Newlines are kept so a hit can still be traced to its line.
+    Blanked regions keep their newlines so a hit still reports its real line,
+    and a region with no newline becomes one space so the tokens on either
+    side stay separate: `new/**/Widget()` is an allocation, not `newWidget()`.
     """
     out = []
     i, n = 0, len(text)
+
+    def skip(end):
+        region = text[i:end]
+        newlines = region.count("\n")
+        out.append("\n" * newlines if newlines else " ")
+        return end
+
     while i < n:
         ch = text[i]
         if ch == "/" and i + 1 < n and text[i + 1] == "/":
@@ -69,20 +87,24 @@ def _code_of(text):
             continue
         if ch == "/" and i + 1 < n and text[i + 1] == "*":
             j = text.find("*/", i + 2)
-            i = n if j < 0 else j + 2
-            continue
-        if ch == '"':
-            i += 1
-            while i < n and text[i] != '"':
-                i += 2 if text[i] == "\\" else 1
-            i += 1
+            i = skip(n if j < 0 else j + 2)
             continue
         if ch == "R" and i + 1 < n and text[i + 1] == '"':
-            j = i + 2
-            while j < n and text[j] != "(":
-                j += 1
-            j = text.find(')"', j + 1)
-            i = n if j < 0 else j + 2
+            # R"delim(...)delim": the closing ) belongs to the delimiter, so
+            # a bare ) inside the body does not end the literal.
+            opener = text.find("(", i + 2)
+            if opener < 0:
+                i = skip(n)
+                continue
+            delimiter = text[i + 2:opener]
+            closer = text.find(")" + delimiter + '"', opener + 1)
+            i = skip(n if closer < 0 else closer + len(delimiter) + 2)
+            continue
+        if ch == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            i = skip(min(j + 1, n))
             continue
         out.append(ch)
         i += 1
@@ -98,7 +120,7 @@ def _kind_of(code, start):
     if _OPERATOR_NEW.search(code[max(0, start - 12) : start + 4]):
         return None
     line = code.splitlines()[code[:start].count("\n")]
-    if line.lstrip().startswith("#"):
+    if _INCLUDE.match(line.lstrip()):
         return None
     tail = code[start + 3:]
     if re.match(r"\s*\(", tail):
@@ -166,21 +188,22 @@ def _write_allowlist(path, hits):
     path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
-# Each case is (source, expected kinds). An empty expectation means the
-# extractor must find nothing: comments, strings, `#include <new>` and
-# `operator new` are not allocations, and make_unique/make_shared are the
-# replacements AGENTS.md asks for.
+# Each case is (source, expected hits), a hit being (kind, line). An empty
+# expectation means the extractor must find nothing: comments, strings,
+# `#include <new>` and `operator new` are not allocations, and
+# make_unique/make_shared are the replacements AGENTS.md asks for. Line
+# numbers are checked too, so a blanked multiline region cannot shift a hit.
 _SELF_CASES = [
-    ("auto p = new Widget();", ["bare-new"]),
-    ("auto p = new Widget;", ["bare-new"]),
-    ("auto p = new Widget{};", ["bare-new"]),
-    ("auto p = new Widget{1, 2};", ["bare-new"]),
-    ("auto p = new Widget[4];", ["bare-new"]),
-    ("auto p = new Widget[4]{};", ["bare-new"]),
-    ("auto p = new std::vector<int>(n);", ["bare-new"]),
-    ("auto p = new rigExec::Widget();", ["bare-new"]),
-    ("auto p = new\n    Widget(1, 2);", ["bare-new"]),
-    ("auto p = std::unique_ptr<Widget>(\n    new Widget());", ["bare-new"]),
+    ("auto p = new Widget();", [("bare-new", 1)]),
+    ("auto p = new Widget;", [("bare-new", 1)]),
+    ("auto p = new Widget{};", [("bare-new", 1)]),
+    ("auto p = new Widget{1, 2};", [("bare-new", 1)]),
+    ("auto p = new Widget[4];", [("bare-new", 1)]),
+    ("auto p = new Widget[4]{};", [("bare-new", 1)]),
+    ("auto p = new std::vector<int>(n);", [("bare-new", 1)]),
+    ("auto p = new rigExec::Widget();", [("bare-new", 1)]),
+    ("auto p = new\n    Widget(1, 2);", [("bare-new", 1)]),
+    ("auto p = std::unique_ptr<Widget>(\n    new Widget());", [("bare-new", 2)]),
     ("items.push_back(std::make_unique<Widget>());", []),
     ("auto p = std::make_shared<Widget>();", []),
     ("// auto p = new Widget();", []),
@@ -189,10 +212,33 @@ _SELF_CASES = [
     ("#include <new>", []),
     ("void *operator new(std::size_t n);", []),
     ("void *operator new[](std::size_t n);", []),
-    ("new (arena) Widget;", ["placement-new"]),
-    ("new (buffer) Widget[2];", ["placement-new"]),
+    ("new (arena) Widget;", [("placement-new", 1)]),
+    ("new (buffer) Widget[2];", [("placement-new", 1)]),
     ("renewWidget();", []),
     ("News news;", []),
+    # A raw string ends at )delim", not at the first bare ) in its body.
+    ('const char *s = R"tag(text)tag";\nauto p = new Widget();',
+     [("bare-new", 2)]),
+    ('auto s = R"(new Widget())";', []),
+    ('auto s = R"del(new Widget[4])del";\nauto p = new Widget[2];',
+     [("bare-new", 2)]),
+    ('auto s = R"(\nnew Widget();\n)";\nauto p = new Widget();',
+     [("bare-new", 4)]),
+    # Macro bodies allocate too; only includes are exempt.
+    ("#define MAKE_WIDGET() new Widget()", [("bare-new", 1)]),
+    ("#define PLACE(arena) new (arena) Widget()", [("placement-new", 1)]),
+    ("#define MAKE() \\\n    new Widget()", [("bare-new", 2)]),
+    ("#pragma once\n#define WIDGET() new Widget", [("bare-new", 2)]),
+    # Blanked regions must not move the line a hit reports on.
+    ("/*\nnew Widget[3];\n*/\nauto p = new Widget();", [("bare-new", 4)]),
+    ('"a string with new Widget()\nspanning lines"\nauto p = new Widget();',
+     [("bare-new", 3)]),
+    # Blanking a comment must keep the space between the tokens it separates.
+    ("auto p = new/**/Widget();", [("bare-new", 1)]),
+    ("auto p = new /* inline */ Widget[4];", [("bare-new", 1)]),
+    ("auto p = /* note\nline */\n    new Widget();", [("bare-new", 3)]),
+    ("auto p = new\n/**/Widget[2]();", [("bare-new", 1)]),
+    ("renew/**/Widget();", []),
 ]
 
 
@@ -202,9 +248,9 @@ def _self_test():
         root = pathlib.Path(tmp)
         for index, (source, expected) in enumerate(_SELF_CASES):
             hits = _scan_text(f"case{index}.cpp", source + "\n")
-            kinds = [kind for _, kind, _, _ in hits]
-            if kinds != expected:
-                failures.append(f"{source!r}: got {kinds}, expected {expected}")
+            found = [(kind, number) for _, kind, _, number in hits]
+            if found != expected:
+                failures.append(f"{source!r}: got {found}, expected {expected}")
     if failures:
         for failure in failures:
             print(f"self-test FAIL {failure}")

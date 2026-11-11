@@ -341,5 +341,6 @@ substeps, a shorter window or a smaller collision depth cost less.
 - A frame the cloth is disabled at holds no packet, so the history after it
   starts there.
 - Mover plugins built for API 5 or 6 must be rebuilt for API 7, whose
-  temporal-mover hooks include `windowFramesScene`
+  temporal-mover hooks include `windowFramesScene`, and for API 8, whose
+  handler spells the schema type as `std::string_view`
   ([external movers](external-movers.md#temporal-movers)).

@@ -304,7 +304,11 @@ struct RigExecMoverHandler {
 /// captureWindow and applyWindow. Both structs grew, so a plugin built for 5
 /// is rebuilt.
 /// Version 7 adds windowFramesScene, required of a windowed mover.
-inline constexpr int RigExecMoverPluginApiVersion = 7;
+/// Version 8 stores the handler's schema type as std::string_view instead of
+/// const char *, so the first field's size and layout change: a plugin built
+/// for 7 must be rebuilt, and the loader refuses it before loading the
+/// library.
+inline constexpr int RigExecMoverPluginApiVersion = 8;
 
 /// Registers one mover, retaining an immutable copy and its schema name.
 /// Duplicate schema names and incomplete external callbacks are rejected.

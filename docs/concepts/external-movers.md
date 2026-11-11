@@ -11,12 +11,12 @@ callback and a points computation; no changes to RigExec's built-in mover list
 are required.
 
 Use the same compiler, architecture, build configuration, OpenUSD installation,
-and RigExec SDK as the host. Plugin API version 7 combines declared external
-input leaves, explicit phased oracle lookup callbacks, the optional
-provider-aware playback kernel and optional temporal movers. Libraries built
-for API 1, 2 or 3 must be rebuilt and migrate their assembly callback;
-libraries built for API 4, 5 or 6 must be rebuilt, since the handler grew
-(and, before 6, the playback kernel).
+and RigExec SDK as the host. Plugin API version 8 spells the handler's schema
+type as `std::string_view`. Libraries built for API 1, 2 or 3 must be rebuilt
+and migrate their assembly callback; libraries built for API 4 through 7 must
+be rebuilt, since the handler grew (and, before 6, the playback kernel) and 8
+changes the layout of its first field. The loader rejects a library whose
+metadata names another version before it loads the library.
 
 `declareExternalInputs` runs only at compilation and declares ordered typed
 `RigExecRevisionLeafKey` records. Each record specifies its canonical property
@@ -60,9 +60,10 @@ rigexec_add_mover(MyMover
     SCHEMA_TYPE MyMover)
 ```
 
-The adapter exports `rigExec::MakeMyMoverUsdAdapter(const char *schemaType)`
-returning a `RigExecMoverHandler`. It supplies scene binding, declared inputs,
-payload assembly, encoding, and native application through the shared kernel.
+The adapter exports `rigExec::MakeMyMoverUsdAdapter(std::string_view
+schemaType)` returning a `RigExecMoverHandler`. It supplies scene binding,
+declared inputs, payload assembly, encoding, and native application through
+the shared kernel.
 Generated code supplies the schema name, installs the typed runtime kernel,
 and registers the handler when the plugin loads. The adapter does not call
 `RIGEXEC_REGISTER_MOVER` for that same type. Existing manually registered
@@ -476,7 +477,7 @@ Windows and colons on Linux/macOS. Keep the host's existing schema and imaging
 plugin paths as well.
 
 The generated `plugInfo.json` marks the library with
-`"Info": {"RigExecMoverPlugin": 7}`. RigExec loads discoverable mover libraries
+`"Info": {"RigExecMoverPlugin": 8}`. RigExec loads discoverable mover libraries
 on the first unknown handler lookup. Hosts can call
 `RigExecLoadMoverPlugins(&diagnostics)` explicitly to inspect version or load
 errors. After adding search locations with
