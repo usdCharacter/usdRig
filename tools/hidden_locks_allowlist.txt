@@ -31,7 +31,7 @@ libs/rigExec/backgroundScheduler.cpp | lock | std::lock_guard<std::mutex> lock(_
 libs/rigExec/backgroundScheduler.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);
 libs/rigExec/backgroundScheduler.cpp | lock | std::unique_lock<std::mutex> lock(_mutex);
 
-libs/rigExec/backgroundScheduler.h | lock | std::mutex &FenceMutex() const { return _fenceMutex; }
+libs/rigExec/backgroundScheduler.h | lock | std::mutex &FenceMutex() const
 libs/rigExec/backgroundScheduler.h | lock | mutable std::mutex _mutex;
 libs/rigExec/backgroundScheduler.h | lock | mutable std::mutex _fenceMutex;
 libs/rigExec/backgroundScheduler.h | lock | std::condition_variable _cv;

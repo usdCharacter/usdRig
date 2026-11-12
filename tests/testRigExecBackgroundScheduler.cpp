@@ -37,6 +37,9 @@
 //   * BUDGET. The sampling budget bounds factory invocations per trigger;
 //     the millisecond stop binds sampling; already-queued merges consume
 //     nothing; the unlimited default preserves the full burst shape.
+//   * STAMPS. An injected clock makes queue wait and run time exact, the
+//     decline reasons add up to declined, the depth and running maxima hold
+//     the peak, and a stopped trigger burst says which cause stopped it.
 // Two process modes: most tests force RIGEXEC_FRAME_CACHE=on (live-read) and
 // run the warm path, skipping with a note when the ambient
 // RIGEXEC_ENABLE_PARALLEL_EVAL=0 closes the gate -- that cached switch cannot
@@ -66,12 +69,12 @@ using namespace rigExec;
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
@@ -163,7 +166,10 @@ public:
         return _runs;
     }
 
-    size_t FactoryCalls() const { return _factoryCalls; }
+    size_t FactoryCalls() const
+    {
+        return _factoryCalls;
+    }
 
 private:
     mutable std::mutex _mutex;
@@ -253,10 +259,14 @@ TestAStaleJobIsRefused()
     CHECK(!scheduler.Enqueue(rig, UsdTimeCode(3.0),
                              RigExecWarmPriority::Neighbor, sampled,
                              recorder.Work()));
-    CHECK(!scheduler.Enqueue(rig, UsdTimeCode(3.0),
-                             RigExecWarmPriority::Sweep, sampled,
-                             recorder.Work()));
+    CHECK(!scheduler.Enqueue(rig, UsdTimeCode(3.0), RigExecWarmPriority::Sweep,
+                             sampled, recorder.Work()));
     CHECK(scheduler.Stats().declined == 2);
+    const RigExecBackgroundSchedulerStats refused = scheduler.Stats();
+    CHECK(refused.declinedFillGate + refused.declinedStaleGeneration == 2);
+    if (RigExecBackgroundWarmingEnabled()) {
+        CHECK(refused.declinedStaleGeneration == 2);
+    }
     CHECK(scheduler.Stats().queuedDepth == 0);
 }
 
@@ -282,8 +292,8 @@ TestWarmingGateTruthTable()
     CHECK(!RigExecBackgroundWarmingEnabled(RigExecFrameCacheMode::On, false));
     CHECK(!RigExecBackgroundWarmingEnabled(RigExecFrameCacheMode::Off, true));
     CHECK(!RigExecBackgroundWarmingEnabled(RigExecFrameCacheMode::Off, false));
-    CHECK(!RigExecBackgroundWarmingEnabled(RigExecFrameCacheMode::WarmOff,
-                                           true));
+    CHECK(
+        !RigExecBackgroundWarmingEnabled(RigExecFrameCacheMode::WarmOff, true));
     CHECK(!RigExecBackgroundWarmingEnabled(RigExecFrameCacheMode::WarmOff,
                                            false));
 }
@@ -316,10 +326,10 @@ TestFrameCacheModeReadsLiveFromTheEnvironment()
     // The environment-ambient gate agrees with the pure gate fed the live
     // mode and the library's cached parallel switch.
     ScopedFrameCacheMode on("on");
-    CHECK(RigExecBackgroundWarmingEnabled() ==
-          RigExecBackgroundWarmingEnabled(
-              RigExecFrameCacheModeFromEnvironment(),
-              RigExecParallelEvaluationEnabled()));
+    CHECK(
+        RigExecBackgroundWarmingEnabled() ==
+        RigExecBackgroundWarmingEnabled(RigExecFrameCacheModeFromEnvironment(),
+                                        RigExecParallelEvaluationEnabled()));
 }
 
 // A closed gate declines warming while the fence keeps working: every
@@ -334,8 +344,7 @@ TestClosedGateDeclinesWarmingButKeepsTheFence()
         RigExecBackgroundScheduler scheduler(/*workerCount=*/0);
         Recorder recorder;
         const SdfPath rig("/Asset/Rig");
-        const RigExecFrameGeneration current =
-            scheduler.CurrentGeneration(rig);
+        const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
         CHECK(!scheduler.Enqueue(rig, UsdTimeCode(3.0),
                                  RigExecWarmPriority::Neighbor, current,
                                  recorder.Work()));
@@ -343,12 +352,13 @@ TestClosedGateDeclinesWarmingButKeepsTheFence()
                                  RigExecWarmPriority::Sweep, current,
                                  recorder.Work()));
         const std::vector<UsdTimeCode> sweep{UsdTimeCode(4.0)};
-        CHECK(scheduler.OnEditCommitted(rig, UsdTimeCode(10.0), current,
-                                        sweep, recorder.Factory()) == 0);
+        CHECK(scheduler.OnEditCommitted(rig, UsdTimeCode(10.0), current, sweep,
+                                        recorder.Factory()) == 0);
         CHECK(scheduler.OnIdle(rig, UsdTimeCode(10.0), current, sweep,
                                recorder.Factory()) == 0);
         CHECK(recorder.FactoryCalls() == 0);
         CHECK(scheduler.Stats().declined == 2);
+        CHECK(scheduler.Stats().declinedFillGate == 2);
         CHECK(scheduler.Stats().queuedDepth == 0);
         // The fence is unaffected by the gate: edits still bump.
         scheduler.CancelGeneration(rig);
@@ -368,16 +378,14 @@ TestACurrentJobIsAcceptedNeighborBeforeSweep()
                     "warming unavailable in this process\n");
         return;
     }
-    CHECK(int(RigExecWarmPriority::Neighbor) <
-          int(RigExecWarmPriority::Sweep));
+    CHECK(int(RigExecWarmPriority::Neighbor) < int(RigExecWarmPriority::Sweep));
     RigExecBackgroundScheduler scheduler(/*workerCount=*/0);
     Recorder recorder;
     const SdfPath rig("/Asset/Rig");
     const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
     // Enqueued backwards on purpose: the sweep must still run second.
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(1.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(1.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
     CHECK(scheduler.Enqueue(rig, UsdTimeCode(2.0),
                             RigExecWarmPriority::Neighbor, current,
                             recorder.Work()));
@@ -411,15 +419,12 @@ TestFifoWithinAPriority()
     Recorder recorder;
     const SdfPath rig("/Asset/Rig");
     const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(3.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(1.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(2.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(3.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(1.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(2.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
     CHECK(scheduler.DrainQueueForTesting() == 3);
     CHECK(TimesEqual(RunTimes(recorder.Runs()), {3.0, 1.0, 2.0}));
 }
@@ -439,12 +444,10 @@ TestDuplicateTimesCoalesce()
     Recorder recorder;
     const SdfPath rig("/Asset/Rig");
     const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(3.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(3.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(3.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(3.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
     CHECK(scheduler.Stats().queuedDepth == 1);
     CHECK(scheduler.Stats().coalesced == 1);
     CHECK(scheduler.Stats().upgraded == 0);
@@ -468,8 +471,7 @@ TestSweepPromotesToNeighborOnReenqueue()
         RigExecBackgroundScheduler scheduler(/*workerCount=*/0);
         Recorder recorder;
         const SdfPath rig("/Asset/Rig");
-        const RigExecFrameGeneration current =
-            scheduler.CurrentGeneration(rig);
+        const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
         CHECK(scheduler.Enqueue(rig, UsdTimeCode(3.0),
                                 RigExecWarmPriority::Sweep, current,
                                 recorder.Work()));
@@ -487,8 +489,7 @@ TestSweepPromotesToNeighborOnReenqueue()
         RigExecBackgroundScheduler scheduler(/*workerCount=*/0);
         Recorder recorder;
         const SdfPath rig("/Asset/Rig");
-        const RigExecFrameGeneration current =
-            scheduler.CurrentGeneration(rig);
+        const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
         CHECK(scheduler.Enqueue(rig, UsdTimeCode(4.0),
                                 RigExecWarmPriority::Neighbor, current,
                                 recorder.Work()));
@@ -517,16 +518,25 @@ TestUnusableEnqueuesDecline()
                              recorder.Work()));
     const double nan = std::numeric_limits<double>::quiet_NaN();
     const double inf = std::numeric_limits<double>::infinity();
-    CHECK(!scheduler.Enqueue(rig, UsdTimeCode(nan),
-                             RigExecWarmPriority::Sweep, current,
-                             recorder.Work()));
-    CHECK(!scheduler.Enqueue(rig, UsdTimeCode(inf),
-                             RigExecWarmPriority::Sweep, current,
-                             recorder.Work()));
+    CHECK(!scheduler.Enqueue(rig, UsdTimeCode(nan), RigExecWarmPriority::Sweep,
+                             current, recorder.Work()));
+    CHECK(!scheduler.Enqueue(rig, UsdTimeCode(inf), RigExecWarmPriority::Sweep,
+                             current, recorder.Work()));
     CHECK(!scheduler.Enqueue(rig, UsdTimeCode(3.0),
                              RigExecWarmPriority::Neighbor, current,
                              RigExecWarmWork()));
-    CHECK(scheduler.Stats().declined == 4);
+    const RigExecBackgroundSchedulerStats stats = scheduler.Stats();
+    CHECK(stats.declined == 4);
+    CHECK(stats.declined ==
+          stats.declinedFillGate + stats.declinedStaleGeneration +
+              stats.declinedUnusableTime + stats.declinedEmptyWork +
+              stats.declinedPerRigCap + stats.declinedStopping +
+              stats.declinedFreezeRefused + stats.declinedUnsampleable +
+              stats.declinedD7Exempt);
+    if (RigExecBackgroundWarmingEnabled()) {
+        CHECK(stats.declinedUnusableTime == 3);
+        CHECK(stats.declinedEmptyWork == 1);
+    }
     CHECK(scheduler.Stats().queuedDepth == 0);
 }
 
@@ -550,33 +560,28 @@ TestPerRigCapDeclinesPastItsLimit()
     const SdfPath rig("/Asset/Rig");
     const SdfPath other("/Asset/Other");
     const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(1.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(2.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
-    CHECK(!scheduler.Enqueue(rig, UsdTimeCode(3.0),
-                             RigExecWarmPriority::Sweep, current,
-                             recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(1.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(2.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
+    CHECK(!scheduler.Enqueue(rig, UsdTimeCode(3.0), RigExecWarmPriority::Sweep,
+                             current, recorder.Work()));
     // A duplicate of a queued time merges instead of declining: it asks for
     // no new warming.
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(1.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(1.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
     CHECK(scheduler.Stats().coalesced == 1);
     // Another rig has its own budget.
     const RigExecFrameGeneration otherCurrent =
         scheduler.CurrentGeneration(other);
-    CHECK(scheduler.Enqueue(other, UsdTimeCode(1.0),
-                            RigExecWarmPriority::Sweep, otherCurrent,
-                            recorder.Work()));
+    CHECK(scheduler.Enqueue(other, UsdTimeCode(1.0), RigExecWarmPriority::Sweep,
+                            otherCurrent, recorder.Work()));
     // Running one frees one.
     CHECK(scheduler.RunNextQueuedForTesting());
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(3.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(3.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
     CHECK(scheduler.Stats().declined == 1);
+    CHECK(scheduler.Stats().declinedPerRigCap == 1);
 }
 
 // CancelGeneration purges the rig's queued jobs -- inputs freed, cap space
@@ -598,12 +603,10 @@ TestCancelPurgesQueuedJobsPromptly()
     const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
     const RigExecFrameGeneration otherCurrent =
         scheduler.CurrentGeneration(other);
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(1.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
-    CHECK(scheduler.Enqueue(other, UsdTimeCode(1.0),
-                            RigExecWarmPriority::Sweep, otherCurrent,
-                            recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(1.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
+    CHECK(scheduler.Enqueue(other, UsdTimeCode(1.0), RigExecWarmPriority::Sweep,
+                            otherCurrent, recorder.Work()));
     scheduler.CancelGeneration(rig);
     CHECK(scheduler.Stats().canceled == 1);
     CHECK(scheduler.Stats().queuedDepth == 1);
@@ -613,9 +616,8 @@ TestCancelPurgesQueuedJobsPromptly()
     CHECK(recorder.Runs()[0].rig == other);
     // The purge freed the cap: a fresh job under the new token enqueues.
     const RigExecFrameGeneration fresh = scheduler.CurrentGeneration(rig);
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(2.0),
-                            RigExecWarmPriority::Sweep, fresh,
-                            recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(2.0), RigExecWarmPriority::Sweep,
+                            fresh, recorder.Work()));
     CHECK(scheduler.DrainQueueForTesting() == 1);
     CHECK(recorder.Runs().size() == 2);
     CHECK(scheduler.Stats().completed == 2);
@@ -628,8 +630,9 @@ TestCommitTriggerEnqueuesNeighborsThenSweepNeverPlayhead()
 {
     ScopedFrameCacheMode on("on");
     if (!RigExecBackgroundWarmingEnabled()) {
-        std::printf("SKIP TestCommitTriggerEnqueuesNeighborsThenSweepNeverPlayhead: "
-                    "warming unavailable in this process\n");
+        std::printf(
+            "SKIP TestCommitTriggerEnqueuesNeighborsThenSweepNeverPlayhead: "
+            "warming unavailable in this process\n");
         return;
     }
     RigExecBackgroundScheduler scheduler(/*workerCount=*/0);
@@ -671,12 +674,11 @@ TestTriggerSkipsUnsampleableAndStopsAtCap()
         RigExecBackgroundScheduler scheduler(/*workerCount=*/0);
         Recorder recorder;
         const SdfPath rig("/Asset/Rig");
-        const RigExecFrameGeneration current =
-            scheduler.CurrentGeneration(rig);
+        const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
         const std::vector<UsdTimeCode> sweep{
             UsdTimeCode::Default(), UsdTimeCode(5.0), UsdTimeCode(5.0)};
-        CHECK(scheduler.OnEditCommitted(rig, UsdTimeCode(10.0), current,
-                                        sweep, recorder.Factory(),
+        CHECK(scheduler.OnEditCommitted(rig, UsdTimeCode(10.0), current, sweep,
+                                        recorder.Factory(),
                                         /*neighborRadius=*/0) == 1);
         CHECK(recorder.FactoryCalls() == 1);
         CHECK(scheduler.Stats().coalesced == 1);
@@ -687,11 +689,10 @@ TestTriggerSkipsUnsampleableAndStopsAtCap()
         scheduler.SetPerRigJobCap(2);
         Recorder recorder;
         const SdfPath rig("/Asset/Rig");
-        const RigExecFrameGeneration current =
-            scheduler.CurrentGeneration(rig);
+        const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
         const std::vector<UsdTimeCode> sweep{UsdTimeCode(5.0)};
-        CHECK(scheduler.OnEditCommitted(rig, UsdTimeCode(10.0), current,
-                                        sweep, recorder.Factory(),
+        CHECK(scheduler.OnEditCommitted(rig, UsdTimeCode(10.0), current, sweep,
+                                        recorder.Factory(),
                                         /*neighborRadius=*/8) == 2);
         CHECK(recorder.FactoryCalls() == 2);
         CHECK(scheduler.DrainQueueForTesting() == 2);
@@ -701,11 +702,10 @@ TestTriggerSkipsUnsampleableAndStopsAtCap()
     {
         RigExecBackgroundScheduler scheduler(/*workerCount=*/0);
         const SdfPath rig("/Asset/Rig");
-        const RigExecFrameGeneration current =
-            scheduler.CurrentGeneration(rig);
+        const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
         const std::vector<UsdTimeCode> sweep{UsdTimeCode(5.0)};
-        CHECK(scheduler.OnEditCommitted(rig, UsdTimeCode(10.0), current,
-                                        sweep, RigExecWarmJobFactory(),
+        CHECK(scheduler.OnEditCommitted(rig, UsdTimeCode(10.0), current, sweep,
+                                        RigExecWarmJobFactory(),
                                         /*neighborRadius=*/2) == 0);
         CHECK(scheduler.OnIdle(rig, UsdTimeCode(10.0), current, sweep,
                                RigExecWarmJobFactory()) == 0);
@@ -730,8 +730,8 @@ TestTriggerWithStaleGenerationOrDefaultPlayheadEnqueuesNothing()
     CHECK(scheduler.OnIdle(rig, UsdTimeCode(10.0), sampled, sweep,
                            recorder.Factory()) == 0);
     const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
-    CHECK(scheduler.OnEditCommitted(rig, UsdTimeCode::Default(), current,
-                                    sweep, recorder.Factory()) == 0);
+    CHECK(scheduler.OnEditCommitted(rig, UsdTimeCode::Default(), current, sweep,
+                                    recorder.Factory()) == 0);
     CHECK(scheduler.OnIdle(rig, UsdTimeCode::Default(), current, sweep,
                            recorder.Factory()) == 0);
     CHECK(recorder.FactoryCalls() == 0);
@@ -772,6 +772,8 @@ TestTriggerStopsWhenAnEditLandsMidTrigger()
     // The bump purged the one job the trigger had queued.
     CHECK(scheduler.Stats().canceled == 1);
     CHECK(scheduler.Stats().queuedDepth == 0);
+    CHECK(scheduler.Stats().triggerStops == 1);
+    CHECK(scheduler.Stats().triggerStopsStale == 1);
     CHECK(scheduler.DrainQueueForTesting() == 0);
     CHECK(recorder.Runs().empty());
 }
@@ -825,22 +827,18 @@ TestPlaybackAdvanceShedsPassedSweep()
     CHECK(scheduler.Enqueue(rig, UsdTimeCode(8.0),
                             RigExecWarmPriority::Neighbor, current,
                             recorder.Work()));
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(9.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(10.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(11.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(9.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(10.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(11.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
     CHECK(scheduler.NotePlaybackAdvanced(rig, UsdTimeCode(10.0)) == 2);
     CHECK(scheduler.Stats().shed == 2);
     CHECK(scheduler.Stats().queuedDepth == 2);
     // The shed freed the cap: an ahead frame enqueues.
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(12.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(12.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
     CHECK(scheduler.DrainQueueForTesting() == 3);
     // Neighbor first, then the ahead sweep in FIFO order.
     CHECK(TimesEqual(RunTimes(recorder.Runs()), {8.0, 11.0, 12.0}));
@@ -869,12 +867,10 @@ TestPlaybackAdvanceWithNaNShedsNothing()
     Recorder recorder;
     const SdfPath rig("/Asset/Rig");
     const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(9.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(10.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(9.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(10.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
     const double nan = std::numeric_limits<double>::quiet_NaN();
     CHECK(scheduler.NotePlaybackAdvanced(rig, UsdTimeCode(nan)) == 0);
     CHECK(scheduler.Stats().shed == 0);
@@ -900,12 +896,10 @@ TestProfilerLaneRecordsQueueAndCancels()
     Recorder recorder;
     const SdfPath rig("/Asset/Rig");
     const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(9.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(10.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(9.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(10.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
     // Disabled by default: queue mutations record nothing.
     CHECK(scheduler.GetProfiler().GetEventCount() == 0);
 
@@ -915,12 +909,10 @@ TestProfilerLaneRecordsQueueAndCancels()
                             recorder.Work()));
     scheduler.CancelGeneration(rig);
     const RigExecFrameGeneration next = scheduler.CurrentGeneration(rig);
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(11.0),
-                            RigExecWarmPriority::Sweep, next,
-                            recorder.Work()));
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(12.0),
-                            RigExecWarmPriority::Sweep, next,
-                            recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(11.0), RigExecWarmPriority::Sweep,
+                            next, recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(12.0), RigExecWarmPriority::Sweep,
+                            next, recorder.Work()));
     CHECK(scheduler.NotePlaybackAdvanced(rig, UsdTimeCode(12.0)) == 2);
     CHECK(scheduler.NotePlaybackAdvanced(rig, UsdTimeCode(13.0)) == 0);
 
@@ -936,8 +928,8 @@ TestProfilerLaneRecordsQueueAndCancels()
         }
         if (event.kind == RigExecProfileEventKind::Instant &&
             event.name == "warmCancel") {
-            cancels.push_back({event.args.at("purged"),
-                               event.args.at("cause")});
+            cancels.push_back(
+                {event.args.at("purged"), event.args.at("cause")});
         }
     }
     const std::vector<std::string> expectedNames(
@@ -972,15 +964,12 @@ TestStatsBalanceOverAMixedScenario()
     Recorder recorder;
     const SdfPath rig("/Asset/Rig");
     const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(1.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(2.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(1.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(1.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(2.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(1.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
     CHECK(scheduler.Enqueue(rig, UsdTimeCode(2.0),
                             RigExecWarmPriority::Neighbor, current,
                             recorder.Work()));
@@ -1014,6 +1003,18 @@ TestStatsBalanceOverAMixedScenario()
               stats.canceled + stats.shed + stats.droppedStale +
               stats.droppedAtShutdown + stats.queuedDepth + stats.running ==
           3);
+    // The peak the queue reached, and the split of what entered it.
+    CHECK(stats.maxQueuedDepth == 3);
+    CHECK(stats.maxRunning == 1);
+    CHECK(stats.enqueuedNeighbor + stats.enqueuedSweep == 3);
+    CHECK(stats.enqueuedNeighbor == 1);
+    CHECK(stats.enqueuedSweep == 2);
+    CHECK(stats.declined ==
+          stats.declinedFillGate + stats.declinedStaleGeneration +
+              stats.declinedUnusableTime + stats.declinedEmptyWork +
+              stats.declinedPerRigCap + stats.declinedStopping +
+              stats.declinedFreezeRefused + stats.declinedUnsampleable +
+              stats.declinedD7Exempt);
 }
 
 // The pool runs every job exactly once: enqueue eight, wait for idle, and all
@@ -1110,8 +1111,7 @@ TestShutdownDropsPendingJobs()
     {
         RigExecBackgroundScheduler scheduler(/*workerCount=*/0);
         const SdfPath rig("/Asset/Rig");
-        const RigExecFrameGeneration current =
-            scheduler.CurrentGeneration(rig);
+        const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
         CHECK(scheduler.Enqueue(rig, UsdTimeCode(1.0),
                                 RigExecWarmPriority::Sweep, current,
                                 recorder.Work()));
@@ -1143,8 +1143,7 @@ TestShutdownJoinsARunningJob()
     {
         RigExecBackgroundScheduler scheduler;
         const SdfPath rig("/Asset/Rig");
-        const RigExecFrameGeneration current =
-            scheduler.CurrentGeneration(rig);
+        const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
         RigExecWarmWork blocking = [&](const RigExecWarmRequest &) {
             {
                 std::lock_guard<std::mutex> lock(gateMutex);
@@ -1206,9 +1205,8 @@ TestCancelPurgesWhileAJobRuns()
     };
     CHECK(scheduler.Enqueue(rig, UsdTimeCode(1.0),
                             RigExecWarmPriority::Neighbor, current, blocking));
-    CHECK(scheduler.Enqueue(rig, UsdTimeCode(2.0),
-                            RigExecWarmPriority::Sweep, current,
-                            recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(2.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
     {
         std::unique_lock<std::mutex> lock(gateMutex);
         gateCv.wait(lock, [&] { return started; });
@@ -1256,10 +1254,10 @@ TestScopedRetirementIncludesRunningFirstFills()
             std::unique_lock<std::mutex> lock(gateMutex);
             gateCv.wait(lock, [&] { return released; });
         }
-        return scheduler.IsWarmRequestCurrent(
-            request.rig, request.generation, request.time, request.fenceToken)
-                ? RigExecWarmOutcome::Published
-                : RigExecWarmOutcome::DeclinedGeneration;
+        return scheduler.IsWarmRequestCurrent(request.rig, request.generation,
+                                              request.time, request.fenceToken)
+                   ? RigExecWarmOutcome::Published
+                   : RigExecWarmOutcome::DeclinedGeneration;
     };
     CHECK(scheduler.Enqueue(rig, UsdTimeCode(1), RigExecWarmPriority::Sweep,
                             generation, blocking));
@@ -1274,9 +1272,11 @@ TestScopedRetirementIncludesRunningFirstFills()
     CHECK(scheduler.Enqueue(rig, UsdTimeCode(2), RigExecWarmPriority::Sweep,
                             generation, recorder.Work()));
     CHECK(scheduler.Enqueue(other, UsdTimeCode(4), RigExecWarmPriority::Sweep,
-                            scheduler.CurrentGeneration(other), recorder.Work()));
+                            scheduler.CurrentGeneration(other),
+                            recorder.Work()));
     const auto inFlight = scheduler.InFlightTimes(rig);
-    CHECK(inFlight == std::vector<UsdTimeCode>({UsdTimeCode(1), UsdTimeCode(2)}));
+    CHECK(inFlight ==
+          std::vector<UsdTimeCode>({UsdTimeCode(1), UsdTimeCode(2)}));
     CHECK(scheduler.InFlightTimes(other) ==
           std::vector<UsdTimeCode>({UsdTimeCode(4)}));
     CHECK(scheduler.CancelGenerationTimes(rig, inFlight) == 2);
@@ -1378,8 +1378,8 @@ TestOutcomesSplitCompletion()
     CHECK(stats.published == 2);
     CHECK(stats.declinedInvalid == 2);
     CHECK(stats.declinedGeneration == 1);
-    CHECK(stats.completed == stats.published + stats.declinedInvalid +
-          stats.declinedGeneration);
+    CHECK(stats.completed ==
+          stats.published + stats.declinedInvalid + stats.declinedGeneration);
     // Five accepts, no merges, all five terminal under the new equation.
     CHECK(stats.published + stats.declinedInvalid + stats.declinedGeneration +
               stats.droppedStale + stats.canceled + stats.shed +
@@ -1429,8 +1429,7 @@ TestTransitionHookReportsQueueVisibility()
         RigExecBackgroundScheduler scheduler(/*workerCount=*/0);
         scheduler.SetTransitionHook(recorder.Hook());
         const SdfPath rig("/Asset/Rig");
-        const RigExecFrameGeneration current =
-            scheduler.CurrentGeneration(rig);
+        const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
         RigExecWarmWork published = [](const RigExecWarmRequest &) {
             return RigExecWarmOutcome::Published;
         };
@@ -1449,13 +1448,12 @@ TestTransitionHookReportsQueueVisibility()
     }
     const std::vector<RigExecWarmTransition> got = recorder.Transitions();
     CHECK(got.size() == 7);
-    const auto expect = [&got](size_t i, double time,
-                               RigExecWarmTransitionKind kind,
-                               RigExecWarmOutcome outcome =
-                                   RigExecWarmOutcome::Published) {
-        return i < got.size() && got[i].timeValue == time &&
-            got[i].kind == kind && got[i].outcome == outcome;
-    };
+    const auto expect =
+        [&got](size_t i, double time, RigExecWarmTransitionKind kind,
+               RigExecWarmOutcome outcome = RigExecWarmOutcome::Published) {
+            return i < got.size() && got[i].timeValue == time &&
+                   got[i].kind == kind && got[i].outcome == outcome;
+        };
     CHECK(expect(0, 1.0, RigExecWarmTransitionKind::Queued));
     CHECK(expect(1, 2.0, RigExecWarmTransitionKind::Queued));
     CHECK(expect(2, 1.0, RigExecWarmTransitionKind::Running));
@@ -1471,8 +1469,7 @@ TestTransitionHookReportsQueueVisibility()
         RigExecBackgroundScheduler scheduler(/*workerCount=*/0);
         scheduler.SetTransitionHook(shutdown.Hook());
         const SdfPath rig("/Asset/Rig");
-        const RigExecFrameGeneration current =
-            scheduler.CurrentGeneration(rig);
+        const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
         RigExecWarmWork published = [](const RigExecWarmRequest &) {
             return RigExecWarmOutcome::Published;
         };
@@ -1543,20 +1540,18 @@ TestNoRigStarvesUnderFlood()
     const SdfPath rigB("/Asset/RigB");
     size_t accepts = 0;
     for (int t = 1; t <= 60; ++t) {
-        accepts += scheduler.Enqueue(rigA, UsdTimeCode(double(t)),
-                                     RigExecWarmPriority::Sweep,
-                                     scheduler.CurrentGeneration(rigA),
-                                     recorder.Work())
-            ? 1
-            : 0;
+        accepts += scheduler.Enqueue(
+                       rigA, UsdTimeCode(double(t)), RigExecWarmPriority::Sweep,
+                       scheduler.CurrentGeneration(rigA), recorder.Work())
+                       ? 1
+                       : 0;
     }
     for (int t = 1; t <= 60; ++t) {
-        accepts += scheduler.Enqueue(rigB, UsdTimeCode(double(t)),
-                                     RigExecWarmPriority::Sweep,
-                                     scheduler.CurrentGeneration(rigB),
-                                     recorder.Work())
-            ? 1
-            : 0;
+        accepts += scheduler.Enqueue(
+                       rigB, UsdTimeCode(double(t)), RigExecWarmPriority::Sweep,
+                       scheduler.CurrentGeneration(rigB), recorder.Work())
+                       ? 1
+                       : 0;
     }
     CHECK(accepts == 120);
     scheduler.WaitUntilIdle();
@@ -1635,7 +1630,230 @@ TestSamplingBudgetBoundsFactoryInvocations()
     CHECK(recorder.FactoryCalls() == 35);
 }
 
-}  // namespace
+// A clock that advances a fixed step on every reading. The queue stamps and
+// the millisecond budget stop read it, so a test can assert exact waits and
+// stops without touching wall time.
+class SteppingClock {
+public:
+    explicit SteppingClock(uint64_t step = 1000) : _step(step)
+    {
+    }
+    uint64_t Now()
+    {
+        const uint64_t value = _now;
+        _now += _step;
+        return value;
+    }
+
+private:
+    uint64_t _step = 1000;
+    uint64_t _now = 0;
+};
+
+// The scheduler stamps every job with its own clock: queue wait is enqueue to
+// pop, run time is pop to the terminal state. With an injected clock the two
+// are exact numbers, not wall-clock noise.
+void
+TestInjectedClockStampsQueueWaitAndRunTime()
+{
+    std::printf("progress: TestInjectedClockStampsQueueWaitAndRunTime\n");
+    std::fflush(stdout);
+    ScopedFrameCacheMode on("on");
+    if (!RigExecBackgroundWarmingEnabled()) {
+        std::printf("SKIP TestInjectedClockStampsQueueWaitAndRunTime: "
+                    "warming unavailable in this process\n");
+        return;
+    }
+    SteppingClock clock;
+    RigExecBackgroundScheduler scheduler(
+        /*workerCount=*/0, [&clock] { return clock.Now(); });
+    Recorder recorder;
+    const SdfPath rig("/Asset/Rig");
+    const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(1.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(2.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
+    // Reads: enqueue 0, enqueue 1000, pop 2000, finish 3000, pop 4000,
+    // finish 5000. Job one waits 2000us and runs 1000us; job two waits 3000us
+    // and runs 1000us.
+    CHECK(scheduler.RunNextQueuedForTesting());
+    CHECK(scheduler.RunNextQueuedForTesting());
+    const RigExecBackgroundSchedulerStats stats = scheduler.Stats();
+    CHECK(stats.completed == 2);
+    CHECK(stats.totalQueueWaitUs == 5000);
+    CHECK(stats.maxQueueWaitUs == 3000);
+    CHECK(stats.totalRunUs == 2000);
+    CHECK(stats.maxRunUs == 1000);
+    // The seam is the clock the caller handed in, not the steady clock.
+    const uint64_t before = scheduler.ClockNowUs();
+    CHECK(scheduler.ClockNowUs() == before + 1000);
+}
+
+// Every refused Enqueue lands in exactly one reason, and the reasons add up to
+// the declined total.
+void
+TestDeclinedEnqueuesSplitByReason()
+{
+    std::printf("progress: TestDeclinedEnqueuesSplitByReason\n");
+    std::fflush(stdout);
+    ScopedFrameCacheMode on("on");
+    if (!RigExecBackgroundWarmingEnabled()) {
+        std::printf("SKIP TestDeclinedEnqueuesSplitByReason: "
+                    "warming unavailable in this process\n");
+        return;
+    }
+    RigExecBackgroundScheduler scheduler(/*workerCount=*/0);
+    scheduler.SetPerRigJobCap(1);
+    Recorder recorder;
+    const SdfPath rig("/Asset/Rig");
+    const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    CHECK(!scheduler.Enqueue(rig, UsdTimeCode::Default(),
+                             RigExecWarmPriority::Sweep, current,
+                             recorder.Work()));
+    CHECK(!scheduler.Enqueue(rig, UsdTimeCode(nan), RigExecWarmPriority::Sweep,
+                             current, recorder.Work()));
+    CHECK(!scheduler.Enqueue(rig, UsdTimeCode(1.0), RigExecWarmPriority::Sweep,
+                             current, RigExecWarmWork()));
+    CHECK(scheduler.Enqueue(rig, UsdTimeCode(1.0), RigExecWarmPriority::Sweep,
+                            current, recorder.Work()));
+    CHECK(!scheduler.Enqueue(rig, UsdTimeCode(2.0), RigExecWarmPriority::Sweep,
+                             current, recorder.Work()));
+    CHECK(!scheduler.Enqueue(rig, UsdTimeCode(3.0), RigExecWarmPriority::Sweep,
+                             current + 1, recorder.Work()));
+    const RigExecBackgroundSchedulerStats stats = scheduler.Stats();
+    CHECK(stats.declinedUnusableTime == 2);
+    CHECK(stats.declinedEmptyWork == 1);
+    CHECK(stats.declinedPerRigCap == 1);
+    CHECK(stats.declinedStaleGeneration == 1);
+    CHECK(stats.declinedFillGate == 0);
+    CHECK(stats.declinedStopping == 0);
+    CHECK(stats.declined ==
+          stats.declinedFillGate + stats.declinedStaleGeneration +
+              stats.declinedUnusableTime + stats.declinedEmptyWork +
+              stats.declinedPerRigCap + stats.declinedStopping +
+              stats.declinedFreezeRefused + stats.declinedUnsampleable +
+              stats.declinedD7Exempt);
+}
+
+// The depth and running maxima hold the peak the queue reached, and the queue
+// split adds up to the depth in both priorities.
+void
+TestQueueDepthMaximaAndPrioritySplit()
+{
+    std::printf("progress: TestQueueDepthMaximaAndPrioritySplit\n");
+    std::fflush(stdout);
+    ScopedFrameCacheMode on("on");
+    if (!RigExecBackgroundWarmingEnabled()) {
+        std::printf("SKIP TestQueueDepthMaximaAndPrioritySplit: "
+                    "warming unavailable in this process\n");
+        return;
+    }
+    SteppingClock clock;
+    RigExecBackgroundScheduler scheduler(
+        /*workerCount=*/0, [&clock] { return clock.Now(); });
+    Recorder recorder;
+    const SdfPath rig("/Asset/Rig");
+    const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
+    for (int i = 0; i < 3; ++i) {
+        CHECK(scheduler.Enqueue(rig, UsdTimeCode(double(i + 1)),
+                                RigExecWarmPriority::Sweep, current,
+                                recorder.Work()));
+    }
+    for (int i = 0; i < 2; ++i) {
+        CHECK(scheduler.Enqueue(rig, UsdTimeCode(double(i + 5)),
+                                RigExecWarmPriority::Neighbor, current,
+                                recorder.Work()));
+    }
+    RigExecBackgroundSchedulerStats stats = scheduler.Stats();
+    CHECK(stats.queuedDepth == 5);
+    CHECK(stats.queuedNeighbor == 2);
+    CHECK(stats.queuedSweep == 3);
+    CHECK(stats.maxQueuedDepth == 5);
+    CHECK(stats.enqueuedNeighbor == 2);
+    CHECK(stats.enqueuedSweep == 3);
+    CHECK(scheduler.RunNextQueuedForTesting());
+    CHECK(scheduler.RunNextQueuedForTesting());
+    stats = scheduler.Stats();
+    CHECK(stats.maxRunning == 1);
+    CHECK(stats.queuedDepth == 3);
+    CHECK(stats.maxQueuedDepth == 5);
+    CHECK(stats.queuedNeighbor + stats.queuedSweep == stats.queuedDepth);
+    scheduler.CancelGeneration(rig);
+    stats = scheduler.Stats();
+    CHECK(stats.queuedDepth == 0);
+    CHECK(stats.maxQueuedDepth == 5);
+}
+
+// A trigger burst that ends early says why: staleness, the sampling budget
+// (invocations or the millisecond stop), or the per-rig cap.
+void
+TestTriggerStopsSplitByCause()
+{
+    std::printf("progress: TestTriggerStopsSplitByCause\n");
+    std::fflush(stdout);
+    ScopedFrameCacheMode on("on");
+    if (!RigExecBackgroundWarmingEnabled()) {
+        std::printf("SKIP TestTriggerStopsSplitByCause: "
+                    "warming unavailable in this process\n");
+        return;
+    }
+    SteppingClock clock;
+    RigExecBackgroundScheduler scheduler(
+        /*workerCount=*/0, [&clock] { return clock.Now(); });
+    scheduler.SetPerRigJobCap(2);
+    Recorder recorder;
+    const SdfPath rig("/Asset/Rig");
+    const RigExecFrameGeneration current = scheduler.CurrentGeneration(rig);
+    // Radius 2 asks for 9, 11, 8, 12: the cap closes the burst at the third.
+    CHECK(scheduler.OnEditCommitted(rig, UsdTimeCode(10.0), current, {},
+                                    recorder.Factory(), 2) == 2);
+    CHECK(scheduler.Stats().triggerStopsCap == 1);
+    CHECK(scheduler.Stats().triggerStops == 1);
+    // Draining frees the cap without bumping the generation token.
+    CHECK(scheduler.DrainQueueForTesting() == 2);
+
+    // Invocation budget: one sample, then the burst stops.
+    RigExecWarmSamplingBudget invocations;
+    invocations.maxFactoryInvocations = 1;
+    const std::vector<UsdTimeCode> sweep{UsdTimeCode(20.0), UsdTimeCode(21.0),
+                                         UsdTimeCode(22.0)};
+    CHECK(scheduler.OnIdle(rig, UsdTimeCode(10.0), current, sweep,
+                           recorder.Factory(), invocations) == 1);
+    CHECK(scheduler.Stats().triggerStopsBudget == 1);
+    CHECK(scheduler.DrainQueueForTesting() == 1);
+
+    // Millisecond budget, on the injected clock: every reading advances
+    // 1000us, so the first frame sees 1000us elapsed and the second 3000us
+    // against a 1.5ms stop.
+    RigExecWarmSamplingBudget msStop;
+    msStop.maxMs = 1.5;
+    CHECK(scheduler.OnIdle(rig, UsdTimeCode(10.0), current, sweep,
+                           recorder.Factory(), msStop) == 1);
+    CHECK(scheduler.Stats().triggerStopsBudget == 2);
+    CHECK(scheduler.DrainQueueForTesting() == 1);
+
+    // An edit landing mid-burst stops the burst as stale.
+    size_t calls = 0;
+    RigExecWarmJobFactory bumping =
+        [&](UsdTimeCode time) -> RigExecWarmFactoryResult {
+        ++calls;
+        if (calls == 2) {
+            scheduler.CancelGeneration(rig);
+        }
+        return recorder.Factory()(time);
+    };
+    CHECK(scheduler.OnIdle(rig, UsdTimeCode(10.0), current, sweep, bumping) ==
+          1);
+    CHECK(scheduler.Stats().triggerStopsStale == 1);
+    CHECK(scheduler.Stats().triggerStops ==
+          scheduler.Stats().triggerStopsStale +
+              scheduler.Stats().triggerStopsBudget +
+              scheduler.Stats().triggerStopsCap);
+}
+
+} // namespace
 
 int
 main()
@@ -1669,6 +1887,10 @@ main()
     TestPoolPreservesPriorityOrder();
     TestNoRigStarvesUnderFlood();
     TestSamplingBudgetBoundsFactoryInvocations();
+    TestInjectedClockStampsQueueWaitAndRunTime();
+    TestDeclinedEnqueuesSplitByReason();
+    TestQueueDepthMaximaAndPrioritySplit();
+    TestTriggerStopsSplitByCause();
     TestPoolRunsEveryJobExactlyOnce();
     TestThreadedCancelBalancesTheBooks();
     TestShutdownDropsPendingJobs();
