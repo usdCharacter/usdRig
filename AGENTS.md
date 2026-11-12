@@ -200,6 +200,11 @@ cycle handling, and native/frozen/runtime parity. See
   `libs/rigExecSchema/schemaTokens.h` for the codeless RigExec schema,
   `TF_DEFINE_PRIVATE_TOKENS`), never through string literals at the use
   site. Declare each token once at namespace scope and reuse it.
+  `libs/rigExecSchema/schemaNames.h` spells every RigExec type, attribute,
+  value token and provider computation name once as plain text, so the
+  binary runtime (no OpenUSD library) compares the same spelling;
+  `schemaTokens.h` interns those constants for stage-side code. Keep both in
+  step with `schema.usda`.
 - Avoid raw pointers. Owned objects go through `std::unique_ptr` /
   `std::shared_ptr`; a required non-null parameter takes a reference (or a
   const reference for a read-only borrow); a raw pointer appears only as
@@ -315,6 +320,55 @@ those remain review responsibilities. Do not apply Pixar copyright headers
 to usdRig-owned code. CI's `clang-format` check uses the same pinned version;
 the formatter can be run locally before builds. A failing formatting CI check
 blocks merging alongside the other checks.
+
+### Allocation and ownership
+
+Bare `new` allocation expressions are replaced by `make_unique` for unique
+ownership or `make_shared` for actual shared ownership; `new T[]` becomes
+`make_unique<T[]>(n)`, and the TU includes `<memory>`. Do not pick
+`make_shared` to reach a constructor: keep unique ownership unique. Four
+exceptions are accepted:
+
+- Factory-only construction reaches a private constructor through a private,
+  non-aggregate, non-default-constructible passkey such as
+  `struct _FactoryTag { explicit _FactoryTag(int) {} };`, with a public
+  tagged constructor delegating to the old one. An empty aggregate tag is not
+  a gate in C++17: an outside caller writes `T({}, args...)` and
+  value-initializes the tag. Prove a gate with a compile-time probe that
+  rejects `T({}, args...)` at the constructor's real arity. A tag is still a
+  gate where the constructor stays private. Do not friend `std::make_unique`
+  or `std::make_shared`, and do not change a public factory signature or
+  owning return type to get around the gate.
+- OpenUSD intrusive objects stay `TfRefPtr`-owned: build with `make_unique`
+  and adopt exactly once with `TfCreateRefPtr(candidate.release())`. Never
+  wrap a `TfRefBase` object in `shared_ptr`, and never build a `TfRefPtr`
+  from a raw pointer through its incrementing constructor.
+- An explicit `.release()` is allowed only into a named receiving owner or a
+  documented process-lifetime contract, with a brief comment where it is not
+  obvious: the mover-registry snapshot, the structural-verify exit-hook
+  counts, the golden-suite node adopted by the intrusive list, the GPU
+  executor, and test paths that deliberately keep an evaluator open. Do not
+  replace such a lifetime with a destructing static: that brings in a
+  shutdown-order failure.
+- Generated FlatBuffers headers under `libs/rigExecBinary/generated`,
+  `thirdparty/`, and `plugin/usdNoodles/` are excluded. The C allocator
+  pairing in `libs/rigExecBinary/transport.cpp` (`std::malloc` and
+  `std::free` behind `ISzAlloc` and `FreeBuffer`) is not a `new`
+  expression; leave it alone.
+
+The same rule covers raw pointers: an object that a local pointer owns goes
+through `std::unique_ptr`, and a raw pointer is only borrowed or optional
+access. `tools/check_allocations.py` runs in CI and fails on a new `new`
+expression in the owned sources: bare `new T`, `new T{}`, `new T[n]`, one
+split across lines, and placement `new (buffer) T`, which is reported as its
+own kind. Comments, string literals and `operator new` definitions are not
+hits. The deliberate exceptions sit in `tools/allocations_allowlist.txt`, one
+`file | kind | line` entry each. The scan is textual, so review still judges
+the ownership shape a `make_shared` hides, a `TfRefPtr` built from a raw
+pointer, or a passkey gate that is really an aggregate.
+`testRigExecAllocationChecker` runs the checker's `--self-test` over synthetic
+sources of every form above; extend `_SELF_CASES` when the extractor changes.
+Keep the exceptions above in sync with the code they describe.
 
 ### Build and test
 

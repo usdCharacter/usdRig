@@ -1,4 +1,5 @@
 // RigExec point-frame math.
+#include "rigExecSchema/schemaNames.h"
 #include "pointFrame.h"
 
 #include "pxr/base/gf/matrix3d.h"
@@ -12,18 +13,24 @@ namespace rigExec {
 RigExecFramePolicy
 RigExecParseFramePolicy(const TfToken &token)
 {
-    if (token == "affine") return RigExecFramePolicy::Affine;
-    if (token == "axial") return RigExecFramePolicy::Axial;
-    if (token == "rigid") return RigExecFramePolicy::Rigid;
+    if (token == "affine")
+        return RigExecFramePolicy::Affine;
+    if (token == "axial")
+        return RigExecFramePolicy::Axial;
+    if (token == "rigid")
+        return RigExecFramePolicy::Rigid;
     return RigExecFramePolicy::Orthogonal;
 }
 
 RigExecAxis
 RigExecParseAxis(const TfToken &token, RigExecAxis fallback)
 {
-    if (token == "x") return RigExecAxis::X;
-    if (token == "y") return RigExecAxis::Y;
-    if (token == "z") return RigExecAxis::Z;
+    if (token == SchemaValueText::x)
+        return RigExecAxis::X;
+    if (token == SchemaValueText::y)
+        return RigExecAxis::Y;
+    if (token == SchemaValueText::z)
+        return RigExecAxis::Z;
     return fallback;
 }
 
@@ -56,13 +63,12 @@ _TransformDir(const GfVec3d &v, const GfMatrix3d &m)
     return v * m;
 }
 
-}  // namespace
+} // namespace
 
 bool
-RigExecPointsToMatrix(
-    const std::array<GfVec3d, 4> &restPoints,
-    const std::array<GfVec3d, 4> &posePoints,
-    GfMatrix4d *matrix)
+RigExecPointsToMatrix(const std::array<GfVec3d, 4> &restPoints,
+                      const std::array<GfVec3d, 4> &posePoints,
+                      GfMatrix4d *matrix)
 {
     // Column convention: L = B_P B_Q^-1, t = po - L qo.
     // Row-vector storage: M3 = L^T = (B_Q^T)^-1 B_P^T = MQ^-1 * MP,
@@ -83,28 +89,23 @@ RigExecPointsToMatrix(
     const GfVec3d t = posePoints[0] - _TransformDir(restPoints[0], m3);
 
     if (matrix) {
-        *matrix = GfMatrix4d(
-            m3[0][0], m3[0][1], m3[0][2], 0.0,
-            m3[1][0], m3[1][1], m3[1][2], 0.0,
-            m3[2][0], m3[2][1], m3[2][2], 0.0,
-            t[0],     t[1],     t[2],     1.0);
+        *matrix = GfMatrix4d(m3[0][0], m3[0][1], m3[0][2], 0.0, m3[1][0],
+                             m3[1][1], m3[1][2], 0.0, m3[2][0], m3[2][1],
+                             m3[2][2], 0.0, t[0], t[1], t[2], 1.0);
     }
     return true;
 }
 
 bool
-RigExecPointsToMatrix(
-    const std::array<GfVec3d, 4> &restPoints,
-    const RigExecPointFrame &frame,
-    GfMatrix4d *matrix)
+RigExecPointsToMatrix(const std::array<GfVec3d, 4> &restPoints,
+                      const RigExecPointFrame &frame, GfMatrix4d *matrix)
 {
     return RigExecPointsToMatrix(restPoints, frame.points, matrix);
 }
 
 RigExecPointFrame
-RigExecMatrixToPoints(
-    const std::array<GfVec3d, 4> &restPoints,
-    const GfMatrix4d &matrix)
+RigExecMatrixToPoints(const std::array<GfVec3d, 4> &restPoints,
+                      const GfMatrix4d &matrix)
 {
     RigExecPointFrame frame;
     for (size_t i = 0; i < 4; ++i) {
@@ -129,8 +130,8 @@ namespace {
 GfVec3d
 _WorldAxisLeastParallel(const GfVec3d &ex)
 {
-    const GfVec3d axes[3] = {
-        GfVec3d(1, 0, 0), GfVec3d(0, 1, 0), GfVec3d(0, 0, 1)};
+    const GfVec3d axes[3] = {GfVec3d(1, 0, 0), GfVec3d(0, 1, 0),
+                             GfVec3d(0, 0, 1)};
     double best = 2.0;
     GfVec3d bestAxis(0, 1, 0);
     for (const GfVec3d &axis : axes) {
@@ -152,13 +153,12 @@ _ProjectUp(const GfVec3d &up, const GfVec3d &ex)
     return {u, u.GetLength()};
 }
 
-}  // namespace
+} // namespace
 
 RigExecPointFrame
-RigExecReconstructFrame(
-    const std::array<GfVec3d, 4> &restPoints,
-    const std::array<GfVec3d, 4> &posePoints,
-    const RigExecFrameReconstructionArgs &args)
+RigExecReconstructFrame(const std::array<GfVec3d, 4> &restPoints,
+                        const std::array<GfVec3d, 4> &posePoints,
+                        const RigExecFrameReconstructionArgs &args)
 {
     RigExecPointFrame frame;
     frame.points = posePoints;
@@ -193,20 +193,20 @@ RigExecReconstructFrame(
     const int sideIdx = 6 - aimIdx - upIdx;
     // Permutation parity of (aim, up, side) relative to (x, y, z): an even
     // permutation completes the frame with side = aim x up; odd negates.
-    const bool evenPermutation =
-        (aimIdx == 1 && upIdx == 2) || (aimIdx == 2 && upIdx == 3) ||
-        (aimIdx == 3 && upIdx == 1);
+    const bool evenPermutation = (aimIdx == 1 && upIdx == 2) ||
+                                 (aimIdx == 2 && upIdx == 3) ||
+                                 (aimIdx == 3 && upIdx == 1);
     const double sideSign = evenPermutation ? 1.0 : -1.0;
 
     const GfVec3d po = posePoints[0];
     const double eps = RigExecFrameEpsilon(restPoints);
 
-    const double lAim = std::max(
-        (restPoints[aimIdx] - restPoints[0]).GetLength(), eps);
-    const double lUp = std::max(
-        (restPoints[upIdx] - restPoints[0]).GetLength(), eps);
-    const double lSide = std::max(
-        (restPoints[sideIdx] - restPoints[0]).GetLength(), eps);
+    const double lAim =
+        std::max((restPoints[aimIdx] - restPoints[0]).GetLength(), eps);
+    const double lUp =
+        std::max((restPoints[upIdx] - restPoints[0]).GetLength(), eps);
+    const double lSide =
+        std::max((restPoints[sideIdx] - restPoints[0]).GetLength(), eps);
 
     const GfVec3d a = posePoints[aimIdx] - po;
     const double aLen = a.GetLength();
@@ -238,7 +238,7 @@ RigExecReconstructFrame(
     }
     GfVec3d eUp = u / uLen;
     GfVec3d eSide = sideSign * GfCross(eAim, eUp);
-    eUp = sideSign * GfCross(eSide, eAim);  // re-cross removes drift
+    eUp = sideSign * GfCross(eSide, eAim); // re-cross removes drift
     eUp.Normalize();
     eSide.Normalize();
 
@@ -308,14 +308,16 @@ _SymmetricEigen3(const double m[3][3], double eval[3], double evec[3][3])
             a[i][j] = m[i][j];
 
     for (int sweep = 0; sweep < 64; ++sweep) {
-        double off = std::abs(a[0][1]) + std::abs(a[0][2]) +
-                     std::abs(a[1][2]);
-        if (off < 1e-15) break;
+        double off = std::abs(a[0][1]) + std::abs(a[0][2]) + std::abs(a[1][2]);
+        if (off < 1e-15)
+            break;
         for (int p = 0; p < 2; ++p) {
             for (int q = p + 1; q < 3; ++q) {
-                if (std::abs(a[p][q]) < 1e-18) continue;
+                if (std::abs(a[p][q]) < 1e-18)
+                    continue;
                 const double theta = (a[q][q] - a[p][p]) / (2 * a[p][q]);
-                const double t = (theta >= 0 ? 1.0 : -1.0) /
+                const double t =
+                    (theta >= 0 ? 1.0 : -1.0) /
                     (std::abs(theta) + std::sqrt(theta * theta + 1));
                 const double cth = 1.0 / std::sqrt(t * t + 1);
                 const double sth = t * cth;
@@ -379,7 +381,7 @@ _SymmetricEigen3(const double m[3][3], double eval[3], double evec[3][3])
             for (int k = 0; k < 3; ++k)
                 evec[k][i] = (k == i) ? 1.0 : 0.0;
     } else if (eq01 || eq12) {
-        const int a = eq01 ? 0 : 1;   // repeated pair indices (a, a+1)
+        const int a = eq01 ? 0 : 1; // repeated pair indices (a, a+1)
         const int other = eq01 ? 2 : 0;
         // Unit normal of the repeated 2D subspace = the distinct vector.
         const double n[3] = {evec[0][other], evec[1][other], evec[2][other]};
@@ -398,22 +400,24 @@ _SymmetricEigen3(const double m[3][3], double eval[3], double evec[3][3])
             if (len > bestLen) {
                 bestLen = len;
                 bestAxis = axis;
-                for (int k = 0; k < 3; ++k) b1[k] = p[k] / len;
+                for (int k = 0; k < 3; ++k)
+                    b1[k] = p[k] / len;
             }
         }
         (void)bestAxis;
         // Second basis vector completes the subspace: b2 = n x b1.
-        double b2[3] = {
-            n[1] * b1[2] - n[2] * b1[1],
-            n[2] * b1[0] - n[0] * b1[2],
-            n[0] * b1[1] - n[1] * b1[0]};
+        double b2[3] = {n[1] * b1[2] - n[2] * b1[1],
+                        n[2] * b1[0] - n[0] * b1[2],
+                        n[0] * b1[1] - n[1] * b1[0]};
         // Sign-canonicalize b2 like the per-vector rule above.
         int maxK = 0;
         for (int k = 1; k < 3; ++k) {
-            if (std::abs(b2[k]) > std::abs(b2[maxK])) maxK = k;
+            if (std::abs(b2[k]) > std::abs(b2[maxK]))
+                maxK = k;
         }
         if (b2[maxK] < 0) {
-            for (int k = 0; k < 3; ++k) b2[k] = -b2[k];
+            for (int k = 0; k < 3; ++k)
+                b2[k] = -b2[k];
         }
         for (int k = 0; k < 3; ++k) {
             evec[k][a] = b1[k];
@@ -422,14 +426,13 @@ _SymmetricEigen3(const double m[3][3], double eval[3], double evec[3][3])
     }
 }
 
-}  // namespace
+} // namespace
 
 bool
-RigExecPointsToParams(
-    const std::array<GfVec3d, 4> &restPoints,
-    const std::array<GfVec3d, 4> &posePoints,
-    RigExecAxis reflectionAxis,
-    RigExecTransformParams *params)
+RigExecPointsToParams(const std::array<GfVec3d, 4> &restPoints,
+                      const std::array<GfVec3d, 4> &posePoints,
+                      RigExecAxis reflectionAxis,
+                      RigExecTransformParams *params)
 {
     GfMatrix4d m;
     if (!RigExecPointsToMatrix(restPoints, posePoints, &m)) {
@@ -448,7 +451,8 @@ RigExecPointsToParams(
     for (int i = 0; i < 3; ++i) {
         for (int j = 0; j < 3; ++j) {
             double sum = 0;
-            for (int k = 0; k < 3; ++k) sum += L[k][i] * L[k][j];
+            for (int k = 0; k < 3; ++k)
+                sum += L[k][i] * L[k][j];
             ltl[i][j] = sum;
         }
     }
@@ -459,12 +463,11 @@ RigExecPointsToParams(
     for (int i = 0; i < 3; ++i) {
         sigma[i] = std::sqrt(std::max(s2[i], 0.0));
     }
-    const double detL =
-        L[0][0] * (L[1][1] * L[2][2] - L[1][2] * L[2][1]) -
-        L[0][1] * (L[1][0] * L[2][2] - L[1][2] * L[2][0]) +
-        L[0][2] * (L[1][0] * L[2][1] - L[1][1] * L[2][0]);
+    const double detL = L[0][0] * (L[1][1] * L[2][2] - L[1][2] * L[2][1]) -
+                        L[0][1] * (L[1][0] * L[2][2] - L[1][2] * L[2][0]) +
+                        L[0][2] * (L[1][0] * L[2][1] - L[1][1] * L[2][0]);
     if (sigma[2] < 1e-14 * std::max(1.0, sigma[0])) {
-        return false;  // singular posed frame: no SRT decomposition
+        return false; // singular posed frame: no SRT decomposition
     }
 
     // U = L V S^-1.
@@ -472,7 +475,8 @@ RigExecPointsToParams(
     for (int i = 0; i < 3; ++i) {
         for (int j = 0; j < 3; ++j) {
             double sum = 0;
-            for (int k = 0; k < 3; ++k) sum += L[i][k] * V[k][j];
+            for (int k = 0; k < 3; ++k)
+                sum += L[i][k] * V[k][j];
             U[i][j] = sum / sigma[j];
         }
     }
@@ -513,27 +517,24 @@ RigExecPointsToParams(
     for (int i = 0; i < 3; ++i) {
         for (int j = 0; j < 3; ++j) {
             double sum = 0;
-            for (int kk = 0; kk < 3; ++kk) sum += R[kk][i] * L[kk][j];
+            for (int kk = 0; kk < 3; ++kk)
+                sum += R[kk][i] * L[kk][j];
             H[i][j] = sum;
         }
     }
 
     // Quaternion from the proper rotation R (column convention). Build a
     // row-vector GfMatrix3d = R^T and use Gf's extraction.
-    GfMatrix3d rowR(
-        R[0][0], R[1][0], R[2][0],
-        R[0][1], R[1][1], R[2][1],
-        R[0][2], R[1][2], R[2][2]);
+    GfMatrix3d rowR(R[0][0], R[1][0], R[2][0], R[0][1], R[1][1], R[2][1],
+                    R[0][2], R[1][2], R[2][2]);
     rowR.Orthonormalize();
     const GfQuatd q = rowR.ExtractRotation().GetQuat();
 
     params->translation = GfVec3d(m[3][0], m[3][1], m[3][2]);
     params->rotation = q.GetNormalized();
     params->scale = GfVec3d(H[0][0], H[1][1], H[2][2]);
-    params->shear = GfVec3d(
-        H[0][1] / H[0][0],
-        H[0][2] / H[0][0],
-        H[1][2] / H[1][1]);
+    params->shear =
+        GfVec3d(H[0][1] / H[0][0], H[0][2] / H[0][0], H[1][2] / H[1][1]);
     params->reflectionAxis = reflectionAxis;
     return true;
 }
@@ -558,8 +559,8 @@ RigExecParamsToMatrix(const RigExecTransformParams &params)
     // normalization applied at decomposition). Rebuilding it upper
     // triangular would discard half the stretch and break the round trip.
     double H[3][3] = {
-        {sc[0],         sh[0] * sc[0], sh[1] * sc[0]},
-        {sh[0] * sc[0], sc[1],         sh[2] * sc[1]},
+        {sc[0], sh[0] * sc[0], sh[1] * sc[0]},
+        {sh[0] * sc[0], sc[1], sh[2] * sc[1]},
         {sh[1] * sc[0], sh[2] * sc[1], sc[2]},
     };
 
@@ -567,17 +568,16 @@ RigExecParamsToMatrix(const RigExecTransformParams &params)
     for (int i = 0; i < 3; ++i) {
         for (int j = 0; j < 3; ++j) {
             double sum = 0;
-            for (int k = 0; k < 3; ++k) sum += R[i][k] * H[k][j];
+            for (int k = 0; k < 3; ++k)
+                sum += R[i][k] * H[k][j];
             L[i][j] = sum;
         }
     }
 
-    return GfMatrix4d(
-        L[0][0], L[1][0], L[2][0], 0.0,
-        L[0][1], L[1][1], L[2][1], 0.0,
-        L[0][2], L[1][2], L[2][2], 0.0,
-        params.translation[0], params.translation[1],
-        params.translation[2], 1.0);
+    return GfMatrix4d(L[0][0], L[1][0], L[2][0], 0.0, L[0][1], L[1][1], L[2][1],
+                      0.0, L[0][2], L[1][2], L[2][2], 0.0,
+                      params.translation[0], params.translation[1],
+                      params.translation[2], 1.0);
 }
 
 RigExecPointFrame
@@ -590,4 +590,4 @@ RigExecTransformFrame(const RigExecPointFrame &frame, const GfMatrix4d &space)
     return out;
 }
 
-}  // namespace rigExec
+} // namespace rigExec

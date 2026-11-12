@@ -47,6 +47,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -56,16 +57,16 @@ namespace rigExec {
 
 /// The primvar and shader names, in one place.
 struct RigExecTouchPoseTokens {
-    static const TfToken &RegionPrimvar();   // rigExecTouchRegion
-    static const TfToken &TablePrimvar();    // rigExecTouchTable
+    static const TfToken &RegionPrimvar(); // rigExecTouchRegion
+    static const TfToken &TablePrimvar();  // rigExecTouchTable
 };
 
 /// What one attached mesh is lit with. Immutable once published; a change
 /// publishes a new one.
 struct RigExecTouchPoseHighlightMesh {
     SdfPath path;
-    VtFloatArray faceSlots;     ///< per face: region + 1, 0 for none
-    VtVec4fArray table;         ///< [slot] = rgb + strength; [0] unlit
+    VtFloatArray faceSlots; ///< per face: region + 1, 0 for none
+    VtVec4fArray table;     ///< [slot] = rgb + strength; [0] unlit
 };
 using RigExecTouchPoseHighlightMeshConstPtr =
     std::shared_ptr<const RigExecTouchPoseHighlightMesh>;
@@ -111,11 +112,14 @@ public:
 
     /// The mesh a scene index bound to \p contextKey draws for \p path:
     /// the one attached under that key, else the unscoped one.
-    RigExecTouchPoseHighlightMeshConstPtr Find(
-        const SdfPath &path, uint64_t contextKey = 0) const;
+    RigExecTouchPoseHighlightMeshConstPtr Find(const SdfPath &path,
+                                               uint64_t contextKey = 0) const;
 
     /// Cheap test the scene index makes on every GetPrim.
-    bool HasMeshes() const { return _count.load() != 0; }
+    bool HasMeshes() const
+    {
+        return _count.load() != 0;
+    }
 
     /// The mesh paths a scene index bound to \p contextKey sees: the ones
     /// attached under that key plus the unscoped ones.
@@ -129,7 +133,10 @@ public:
     size_t GetSceneIndexCount();
 
     /// Counters for tests and the benchmark.
-    uint64_t GetTableUpdateCount() const { return _tableUpdates.load(); }
+    uint64_t GetTableUpdateCount() const
+    {
+        return _tableUpdates.load();
+    }
 
 private:
     RigExecTouchPoseHighlights() = default;
@@ -164,8 +171,8 @@ std::string RigExecTouchPoseGetWrappedSource(const TfToken &baseIdentifier);
 class RigExecTouchPoseSceneIndex final
     : public HdSingleInputFilteringSceneIndexBase {
 public:
-    static RigExecTouchPoseSceneIndexRefPtr New(
-        const HdSceneIndexBaseRefPtr &inputSceneIndex);
+    static RigExecTouchPoseSceneIndexRefPtr
+    New(const HdSceneIndexBaseRefPtr &inputSceneIndex);
 
     HdSceneIndexPrim GetPrim(const SdfPath &primPath) const override;
     SdfPathVector GetChildPrimPaths(const SdfPath &primPath) const override;
@@ -181,12 +188,15 @@ public:
     /// unscoped meshes only). Bound, and rebound when the stage under the
     /// engine is replaced, from the rig adapter's rigExec/stageKey leaf on
     /// population -- the same transport the rig's own chains bind through.
-    uint64_t GetContextKey() const { return _contextKey.load(); }
+    uint64_t GetContextKey() const
+    {
+        return _contextKey.load();
+    }
 
 protected:
-    void _PrimsAdded(
-        const HdSceneIndexBase &sender,
-        const HdSceneIndexObserver::AddedPrimEntries &entries) override;
+    void
+    _PrimsAdded(const HdSceneIndexBase &sender,
+                const HdSceneIndexObserver::AddedPrimEntries &entries) override;
     void _PrimsRemoved(
         const HdSceneIndexBase &sender,
         const HdSceneIndexObserver::RemovedPrimEntries &entries) override;
@@ -195,9 +205,19 @@ protected:
         const HdSceneIndexObserver::DirtiedPrimEntries &entries) override;
 
 private:
-    explicit RigExecTouchPoseSceneIndex(
-        const HdSceneIndexBaseRefPtr &inputSceneIndex);
+    /// Passkey for New(): not an aggregate, so a braced empty list cannot
+    /// build it, and only this class can name the type.
+    struct _FactoryTag {
+        explicit _FactoryTag(int)
+        {
+        }
+    };
 
+public:
+    RigExecTouchPoseSceneIndex(_FactoryTag,
+                               const HdSceneIndexBaseRefPtr &inputSceneIndex);
+
+private:
     /// The materials bound to \p meshPath and its direct GeomSubset
     /// children, read from the input scene.
     std::set<SdfPath> _ComputeBoundMaterials(const SdfPath &meshPath) const;
@@ -221,6 +241,23 @@ private:
     std::map<SdfPath, int> _wrapCount;
 };
 
-}  // namespace rigExec
+// Factory gate: New() is the only admission. The probe spells the real arity
+// so it is false for the private non-aggregate passkey, not for a missing
+// argument.
+namespace {
+template <class T, class Params, class = void>
+struct _BraceConstructible : std::false_type {};
 
-#endif  // RIGEXEC_IMAGING_TOUCH_POSE_HIGHLIGHT_H
+template <class T, class... Args>
+struct _BraceConstructible<
+    T, void(Args...), std::void_t<decltype(T({}, std::declval<Args>()...))>>
+    : std::true_type {};
+} // namespace
+
+static_assert(!_BraceConstructible<RigExecTouchPoseSceneIndex,
+                                   void(HdSceneIndexBaseRefPtr)>::value,
+              "RigExecTouchPoseSceneIndex: New() is the only admission");
+
+} // namespace rigExec
+
+#endif // RIGEXEC_IMAGING_TOUCH_POSE_HIGHLIGHT_H

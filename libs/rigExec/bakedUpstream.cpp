@@ -2,6 +2,7 @@
 // path, compared by value from run to run, and the two sets that admit them
 // (the attributes a bake lists as inputs, and those the weight oracle reads).
 
+#include "rigExecSchema/schemaNames.h"
 #include "bakedProgram.h"
 #include "inputReplay.h"
 #include "bakedProgramImpl.h"
@@ -33,43 +34,43 @@
 namespace rigExec {
 
 namespace {
-const TfToken _falloffSamplesInput("inputs:falloffSamples");
+const TfToken _falloffSamplesInput(SchemaAttrText::inputsFalloffSamples);
 
 TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
-    ((rigExecOperation, "rigExec:operation"))
-    ((rigExecWeightObject, "rigExec:weightObject"))
-    ((rigExecBaseWeight, "rigExec:baseWeight"))
-    ((rigExecInputWeights, "rigExec:inputWeights"))
-    ((rigExecWeightTarget, "rigExec:weightTarget"))
-    ((rigExecSampleSource, "rigExec:sampleSource"))
-    ((rigExecCurve, "rigExec:curve"))
-    ((rigExecCombineWeight, "RigExecCombineWeight"))
-    ((inputsDefaultWeight, "inputs:defaultWeight"))
-    ((inputsEnabled, "inputs:enabled"))
-    ((rigExecElementSize, "rigExec:elementSize"))
-    ((rigExecSkinningMethod, "rigExec:skinningMethod"))
-    ((inputsOnlySmooth, "inputs:onlySmooth"))
-    ((inputsComputationToTarget, "inputs:computationToTarget"))
-    ((rigExecEvaluation, "rigExec:evaluation"))
-    ((rigExecInterpolationU, "rigExec:interpolationU"))
-    ((rigExecInterpolationV, "rigExec:interpolationV"))
-    ((rigExecInterpolationW, "rigExec:interpolationW"))
-    ((rigExecOrigin, "rigExec:origin"))
-    ((rigExecSpacing, "rigExec:spacing"))
-    ((rigExecStrength, "rigExec:strength"))
-    ((rigExecCageMatrix, "rigExec:cageMatrix"))
-    ((rigExecTargetMatrix, "rigExec:targetMatrix"))
-    ((rigExecPointSpace, "rigExec:pointSpace"))
-    ((rigExecSnapMode, "rigExec:snapMode"))
-    ((rigExecOffset, "rigExec:offset"))
-    ((rigExecSurfaceMatrix, "rigExec:surfaceMatrix"))
-    ((rigExecRayOrigin, "rigExec:rayOrigin"))
-    ((rigExecRayDirection, "rigExec:rayDirection"))
-    ((rigExecRayUp, "rigExec:rayUp"))
-    ((rigExecShaderOffset, "rigExec:shaderOffset"))
+    ((rigExecOperation, SchemaAttrText::rigExecOperation))
+    ((rigExecWeightObject, SchemaAttrText::rigExecWeightObject))
+    ((rigExecBaseWeight, SchemaAttrText::rigExecBaseWeight))
+    ((rigExecInputWeights, SchemaAttrText::rigExecInputWeights))
+    ((rigExecWeightTarget, SchemaAttrText::rigExecWeightTarget))
+    ((rigExecSampleSource, SchemaAttrText::rigExecSampleSource))
+    ((rigExecCurve, SchemaAttrText::rigExecCurve))
+    ((rigExecCombineWeight, SchemaTypeName::RigExecCombineWeight))
+    ((inputsDefaultWeight, SchemaAttrText::inputsDefaultWeight))
+    ((inputsEnabled, SchemaAttrText::inputsEnabled))
+    ((rigExecElementSize, SchemaAttrText::rigExecElementSize))
+    ((rigExecSkinningMethod, SchemaAttrText::rigExecSkinningMethod))
+    ((inputsOnlySmooth, SchemaAttrText::inputsOnlySmooth))
+    ((inputsComputationToTarget, SchemaAttrText::inputsComputationToTarget))
+    ((rigExecEvaluation, SchemaAttrText::rigExecEvaluation))
+    ((rigExecInterpolationU, SchemaAttrText::rigExecInterpolationU))
+    ((rigExecInterpolationV, SchemaAttrText::rigExecInterpolationV))
+    ((rigExecInterpolationW, SchemaAttrText::rigExecInterpolationW))
+    ((rigExecOrigin, SchemaAttrText::rigExecOrigin))
+    ((rigExecSpacing, SchemaAttrText::rigExecSpacing))
+    ((rigExecStrength, SchemaAttrText::rigExecStrength))
+    ((rigExecCageMatrix, SchemaAttrText::rigExecCageMatrix))
+    ((rigExecTargetMatrix, SchemaAttrText::rigExecTargetMatrix))
+    ((rigExecPointSpace, SchemaAttrText::rigExecPointSpace))
+    ((rigExecSnapMode, SchemaAttrText::rigExecSnapMode))
+    ((rigExecOffset, SchemaAttrText::rigExecOffset))
+    ((rigExecSurfaceMatrix, SchemaAttrText::rigExecSurfaceMatrix))
+    ((rigExecRayOrigin, SchemaAttrText::rigExecRayOrigin))
+    ((rigExecRayDirection, SchemaAttrText::rigExecRayDirection))
+    ((rigExecRayUp, SchemaAttrText::rigExecRayUp))
+    ((rigExecShaderOffset, SchemaAttrText::rigExecShaderOffset))
 );
-}
+} // namespace
 
 bool
 RigExecUpstreamSlotType(const SdfValueTypeName &typeName)
@@ -81,8 +82,7 @@ RigExecUpstreamSlotType(const SdfValueTypeName &typeName)
     const auto &N = *SdfValueTypeNames;
     return type == N.Double.GetType() || type == N.Float.GetType() ||
            type == N.Bool.GetType() || type == N.Int.GetType() ||
-           type == N.Token.GetType() ||
-           type == N.Matrix4d.GetType() ||
+           type == N.Token.GetType() || type == N.Matrix4d.GetType() ||
            type == N.Double3.GetType() || type == N.Float3.GetType();
 }
 
@@ -92,7 +92,7 @@ namespace {
 // admission between evaluations.
 std::atomic<bool> _upstreamArrays{true};
 
-}  // namespace
+} // namespace
 
 void
 RigExecSetUpstreamArrayAdmissionForTesting(bool on)
@@ -115,10 +115,8 @@ RigExecUpstreamArraySlotType(const SdfValueTypeName &typeName)
     }
     const TfType type = typeName.GetType();
     const auto &N = *SdfValueTypeNames;
-    return type == N.IntArray.GetType() ||
-           type == N.FloatArray.GetType() ||
-           type == N.DoubleArray.GetType() ||
-           type == N.Float2Array.GetType() ||
+    return type == N.IntArray.GetType() || type == N.FloatArray.GetType() ||
+           type == N.DoubleArray.GetType() || type == N.Float2Array.GetType() ||
            type == N.Float3Array.GetType();
 }
 
@@ -173,8 +171,7 @@ RigExecUpstreamDropReason(const UsdStageRefPtr &stage,
         count = known->second.count;
     } else {
         VtValue stageValue;
-        if (!attribute.Get(&stageValue, time) ||
-            !stageValue.IsArrayValued()) {
+        if (!attribute.Get(&stageValue, time) || !stageValue.IsArrayValued()) {
             return "the attribute has no stage value at this time";
         }
         count = stageValue.GetArraySize();
@@ -256,9 +253,8 @@ RigExecBakedProgram::DescribeUpstreamArrays(const RigExecRigEvaluator &E)
             }
             const bool layout = int(k) == indices || int(k) == weights;
             add(key.path,
-                key.time == RigExecRevisionLeafTime::AtDefault
-                    ? Time::AtDefault
-                    : Time::AtTime,
+                key.time == RigExecRevisionLeafTime::AtDefault ? Time::AtDefault
+                                                               : Time::AtTime,
                 layout ? "skin layout" : owner);
         }
         for (const auto &[input, samples] : revision.binding.blendSamples) {
@@ -291,9 +287,8 @@ RigExecBakedProgram::DescribeUpstreamArrays(const RigExecRigEvaluator &E)
         for (const auto &revision : revisions) {
             const UsdPrim mover = stage->GetPrimAtPath(revision.moverPath);
             TfToken token;
-            if (const UsdAttribute a =
-                    mover ? mover.GetAttribute(operationName)
-                          : UsdAttribute()) {
+            if (const UsdAttribute a = mover ? mover.GetAttribute(operationName)
+                                             : UsdAttribute()) {
                 a.Get(&token, UsdTimeCode::Default());
             }
             RigExecPropertyOp op;
@@ -362,8 +357,7 @@ RigExecBakedProgram::DescribeUpstreamArrays(const RigExecRigEvaluator &E)
                 }
             }
             const TfToken type = prim.GetTypeName();
-            const bool volumetric =
-                evaluatorDetail::_IsVolumeWeightType(type);
+            const bool volumetric = evaluatorDetail::_IsVolumeWeightType(type);
             if (!volumetric && type != combineType) {
                 continue;
             }
@@ -397,9 +391,8 @@ RigExecBakedProgram::DescribeUpstreamArrays(const RigExecRigEvaluator &E)
     // value override cannot replace such a read with an array, so the
     // dynamic walk could not follow a value there: those attributes are
     // structural for every reader and in every backend.
-    visitPoints(execWeightObjects, [&rows](const SdfPath &path, bool) {
-        rows.erase(path);
-    });
+    visitPoints(execWeightObjects,
+                [&rows](const SdfPath &path, bool) { rows.erase(path); });
 
     std::vector<RigExecUpstreamArrayRow> out;
     out.reserve(rows.size());
@@ -483,7 +476,8 @@ _BuildUpstreamSets(RigExecBakedProgramImpl *program)
     if (described) {
         for (const RigExecBakedPropertyChainDesc &chain : chains) {
             paths.insert(chain.target);
-            const bool matrix = chain.valueType ==
+            const bool matrix =
+                chain.valueType ==
                 RigExecBakedPropertyChainDesc::ValueType::Matrix4d;
             for (const auto &r : chain.revisions) {
                 _AddWalk(B, r.enabled, &paths);
@@ -525,119 +519,135 @@ _BuildUpstreamSets(RigExecBakedProgramImpl *program)
     // inputs (enable, skin layout scalars, iterative scalars, shader dials,
     // projector ray settings).
     const TfToken &defaultWeightName = _tokens->inputsDefaultWeight;
-    const auto moverReads =
-        [&](const RigExecBakedProgramImpl::GeomRevision &revision) {
-            for (const auto &channel : revision.blendChannels) {
-                _AddWalk(B, channel.weight, &paths);
-                for (const auto &sample : channel.samples) {
-                    _AddWalk(B, sample.activation, &paths);
-                }
+    const auto moverReads = [&](const RigExecBakedProgramImpl::GeomRevision
+                                    &revision) {
+        for (const auto &channel : revision.blendChannels) {
+            _AddWalk(B, channel.weight, &paths);
+            for (const auto &sample : channel.samples) {
+                _AddWalk(B, sample.activation, &paths);
             }
-            const UsdPrim &prim = revision.moverPrim;
-            if (!prim) {
-                return;
-            }
-            const RigExecRevisionOp op = revision.op;
-            const auto attr = [&prim](const TfToken &name) {
-                return prim.GetAttribute(name);
-            };
-            if (op != RigExecRevisionOp::RecomputeNormals &&
-                op != RigExecRevisionOp::RecomputeExtent &&
-                !RigExecIsDerivedMatrixOp(op)) {
-                _AddWalk(B, attr(_tokens->inputsEnabled), &paths);
-            }
-            if (op == RigExecRevisionOp::External) {
-                const auto numeric = [](RigExecRevisionLeafType type) {
-                    using Type = RigExecRevisionLeafType;
-                    return type == Type::Double || type == Type::Dial ||
-                           type == Type::Float || type == Type::Bool ||
-                           type == Type::Int || type == Type::Matrix4d ||
-                           type == Type::Vec3d || type == Type::Vec3f;
-                };
-                const auto addSource = [&](const SdfPath &path, RigExecRevisionLeafType requested) {
-                    const auto attribute = B.stage->GetAttributeAtPath(path);
-                    const auto &N = *SdfValueTypeNames;
-                    if (!attribute || !attribute.HasValue() ||
-                        !RigExecUpstreamSlotType(attribute.GetTypeName()) ||
-                        attribute.GetTypeName().GetType() == N.Token.GetType()) return;
-                    const auto actual = attribute.GetTypeName().GetType();
-                    using Type = RigExecRevisionLeafType;
-                    const bool compatible =
-                        ((requested == Type::Float || requested == Type::Dial) &&
-                         (actual == N.Float.GetType() || actual == N.Double.GetType())) ||
-                        (requested == Type::Double && actual == N.Double.GetType()) ||
-                        (requested == Type::Bool && actual == N.Bool.GetType()) ||
-                        (requested == Type::Int && actual == N.Int.GetType()) ||
-                        (requested == Type::Matrix4d && actual == N.Matrix4d.GetType()) ||
-                        (requested == Type::Vec3d && actual == N.Double3.GetType()) ||
-                        (requested == Type::Vec3f && actual == N.Float3.GetType());
-                    if (!compatible) return;
-                    SdfPathVector connections;
-                    if (attribute.HasAuthoredConnections()) attribute.GetConnections(&connections);
-                    if (connections.empty()) paths.insert(path);
-                };
-                for (size_t k = 0; k < revision.binding.externalInputs.size(); ++k) {
-                    const auto &key = revision.binding.externalInputs[k];
-                    using Flavour = RigExecRevisionLeafFlavour;
-                    if (key.time != RigExecRevisionLeafTime::AtTime || !numeric(key.type) ||
-                        (key.flavour != Flavour::Resolved && key.flavour != Flavour::ResolvedOnly &&
-                         key.flavour != Flavour::OverlayThenRaw)) continue;
-                    addSource(key.path, key.type);
-                    if (revision.leaves.decl.externalBegin < 0) continue;
-                    const size_t leaf = size_t(revision.leaves.decl.externalBegin) + k;
-                    if (leaf < revision.leaves.hops.size())
-                        for (const auto &path : revision.leaves.hops[leaf]) addSource(path, key.type);
-                }
-            }
-            if (op == RigExecRevisionOp::Skin) {
-                _AddWalk(B, attr(_tokens->rigExecElementSize), &paths);
-                _AddWalk(B, attr(_tokens->rigExecSkinningMethod), &paths);
-            }
-            if (op == RigExecRevisionOp::DeltaMush ||
-                op == RigExecRevisionOp::Wrinkle) {
-                RigExecMoverParameters parameters;
-                frozenDetail::_VisitIterativeMoverScalars(
-                    op, parameters, [&](const TfToken &name, auto, auto &) {
-                        _AddWalk(B, attr(name), &paths);
-                    });
-            }
-            // The extended deformer settings read at the time (the
-            // exporter's connection-following path reads).
-            if (op == RigExecRevisionOp::DeltaMush) {
-                for (const TfToken &name :
-                     {_tokens->inputsOnlySmooth, _tokens->inputsComputationToTarget}) {
-                    _AddWalk(B, attr(name), &paths);
-                }
-            } else if (op == RigExecRevisionOp::Lattice) {
-                for (const TfToken &name :
-                     {_tokens->rigExecEvaluation, _tokens->rigExecInterpolationU,
-                      _tokens->rigExecInterpolationV, _tokens->rigExecInterpolationW,
-                      _tokens->rigExecOrigin, _tokens->rigExecSpacing, _tokens->rigExecStrength,
-                      _tokens->rigExecCageMatrix, _tokens->rigExecTargetMatrix,
-                      _tokens->rigExecPointSpace}) {
-                    _AddWalk(B, attr(name), &paths);
-                }
-            } else if (op == RigExecRevisionOp::SurfaceProject) {
-                for (const TfToken &name :
-                     {_tokens->rigExecSnapMode, _tokens->rigExecOffset,
-                      _tokens->rigExecSurfaceMatrix, _tokens->rigExecTargetMatrix,
-                      _tokens->rigExecPointSpace}) {
-                    _AddWalk(B, attr(name), &paths);
-                }
-            }
-            if (op == RigExecRevisionOp::ShaderDials) {
-                for (const SdfPath &dial : revision.binding.shaderDials) {
-                    _AddWalk(B, B.stage->GetAttributeAtPath(dial), &paths);
-                }
-            } else if (RigExecIsDerivedMatrixOp(op)) {
-                for (const TfToken &name : {_tokens->rigExecRayOrigin,
-                                            _tokens->rigExecRayDirection,
-                                            _tokens->rigExecRayUp,
-                                            _tokens->rigExecShaderOffset}) {
-                    _AddWalk(B, attr(name), &paths);
-                }
-            }
+        }
+        const UsdPrim &prim = revision.moverPrim;
+        if (!prim) {
+            return;
+        }
+        const RigExecRevisionOp op = revision.op;
+        const auto attr = [&prim](const TfToken &name) {
+            return prim.GetAttribute(name);
         };
+        if (op != RigExecRevisionOp::RecomputeNormals &&
+            op != RigExecRevisionOp::RecomputeExtent &&
+            !RigExecIsDerivedMatrixOp(op)) {
+            _AddWalk(B, attr(_tokens->inputsEnabled), &paths);
+        }
+        if (op == RigExecRevisionOp::External) {
+            const auto numeric = [](RigExecRevisionLeafType type) {
+                using Type = RigExecRevisionLeafType;
+                return type == Type::Double || type == Type::Dial ||
+                       type == Type::Float || type == Type::Bool ||
+                       type == Type::Int || type == Type::Matrix4d ||
+                       type == Type::Vec3d || type == Type::Vec3f;
+            };
+            const auto addSource = [&](const SdfPath &path,
+                                       RigExecRevisionLeafType requested) {
+                const auto attribute = B.stage->GetAttributeAtPath(path);
+                const auto &N = *SdfValueTypeNames;
+                if (!attribute || !attribute.HasValue() ||
+                    !RigExecUpstreamSlotType(attribute.GetTypeName()) ||
+                    attribute.GetTypeName().GetType() == N.Token.GetType())
+                    return;
+                const auto actual = attribute.GetTypeName().GetType();
+                using Type = RigExecRevisionLeafType;
+                const bool compatible =
+                    ((requested == Type::Float || requested == Type::Dial) &&
+                     (actual == N.Float.GetType() ||
+                      actual == N.Double.GetType())) ||
+                    (requested == Type::Double &&
+                     actual == N.Double.GetType()) ||
+                    (requested == Type::Bool && actual == N.Bool.GetType()) ||
+                    (requested == Type::Int && actual == N.Int.GetType()) ||
+                    (requested == Type::Matrix4d &&
+                     actual == N.Matrix4d.GetType()) ||
+                    (requested == Type::Vec3d &&
+                     actual == N.Double3.GetType()) ||
+                    (requested == Type::Vec3f && actual == N.Float3.GetType());
+                if (!compatible)
+                    return;
+                SdfPathVector connections;
+                if (attribute.HasAuthoredConnections())
+                    attribute.GetConnections(&connections);
+                if (connections.empty())
+                    paths.insert(path);
+            };
+            for (size_t k = 0; k < revision.binding.externalInputs.size();
+                 ++k) {
+                const auto &key = revision.binding.externalInputs[k];
+                using Flavour = RigExecRevisionLeafFlavour;
+                if (key.time != RigExecRevisionLeafTime::AtTime ||
+                    !numeric(key.type) ||
+                    (key.flavour != Flavour::Resolved &&
+                     key.flavour != Flavour::ResolvedOnly &&
+                     key.flavour != Flavour::OverlayThenRaw))
+                    continue;
+                addSource(key.path, key.type);
+                if (revision.leaves.decl.externalBegin < 0)
+                    continue;
+                const size_t leaf =
+                    size_t(revision.leaves.decl.externalBegin) + k;
+                if (leaf < revision.leaves.hops.size())
+                    for (const auto &path : revision.leaves.hops[leaf])
+                        addSource(path, key.type);
+            }
+        }
+        if (op == RigExecRevisionOp::Skin) {
+            _AddWalk(B, attr(_tokens->rigExecElementSize), &paths);
+            _AddWalk(B, attr(_tokens->rigExecSkinningMethod), &paths);
+        }
+        if (op == RigExecRevisionOp::DeltaMush ||
+            op == RigExecRevisionOp::Wrinkle) {
+            RigExecMoverParameters parameters;
+            frozenDetail::_VisitIterativeMoverScalars(
+                op, parameters, [&](const TfToken &name, auto, auto &) {
+                    _AddWalk(B, attr(name), &paths);
+                });
+        }
+        // The extended deformer settings read at the time (the
+        // exporter's connection-following path reads).
+        if (op == RigExecRevisionOp::DeltaMush) {
+            for (const TfToken &name : {_tokens->inputsOnlySmooth,
+                                        _tokens->inputsComputationToTarget}) {
+                _AddWalk(B, attr(name), &paths);
+            }
+        } else if (op == RigExecRevisionOp::Lattice) {
+            for (const TfToken &name :
+                 {_tokens->rigExecEvaluation, _tokens->rigExecInterpolationU,
+                  _tokens->rigExecInterpolationV,
+                  _tokens->rigExecInterpolationW, _tokens->rigExecOrigin,
+                  _tokens->rigExecSpacing, _tokens->rigExecStrength,
+                  _tokens->rigExecCageMatrix, _tokens->rigExecTargetMatrix,
+                  _tokens->rigExecPointSpace}) {
+                _AddWalk(B, attr(name), &paths);
+            }
+        } else if (op == RigExecRevisionOp::SurfaceProject) {
+            for (const TfToken &name :
+                 {_tokens->rigExecSnapMode, _tokens->rigExecOffset,
+                  _tokens->rigExecSurfaceMatrix, _tokens->rigExecTargetMatrix,
+                  _tokens->rigExecPointSpace}) {
+                _AddWalk(B, attr(name), &paths);
+            }
+        }
+        if (op == RigExecRevisionOp::ShaderDials) {
+            for (const SdfPath &dial : revision.binding.shaderDials) {
+                _AddWalk(B, B.stage->GetAttributeAtPath(dial), &paths);
+            }
+        } else if (RigExecIsDerivedMatrixOp(op)) {
+            for (const TfToken &name :
+                 {_tokens->rigExecRayOrigin, _tokens->rigExecRayDirection,
+                  _tokens->rigExecRayUp, _tokens->rigExecShaderOffset}) {
+                _AddWalk(B, attr(name), &paths);
+            }
+        }
+    };
     for (const RigExecBakedProgramImpl::GeomChain &chain : B.chains) {
         for (const auto &revision : chain.revisions) {
             if (revision.moverPrim) {
@@ -655,8 +665,7 @@ _BuildUpstreamSets(RigExecBakedProgramImpl *program)
     for (const SdfPath &path : paths) {
         const UsdAttribute a = B.stage->GetAttributeAtPath(path);
         if (a && RigExecUpstreamSlotType(a.GetTypeName())) {
-            B.upstreamAdmissible.emplace_hint(B.upstreamAdmissible.end(),
-                                              path,
+            B.upstreamAdmissible.emplace_hint(B.upstreamAdmissible.end(), path,
                                               a.GetTypeName().GetType());
         }
     }
@@ -716,12 +725,11 @@ _BuildUpstreamSets(RigExecBakedProgramImpl *program)
         if (i < baked) {
             const RigExecBakedProgramImpl::WeightObject &w = B.weightObjects[i];
             for (const RigExecBakedInput<float> *input :
-                 {&w.defaultWeight, &w.driver,    &w.scale,     &w.bias,
-                  &w.strength,      &w.invert,    &w.falloffMin,
-                  &w.falloffMax,    &w.scaleXPos, &w.scaleYPos,
-                  &w.scaleZPos,     &w.scaleXNeg, &w.scaleYNeg,
-                  &w.scaleZNeg,     &w.scaleX,    &w.scaleY,
-                  &w.scaleZ,        &w.extentU,   &w.extentV}) {
+                 {&w.defaultWeight, &w.driver, &w.scale, &w.bias, &w.strength,
+                  &w.invert, &w.falloffMin, &w.falloffMax, &w.scaleXPos,
+                  &w.scaleYPos, &w.scaleZPos, &w.scaleXNeg, &w.scaleYNeg,
+                  &w.scaleZNeg, &w.scaleX, &w.scaleY, &w.scaleZ, &w.extentU,
+                  &w.extentV}) {
                 _AddWalk(B, input->head, &hops);
             }
             mark(w.base);
@@ -743,7 +751,7 @@ _BuildUpstreamSets(RigExecBakedProgramImpl *program)
     B.upstreamSetsBuilt = true;
 }
 
-}  // namespace
+} // namespace
 
 const std::map<SdfPath, TfType> &
 RigExecBakedProgram::GetUpstreamAdmissible() const
@@ -772,8 +780,8 @@ RigExecBakedPlaceUpstream(RigExecBakedProgramImpl *program, bool placeOracle)
         B.upstreamMovedThisRun = false;
     }
     const size_t numbers = B.overridden.size();
-    const bool sized = B.upstreamOn.size() == numbers &&
-                       B.upstreamChanged.size() == numbers;
+    const bool sized =
+        B.upstreamOn.size() == numbers && B.upstreamChanged.size() == numbers;
     if (sized && B.upstream == B.lastUpstream) {
         if (B.upstream.empty()) {
             return;
@@ -839,4 +847,4 @@ RigExecBakedPlaceUpstream(RigExecBakedProgramImpl *program, bool placeOracle)
     }
 }
 
-}  // namespace rigExec
+} // namespace rigExec

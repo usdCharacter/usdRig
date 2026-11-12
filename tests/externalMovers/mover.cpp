@@ -20,11 +20,13 @@ const TfToken kReference("rigExec:reference");
 // point, so a phased read that playback re-evaluates shows in the result.
 using Payload = GfVec3f;
 
-void Bind(const RigExecMoverBindContext &ctx)
+void
+Bind(const RigExecMoverBindContext &ctx)
 {
     const SdfPathVector references =
         RigExecRelationshipTargets(ctx.moverPrim, kReference);
-    if (references.size() != 1) return;
+    if (references.size() != 1)
+        return;
     const RigExecReadPhase phase =
         RigExecPhaseForInput(ctx.moverPrim, kReference);
     if (!phase.IsBase()) {
@@ -32,49 +34,71 @@ void Bind(const RigExecMoverBindContext &ctx)
     }
 }
 
-void DeclareInputs(const RigExecMoverBindContext &ctx,
-                   std::vector<RigExecRevisionLeafKey> *inputs)
+void
+DeclareInputs(const RigExecMoverBindContext &ctx,
+              std::vector<RigExecRevisionLeafKey> *inputs)
 {
     inputs->push_back({ctx.moverPrim.GetPath().AppendProperty(kGain),
-        RigExecRevisionLeafType::Float, RigExecRevisionLeafTime::AtTime,
-        RigExecRevisionLeafFlavour::Resolved, VtValue(testExternalMoverSchema::inputs_gain)});
-    const auto references = RigExecRelationshipTargets(ctx.moverPrim, kReference);
+                       RigExecRevisionLeafType::Float,
+                       RigExecRevisionLeafTime::AtTime,
+                       RigExecRevisionLeafFlavour::Resolved,
+                       VtValue(testExternalMoverSchema::inputs_gain)});
+    const auto references =
+        RigExecRelationshipTargets(ctx.moverPrim, kReference);
     if (references.size() == 1) {
         inputs->push_back({references[0], RigExecRevisionLeafType::Vec3fArray,
-            RigExecRevisionLeafTime::AtTime, RigExecRevisionLeafFlavour::Resolved,
-            VtValue(VtVec3fArray())});
+                           RigExecRevisionLeafTime::AtTime,
+                           RigExecRevisionLeafFlavour::Resolved,
+                           VtValue(VtVec3fArray())});
     }
 }
 
-bool CompileScene(const RigExecSceneDescriptors &scene,const SdfPath &mover,
-                  const SdfPath &,RigExecRevisionBinding *binding,std::string *error)
+bool
+CompileScene(const RigExecSceneDescriptors &scene, const SdfPath &mover,
+             const SdfPath &, RigExecRevisionBinding *binding,
+             std::string *error)
 {
-    if(!binding)return false;
-    binding->externalInputs={{mover.AppendProperty(kGain),
-        RigExecRevisionLeafType::Float,RigExecRevisionLeafTime::AtTime,
-        RigExecRevisionLeafFlavour::Resolved,VtValue(testExternalMoverSchema::inputs_gain)}};
-    const auto reference=scene.relationships.find(mover.AppendProperty(kReference));
-    if(reference!=scene.relationships.end() && reference->second.fact.targets.size()==1) {
-        const auto &path=reference->second.fact.targets.front();RigExecReadPhase phase;
-        if(!RigExecParseReadPhase(reference->second.readPhase.GetText(),&phase,error))return false;
-        if(!phase.IsBase())binding->phases[path]=phase;
-        binding->externalInputs.push_back({path,RigExecRevisionLeafType::Vec3fArray,
-            RigExecRevisionLeafTime::AtTime,RigExecRevisionLeafFlavour::Resolved,VtValue(VtVec3fArray())});
+    if (!binding)
+        return false;
+    binding->externalInputs = {
+        {mover.AppendProperty(kGain), RigExecRevisionLeafType::Float,
+         RigExecRevisionLeafTime::AtTime, RigExecRevisionLeafFlavour::Resolved,
+         VtValue(testExternalMoverSchema::inputs_gain)}};
+    const auto reference =
+        scene.relationships.find(mover.AppendProperty(kReference));
+    if (reference != scene.relationships.end() &&
+        reference->second.fact.targets.size() == 1) {
+        const auto &path = reference->second.fact.targets.front();
+        RigExecReadPhase phase;
+        if (!RigExecParseReadPhase(reference->second.readPhase.GetText(),
+                                   &phase, error))
+            return false;
+        if (!phase.IsBase())
+            binding->phases[path] = phase;
+        binding->externalInputs.push_back(
+            {path, RigExecRevisionLeafType::Vec3fArray,
+             RigExecRevisionLeafTime::AtTime,
+             RigExecRevisionLeafFlavour::Resolved, VtValue(VtVec3fArray())});
     }
     return true;
 }
 
-bool Assemble(const RigExecExternalInputContext &ctx, VtValue *data)
+bool
+Assemble(const RigExecExternalInputContext &ctx, VtValue *data)
 {
     if (ctx.values.basePoints.empty() || ctx.inputs.empty() ||
-        !ctx.inputs[0].IsHolding<float>()) return false;
+        !ctx.inputs[0].IsHolding<float>())
+        return false;
     const float gain = ctx.inputs[0].UncheckedGet<float>();
-    if (!std::isfinite(gain)) return false;
+    if (!std::isfinite(gain))
+        return false;
     Payload payload(gain, 0.0f, 0.0f);
     if (ctx.inputs.size() == 2) {
-        if (!ctx.inputs[1].IsHolding<VtVec3fArray>()) return false;
+        if (!ctx.inputs[1].IsHolding<VtVec3fArray>())
+            return false;
         const auto &points = ctx.inputs[1].UncheckedGet<VtVec3fArray>();
-        if (points.empty()) return false;
+        if (points.empty())
+            return false;
         payload[1] = points[0][1];
         payload[2] = 1.0f;
     }
@@ -82,24 +106,26 @@ bool Assemble(const RigExecExternalInputContext &ctx, VtValue *data)
     return true;
 }
 
-bool Apply(const VtValue &data, std::vector<GfVec3f> *points)
+bool
+Apply(const VtValue &data, std::vector<GfVec3f> *points)
 {
-    if (!data.IsHolding<Payload>()) return false;
+    if (!data.IsHolding<Payload>())
+        return false;
     const Payload &payload = data.UncheckedGet<Payload>();
     if (payload[0] == -2.0f) {
         points->push_back(GfVec3f(0));
         return true;
     }
-    return TestQuadraticDefinition::Deform(payload[0], payload[1],
-                  points->empty() ? nullptr : points->front().data(),
-                  points->size());
+    return TestQuadraticDefinition::Deform(
+        payload[0], payload[1],
+        points->empty() ? nullptr : points->front().data(), points->size());
 }
 
-RigExecOracleResult Oracle(const RigExecMoverOracleContext &ctx)
+RigExecOracleResult
+Oracle(const RigExecMoverOracleContext &ctx)
 {
     float gain = 1.0f;
-    ctx.resolved.GetAttribute(ctx.prim.GetAttribute(kGain),
-                              ctx.time, &gain);
+    ctx.resolved.GetAttribute(ctx.prim.GetAttribute(kGain), ctx.time, &gain);
     if (!std::isfinite(gain) || gain < 0.0f) {
         return RigExecOracleResult::PassThrough;
     }
@@ -113,25 +139,34 @@ RigExecOracleResult Oracle(const RigExecMoverOracleContext &ctx)
 // bytes are the payload's three floats.
 constexpr auto &kCompiledDataTag = TestQuadraticDefinition::CompiledTag;
 
-bool EncodeCompiledData(const RigExecRevisionBinding &,std::vector<uint8_t> *compiledRig) {
-    compiledRig->assign(kCompiledDataTag,kCompiledDataTag+sizeof(kCompiledDataTag));return true;
+bool
+EncodeCompiledData(const RigExecRevisionBinding &,
+                   std::vector<uint8_t> *compiledRig)
+{
+    compiledRig->assign(kCompiledDataTag,
+                        kCompiledDataTag + sizeof(kCompiledDataTag));
+    return true;
 }
 
-bool Encode(const VtValue &data, const RigExecRevisionBinding &,
-            std::vector<uint8_t> *compiledRig, std::vector<uint8_t> *frame)
+bool
+Encode(const VtValue &data, const RigExecRevisionBinding &,
+       std::vector<uint8_t> *compiledRig, std::vector<uint8_t> *frame)
 {
-    if (!data.IsHolding<Payload>()) return false;
+    if (!data.IsHolding<Payload>())
+        return false;
     const Payload &payload = data.UncheckedGet<Payload>();
-    compiledRig->assign(kCompiledDataTag, kCompiledDataTag + sizeof(kCompiledDataTag));
+    compiledRig->assign(kCompiledDataTag,
+                        kCompiledDataTag + sizeof(kCompiledDataTag));
     frame->resize(sizeof(float) * 3);
     std::memcpy(frame->data(), payload.data(), frame->size());
     return true;
 }
 
-RigExecMoverHandler Handler(const char *schemaType)
+RigExecMoverHandler
+Handler(std::string_view schemaType)
 {
-    RigExecMoverHandler handler(schemaType,
-        &RigExecFixedMoverOp<RigExecRevisionOp::External>,
+    RigExecMoverHandler handler(
+        schemaType, &RigExecFixedMoverOp<RigExecRevisionOp::External>,
         RigExecMoverDomain::Points);
     handler.singleTarget = true;
     handler.bind = &Bind;
@@ -146,7 +181,8 @@ RigExecMoverHandler Handler(const char *schemaType)
 }
 
 // The same mover from a plugin that never adopted .rigexec export.
-RigExecMoverHandler UnexportableHandler()
+RigExecMoverHandler
+UnexportableHandler()
 {
     RigExecMoverHandler handler = Handler("ExternalUnexportableMover");
     handler.encodeExternalCompiledData = nullptr;
@@ -155,12 +191,13 @@ RigExecMoverHandler UnexportableHandler()
     return handler;
 }
 
-}  // namespace
+} // namespace
 
 namespace rigExec {
-RigExecMoverHandler RigExecQuadraticUsdAdapter(const char *schemaType)
+RigExecMoverHandler
+RigExecQuadraticUsdAdapter(std::string_view schemaType)
 {
     return Handler(schemaType);
 }
-}
+} // namespace rigExec
 RIGEXEC_REGISTER_MOVER(UnexportableHandler());

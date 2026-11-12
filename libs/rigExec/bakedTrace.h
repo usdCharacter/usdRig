@@ -5,6 +5,7 @@
 #ifndef RIGEXEC_BAKED_TRACE_H
 #define RIGEXEC_BAKED_TRACE_H
 
+#include "rigExecSchema/schemaNames.h"
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -72,6 +73,6 @@ RigExecBakedLastRunTrace(const RigExecBakedProgramImpl &program);
 std::vector<RigExecOpGraphNode>
 RigExecBakedOpGraph(const RigExecBakedProgramImpl &program);
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_BAKED_TRACE_H
+#endif // RIGEXEC_BAKED_TRACE_H

@@ -4,6 +4,7 @@
 // This TU owns its exec-side computeMoverParameters registration and
 // builder, its revision binder, its compile validator, and its
 // parity-oracle branch, and registers the row that points at them.
+#include "rigExecSchema/schemaNames.h"
 #include "moverRegistry.h"
 #include "moverExecCommon.h"
 #include "../moverGraph.h"
@@ -17,38 +18,37 @@
 
 #include <cmath>
 
-using rigExec::RigExecMoverParameters;
 using rigExec::RigExecMoverExecTokens;
+using rigExec::RigExecMoverParameters;
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
 // Relationship names the binders and validators read, interned once:
 // building a token from text takes the registry lock.
 TF_DEFINE_PRIVATE_TOKENS(_relTokens,
-    ((transform, "rigExec:transform"))
-    ((transformSpace, "rigExec:transformSpace"))
-    ((space, "rigExec:space"))
-    ((referenceTransform, "rigExec:referenceTransform"))
-    ((referenceTransformSpace, "rigExec:referenceTransformSpace")));
+    ((transform, rigExec::SchemaAttrText::rigExecTransform))
+    ((transformSpace, rigExec::SchemaAttrText::rigExecTransformSpace))
+    ((space, rigExec::SchemaAttrText::rigExecSpace))
+    ((referenceTransform, rigExec::SchemaAttrText::rigExecReferenceTransform))
+    ((referenceTransformSpace, rigExec::SchemaAttrText::rigExecReferenceTransformSpace)));
 
 // Interned once: callbacks and validators run on parallel lanes, and
 // building a token from text takes the registry lock.
 TF_DEFINE_PRIVATE_TOKENS(_matrixTokens,
     (matrix)
     (radial)
-    ((transform, "rigExec:transform"))
+    ((transform, rigExec::SchemaAttrText::rigExecTransform))
     (RigExecControl)
     (RigExecJoint)
-    ((transformSpace, "rigExec:transformSpace"))
-    ((space, "rigExec:space")));
+    ((transformSpace, rigExec::SchemaAttrText::rigExecTransformSpace))
+    ((space, rigExec::SchemaAttrText::rigExecSpace)));
 
 namespace {
-const TfToken _oraclePointFrame("rigExec:pointFrame");
+const TfToken _oraclePointFrame(rigExec::SchemaAttrText::rigExecPointFrame);
 const TfToken _oracleRestFrame("rest");
 
-const TfToken _oracleToken0("rigExec:transform");
-const TfToken _oracleToken1("rigExec:transformSpace");
-
+const TfToken _oracleToken0(rigExec::SchemaAttrText::rigExecTransform);
+const TfToken _oracleToken1(rigExec::SchemaAttrText::rigExecTransformSpace);
 
 RigExecMoverParameters
 _BuildMatrixMoverParameters(const VdfContext &ctx)
@@ -59,7 +59,7 @@ _BuildMatrixMoverParameters(const VdfContext &ctx)
         ctx.GetInputValuePtr<bool>(RigExecMoverExecTokens->enabled);
     params.enabled = enabled ? *enabled : true;
     if (!params.enabled) {
-        params.valid = true;  // disabled is an ordinary pass-through
+        params.valid = true; // disabled is an ordinary pass-through
         return params;
     }
 
@@ -75,9 +75,8 @@ _BuildMatrixMoverParameters(const VdfContext &ctx)
 
     const GfMatrix4d *transform =
         ctx.GetInputValuePtr<GfMatrix4d>(RigExecMoverExecTokens->transform);
-    if (!transform ||
-        !rigExec::RigExecMoverSetCommonEnvelope(ctx, &params)) {
-        return params;  // MoverFailed
+    if (!transform || !rigExec::RigExecMoverSetCommonEnvelope(ctx, &params)) {
+        return params; // MoverFailed
     }
     // The matrix must be finite and affine.
     for (int i = 0; i < 4; ++i) {
@@ -144,26 +143,33 @@ _BindMatrixMover(const rigExec::RigExecMoverBindContext &ctx)
     // neutral references: transform first, then transformSpace. This gives
     // them the same phase, dependency, invalidation and frozen-run handling
     // as the provider lists used by skin and wire movers.
-    for (const TfToken *name : {&_relTokens->referenceTransform, &_relTokens->referenceTransformSpace}) {
-        const auto targets = rigExec::RigExecRelationshipTargets(moverPrim, *name);
-        if (targets.empty()) continue;
+    for (const TfToken *name : {&_relTokens->referenceTransform,
+                                &_relTokens->referenceTransformSpace}) {
+        const auto targets =
+            rigExec::RigExecRelationshipTargets(moverPrim, *name);
+        if (targets.empty())
+            continue;
         SdfPath reference = targets.front();
-        if (binding.transformPhase.kind == rigExec::RigExecReadPhaseKind::Final) {
+        if (binding.transformPhase.kind ==
+            rigExec::RigExecReadPhaseKind::Final) {
             const auto it = frameChainHeads.find(reference);
-            if (it != frameChainHeads.end()) reference = it->second;
+            if (it != frameChainHeads.end())
+                reference = it->second;
         }
         binding.influences.push_back(reference);
     }
 }
 
 bool
-_ValidateMatrixMover(
-    const rigExec::RigExecMoverValidateContext &ctx, std::string *error)
+_ValidateMatrixMover(const rigExec::RigExecMoverValidateContext &ctx,
+                     std::string *error)
 {
     const UsdStageRefPtr &stage = ctx.stage;
     const UsdPrim &prim = ctx.prim;
     const std::vector<SdfPath> &targets = ctx.targets;
-    const auto who = [&] { return "MatrixMover " + prim.GetPath().GetString(); };
+    const auto who = [&] {
+        return "MatrixMover " + prim.GetPath().GetString();
+    };
     if (targets.size() != 1) {
         *error = who() + ": moves must resolve to exactly one target";
         return false;
@@ -182,33 +188,32 @@ _ValidateMatrixMover(
         !rigExec::RigExecIsTransformDomainAmbiguous(stage, targets[0])) {
         const UsdPrim owner = stage->GetPrimAtPath(targets[0]);
         const TfToken type = owner ? owner.GetTypeName() : TfToken();
-        if (!owner || !(type == "RigExecControl" || type == "RigExecJoint" ||
+        if (!owner || !(type == rigExec::SchemaTypeName::RigExecControl ||
+                        type == rigExec::SchemaTypeName::RigExecJoint ||
                         UsdGeomXformable(owner))) {
             *error = who() + ": a bare prim move target names the transform "
-                           "domain, so it must be an Xformable, a "
-                           "RigExecControl or a RigExecJoint";
+                             "domain, so it must be an Xformable, a "
+                             "RigExecControl or a RigExecJoint";
             return false;
         }
         return true;
     }
-    if (!targets[0].IsPropertyPath() ||
-        targets[0].GetNameToken() != "points") {
-        *error = who() + ": moves must resolve to exactly one native "
-                       "PointBased points property, or one prim for the "
-                       "transform domain" +
+    if (!targets[0].IsPropertyPath() || targets[0].GetNameToken() != "points") {
+        *error = who() +
+                 ": moves must resolve to exactly one native "
+                 "PointBased points property, or one prim for the "
+                 "transform domain" +
                  rigExec::RigExecPointsTargetHint(stage, targets[0]);
         return false;
     }
-    const UsdPrim owner =
-        stage->GetPrimAtPath(targets[0].GetPrimPath());
+    const UsdPrim owner = stage->GetPrimAtPath(targets[0].GetPrimPath());
     if (!owner || !owner.IsA<UsdGeomPointBased>()) {
         *error = who() + ": move target owner is not a stock PointBased prim";
         return false;
     }
     // Exact Sdf type/role check: equal C++ element types never infer
     // compatibility.
-    const UsdAttribute targetAttr =
-        stage->GetAttributeAtPath(targets[0]);
+    const UsdAttribute targetAttr = stage->GetAttributeAtPath(targets[0]);
     if (!targetAttr ||
         targetAttr.GetTypeName() != SdfValueTypeNames->Point3fArray) {
         *error = who() + ": move target is not an exact point3f[] property";
@@ -216,8 +221,7 @@ _ValidateMatrixMover(
     }
 
     SdfPathVector transforms;
-    if (UsdRelationship rel =
-            prim.GetRelationship(_matrixTokens->transform)) {
+    if (UsdRelationship rel = prim.GetRelationship(_matrixTokens->transform)) {
         rel.GetTargets(&transforms);
     }
     if (transforms.size() != 1) {
@@ -243,7 +247,7 @@ _ValidateMatrixMover(
         const UsdPrim spacePrim = stage->GetPrimAtPath(spaces[0]);
         if (!spacePrim || !isFrameProvider(spacePrim.GetTypeName())) {
             *error = who() + ": rigExec:transformSpace target is not a "
-                           "catalogued matrix provider";
+                             "catalogued matrix provider";
             return false;
         }
     }
@@ -263,7 +267,7 @@ _ValidateMatrixMover(
         const UsdPrim carryPrim = stage->GetPrimAtPath(carries[0]);
         if (!carryPrim || !isFrameProvider(carryPrim.GetTypeName())) {
             *error = who() + ": rigExec:space target is not a catalogued "
-                           "matrix provider";
+                             "matrix provider";
             return false;
         }
     }
@@ -274,7 +278,7 @@ _ValidateMatrixMover(
         transformPrim && isFrameProvider(transformPrim.GetTypeName());
     if (!isProvider) {
         *error = who() + ": rigExec:transform target is not a catalogued "
-                       "matrix provider";
+                         "matrix provider";
         return false;
     }
     const auto references = rigExec::RigExecRelationshipTargets(
@@ -284,8 +288,9 @@ _ValidateMatrixMover(
     if (references.size() > 1 || referenceSpaces.size() > 1 ||
         (!referenceSpaces.empty() && (references.empty() || spaces.empty())) ||
         (!references.empty() && !spaces.empty() && referenceSpaces.empty())) {
-        *error = who() + ": referenceTransform takes one provider; a transformSpace "
-                       "also requires referenceTransformSpace";
+        *error = who() +
+                 ": referenceTransform takes one provider; a transformSpace "
+                 "also requires referenceTransformSpace";
         return false;
     }
     for (const auto &paths : {references, referenceSpaces}) {
@@ -315,34 +320,43 @@ _OracleMatrixMover(const rigExec::RigExecMoverOracleContext &ctx)
         rel.GetTargets(&transforms);
     }
     if (transforms.size() != 1) {
-        diagnostics->push_back(
-            "MoverFailed " + moverPath.GetString() +
-            ": transform must have exactly one target");
+        diagnostics->push_back("MoverFailed " + moverPath.GetString() +
+                               ": transform must have exactly one target");
         return RigExecOracleResult::PassThrough;
     }
-    const auto phase = rigExec::RigExecPhaseForInput(prim, _relTokens->transform);
+    const auto phase =
+        rigExec::RigExecPhaseForInput(prim, _relTokens->transform);
     const bool final = phase.kind == rigExec::RigExecReadPhaseKind::Final;
-    std::unordered_map<SdfPath,GfMatrix4d,SdfPath::Hash> matrices;
-    for (const TfToken *name : {&_relTokens->transform, &_relTokens->transformSpace, &_relTokens->referenceTransform, &_relTokens->referenceTransformSpace}) {
-        for (const auto &path : rigExec::RigExecRelationshipTargets(prim,*name)) {
-            const auto *value = ctx.phasedMatrix ? ctx.phasedMatrix(path,phase,moverPath) : nullptr;
-            if (value) matrices[path] = *value;
+    std::unordered_map<SdfPath, GfMatrix4d, SdfPath::Hash> matrices;
+    for (const TfToken *name :
+         {&_relTokens->transform, &_relTokens->transformSpace,
+          &_relTokens->referenceTransform,
+          &_relTokens->referenceTransformSpace}) {
+        for (const auto &path :
+             rigExec::RigExecRelationshipTargets(prim, *name)) {
+            const auto *value = ctx.phasedMatrix
+                                    ? ctx.phasedMatrix(path, phase, moverPath)
+                                    : nullptr;
+            if (value)
+                matrices[path] = *value;
         }
     }
     const auto matrixIt = matrices.find(transforms[0]);
     if (matrixIt == matrices.end()) {
-        diagnostics->push_back(
-            "MoverFailed " + moverPath.GetString() +
-            ": no " + (final ? "final" : "base") + " matrix provider at " +
-            transforms[0].GetString());
+        diagnostics->push_back("MoverFailed " + moverPath.GetString() +
+                               ": no " + (final ? "final" : "base") +
+                               " matrix provider at " +
+                               transforms[0].GetString());
         return RigExecOracleResult::PassThrough;
     }
     GfMatrix4d m = matrixIt->second;
     const auto normalize = [&](const TfToken &name, GfMatrix4d *value) {
         const auto refs = rigExec::RigExecRelationshipTargets(prim, name);
-        if (refs.empty()) return true;
+        if (refs.empty())
+            return true;
         const auto it = matrices.find(refs.front());
-        if (it == matrices.end()) return false;
+        if (it == matrices.end())
+            return false;
         *value = rigExec::RigExecMeasureFromReference(*value, it->second);
         return true;
     };
@@ -350,17 +364,17 @@ _OracleMatrixMover(const rigExec::RigExecMoverOracleContext &ctx)
         return RigExecOracleResult::PassThrough;
     }
     SdfPathVector spaces;
-    if (rigExec::RigExecOracleRelationship rel = prim.GetRelationship(
-            _oracleToken1)) {
+    if (rigExec::RigExecOracleRelationship rel =
+            prim.GetRelationship(_oracleToken1)) {
         rel.GetTargets(&spaces);
     }
     if (!spaces.empty()) {
         const auto spaceIt = matrices.find(spaces[0]);
         if (spaceIt == matrices.end()) {
-            diagnostics->push_back(
-                "MoverFailed " + moverPath.GetString() +
-                ": no " + (final ? "final" : "base") +
-                " matrix provider at " + spaces[0].GetString());
+            diagnostics->push_back("MoverFailed " + moverPath.GetString() +
+                                   ": no " + (final ? "final" : "base") +
+                                   " matrix provider at " +
+                                   spaces[0].GetString());
             return RigExecOracleResult::PassThrough;
         }
         GfMatrix4d space = spaceIt->second;
@@ -369,42 +383,58 @@ _OracleMatrixMover(const rigExec::RigExecMoverOracleContext &ctx)
         }
         m = rigExec::RigExecMeasureInSpace(m, space);
         TfToken pointFrame = _oracleRestFrame;
-        prim.GetAttribute(_oraclePointFrame).Get(&pointFrame,ctx.time);
+        prim.GetAttribute(_oraclePointFrame).Get(&pointFrame, ctx.time);
         if (pointFrame == "posed") {
-            const auto carries = rigExec::RigExecRelationshipTargets(prim,_relTokens->space);
+            const auto carries =
+                rigExec::RigExecRelationshipTargets(prim, _relTokens->space);
             if (!carries.empty()) {
-                const auto *carry = ctx.phasedMatrix ? ctx.phasedMatrix(carries[0],phase,moverPath) : nullptr;
-                if (!carry) return RigExecOracleResult::PassThrough;
+                const auto *carry =
+                    ctx.phasedMatrix
+                        ? ctx.phasedMatrix(carries[0], phase, moverPath)
+                        : nullptr;
+                if (!carry)
+                    return RigExecOracleResult::PassThrough;
                 m = carry->GetInverse() * m * *carry;
             } else {
                 GfVec3d scale(1.0);
-                for (size_t column=0;column<3;++column) {
-                    const double length = GfVec3d(space[0][column],space[1][column],space[2][column]).GetLength();
-                    if (length > 0.0) scale[column] = length;
+                for (size_t column = 0; column < 3; ++column) {
+                    const double length =
+                        GfVec3d(space[0][column], space[1][column],
+                                space[2][column])
+                            .GetLength();
+                    if (length > 0.0)
+                        scale[column] = length;
                 }
                 if (scale != GfVec3d(1.0)) {
-                    GfMatrix4d scaled(1.0),unscaled(1.0);
+                    GfMatrix4d scaled(1.0), unscaled(1.0);
                     scaled.SetScale(scale);
-                    unscaled.SetScale(GfVec3d(1.0/scale[0],1.0/scale[1],1.0/scale[2]));
+                    unscaled.SetScale(GfVec3d(1.0 / scale[0], 1.0 / scale[1],
+                                              1.0 / scale[2]));
                     m = unscaled * m * scaled;
                 }
             }
-            m[0][3]=0.0;m[1][3]=0.0;m[2][3]=0.0;m[3][3]=1.0;
+            m[0][3] = 0.0;
+            m[1][3] = 0.0;
+            m[2][3] = 0.0;
+            m[3][3] = 1.0;
         }
     }
     TfToken weightBlend;
-    prim.GetAttribute(RigExecMoverExecTokens->weightBlendAttr).Get(&weightBlend,ctx.time);
+    prim.GetAttribute(RigExecMoverExecTokens->weightBlendAttr)
+        .Get(&weightBlend, ctx.time);
     if (weightBlend == "radial" && ctx.envelope) {
-        if (ctx.envelope->size() != points.size()) return RigExecOracleResult::PassThrough;
-        for (size_t i=0;i<points.size();++i) {
-            const GfMatrix4d partial=rigExec::RigExecPartialTransform(m,(*ctx.envelope)[i]);
-            points[i]=GfVec3f(partial.TransformAffine(GfVec3d(points[i])));
+        if (ctx.envelope->size() != points.size())
+            return RigExecOracleResult::PassThrough;
+        for (size_t i = 0; i < points.size(); ++i) {
+            const GfMatrix4d partial =
+                rigExec::RigExecPartialTransform(m, (*ctx.envelope)[i]);
+            points[i] = GfVec3f(partial.TransformAffine(GfVec3d(points[i])));
         }
         return RigExecOracleResult::Applied;
     }
     for (size_t i = 0; i < points.size(); ++i) {
-        const GfVec3d moved = rigExec::RigExecApplyWeightedMatrix(
-            GfVec3d(points[i]), m, 1.0f);
+        const GfVec3d moved =
+            rigExec::RigExecApplyWeightedMatrix(GfVec3d(points[i]), m, 1.0f);
         points[i] = GfVec3f(moved);
     }
     return RigExecOracleResult::Blend;
@@ -414,23 +444,25 @@ rigExec::RigExecMoverHandler
 _MakeHandler()
 {
     rigExec::RigExecMoverHandler handler(
-        "RigExecMatrixMover",
+        rigExec::SchemaTypeName::RigExecMatrixMover,
         &rigExec::RigExecFixedMoverOp<rigExec::RigExecRevisionOp::Matrix>,
         rigExec::RigExecMoverDomain::Points);
     handler.customTargetValidation = true;
     handler.frameRelationships = {
-        "rigExec:transform", "rigExec:transformSpace",
-        "rigExec:referenceTransform", "rigExec:referenceTransformSpace",
-        "rigExec:space"};
-    handler.transformRelationship = "rigExec:transform";
-    handler.spaceRelationship = "rigExec:transformSpace";
+        rigExec::SchemaAttrText::rigExecTransform,
+        rigExec::SchemaAttrText::rigExecTransformSpace,
+        rigExec::SchemaAttrText::rigExecReferenceTransform,
+        rigExec::SchemaAttrText::rigExecReferenceTransformSpace,
+        rigExec::SchemaAttrText::rigExecSpace};
+    handler.transformRelationship = rigExec::SchemaAttrText::rigExecTransform;
+    handler.spaceRelationship = rigExec::SchemaAttrText::rigExecTransformSpace;
     handler.bind = &_BindMatrixMover;
     handler.validate = &_ValidateMatrixMover;
     handler.oracle = &_OracleMatrixMover;
     return handler;
 }
 
-}  // namespace
+} // namespace
 
 // EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA opens/closes the pxr namespace
 // itself, so the registration block stays at global scope.
@@ -440,8 +472,7 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecMatrixMover)
         .Callback<RigExecMoverParameters>(&_BuildMatrixMoverParameters)
         .Inputs(
             RIGEXEC_MOVER_COMMON_INPUTS,
-            AttributeValue<TfToken>(
-                RigExecMoverExecTokens->weightBlendAttr),
+            AttributeValue<TfToken>(RigExecMoverExecTokens->weightBlendAttr),
             Relationship(RigExecMoverExecTokens->resolvedTransform)
                 .TargetedObjects<GfMatrix4d>(
                     RigExecMoverExecTokens->computeMatrix)
@@ -450,12 +481,11 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecMatrixMover)
     self.PrimComputation(RigExecMoverExecTokens->computeMoverStatus)
         .Callback<rigExec::RigExecMoverStatus>(
             &rigExec::RigExecMoverBuildStatus)
-        .Inputs(
-            Computation<RigExecMoverParameters>(
-                RigExecMoverExecTokens->computeMoverParameters)
-                .Required(),
-            Computation<SdfPath>(ExecBuiltinComputations->computePath)
-                .InputName(RigExecMoverExecTokens->moverPath));
+        .Inputs(Computation<RigExecMoverParameters>(
+                    RigExecMoverExecTokens->computeMoverParameters)
+                    .Required(),
+                Computation<SdfPath>(ExecBuiltinComputations->computePath)
+                    .InputName(RigExecMoverExecTokens->moverPath));
 }
 
 RIGEXEC_REGISTER_MOVER(_MakeHandler());

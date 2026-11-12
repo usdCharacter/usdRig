@@ -1,4 +1,5 @@
 // Strict, schema-backed authoring for codeless RigExec schemas.
+#include "rigExecSchema/schemaNames.h"
 #include "schemaAuthoring.h"
 
 #include "rigExecMath/avarScale.h"
@@ -19,11 +20,11 @@ namespace rigExec {
 namespace {
 
 const TfToken _readPhaseMetadata("rigExecReadPhase");
-const TfToken _controlType("RigExecControl");
-const TfToken _jointType("RigExecJoint");
-const TfToken _avarSx("avars:sx");
-const TfToken _avarSy("avars:sy");
-const TfToken _avarSz("avars:sz");
+const TfToken _controlType(SchemaTypeName::RigExecControl);
+const TfToken _jointType(SchemaTypeName::RigExecJoint);
+const TfToken _avarSx(SchemaAttrText::avarsSx);
+const TfToken _avarSy(SchemaAttrText::avarsSy);
+const TfToken _avarSz(SchemaAttrText::avarsSz);
 
 std::string
 _Quoted(const TfToken &token)
@@ -56,8 +57,7 @@ const UsdPrimDefinition &
 _RequireConcreteDefinition(const TfToken &schemaType)
 {
     if (schemaType.IsEmpty()) {
-        throw std::invalid_argument(
-            "concrete schema type must not be empty");
+        throw std::invalid_argument("concrete schema type must not be empty");
     }
     const UsdPrimDefinition *definition =
         UsdSchemaRegistry::GetInstance().FindConcretePrimDefinition(schemaType);
@@ -97,23 +97,22 @@ _RequireAppliedDefinition(const TfToken &schemaIdentifier)
 }
 
 void
-_RequireExpectedType(
-    const UsdPrim &prim, const TfToken &schemaType, const SdfPath &path)
+_RequireExpectedType(const UsdPrim &prim, const TfToken &schemaType,
+                     const SdfPath &path)
 {
     if (!prim) {
         throw std::runtime_error("no prim exists" + _At(path));
     }
     if (prim.GetTypeName() != schemaType) {
-        throw std::invalid_argument(
-            "expected " + _Quoted(schemaType) + _At(path) + ", found " +
-            _Quoted(prim.GetTypeName()));
+        throw std::invalid_argument("expected " + _Quoted(schemaType) +
+                                    _At(path) + ", found " +
+                                    _Quoted(prim.GetTypeName()));
     }
 
     // A raw typeName opinion is legal USD even when its schema plugin is
     // absent. Require the recognized schema type as well, so a bare string can
     // never masquerade as a schema-backed prim.
-    const TfToken resolvedType =
-        prim.GetPrimTypeInfo().GetSchemaTypeName();
+    const TfToken resolvedType = prim.GetPrimTypeInfo().GetSchemaTypeName();
     if (resolvedType != schemaType) {
         throw std::runtime_error(
             "prim " + path.GetString() + " authors type " +
@@ -140,9 +139,10 @@ _RequireAttributeDefinition(const UsdPrim &prim, const TfToken &name)
             _Quoted(name) + " is a declared relationship, not an attribute" +
             _At(prim.GetPath()));
     }
-    throw std::invalid_argument(
-        "attribute " + _Quoted(name) + " is not declared by the composed "
-        "schema definition" + _At(prim.GetPath()));
+    throw std::invalid_argument("attribute " + _Quoted(name) +
+                                " is not declared by the composed "
+                                "schema definition" +
+                                _At(prim.GetPath()));
 }
 
 UsdPrimDefinition::Relationship
@@ -176,11 +176,11 @@ _IsControlOrJointAvarScale(const UsdPrim &prim, const TfToken &name)
            (name == _avarSx || name == _avarSy || name == _avarSz);
 }
 
-}  // namespace
+} // namespace
 
 RigExecSchemaPrim
-RigExecSchemaPrim::Define(
-    UsdStageRefPtr stage, const SdfPath &path, const TfToken &schemaType)
+RigExecSchemaPrim::Define(UsdStageRefPtr stage, const SdfPath &path,
+                          const TfToken &schemaType)
 {
     _RequireStageAndPath(stage, path);
     // Resolve before DefinePrim: an unavailable or misspelled schema must not
@@ -193,8 +193,8 @@ RigExecSchemaPrim::Define(
     } else {
         prim = stage->DefinePrim(path, schemaType);
         if (!prim) {
-            throw std::runtime_error(
-                "failed to define " + _Quoted(schemaType) + _At(path));
+            throw std::runtime_error("failed to define " + _Quoted(schemaType) +
+                                     _At(path));
         }
         _RequireExpectedType(prim, schemaType, path);
     }
@@ -202,16 +202,14 @@ RigExecSchemaPrim::Define(
 }
 
 RigExecSchemaPrim
-RigExecSchemaPrim::Get(
-    UsdStageRefPtr stage, const SdfPath &path,
-    const TfToken &expectedSchemaType)
+RigExecSchemaPrim::Get(UsdStageRefPtr stage, const SdfPath &path,
+                       const TfToken &expectedSchemaType)
 {
     _RequireStageAndPath(stage, path);
     _RequireConcreteDefinition(expectedSchemaType);
     const UsdPrim prim = stage->GetPrimAtPath(path);
     _RequireExpectedType(prim, expectedSchemaType, path);
-    return RigExecSchemaPrim(
-        std::move(stage), path, expectedSchemaType);
+    return RigExecSchemaPrim(std::move(stage), path, expectedSchemaType);
 }
 
 bool
@@ -265,15 +263,14 @@ RigExecSchemaPrim::ApplyAPI(const TfToken &schemaIdentifier) const
                 (whyNot.empty() ? std::string() : ": " + whyNot));
         }
         if (!prim.ApplyAPI(schemaIdentifier)) {
-            throw std::runtime_error(
-                "OpenUSD failed to apply API " + _Quoted(schemaIdentifier) +
-                _At(_path));
+            throw std::runtime_error("OpenUSD failed to apply API " +
+                                     _Quoted(schemaIdentifier) + _At(_path));
         }
     }
     if (!prim.HasAPI(schemaIdentifier)) {
-        throw std::runtime_error(
-            "API " + _Quoted(schemaIdentifier) +
-            " was not composed after ApplyAPI" + _At(_path));
+        throw std::runtime_error("API " + _Quoted(schemaIdentifier) +
+                                 " was not composed after ApplyAPI" +
+                                 _At(_path));
     }
 
     // Verify that applying the API really extended this prim's composed
@@ -284,31 +281,31 @@ RigExecSchemaPrim::ApplyAPI(const TfToken &schemaIdentifier) const
         if (!composed.GetPropertyDefinition(property)) {
             throw std::runtime_error(
                 "API " + _Quoted(schemaIdentifier) + " is applied" +
-                _At(_path) + " but its declared property " +
-                _Quoted(property) + " is absent from the composed definition");
+                _At(_path) + " but its declared property " + _Quoted(property) +
+                " is absent from the composed definition");
         }
     }
 }
 
 void
-RigExecSchemaPrim::SetAttribute(
-    const TfToken &name, const VtValue &value, UsdTimeCode time) const
+RigExecSchemaPrim::SetAttribute(const TfToken &name, const VtValue &value,
+                                UsdTimeCode time) const
 {
     const UsdPrim prim = _RequirePrim();
     const UsdPrimDefinition::Attribute definition =
         _RequireAttributeDefinition(prim, name);
     if (value.IsEmpty()) {
-        throw std::invalid_argument(
-            "cannot set declared attribute " + _Quoted(name) +
-            " from an empty VtValue" + _At(_path));
+        throw std::invalid_argument("cannot set declared attribute " +
+                                    _Quoted(name) + " from an empty VtValue" +
+                                    _At(_path));
     }
 
     const SdfValueTypeName expectedType = definition.GetTypeName();
     if (!expectedType.CanRepresent(value)) {
-        throw std::invalid_argument(
-            "attribute " + _Quoted(name) + _At(_path) + " requires " +
-            expectedType.GetAsToken().GetString() + ", got " +
-            value.GetTypeName());
+        throw std::invalid_argument("attribute " + _Quoted(name) + _At(_path) +
+                                    " requires " +
+                                    expectedType.GetAsToken().GetString() +
+                                    ", got " + value.GetTypeName());
     }
     if (definition.GetVariability() == SdfVariabilityUniform &&
         !time.IsDefault()) {
@@ -338,18 +335,18 @@ RigExecSchemaPrim::SetAttribute(
         throw std::runtime_error(
             "OpenUSD did not expose " + _Quoted(name) +
             " with the type, variability, and non-custom status declared by "
-            "the composed schema" + _At(_path));
+            "the composed schema" +
+            _At(_path));
     }
     if (!attribute.Set(authoredValue, time)) {
-        throw std::runtime_error(
-            "failed to set declared attribute " + _Quoted(name) +
-            _At(_path));
+        throw std::runtime_error("failed to set declared attribute " +
+                                 _Quoted(name) + _At(_path));
     }
 }
 
 void
-RigExecSchemaPrim::SetRelationship(
-    const TfToken &name, const SdfPathVector &targets) const
+RigExecSchemaPrim::SetRelationship(const TfToken &name,
+                                   const SdfPathVector &targets) const
 {
     const UsdPrim prim = _RequirePrim();
     _RequireRelationshipDefinition(prim, name);
@@ -360,9 +357,8 @@ RigExecSchemaPrim::SetRelationship(
             _Quoted(name) + _At(_path));
     }
     if (!relationship.SetTargets(targets)) {
-        throw std::runtime_error(
-            "failed to set declared relationship " + _Quoted(name) +
-            _At(_path));
+        throw std::runtime_error("failed to set declared relationship " +
+                                 _Quoted(name) + _At(_path));
     }
 }
 
@@ -378,15 +374,14 @@ RigExecSchemaPrim::ClearAttribute(const TfToken &name) const
             _At(_path));
     }
     if (!attribute.Clear()) {
-        throw std::runtime_error(
-            "failed to clear declared attribute " + _Quoted(name) +
-            _At(_path));
+        throw std::runtime_error("failed to clear declared attribute " +
+                                 _Quoted(name) + _At(_path));
     }
 }
 
 void
-RigExecSchemaPrim::SetReadPhase(
-    const TfToken &propertyName, const std::string &phase) const
+RigExecSchemaPrim::SetReadPhase(const TfToken &propertyName,
+                                const std::string &phase) const
 {
     if (phase.empty()) {
         throw std::invalid_argument("read phase must not be empty");
@@ -398,13 +393,12 @@ RigExecSchemaPrim::SetReadPhase(
     if (!property) {
         throw std::invalid_argument(
             "property " + _Quoted(propertyName) +
-            " is not declared by the composed schema definition" +
-            _At(_path));
+            " is not declared by the composed schema definition" + _At(_path));
     }
     const SdfSchema &sdfSchema = SdfSchema::GetInstance();
     if (!sdfSchema.IsRegistered(_readPhaseMetadata) ||
-        !sdfSchema.IsValidFieldForSpec(
-            _readPhaseMetadata, property.GetSpecType())) {
+        !sdfSchema.IsValidFieldForSpec(_readPhaseMetadata,
+                                       property.GetSpecType())) {
         throw std::runtime_error(
             "metadata field 'rigExecReadPhase' is not registered for this "
             "property kind; register the RigExec schema plugin before "
@@ -414,12 +408,12 @@ RigExecSchemaPrim::SetReadPhase(
     bool authored = false;
     if (property.IsAttribute()) {
         const UsdAttribute attribute = prim.GetAttribute(propertyName);
-        authored = attribute && attribute.SetMetadata(
-            _readPhaseMetadata, VtValue(phase));
+        authored = attribute &&
+                   attribute.SetMetadata(_readPhaseMetadata, VtValue(phase));
     } else if (property.IsRelationship()) {
         const UsdRelationship relationship = prim.GetRelationship(propertyName);
-        authored = relationship && relationship.SetMetadata(
-            _readPhaseMetadata, VtValue(phase));
+        authored = relationship &&
+                   relationship.SetMetadata(_readPhaseMetadata, VtValue(phase));
     }
     if (!authored) {
         throw std::runtime_error(
@@ -428,4 +422,4 @@ RigExecSchemaPrim::SetReadPhase(
     }
 }
 
-}  // namespace rigExec
+} // namespace rigExec

@@ -53,6 +53,19 @@ public:
     struct Impl;
 
 private:
+    // Passkey: the tagged constructor below is public so std::make_unique
+    // can reach it, but _Tag is private and non-aggregate, so only a member
+    // or friend can build it and construction stays in Get().
+    struct _Tag {
+        explicit _Tag(int)
+        {
+        }
+    };
+
+public:
+    explicit RigExecGpuDeformExecutor(_Tag);
+
+private:
     RigExecGpuDeformExecutor();
     std::unique_ptr<Impl> _impl;
 };
@@ -66,6 +79,6 @@ void RigExecGpuRegisterDeformRunner();
 /// unless RIGEXEC_GPU_CLOTH=0. Idempotent; a host calls it once at load.
 void RigExecGpuRegisterClothRunner();
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_GPU_DEFORM_EXECUTOR_H
+#endif // RIGEXEC_GPU_DEFORM_EXECUTOR_H

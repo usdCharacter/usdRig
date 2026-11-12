@@ -19,9 +19,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include "rigExecSchema/schemaNames.h"
 
-using rigExec::RigExecMoverParameters;
 using rigExec::RigExecMoverExecTokens;
+using rigExec::RigExecMoverParameters;
 using rigExec::RigExecPointFrameArray;
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -29,14 +30,14 @@ PXR_NAMESPACE_USING_DIRECTIVE
 // Relationship names the binders and validators read, interned once:
 // building a token from text takes the registry lock.
 TF_DEFINE_PRIVATE_TOKENS(_relTokens,
-    ((bindCoordinates, "rigExec:bindCoordinates"))
-    ((driverCurve, "rigExec:driverCurve"))
-    ((driverTransforms, "rigExec:driverTransforms"))
-    ((driverTransformSpaces, "rigExec:driverTransformSpaces"))
-    ((driverBaseTransforms, "rigExec:driverBaseTransforms"))
-    ((driverBaseTransformSpaces, "rigExec:driverBaseTransformSpaces"))
-    ((space, "rigExec:space"))
-    ((driverFrames, "rigExec:driverFrames")));
+    ((bindCoordinates, rigExec::SchemaAttrText::rigExecBindCoordinates))
+    ((driverCurve, rigExec::SchemaAttrText::rigExecDriverCurve))
+    ((driverTransforms, rigExec::SchemaAttrText::rigExecDriverTransforms))
+    ((driverTransformSpaces, rigExec::SchemaAttrText::rigExecDriverTransformSpaces))
+    ((driverBaseTransforms, rigExec::SchemaAttrText::rigExecDriverBaseTransforms))
+    ((driverBaseTransformSpaces, rigExec::SchemaAttrText::rigExecDriverBaseTransformSpaces))
+    ((space, rigExec::SchemaAttrText::rigExecSpace))
+    ((driverFrames, rigExec::SchemaAttrText::rigExecDriverFrames)));
 
 // Interned once: callbacks and validators run on parallel lanes, and
 // building a token from text takes the registry lock.
@@ -44,33 +45,35 @@ TF_DEFINE_PRIVATE_TOKENS(_curveTokens,
     (points)
     (order)
     (knots)
-    ((space, "rigExec:space")));
+    ((space, rigExec::SchemaAttrText::rigExecSpace)));
 
 namespace {
 const TfToken _oracleLocalFrame("local");
-const TfToken _oracleToken0("rigExec:mode");
-const TfToken _oracleToken1("rigExec:driverCurve");
-const TfToken _oracleToken2("rigExec:bindCoordinates");
-const TfToken _oracleToken3("rigExec:driverTransforms");
-const TfToken _oracleToken4("rigExec:driverTransformSpaces");
+const TfToken _oracleToken0(rigExec::SchemaAttrText::rigExecMode);
+const TfToken _oracleToken1(rigExec::SchemaAttrText::rigExecDriverCurve);
+const TfToken _oracleToken2(rigExec::SchemaAttrText::rigExecBindCoordinates);
+const TfToken _oracleToken3(rigExec::SchemaAttrText::rigExecDriverTransforms);
+const TfToken
+    _oracleToken4(rigExec::SchemaAttrText::rigExecDriverTransformSpaces);
 const TfToken _oracleToken5("points");
 const TfToken _oracleToken6("order");
 const TfToken _oracleToken7("knots");
 const TfToken _oracleToken8("inputs:dropoffDistance");
 const TfToken _oracleToken9("inputs:driverWeights");
 const TfToken _oracleToken10("inputs:driverBaseWeights");
-const TfToken _oracleToken11("rigExec:driverBaseTransforms");
-const TfToken _oracleToken12("rigExec:driverBaseTransformSpaces");
-const TfToken _oracleToken13("rigExec:pointFrame");
-const TfToken _oracleToken14("rigExec:driverDeltaFrame");
-const TfToken _oracleToken15("rigExec:space");
-const TfToken _oracleToken16("rigExec:weightObject");
-const TfToken _oracleToken17("rigExec:indices");
-const TfToken _oracleToken18("rigExec:driverFrames");
-const TfToken _oracleToken19("rigExec:sampleCount");
+const TfToken
+    _oracleToken11(rigExec::SchemaAttrText::rigExecDriverBaseTransforms);
+const TfToken
+    _oracleToken12(rigExec::SchemaAttrText::rigExecDriverBaseTransformSpaces);
+const TfToken _oracleToken13(rigExec::SchemaAttrText::rigExecPointFrame);
+const TfToken _oracleToken14(rigExec::SchemaAttrText::rigExecDriverDeltaFrame);
+const TfToken _oracleToken15(rigExec::SchemaAttrText::rigExecSpace);
+const TfToken _oracleToken16(rigExec::SchemaAttrText::rigExecWeightObject);
+const TfToken _oracleToken17(rigExec::SchemaAttrText::rigExecIndices);
+const TfToken _oracleToken18(rigExec::SchemaAttrText::rigExecDriverFrames);
+const TfToken _oracleToken19(rigExec::SchemaAttrText::rigExecSampleCount);
 const TfToken _oracleToken20("ribbon");
 const TfToken _oracleToken21("rest");
-
 
 RigExecMoverParameters
 _BuildCurveMoverParameters(const VdfContext &ctx)
@@ -133,8 +136,8 @@ _BindCurveMover(const rigExec::RigExecMoverBindContext &ctx)
     }
     // The wire's driver: a NURBS curve prim, read at its declared phase
     // (a curve deformed by its own chain reads "final").
-    const SdfPathVector curves = rigExec::RigExecRelationshipTargets(
-        moverPrim, _relTokens->driverCurve);
+    const SdfPathVector curves =
+        rigExec::RigExecRelationshipTargets(moverPrim, _relTokens->driverCurve);
     if (!curves.empty()) {
         const SdfPath curvePrim = curves[0].GetPrimPath();
         binding.driverCurvePoints =
@@ -153,9 +156,8 @@ _BindCurveMover(const rigExec::RigExecMoverBindContext &ctx)
     // one transform (or one for all) per unique control point, measured
     // against its space. Carried as influences -- transforms first, then
     // spaces -- so every path delivers them the way it delivers a skin's.
-    const SdfPathVector driverTransforms =
-        rigExec::RigExecRelationshipTargets(
-            moverPrim, _relTokens->driverTransforms);
+    const SdfPathVector driverTransforms = rigExec::RigExecRelationshipTargets(
+        moverPrim, _relTokens->driverTransforms);
     if (!driverTransforms.empty()) {
         binding.transformPhase = rigExec::RigExecPhaseForInput(
             moverPrim, _relTokens->driverTransforms);
@@ -183,8 +185,7 @@ _BindCurveMover(const rigExec::RigExecMoverBindContext &ctx)
         for (const SdfPath &b : baseTransforms) {
             binding.influences.push_back(provider(b));
         }
-        for (const SdfPath &b :
-             rigExec::RigExecRelationshipTargets(
+        for (const SdfPath &b : rigExec::RigExecRelationshipTargets(
                  moverPrim, _relTokens->driverBaseTransformSpaces)) {
             binding.influences.push_back(provider(b));
         }
@@ -205,9 +206,8 @@ _BindCurveMover(const rigExec::RigExecMoverBindContext &ctx)
         binding.driverFrames = frames[0];
     }
     if (!binding.bindCoords.IsEmpty()) {
-        const rigExec::RigExecReadPhase phase =
-            rigExec::RigExecPhaseForInput(
-                moverPrim, _relTokens->bindCoordinates);
+        const rigExec::RigExecReadPhase phase = rigExec::RigExecPhaseForInput(
+            moverPrim, _relTokens->bindCoordinates);
         if (!phase.IsBase()) {
             binding.phases[binding.bindCoords] = phase;
         }
@@ -233,42 +233,43 @@ _OracleCurveMover(const rigExec::RigExecMoverOracleContext &ctx)
         // points at the declared phase, rest control points, order
         // and knots as authored, and the authored bind coordinates.
         SdfPathVector curves, binds;
-        if (rigExec::RigExecOracleRelationship rel = prim.GetRelationship(
-                _oracleToken1)) {
+        if (rigExec::RigExecOracleRelationship rel =
+                prim.GetRelationship(_oracleToken1)) {
             rel.GetTargets(&curves);
         }
-        if (rigExec::RigExecOracleRelationship rel = prim.GetRelationship(
-                _oracleToken2)) {
+        if (rigExec::RigExecOracleRelationship rel =
+                prim.GetRelationship(_oracleToken2)) {
             rel.GetTargets(&binds);
         }
         if (curves.empty() || binds.empty()) {
             diagnostics->push_back(
                 "MoverFailed " + moverPath.GetString() +
-                ": wire needs rigExec:driverCurve and "
-                "rigExec:bindCoordinates");
+                ": wire needs rigExec:driverCurve and " +
+                rigExec::SchemaAttrText::rigExecBindCoordinates);
             return RigExecOracleResult::PassThrough;
         }
         const SdfPath curvePrim = curves[0].GetPrimPath();
         VtVec3fArray posedCvs, restCvs;
         SdfPathVector driverTransforms, driverSpaces;
-        if (rigExec::RigExecOracleRelationship rel = prim.GetRelationship(
-                _oracleToken3)) {
+        if (rigExec::RigExecOracleRelationship rel =
+                prim.GetRelationship(_oracleToken3)) {
             rel.GetTargets(&driverTransforms);
         }
-        if (rigExec::RigExecOracleRelationship rel = prim.GetRelationship(
-                _oracleToken4)) {
+        if (rigExec::RigExecOracleRelationship rel =
+                prim.GetRelationship(_oracleToken4)) {
             rel.GetTargets(&driverSpaces);
         }
         if (driverTransforms.empty()) {
             rigExec::RigExecReadPhasedPoints(
-                ctx, "rigExec:driverCurve",
+                ctx, rigExec::SchemaAttrText::rigExecDriverCurve,
                 curvePrim.AppendProperty(_oracleToken5), &posedCvs);
         }
         VtIntArray order;
         VtDoubleArray knots;
         VtVec2fArray sts;
         float dropoff = 0.0f;
-        if (const rigExec::RigExecOraclePrim curve = stage->GetPrimAtPath(curvePrim)) {
+        if (const rigExec::RigExecOraclePrim curve =
+                stage->GetPrimAtPath(curvePrim)) {
             curve.GetAttribute(_oracleToken5)
                 .Get(&restCvs, UsdTimeCode::Default());
             curve.GetAttribute(_oracleToken6)
@@ -276,7 +277,8 @@ _OracleCurveMover(const rigExec::RigExecMoverOracleContext &ctx)
             curve.GetAttribute(_oracleToken7)
                 .Get(&knots, UsdTimeCode::Default());
         }
-        if (rigExec::RigExecOracleAttribute a = stage->GetAttributeAtPath(binds[0])) {
+        if (rigExec::RigExecOracleAttribute a =
+                stage->GetAttributeAtPath(binds[0])) {
             a.Get(&sts, time);
         }
         if (rigExec::RigExecOracleAttribute a =
@@ -286,30 +288,40 @@ _OracleCurveMover(const rigExec::RigExecMoverOracleContext &ctx)
         if (!driverTransforms.empty()) {
             // Independently of the assembler: the providers' own
             // matrices, measured and weighted per control point.
-            const auto phase = rigExec::RigExecPhaseForInput(prim, _relTokens->driverTransforms);
-            std::unordered_map<SdfPath,GfMatrix4d,SdfPath::Hash> matrices;
-            for (const TfToken *name : {&_relTokens->driverTransforms, &_relTokens->driverTransformSpaces, &_relTokens->driverBaseTransforms, &_relTokens->driverBaseTransformSpaces, &_relTokens->space}) {
-                for (const auto &path : rigExec::RigExecRelationshipTargets(prim,*name)) {
-                    const auto *value = ctx.phasedMatrix ? ctx.phasedMatrix(path,phase,moverPath) : nullptr;
-                    if (value) matrices[path] = *value;
+            const auto phase = rigExec::RigExecPhaseForInput(
+                prim, _relTokens->driverTransforms);
+            std::unordered_map<SdfPath, GfMatrix4d, SdfPath::Hash> matrices;
+            for (const TfToken *name :
+                 {&_relTokens->driverTransforms,
+                  &_relTokens->driverTransformSpaces,
+                  &_relTokens->driverBaseTransforms,
+                  &_relTokens->driverBaseTransformSpaces, &_relTokens->space}) {
+                for (const auto &path :
+                     rigExec::RigExecRelationshipTargets(prim, *name)) {
+                    const auto *value =
+                        ctx.phasedMatrix
+                            ? ctx.phasedMatrix(path, phase, moverPath)
+                            : nullptr;
+                    if (value)
+                        matrices[path] = *value;
                 }
             }
             VtFloatArray weights, baseWeights;
-            if (const rigExec::RigExecOracleAttribute a = prim.GetAttribute(
-                    _oracleToken9)) {
+            if (const rigExec::RigExecOracleAttribute a =
+                    prim.GetAttribute(_oracleToken9)) {
                 a.Get(&weights, time);
             }
-            if (const rigExec::RigExecOracleAttribute a = prim.GetAttribute(
-                    _oracleToken10)) {
+            if (const rigExec::RigExecOracleAttribute a =
+                    prim.GetAttribute(_oracleToken10)) {
                 a.Get(&baseWeights, time);
             }
             SdfPathVector baseTransforms, baseSpaces;
-            if (rigExec::RigExecOracleRelationship rel = prim.GetRelationship(
-                    _oracleToken11)) {
+            if (rigExec::RigExecOracleRelationship rel =
+                    prim.GetRelationship(_oracleToken11)) {
                 rel.GetTargets(&baseTransforms);
             }
-            if (rigExec::RigExecOracleRelationship rel = prim.GetRelationship(
-                    _oracleToken12)) {
+            if (rigExec::RigExecOracleRelationship rel =
+                    prim.GetRelationship(_oracleToken12)) {
                 rel.GetTargets(&baseSpaces);
             }
             const auto pick = [](size_t count, size_t j) {
@@ -324,8 +336,8 @@ _OracleCurveMover(const rigExec::RigExecMoverOracleContext &ctx)
                     prim.GetAttribute(_oracleToken13)) {
                 a.Get(&pointFrame, time);
             }
-            if (const rigExec::RigExecOracleAttribute a = prim.GetAttribute(
-                    _oracleToken14)) {
+            if (const rigExec::RigExecOracleAttribute a =
+                    prim.GetAttribute(_oracleToken14)) {
                 a.Get(&deltaFrame, time);
             }
             frame.posedPoints = pointFrame == "posed";
@@ -346,8 +358,8 @@ _OracleCurveMover(const rigExec::RigExecMoverOracleContext &ctx)
                 }
             }
             const auto measured = [&](const SdfPathVector &ts,
-                                      const SdfPathVector &ss,
-                                      size_t j, GfVec3d *spaceScale) {
+                                      const SdfPathVector &ss, size_t j,
+                                      GfVec3d *spaceScale) {
                 GfMatrix4d m(1.0);
                 const auto t = matrices.find(ts[pick(ts.size(), j)]);
                 if (t == matrices.end()) {
@@ -356,14 +368,13 @@ _OracleCurveMover(const rigExec::RigExecMoverOracleContext &ctx)
                 }
                 m = t->second;
                 if (!ss.empty()) {
-                    const auto sp =
-                        matrices.find(ss[pick(ss.size(), j)]);
+                    const auto sp = matrices.find(ss[pick(ss.size(), j)]);
                     if (sp == matrices.end()) {
                         missing = true;
                         return m;
                     }
-                    m = rigExec::RigExecMeasureWireDriver(
-                        m, sp->second, frame, spaceScale);
+                    m = rigExec::RigExecMeasureWireDriver(m, sp->second, frame,
+                                                          spaceScale);
                 }
                 return m;
             };
@@ -372,33 +383,30 @@ _OracleCurveMover(const rigExec::RigExecMoverOracleContext &ctx)
                 if (!baseTransforms.empty()) {
                     const GfMatrix4d b =
                         measured(baseTransforms, baseSpaces, j, nullptr);
-                    const float wb = baseWeights.empty()
-                        ? 1.0f
-                        : baseWeights[pick(baseWeights.size(), j)];
-                    const GfVec3f moved(
-                        b.TransformAffine(GfVec3d(restCvs[j])));
+                    const float wb =
+                        baseWeights.empty()
+                            ? 1.0f
+                            : baseWeights[pick(baseWeights.size(), j)];
+                    const GfVec3f moved(b.TransformAffine(GfVec3d(restCvs[j])));
                     restCvs[j] = restCvs[j] + (moved - restCvs[j]) * wb;
                 }
                 GfVec3d scale(1.0, 1.0, 1.0);
                 const GfMatrix4d m =
                     measured(driverTransforms, driverSpaces, j, &scale);
-                const float w = weights.empty()
-                    ? 1.0f : weights[pick(weights.size(), j)];
-                const GfVec3f moved(
-                    m.TransformAffine(GfVec3d(restCvs[j])));
+                const float w =
+                    weights.empty() ? 1.0f : weights[pick(weights.size(), j)];
+                const GfVec3f moved(m.TransformAffine(GfVec3d(restCvs[j])));
                 GfVec3f displacement = (moved - restCvs[j]) * w;
                 if (frame.posedPoints && !frame.carry) {
-                    displacement = GfVec3f(
-                        displacement[0] * float(scale[0]),
-                        displacement[1] * float(scale[1]),
-                        displacement[2] * float(scale[2]));
+                    displacement = GfVec3f(displacement[0] * float(scale[0]),
+                                           displacement[1] * float(scale[1]),
+                                           displacement[2] * float(scale[2]));
                 }
                 posedCvs[j] = restCvs[j] + displacement;
             }
             if (!missing && frame.posedPoints && frame.carry) {
                 std::vector<GfVec3f> restVec(restCvs.begin(), restCvs.end());
-                std::vector<GfVec3f> posedVec(posedCvs.begin(),
-                                              posedCvs.end());
+                std::vector<GfVec3f> posedVec(posedCvs.begin(), posedCvs.end());
                 rigExec::RigExecCarryWireCurves(&restVec, &posedVec, carry);
                 restCvs.assign(restVec.begin(), restVec.end());
                 posedCvs.assign(posedVec.begin(), posedVec.end());
@@ -411,8 +419,7 @@ _OracleCurveMover(const rigExec::RigExecMoverOracleContext &ctx)
             }
         }
         const std::vector<GfVec3f> rest(restCvs.begin(), restCvs.end());
-        const std::vector<GfVec3f> posed(posedCvs.begin(),
-                                         posedCvs.end());
+        const std::vector<GfVec3f> posed(posedCvs.begin(), posedCvs.end());
         const std::vector<double> knotVec(knots.begin(), knots.end());
         const int curveOrder = order.empty() ? 0 : order[0];
         std::vector<GfVec3f> scratch(points.begin(), points.end());
@@ -422,16 +429,15 @@ _OracleCurveMover(const rigExec::RigExecMoverOracleContext &ctx)
         std::vector<GfVec2f> bindAll(sts.begin(), sts.end());
         if (sts.size() != scratch.size()) {
             SdfPathVector weightTargets;
-            if (rigExec::RigExecOracleRelationship rel = prim.GetRelationship(
-                    _oracleToken16)) {
+            if (rigExec::RigExecOracleRelationship rel =
+                    prim.GetRelationship(_oracleToken16)) {
                 rel.GetTargets(&weightTargets);
             }
             VtIntArray indices;
             if (!weightTargets.empty()) {
                 if (const rigExec::RigExecOraclePrim w =
                         stage->GetPrimAtPath(weightTargets[0])) {
-                    w.GetAttribute(_oracleToken17)
-                        .Get(&indices);
+                    w.GetAttribute(_oracleToken17).Get(&indices);
                 }
             }
             if (indices.size() == sts.size()) {
@@ -445,11 +451,10 @@ _OracleCurveMover(const rigExec::RigExecMoverOracleContext &ctx)
             }
         }
         if (!rigExec::RigExecApplyWire(
-                &scratch, rigExec::RigExecNurbsCurve{&rest, curveOrder,
-                                                    &knotVec},
+                &scratch,
+                rigExec::RigExecNurbsCurve{&rest, curveOrder, &knotVec},
                 rigExec::RigExecNurbsCurve{&posed, curveOrder, &knotVec},
-                bindAll.data(), bindAll.size(), dropoff,
-                0, scratch.size())) {
+                bindAll.data(), bindAll.size(), dropoff, 0, scratch.size())) {
             diagnostics->push_back(
                 "MoverFailed " + moverPath.GetString() +
                 ": wire driver curve or bind coordinates do not "
@@ -462,13 +467,15 @@ _OracleCurveMover(const rigExec::RigExecMoverOracleContext &ctx)
     // The bound frame input can come from any solver kind. A source-only
     // oracle without that adapter retains the raw Ribbon sampling path.
     SdfPathVector frameTargets;
-    if (rigExec::RigExecOracleRelationship rel = prim.GetRelationship(
-            _oracleToken18)) {
+    if (rigExec::RigExecOracleRelationship rel =
+            prim.GetRelationship(_oracleToken18)) {
         rel.GetTargets(&frameTargets);
     }
     if (ctx.boundFrames) {
-        const auto *input = frameTargets.size() == 1
-            ? ctx.boundFrames(moverPath, frameTargets[0], time) : nullptr;
+        const auto *input =
+            frameTargets.size() == 1
+                ? ctx.boundFrames(moverPath, frameTargets[0], time)
+                : nullptr;
         if (!input || !input->available || !input->generation ||
             input->owner != frameTargets[0] || input->time != time) {
             diagnostics->push_back("MoverFailed " + moverPath.GetString() +
@@ -512,8 +519,9 @@ _OracleCurveMover(const rigExec::RigExecMoverOracleContext &ctx)
                 const GfVec3d y = rest[2] - rest[0];
                 const GfVec3d z = rest[3] - rest[0];
                 const double determinant = GfDot(x, GfCross(y, z));
-                const double epsilon = 1e-10 * std::max(
-                    {1.0, x.GetLength(), y.GetLength(), z.GetLength()});
+                const double epsilon =
+                    1e-10 * std::max({1.0, x.GetLength(), y.GetLength(),
+                                      z.GetLength()});
                 if (std::abs(determinant) < epsilon * epsilon * epsilon)
                     return point;
                 const GfVec3d delta = point - rest[0];
@@ -521,10 +529,11 @@ _OracleCurveMover(const rigExec::RigExecMoverOracleContext &ctx)
                 const double b = GfDot(x, GfCross(delta, z)) / determinant;
                 const double c = GfDot(x, GfCross(y, delta)) / determinant;
                 return posed[0] + (posed[1] - posed[0]) * a +
-                    (posed[2] - posed[0]) * b + (posed[3] - posed[0]) * c;
+                       (posed[2] - posed[0]) * b + (posed[3] - posed[0]) * c;
             };
             for (size_t i = 0; i < points.size(); ++i) {
-                const float u = std::min(1.0f, std::max(0.0f, coordinates[i][0]));
+                const float u =
+                    std::min(1.0f, std::max(0.0f, coordinates[i][0]));
                 const float position = u * float(count - 1);
                 const size_t sample = std::min(count - 2, size_t(position));
                 const float fraction = position - float(sample);
@@ -542,54 +551,54 @@ _OracleCurveMover(const rigExec::RigExecMoverOracleContext &ctx)
         if (const rigExec::RigExecOraclePrim ribbon =
                 stage->GetPrimAtPath(frameTargets[0])) {
             SdfPathVector curves;
-            if (rigExec::RigExecOracleRelationship rel = ribbon.GetRelationship(
-                    _oracleToken1)) {
+            if (rigExec::RigExecOracleRelationship rel =
+                    ribbon.GetRelationship(_oracleToken1)) {
                 rel.GetTargets(&curves);
             }
             if (!curves.empty()) {
                 curvePoints = curves[0].IsPrimPath()
-                    ? curves[0].AppendProperty(_oracleToken5)
-                    : curves[0];
+                                  ? curves[0].AppendProperty(_oracleToken5)
+                                  : curves[0];
             }
-            if (rigExec::RigExecOracleAttribute a = ribbon.GetAttribute(
-                    _oracleToken19)) {
+            if (rigExec::RigExecOracleAttribute a =
+                    ribbon.GetAttribute(_oracleToken19)) {
                 a.Get(&sampleCount, time);
             }
         }
     }
     VtVec3fArray posedCvs, restCvs;
-    if (rigExec::RigExecOracleAttribute a = stage->GetAttributeAtPath(curvePoints)) {
+    if (rigExec::RigExecOracleAttribute a =
+            stage->GetAttributeAtPath(curvePoints)) {
         a.Get(&posedCvs, time);
         a.Get(&restCvs, UsdTimeCode::Default());
     }
     if (!frameTargets.empty()) {
         const auto ribbon = stage->GetPrimAtPath(frameTargets[0]);
-        const auto phase = rigExec::RigExecPhaseForInput(ribbon,_relTokens->driverCurve);
+        const auto phase =
+            rigExec::RigExecPhaseForInput(ribbon, _relTokens->driverCurve);
         if (!phase.IsBase() && ctx.phasedPoints) {
-            const auto *value = ctx.phasedPoints(curvePoints,phase,moverPath);
-            if (value && value->IsHolding<VtVec3fArray>()) posedCvs = value->UncheckedGet<VtVec3fArray>();
+            const auto *value = ctx.phasedPoints(curvePoints, phase, moverPath);
+            if (value && value->IsHolding<VtVec3fArray>())
+                posedCvs = value->UncheckedGet<VtVec3fArray>();
         }
     }
     const auto posedSamples = rigExec::RigExecSampleCurveRMF(
-        std::vector<GfVec3f>(posedCvs.begin(), posedCvs.end()),
-        sampleCount);
+        std::vector<GfVec3f>(posedCvs.begin(), posedCvs.end()), sampleCount);
     const auto restSamples = rigExec::RigExecSampleCurveRMF(
-        std::vector<GfVec3f>(restCvs.begin(), restCvs.end()),
-        sampleCount);
+        std::vector<GfVec3f>(restCvs.begin(), restCvs.end()), sampleCount);
     if (mode == "emitGuidePoints") {
         if (posedSamples.GetSize() == points.size()) {
             for (size_t i = 0; i < points.size(); ++i) {
                 points[i] = posedSamples.positions[i];
             }
         } else {
-            diagnostics->push_back(
-                "MoverFailed " + moverPath.GetString() +
-                ": guide cardinality mismatch");
+            diagnostics->push_back("MoverFailed " + moverPath.GetString() +
+                                   ": guide cardinality mismatch");
         }
     } else {
         SdfPathVector binds;
-        if (rigExec::RigExecOracleRelationship rel = prim.GetRelationship(
-                _oracleToken2)) {
+        if (rigExec::RigExecOracleRelationship rel =
+                prim.GetRelationship(_oracleToken2)) {
             rel.GetTargets(&binds);
         }
         VtVec2fArray sts;
@@ -601,9 +610,8 @@ _OracleCurveMover(const rigExec::RigExecMoverOracleContext &ctx)
         }
         std::vector<GfVec3f> scratch(points.begin(), points.end());
         rigExec::RigExecApplyRibbonTransport(
-            &scratch,
-            std::vector<GfVec2f>(sts.begin(), sts.end()),
-            restSamples, posedSamples);
+            &scratch, std::vector<GfVec2f>(sts.begin(), sts.end()), restSamples,
+            posedSamples);
         std::copy(scratch.begin(), scratch.end(), points.begin());
     }
     return RigExecOracleResult::Blend;
@@ -614,15 +622,16 @@ _OracleCurveMover(const rigExec::RigExecMoverOracleContext &ctx)
 // because a carry that silently resolves to nothing looks exactly like
 // the shear it was named to remove.
 bool
-_ValidateCurveMover(
-    const rigExec::RigExecMoverValidateContext &ctx, std::string *error)
+_ValidateCurveMover(const rigExec::RigExecMoverValidateContext &ctx,
+                    std::string *error)
 {
     SdfPathVector carries;
-    if (UsdRelationship rel =
-            ctx.prim.GetRelationship(_curveTokens->space)) {
+    if (UsdRelationship rel = ctx.prim.GetRelationship(_curveTokens->space)) {
         rel.GetTargets(&carries);
     }
-    const auto who = [&] { return "CurveMover " + ctx.prim.GetPath().GetString(); };
+    const auto who = [&] {
+        return "CurveMover " + ctx.prim.GetPath().GetString();
+    };
     if (carries.size() > 1) {
         *error = who() + ": rigExec:space takes at most one target";
         return false;
@@ -632,7 +641,7 @@ _ValidateCurveMover(
         const TfToken type = carryPrim ? carryPrim.GetTypeName() : TfToken();
         if (type != "RigExecControl" && type != "RigExecJoint") {
             *error = who() + ": rigExec:space target is not a catalogued "
-                           "matrix provider";
+                             "matrix provider";
             return false;
         }
     }
@@ -643,19 +652,21 @@ rigExec::RigExecMoverHandler
 _MakeHandler()
 {
     rigExec::RigExecMoverHandler handler(
-        "RigExecCurveMover", &_ResolveCurveOp,
+        rigExec::SchemaTypeName::RigExecCurveMover, &_ResolveCurveOp,
         rigExec::RigExecMoverDomain::Points);
     handler.frameRelationships = {
-        "rigExec:driverTransforms", "rigExec:driverTransformSpaces",
-        "rigExec:driverBaseTransforms",
-        "rigExec:driverBaseTransformSpaces", "rigExec:space"};
+        rigExec::SchemaAttrText::rigExecDriverTransforms,
+        rigExec::SchemaAttrText::rigExecDriverTransformSpaces,
+        rigExec::SchemaAttrText::rigExecDriverBaseTransforms,
+        rigExec::SchemaAttrText::rigExecDriverBaseTransformSpaces,
+        rigExec::SchemaAttrText::rigExecSpace};
     handler.bind = &_BindCurveMover;
     handler.validate = &_ValidateCurveMover;
     handler.oracle = &_OracleCurveMover;
     return handler;
 }
 
-}  // namespace
+} // namespace
 
 // EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA opens/closes the pxr namespace
 // itself, so the registration block stays at global scope.
@@ -667,8 +678,7 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecCurveMover)
             RIGEXEC_MOVER_COMMON_INPUTS,
             AttributeValue<TfToken>(RigExecMoverExecTokens->modeAttr),
             Relationship(RigExecMoverExecTokens->resolvedBindCoords)
-                .TargetedObjects<GfVec2f>(
-                    ExecBuiltinComputations->computeValue)
+                .TargetedObjects<GfVec2f>(ExecBuiltinComputations->computeValue)
                 .InputName(RigExecMoverExecTokens->bindCoords),
             Relationship(RigExecMoverExecTokens->resolvedDriverFrames)
                 .TargetedObjects<rigExec::RigExecPointFrameArray>(
@@ -678,12 +688,11 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecCurveMover)
     self.PrimComputation(RigExecMoverExecTokens->computeMoverStatus)
         .Callback<rigExec::RigExecMoverStatus>(
             &rigExec::RigExecMoverBuildStatus)
-        .Inputs(
-            Computation<RigExecMoverParameters>(
-                RigExecMoverExecTokens->computeMoverParameters)
-                .Required(),
-            Computation<SdfPath>(ExecBuiltinComputations->computePath)
-                .InputName(RigExecMoverExecTokens->moverPath));
+        .Inputs(Computation<RigExecMoverParameters>(
+                    RigExecMoverExecTokens->computeMoverParameters)
+                    .Required(),
+                Computation<SdfPath>(ExecBuiltinComputations->computePath)
+                    .InputName(RigExecMoverExecTokens->moverPath));
 }
 
 RIGEXEC_REGISTER_MOVER(_MakeHandler());

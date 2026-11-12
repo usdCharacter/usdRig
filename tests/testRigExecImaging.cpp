@@ -97,6 +97,8 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 using namespace rigExec;
@@ -6416,11 +6418,26 @@ private:
 // Publishes `rigExecInputs` on the prims it was given values for, and sends
 // the dirty a value change owes.
 class _UpstreamInputsSceneIndex : public HdSingleInputFilteringSceneIndexBase {
+    // Passkey: the intrusive ref count starts at 1, so New() must adopt the
+    // object; the tag is non-aggregate so {} cannot build it either.
+    struct _Tag {
+        explicit _Tag(int)
+        {
+        }
+    };
+
 public:
     static TfRefPtr<_UpstreamInputsSceneIndex>
     New(const HdSceneIndexBaseRefPtr &input)
     {
-        return TfCreateRefPtr(new _UpstreamInputsSceneIndex(input));
+        return TfCreateRefPtr(
+            std::make_unique<_UpstreamInputsSceneIndex>(_Tag{0}, input)
+                .release());
+    }
+
+    _UpstreamInputsSceneIndex(_Tag, const HdSceneIndexBaseRefPtr &input)
+        : _UpstreamInputsSceneIndex(input)
+    {
     }
 
     void Set(const SdfPath &attribute, const VtValue &value)
@@ -6519,6 +6536,25 @@ private:
     std::shared_ptr<std::atomic<double>> _time =
         std::make_shared<std::atomic<double>>(0.0);
 };
+
+template <class T, class = void>
+struct _BraceConstructible : std::false_type {};
+template <class T>
+struct _BraceConstructible<T, std::void_t<decltype(T({}))>> : std::true_type {};
+static_assert(!_BraceConstructible<_UpstreamInputsSceneIndex>::value,
+              "New() is the only entry: brace construction must be rejected");
+
+// The tagged ctor takes the input handle too, so probe that admission as
+// well: it is the one an aggregate tag would still let a caller through.
+template <class T, class = void>
+struct _TagBraceConstructible : std::false_type {};
+template <class T>
+struct _TagBraceConstructible<
+    T, std::void_t<decltype(T({},
+                              std::declval<const HdSceneIndexBaseRefPtr &>()))>>
+    : std::true_type {};
+static_assert(!_TagBraceConstructible<_UpstreamInputsSceneIndex>::value,
+              "New() is the only entry: the passkey must not be brace-built");
 
 // What a generation publishes: points, driven transforms and guide frames
 // (joint matrices), by prim.

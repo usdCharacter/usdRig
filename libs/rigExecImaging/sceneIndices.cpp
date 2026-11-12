@@ -1,4 +1,5 @@
 // RigExec Hydra scene-index filters implementation.
+#include "rigExecSchema/schemaNames.h"
 #include "sceneIndices.h"
 
 #include "frameTable.h"
@@ -95,9 +96,8 @@ RigExecStageKeyFromAddedEntries(
         if (!prim.dataSource) {
             continue;
         }
-        const HdContainerDataSourceHandle rigExec =
-            HdContainerDataSource::Cast(
-                prim.dataSource->Get(RigExecTriggerContainerToken()));
+        const HdContainerDataSourceHandle rigExec = HdContainerDataSource::Cast(
+            prim.dataSource->Get(RigExecTriggerContainerToken()));
         if (!rigExec) {
             continue;
         }
@@ -121,22 +121,20 @@ namespace {
 // leaf is absent or unreadable, in which case the caller leaves the
 // published generation alone rather than evaluating at a guessed time.
 bool
-_TriggerTime(
-    const HdSceneIndexBaseRefPtr &input, const SdfPath &rigPath,
-    UsdTimeCode *time)
+_TriggerTime(const HdSceneIndexBaseRefPtr &input, const SdfPath &rigPath,
+             UsdTimeCode *time)
 {
     const HdSceneIndexPrim prim = input->GetPrim(rigPath);
     if (!prim.dataSource) {
         return false;
     }
-    const HdContainerDataSourceHandle rigExec =
-        HdContainerDataSource::Cast(
-            prim.dataSource->Get(RigExecTriggerContainerToken()));
+    const HdContainerDataSourceHandle rigExec = HdContainerDataSource::Cast(
+        prim.dataSource->Get(RigExecTriggerContainerToken()));
     if (!rigExec) {
         return false;
     }
-    const HdSampledDataSourceHandle leaf = HdSampledDataSource::Cast(
-        rigExec->Get(RigExecTriggerLeafToken()));
+    const HdSampledDataSourceHandle leaf =
+        HdSampledDataSource::Cast(rigExec->Get(RigExecTriggerLeafToken()));
     if (!leaf) {
         return false;
     }
@@ -152,12 +150,12 @@ _TriggerTime(
     return false;
 }
 
-}  // namespace
+} // namespace
 
 // RigExecInternalPrimPruningSceneIndex
 
 RigExecInternalPrimPruningSceneIndex::RigExecInternalPrimPruningSceneIndex(
-    const HdSceneIndexBaseRefPtr &inputSceneIndex)
+    _FactoryTag, const HdSceneIndexBaseRefPtr &inputSceneIndex)
     : HdSingleInputFilteringSceneIndexBase(inputSceneIndex)
 {
 }
@@ -202,8 +200,7 @@ SdfPathVector
 RigExecInternalPrimPruningSceneIndex::GetChildPrimPaths(
     const SdfPath &primPath) const
 {
-    SdfPathVector children =
-        _GetInputSceneIndex()->GetChildPrimPaths(primPath);
+    SdfPathVector children = _GetInputSceneIndex()->GetChildPrimPaths(primPath);
     children.erase(
         std::remove_if(children.begin(), children.end(),
                        [this](const SdfPath &p) { return _IsOwned(p); }),
@@ -275,13 +272,14 @@ RigExecInternalPrimPruningSceneIndex::_PrimsDirtied(
 // RigExecBindingResolvingSceneIndex
 
 RigExecBindingResolvingSceneIndex::RigExecBindingResolvingSceneIndex(
-    const HdSceneIndexBaseRefPtr &inputSceneIndex)
+    _FactoryTag, const HdSceneIndexBaseRefPtr &inputSceneIndex)
     : HdSingleInputFilteringSceneIndexBase(inputSceneIndex)
 {
 }
 
 void
-RigExecBindingResolvingSceneIndex::SetCompiledRigBinding(CompiledRigBindingConstPtr compiledRig)
+RigExecBindingResolvingSceneIndex::SetCompiledRigBinding(
+    CompiledRigBindingConstPtr compiledRig)
 {
     CompiledRigBindingConstPtr previous = std::atomic_load(&_compiledRig);
     std::atomic_store(&_compiledRig, std::move(compiledRig));
@@ -301,8 +299,7 @@ RigExecBindingResolvingSceneIndex::SetCompiledRigBinding(CompiledRigBindingConst
     if (current) {
         for (const SdfPath &p : current->publishedPrims) {
             if (!previous || !previous->publishedPrims.count(p)) {
-                dirtied.emplace_back(
-                    p, HdDataSourceLocatorSet::UniversalSet());
+                dirtied.emplace_back(p, HdDataSourceLocatorSet::UniversalSet());
             }
         }
     }
@@ -360,10 +357,10 @@ RigExecBindingResolvingSceneIndex::_PrimsDirtied(
 // RigExecResultsSceneIndex
 
 RigExecResultsSceneIndex::RigExecResultsSceneIndex(
-    const HdSceneIndexBaseRefPtr &inputSceneIndex,
+    _FactoryTag, const HdSceneIndexBaseRefPtr &inputSceneIndex,
     std::shared_ptr<RigExecSnapshotStore> store)
-    : HdSingleInputFilteringSceneIndexBase(inputSceneIndex)
-    , _store(std::move(store))
+    : HdSingleInputFilteringSceneIndexBase(inputSceneIndex),
+      _store(std::move(store))
 {
     // Seed the driven-transform history from whatever generation is already
     // published. A chain constructed AFTER activation (usdview builds its
@@ -374,8 +371,7 @@ RigExecResultsSceneIndex::RigExecResultsSceneIndex(
     // traversal finds the synthesized children, so this index must already
     // believe it announced them or a later drop to zero sends no removals
     // and the stale guides survive downstream.
-    if (const RigExecImagingSnapshotConstPtr snapshot =
-            _CurrentSnapshot()) {
+    if (const RigExecImagingSnapshotConstPtr snapshot = _CurrentSnapshot()) {
         for (const auto &[path, published] : snapshot->prims) {
             if (published.hasXform) {
                 _announcedDrivenXforms.insert(path);
@@ -412,11 +408,13 @@ public:
     HD_DECLARE_DATASOURCE(_MotionDataSource);
     using Time = HdSampledDataSource::Time;
 
-    VtValue GetValue(Time shutterOffset) override {
+    VtValue GetValue(Time shutterOffset) override
+    {
         return VtValue(GetTypedValue(shutterOffset));
     }
 
-    T GetTypedValue(Time shutterOffset) override {
+    T GetTypedValue(Time shutterOffset) override
+    {
         if (_offsets.empty()) {
             return _base;
         }
@@ -432,7 +430,8 @@ public:
 
     bool GetContributingSampleTimesForInterval(
         Time startTime, Time endTime,
-        std::vector<Time> *outSampleTimes) override {
+        std::vector<Time> *outSampleTimes) override
+    {
         if (_offsets.size() < 2) {
             return false;
         }
@@ -441,10 +440,12 @@ public:
     }
 
 private:
-    _MotionDataSource(T base, std::vector<float> offsets, std::vector<T> samples)
-        : _base(std::move(base))
-        , _offsets(std::move(offsets))
-        , _samples(std::move(samples)) {}
+    _MotionDataSource(T base, std::vector<float> offsets,
+                      std::vector<T> samples)
+        : _base(std::move(base)), _offsets(std::move(offsets)),
+          _samples(std::move(samples))
+    {
+    }
 
     T _base;
     std::vector<float> _offsets;
@@ -501,8 +502,10 @@ _MotionSampleTimes(const std::vector<float> &offsets, float start, float end,
             times.push_back(offset);
         }
     }
-    if (haveBelow) times.insert(times.begin(), below);
-    if (haveAbove) times.push_back(above);
+    if (haveBelow)
+        times.insert(times.begin(), below);
+    if (haveAbove)
+        times.push_back(above);
     if (times.size() < 2) {
         return false;
     }
@@ -512,21 +515,25 @@ _MotionSampleTimes(const std::vector<float> &offsets, float start, float end,
 
 // Reads one published value of a prim; false when that frame has none.
 template <class T>
-using _PublishedField = bool (*)(const RigExecPublishedPrim &,
-                                 const TfToken &, T *);
+using _PublishedField = bool (*)(const RigExecPublishedPrim &, const TfToken &,
+                                 T *);
 
 bool
-_PublishedPoints(const RigExecPublishedPrim &p, const TfToken &, VtVec3fArray *v)
+_PublishedPoints(const RigExecPublishedPrim &p, const TfToken &,
+                 VtVec3fArray *v)
 {
-    if (!p.hasPoints) return false;
+    if (!p.hasPoints)
+        return false;
     *v = p.points;
     return true;
 }
 
 bool
-_PublishedNormals(const RigExecPublishedPrim &p, const TfToken &, VtVec3fArray *v)
+_PublishedNormals(const RigExecPublishedPrim &p, const TfToken &,
+                  VtVec3fArray *v)
 {
-    if (!p.hasNormals) return false;
+    if (!p.hasNormals)
+        return false;
     *v = p.normals;
     return true;
 }
@@ -534,7 +541,8 @@ _PublishedNormals(const RigExecPublishedPrim &p, const TfToken &, VtVec3fArray *
 bool
 _PublishedExtentMin(const RigExecPublishedPrim &p, const TfToken &, GfVec3d *v)
 {
-    if (!p.hasExtent) return false;
+    if (!p.hasExtent)
+        return false;
     *v = p.extentMin;
     return true;
 }
@@ -542,16 +550,19 @@ _PublishedExtentMin(const RigExecPublishedPrim &p, const TfToken &, GfVec3d *v)
 bool
 _PublishedExtentMax(const RigExecPublishedPrim &p, const TfToken &, GfVec3d *v)
 {
-    if (!p.hasExtent) return false;
+    if (!p.hasExtent)
+        return false;
     *v = p.extentMax;
     return true;
 }
 
 bool
-_PublishedShaderFloat(const RigExecPublishedPrim &p, const TfToken &name, float *v)
+_PublishedShaderFloat(const RigExecPublishedPrim &p, const TfToken &name,
+                      float *v)
 {
     const auto it = p.shaderFloats.find(name);
-    if (it == p.shaderFloats.end()) return false;
+    if (it == p.shaderFloats.end())
+        return false;
     *v = it->second;
     return true;
 }
@@ -561,7 +572,8 @@ _PublishedShaderMatrix(const RigExecPublishedPrim &p, const TfToken &name,
                        GfMatrix4d *v)
 {
     const auto it = p.shaderMatrices.find(name);
-    if (it == p.shaderMatrices.end()) return false;
+    if (it == p.shaderMatrices.end())
+        return false;
     *v = it->second;
     return true;
 }
@@ -575,18 +587,20 @@ struct _FrameSource {
     SdfPath prim;
 
     static _FrameSource From(const RigExecImagingSnapshot &snapshot,
-                             const SdfPath &prim) {
+                             const SdfPath &prim)
+    {
         _FrameSource source;
         source.table = snapshot.frameTable;
-        source.haveTime = !snapshot.sampleTimeIsDefault &&
-                          std::isfinite(snapshot.sampleTime);
+        source.haveTime =
+            !snapshot.sampleTimeIsDefault && std::isfinite(snapshot.sampleTime);
         source.time = snapshot.sampleTime;
         source.prim = prim;
         return source;
     }
 
     // The frame at \p offset, or null after recording the demand.
-    std::shared_ptr<const RigExecImagingSnapshot> Frame(float offset) const {
+    std::shared_ptr<const RigExecImagingSnapshot> Frame(float offset) const
+    {
         if (!table || !haveTime) {
             return nullptr;
         }
@@ -599,7 +613,10 @@ struct _FrameSource {
     }
 
     // True when offset reads go to the table (else the legacy answers).
-    bool Live() const { return table && haveTime; }
+    bool Live() const
+    {
+        return table && haveTime;
+    }
 };
 
 template <class T>
@@ -608,7 +625,8 @@ public:
     HD_DECLARE_DATASOURCE(_FrameValueDataSource);
     using Time = HdSampledDataSource::Time;
 
-    VtValue GetValue(Time offset) override {
+    VtValue GetValue(Time offset) override
+    {
         T value;
         if (_Resolve(offset, &value)) {
             return VtValue(std::move(value));
@@ -616,35 +634,35 @@ public:
         return VtValue();
     }
 
-    T GetTypedValue(Time offset) override {
+    T GetTypedValue(Time offset) override
+    {
         T value;
         return _Resolve(offset, &value) ? value : _base;
     }
 
     bool GetContributingSampleTimesForInterval(
         Time startTime, Time endTime,
-        std::vector<Time> *outSampleTimes) override {
-        return _MotionSampleTimes(_offsets, startTime, endTime,
-                                  outSampleTimes);
+        std::vector<Time> *outSampleTimes) override
+    {
+        return _MotionSampleTimes(_offsets, startTime, endTime, outSampleTimes);
     }
 
 private:
     _FrameValueDataSource(T base, std::vector<float> offsets,
                           std::vector<T> samples, _FrameSource source,
                           TfToken name, _PublishedField<T> field)
-        : _base(std::move(base))
-        , _offsets(std::move(offsets))
-        , _samples(std::move(samples))
-        , _source(std::move(source))
-        , _name(std::move(name))
-        , _field(field) {
+        : _base(std::move(base)), _offsets(std::move(offsets)),
+          _samples(std::move(samples)), _source(std::move(source)),
+          _name(std::move(name)), _field(field)
+    {
         if (_samples.size() != _offsets.size()) {
             _offsets.clear();
             _samples.clear();
         }
     }
 
-    bool _Resolve(Time offset, T *value) const {
+    bool _Resolve(Time offset, T *value) const
+    {
         if (std::abs(offset) < kFrameOffsetEpsilon) {
             *value = _base;
             return true;
@@ -705,24 +723,30 @@ class _ShaderMatrixDataSource final
 public:
     HD_DECLARE_DATASOURCE(_ShaderMatrixDataSource);
 
-    GfMatrix4f GetTypedValue(Time offset) override {
+    GfMatrix4f GetTypedValue(Time offset) override
+    {
         return GfMatrix4f(_local->GetTypedValue(offset));
     }
-    VtValue GetValue(Time offset) override {
+    VtValue GetValue(Time offset) override
+    {
         const VtValue local = _local->GetValue(offset);
         if (!local.IsHolding<GfMatrix4d>()) {
             return VtValue();
         }
         return VtValue(GfMatrix4f(local.UncheckedGet<GfMatrix4d>()));
     }
-    bool GetContributingSampleTimesForInterval(
-        Time start, Time end, std::vector<Time> *times) override {
+    bool
+    GetContributingSampleTimesForInterval(Time start, Time end,
+                                          std::vector<Time> *times) override
+    {
         return _local->GetContributingSampleTimesForInterval(start, end, times);
     }
 
 private:
     explicit _ShaderMatrixDataSource(HdMatrixDataSourceHandle local)
-        : _local(std::move(local)) {}
+        : _local(std::move(local))
+    {
+    }
     const HdMatrixDataSourceHandle _local;
 };
 
@@ -748,8 +772,7 @@ _ParseGuideName(const TfToken &name, bool *isCone, size_t *index)
     if (s.compare(0, _guideSpherePrefix.size(), _guideSpherePrefix) == 0) {
         prefix = &_guideSpherePrefix;
         *isCone = false;
-    } else if (s.compare(0, _guideConePrefix.size(), _guideConePrefix) ==
-               0) {
+    } else if (s.compare(0, _guideConePrefix.size(), _guideConePrefix) == 0) {
         prefix = &_guideConePrefix;
         *isCone = true;
     } else {
@@ -803,13 +826,12 @@ _GuideHasSphere(const RigExecPublishedPrim &published, size_t index)
 // fallback and the only thing the joint sphere/cone guides ever want.
 // \p opacity replaces guide:displayOpacity when non-negative.
 HdContainerDataSourceHandle
-_BuildGuideStylePrimvars(
-    const RigExecPublishedPrim &published,
-    const VtVec3fArray &points = VtVec3fArray(),
-    double wireWidth = 0.0,
-    const VtVec3fArray &normals = VtVec3fArray(),
-    const TfToken &normalsInterpolation = TfToken(),
-    float opacity = -1.0f)
+_BuildGuideStylePrimvars(const RigExecPublishedPrim &published,
+                         const VtVec3fArray &points = VtVec3fArray(),
+                         double wireWidth = 0.0,
+                         const VtVec3fArray &normals = VtVec3fArray(),
+                         const TfToken &normalsInterpolation = TfToken(),
+                         float opacity = -1.0f)
 {
     TfTokenVector names{HdTokens->displayColor, HdTokens->displayOpacity};
     std::vector<HdDataSourceBaseHandle> values{
@@ -824,7 +846,7 @@ _BuildGuideStylePrimvars(
             .SetPrimvarValue(
                 HdRetainedTypedSampledDataSource<VtFloatArray>::New(
                     VtFloatArray{opacity >= 0.0f ? opacity
-                                                : published.guideOpacity}))
+                                                 : published.guideOpacity}))
             .SetInterpolation(_Token(HdPrimvarSchemaTokens->constant))
             .Build()};
     if (!points.empty()) {
@@ -832,8 +854,7 @@ _BuildGuideStylePrimvars(
         values.push_back(
             HdPrimvarSchema::Builder()
                 .SetPrimvarValue(
-                    HdRetainedTypedSampledDataSource<VtVec3fArray>::New(
-                        points))
+                    HdRetainedTypedSampledDataSource<VtVec3fArray>::New(points))
                 .SetInterpolation(_Token(HdPrimvarSchemaTokens->vertex))
                 .SetRole(_Token(HdPrimvarSchemaTokens->point))
                 .Build());
@@ -860,15 +881,14 @@ _BuildGuideStylePrimvars(
                 .SetPrimvarValue(
                     HdRetainedTypedSampledDataSource<VtVec3fArray>::New(
                         normals))
-                .SetInterpolation(_Token(
-                    normalsInterpolation.IsEmpty()
-                        ? HdPrimvarSchemaTokens->vertex
-                        : normalsInterpolation))
+                .SetInterpolation(_Token(normalsInterpolation.IsEmpty()
+                                             ? HdPrimvarSchemaTokens->vertex
+                                             : normalsInterpolation))
                 .SetRole(_Token(HdPrimvarSchemaTokens->normal))
                 .Build());
     }
-    return HdRetainedContainerDataSource::New(
-        names.size(), names.data(), values.data());
+    return HdRetainedContainerDataSource::New(names.size(), names.data(),
+                                              values.data());
 }
 
 // INHERITED BY HAND from the parent a guide hangs off: visibility, so
@@ -891,22 +911,20 @@ _BuildGuideStylePrimvars(
 // flattened, so one read carries the whole inheritance chain, and
 // reusing its handles keeps any time sampling intact.
 void
-_AppendInheritedGuideState(
-    const HdContainerDataSourceHandle &parentDataSource,
-    TfTokenVector *names, std::vector<HdDataSourceBaseHandle> *values)
+_AppendInheritedGuideState(const HdContainerDataSourceHandle &parentDataSource,
+                           TfTokenVector *names,
+                           std::vector<HdDataSourceBaseHandle> *values)
 {
     if (!parentDataSource) {
         return;
     }
-    if (const HdDataSourceBaseHandle visibility =
-            HdContainerDataSource::Get(
-                parentDataSource, HdVisibilitySchema::GetDefaultLocator())) {
+    if (const HdDataSourceBaseHandle visibility = HdContainerDataSource::Get(
+            parentDataSource, HdVisibilitySchema::GetDefaultLocator())) {
         names->push_back(HdVisibilitySchema::GetSchemaToken());
         values->push_back(visibility);
     }
-    if (const HdDataSourceBaseHandle origin =
-            HdContainerDataSource::Get(
-                parentDataSource, HdPrimOriginSchema::GetDefaultLocator())) {
+    if (const HdDataSourceBaseHandle origin = HdContainerDataSource::Get(
+            parentDataSource, HdPrimOriginSchema::GetDefaultLocator())) {
         names->push_back(HdPrimOriginSchema::GetSchemaToken());
         values->push_back(origin);
     }
@@ -939,15 +957,15 @@ _GuideRenderTag(const RigExecPublishedPrim &published)
 }
 
 HdContainerDataSourceHandle
-_BuildGuidePrim(
-    const RigExecPublishedPrim &published, bool isCone, size_t index,
-    const HdContainerDataSourceHandle &parentDataSource,
-    const GfMatrix4d &assetRootWorld)
+_BuildGuidePrim(const RigExecPublishedPrim &published, bool isCone,
+                size_t index,
+                const HdContainerDataSourceHandle &parentDataSource,
+                const GfMatrix4d &assetRootWorld)
 {
     const GfMatrix4d &frame = published.guideFrames[index];
     const double length = published.guideLengths[index];
-    const double radius = index < published.guideRadii.size()
-        ? published.guideRadii[index] : 1.0;
+    const double radius =
+        index < published.guideRadii.size() ? published.guideRadii[index] : 1.0;
 
     // The cone spans its axis symmetrically: translate so the base sits
     // at the frame origin, pointing along the frame's +X aim axis.
@@ -978,16 +996,14 @@ _BuildGuidePrim(
     names.push_back(HdXformSchemaTokens->xform);
     values.push_back(
         HdXformSchema::Builder()
-            .SetMatrix(HdRetainedTypedSampledDataSource<GfMatrix4d>::New(
-                xform))
+            .SetMatrix(HdRetainedTypedSampledDataSource<GfMatrix4d>::New(xform))
             .SetResetXformStack(
                 HdRetainedTypedSampledDataSource<bool>::New(true))
             .Build());
     names.push_back(HdPurposeSchema::GetSchemaToken());
-    values.push_back(
-        HdPurposeSchema::Builder()
-            .SetPurpose(_Token(_GuideRenderTag(published)))
-            .Build());
+    values.push_back(HdPurposeSchema::Builder()
+                         .SetPurpose(_Token(_GuideRenderTag(published)))
+                         .Build());
     _AppendInheritedGuideState(parentDataSource, &names, &values);
     names.push_back(HdPrimvarsSchemaTokens->primvars);
     values.push_back(_BuildGuideStylePrimvars(published));
@@ -1003,20 +1019,19 @@ _BuildGuidePrim(
         names.push_back(HdConeSchema::GetSchemaToken());
         values.push_back(
             HdConeSchema::Builder()
-                .SetHeight(HdRetainedTypedSampledDataSource<double>::New(
-                    length))
+                .SetHeight(
+                    HdRetainedTypedSampledDataSource<double>::New(length))
                 .SetRadius(HdDoubleDataSource::Cast(radiusSource))
                 .SetAxis(_Token(HdConeSchemaTokens->X))
                 .Build());
     } else {
         names.push_back(HdSphereSchema::GetSchemaToken());
-        values.push_back(
-            HdSphereSchema::Builder()
-                .SetRadius(HdDoubleDataSource::Cast(radiusSource))
-                .Build());
+        values.push_back(HdSphereSchema::Builder()
+                             .SetRadius(HdDoubleDataSource::Cast(radiusSource))
+                             .Build());
     }
-    return HdRetainedContainerDataSource::New(
-        names.size(), names.data(), values.data());
+    return HdRetainedContainerDataSource::New(names.size(), names.data(),
+                                              values.data());
 }
 
 // Synthesized control guides: a RigExecControl draws
@@ -1069,7 +1084,8 @@ _HasGpuDeform(const RigExecPublishedPrim &published)
 // computations: the judge over Hydra's own copies of the inputs.
 class _GpuDeformCpuCallback : public HdExtComputationCpuCallback {
 public:
-    void Compute(HdExtComputationContext *ctx) override {
+    void Compute(HdExtComputationContext *ctx) override
+    {
         const VtValue &ops = ctx->GetInputValue(_gpuTokens->rxOps);
         const VtValue &staticF = ctx->GetInputValue(_gpuTokens->rxStaticF);
         const VtValue &staticI = ctx->GetInputValue(_gpuTokens->rxStaticI);
@@ -1077,8 +1093,10 @@ public:
         const VtValue &frame = ctx->GetInputValue(_gpuTokens->rxFrame);
         const VtValue &previous = ctx->GetInputValue(_gpuTokens->rxPrevFrame);
         const VtValue &scale = ctx->GetInputValue(_gpuTokens->rxVelocityScale);
-        if (!ops.IsHolding<VtIntArray>() || !staticF.IsHolding<VtFloatArray>() ||
-            !staticI.IsHolding<VtIntArray>() || !base.IsHolding<VtVec3fArray>() ||
+        if (!ops.IsHolding<VtIntArray>() ||
+            !staticF.IsHolding<VtFloatArray>() ||
+            !staticI.IsHolding<VtIntArray>() ||
+            !base.IsHolding<VtVec3fArray>() ||
             !frame.IsHolding<VtFloatArray>() ||
             !previous.IsHolding<VtFloatArray>() || !scale.IsHolding<float>()) {
             ctx->RaiseComputationError();
@@ -1087,7 +1105,8 @@ public:
         const VtVec3fArray &points = base.UncheckedGet<VtVec3fArray>();
         RigExecGpuDeformView view;
         view.ops = ops.UncheckedGet<VtIntArray>().cdata();
-        view.opCount = ops.UncheckedGet<VtIntArray>().size() / RigExecGpuOpStride;
+        view.opCount =
+            ops.UncheckedGet<VtIntArray>().size() / RigExecGpuOpStride;
         view.staticF = staticF.UncheckedGet<VtFloatArray>().cdata();
         view.staticI = staticI.UncheckedGet<VtIntArray>().cdata();
         view.frame = frame.UncheckedGet<VtFloatArray>().cdata();
@@ -1116,9 +1135,9 @@ HdContainerDataSourceHandle
 _BuildGpuDeformInputsPrim(const RigExecPublishedPrim &published)
 {
     const auto &tables = *published.gpuDeformStatic;
-    const TfToken names[] = {
-        _gpuTokens->rxOps, _gpuTokens->rxStaticF, _gpuTokens->rxStaticI,
-        _gpuTokens->rxBase, _gpuTokens->rxOpCount};
+    const TfToken names[] = {_gpuTokens->rxOps, _gpuTokens->rxStaticF,
+                             _gpuTokens->rxStaticI, _gpuTokens->rxBase,
+                             _gpuTokens->rxOpCount};
     const HdDataSourceBaseHandle values[] = {
         HdRetainedTypedSampledDataSource<VtIntArray>::New(tables.ops),
         HdRetainedTypedSampledDataSource<VtFloatArray>::New(tables.staticF),
@@ -1129,8 +1148,8 @@ _BuildGpuDeformInputsPrim(const RigExecPublishedPrim &published)
     static const TfToken schema = HdExtComputationSchema::GetSchemaToken();
     const HdDataSourceBaseHandle computation =
         HdExtComputationSchema::Builder()
-            .SetInputValues(HdRetainedContainerDataSource::New(
-                std::size(names), names, values))
+            .SetInputValues(HdRetainedContainerDataSource::New(std::size(names),
+                                                               names, values))
             .Build();
     return HdRetainedContainerDataSource::New(1, &schema, &computation);
 }
@@ -1139,9 +1158,8 @@ HdContainerDataSourceHandle
 _BuildGpuDeformPrim(const SdfPath &meshPath,
                     const RigExecPublishedPrim &published)
 {
-    const TfToken inputNames[] = {
-        _gpuTokens->rxFrame, _gpuTokens->rxPrevFrame,
-        _gpuTokens->rxVelocityScale};
+    const TfToken inputNames[] = {_gpuTokens->rxFrame, _gpuTokens->rxPrevFrame,
+                                  _gpuTokens->rxVelocityScale};
     const HdDataSourceBaseHandle inputValues[] = {
         HdRetainedTypedSampledDataSource<VtFloatArray>::New(
             published.gpuDeformFrame),
@@ -1149,9 +1167,9 @@ _BuildGpuDeformPrim(const SdfPath &meshPath,
             published.gpuDeformPreviousFrame),
         HdRetainedTypedSampledDataSource<float>::New(
             published.gpuDeformVelocityScale)};
-    const TfToken aggregated[] = {
-        _gpuTokens->rxOps, _gpuTokens->rxStaticF, _gpuTokens->rxStaticI,
-        _gpuTokens->rxBase, _gpuTokens->rxOpCount};
+    const TfToken aggregated[] = {_gpuTokens->rxOps, _gpuTokens->rxStaticF,
+                                  _gpuTokens->rxStaticI, _gpuTokens->rxBase,
+                                  _gpuTokens->rxOpCount};
     const HdPathDataSourceHandle source =
         HdRetainedTypedSampledDataSource<SdfPath>::New(
             meshPath.AppendChild(_gpuDeformInputsName));
@@ -1172,9 +1190,8 @@ _BuildGpuDeformPrim(const SdfPath &meshPath,
             .Build();
     const HdDataSourceBaseHandle outputs[] = {output, output};
     static const HdExtComputationCpuCallbackDataSourceHandle callback =
-        HdRetainedTypedSampledDataSource<
-            HdExtComputationCpuCallbackSharedPtr>::New(
-                std::make_shared<_GpuDeformCpuCallback>());
+        HdRetainedTypedSampledDataSource<HdExtComputationCpuCallbackSharedPtr>::
+            New(std::make_shared<_GpuDeformCpuCallback>());
     static const HdStringDataSourceHandle kernel =
         HdRetainedTypedSampledDataSource<std::string>::New(
             RigExecGpuDeformStormKernel());
@@ -1223,8 +1240,8 @@ _BuildGpuDeformPrimvars(const SdfPath &meshPath)
     const HdDataSourceBaseHandle values[] = {
         primvar(HdTokens->points, HdPrimvarSchemaTokens->point),
         primvar(HdTokens->velocities, HdPrimvarSchemaTokens->vector)};
-    return HdExtComputationPrimvarsSchema::BuildRetained(
-        std::size(names), names, values);
+    return HdExtComputationPrimvarsSchema::BuildRetained(std::size(names),
+                                                         names, values);
 }
 
 // One unit shape, ready to publish.
@@ -1270,9 +1287,8 @@ constexpr int _kGuideRingSegments = 32;
 // have no wrap, so restating the start vertex is what closes a ring; that
 // costs one vertex and avoids the linear-periodic path entirely.
 void
-_AppendGuideRing(
-    int segments, int axisA, int axisB, double direction, bool close,
-    VtVec3fArray *points)
+_AppendGuideRing(int segments, int axisA, int axisB, double direction,
+                 bool close, VtVec3fArray *points)
 {
     for (int i = 0; i < segments + (close ? 1 : 0); ++i) {
         const double theta =
@@ -1291,10 +1307,9 @@ void
 _AppendGuideBoxRing(float y, bool close, VtVec3fArray *points)
 {
     static const float corners[4][2] = {
-        {-1, -1}, {-1, 1}, {1, 1}, {1, -1}};  // (x, z)
+        {-1, -1}, {-1, 1}, {1, 1}, {1, -1}}; // (x, z)
     for (int i = 0; i < (close ? 5 : 4); ++i) {
-        points->push_back(
-            GfVec3f(corners[i % 4][0], y, corners[i % 4][1]));
+        points->push_back(GfVec3f(corners[i % 4][0], y, corners[i % 4][1]));
     }
 }
 
@@ -1302,13 +1317,13 @@ std::vector<_ControlGuideShape>
 _BuildControlGuideShapes()
 {
     const TfToken kSphere("sphere");
-    const TfToken kCircle("circle");
+    const TfToken kCircle(SchemaValueText::circle);
     const TfToken kBox("box");
     const TfToken kCube("cube");
     const TfToken kDiamond("diamond");
     const TfToken kPyramid("pyramid");
-    const TfToken kWire("wire");
-    const TfToken kGeometry("geometry");
+    const TfToken kWire(SchemaValueText::wire);
+    const TfToken kGeometry(SchemaValueText::geometry);
 
     // The octahedron and the pyramid, shared by their wire and geometry
     // forms so the two cannot disagree about where the corners are.
@@ -1361,8 +1376,8 @@ _BuildControlGuideShapes()
     {
         VtVec3fArray points;
         _AppendGuideBoxRing(0.0f, /* close = */ true, &points);
-        add(kBox, kWire, HdPrimTypeTokens->basisCurves, points,
-            VtIntArray{5}, VtIntArray());
+        add(kBox, kWire, HdPrimTypeTokens->basisCurves, points, VtIntArray{5},
+            VtIntArray());
     }
     {
         // Two rings plus the four vertical pillars that join them.
@@ -1408,8 +1423,8 @@ _BuildControlGuideShapes()
     // meshes with no authored normals -- flat shading is what a guide wants.
     add(kSphere, kGeometry, HdPrimTypeTokens->sphere, VtVec3fArray(),
         VtIntArray(), VtIntArray());
-    add(kCube, kGeometry, HdPrimTypeTokens->cube, VtVec3fArray(),
-        VtIntArray(), VtIntArray());
+    add(kCube, kGeometry, HdPrimTypeTokens->cube, VtVec3fArray(), VtIntArray(),
+        VtIntArray());
     {
         // One n-gon face. Hydra triangulates it; authoring a fan here would
         // only add a centre vertex nothing needs.
@@ -1434,8 +1449,8 @@ _BuildControlGuideShapes()
         // counter-clockwise seen from outside, so the geometric normals a
         // renderer derives point outward even though doubleSided makes the
         // guide legible either way.
-        const VtVec3fArray points{kPlusX, kMinusX, kPlusY,
-                                  kMinusY, kPlusZ, kMinusZ};
+        const VtVec3fArray points{kPlusX,  kMinusX, kPlusY,
+                                  kMinusY, kPlusZ,  kMinusZ};
         add(kDiamond, kGeometry, HdPrimTypeTokens->mesh, points,
             VtIntArray{3, 3, 3, 3, 3, 3, 3, 3},
             VtIntArray{0, 2, 4, 4, 2, 1, 1, 2, 5, 5, 2, 0,
@@ -1495,10 +1510,10 @@ _FindControlGuideShape(const TfToken &shape, const TfToken &drawMode)
 }
 
 HdContainerDataSourceHandle
-_BuildControlGuidePrim(
-    const RigExecPublishedPrim &published, const _ControlGuideShape &templateShape,
-    const HdContainerDataSourceHandle &parentDataSource,
-    const GfMatrix4d &assetRootWorld)
+_BuildControlGuidePrim(const RigExecPublishedPrim &published,
+                       const _ControlGuideShape &templateShape,
+                       const HdContainerDataSourceHandle &parentDataSource,
+                       const GfMatrix4d &assetRootWorld)
 {
     _ControlGuideShape custom;
     if (published.controlGuideShape == _controlGuideTokens->custom) {
@@ -1506,14 +1521,21 @@ _BuildControlGuidePrim(
         custom.points = published.controlGuidePoints;
         custom.counts = published.controlGuideCounts;
         if (!custom.points.empty()) {
-            custom.extentMin = custom.extentMax = GfVec3d(custom.points.front());
-            for (const GfVec3f &p : custom.points) for (int a = 0; a < 3; ++a) {
-                custom.extentMin[a] = std::min(custom.extentMin[a], double(p[a]));
-                custom.extentMax[a] = std::max(custom.extentMax[a], double(p[a]));
-            }
+            custom.extentMin = custom.extentMax =
+                GfVec3d(custom.points.front());
+            for (const GfVec3f &p : custom.points)
+                for (int a = 0; a < 3; ++a) {
+                    custom.extentMin[a] =
+                        std::min(custom.extentMin[a], double(p[a]));
+                    custom.extentMax[a] =
+                        std::max(custom.extentMax[a], double(p[a]));
+                }
         }
     }
-    const _ControlGuideShape &shape = published.controlGuideShape == _controlGuideTokens->custom ? custom : templateShape;
+    const _ControlGuideShape &shape =
+        published.controlGuideShape == _controlGuideTokens->custom
+            ? custom
+            : templateShape;
     // S(effectiveScale) * rigid frame * asset root placement.
     // USD is row-vector, so the leftmost factor applies first: the effective
     // per-axis scale sizes the unit shape in ITS own axes, and only
@@ -1550,7 +1572,8 @@ _BuildControlGuidePrim(
         published.controlGuideShape == _controlGuideTokens->box) {
         if (published.controlGuidePlaneNormal == _controlGuideTokens->X) {
             plane.SetRotate(GfRotation(GfVec3d(0, 0, 1), -90.0));
-        } else if (published.controlGuidePlaneNormal == _controlGuideTokens->Z) {
+        } else if (published.controlGuidePlaneNormal ==
+                   _controlGuideTokens->Z) {
             plane.SetRotate(GfRotation(GfVec3d(1, 0, 0), 90.0));
         }
     }
@@ -1562,8 +1585,7 @@ _BuildControlGuidePrim(
     names.push_back(HdXformSchemaTokens->xform);
     values.push_back(
         HdXformSchema::Builder()
-            .SetMatrix(HdRetainedTypedSampledDataSource<GfMatrix4d>::New(
-                xform))
+            .SetMatrix(HdRetainedTypedSampledDataSource<GfMatrix4d>::New(xform))
             .SetResetXformStack(
                 HdRetainedTypedSampledDataSource<bool>::New(true))
             .Build());
@@ -1574,20 +1596,20 @@ _BuildControlGuidePrim(
     // drawn render tag and UsdGeomBBoxCache's classification of the same
     // prim in agreement by construction.
     names.push_back(HdPurposeSchema::GetSchemaToken());
-    values.push_back(
-        HdPurposeSchema::Builder()
-            .SetPurpose(_Token(_GuideRenderTag(published)))
-            .Build());
+    values.push_back(HdPurposeSchema::Builder()
+                         .SetPurpose(_Token(_GuideRenderTag(published)))
+                         .Build());
     _AppendInheritedGuideState(parentDataSource, &names, &values);
     names.push_back(HdPrimvarsSchemaTokens->primvars);
     // Width belongs to the wire draw mode alone: the meshes and the
     // implicits have no curves to widen, and authoring a stray widths
     // primvar on them would be a primvar a renderer has to decide what to
     // do with.
-    values.push_back(_BuildGuideStylePrimvars(
-        published, shape.points,
-        shape.primType == HdPrimTypeTokens->basisCurves
-            ? published.controlGuideWireWidth : 0.0));
+    values.push_back(
+        _BuildGuideStylePrimvars(published, shape.points,
+                                 shape.primType == HdPrimTypeTokens->basisCurves
+                                     ? published.controlGuideWireWidth
+                                     : 0.0));
 
     if (shape.primType == HdPrimTypeTokens->basisCurves &&
         published.controlGuideWireWidth > 0.0) {
@@ -1617,8 +1639,8 @@ _BuildControlGuidePrim(
                 .SetTopology(
                     HdBasisCurvesTopologySchema::Builder()
                         .SetCurveVertexCounts(
-                            HdRetainedTypedSampledDataSource<
-                                VtIntArray>::New(shape.counts))
+                            HdRetainedTypedSampledDataSource<VtIntArray>::New(
+                                shape.counts))
                         .SetBasis(_Token(HdTokens->linear))
                         .SetType(_Token(HdTokens->linear))
                         .SetWrap(_Token(HdTokens->nonperiodic))
@@ -1631,13 +1653,13 @@ _BuildControlGuidePrim(
                 .SetTopology(
                     HdMeshTopologySchema::Builder()
                         .SetFaceVertexCounts(
-                            HdRetainedTypedSampledDataSource<
-                                VtIntArray>::New(shape.counts))
+                            HdRetainedTypedSampledDataSource<VtIntArray>::New(
+                                shape.counts))
                         .SetFaceVertexIndices(
-                            HdRetainedTypedSampledDataSource<
-                                VtIntArray>::New(shape.indices))
-                        .SetOrientation(_Token(
-                            HdMeshTopologySchemaTokens->rightHanded))
+                            HdRetainedTypedSampledDataSource<VtIntArray>::New(
+                                shape.indices))
+                        .SetOrientation(
+                            _Token(HdMeshTopologySchemaTokens->rightHanded))
                         .Build())
                 // Guides are looked at from every side and have no
                 // interior, so a back face is never the wrong thing to
@@ -1653,8 +1675,7 @@ _BuildControlGuidePrim(
         names.push_back(HdSphereSchema::GetSchemaToken());
         values.push_back(
             HdSphereSchema::Builder()
-                .SetRadius(
-                    HdRetainedTypedSampledDataSource<double>::New(1.0))
+                .SetRadius(HdRetainedTypedSampledDataSource<double>::New(1.0))
                 .Build());
     } else if (shape.primType == HdPrimTypeTokens->cube) {
         // Size 2 spans ±1: the same unit box the wire cube draws.
@@ -1677,8 +1698,8 @@ _BuildControlGuidePrim(
                     shape.extentMax))
                 .Build());
     }
-    return HdRetainedContainerDataSource::New(
-        names.size(), names.data(), values.data());
+    return HdRetainedContainerDataSource::New(names.size(), names.data(),
+                                              values.data());
 }
 
 // Synthesized volume weight guides (drawn
@@ -1717,10 +1738,9 @@ _VolumeGuideName(size_t index)
 }
 
 HdContainerDataSourceHandle
-_BuildVolumeGuidePrim(
-    const RigExecPublishedPrim &published, size_t index,
-    const HdContainerDataSourceHandle &parentDataSource,
-    const GfMatrix4d &assetRootWorld)
+_BuildVolumeGuidePrim(const RigExecPublishedPrim &published, size_t index,
+                      const HdContainerDataSourceHandle &parentDataSource,
+                      const GfMatrix4d &assetRootWorld)
 {
     const RigExecVolumeGuideElement &element = published.volumeGuides[index];
 
@@ -1738,10 +1758,9 @@ _BuildVolumeGuidePrim(
                 HdRetainedTypedSampledDataSource<bool>::New(true))
             .Build());
     names.push_back(HdPurposeSchema::GetSchemaToken());
-    values.push_back(
-        HdPurposeSchema::Builder()
-            .SetPurpose(_Token(_GuideRenderTag(published)))
-            .Build());
+    values.push_back(HdPurposeSchema::Builder()
+                         .SetPurpose(_Token(_GuideRenderTag(published)))
+                         .Build());
     _AppendInheritedGuideState(parentDataSource, &names, &values);
     names.push_back(HdPrimvarsSchemaTokens->primvars);
     values.push_back(_BuildGuideStylePrimvars(
@@ -1789,9 +1808,8 @@ _BuildVolumeGuidePrim(
                         .SetOrientation(
                             _Token(HdMeshTopologySchemaTokens->rightHanded))
                         .Build())
-                .SetDoubleSided(
-                    HdRetainedTypedSampledDataSource<bool>::New(
-                        element.doubleSided))
+                .SetDoubleSided(HdRetainedTypedSampledDataSource<bool>::New(
+                    element.doubleSided))
                 .Build());
     } else if (element.primType == HdPrimTypeTokens->sphere) {
         // Unit radius: the iso-surface radius rides in the xform. Set
@@ -1824,8 +1842,8 @@ _BuildVolumeGuidePrim(
                     .Build());
         }
     }
-    return HdRetainedContainerDataSource::New(
-        names.size(), names.data(), values.data());
+    return HdRetainedContainerDataSource::New(names.size(), names.data(),
+                                              values.data());
 }
 
 // The influence overlay's colour ramp: neutral grey where the field is off,
@@ -1846,13 +1864,15 @@ _WeightOverlayColor(float weight, RigExecWeightDisplay display)
     // Clamped rather than extrapolated: rigExec:rangePolicy already lets a
     // volume publish out-of-range weights under `clamp`, and a colour
     // channel outside [0, 1] is a renderer's problem, not a signal.
-    const float t = !std::isfinite(weight) ? 0.0f : std::clamp(weight, 0.0f, 1.0f);
+    const float t =
+        !std::isfinite(weight) ? 0.0f : std::clamp(weight, 0.0f, 1.0f);
     if (display != RigExecWeightDisplay::Tint) {
         // Ordered anchors at 0, .25, .5, .75, 1. Bands quantize the
         // resolved vertex samples; the renderer still interpolates faces.
-        const GfVec3f ramp[5] = {GfVec3f(0.04f, 0.08f, 0.22f),
-            GfVec3f(0.02f, 0.36f, 0.60f), GfVec3f(0.04f, 0.72f, 0.56f),
-            GfVec3f(0.95f, 0.78f, 0.12f), GfVec3f(1.0f, 0.12f, 0.04f)};
+        const GfVec3f ramp[5] = {
+            GfVec3f(0.04f, 0.08f, 0.22f), GfVec3f(0.02f, 0.36f, 0.60f),
+            GfVec3f(0.04f, 0.72f, 0.56f), GfVec3f(0.95f, 0.78f, 0.12f),
+            GfVec3f(1.0f, 0.12f, 0.04f)};
         if (display == RigExecWeightDisplay::Bands)
             return ramp[std::min(4, int(t * 5.0f))];
         const float scaled = t * 4.0f;
@@ -1939,7 +1959,8 @@ _TryInvert(const GfMatrix4d &m, GfMatrix4d *inverse)
 // The xform matrix a prim's data source carries, or identity when it has
 // none. Upstream of us that value is already world-space (flattened).
 GfMatrix4d
-_ReadXform(const HdContainerDataSourceHandle &dataSource, float shutterOffset = 0.0f)
+_ReadXform(const HdContainerDataSourceHandle &dataSource,
+           float shutterOffset = 0.0f)
 {
     if (!dataSource) {
         return GfMatrix4d(1.0);
@@ -1961,11 +1982,13 @@ class _WorldShaderMatrixDataSource final
 public:
     HD_DECLARE_DATASOURCE(_WorldShaderMatrixDataSource);
 
-    GfMatrix4f GetTypedValue(Time offset) override {
+    GfMatrix4f GetTypedValue(Time offset) override
+    {
         return GfMatrix4f(_local->GetTypedValue(offset) *
                           _world->GetTypedValue(offset));
     }
-    VtValue GetValue(Time offset) override {
+    VtValue GetValue(Time offset) override
+    {
         // Frames on demand: a local the rig has no frame for yet is "not
         // yet" here too.
         const VtValue local = _local->GetValue(offset);
@@ -1975,15 +1998,19 @@ public:
         return VtValue(GfMatrix4f(local.UncheckedGet<GfMatrix4d>() *
                                   _world->GetTypedValue(offset)));
     }
-    bool GetContributingSampleTimesForInterval(
-        Time start, Time end, std::vector<Time> *times) override {
+    bool
+    GetContributingSampleTimesForInterval(Time start, Time end,
+                                          std::vector<Time> *times) override
+    {
         return _world->GetContributingSampleTimesForInterval(start, end, times);
     }
 
 private:
     _WorldShaderMatrixDataSource(HdMatrixDataSourceHandle local,
-                               HdMatrixDataSourceHandle world)
-        : _local(std::move(local)), _world(std::move(world)) {}
+                                 HdMatrixDataSourceHandle world)
+        : _local(std::move(local)), _world(std::move(world))
+    {
+    }
     const HdMatrixDataSourceHandle _local;
     const HdMatrixDataSourceHandle _world;
 };
@@ -1992,8 +2019,8 @@ private:
 // primvars, even when evaluation returned an identical local projector.
 HdDataSourceLocatorSet
 _ShaderMatrixXformLocators(const RigExecImagingSnapshot &snapshot,
-                          const SdfPath &path,
-                          const HdDataSourceLocatorSet &locators)
+                           const SdfPath &path,
+                           const HdDataSourceLocatorSet &locators)
 {
     const auto it = snapshot.prims.find(path);
     if (it == snapshot.prims.end() ||
@@ -2033,9 +2060,9 @@ _BuildStrongRoot(const RigExecPublishedPrim &published,
         // points maps to the flat primvars/points/primvarValue leaf; a
         // stock built-in is always flat.
         primvarNames.push_back(HdTokens->points);
-        const HdSampledDataSourceHandle pointsSource = _FrameValue(
-            published.points, published.sampleOffsets, published.pointsSamples,
-            frames, &_PublishedPoints);
+        const HdSampledDataSourceHandle pointsSource =
+            _FrameValue(published.points, published.sampleOffsets,
+                        published.pointsSamples, frames, &_PublishedPoints);
         primvarValues.push_back(
             HdPrimvarSchema::Builder()
                 .SetPrimvarValue(pointsSource)
@@ -2061,9 +2088,9 @@ _BuildStrongRoot(const RigExecPublishedPrim &published,
     // float4x4 getter consumes 64. Float publication is also valid on the
     // double-capable backends and leaves authored matrix4d properties alone.
     for (const auto &[name, matrix] : published.shaderMatrices) {
-        const HdMatrixDataSourceHandle local = _FrameValue(
-            matrix, {}, std::vector<GfMatrix4d>{}, frames,
-            &_PublishedShaderMatrix, name);
+        const HdMatrixDataSourceHandle local =
+            _FrameValue(matrix, {}, std::vector<GfMatrix4d>{}, frames,
+                        &_PublishedShaderMatrix, name);
         HdSampledDataSourceHandle value = _ShaderMatrixDataSource::New(local);
         if (published.targetLocalShaderMatrices.count(name)) {
             if (const HdMatrixDataSourceHandle world =
@@ -2107,10 +2134,9 @@ _BuildStrongRoot(const RigExecPublishedPrim &published,
         primvarNames.push_back(HdTokens->normals);
         primvarValues.push_back(
             HdPrimvarSchema::Builder()
-                .SetPrimvarValue(
-                    _FrameValue(published.normals, published.sampleOffsets,
-                                published.normalsSamples, frames,
-                                &_PublishedNormals))
+                .SetPrimvarValue(_FrameValue(
+                    published.normals, published.sampleOffsets,
+                    published.normalsSamples, frames, &_PublishedNormals))
                 .SetInterpolation(_Token(HdPrimvarSchemaTokens->vertex))
                 .SetRole(_Token(HdPrimvarSchemaTokens->normal))
                 .Build());
@@ -2142,14 +2168,13 @@ _BuildStrongRoot(const RigExecPublishedPrim &published,
         VtVec3fArray colors(published.weightOverlay.size());
         for (size_t i = 0; i < published.weightOverlay.size(); ++i) {
             colors[i] = _WeightOverlayColor(published.weightOverlay[i],
-                                          published.weightDisplay);
+                                            published.weightDisplay);
         }
         primvarNames.push_back(HdTokens->displayColor);
         primvarValues.push_back(
             HdPrimvarSchema::Builder()
                 .SetPrimvarValue(
-                    HdRetainedTypedSampledDataSource<VtVec3fArray>::New(
-                        colors))
+                    HdRetainedTypedSampledDataSource<VtVec3fArray>::New(colors))
                 .SetInterpolation(_Token(HdPrimvarSchemaTokens->vertex))
                 .SetRole(_Token(HdPrimvarSchemaTokens->color))
                 .Build());
@@ -2164,23 +2189,23 @@ _BuildStrongRoot(const RigExecPublishedPrim &published,
         names.push_back(HdExtentSchemaTokens->extent);
         values.push_back(
             HdExtentSchema::Builder()
-                .SetMin(_FrameValue(published.extentMin, published.sampleOffsets,
-                                    published.extentMinSamples, frames,
-                                    &_PublishedExtentMin))
-                .SetMax(_FrameValue(published.extentMax, published.sampleOffsets,
-                                    published.extentMaxSamples, frames,
-                                    &_PublishedExtentMax))
+                .SetMin(_FrameValue(
+                    published.extentMin, published.sampleOffsets,
+                    published.extentMinSamples, frames, &_PublishedExtentMin))
+                .SetMax(_FrameValue(
+                    published.extentMax, published.sampleOffsets,
+                    published.extentMaxSamples, frames, &_PublishedExtentMax))
                 .Build());
     }
 
     if (names.empty()) {
         return nullptr;
     }
-    return HdRetainedContainerDataSource::New(
-        names.size(), names.data(), values.data());
+    return HdRetainedContainerDataSource::New(names.size(), names.data(),
+                                              values.data());
 }
 
-}  // namespace
+} // namespace
 
 bool
 RigExecTryInvertXform(const GfMatrix4d &m, GfMatrix4d *inverse)
@@ -2223,12 +2248,11 @@ namespace {
 // The body of RigExecResultsSceneIndex::_ComputeDrivenXform, free so a
 // frame-valued transform (below) can compose another frame's snapshot.
 bool
-_ComputeDrivenXformFrom(
-    const HdSceneIndexBaseRefPtr &input,
-    const SdfPath &primPath,
-    const HdContainerDataSourceHandle &inputDataSource,
-    const RigExecImagingSnapshot &snapshot,
-    GfMatrix4d *result, float shutterOffset)
+_ComputeDrivenXformFrom(const HdSceneIndexBaseRefPtr &input,
+                        const SdfPath &primPath,
+                        const HdContainerDataSourceHandle &inputDataSource,
+                        const RigExecImagingSnapshot &snapshot,
+                        GfMatrix4d *result, float shutterOffset)
 {
     // Fast path. This runs for EVERY prim on EVERY pull, so a rig that drives
     // no transforms at all (a points-only rig, the common case) must not pay
@@ -2249,7 +2273,8 @@ _ComputeDrivenXformFrom(
          current = current.GetParentPath()) {
         const auto it = snapshot.prims.find(current);
         if (it == snapshot.prims.end() || !it->second.hasXform) {
-            if (snapshot.xformResetPaths.count(current)) break;
+            if (snapshot.xformResetPaths.count(current))
+                break;
             continue;
         }
         const GfMatrix4d worldOld =
@@ -2260,11 +2285,13 @@ _ComputeDrivenXformFrom(
         GfMatrix4d revised = published.xform, base = published.xformBase;
         if (!published.sampleOffsets.empty() &&
             published.xformSamples.size() == published.sampleOffsets.size() &&
-            published.xformBaseSamples.size() == published.sampleOffsets.size()) {
+            published.xformBaseSamples.size() ==
+                published.sampleOffsets.size()) {
             size_t sample = 0;
             for (size_t i = 1; i < published.sampleOffsets.size(); ++i) {
                 if (std::abs(published.sampleOffsets[i] - shutterOffset) <
-                    std::abs(published.sampleOffsets[sample] - shutterOffset)) sample = i;
+                    std::abs(published.sampleOffsets[sample] - shutterOffset))
+                    sample = i;
             }
             revised = published.xformSamples[sample];
             base = published.xformBaseSamples[sample];
@@ -2279,14 +2306,16 @@ _ComputeDrivenXformFrom(
         GfMatrix4d baseInverse(1.0);
         if (!_TryInvert(worldOld, &worldOldInverse) ||
             !_TryInvert(base, &baseInverse)) {
-            if (snapshot.xformResetPaths.count(current)) break;
+            if (snapshot.xformResetPaths.count(current))
+                break;
             continue;
         }
 
-        composed = composed * (worldOldInverse * revised *
-                               baseInverse * worldOld);
+        composed =
+            composed * (worldOldInverse * revised * baseInverse * worldOld);
         driven = true;
-        if (snapshot.xformResetPaths.count(current)) break;
+        if (snapshot.xformResetPaths.count(current))
+            break;
     }
     if (!driven) {
         return false;
@@ -2310,19 +2339,23 @@ class _DrivenXformDataSource final
 public:
     HD_DECLARE_DATASOURCE(_DrivenXformDataSource);
 
-    VtValue GetValue(Time offset) override {
+    VtValue GetValue(Time offset) override
+    {
         GfMatrix4d value;
         if (_Resolve(offset, &value)) {
             return VtValue(value);
         }
         return VtValue();
     }
-    GfMatrix4d GetTypedValue(Time offset) override {
+    GfMatrix4d GetTypedValue(Time offset) override
+    {
         GfMatrix4d value;
         return _Resolve(offset, &value) ? value : _base;
     }
-    bool GetContributingSampleTimesForInterval(
-        Time start, Time end, std::vector<Time> *times) override {
+    bool
+    GetContributingSampleTimesForInterval(Time start, Time end,
+                                          std::vector<Time> *times) override
+    {
         return _MotionSampleTimes(_offsets, start, end, times);
     }
 
@@ -2330,22 +2363,20 @@ private:
     _DrivenXformDataSource(HdSceneIndexBaseRefPtr input, SdfPath primPath,
                            HdContainerDataSourceHandle inputDataSource,
                            GfMatrix4d base, std::vector<float> offsets,
-                           std::vector<GfMatrix4d> samples,
-                           _FrameSource source)
-        : _input(std::move(input))
-        , _primPath(std::move(primPath))
-        , _inputDataSource(std::move(inputDataSource))
-        , _base(base)
-        , _offsets(std::move(offsets))
-        , _samples(std::move(samples))
-        , _source(std::move(source)) {
+                           std::vector<GfMatrix4d> samples, _FrameSource source)
+        : _input(std::move(input)), _primPath(std::move(primPath)),
+          _inputDataSource(std::move(inputDataSource)), _base(base),
+          _offsets(std::move(offsets)), _samples(std::move(samples)),
+          _source(std::move(source))
+    {
         if (_samples.size() != _offsets.size()) {
             _offsets.clear();
             _samples.clear();
         }
     }
 
-    bool _Resolve(Time offset, GfMatrix4d *value) const {
+    bool _Resolve(Time offset, GfMatrix4d *value) const
+    {
         if (std::abs(offset) < kFrameOffsetEpsilon) {
             *value = _base;
             return true;
@@ -2388,14 +2419,13 @@ private:
     const _FrameSource _source;
 };
 
-}  // namespace
+} // namespace
 
 bool
 RigExecResultsSceneIndex::_ComputeDrivenXform(
-    const SdfPath &primPath,
-    const HdContainerDataSourceHandle &inputDataSource,
-    const RigExecImagingSnapshot &snapshot,
-    GfMatrix4d *result, float shutterOffset) const
+    const SdfPath &primPath, const HdContainerDataSourceHandle &inputDataSource,
+    const RigExecImagingSnapshot &snapshot, GfMatrix4d *result,
+    float shutterOffset) const
 {
     return _ComputeDrivenXformFrom(_GetInputSceneIndex(), primPath,
                                    inputDataSource, snapshot, result,
@@ -2413,32 +2443,27 @@ RigExecResultsSceneIndex::GetPrim(const SdfPath &primPath) const
     bool guideIsCone = false;
     size_t guideIndex = 0;
     if (primPath.IsPrimPath() && !primPath.IsAbsoluteRootPath() &&
-        _ParseGuideName(primPath.GetNameToken(), &guideIsCone,
-                        &guideIndex) &&
+        _ParseGuideName(primPath.GetNameToken(), &guideIsCone, &guideIndex) &&
         !_GetInputSceneIndex()->GetPrim(primPath).dataSource) {
         const HdSceneIndexPrim parent =
             _GetInputSceneIndex()->GetPrim(primPath.GetParentPath());
         if (parent.dataSource) {
             if (const RigExecImagingSnapshotConstPtr snapshot =
                     _CurrentSnapshot()) {
-                const auto it =
-                    snapshot->prims.find(primPath.GetParentPath());
+                const auto it = snapshot->prims.find(primPath.GetParentPath());
                 if (it != snapshot->prims.end() && it->second.hasGuides &&
                     guideIndex < it->second.guideFrames.size() &&
-                    (guideIsCone
-                         ? _GuideHasCone(it->second, guideIndex)
-                         : _GuideHasSphere(it->second, guideIndex))) {
+                    (guideIsCone ? _GuideHasCone(it->second, guideIndex)
+                                 : _GuideHasSphere(it->second, guideIndex))) {
                     HdSceneIndexPrim prim;
                     prim.primType = guideIsCone ? HdPrimTypeTokens->cone
                                                 : HdPrimTypeTokens->sphere;
                     prim.dataSource = _BuildGuidePrim(
-                        it->second, guideIsCone, guideIndex,
-                        parent.dataSource,
-                        _ResolveAssetRootWorld(
-                            it->second.assetRoot.IsEmpty()
-                                ? snapshot->assetRoot
-                                : it->second.assetRoot,
-                            *snapshot));
+                        it->second, guideIsCone, guideIndex, parent.dataSource,
+                        _ResolveAssetRootWorld(it->second.assetRoot.IsEmpty()
+                                                   ? snapshot->assetRoot
+                                                   : it->second.assetRoot,
+                                               *snapshot));
                     return prim;
                 }
             }
@@ -2480,10 +2505,8 @@ RigExecResultsSceneIndex::GetPrim(const SdfPath &primPath) const
         if (parent.dataSource) {
             if (const RigExecImagingSnapshotConstPtr snapshot =
                     _CurrentSnapshot()) {
-                const auto it =
-                    snapshot->prims.find(primPath.GetParentPath());
-                if (it != snapshot->prims.end() &&
-                    it->second.hasControlGuide) {
+                const auto it = snapshot->prims.find(primPath.GetParentPath());
+                if (it != snapshot->prims.end() && it->second.hasControlGuide) {
                     if (const _ControlGuideShape *shape =
                             _FindControlGuideShape(
                                 it->second.controlGuideShape,
@@ -2516,20 +2539,18 @@ RigExecResultsSceneIndex::GetPrim(const SdfPath &primPath) const
         if (parent.dataSource) {
             if (const RigExecImagingSnapshotConstPtr snapshot =
                     _CurrentSnapshot()) {
-                const auto it =
-                    snapshot->prims.find(primPath.GetParentPath());
-                if (it != snapshot->prims.end() &&
-                    it->second.hasVolumeGuides &&
+                const auto it = snapshot->prims.find(primPath.GetParentPath());
+                if (it != snapshot->prims.end() && it->second.hasVolumeGuides &&
                     volumeIndex < it->second.volumeGuides.size()) {
                     HdSceneIndexPrim prim;
                     prim.primType =
                         it->second.volumeGuides[volumeIndex].primType;
                     prim.dataSource = _BuildVolumeGuidePrim(
                         it->second, volumeIndex, parent.dataSource,
-                        _ResolveAssetRootWorld(
-                            it->second.assetRoot.IsEmpty()
-                                ? snapshot->assetRoot : it->second.assetRoot,
-                            *snapshot));
+                        _ResolveAssetRootWorld(it->second.assetRoot.IsEmpty()
+                                                   ? snapshot->assetRoot
+                                                   : it->second.assetRoot,
+                                               *snapshot));
                     return prim;
                 }
             }
@@ -2556,8 +2577,9 @@ RigExecResultsSceneIndex::GetPrim(const SdfPath &primPath) const
     if (_ComputeDrivenXform(primPath, prim.dataSource, *snapshot,
                             &drivenXform)) {
         std::vector<float> offsets;
-        for (SdfPath current = primPath; !current.IsEmpty() &&
-                 !current.IsAbsoluteRootPath(); current = current.GetParentPath()) {
+        for (SdfPath current = primPath;
+             !current.IsEmpty() && !current.IsAbsoluteRootPath();
+             current = current.GetParentPath()) {
             const auto it = snapshot->prims.find(current);
             if (it != snapshot->prims.end() && it->second.hasXform) {
                 offsets.insert(offsets.end(), it->second.sampleOffsets.begin(),
@@ -2565,28 +2587,41 @@ RigExecResultsSceneIndex::GetPrim(const SdfPath &primPath) const
             }
         }
         // Preserve upstream motion as well as RigExec's explicit samples.
-        const auto appendUpstreamSamples = [&offsets](const HdContainerDataSourceHandle &root) {
-            const auto matrix = HdXformSchema::GetFromParent(root).GetMatrix();
-            if (!matrix) return;
-            std::vector<float> samples;
-            if (matrix->GetContributingSampleTimesForInterval(
-                    offsets.empty() ? 0.0f : *std::min_element(offsets.begin(), offsets.end()),
-                    offsets.empty() ? 0.0f : *std::max_element(offsets.begin(), offsets.end()),
-                    &samples)) offsets.insert(offsets.end(), samples.begin(), samples.end());
-        };
+        const auto appendUpstreamSamples =
+            [&offsets](const HdContainerDataSourceHandle &root) {
+                const auto matrix =
+                    HdXformSchema::GetFromParent(root).GetMatrix();
+                if (!matrix)
+                    return;
+                std::vector<float> samples;
+                if (matrix->GetContributingSampleTimesForInterval(
+                        offsets.empty()
+                            ? 0.0f
+                            : *std::min_element(offsets.begin(), offsets.end()),
+                        offsets.empty()
+                            ? 0.0f
+                            : *std::max_element(offsets.begin(), offsets.end()),
+                        &samples))
+                    offsets.insert(offsets.end(), samples.begin(),
+                                   samples.end());
+            };
         appendUpstreamSamples(prim.dataSource);
-        for (SdfPath current = primPath.GetParentPath(); !current.IsEmpty() &&
-                 !current.IsAbsoluteRootPath(); current = current.GetParentPath()) {
+        for (SdfPath current = primPath.GetParentPath();
+             !current.IsEmpty() && !current.IsAbsoluteRootPath();
+             current = current.GetParentPath()) {
             const auto it = snapshot->prims.find(current);
             if (it != snapshot->prims.end() && it->second.hasXform)
-                appendUpstreamSamples(_GetInputSceneIndex()->GetPrim(current).dataSource);
+                appendUpstreamSamples(
+                    _GetInputSceneIndex()->GetPrim(current).dataSource);
         }
         std::sort(offsets.begin(), offsets.end());
-        offsets.erase(std::unique(offsets.begin(), offsets.end()), offsets.end());
+        offsets.erase(std::unique(offsets.begin(), offsets.end()),
+                      offsets.end());
         std::vector<GfMatrix4d> samples;
         for (float offset : offsets) {
             GfMatrix4d value = _ReadXform(prim.dataSource, offset);
-            _ComputeDrivenXform(primPath, prim.dataSource, *snapshot, &value, offset);
+            _ComputeDrivenXform(primPath, prim.dataSource, *snapshot, &value,
+                                offset);
             samples.push_back(value);
         }
         static const TfToken xformName = HdXformSchemaTokens->xform;
@@ -2607,8 +2642,7 @@ RigExecResultsSceneIndex::GetPrim(const SdfPath &primPath) const
                 .Build();
         prim.dataSource =
             HdOverlayContainerDataSource::OverlayedContainerDataSources(
-                HdRetainedContainerDataSource::New(1, &xformName,
-                                                   &xformSource),
+                HdRetainedContainerDataSource::New(1, &xformName, &xformSource),
                 prim.dataSource);
     }
 
@@ -2616,9 +2650,8 @@ RigExecResultsSceneIndex::GetPrim(const SdfPath &primPath) const
     if (it == snapshot->prims.end()) {
         return prim;
     }
-    if (HdContainerDataSourceHandle strongRoot =
-            _BuildStrongRoot(it->second, prim.dataSource, primPath,
-                             *snapshot)) {
+    if (HdContainerDataSourceHandle strongRoot = _BuildStrongRoot(
+            it->second, prim.dataSource, primPath, *snapshot)) {
         // Container-on-container overlap composes recursively: owned
         // value leaves win while topology, descriptors, and unrelated
         // schemas continue to come from upstream.
@@ -2632,8 +2665,7 @@ RigExecResultsSceneIndex::GetPrim(const SdfPath &primPath) const
 SdfPathVector
 RigExecResultsSceneIndex::GetChildPrimPaths(const SdfPath &primPath) const
 {
-    SdfPathVector children =
-        _GetInputSceneIndex()->GetChildPrimPaths(primPath);
+    SdfPathVector children = _GetInputSceneIndex()->GetChildPrimPaths(primPath);
     const RigExecImagingSnapshotConstPtr snapshot = _CurrentSnapshot();
     if (!snapshot) {
         return children;
@@ -2690,7 +2722,7 @@ RigExecResultsSceneIndex::GetChildPrimPaths(const SdfPath &primPath) const
 namespace {
 constexpr uint8_t _GuideSphereBit = 1u;
 constexpr uint8_t _GuideConeBit = 2u;
-}
+} // namespace
 
 // One topology mask per guide payload element. This is exactly what traversal
 // finds, including the upstream-parent gate.
@@ -2724,7 +2756,8 @@ bool
 RigExecResultsSceneIndex::_DesiredGpuDeform(const SdfPath &path) const
 {
     const RigExecImagingSnapshotConstPtr snapshot = _CurrentSnapshot();
-    if (!snapshot) return false;
+    if (!snapshot)
+        return false;
     const auto it = snapshot->prims.find(path);
     return it != snapshot->prims.end() && _HasGpuDeform(it->second) &&
            _GetInputSceneIndex()->GetPrim(path).dataSource;
@@ -2833,15 +2866,14 @@ RigExecResultsSceneIndex::_RefreshAnnouncedVolumeGuides(const SdfPath &path)
 
 void
 RigExecResultsSceneIndex::_SyncVolumeGuideChildren(
-    const SdfPath &path,
-    HdSceneIndexObserver::AddedPrimEntries *added,
+    const SdfPath &path, HdSceneIndexObserver::AddedPrimEntries *added,
     HdSceneIndexObserver::RemovedPrimEntries *removed)
 {
     const std::vector<TfToken> desired = _DesiredVolumeGuideTypes(path);
     const auto it = _announcedVolumeGuides.find(path);
-    const std::vector<TfToken> announced =
-        it != _announcedVolumeGuides.end() ? it->second
-                                           : std::vector<TfToken>();
+    const std::vector<TfToken> announced = it != _announcedVolumeGuides.end()
+                                               ? it->second
+                                               : std::vector<TfToken>();
     if (desired.empty() && announced.empty()) {
         // Nothing believed on either side. Worth its own exit: every
         // published joint and control comes through here too, and this
@@ -2883,8 +2915,7 @@ RigExecResultsSceneIndex::_SyncVolumeGuideChildren(
 
 void
 RigExecResultsSceneIndex::_SyncControlGuideChild(
-    const SdfPath &path,
-    HdSceneIndexObserver::AddedPrimEntries *added,
+    const SdfPath &path, HdSceneIndexObserver::AddedPrimEntries *added,
     HdSceneIndexObserver::RemovedPrimEntries *removed)
 {
     const TfToken desired = _DesiredControlGuideType(path);
@@ -2899,8 +2930,8 @@ RigExecResultsSceneIndex::_SyncControlGuideChild(
     const SdfPath childPath = path.AppendChild(_controlGuideName);
     // Authored prims win colliding names: never claim (or remove) a path
     // that exists upstream.
-    const bool existsUpstream = static_cast<bool>(
-        _GetInputSceneIndex()->GetPrim(childPath).dataSource);
+    const bool existsUpstream =
+        static_cast<bool>(_GetInputSceneIndex()->GetPrim(childPath).dataSource);
     if (!desired.IsEmpty()) {
         // Re-added on a TYPE change as well as on a first appearance: a
         // control switched from wire to geometry keeps its child but stops
@@ -2920,8 +2951,7 @@ RigExecResultsSceneIndex::_SyncControlGuideChild(
 
 void
 RigExecResultsSceneIndex::_SyncGuideChildren(
-    const SdfPath &path,
-    HdSceneIndexObserver::AddedPrimEntries *added,
+    const SdfPath &path, HdSceneIndexObserver::AddedPrimEntries *added,
     HdSceneIndexObserver::RemovedPrimEntries *removed)
 {
     const std::vector<uint8_t> desired = _DesiredGuideTopology(path);
@@ -2943,8 +2973,7 @@ RigExecResultsSceneIndex::_SyncGuideChildren(
             added->emplace_back(spherePath, HdPrimTypeTokens->sphere);
         }
         if (desired[i] & _GuideConeBit) {
-            const SdfPath conePath =
-                path.AppendChild(_GuideName(true, i));
+            const SdfPath conePath = path.AppendChild(_GuideName(true, i));
             if (!existsUpstream(conePath)) {
                 added->emplace_back(conePath, HdPrimTypeTokens->cone);
             }
@@ -2952,13 +2981,11 @@ RigExecResultsSceneIndex::_SyncGuideChildren(
     }
     for (size_t i = desired.size(); i < announced.size(); ++i) {
         const SdfPath spherePath = path.AppendChild(_GuideName(false, i));
-        if ((announced[i] & _GuideSphereBit) &&
-            !existsUpstream(spherePath)) {
+        if ((announced[i] & _GuideSphereBit) && !existsUpstream(spherePath)) {
             removed->emplace_back(spherePath);
         }
         if (announced[i] & _GuideConeBit) {
-            const SdfPath conePath =
-                path.AppendChild(_GuideName(true, i));
+            const SdfPath conePath = path.AppendChild(_GuideName(true, i));
             if (!existsUpstream(conePath)) {
                 removed->emplace_back(conePath);
             }
@@ -2967,16 +2994,15 @@ RigExecResultsSceneIndex::_SyncGuideChildren(
     // A surviving element can independently gain or lose its sphere or cone.
     // Those are child-topology changes, not merely dirty values.
     for (size_t i = 0; i < common; ++i) {
-        for (const auto &[bit, isCone, primType] : {
-                 std::tuple<uint8_t, bool, TfToken>(
-                     _GuideSphereBit, false, HdPrimTypeTokens->sphere),
-                 std::tuple<uint8_t, bool, TfToken>(
-                     _GuideConeBit, true, HdPrimTypeTokens->cone)}) {
+        for (const auto &[bit, isCone, primType] :
+             {std::tuple<uint8_t, bool, TfToken>(_GuideSphereBit, false,
+                                                 HdPrimTypeTokens->sphere),
+              std::tuple<uint8_t, bool, TfToken>(_GuideConeBit, true,
+                                                 HdPrimTypeTokens->cone)}) {
             if ((announced[i] & bit) == (desired[i] & bit)) {
                 continue;
             }
-            const SdfPath childPath =
-                path.AppendChild(_GuideName(isCone, i));
+            const SdfPath childPath = path.AppendChild(_GuideName(isCone, i));
             if (existsUpstream(childPath)) {
                 continue;
             }
@@ -3008,8 +3034,7 @@ RigExecResultsSceneIndex::_SyncGuideChildren(
 // stay behind.
 void
 RigExecResultsSceneIndex::_DirtyAnnouncedGuideChildren(
-    const SdfPath &path,
-    const HdDataSourceLocatorSet &locators,
+    const SdfPath &path, const HdDataSourceLocatorSet &locators,
     HdSceneIndexObserver::DirtiedPrimEntries *entries) const
 {
     // Authored prims win colliding names, as everywhere else here: one is
@@ -3043,18 +3068,16 @@ RigExecResultsSceneIndex::_DirtyAnnouncedGuideChildren(
 // the synthesized guide children that are present only here.
 void
 RigExecResultsSceneIndex::_DirtySubtree(
-    const SdfPath &path,
-    const HdDataSourceLocatorSet &locators,
+    const SdfPath &path, const HdDataSourceLocatorSet &locators,
     HdSceneIndexObserver::DirtiedPrimEntries *entries) const
 {
     const RigExecImagingSnapshotConstPtr snapshot = _CurrentSnapshot();
     _DirtyAnnouncedGuideChildren(path, locators, entries);
     for (const SdfPath &child :
-             _GetInputSceneIndex()->GetChildPrimPaths(path)) {
-        entries->emplace_back(
-            child, snapshot
-                       ? _ShaderMatrixXformLocators(*snapshot, child, locators)
-                       : locators);
+         _GetInputSceneIndex()->GetChildPrimPaths(path)) {
+        entries->emplace_back(child, snapshot ? _ShaderMatrixXformLocators(
+                                                    *snapshot, child, locators)
+                                              : locators);
         _DirtySubtree(child, locators, entries);
     }
 }
@@ -3079,8 +3102,7 @@ RigExecResultsSceneIndex::_RefreshDrivenXform(const SdfPath &path)
 // whenever the rig moves its own root.
 GfMatrix4d
 RigExecResultsSceneIndex::_ResolveAssetRootWorld(
-    const SdfPath &assetRoot,
-    const RigExecImagingSnapshot &snapshot) const
+    const SdfPath &assetRoot, const RigExecImagingSnapshot &snapshot) const
 {
     if (assetRoot.IsEmpty()) {
         return GfMatrix4d(1.0);
@@ -3098,11 +3120,9 @@ RigExecResultsSceneIndex::_ResolveAssetRootWorld(
     // driven-transform overlay when one applies, the upstream flattened
     // matrix otherwise -- because _ComputeDrivenXform already takes the
     // generation to resolve against as a parameter.
-    const HdSceneIndexPrim prim =
-        _GetInputSceneIndex()->GetPrim(assetRoot);
+    const HdSceneIndexPrim prim = _GetInputSceneIndex()->GetPrim(assetRoot);
     GfMatrix4d driven(1.0);
-    if (_ComputeDrivenXform(assetRoot, prim.dataSource, snapshot,
-                            &driven)) {
+    if (_ComputeDrivenXform(assetRoot, prim.dataSource, snapshot, &driven)) {
         return driven;
     }
     return _ReadXform(prim.dataSource);
@@ -3185,8 +3205,8 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
     entries.reserve(dirtied.size());
     for (const RigExecPublishedDirty &entry : dirtied) {
         if (entry.changes & RigExecChangeStructural) {
-            entries.emplace_back(
-                entry.path, HdDataSourceLocatorSet::UniversalSet());
+            entries.emplace_back(entry.path,
+                                 HdDataSourceLocatorSet::UniversalSet());
 
             // An influence overlay APPEARING or DISAPPEARING changes which
             // primvars this prim owns, and that is a RESYNC, not a dirty.
@@ -3289,8 +3309,7 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
             const bool isDriven = _IsDrivenXform(entry.path);
             if (wasDriven || isDriven || (entry.changes & RigExecChangeXform)) {
                 _DirtySubtree(entry.path,
-                              HdDataSourceLocatorSet::UniversalSet(),
-                              &entries);
+                              HdDataSourceLocatorSet::UniversalSet(), &entries);
             }
             _RefreshDrivenXform(entry.path);
 
@@ -3350,12 +3369,12 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
             // intact gets no add of its own, so a surface whose radius or
             // placement moved in the same generation would otherwise keep
             // its old geometry forever.
-            const size_t survivingVolumes = std::min(
-                _announcedVolumeGuides.count(entry.path)
-                    ? _announcedVolumeGuides[entry.path].size() : size_t(0),
-                _DesiredVolumeGuideTypes(entry.path).size());
-            _SyncVolumeGuideChildren(entry.path, &addedGuides,
-                                     &removedGuides);
+            const size_t survivingVolumes =
+                std::min(_announcedVolumeGuides.count(entry.path)
+                             ? _announcedVolumeGuides[entry.path].size()
+                             : size_t(0),
+                         _DesiredVolumeGuideTypes(entry.path).size());
+            _SyncVolumeGuideChildren(entry.path, &addedGuides, &removedGuides);
             for (size_t i = 0; i < survivingVolumes; ++i) {
                 const SdfPath childPath =
                     entry.path.AppendChild(_VolumeGuideName(i));
@@ -3384,10 +3403,11 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
                             .dataSource) {
                 static const HdDataSourceLocatorSet controlGuideXform =
                     HdContainerDataSourceEditor::ComputeDirtyLocators(
-                        HdDataSourceLocatorSet{HdDataSourceLocator(
-                            HdXformSchemaTokens->xform,
-                            HdXformSchemaTokens->matrix)});
-                entries.emplace_back(controlGuidePath,
+                        HdDataSourceLocatorSet{
+                            HdDataSourceLocator(HdXformSchemaTokens->xform,
+                                                HdXformSchemaTokens->matrix)});
+                entries.emplace_back(
+                    controlGuidePath,
                     entry.changes & RigExecChangeGuides
                         ? HdDataSourceLocatorSet::UniversalSet()
                         : controlGuideXform);
@@ -3407,9 +3427,9 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
             } else {
                 static const HdDataSourceLocatorSet guideXform =
                     HdContainerDataSourceEditor::ComputeDirtyLocators(
-                        HdDataSourceLocatorSet{HdDataSourceLocator(
-                            HdXformSchemaTokens->xform,
-                            HdXformSchemaTokens->matrix)});
+                        HdDataSourceLocatorSet{
+                            HdDataSourceLocator(HdXformSchemaTokens->xform,
+                                                HdXformSchemaTokens->matrix)});
                 // A changed length moves a cone's height with its offset.
                 static const HdDataSourceLocatorSet coneLength =
                     HdContainerDataSourceEditor::ComputeDirtyLocators(
@@ -3436,9 +3456,9 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
                                 .dataSource) {
                             continue;
                         }
-                        entries.emplace_back(
-                            childPath,
-                            isCone && lengths ? coneLength : guideXform);
+                        entries.emplace_back(childPath, isCone && lengths
+                                                            ? coneLength
+                                                            : guideXform);
                     }
                 }
             }
@@ -3451,17 +3471,15 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
             if (announcedIt == _announcedGuides.end()) {
                 // Never announced (late consumer): the adds carry the
                 // fresh payload; no dirtying needed.
-                _SyncGuideChildren(entry.path, &addedGuides,
-                                   &removedGuides);
+                _SyncGuideChildren(entry.path, &addedGuides, &removedGuides);
             } else {
                 const std::vector<uint8_t> announcedGuides =
                     announcedIt->second;
                 const std::vector<uint8_t> desiredGuides =
                     _DesiredGuideTopology(entry.path);
-                _SyncGuideChildren(entry.path, &addedGuides,
-                                   &removedGuides);
-                const size_t survivingGuides = std::min(
-                    announcedGuides.size(), desiredGuides.size());
+                _SyncGuideChildren(entry.path, &addedGuides, &removedGuides);
+                const size_t survivingGuides =
+                    std::min(announcedGuides.size(), desiredGuides.size());
                 for (size_t i = 0; i < survivingGuides; ++i) {
                     auto dirty = [&](bool isCone) {
                         const SdfPath childPath =
@@ -3474,8 +3492,7 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
                             return;
                         }
                         entries.emplace_back(
-                            childPath,
-                            HdDataSourceLocatorSet::UniversalSet());
+                            childPath, HdDataSourceLocatorSet::UniversalSet());
                     };
                     if ((announcedGuides[i] & _GuideSphereBit) &&
                         (desiredGuides[i] & _GuideSphereBit)) {
@@ -3502,9 +3519,7 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
                 for (size_t i = 0; i < announcedVolumes->second.size(); ++i) {
                     const SdfPath childPath =
                         entry.path.AppendChild(_VolumeGuideName(i));
-                    if (_GetInputSceneIndex()
-                            ->GetPrim(childPath)
-                            .dataSource) {
+                    if (_GetInputSceneIndex()->GetPrim(childPath).dataSource) {
                         continue;
                     }
                     entries.emplace_back(
@@ -3514,9 +3529,10 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
         }
         HdDataSourceLocatorSet leaves;
         if (entry.changes & RigExecChangeXform) {
-            leaves.insert(HdDataSourceLocator(
-                HdXformSchemaTokens->xform, HdXformSchemaTokens->matrix));
-            if (const RigExecImagingSnapshotConstPtr snapshot = _CurrentSnapshot()) {
+            leaves.insert(HdDataSourceLocator(HdXformSchemaTokens->xform,
+                                              HdXformSchemaTokens->matrix));
+            if (const RigExecImagingSnapshotConstPtr snapshot =
+                    _CurrentSnapshot()) {
                 const auto prim = snapshot->prims.find(entry.path);
                 if (prim != snapshot->prims.end() &&
                     !prim->second.targetLocalShaderMatrices.empty()) {
@@ -3548,10 +3564,10 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
                 HdPrimvarSchemaTokens->primvarValue));
             // The compiled rig-owned structural blocks ride with owned points
             // (the locator table): the complete entries.
-            leaves.insert(HdDataSourceLocator(
-                HdPrimvarsSchemaTokens->primvars, HdTokens->velocities));
-            leaves.insert(HdDataSourceLocator(
-                HdPrimvarsSchemaTokens->primvars, HdTokens->accelerations));
+            leaves.insert(HdDataSourceLocator(HdPrimvarsSchemaTokens->primvars,
+                                              HdTokens->velocities));
+            leaves.insert(HdDataSourceLocator(HdPrimvarsSchemaTokens->primvars,
+                                              HdTokens->accelerations));
         }
         if (entry.changes &
             (RigExecChangeGpuDeform | RigExecChangeGpuDeformStatic)) {
@@ -3574,10 +3590,10 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
                         HdDataSourceLocatorSet::UniversalSet());
                 }
             }
-            leaves.insert(HdDataSourceLocator(
-                HdPrimvarsSchemaTokens->primvars, HdTokens->points));
-            leaves.insert(HdDataSourceLocator(
-                HdPrimvarsSchemaTokens->primvars, HdTokens->velocities));
+            leaves.insert(HdDataSourceLocator(HdPrimvarsSchemaTokens->primvars,
+                                              HdTokens->points));
+            leaves.insert(HdDataSourceLocator(HdPrimvarsSchemaTokens->primvars,
+                                              HdTokens->velocities));
         }
         if (entry.changes & RigExecChangeShaderMatrix) {
             // The primvars CONTAINER, not one named leaf: the flag says a
@@ -3587,8 +3603,8 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
             // a value dirty, so Hydra keeps the descriptors it announced
             // on the first sync, where a structural one would resync the
             // prim every time an eye moved.
-            leaves.insert(HdDataSourceLocator(
-                HdPrimvarsSchemaTokens->primvars));
+            leaves.insert(
+                HdDataSourceLocator(HdPrimvarsSchemaTokens->primvars));
         }
         if (entry.changes & RigExecChangeNormals) {
             leaves.insert(HdDataSourceLocator(
@@ -3606,10 +3622,10 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
                 HdPrimvarSchemaTokens->primvarValue));
         }
         if (entry.changes & RigExecChangeExtent) {
-            leaves.insert(HdDataSourceLocator(
-                HdExtentSchemaTokens->extent, HdExtentSchemaTokens->min));
-            leaves.insert(HdDataSourceLocator(
-                HdExtentSchemaTokens->extent, HdExtentSchemaTokens->max));
+            leaves.insert(HdDataSourceLocator(HdExtentSchemaTokens->extent,
+                                              HdExtentSchemaTokens->min));
+            leaves.insert(HdDataSourceLocator(HdExtentSchemaTokens->extent,
+                                              HdExtentSchemaTokens->max));
         }
         if (leaves.IsEmpty()) {
             continue;
@@ -3629,9 +3645,8 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
     if (!xformRoots.empty()) {
         static const HdDataSourceLocatorSet xformSubtree =
             HdContainerDataSourceEditor::ComputeDirtyLocators(
-                HdDataSourceLocatorSet{
-                    HdDataSourceLocator(HdXformSchemaTokens->xform,
-                                        HdXformSchemaTokens->matrix)});
+                HdDataSourceLocatorSet{HdDataSourceLocator(
+                    HdXformSchemaTokens->xform, HdXformSchemaTokens->matrix)});
         std::sort(xformRoots.begin(), xformRoots.end());
         xformRoots.erase(std::unique(xformRoots.begin(), xformRoots.end()),
                          xformRoots.end());
@@ -3725,9 +3740,8 @@ RigExecResultsSceneIndex::_NoteUpstreamAdded(
     for (const auto &entry : entries) {
         const HdSceneIndexPrim prim = input->GetPrim(entry.primPath);
         const bool carries =
-            prim.dataSource &&
-            HdContainerDataSource::Cast(
-                prim.dataSource->Get(RigExecUpstreamInputsToken()));
+            prim.dataSource && HdContainerDataSource::Cast(prim.dataSource->Get(
+                                   RigExecUpstreamInputsToken()));
         if (carries) {
             _upstreamPrims.insert(entry.primPath);
             noted = true;
@@ -3752,8 +3766,7 @@ RigExecResultsSceneIndex::_NoteUpstreamDirtied(
         // A universal dirty (a compiled rig swap's, among others) names no
         // source: it re-pulls a prim already known to carry one, and
         // discovers none.
-        if (entry.dirtyLocators.Contains(
-                HdDataSourceLocator::EmptyLocator())) {
+        if (entry.dirtyLocators.Contains(HdDataSourceLocator::EmptyLocator())) {
             if (_upstreamPrims.count(entry.primPath)) {
                 noted = true;
             }
@@ -3836,7 +3849,7 @@ RigExecResultsSceneIndex::_PullUpstreamOnce(_UpstreamPull why)
     // The window under the context's lock, released before any source is
     // called (a source may send a notice that re-enters the context).
     const RigExecUpstreamPullWindow window = context->GetUpstreamPullWindow();
-    const double t0 = _haveUpstreamT0 ? _upstreamT0
+    const double t0 = _haveUpstreamT0   ? _upstreamT0
                       : window.haveTime ? window.time
                                         : window.lo;
     const double lo = std::min(window.lo, t0);
@@ -3863,10 +3876,9 @@ RigExecResultsSceneIndex::_PullUpstreamOnce(_UpstreamPull why)
         const double last = std::floor(hi);
         table->firstFrame = int64_t(first);
         table->frameCount =
-            last >= first
-                ? size_t(std::min<int64_t>(int64_t(last - first) + 1,
-                                           kMaxFrames))
-                : 0;
+            last >= first ? size_t(std::min<int64_t>(int64_t(last - first) + 1,
+                                                     kMaxFrames))
+                          : 0;
         _upstreamSourcesDirty = false;
         const HdSceneIndexBaseRefPtr &input = _GetInputSceneIndex();
         std::vector<SdfPath> gone;
@@ -3953,8 +3965,8 @@ RigExecResultsSceneIndex::_IsTimeTriggerDirty(
     // locator intersects everything. The locator test runs first, so the
     // xform-preview dirties sent while a context holds its lock never
     // reach the context lookup.
-    static const HdDataSourceLocator trigger(
-        RigExecTriggerContainerToken(), RigExecTriggerLeafToken());
+    static const HdDataSourceLocator trigger(RigExecTriggerContainerToken(),
+                                             RigExecTriggerLeafToken());
     if (!entry.dirtyLocators.Intersects(trigger)) {
         return false;
     }
@@ -4041,13 +4053,12 @@ RigExecResultsSceneIndex::_PrimsAdded(
     HdSceneIndexObserver::AddedPrimEntries addedGuides;
     HdSceneIndexObserver::RemovedPrimEntries removedGuides;
     for (const auto &entry : entries) {
-        _announcedGuides.erase(entry.primPath);  // re-add is a resync
+        _announcedGuides.erase(entry.primPath); // re-add is a resync
         _SyncGuideChildren(entry.primPath, &addedGuides, &removedGuides);
         _announcedControlGuides.erase(entry.primPath);
         _SyncControlGuideChild(entry.primPath, &addedGuides, &removedGuides);
         _announcedVolumeGuides.erase(entry.primPath);
-        _SyncVolumeGuideChildren(entry.primPath, &addedGuides,
-                                 &removedGuides);
+        _SyncVolumeGuideChildren(entry.primPath, &addedGuides, &removedGuides);
     }
     if (!removedGuides.empty()) {
         _SendPrimsRemoved(removedGuides);
@@ -4072,22 +4083,26 @@ RigExecResultsSceneIndex::_PrimsRemoved(
             for (auto it = _announcedGuides.begin();
                  it != _announcedGuides.end();) {
                 it = it->first.HasPrefix(entry.primPath)
-                    ? _announcedGuides.erase(it) : std::next(it);
+                         ? _announcedGuides.erase(it)
+                         : std::next(it);
             }
             for (auto it = _announcedControlGuides.begin();
                  it != _announcedControlGuides.end();) {
                 it = it->first.HasPrefix(entry.primPath)
-                    ? _announcedControlGuides.erase(it) : std::next(it);
+                         ? _announcedControlGuides.erase(it)
+                         : std::next(it);
             }
             for (auto it = _announcedVolumeGuides.begin();
                  it != _announcedVolumeGuides.end();) {
                 it = it->first.HasPrefix(entry.primPath)
-                    ? _announcedVolumeGuides.erase(it) : std::next(it);
+                         ? _announcedVolumeGuides.erase(it)
+                         : std::next(it);
             }
             for (auto it = _announcedDrivenXforms.begin();
                  it != _announcedDrivenXforms.end();) {
                 it = it->HasPrefix(entry.primPath)
-                    ? _announcedDrivenXforms.erase(it) : std::next(it);
+                         ? _announcedDrivenXforms.erase(it)
+                         : std::next(it);
             }
         }
         return;
@@ -4148,8 +4163,7 @@ RigExecResultsSceneIndex::_PrimsRemoved(
                                 &index)) {
                 revealedParents.insert(entry.primPath.GetParentPath());
             } else if (entry.primPath.GetNameToken() == _controlGuideName) {
-                revealedControlParents.insert(
-                    entry.primPath.GetParentPath());
+                revealedControlParents.insert(entry.primPath.GetParentPath());
             } else if (_ParseVolumeGuideName(entry.primPath.GetNameToken(),
                                              &index)) {
                 revealedVolumeParents.insert(entry.primPath.GetParentPath());
@@ -4288,7 +4302,7 @@ RigExecResultsSceneIndex::_PrimsDirtied(
 // RigExecXformOverrideSceneIndex
 
 RigExecXformOverrideSceneIndex::RigExecXformOverrideSceneIndex(
-    const HdSceneIndexBaseRefPtr &inputSceneIndex)
+    _FactoryTag, const HdSceneIndexBaseRefPtr &inputSceneIndex)
     : HdSingleInputFilteringSceneIndexBase(inputSceneIndex)
 {
 }
@@ -4445,4 +4459,4 @@ RigExecXformOverrideSceneIndex::_PrimsDirtied(
     }
 }
 
-}  // namespace rigExec
+} // namespace rigExec

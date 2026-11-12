@@ -39,6 +39,7 @@
 #include "types.h"
 
 #include "rigExecMath/pointFrame.h"
+#include "rigExecSchema/schemaTokens.h"
 
 #include "pxr/base/gf/math.h"
 #include "pxr/base/tf/getenv.h"
@@ -47,6 +48,7 @@
 #include "pxr/base/work/dispatcher.h"
 #include "pxr/base/work/loops.h"
 #include "pxr/base/gf/rotation.h"
+#include "pxr/usd/sdf/schema.h"
 #include "pxr/usd/sdf/types.h"
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/attributeQuery.h"
@@ -78,8 +80,8 @@ namespace {
 
 TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
-    ((rigExecBaseWeight, "rigExec:baseWeight"))
-    ((rigExecInputWeights, "rigExec:inputWeights"))
+    ((rigExecBaseWeight, SchemaAttrText::rigExecBaseWeight))
+    ((rigExecInputWeights, SchemaAttrText::rigExecInputWeights))
     (xformOpOrder)
     ((default_, "default"))
     (timeSamples)
@@ -88,76 +90,80 @@ TF_DEFINE_PRIVATE_TOKENS(
     (custom)
     (variability)
     (visibility)
-    ((xyz, "XYZ"))
-    ((rigExecIkValue, "rigExec:ikValue"))
-    ((inputsGain, "inputs:gain"))
-    ((rigExecBasis, "rigExec:basis"))
-    ((rigExecPoseRotations, "rigExec:poseRotations"))
-    ((rigExecPoseFalloffs, "rigExec:poseFalloffs"))
-    ((rigExecPoseGains, "rigExec:poseGains"))
-    ((rigExecKernel, "rigExec:kernel"))
-    ((rigExecRegularization, "rigExec:regularization"))
-    ((rigExecTarget, "rigExec:target"))
-    ((inputsActiveSpace, "inputs:activeSpace"))
-    ((rigExecOperation, "rigExec:operation"))
-    ((rigExecWeightObject, "rigExec:weightObject"))
-    ((rigExecCombineWeight, "RigExecCombineWeight"))
-    ((rigExecCurveWeight, "RigExecCurveWeight"))
-    ((rigExecPlaneWeight, "RigExecPlaneWeight"))
-    ((rigExecDynamicWeight, "RigExecDynamicWeight"))
-    ((rigExecCombineMode, "rigExec:combineMode"))
+    ((xyz, SchemaValueText::xyz))
+    ((rigExecIkValue, SchemaAttrText::rigExecIkValue))
+    ((inputsGain, SchemaAttrText::inputsGain))
+    ((rigExecBasis, SchemaAttrText::rigExecBasis))
+    ((rigExecPoseRotations, SchemaAttrText::rigExecPoseRotations))
+    ((rigExecPoseFalloffs, SchemaAttrText::rigExecPoseFalloffs))
+    ((rigExecPoseGains, SchemaAttrText::rigExecPoseGains))
+    ((rigExecKernel, SchemaAttrText::rigExecKernel))
+    ((rigExecRegularization, SchemaAttrText::rigExecRegularization))
+    ((rigExecTarget, SchemaAttrText::rigExecTarget))
+    ((inputsActiveSpace, SchemaAttrText::inputsActiveSpace))
+    ((rigExecOperation, SchemaAttrText::rigExecOperation))
+    ((rigExecWeightObject, SchemaAttrText::rigExecWeightObject))
+    ((rigExecCombineWeight, SchemaTypeName::RigExecCombineWeight))
+    ((rigExecCurveWeight, SchemaTypeName::RigExecCurveWeight))
+    ((rigExecPlaneWeight, SchemaTypeName::RigExecPlaneWeight))
+    ((rigExecDynamicWeight, SchemaTypeName::RigExecDynamicWeight))
+    ((rigExecCombineMode, SchemaAttrText::rigExecCombineMode))
     (multiply)
-    ((rigExecWeightTarget, "rigExec:weightTarget"))
-    ((rigExecSampleSource, "rigExec:sampleSource"))
-    ((rigExecCurve, "rigExec:curve"))
-    ((rigExecPlaneAxis, "rigExec:planeAxis"))
+    ((rigExecWeightTarget, SchemaAttrText::rigExecWeightTarget))
+    ((rigExecSampleSource, SchemaAttrText::rigExecSampleSource))
+    ((rigExecCurve, SchemaAttrText::rigExecCurve))
+    ((rigExecPlaneAxis, SchemaAttrText::rigExecPlaneAxis))
     (y)
-    ((rigExecPlaneBounds, "rigExec:planeBounds"))
+    ((rigExecPlaneBounds, SchemaAttrText::rigExecPlaneBounds))
     (unbounded)
-    ((rigExecRepresentation, "rigExec:representation"))
+    ((rigExecRepresentation, SchemaAttrText::rigExecRepresentation))
     (constant)
-    ((rigExecRangePolicy, "rigExec:rangePolicy"))
+    ((rigExecRangePolicy, SchemaAttrText::rigExecRangePolicy))
     (strict)
-    ((rigExecIndices, "rigExec:indices"))
-    ((rigExecValues, "rigExec:values"))
-    ((rigExecDefaultWeight, "rigExec:defaultWeight"))
-    ((inputsEnabled, "inputs:enabled"))
-    ((inputsMask, "inputs:mask"))
-    ((inputsDefaultWeight, "inputs:defaultWeight"))
-    ((inputsValue, "inputs:value"))
-    ((inputsMin, "inputs:min"))
-    ((inputsMax, "inputs:max"))
-    ((inputsKeys, "inputs:keys"))
-    ((inputsTangents, "inputs:tangents"))
+    ((rigExecIndices, SchemaAttrText::rigExecIndices))
+    ((rigExecValues, SchemaAttrText::rigExecValues))
+    ((rigExecDefaultWeight, SchemaAttrText::rigExecDefaultWeight))
+    ((inputsEnabled, SchemaAttrText::inputsEnabled))
+    ((inputsMask, SchemaAttrText::inputsMask))
+    ((inputsDefaultWeight, SchemaAttrText::inputsDefaultWeight))
+    ((inputsValue, SchemaAttrText::inputsValue))
+    ((inputsMin, SchemaAttrText::inputsMin))
+    ((inputsMax, SchemaAttrText::inputsMax))
+    ((inputsKeys, SchemaAttrText::inputsKeys))
+    ((inputsTangents, SchemaAttrText::inputsTangents))
 );
 
-// The channels Build's parallel resolve lanes bind, interned at load:
-// TfToken from text takes the token registry's lock on every construction.
-const TfToken kPosedSpace("posed:space");
-const TfToken kRestSpace("rest:space");
-const TfToken kDefaultSpace("default:space");
-const TfToken kParentSpace("parent:space");
-const TfToken kParentDefaultSpace("parent:defaultSpace");
-const TfToken kAvarDefaultSpace("avars:defaultSpace");
-const TfToken kPosedDefaultSpace("posed:defaultSpace");
-const TfToken kRotationSign("avars:rotationSign");
-const TfToken kRotationOrder("avars:rotationOrder");
-const TfToken kRestAvarTokens[6] = {
-    TfToken("rest:tx"), TfToken("rest:ty"), TfToken("rest:tz"),
-    TfToken("rest:rx"), TfToken("rest:ry"), TfToken("rest:rz")};
+// The channels Build's parallel resolve lanes bind. They are the interned
+// SchemaAttr tokens, so no lane builds a token from text.
+const TfToken &kPosedSpace = SchemaAttr::posedSpace;
+const TfToken &kRestSpace = SchemaAttr::restSpace;
+const TfToken &kDefaultSpace = SchemaAttr::defaultSpace;
+const TfToken &kParentSpace = SchemaAttr::parentSpace;
+const TfToken &kParentDefaultSpace = SchemaAttr::parentDefaultSpace;
+const TfToken &kAvarDefaultSpace = SchemaAttr::avarsDefaultSpace;
+const TfToken &kPosedDefaultSpace = SchemaAttr::posedDefaultSpace;
+const TfToken &kRotationSign = SchemaAttr::avarsRotationSign;
+const TfToken &kRotationOrder = SchemaAttr::avarsRotationOrder;
+const TfToken kRestAvarTokens[6] = {SchemaAttr::restTx, SchemaAttr::restTy,
+                                    SchemaAttr::restTz, SchemaAttr::restRx,
+                                    SchemaAttr::restRy, SchemaAttr::restRz};
 const TfToken kDefaultAvarTokens[6] = {
-    TfToken("default:tx"), TfToken("default:ty"), TfToken("default:tz"),
-    TfToken("default:rx"), TfToken("default:ry"), TfToken("default:rz")};
+    SchemaAttr::defaultTx, SchemaAttr::defaultTy, SchemaAttr::defaultTz,
+    SchemaAttr::defaultRx, SchemaAttr::defaultRy, SchemaAttr::defaultRz};
 // RigExecBakedAvarNames, in its order.
 static_assert(std::size(RigExecBakedAvarNames) == 11,
               "kAvarTokens interns every avar name");
-const TfToken kAvarTokens[11] = {
-    TfToken(RigExecBakedAvarNames[0]), TfToken(RigExecBakedAvarNames[1]),
-    TfToken(RigExecBakedAvarNames[2]), TfToken(RigExecBakedAvarNames[3]),
-    TfToken(RigExecBakedAvarNames[4]), TfToken(RigExecBakedAvarNames[5]),
-    TfToken(RigExecBakedAvarNames[6]), TfToken(RigExecBakedAvarNames[7]),
-    TfToken(RigExecBakedAvarNames[8]), TfToken(RigExecBakedAvarNames[9]),
-    TfToken(RigExecBakedAvarNames[10])};
+const TfToken kAvarTokens[11] = {SchemaAttr::avarsTx,
+                                 SchemaAttr::avarsTy,
+                                 SchemaAttr::avarsTz,
+                                 SchemaAttr::avarsSx,
+                                 SchemaAttr::avarsSy,
+                                 SchemaAttr::avarsSz,
+                                 SchemaAttr::avarsRx,
+                                 SchemaAttr::avarsRy,
+                                 SchemaAttr::avarsRz,
+                                 SchemaAttr::avarsRspin,
+                                 SchemaAttr::avarsUnitScaleFactor};
 
 // A plain attribute read with no time and no resolution walk, for the
 // uniform tokens the dynamic path reads exactly this way
@@ -194,14 +200,14 @@ _Targets(const UsdPrim &prim, const TfToken &name)
 bool
 _IsBakedConstraintType(const TfToken &type)
 {
-    const bool baked = type == "RigExecPositionConstraint" ||
-           type == "RigExecRotationConstraint" ||
-           type == "RigExecScaleConstraint" ||
-           type == "RigExecParentConstraint" ||
-           type == "RigExecAimConstraint" ||
-           type == "RigExecSingleChainIkConstraint" ||
-           type == "RigExecIkFkMatchConstraint" ||
-           type == "RigExecHarmonicsConstraint";
+    const bool baked = type == SchemaType::RigExecPositionConstraint ||
+                       type == SchemaType::RigExecRotationConstraint ||
+                       type == SchemaType::RigExecScaleConstraint ||
+                       type == SchemaType::RigExecParentConstraint ||
+                       type == SchemaType::RigExecAimConstraint ||
+                       type == SchemaType::RigExecSingleChainIkConstraint ||
+                       type == SchemaType::RigExecIkFkMatchConstraint ||
+                       type == SchemaType::RigExecHarmonicsConstraint;
     // RigExecRigEvaluator::GetConstraintOperatorTypeNames() is the authority
     // on which operators exist; this is the subset the program can express,
     // and it must stay a subset. A name here the evaluator does not register
@@ -209,17 +215,21 @@ _IsBakedConstraintType(const TfToken &type)
     // an operator that simply never takes the baked path.
     TF_VERIFY(!baked || RigExecRigEvaluator::IsConstraintOperatorType(type),
               "rigExec: %s is baked but is not a registered constraint "
-              "operator", type.GetText());
+              "operator",
+              type.GetText());
     return baked;
 }
 
 bool
 _IsBakedSolverType(const TfToken &type)
 {
-    return type == "RigExecFkChain" || type == "RigExecTwoBoneIk" ||
-           type == "RigExecBlendPointFrames" || type == "RigExecSplineIk" ||
-           type == "RigExecTwistDistribution" || type == "RigExecRibbon" ||
-           type == "RigExecSkeleton2d";
+    return type == SchemaType::RigExecFkChain ||
+           type == SchemaType::RigExecTwoBoneIk ||
+           type == SchemaType::RigExecBlendPointFrames ||
+           type == SchemaType::RigExecSplineIk ||
+           type == SchemaType::RigExecTwistDistribution ||
+           type == SchemaType::RigExecRibbon ||
+           type == SchemaType::RigExecSkeleton2d;
 }
 
 // The three placeable weight shapes, which the evaluator spells the same way
@@ -229,8 +239,9 @@ _IsBakedSolverType(const TfToken &type)
 bool
 _IsVolumeWeightTypeName(const TfToken &type)
 {
-    return type == "RigExecSphereWeight" || type == "RigExecPlaneWeight" ||
-           type == "RigExecCurveWeight";
+    return type == SchemaTypeName::RigExecSphereWeight ||
+           type == SchemaTypeName::RigExecPlaneWeight ||
+           type == SchemaTypeName::RigExecCurveWeight;
 }
 
 // The volumes the walk places (_nativeVolumeProviders) that have no
@@ -276,8 +287,7 @@ std::vector<SdfPath>
 _SolverCheckpointsWithoutAnOutput(
     const std::map<SdfPath, std::set<SdfPath>> &snapshots,
     const std::map<SdfPath, std::set<SdfPath>> &solverDependencies,
-    const std::map<SdfPath, std::vector<std::pair<SdfPath, int>>>
-        &solverJoints,
+    const std::map<SdfPath, std::vector<std::pair<SdfPath, int>>> &solverJoints,
     const std::set<SdfPath> &batched)
 {
     std::vector<SdfPath> missing;
@@ -310,8 +320,10 @@ _SolverCheckpointsWithoutAnOutput(
 bool
 _IsBakedWeightType(const TfToken &type)
 {
-    return type == "RigExecStaticWeight" || type == "RigExecDynamicWeight" ||
-           type == "RigExecCombineWeight" || _IsVolumeWeightTypeName(type);
+    return type == SchemaTypeName::RigExecStaticWeight ||
+           type == SchemaTypeName::RigExecDynamicWeight ||
+           type == SchemaTypeName::RigExecCombineWeight ||
+           _IsVolumeWeightTypeName(type);
 }
 
 // A numeric probe time. Selection along a connection chain must not depend on
@@ -350,12 +362,14 @@ _AttributeIsIdentity(const UsdPrim &prim, const TfToken &name, bool *connected)
 // expression that follows the namespace parent, or a posed frame -- not the
 // attribute's authored value. A connection that ENDS at one of them is
 // therefore outside the single-connection walk the binding table performs.
+const char *const kComputedSpaces[] = {
+    SchemaAttrText::defaultSpace,       SchemaAttrText::avarsDefaultSpace,
+    SchemaAttrText::posedDefaultSpace,  SchemaAttrText::parentSpace,
+    SchemaAttrText::parentDefaultSpace, SchemaAttrText::posedSpace};
+
 bool
 _ConnectionReachesComputedSpace(const UsdAttribute &attribute)
 {
-    static const char *const kComputedSpaces[] = {
-        "default:space", "avars:defaultSpace", "posed:defaultSpace",
-        "parent:space", "parent:defaultSpace", "posed:space"};
     // Mirrors RigExecBakedClassifyInput's loop, and stops on the same two
     // conditions it does: a cycle, or a fan-out the walk cannot follow.
     std::set<SdfPath> visiting;
@@ -381,44 +395,49 @@ _ConnectionReachesComputedSpace(const UsdAttribute &attribute)
     return false;
 }
 
-}  // namespace
+} // namespace
 
 // Bakeability.
 
 namespace {
-void _SampleIntervening(RigExecBakedProgramImpl *program, UsdTimeCode time)
+void
+_SampleIntervening(RigExecBakedProgramImpl *program, UsdTimeCode time)
 {
     auto &B = *program;
-    if (B.interveningSlots.empty()) return;
+    if (B.interveningSlots.empty())
+        return;
     UsdGeomXformCache cache(time);
     for (size_t k = 0; k < B.interveningSlots.size(); ++k) {
         const size_t slot = size_t(B.interveningSlots[k]);
         auto &input = B.ladders[slot].interveningSpace;
-        const UsdPrim parent = B.stage->GetPrimAtPath(B.paths[slot].GetParentPath());
+        const UsdPrim parent =
+            B.stage->GetPrimAtPath(B.paths[slot].GetParentPath());
         const UsdPrim anchor = B.stage->GetPrimAtPath(B.interveningAnchors[k]);
         bool reset = false;
-        input.constant = parent && anchor && parent != anchor
-            ? cache.ComputeRelativeTransform(parent, anchor, &reset) : GfMatrix4d(1.0);
+        input.constant =
+            parent && anchor && parent != anchor
+                ? cache.ComputeRelativeTransform(parent, anchor, &reset)
+                : GfMatrix4d(1.0);
         B.ladders[slot].interveningReset = reset;
-        if (reset) input.constant = GfMatrix4d(1.0);
+        if (reset)
+            input.constant = GfMatrix4d(1.0);
         if (input.leaf >= 0) {
             auto &pool = B.leaves.Of<GfMatrix4d>();
             const size_t leaf = size_t(input.leaf);
             // Bitwise, as every typed leaf compares: -0 is not 0.
-            RigExecBakedNoteLeafWrite(
-                &pool, leaf,
-                std::memcmp(pool.value[leaf].GetArray(),
-                            input.constant.GetArray(),
-                            16 * sizeof(double)) != 0);
+            RigExecBakedNoteLeafWrite(&pool, leaf,
+                                      std::memcmp(pool.value[leaf].GetArray(),
+                                                  input.constant.GetArray(),
+                                                  16 * sizeof(double)) != 0);
             pool.value[leaf] = input.constant;
         }
     }
 }
-}
+} // namespace
 
 bool
 RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
-                               std::vector<std::string> *reasons)
+                                std::vector<std::string> *reasons)
 {
     // The refusal list IS the answer here -- the walk below is the same
     // whether or not anybody wants to read the sentences -- so a caller
@@ -445,7 +464,7 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
     // joint or control of the rig; this is the same fact stated against the
     // program's own table.
     for (const RigExecRigEvaluator::_PoseInterpolator &record :
-             E._poseInterpolators) {
+         E._poseInterpolators) {
         // A NUMERIC driver reads dials rather than a frame: it names no
         // driver prim, so there is no slot for one to be. An ML mover reads
         // both.
@@ -498,7 +517,7 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
         }
         for (const auto &source : sw.sources) {
             if (source.path.IsEmpty()) {
-                continue;   // world: identity, no slot needed
+                continue; // world: identity, no slot needed
             }
             if (!E._nativeProviderPaths.count(source.path)) {
                 say("space switch source has no slot", source.path);
@@ -517,7 +536,8 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
         // one difference the compose has to know about, which is that their
         // scale avars are read and discarded (RigExecBakedProgramImpl::
         // noScaleAvars).
-        if (type != "RigExecJoint" && type != "RigExecControl" &&
+        if (type != SchemaTypeName::RigExecJoint &&
+            type != SchemaTypeName::RigExecControl &&
             !_IsVolumeWeightTypeName(type)) {
             say("provider type not baked (" + type.GetString() + ")", path);
         }
@@ -564,8 +584,7 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
         const UsdPrim prim = E._stage->GetPrimAtPath(solverPath);
         const TfToken type = prim ? prim.GetTypeName() : TfToken();
         if (!_IsBakedSolverType(type)) {
-            say("solver type not baked (" + type.GetString() + ")",
-                solverPath);
+            say("solver type not baked (" + type.GetString() + ")", solverPath);
         }
     }
 
@@ -576,27 +595,28 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
     // trusting the compile pass to have rejected a cycle first: a
     // bakeability check that only terminates because somebody else checked is
     // not one to leave in place.
-    const auto walkWeights = [&E](const SdfPath &root,
-                                  const std::function<bool(const UsdPrim &)>
-                                      &visit) {
-        std::set<SdfPath> seen;
-        std::function<void(const SdfPath &)> walk = [&](const SdfPath &path) {
-            if (path.IsEmpty() || !seen.insert(path).second) {
-                return;
-            }
-            const UsdPrim prim = E._stage->GetPrimAtPath(path);
-            if (!prim || !visit(prim)) {
-                return;
-            }
-            for (const TfToken &name : {_tokens->rigExecBaseWeight,
-                                        _tokens->rigExecInputWeights}) {
-                for (const SdfPath &input : _Targets(prim, name)) {
-                    walk(input);
-                }
-            }
+    const auto walkWeights =
+        [&E](const SdfPath &root,
+             const std::function<bool(const UsdPrim &)> &visit) {
+            std::set<SdfPath> seen;
+            std::function<void(const SdfPath &)> walk =
+                [&](const SdfPath &path) {
+                    if (path.IsEmpty() || !seen.insert(path).second) {
+                        return;
+                    }
+                    const UsdPrim prim = E._stage->GetPrimAtPath(path);
+                    if (!prim || !visit(prim)) {
+                        return;
+                    }
+                    for (const TfToken &name : {_tokens->rigExecBaseWeight,
+                                                _tokens->rigExecInputWeights}) {
+                        for (const SdfPath &input : _Targets(prim, name)) {
+                            walk(input);
+                        }
+                    }
+                };
+            walk(root);
         };
-        walk(root);
-    };
     const auto sayUnbakedWeights = [&](const SdfPath &root) {
         walkWeights(root, [&](const UsdPrim &prim) {
             const TfToken type = prim.GetTypeName();
@@ -613,7 +633,7 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
         // A transform-domain matrix mover rides the constraint walk without
         // being a constraint operator, so it is admitted by name here
         // rather than through the operator registry's subset check.
-        if (constraint.schemaType != "RigExecMatrixMover" &&
+        if (constraint.schemaType != SchemaTypeName::RigExecMatrixMover &&
             !_IsBakedConstraintType(constraint.schemaType)) {
             say("constraint type not baked (" +
                     constraint.schemaType.GetString() + ")",
@@ -626,7 +646,8 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
         sayUnbakedWeights(constraint.weightObject);
         // An IK/FK match revises no frame a reader sees, so it has none.
         if (constraint.targets.empty() &&
-            constraint.schemaType != "RigExecIkFkMatchConstraint") {
+            constraint.schemaType !=
+                SchemaTypeName::RigExecIkFkMatchConstraint) {
             say("constraint names no target", constraint.moverPath);
             continue;
         }
@@ -639,8 +660,7 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
         for (const SdfPath &target : constraint.targets) {
             if (!E._nativeProviderPaths.count(target) &&
                 !E._xformDerivedProviders.count(target)) {
-                say("constraint target is not a seeded pose provider",
-                    target);
+                say("constraint target is not a seeded pose provider", target);
             }
         }
     }
@@ -708,8 +728,7 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
                        r.op == RigExecRevisionOp::SurfaceProject);
         if (!supported) {
             say(std::string("mover operation not baked (") +
-                    RigExecBakedOpName(r.op) +
-                    ")",
+                    RigExecBakedOpName(r.op) + ")",
                 r.moverPath);
             return;
         }
@@ -744,6 +763,12 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
 // The bake.
 
 RigExecBakedProgram::RigExecBakedProgram(
+    _FactoryTag, std::unique_ptr<RigExecBakedProgramImpl> impl)
+    : RigExecBakedProgram(std::move(impl))
+{
+}
+
+RigExecBakedProgram::RigExecBakedProgram(
     std::unique_ptr<RigExecBakedProgramImpl> impl)
     : _impl(std::move(impl))
 {
@@ -751,11 +776,14 @@ RigExecBakedProgram::RigExecBakedProgram(
 
 RigExecBakedProgram::~RigExecBakedProgram() = default;
 
-size_t RigExecBakedProgram::GetProviderCount() const {
+size_t
+RigExecBakedProgram::GetProviderCount() const
+{
     return _impl->paths.size();
 }
 std::vector<RigExecBakedProgram::WindowedOpInfo>
-RigExecBakedProgram::GetWindowedOps() const {
+RigExecBakedProgram::GetWindowedOps() const
+{
     std::vector<WindowedOpInfo> out;
     out.reserve(_impl->windowedOps.size());
     for (const auto &op : _impl->windowedOps) {
@@ -768,56 +796,86 @@ RigExecBakedProgram::GetWindowedOps() const {
     }
     return out;
 }
-size_t RigExecBakedProgram::GetWindowedOpCount() const {
+size_t
+RigExecBakedProgram::GetWindowedOpCount() const
+{
     return _impl->windowedOps.size();
 }
-void RigExecBakedProgram::SetWindowRings(const std::vector<RigExecWindowRing> &rings) {
+void
+RigExecBakedProgram::SetWindowRings(const std::vector<RigExecWindowRing> &rings)
+{
     RigExecBakedPlaceWindowRings(_impl.get(), rings);
 }
-std::vector<RigExecWindowPacketPtr> RigExecBakedProgram::GetWindowCaptures() const {
+std::vector<RigExecWindowPacketPtr>
+RigExecBakedProgram::GetWindowCaptures() const
+{
     return _impl->windowCaptures;
 }
-size_t RigExecBakedProgram::GetBoundInputCount() const {
+size_t
+RigExecBakedProgram::GetBoundInputCount() const
+{
     return _impl->boundInputs;
 }
-size_t RigExecBakedProgram::GetVaryingInputCount() const {
+size_t
+RigExecBakedProgram::GetVaryingInputCount() const
+{
     return _impl->varyingInputs;
 }
 
-void RigExecBakedProgram::ReleaseStageReferences() {
+void
+RigExecBakedProgram::ReleaseStageReferences()
+{
     _impl->stage.Reset();
 }
 
-void RigExecBakedProgram::AdoptBlendSampleLayouts(RigExecBlendSampleCache *cache) {
-    if (!cache) return;
+void
+RigExecBakedProgram::AdoptBlendSampleLayouts(RigExecBlendSampleCache *cache)
+{
+    if (!cache)
+        return;
     auto &B = *_impl;
     const auto &execution = B.opExecution;
     // Only bodies which normalized current leaves may publish after the join.
     const auto adopt = [&](size_t i) {
-        if (i>=B.opGraph.ops.size() || i>=execution.ran.size() || !execution.ran[i]) return;
-        const auto &step=B.steps[B.opGraph.ops[i].originalIndex];
-        if (step.kind!=RigExecBakedStepKind::RevisionStatic || step.object<0 ||
-            size_t(step.object)>=B.revisionIndex.size()) return;
-        const auto &entry=B.revisionIndex[size_t(step.object)];
-        auto &revision=B.chains[size_t(entry.first)].revisions[size_t(entry.second)];
-        if (!revision.parameters.enabled) return;
-        for (auto &channel:revision.blendChannels) for (auto &sample:channel.samples) {
-            if (sample.blendShape.IsEmpty() || !sample.layout) continue;
-            auto retained=cache->AdoptExclusive(sample.samplePath,sample.layout,sample.layoutRefused);
-            if (retained) sample.layout=std::move(retained);
-        }
+        if (i >= B.opGraph.ops.size() || i >= execution.ran.size() ||
+            !execution.ran[i])
+            return;
+        const auto &step = B.steps[B.opGraph.ops[i].originalIndex];
+        if (step.kind != RigExecBakedStepKind::RevisionStatic ||
+            step.object < 0 || size_t(step.object) >= B.revisionIndex.size())
+            return;
+        const auto &entry = B.revisionIndex[size_t(step.object)];
+        auto &revision =
+            B.chains[size_t(entry.first)].revisions[size_t(entry.second)];
+        if (!revision.parameters.enabled)
+            return;
+        for (auto &channel : revision.blendChannels)
+            for (auto &sample : channel.samples) {
+                if (sample.blendShape.IsEmpty() || !sample.layout)
+                    continue;
+                auto retained = cache->AdoptExclusive(
+                    sample.samplePath, sample.layout, sample.layoutRefused);
+                if (retained)
+                    sample.layout = std::move(retained);
+            }
     };
     // The executor's record, ascending: AdoptExclusive is first-wins, so
     // the visit order is that of a sweep over every op.
-    if (execution.touchedValid) for (const uint32_t i:execution.touched) adopt(i);
-    else for (size_t i=0;i<B.opGraph.ops.size() && i<execution.ran.size();++i) adopt(i);
+    if (execution.touchedValid)
+        for (const uint32_t i : execution.touched)
+            adopt(i);
+    else
+        for (size_t i = 0; i < B.opGraph.ops.size() && i < execution.ran.size();
+             ++i)
+            adopt(i);
 }
 
-void RigExecBakedProgram::AdoptGeometryStateFrom(
-    RigExecBakedProgram &previous) {
+void
+RigExecBakedProgram::AdoptGeometryStateFrom(RigExecBakedProgram &previous)
+{
     RigExecBakedProgramImpl &B = *_impl;
     RigExecBakedProgramImpl &P = *previous._impl;
-    RigExecBakedAdoptSkinOpState(&B,P);
+    RigExecBakedAdoptSkinOpState(&B, P);
     // One revision's run state, moved from the node the outgoing program
     // held. Everything here is a CACHE of the last run; the compiled
     // description around it comes from the compiled rig the new program was built
@@ -918,7 +976,8 @@ void RigExecBakedProgram::AdoptGeometryStateFrom(
         }
         RigExecBakedProgramImpl::GeomChain &old = *found->second;
         std::map<std::pair<SdfPath, RigExecRevisionOp>,
-                 RigExecBakedProgramImpl::GeomRevision *> retained;
+                 RigExecBakedProgramImpl::GeomRevision *>
+            retained;
         for (RigExecBakedProgramImpl::GeomRevision &revision : old.revisions) {
             retained.emplace(std::make_pair(revision.moverPath, revision.op),
                              &revision);
@@ -966,10 +1025,10 @@ void RigExecBakedProgram::AdoptGeometryStateFrom(
             adopt(&revision, &source,
                   /* keepRun = */ i < divergence && (!grouped || carryGroups));
             if (carryGroups) {
-                const int id = B.chainRevisionBegin[size_t(chainIndex)] + int(i);
-                const int oldId =
-                    P.chainRevisionBegin[size_t(oldChainIndex)] +
-                    int(&source - old.revisions.data());
+                const int id =
+                    B.chainRevisionBegin[size_t(chainIndex)] + int(i);
+                const int oldId = P.chainRevisionBegin[size_t(oldChainIndex)] +
+                                  int(&source - old.revisions.data());
                 for (size_t g = 0; g + 1 < chain.groupBounds.size(); ++g) {
                     const int from = RigExecBakedGroupSlot(P, oldId, g);
                     const int to = RigExecBakedGroupSlot(B, id, g);
@@ -1036,11 +1095,11 @@ void RigExecBakedProgram::AdoptGeometryStateFrom(
         std::map<SdfPath, RigExecBakedProgramImpl::GeomChain::Derived *>
             outgoingDerived;
         for (RigExecBakedProgramImpl::GeomChain::Derived &derived :
-                 old.derived) {
+             old.derived) {
             outgoingDerived.emplace(derived.target, &derived);
         }
         for (RigExecBakedProgramImpl::GeomChain::Derived &derived :
-                 chain.derived) {
+             chain.derived) {
             const auto match = outgoingDerived.find(derived.target);
             if (match == outgoingDerived.end() ||
                 match->second->revision.moverPath !=
@@ -1063,21 +1122,27 @@ void RigExecBakedProgram::AdoptGeometryStateFrom(
 // Invalidation.
 
 namespace {
-template<class B, class Fn>
-void _ForEachFixedNumericSource(B &program, Fn &&fn)
+template <class B, class Fn>
+void
+_ForEachFixedNumericSource(B &program, Fn &&fn)
 {
     for (auto &ladder : program.ladders) {
-        for (auto &input : ladder.restAvars) if (input.sourceBacked) fn(input);
-        if (ladder.rotationSign.sourceBacked) fn(ladder.rotationSign);
+        for (auto &input : ladder.restAvars)
+            if (input.sourceBacked)
+                fn(input);
+        if (ladder.rotationSign.sourceBacked)
+            fn(ladder.rotationSign);
     }
     for (auto &constraint : program.constraints)
-        if (constraint.offset.sourceBacked) fn(constraint.offset);
+        if (constraint.offset.sourceBacked)
+            fn(constraint.offset);
 }
 
 // Whether \p path is a property that composes one of the intervening Xforms
 // bakeability judged (xformPrims): their transform is xformOpOrder and the
 // ops it lists, so no other property of theirs can move it.
-bool _ComposesJudgedXform(const RigExecBakedProgramImpl &B, const SdfPath &path)
+bool
+_ComposesJudgedXform(const RigExecBakedProgramImpl &B, const SdfPath &path)
 {
     if (!path.IsPropertyPath() || !B.xformPrims.count(path.GetPrimPath()))
         return false;
@@ -1088,27 +1153,39 @@ bool _ComposesJudgedXform(const RigExecBakedProgramImpl &B, const SdfPath &path)
 
 // A schema numeric argument can acquire or lose its first authored spec
 // without changing its direct source binding. All structural variants refuse.
-bool _FixedNumericSourceResync(const RigExecBakedProgramImpl &B,
-    const UsdNotice::ObjectsChanged &notice, const SdfPath &path)
+bool
+_FixedNumericSourceResync(const RigExecBakedProgramImpl &B,
+                          const UsdNotice::ObjectsChanged &notice,
+                          const SdfPath &path)
 {
-    if (!B.stage || !path.IsPropertyPath() || !B.sourceBackedPaths.count(path) ||
-        B.rebuild.count(path) || _ComposesJudgedXform(B, path)) return false;
+    if (!B.stage || !path.IsPropertyPath() ||
+        !B.sourceBackedPaths.count(path) || B.rebuild.count(path) ||
+        _ComposesJudgedXform(B, path))
+        return false;
     for (const auto &field : notice.GetChangedFields(path))
-        if (field != "default" && field != "typeName") return false;
-    const auto attribute=B.stage->GetAttributeAtPath(path);
+        if (field != SdfFieldKeys->Default && field != SdfFieldKeys->TypeName)
+            return false;
+    const auto attribute = B.stage->GetAttributeAtPath(path);
     if (!attribute || !attribute.GetPrim() || !attribute.GetPrim().IsActive() ||
-        attribute.GetNumTimeSamples()!=0 || attribute.HasSpline() ||
-        attribute.ValueMightBeTimeVarying()) return false;
-    SdfPathVector connections; attribute.GetConnections(&connections);
-    if (!connections.empty()) return false;
-    bool found=false, valid=true;
-    _ForEachFixedNumericSource(B,[&](const auto &input) {
-        if (input.head.GetPath()!=path) return;
-        using T=std::decay_t<decltype(input.sourceFallback)>;
-        static_assert(std::is_same_v<T,double> || std::is_same_v<T,GfVec3d>);
-        found=true;valid=valid && attribute.GetTypeName().GetType()==
-            (std::is_same_v<T,double> ? SdfValueTypeNames->Double
-                                      : SdfValueTypeNames->Double3).GetType();
+        attribute.GetNumTimeSamples() != 0 || attribute.HasSpline() ||
+        attribute.ValueMightBeTimeVarying())
+        return false;
+    SdfPathVector connections;
+    attribute.GetConnections(&connections);
+    if (!connections.empty())
+        return false;
+    bool found = false, valid = true;
+    _ForEachFixedNumericSource(B, [&](const auto &input) {
+        if (input.head.GetPath() != path)
+            return;
+        using T = std::decay_t<decltype(input.sourceFallback)>;
+        static_assert(std::is_same_v<T, double> || std::is_same_v<T, GfVec3d>);
+        found = true;
+        valid = valid &&
+                attribute.GetTypeName().GetType() ==
+                    (std::is_same_v<T, double> ? SdfValueTypeNames->Double
+                                               : SdfValueTypeNames->Double3)
+                        .GetType();
     });
     return found && valid;
 }
@@ -1118,15 +1195,18 @@ bool _FixedNumericSourceResync(const RigExecBakedProgramImpl &B,
 // Nothing but the value and the fields a new spec states may have changed --
 // a connection, a target or metadata that changes how it is read still
 // rebuilds, and so does a path some folded input reads too.
-bool _ValueSpecResync(const RigExecBakedProgramImpl &B,
-    const UsdNotice::ObjectsChanged &notice, const SdfPath &path)
+bool
+_ValueSpecResync(const RigExecBakedProgramImpl &B,
+                 const UsdNotice::ObjectsChanged &notice, const SdfPath &path)
 {
     if (!B.stage || !path.IsPropertyPath() || B.rebuild.count(path) ||
-        _ComposesJudgedXform(B, path)) return false;
+        _ComposesJudgedXform(B, path))
+        return false;
     const TfToken &kDefault = _tokens->default_,
-        &kTimeSamples = _tokens->timeSamples, &kSpline = _tokens->spline,
-        &kTypeName = _tokens->typeName, &kCustom = _tokens->custom,
-        &kVariability = _tokens->variability;
+                  &kTimeSamples = _tokens->timeSamples,
+                  &kSpline = _tokens->spline, &kTypeName = _tokens->typeName,
+                  &kCustom = _tokens->custom,
+                  &kVariability = _tokens->variability;
     for (const TfToken &field : notice.GetChangedFields(path))
         if (field != kDefault && field != kTimeSamples && field != kSpline &&
             field != kTypeName && field != kCustom && field != kVariability)
@@ -1137,8 +1217,9 @@ bool _ValueSpecResync(const RigExecBakedProgramImpl &B,
 
 // The same on the walk of an input read the long way every frame, which is
 // what lets IsInvalidatedBy leave such a resync to the value router.
-bool _LiveInputResync(const RigExecBakedProgramImpl &B,
-    const UsdNotice::ObjectsChanged &notice, const SdfPath &path)
+bool
+_LiveInputResync(const RigExecBakedProgramImpl &B,
+                 const UsdNotice::ObjectsChanged &notice, const SdfPath &path)
 {
     return B.liveInputPaths.count(path) && _ValueSpecResync(B, notice, path);
 }
@@ -1147,8 +1228,9 @@ bool _LiveInputResync(const RigExecBakedProgramImpl &B,
 // read the long way, or a per-frame input whose pinned query ApplyValueEdits
 // re-selects (_RequeryResynced) -- a query keeps the spec it resolved, and a
 // new stronger one escapes it.
-bool _RoutableResync(const RigExecBakedProgramImpl &B,
-    const UsdNotice::ObjectsChanged &notice, const SdfPath &path)
+bool
+_RoutableResync(const RigExecBakedProgramImpl &B,
+                const UsdNotice::ObjectsChanged &notice, const SdfPath &path)
 {
     return (B.liveInputPaths.count(path) || B.overridableInputs.count(path)) &&
            _ValueSpecResync(B, notice, path);
@@ -1201,11 +1283,15 @@ _IsInvalidatedBy(const RigExecBakedProgramImpl &B,
     const auto skipped = [skip](const SdfPath &path) {
         return skip && skip->count(path) > 0;
     };
-    for(const auto &chain:B.chains)for(const auto &derived:chain.derived) {
-        const auto &revision=derived.revision;
-        if((revision.op==RigExecRevisionOp::SurfaceProjector || revision.op==RigExecRevisionOp::ShaderDials) &&
-           RigExecProjectorMeshCaptureAffected(notice,revision.binding.base))return true;
-    }
+    for (const auto &chain : B.chains)
+        for (const auto &derived : chain.derived) {
+            const auto &revision = derived.revision;
+            if ((revision.op == RigExecRevisionOp::SurfaceProjector ||
+                 revision.op == RigExecRevisionOp::ShaderDials) &&
+                RigExecProjectorMeshCaptureAffected(notice,
+                                                    revision.binding.base))
+                return true;
+        }
     // A changed-info notice is a VALUE edit on a property that already
     // existed. It matters only where the bake read that value -- and, for
     // the Xforms bakeability accepted for composing to the identity, on any
@@ -1217,17 +1303,22 @@ _IsInvalidatedBy(const RigExecBakedProgramImpl &B,
     const TfToken &kTimeSamples = _tokens->timeSamples;
     const TfToken &kSpline = _tokens->spline;
     for (const SdfPath &path : notice.GetChangedInfoOnlyPaths()) {
-        if (skipped(path)) continue;
+        if (skipped(path))
+            continue;
         if (path.IsPrimPath() && B.prims.count(path)) {
             for (const TfToken &field : notice.GetChangedFields(path))
-                if (field == "primOrder" || field == "primChildren" || field == "typeName") return true;
+                if (field == SdfFieldKeys->PrimOrder ||
+                    field == SdfChildrenKeys->PrimChildren ||
+                    field == SdfFieldKeys->TypeName)
+                    return true;
         }
 
         // Adding animation or changing resolution invalidates a fixed
         // source binding even though ordinary Default value edits do not.
         if (B.sourceBackedPaths.count(path)) {
             for (const TfToken &field : notice.GetChangedFields(path))
-                if (field != kDefault) return true;
+                if (field != kDefault)
+                    return true;
         }
         if (B.rebuild.count(path) || _ComposesJudgedXform(B, path)) {
             return true;
@@ -1254,7 +1345,7 @@ _IsInvalidatedBy(const RigExecBakedProgramImpl &B,
     // of a prim it read from.
     const auto overlaps = [&B](const SdfPath &path) {
         for (const std::set<SdfPath> *index :
-                 {&B.named, &B.prims, &B.xformPrims}) {
+             {&B.named, &B.prims, &B.xformPrims}) {
             // Descendants of `path` are contiguous from lower_bound: SdfPath
             // sorts in namespace order, which _OnObjectsChanged already
             // relies on for the solver-batch subtree walk.
@@ -1274,9 +1365,12 @@ _IsInvalidatedBy(const RigExecBakedProgramImpl &B,
         return B.prims.count(prim) > 0 || B.xformPrims.count(prim) > 0;
     };
     for (const SdfPath &path : notice.GetResyncedPaths()) {
-        if (skipped(path)) continue;
-        if (_FixedNumericSourceResync(B,notice,path)) continue;
-        if (_LiveInputResync(B,notice,path)) continue;
+        if (skipped(path))
+            continue;
+        if (_FixedNumericSourceResync(B, notice, path))
+            continue;
+        if (_LiveInputResync(B, notice, path))
+            continue;
         if (overlaps(path)) {
             return true;
         }
@@ -1289,7 +1383,7 @@ _IsInvalidatedBy(const RigExecBakedProgramImpl &B,
     return false;
 }
 
-}  // namespace
+} // namespace
 
 bool
 RigExecBakedProgram::IsInvalidatedBy(
@@ -1319,14 +1413,13 @@ RigExecComparePoses(const RigExecRigPose &reference,
         for (const auto &[path, value] : referenceMap) {
             const auto found = bakedMap.find(path);
             if (found == bakedMap.end()) {
-                out->diagnostics.push_back(
-                    std::string("baked parity: no ") + what + " for " +
-                    path.GetString());
+                out->diagnostics.push_back(std::string("baked parity: no ") +
+                                           what + " for " + path.GetString());
                 ++out->comparisonMismatches;
             } else if (!equal(value, found->second)) {
-                out->diagnostics.push_back(
-                    std::string("baked parity: ") + what + " differs at " +
-                    path.GetString());
+                out->diagnostics.push_back(std::string("baked parity: ") +
+                                           what + " differs at " +
+                                           path.GetString());
                 ++out->comparisonMismatches;
             }
         }
@@ -1354,8 +1447,7 @@ RigExecComparePoses(const RigExecRigPose &reference,
             "provider transform", sameMatrix);
     compare(reference.providerBaseXforms, baked.providerBaseXforms,
             "provider base transform", sameMatrix);
-    compare(reference.movedProperties, baked.movedProperties,
-            "moved property",
+    compare(reference.movedProperties, baked.movedProperties, "moved property",
             [](const VtValue &a, const VtValue &b) { return a == b; });
     // The observational guides too: they are a published domain like any
     // other, and a solver aggregate that drifts shows up here first.
@@ -1419,8 +1511,7 @@ namespace {
 const std::set<SdfPath> &
 _ConnectedSources(const RigExecBakedProgramImpl &B)
 {
-    if (B.connectedSourcesFilled &&
-        B.connectedSourcesStamp == B.programStamp) {
+    if (B.connectedSourcesFilled && B.connectedSourcesStamp == B.programStamp) {
         return B.connectedSources;
     }
     B.connectedSources.clear();
@@ -1465,50 +1556,61 @@ _ConnectedSources(const RigExecBakedProgramImpl &B)
 // namespace disjoint from every compiled reader and source is provably
 // neutral; unknown composition changes keep the conservative stamp path.
 bool
-_UnrelatedPrimResync(const RigExecBakedProgramImpl &B,const SdfPath &path)
+_UnrelatedPrimResync(const RigExecBakedProgramImpl &B, const SdfPath &path)
 {
     if (!B.stage || !path.IsPrimPath() || path.IsAbsoluteRootPath() ||
-        UsdPrim::IsPathInPrototype(path) || B.assetRootPath.IsEmpty()) return false;
-    const auto overlaps=[&path](const SdfPath &source) {
+        UsdPrim::IsPathInPrototype(path) || B.assetRootPath.IsEmpty())
+        return false;
+    const auto overlaps = [&path](const SdfPath &source) {
         return !source.IsEmpty() &&
-            (source.HasPrefix(path) || path.HasPrefix(source));
+               (source.HasPrefix(path) || path.HasPrefix(source));
     };
-    if (overlaps(B.assetRootPath)) return false;
+    if (overlaps(B.assetRootPath))
+        return false;
     // The rebuild entry at / records stage metadata read by exact path,
     // not ownership of every prim subtree. Actual root notices are still
     // rejected above and by the value router.
-    for (const auto &source:B.rebuild)
-        if (!source.IsAbsoluteRootPath() && overlaps(source)) return false;
+    for (const auto &source : B.rebuild)
+        if (!source.IsAbsoluteRootPath() && overlaps(source))
+            return false;
     for (const std::set<SdfPath> *index :
-         {&B.named,&B.prims,&B.xformPrims,&B.resolvedRoutedPrims})
-        if (std::any_of(index->begin(),index->end(),overlaps)) return false;
-    for (const auto &entry:B.leafByPath) if (overlaps(entry.first)) return false;
-    for (const auto &entry:B.overridableInputs) if (overlaps(entry.first)) return false;
+         {&B.named, &B.prims, &B.xformPrims, &B.resolvedRoutedPrims})
+        if (std::any_of(index->begin(), index->end(), overlaps))
+            return false;
+    for (const auto &entry : B.leafByPath)
+        if (overlaps(entry.first))
+            return false;
+    for (const auto &entry : B.overridableInputs)
+        if (overlaps(entry.first))
+            return false;
     // Connection targets enter this set even if their attributes do not yet
     // exist. Defining such a prim must never be classified as unrelated.
-    const auto &connected=_ConnectedSources(B);
-    return std::none_of(connected.begin(),connected.end(),overlaps);
+    const auto &connected = _ConnectedSources(B);
+    return std::none_of(connected.begin(), connected.end(), overlaps);
 }
 
 // Declaring an unrelated attribute changes no compiled source route.
 // Whole-prim and connection readers retain the conservative stamp path.
 bool
 _UnrelatedAttributeResync(const RigExecBakedProgramImpl &B,
-                         const UsdNotice::ObjectsChanged &notice,
-                         const SdfPath &path)
+                          const UsdNotice::ObjectsChanged &notice,
+                          const SdfPath &path)
 {
     if (!B.stage || !path.IsPropertyPath() || B.named.count(path) ||
         B.rebuild.count(path) || B.leafByPath.count(path) ||
         B.overridableInputs.count(path) || B.sourceBackedPaths.count(path) ||
         _ComposesJudgedXform(B, path) ||
         B.resolvedRoutedPrims.count(path.GetPrimPath()) ||
-        _ConnectedSources(B).count(path)) return false;
+        _ConnectedSources(B).count(path))
+        return false;
     const UsdAttribute attribute = B.stage->GetAttributeAtPath(path);
     if (!attribute || !attribute.GetPrim().IsActive() ||
-        attribute.HasAuthoredConnections()) return false;
+        attribute.HasAuthoredConnections())
+        return false;
     for (const TfToken &field : notice.GetChangedFields(path))
-        if (field != "default" && field != "typeName" &&
-            field != "custom" && field != "variability") return false;
+        if (field != SdfFieldKeys->Default && field != SdfFieldKeys->TypeName &&
+            field != SdfFieldKeys->Custom && field != SdfFieldKeys->Variability)
+            return false;
     return true;
 }
 
@@ -1535,12 +1637,14 @@ _RouteValueEdits(const RigExecBakedProgramImpl &B,
     const auto skipped = [skip](const SdfPath &path) {
         return skip && skip->count(path) > 0;
     };
-    if (!notice.GetResolvedAssetPathsResyncedPaths().empty()) return false;
+    if (!notice.GetResolvedAssetPathsResyncedPaths().empty())
+        return false;
     for (const auto &path : notice.GetResyncedPaths())
-        if (!skipped(path) && !_FixedNumericSourceResync(B,notice,path) &&
-            !_RoutableResync(B,notice,path) &&
-            !_UnrelatedPrimResync(B,path) &&
-            !_UnrelatedAttributeResync(B,notice,path)) return false;
+        if (!skipped(path) && !_FixedNumericSourceResync(B, notice, path) &&
+            !_RoutableResync(B, notice, path) &&
+            !_UnrelatedPrimResync(B, path) &&
+            !_UnrelatedAttributeResync(B, notice, path))
+            return false;
     const TfToken &kDefault = _tokens->default_;
     const TfToken &kTimeSamples = _tokens->timeSamples;
     const TfToken &kSpline = _tokens->spline;
@@ -1559,19 +1663,23 @@ _RouteValueEdits(const RigExecBakedProgramImpl &B,
     };
     std::vector<int> decided;
     std::vector<SdfPath> read;
-    SdfPathVector edits(notice.GetResyncedPaths().begin(),notice.GetResyncedPaths().end());
-    edits.insert(edits.end(),notice.GetChangedInfoOnlyPaths().begin(),notice.GetChangedInfoOnlyPaths().end());
+    SdfPathVector edits(notice.GetResyncedPaths().begin(),
+                        notice.GetResyncedPaths().end());
+    edits.insert(edits.end(), notice.GetChangedInfoOnlyPaths().begin(),
+                 notice.GetChangedInfoOnlyPaths().end());
     for (const SdfPath &path : edits) {
-        if (skipped(path)) continue;
+        if (skipped(path))
+            continue;
         const std::vector<TfToken> fields = notice.GetChangedFields(path);
-        const bool fixedResync=_FixedNumericSourceResync(B,notice,path);
+        const bool fixedResync = _FixedNumericSourceResync(B, notice, path);
         // IsInvalidatedBy has already ruled the notice's structure out, so a
         // value spec appearing on a live input's walk is placed exactly like
         // a changed value. Any other input may hold a query pinned to the
         // spec it resolved at bake, which a new stronger spec escapes, so
         // its resync is answered by running the whole program.
-        const bool liveResync=_RoutableResync(B,notice,path);
-        if (_UnrelatedAttributeResync(B,notice,path)) continue;
+        const bool liveResync = _RoutableResync(B, notice, path);
+        if (_UnrelatedAttributeResync(B, notice, path))
+            continue;
         // Layer metadata: the time codes, the frame rate -- read by every
         // time conversion and indexed nowhere.
         if (path.IsAbsoluteRootPath()) {
@@ -1589,9 +1697,11 @@ _RouteValueEdits(const RigExecBakedProgramImpl &B,
         }
         for (const TfToken &field : fields) {
             if (field != kDefault && field != kTimeSamples &&
-                field != kSpline && !(fixedResync && field == "typeName") &&
-                !(liveResync && (field == "typeName" || field == "custom" ||
-                                 field == "variability"))) {
+                field != kSpline &&
+                !(fixedResync && field == SdfFieldKeys->TypeName) &&
+                !(liveResync && (field == SdfFieldKeys->TypeName ||
+                                 field == SdfFieldKeys->Custom ||
+                                 field == SdfFieldKeys->Variability))) {
                 return false;
             }
         }
@@ -1650,12 +1760,11 @@ _RouteValueEdits(const RigExecBakedProgramImpl &B,
     return true;
 }
 
-}  // namespace
+} // namespace
 
 bool
-RigExecBakedProgram::DryRunValueEdits(
-    const UsdNotice::ObjectsChanged &notice,
-    std::vector<SdfPath> *readPaths) const
+RigExecBakedProgram::DryRunValueEdits(const UsdNotice::ObjectsChanged &notice,
+                                      std::vector<SdfPath> *readPaths) const
 {
     return _RouteValueEdits(*_impl, notice, nullptr, readPaths);
 }
@@ -1674,15 +1783,17 @@ _ApplyValueEdits(RigExecBakedProgramImpl &B,
     }
     // UsdAttributeQuery caches resolve information. Refresh only named direct
     // source bindings on this owning thread before sampling their exact leaves.
-    _ForEachFixedNumericSource(B,[&](auto &input) {
-        if (std::find(read.begin(),read.end(),input.head.GetPath())!=read.end())
-            input.query=UsdAttributeQuery(input.head);
+    _ForEachFixedNumericSource(B, [&](auto &input) {
+        if (std::find(read.begin(), read.end(), input.head.GetPath()) !=
+            read.end())
+            input.query = UsdAttributeQuery(input.head);
     });
     // A spec that appeared on a per-frame input's walk: the input's query is
     // re-selected over the walk as it stands now, as the bake selected it.
     std::set<int> requery;
     for (const SdfPath &path : notice.GetResyncedPaths()) {
-        if (skip && skip->count(path)) continue;
+        if (skip && skip->count(path))
+            continue;
         const auto found = B.overridableInputs.find(path);
         if (found != B.overridableInputs.end())
             requery.insert(found->second.begin(), found->second.end());
@@ -1691,13 +1802,15 @@ _ApplyValueEdits(RigExecBakedProgramImpl &B,
         frozenDetail::_ForEachPatchableInput(B, [&](auto &input) {
             using T = std::decay_t<decltype(input.constant)>;
             if (!input.query.IsValid() || !input.head ||
-                !requery.count(input.overrideIndex)) return;
+                !requery.count(input.overrideIndex))
+                return;
             bool viaChain = false, varying = false;
             UsdAttribute selected;
             RigExecBakedClassifyInput<T>(input.head, UsdTimeCode::Default(),
                                          B.chainTargets, &viaChain, &varying,
                                          &selected);
-            if (selected) input.query = UsdAttributeQuery(selected);
+            if (selected)
+                input.query = UsdAttributeQuery(selected);
         });
     }
     // The leaves the edit reached, re-read by the next sample: every leaf
@@ -1742,7 +1855,7 @@ _ApplyValueEdits(RigExecBakedProgramImpl &B,
     return true;
 }
 
-}  // namespace
+} // namespace
 
 bool
 RigExecBakedProgram::ApplyValueEdits(const UsdNotice::ObjectsChanged &notice)
@@ -1814,7 +1927,7 @@ RigExecProgramAvarPatch(RigExecBakedProgramImpl *B, size_t bindingIndex,
     }
 }
 
-}  // namespace
+} // namespace
 
 bool
 RigExecBakedProgram::IsPatchableAvarPath(const SdfPath &path) const
@@ -1866,7 +1979,8 @@ _DryRunAvarPatches(const RigExecBakedProgramImpl &B,
     std::vector<std::pair<SdfPath, bool>> edited;
     for (const SdfPath &path : notice.GetResyncedPaths()) {
         if (!path.IsPropertyPath()) {
-            if (taken) continue;  // the router's to judge
+            if (taken)
+                continue; // the router's to judge
             return false;
         }
         edited.emplace_back(path, true);
@@ -1876,10 +1990,10 @@ _DryRunAvarPatches(const RigExecBakedProgramImpl &B,
     }
     for (const auto &[path, resynced] : edited) {
         if (taken && path.IsPropertyPath() && !B.patchableAvars.count(path)) {
-            continue;  // the router's to judge
+            continue; // the router's to judge
         }
-        const bool captured = B.rebuild.count(path) ||
-                              _ComposesJudgedXform(B, path);
+        const bool captured =
+            B.rebuild.count(path) || _ComposesJudgedXform(B, path);
         if (!captured) {
             // Prim-level info arrives for the ancestors of an edit (an
             // `over` being touched above it). It moves no value the frame
@@ -1900,7 +2014,7 @@ _DryRunAvarPatches(const RigExecBakedProgramImpl &B,
         for (const TfToken &field : notice.GetChangedFields(path)) {
             if (field != kDefault && field != kSpline &&
                 field != kTimeSamples && !(resynced && field == kTypeName)) {
-                return false;  // a connection...
+                return false; // a connection...
             }
         }
         const RigExecBakedProgramImpl::AvarBinding &binding =
@@ -1931,7 +2045,7 @@ _DryRunAvarPatches(const RigExecBakedProgramImpl &B,
         }
         const bool animated = sampled || attribute.HasSpline();
         if (!animated && attribute.ValueMightBeTimeVarying()) {
-            return false;  // varies some way this does not know
+            return false; // varies some way this does not know
         }
         // Cleared back to nothing reads as the channel's default, which is
         // the fallback the bake captures for an attribute with no value.
@@ -1946,9 +2060,11 @@ _DryRunAvarPatches(const RigExecBakedProgramImpl &B,
         // just appeared, which its pinned query cannot see; anything else
         // folded it some other way, and only a rebuild re-folds it.
         const auto readers = B.overridableInputs.find(path);
-        if (readers == B.overridableInputs.end()) continue;
+        if (readers == B.overridableInputs.end())
+            continue;
         for (const int index : readers->second) {
-            if (index == binding.input.overrideIndex) continue;
+            if (index == binding.input.overrideIndex)
+                continue;
             bool placed = false;
             for (size_t k = 0; k < B.avarConstantBindings.size() && !placed;
                  ++k) {
@@ -1959,16 +2075,20 @@ _DryRunAvarPatches(const RigExecBakedProgramImpl &B,
                     return false;
                 // Promoting a reader would read its own head, not the
                 // channel its connection reaches.
-                if (animated) return false;
+                if (animated)
+                    return false;
                 decided.push_back({k, value, false, path});
                 placed = true;
             }
             for (size_t k = 0; k < B.avarBindings.size() && !placed; ++k) {
-                if (B.avarBindings[k].input.overrideIndex != index) continue;
-                if (resynced) return false;
+                if (B.avarBindings[k].input.overrideIndex != index)
+                    continue;
+                if (resynced)
+                    return false;
                 placed = true;
             }
-            if (!placed) return false;
+            if (!placed)
+                return false;
         }
     }
     if (decided.empty()) {
@@ -1989,8 +2109,8 @@ _DryRunAvarPatches(const RigExecBakedProgramImpl &B,
 bool
 _DryRunMixedEdits(const RigExecBakedProgramImpl &B,
                   const UsdNotice::ObjectsChanged &notice,
-                  std::vector<_AvarPatch> *patches,
-                  std::set<SdfPath> *taken, std::vector<SdfPath> *read)
+                  std::vector<_AvarPatch> *patches, std::set<SdfPath> *taken,
+                  std::vector<SdfPath> *read)
 {
     bool any = false;
     for (const SdfPath &path : notice.GetResyncedPaths())
@@ -2002,7 +2122,7 @@ _DryRunMixedEdits(const RigExecBakedProgramImpl &B,
            _RouteValueEdits(B, notice, nullptr, read, nullptr, taken);
 }
 
-}  // namespace
+} // namespace
 
 bool
 RigExecBakedProgram::DryRunAvarValueEdits(
@@ -2032,8 +2152,7 @@ RigExecBakedProgram::ApplyAvarValueEdits(
         return false;
     }
     for (const _AvarPatch &patch : patches) {
-        RigExecProgramAvarPatch(&B, patch.binding, patch.value,
-                                patch.animated);
+        RigExecProgramAvarPatch(&B, patch.binding, patch.value, patch.animated);
         // Every other leaf whose read reaches the avar (a shader dial, a
         // mover input connected to it) re-reads it too.
         const auto found = B.leafByPath.find(patch.path);
@@ -2048,8 +2167,7 @@ RigExecBakedProgram::ApplyAvarValueEdits(
 
 bool
 RigExecBakedProgram::DryRunMixedValueEdits(
-    const UsdNotice::ObjectsChanged &notice,
-    std::vector<SdfPath> *paths) const
+    const UsdNotice::ObjectsChanged &notice, std::vector<SdfPath> *paths) const
 {
     std::vector<_AvarPatch> patches;
     std::set<SdfPath> taken;
@@ -2076,8 +2194,7 @@ RigExecBakedProgram::ApplyMixedValueEdits(
         return false;
     }
     for (const _AvarPatch &patch : patches) {
-        RigExecProgramAvarPatch(&B, patch.binding, patch.value,
-                                patch.animated);
+        RigExecProgramAvarPatch(&B, patch.binding, patch.value, patch.animated);
         const auto found = B.leafByPath.find(patch.path);
         if (found != B.leafByPath.end()) {
             for (const uint32_t id : found->second) {
@@ -2138,7 +2255,7 @@ RigExecBakedProgram::SetOverrides(
         // so an override on their source is placed by that same overlay.
         // It carries no number, so the leaf sampler compares its value.
         if (B.resolvedRoutedPrims.count(o.prim) ||
-            RigExecBakedHasExternalInputRoute(B,path) ||
+            RigExecBakedHasExternalInputRoute(B, path) ||
             _ConnectedSources(B).count(path)) {
             B.routedOverrides[path] = o.value;
             continue;
@@ -2146,9 +2263,14 @@ RigExecBakedProgram::SetOverrides(
         // Raw chain bases intentionally ignore interactive whole-array values.
         // Upstream placement remains the only replacement of the authored base.
         bool rawChainBase = false;
-        if (o.value.IsHolding<VtVec3fArray>()) for (const auto &chain : B.chains)
-            if (chain.target == path) { rawChainBase = true; break; }
-        if (rawChainBase) continue;
+        if (o.value.IsHolding<VtVec3fArray>())
+            for (const auto &chain : B.chains)
+                if (chain.target == path) {
+                    rawChainBase = true;
+                    break;
+                }
+        if (rawChainBase)
+            continue;
         placeable = false;
     }
     return placeable;
@@ -2196,24 +2318,49 @@ struct _DigestTable {
         Bytes(&n, sizeof(n));
         Bytes(s.data(), s.size());
     }
-    void Path(const SdfPath &p) { Str(pathText(p)); }
-    void Int(int64_t v) { Bytes(&v, sizeof(v)); }
-    void Double(double v) { Bytes(&v, sizeof(v)); }
+    void Path(const SdfPath &p)
+    {
+        Str(pathText(p));
+    }
+    void Int(int64_t v)
+    {
+        Bytes(&v, sizeof(v));
+    }
+    void Double(double v)
+    {
+        Bytes(&v, sizeof(v));
+    }
     void Matrix(const GfMatrix4d &m)
     {
         Bytes(m.GetArray(), sizeof(double) * 16);
     }
-    void Value(double v) { Double(v); }
-    void Value(bool v) { Int(v ? 1 : 0); }
-    void Value(const TfToken &v) { Str(v.GetString()); }
-    void Value(const GfMatrix4d &v) { Matrix(v); }
-    void Value(const GfVec3d &v) { for (int i=0;i<3;++i) Double(v[i]); }
-    template <class T>
-    void Input(const RigExecBakedInput<T> &input)
+    void Value(double v)
+    {
+        Double(v);
+    }
+    void Value(bool v)
+    {
+        Int(v ? 1 : 0);
+    }
+    void Value(const TfToken &v)
+    {
+        Str(v.GetString());
+    }
+    void Value(const GfMatrix4d &v)
+    {
+        Matrix(v);
+    }
+    void Value(const GfVec3d &v)
+    {
+        for (int i = 0; i < 3; ++i)
+            Double(v[i]);
+    }
+    template <class T> void Input(const RigExecBakedInput<T> &input)
     {
         Value(input.constant);
         Int(input.sourceBacked ? 1 : 0);
-        if (input.sourceBacked) Value(input.sourceFallback);
+        if (input.sourceBacked)
+            Value(input.sourceFallback);
         Path(input.query.IsValid() ? input.query.GetAttribute().GetPath()
                                    : SdfPath());
         Path(input.resolvedAttr ? input.resolvedAttr.GetPath() : SdfPath());
@@ -2274,7 +2421,7 @@ _PrintProgramDigest(const RigExecBakedProgramImpl &B)
         for (size_t i = 0; i < B.paths.size(); ++i) {
             t.Path(B.paths[i]);
             t.Int(int64_t(B.slotKind[i]));
-            t.Int(B.providerActive.empty()?1:int(B.providerActive[i]));
+            t.Int(B.providerActive.empty() ? 1 : int(B.providerActive[i]));
             t.Int(B.parent[i]);
             t.Int(B.propParent[i]);
         }
@@ -2356,8 +2503,7 @@ _PrintProgramDigest(const RigExecBakedProgramImpl &B)
         size_t id = 0;
         frozenDetail::_ForEachPatchableInput(B, [&](const auto &input) {
             const RigExecBakedLeafRef ref =
-                id < B.leafRefs.size() ? B.leafRefs[id]
-                                       : RigExecBakedLeafRef();
+                id < B.leafRefs.size() ? B.leafRefs[id] : RigExecBakedLeafRef();
             t.Int(int64_t(ref.type));
             t.Int(int64_t(ref.index));
             t.Int(input.leaf);
@@ -2439,8 +2585,8 @@ _PrintProgramDigest(const RigExecBakedProgramImpl &B)
                 t.Int(r.path.pinned ? 1 : 0);
                 t.Int(r.path.planar ? 1 : 0);
                 t.Int(int64_t(r.path.component));
-                for (const float f : {r.path.offsetX, r.path.offsetZ,
-                                      r.path.headingOffset}) {
+                for (const float f :
+                     {r.path.offsetX, r.path.offsetZ, r.path.headingOffset}) {
                     uint32_t bits = 0;
                     std::memcpy(&bits, &f, sizeof(bits));
                     t.Int(int64_t(bits));
@@ -2561,9 +2707,8 @@ _PrintProgramDigest(const RigExecBakedProgramImpl &B)
                 }
             }
         }
-        frozenDetail::_ForEachPatchableInput(B, [&t](const auto &input) {
-            t.Int(input.walk);
-        });
+        frozenDetail::_ForEachPatchableInput(
+            B, [&t](const auto &input) { t.Int(input.walk); });
         for (size_t i = 0; i < B.steps.size(); ++i) {
             const RigExecBakedStep &step = B.steps[i];
             if (step.readerWalks.empty()) {
@@ -2605,20 +2750,20 @@ _PrintProgramDigest(const RigExecBakedProgramImpl &B)
             "RIGEXEC_BAKED_PROGRAM_DIGEST %-22s n=%-6zu %016llx\n", name,
             t.count, static_cast<unsigned long long>(t.hash));
     }
-    out += TfStringPrintf(
-        "RIGEXEC_BAKED_PROGRAM_DIGEST %-22s        %016llx\n", "total",
-        static_cast<unsigned long long>(total.hash));
+    out += TfStringPrintf("RIGEXEC_BAKED_PROGRAM_DIGEST %-22s        %016llx\n",
+                          "total", static_cast<unsigned long long>(total.hash));
     std::fwrite(out.data(), 1, out.size(), stderr);
 }
 
-}  // namespace
+} // namespace
 
 // Build.
 
 void
 RigExecBakedBuildContext::Refuse(const std::string &what, const SdfPath &where)
 {
-    if (reasons) reasons->push_back(what + ": " + where.GetString());
+    if (reasons)
+        reasons->push_back(what + ": " + where.GetString());
     ok = false;
 }
 
@@ -2634,8 +2779,7 @@ RigExecBakedCommitShard::Seal()
 {
     for (SdfPathVector *paths : {&prims, &named, &rebuild, &folded, &live}) {
         std::sort(paths->begin(), paths->end());
-        paths->erase(std::unique(paths->begin(), paths->end()),
-                     paths->end());
+        paths->erase(std::unique(paths->begin(), paths->end()), paths->end());
     }
     // Not deduplicated: one input names each walk step once (the walk
     // stops at the first attribute it revisits), so an equal pair is two
@@ -2719,29 +2863,36 @@ std::unique_ptr<RigExecBakedProgram>
 RigExecBakedProgram::Build(RigExecRigEvaluator *evaluator,
                            std::vector<std::string> *reasons)
 {
-    return _BuildWithSceneCapture(evaluator,reasons,nullptr,UsdStageWeakPtr(),0);
+    return _BuildWithSceneCapture(evaluator, reasons, nullptr,
+                                  UsdStageWeakPtr(), 0);
 }
 
 std::unique_ptr<RigExecBakedProgram>
-RigExecBakedProgram::_BuildWithSceneCapture(RigExecRigEvaluator *evaluator,
-    std::vector<std::string> *reasons, const RigExecSceneDescriptors *scene,
-    const UsdStageWeakPtr &sceneStage, uint64_t sceneSerial)
+RigExecBakedProgram::_BuildWithSceneCapture(
+    RigExecRigEvaluator *evaluator, std::vector<std::string> *reasons,
+    const RigExecSceneDescriptors *scene, const UsdStageWeakPtr &sceneStage,
+    uint64_t sceneSerial)
 {
     // Every candidate remains unpublished. Normalize only actual canonical
     // SCC writer owners, then rebuild all frame bindings and version tables
     // from the same authored facts. A removed writer never revives its Solve.
-    if (!evaluator) return nullptr;
+    if (!evaluator)
+        return nullptr;
     const uint64_t sourceSerial = evaluator->_stageEditSerial;
     std::set<SdfPath> excludedPoseWriters, excludedSolverBodies;
     RigExecOpExclusionProof exclusionProof;
     std::map<SdfPath, std::string> cycleSkipReasons;
     for (;;) {
-        auto candidate = _BuildWithSceneCaptureAttempt(evaluator, reasons,
-            scene, sceneStage, sceneSerial, excludedPoseWriters,
-            excludedSolverBodies, exclusionProof, cycleSkipReasons);
-        if (!candidate) return nullptr;
+        auto candidate = _BuildWithSceneCaptureAttempt(
+            evaluator, reasons, scene, sceneStage, sceneSerial,
+            excludedPoseWriters, excludedSolverBodies, exclusionProof,
+            cycleSkipReasons);
+        if (!candidate)
+            return nullptr;
         if (evaluator->_stageEditSerial != sourceSerial) {
-            if (reasons) reasons->push_back("source changed during cycle writer normalization");
+            if (reasons)
+                reasons->push_back(
+                    "source changed during cycle writer normalization");
             return nullptr;
         }
         auto &B = *candidate->_impl;
@@ -2750,45 +2901,61 @@ RigExecBakedProgram::_BuildWithSceneCapture(RigExecRigEvaluator *evaluator,
         for (const auto &step : B.excludedSteps) {
             if (step.kind != K::SolverCommit && step.kind != K::Constraint &&
                 step.kind != K::CommitDelta && step.kind != K::PropagateChunk &&
-                step.kind != K::CommitApply) continue;
+                step.kind != K::CommitApply)
+                continue;
             if (step.object < 0 || size_t(step.object) >= B.commits.size() ||
                 size_t(step.object) >= B.walkSteps.size()) {
-                if (reasons) reasons->push_back("cycle writer has no authored binding");
+                if (reasons)
+                    reasons->push_back("cycle writer has no authored binding");
                 return nullptr;
             }
             const auto &walk = B.walkSteps[size_t(step.object)];
             if (walk.solverBatch) {
                 if (walk.batchSolvers.empty()) {
-                    if (reasons) reasons->push_back("cycle writer has an empty solver batch");
+                    if (reasons)
+                        reasons->push_back(
+                            "cycle writer has an empty solver batch");
                     return nullptr;
                 }
                 // A batch is one atomic application: remove its full joint
                 // ownership, not merely the solver named first by its key.
                 for (int index : walk.batchSolvers) {
-                    if (index < 0 || size_t(index) >= B.solvers.size()) return nullptr;
+                    if (index < 0 || size_t(index) >= B.solvers.size())
+                        return nullptr;
                     newWriters.insert(B.solvers[size_t(index)].path);
                 }
             } else {
                 const SdfPath &owner = B.commits[size_t(step.object)].moverPath;
-                if (owner.IsEmpty()) return nullptr;
+                if (owner.IsEmpty())
+                    return nullptr;
                 newWriters.insert(owner);
             }
         }
         bool progress = false;
-        for (const auto &step : B.excludedSteps) if (step.kind == K::Solve) {
-            if (step.object < 0 || size_t(step.object) >= B.solvers.size()) return nullptr;
-            progress = excludedSolverBodies.insert(B.solvers[size_t(step.object)].path).second || progress;
-        }
+        for (const auto &step : B.excludedSteps)
+            if (step.kind == K::Solve) {
+                if (step.object < 0 || size_t(step.object) >= B.solvers.size())
+                    return nullptr;
+                progress = excludedSolverBodies
+                               .insert(B.solvers[size_t(step.object)].path)
+                               .second ||
+                           progress;
+            }
         for (const auto &owner : newWriters)
             progress = excludedPoseWriters.insert(owner).second || progress;
         if (!progress) {
             if (!newWriters.empty()) {
-                if (reasons) reasons->push_back("normalized cycle writer still has an application");
+                if (reasons)
+                    reasons->push_back(
+                        "normalized cycle writer still has an application");
                 return nullptr;
             }
             // Bodies index the spelled slot paths without a check.
-            if (!TF_VERIFY(B.pathTexts && B.pathTexts->size() == B.paths.size())) {
-                if (reasons) reasons->push_back("slot path texts do not match the slot table");
+            if (!TF_VERIFY(B.pathTexts &&
+                           B.pathTexts->size() == B.paths.size())) {
+                if (reasons)
+                    reasons->push_back(
+                        "slot path texts do not match the slot table");
                 return nullptr;
             }
             return candidate;
@@ -2800,33 +2967,47 @@ RigExecBakedProgram::_BuildWithSceneCapture(RigExecRigEvaluator *evaluator,
         // while its current descriptor arrays still match the report.
         cycleSkipReasons = candidate->_GetCycleSkips(switchOwners);
         const auto withdrawnGeometryOwner = [&](const SdfPath &owner) {
-            if (owner.IsEmpty()) return false;
+            if (owner.IsEmpty())
+                return false;
             bool found = false;
-            for (const auto *chains : {&evaluator->_graphChains, &evaluator->_graphDerivedChains})
-                for (const auto &chain : *chains) for (const auto &revision : chain.second)
-                    if (revision.moverPath == owner &&
-                        excludedSolverBodies.count(revision.binding.driverFrames)) found = true;
+            for (const auto *chains :
+                 {&evaluator->_graphChains, &evaluator->_graphDerivedChains})
+                for (const auto &chain : *chains)
+                    for (const auto &revision : chain.second)
+                        if (revision.moverPath == owner &&
+                            excludedSolverBodies.count(
+                                revision.binding.driverFrames))
+                            found = true;
             return found;
         };
         const auto withdrawnCommit = [&](int index) {
             if (index < 0 || size_t(index) >= B.commits.size() ||
-                size_t(index) >= B.walkSteps.size()) return false;
+                size_t(index) >= B.walkSteps.size())
+                return false;
             const auto &walk = B.walkSteps[size_t(index)];
             if (walk.solverBatch)
-                return std::any_of(walk.batchSolvers.begin(), walk.batchSolvers.end(),
-                    [&](int solver) { return solver >= 0 && size_t(solver) < B.solvers.size() &&
-                        excludedPoseWriters.count(B.solvers[size_t(solver)].path) != 0; });
-            return excludedPoseWriters.count(B.commits[size_t(index)].moverPath) != 0;
+                return std::any_of(
+                    walk.batchSolvers.begin(), walk.batchSolvers.end(),
+                    [&](int solver) {
+                        return solver >= 0 &&
+                               size_t(solver) < B.solvers.size() &&
+                               excludedPoseWriters.count(
+                                   B.solvers[size_t(solver)].path) != 0;
+                    });
+            return excludedPoseWriters.count(
+                       B.commits[size_t(index)].moverPath) != 0;
         };
         const auto withdrawnCommitHelper = [&](const RigExecBakedStep &step) {
             if (step.kind == K::FrameMatrix && step.object >= 0 &&
                 size_t(step.object) < B.frameRecords.size())
-                return withdrawnCommit(B.frameRecords[size_t(step.object)].commit);
+                return withdrawnCommit(
+                    B.frameRecords[size_t(step.object)].commit);
             if (step.kind == K::WeightField && step.object >= 0 &&
                 size_t(step.object) < B.weightFields.size()) {
                 const auto &field = B.weightFields[size_t(step.object)];
-                return field.form == RigExecBakedProgramImpl::WeightField::Form::EnvelopeConstraint &&
-                    withdrawnCommit(field.consumer);
+                return field.form == RigExecBakedProgramImpl::WeightField::
+                                         Form::EnvelopeConstraint &&
+                       withdrawnCommit(field.consumer);
             }
             return false;
         };
@@ -2835,43 +3016,60 @@ RigExecBakedProgram::_BuildWithSceneCapture(RigExecRigEvaluator *evaluator,
             // captured driverFrames source became unavailable are withdrawn.
             SdfPath owner;
             const auto revisionOwner = [&](int index) {
-                if (index < 0 || size_t(index) >= B.revisionIndex.size()) return SdfPath();
+                if (index < 0 || size_t(index) >= B.revisionIndex.size())
+                    return SdfPath();
                 const auto &revision = B.revisionIndex[size_t(index)];
-                return B.chains[size_t(revision.first)].revisions[size_t(revision.second)].moverPath;
+                return B.chains[size_t(revision.first)]
+                    .revisions[size_t(revision.second)]
+                    .moverPath;
             };
             switch (step.kind) {
             case K::SkinTopology:
                 if (step.object >= 0)
-                    if (const auto *revision = RigExecBakedLayoutRevision(B, size_t(step.object)))
+                    if (const auto *revision =
+                            RigExecBakedLayoutRevision(B, size_t(step.object)))
                         owner = revision->moverPath;
                 break;
-            case K::InfluenceFold: case K::RevisionStatic:
-            case K::RevisionChunk: case K::RevisionFuse:
-                owner = revisionOwner(step.object); break;
+            case K::InfluenceFold:
+            case K::RevisionStatic:
+            case K::RevisionChunk:
+            case K::RevisionFuse:
+                owner = revisionOwner(step.object);
+                break;
             case K::Derived:
-                if (step.object >= 0 && size_t(step.object) < B.derivedIndex.size()) {
+                if (step.object >= 0 &&
+                    size_t(step.object) < B.derivedIndex.size()) {
                     const auto &derived = B.derivedIndex[size_t(step.object)];
-                    owner = B.chains[size_t(derived.first)].derived[size_t(derived.second)].revision.moverPath;
+                    owner = B.chains[size_t(derived.first)]
+                                .derived[size_t(derived.second)]
+                                .revision.moverPath;
                 }
                 break;
             case K::FrameMatrix:
-                if (step.object >= 0 && size_t(step.object) < B.frameRecords.size())
+                if (step.object >= 0 &&
+                    size_t(step.object) < B.frameRecords.size())
                     owner = B.frameRecords[size_t(step.object)].mover;
                 break;
             case K::WeightField:
-                if (step.object >= 0 && size_t(step.object) < B.weightFields.size()) {
+                if (step.object >= 0 &&
+                    size_t(step.object) < B.weightFields.size()) {
                     const auto &field = B.weightFields[size_t(step.object)];
-                    if (field.form == RigExecBakedProgramImpl::WeightField::Form::Revision)
+                    if (field.form ==
+                        RigExecBakedProgramImpl::WeightField::Form::Revision)
                         owner = revisionOwner(field.consumer);
                 }
                 break;
-            default: break;
+            default:
+                break;
             }
             return withdrawnGeometryOwner(owner);
         };
         for (const auto &step : B.excludedSteps) {
-            if (step.descriptorKey.empty()) return nullptr;
-            const bool withdrawn = withdrawnCommitHelper(step) || withdrawnGeometryRole(step) || step.kind == K::SolverCommit || step.kind == K::Constraint ||
+            if (step.descriptorKey.empty())
+                return nullptr;
+            const bool withdrawn =
+                withdrawnCommitHelper(step) || withdrawnGeometryRole(step) ||
+                step.kind == K::SolverCommit || step.kind == K::Constraint ||
                 step.kind == K::CommitDelta || step.kind == K::PropagateChunk ||
                 step.kind == K::CommitApply;
             if (withdrawn) {
@@ -2879,10 +3077,13 @@ RigExecBakedProgram::_BuildWithSceneCapture(RigExecRigEvaluator *evaluator,
                 // withdraw an optional geometry role retained earlier.
                 auto &retained = exclusionProof.keys;
                 retained.erase(std::remove(retained.begin(), retained.end(),
-                    step.descriptorKey), retained.end());
+                                           step.descriptorKey),
+                               retained.end());
             }
-            auto &keys = withdrawn ? exclusionProof.removedKeys : exclusionProof.keys;
-            if (std::find(keys.begin(), keys.end(), step.descriptorKey) == keys.end())
+            auto &keys =
+                withdrawn ? exclusionProof.removedKeys : exclusionProof.keys;
+            if (std::find(keys.begin(), keys.end(), step.descriptorKey) ==
+                keys.end())
                 keys.push_back(step.descriptorKey);
         }
         // The shared compiler keeps the original aligned SCC report. No
@@ -2893,15 +3094,16 @@ RigExecBakedProgram::_BuildWithSceneCapture(RigExecRigEvaluator *evaluator,
 }
 
 std::unique_ptr<RigExecBakedProgram>
-RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluator,
-    std::vector<std::string> *reasons, const RigExecSceneDescriptors *scene,
-    const UsdStageWeakPtr &sceneStage, uint64_t sceneSerial,
-    const std::set<SdfPath> &excludedPoseWriters,
+RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
+    RigExecRigEvaluator *evaluator, std::vector<std::string> *reasons,
+    const RigExecSceneDescriptors *scene, const UsdStageWeakPtr &sceneStage,
+    uint64_t sceneSerial, const std::set<SdfPath> &excludedPoseWriters,
     const std::set<SdfPath> &excludedSolverBodies,
     const RigExecOpExclusionProof &exclusionProof,
     const std::map<SdfPath, std::string> &cycleSkipReasons)
 {
-    RigExecInputReplayComparisonScope replayComparison("RigExecBakedProgram::Build");
+    RigExecInputReplayComparisonScope replayComparison(
+        "RigExecBakedProgram::Build");
     if (!evaluator) {
         return nullptr;
     }
@@ -2944,8 +3146,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     if (bakeableBeside) {
         bakeableLane.Run([&E, &bakeable, &bakeableReasons] {
             RigExecProfileScope scope(&E._profiler, "Bake.IsBakeable",
-                                              "compile");
-                    bakeable = IsBakeable(E, &bakeableReasons);
+                                      "compile");
+            bakeable = IsBakeable(E, &bakeableReasons);
         });
     } else {
         phases.Next("Bake.IsBakeable");
@@ -3008,13 +3210,19 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         }
     }
     B.ownedJointSolverBinding = E._jointSolverBinding;
-    for (auto it = B.ownedJointSolverBinding.begin(); it != B.ownedJointSolverBinding.end();) {
+    for (auto it = B.ownedJointSolverBinding.begin();
+         it != B.ownedJointSolverBinding.end();) {
         auto &writers = it->second;
         writers.erase(std::remove_if(writers.begin(), writers.end(),
-            [&](const auto &writer) { return excludedPoseWriters.count(writer.first) != 0; }),
-            writers.end());
-        if (writers.empty()) it = B.ownedJointSolverBinding.erase(it);
-        else ++it;
+                                     [&](const auto &writer) {
+                                         return excludedPoseWriters.count(
+                                                    writer.first) != 0;
+                                     }),
+                      writers.end());
+        if (writers.empty())
+            it = B.ownedJointSolverBinding.erase(it);
+        else
+            ++it;
     }
     B.jointSolverBinding = &B.ownedJointSolverBinding;
     B.cycleExclusionProof = exclusionProof;
@@ -3134,8 +3342,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
             }
         }
         if (B.parent[i] >= i) {
-            refuse("provider slots are not in namespace DFS order",
-                   B.paths[i]);
+            refuse("provider slots are not in namespace DFS order", B.paths[i]);
         }
     }
 
@@ -3168,7 +3375,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     B.restRoundTrip.assign(N, GfMatrix4d(1.0));
     B.defaultRoundTrip.assign(N, GfMatrix4d(1.0));
     B.ladders.resize(size_t(N));
-    for (auto &ladder : B.ladders) ladder.interveningSpace.constant = GfMatrix4d(1.0);
+    for (auto &ladder : B.ladders)
+        ladder.interveningSpace.constant = GfMatrix4d(1.0);
     // Fifteen composed-stage resolutions per provider slot, and on a
     // character this loop is the other of the two places Build spends most
     // of its time -- see the input binding table below, which is the same
@@ -3222,12 +3430,10 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     const size_t commitChunks =
         (size_t(N) + commitChunkSlots - 1) / commitChunkSlots;
     std::vector<RigExecBakedCommitShard> ladderShards(commitChunks);
-    const auto resolveLadderChunks = [&](size_t beginChunk,
-                                         size_t endChunk) {
+    const auto resolveLadderChunks = [&](size_t beginChunk, size_t endChunk) {
         for (size_t k = beginChunk; k < endChunk; ++k) {
             RigExecBakedCommitShard &shard = ladderShards[k];
-            const size_t end =
-                std::min(size_t(N), (k + 1) * commitChunkSlots);
+            const size_t end = std::min(size_t(N), (k + 1) * commitChunkSlots);
             for (size_t i = k * commitChunkSlots; i < end; ++i) {
                 // An xform-derived slot binds no ladder -- its rest frame
                 // is the identity outright, below -- so there is nothing
@@ -3237,31 +3443,36 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
                 }
                 const UsdPrim prim = B.stage->GetPrimAtPath(B.paths[i]);
                 _LadderResolution &out = ladderResolved[i];
-                out.posedSpace = ctx.ResolveBind(prim, kPosedSpace,
-                                                 GfMatrix4d(1.0),
-                                                 &out.posedSpaceWalk);
-                out.restSpace = ctx.ResolveBind(prim, kRestSpace,
-                                                GfMatrix4d(1.0),
-                                                &out.restSpaceWalk);
-                out.defaultSpace = ctx.ResolveBind(prim, kDefaultSpace,
-                                                   GfMatrix4d(1.0),
-                                                   &out.defaultSpaceWalk);
-                out.parentSpace = ctx.ResolveBind(prim, kParentSpace, GfMatrix4d(1.0), &out.parentSpaceWalk);
-                out.parentDefaultSpace = ctx.ResolveBind(prim, kParentDefaultSpace, GfMatrix4d(1.0), &out.parentDefaultSpaceWalk);
-                out.avarDefaultSpace = ctx.ResolveBind(prim, kAvarDefaultSpace, GfMatrix4d(1.0), &out.avarDefaultSpaceWalk);
-                out.posedDefaultSpace = ctx.ResolveBind(prim, kPosedDefaultSpace, GfMatrix4d(1.0), &out.posedDefaultSpaceWalk);
-                out.rotationSign = ctx.ResolveBind(prim, kRotationSign, GfVec3d(1.0), &out.rotationSignWalk,
+                out.posedSpace = ctx.ResolveBind(
+                    prim, kPosedSpace, GfMatrix4d(1.0), &out.posedSpaceWalk);
+                out.restSpace = ctx.ResolveBind(
+                    prim, kRestSpace, GfMatrix4d(1.0), &out.restSpaceWalk);
+                out.defaultSpace =
+                    ctx.ResolveBind(prim, kDefaultSpace, GfMatrix4d(1.0),
+                                    &out.defaultSpaceWalk);
+                out.parentSpace = ctx.ResolveBind(
+                    prim, kParentSpace, GfMatrix4d(1.0), &out.parentSpaceWalk);
+                out.parentDefaultSpace =
+                    ctx.ResolveBind(prim, kParentDefaultSpace, GfMatrix4d(1.0),
+                                    &out.parentDefaultSpaceWalk);
+                out.avarDefaultSpace =
+                    ctx.ResolveBind(prim, kAvarDefaultSpace, GfMatrix4d(1.0),
+                                    &out.avarDefaultSpaceWalk);
+                out.posedDefaultSpace =
+                    ctx.ResolveBind(prim, kPosedDefaultSpace, GfMatrix4d(1.0),
+                                    &out.posedDefaultSpaceWalk);
+                out.rotationSign = ctx.ResolveBind(
+                    prim, kRotationSign, GfVec3d(1.0), &out.rotationSignWalk,
                     /*sourceValue=*/true);
                 out.rotationOrder = ctx.ResolveBind(
-                    prim, kRotationOrder, B.xyzToken,
-                    &out.rotationOrderWalk);
+                    prim, kRotationOrder, B.xyzToken, &out.rotationOrderWalk);
                 for (int c = 0; c < 6; ++c) {
                     out.restAvars[c] = ctx.ResolveBind(
                         prim, kRestAvarTokens[c], 0.0, &out.restAvarWalks[c],
                         /*sourceValue=*/true);
-                    out.defaultAvars[c] = ctx.ResolveBind(
-                        prim, kDefaultAvarTokens[c], 0.0,
-                        &out.defaultAvarWalks[c]);
+                    out.defaultAvars[c] =
+                        ctx.ResolveBind(prim, kDefaultAvarTokens[c], 0.0,
+                                        &out.defaultAvarWalks[c]);
                 }
                 shard.Prim(B.paths[i]);
                 // Recorded in the posedSpace/restSpace/defaultSpace/
@@ -3270,16 +3481,23 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
                 // order the override indices come out in.
                 RigExecBakedRecordBind(&shard, prim, kPosedSpace,
                                        &out.posedSpace, out.posedSpaceWalk);
-                RigExecBakedRecordBind(&shard, prim, kRestSpace,
-                                       &out.restSpace, out.restSpaceWalk);
+                RigExecBakedRecordBind(&shard, prim, kRestSpace, &out.restSpace,
+                                       out.restSpaceWalk);
                 RigExecBakedRecordBind(&shard, prim, kDefaultSpace,
-                                       &out.defaultSpace,
-                                       out.defaultSpaceWalk);
-                RigExecBakedRecordBind(&shard, prim, kParentSpace, &out.parentSpace, out.parentSpaceWalk);
-                RigExecBakedRecordBind(&shard, prim, kParentDefaultSpace, &out.parentDefaultSpace, out.parentDefaultSpaceWalk);
-                RigExecBakedRecordBind(&shard, prim, kAvarDefaultSpace, &out.avarDefaultSpace, out.avarDefaultSpaceWalk);
-                RigExecBakedRecordBind(&shard, prim, kPosedDefaultSpace, &out.posedDefaultSpace, out.posedDefaultSpaceWalk);
-                RigExecBakedRecordBind(&shard, prim, kRotationSign, &out.rotationSign, out.rotationSignWalk);
+                                       &out.defaultSpace, out.defaultSpaceWalk);
+                RigExecBakedRecordBind(&shard, prim, kParentSpace,
+                                       &out.parentSpace, out.parentSpaceWalk);
+                RigExecBakedRecordBind(&shard, prim, kParentDefaultSpace,
+                                       &out.parentDefaultSpace,
+                                       out.parentDefaultSpaceWalk);
+                RigExecBakedRecordBind(&shard, prim, kAvarDefaultSpace,
+                                       &out.avarDefaultSpace,
+                                       out.avarDefaultSpaceWalk);
+                RigExecBakedRecordBind(&shard, prim, kPosedDefaultSpace,
+                                       &out.posedDefaultSpace,
+                                       out.posedDefaultSpaceWalk);
+                RigExecBakedRecordBind(&shard, prim, kRotationSign,
+                                       &out.rotationSign, out.rotationSignWalk);
                 RigExecBakedRecordBind(&shard, prim, kRotationOrder,
                                        &out.rotationOrder,
                                        out.rotationOrderWalk);
@@ -3307,8 +3525,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     if (bakeableBeside) {
         {
             RigExecProfileScope join(&E._profiler, "Bake.IsBakeableJoin",
-                                             "compile");
-                    bakeableLane.Wait();
+                                     "compile");
+            bakeableLane.Wait();
         }
         if (!bakeable) {
             if (reasons) {
@@ -3386,8 +3604,11 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
             const UsdAttribute attribute = provider.GetAttribute(name);
             SdfPathVector sources;
             return attribute && attribute.GetConnections(&sources) &&
-                   sources.size() == 1 && attribute.GetStage()->GetAttributeAtPath(sources[0]) &&
-                   attribute.GetStage()->GetAttributeAtPath(sources[0]).GetTypeName() == attribute.GetTypeName();
+                   sources.size() == 1 &&
+                   attribute.GetStage()->GetAttributeAtPath(sources[0]) &&
+                   attribute.GetStage()
+                           ->GetAttributeAtPath(sources[0])
+                           .GetTypeName() == attribute.GetTypeName();
         };
         ladder.posedSpaceConnected = connected(kPosedSpace);
         ladder.defaultSpaceConnected = connected(kDefaultSpace);
@@ -3468,11 +3689,14 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     // numbered and sampled first; the end of Build numbers them all again.
     for (const SdfPath &provider : E._interveningXformProviders) {
         const int slot = slotOf(provider);
-        if (slot < 0) continue;
+        if (slot < 0)
+            continue;
         B.interveningSlots.push_back(slot);
         const auto anchor = E._poseProviderAnchors.find(provider);
-        B.interveningAnchors.push_back(anchor == E._poseProviderAnchors.end() || anchor->second.IsEmpty()
-            ? B.assetRootPath : anchor->second);
+        B.interveningAnchors.push_back(anchor == E._poseProviderAnchors.end() ||
+                                               anchor->second.IsEmpty()
+                                           ? B.assetRootPath
+                                           : anchor->second);
         B.ladders[size_t(slot)].interveningSpace.constant = GfMatrix4d(1.0);
         B.ladders[size_t(slot)].interveningSpace.varying = true;
         B.ladderVarying = true;
@@ -3480,8 +3704,10 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     _SampleIntervening(&B, capture);
     {
         std::string error;
-        if(!RigExecBakedBuildSpaces(&B,capture,&error,scene,sceneStage,sceneSerial)) {
-            refuse("provider expressions could not translate: "+error,E._rigPath);
+        if (!RigExecBakedBuildSpaces(&B, capture, &error, scene, sceneStage,
+                                     sceneSerial)) {
+            refuse("provider expressions could not translate: " + error,
+                   E._rigPath);
             return nullptr;
         }
     }
@@ -3538,8 +3764,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     const auto resolveChunks = [&](size_t beginChunk, size_t endChunk) {
         for (size_t k = beginChunk; k < endChunk; ++k) {
             RigExecBakedCommitShard &shard = avarShards[k];
-            const size_t end =
-                std::min(size_t(N), (k + 1) * commitChunkSlots);
+            const size_t end = std::min(size_t(N), (k + 1) * commitChunkSlots);
             for (size_t i = k * commitChunkSlots; i < end; ++i) {
                 // An xform-derived slot binds no avars -- its pose is the
                 // stage's -- so the bound/varying counts and the
@@ -3551,9 +3776,9 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
                 const UsdPrim prim = B.stage->GetPrimAtPath(B.paths[i]);
                 for (int c = 0; c < 11; ++c) {
                     _AvarResolution &out = resolved[i * 11 + size_t(c)];
-                    out.input = ctx.ResolveBind(
-                        prim, kAvarTokens[c],
-                        RigExecBakedAvarDefaults[c], &out.walk);
+                    out.input =
+                        ctx.ResolveBind(prim, kAvarTokens[c],
+                                        RigExecBakedAvarDefaults[c], &out.walk);
                     RigExecBakedRecordBind(&shard, prim, kAvarTokens[c],
                                            &out.input, out.walk);
                     if (out.input.varying || out.input.overrideIndex < 0) {
@@ -3609,34 +3834,44 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     phases.Next("Bake.pose_descriptors");
     // Every writer owns a pose version. Matrix checkpoints expose only the
     // named pairs requested by consumers, preserving their skipped-record fallback.
-    const auto snapshotAfter = [&E](const SdfPath &target, const SdfPath &writer) {
+    const auto snapshotAfter = [&E](const SdfPath &target,
+                                    const SdfPath &writer) {
         const auto wanted = E._nativePhaseCheckpoints.find(target);
         return wanted != E._nativePhaseCheckpoints.end() &&
                wanted->second.count(writer) > 0;
     };
     std::vector<RigExecBakedWalkEntry> walk;
-    struct PoseDomainEntry { bool solverBatch; size_t index; SdfPath path; };
+    struct PoseDomainEntry {
+        bool solverBatch;
+        size_t index;
+        SdfPath path;
+    };
     std::vector<PoseDomainEntry> domains;
     for (size_t i = 0; i < E._solverBatches.size(); ++i) {
         const auto &batch = E._solverBatches[i];
-        if (!batch.solvers.empty()) domains.push_back({true, i, *batch.solvers.begin()});
+        if (!batch.solvers.empty())
+            domains.push_back({true, i, *batch.solvers.begin()});
     }
     for (size_t i = 0; i < E._frameConstraints.size(); ++i)
         domains.push_back({false, i, E._frameConstraints[i].moverPath});
-    B.poseDependencyPaths=E._nativePoseDependencies;
-    std::sort(domains.begin(),domains.end(),[&](const auto &a,const auto &b) {
-        const auto ai=E._nativePoseOrdinals.find(a.path),bi=E._nativePoseOrdinals.find(b.path);
-        const int oa=ai==E._nativePoseOrdinals.end()?-1:ai->second;
-        const int ob=bi==E._nativePoseOrdinals.end()?-1:bi->second;
-        return oa!=ob?oa<ob:a.path<b.path;
-    });
+    B.poseDependencyPaths = E._nativePoseDependencies;
+    std::sort(
+        domains.begin(), domains.end(), [&](const auto &a, const auto &b) {
+            const auto ai = E._nativePoseOrdinals.find(a.path),
+                       bi = E._nativePoseOrdinals.find(b.path);
+            const int oa = ai == E._nativePoseOrdinals.end() ? -1 : ai->second;
+            const int ob = bi == E._nativePoseOrdinals.end() ? -1 : bi->second;
+            return oa != ob ? oa < ob : a.path < b.path;
+        });
     for (const PoseDomainEntry &step : domains) {
         RigExecBakedWalkEntry entry;
         entry.solverBatch = step.solverBatch;
         if (step.solverBatch) {
             const auto &batch = E._solverBatches[step.index];
             if (std::any_of(batch.solvers.begin(), batch.solvers.end(),
-                [&](const SdfPath &owner) { return excludedPoseWriters.count(owner) != 0; }))
+                            [&](const SdfPath &owner) {
+                                return excludedPoseWriters.count(owner) != 0;
+                            }))
                 continue;
             entry.level = 0;
             for (const SdfPath &solverPath : batch.solvers) {
@@ -3647,13 +3882,11 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
                         ? std::vector<std::pair<SdfPath, int>>()
                         : joints->second);
                 std::vector<char> snapshotJoints;
-                for (const auto &[joint, element] :
-                         entry.solverJoints.back()) {
+                for (const auto &[joint, element] : entry.solverJoints.back()) {
                     snapshotJoints.push_back(
                         snapshotAfter(joint, solverPath) ? 1 : 0);
                 }
-                entry.solverSnapshotJoints.push_back(
-                    std::move(snapshotJoints));
+                entry.solverSnapshotJoints.push_back(std::move(snapshotJoints));
                 // The live-rest half of the same binding, carried across so
                 // the baked description measures from the same frames the
                 // dynamic path's computeRestFrame overrides do. A restInputs
@@ -3661,21 +3894,24 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
                 // rest was merely pinned, not a live one.
                 SdfPathVector live;
                 for (const auto &[joint, predecessor] : batch.restInputs) {
-                    if (predecessor.IsEmpty()) continue;
+                    if (predecessor.IsEmpty())
+                        continue;
                     bool named = false;
                     if (joints != E._solverJoints.end()) {
                         for (const auto &[named_, element] : joints->second) {
                             named = named || named_ == joint;
                         }
                     }
-                    if (named) live.push_back(joint);
+                    if (named)
+                        live.push_back(joint);
                 }
                 entry.solverLiveRestJoints.push_back(std::move(live));
             }
         } else {
             const RigExecRigEvaluator::_FrameConstraint &fc =
                 E._frameConstraints[step.index];
-            if (excludedPoseWriters.count(fc.moverPath)) continue;
+            if (excludedPoseWriters.count(fc.moverPath))
+                continue;
             entry.constraint.moverPath = fc.moverPath;
             entry.constraint.schemaType = fc.schemaType;
             entry.constraint.targets = fc.targets;
@@ -3713,18 +3949,19 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     // pose and geometry descriptor; discovery order supplies no schedule.
     {
         std::set<SdfPath> batched;
-        for (const auto &entry : walk) if (entry.solverBatch) {
-            for (const SdfPath &solverPath : entry.batchSolvers) {
-                batched.insert(solverPath);
+        for (const auto &entry : walk)
+            if (entry.solverBatch) {
+                for (const SdfPath &solverPath : entry.batchSolvers) {
+                    batched.insert(solverPath);
+                }
             }
-        }
         std::set<SdfPath> pending;
         for (const SdfPath &solverPath : E._nativeGuideSolvers) {
             if (!batched.count(solverPath)) {
                 pending.insert(solverPath);
             }
         }
-        ctx.guideOnlySolvers.assign(pending.begin(),pending.end());
+        ctx.guideOnlySolvers.assign(pending.begin(), pending.end());
     }
     RigExecBakedBuildWalk(&ctx, walk);
     // The native sources the walk registered, and the two buffers the
@@ -3807,13 +4044,15 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     // Geometry readers bind these compiled weight output identities.
     RigExecPathText interpolatorText;
     for (const RigExecRigEvaluator::_PoseInterpolator &record :
-             E._poseInterpolators) {
-        if(!record.descriptor) {
-            ctx.Refuse("pose interpolator has no detached descriptor",record.prim);continue;
+         E._poseInterpolators) {
+        if (!record.descriptor) {
+            ctx.Refuse("pose interpolator has no detached descriptor",
+                       record.prim);
+            continue;
         }
-        const auto &captured=*record.descriptor;
+        const auto &captured = *record.descriptor;
         RigExecBakedProgramImpl::PoseInterpolator out;
-        static_cast<RigExecPoseInterpolatorRecord &>(out)=captured.record;
+        static_cast<RigExecPoseInterpolatorRecord &>(out) = captured.record;
         out.path = record.prim;
         out.pathText = interpolatorText(record.prim);
         // A numeric driver reads dials, not a frame: it names no driver prim
@@ -3830,7 +4069,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
             out.parentSlot = ctx.SlotOf(captured.parent);
             if (out.parentSlot < 0) {
                 ctx.Refuse("pose interpolator driver parent has no provider "
-                           "slot", captured.parent);
+                           "slot",
+                           captured.parent);
                 continue;
             }
         }
@@ -3838,7 +4078,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         for (size_t k = 0; k < captured.extraDrivers.size(); ++k) {
             const int driver = ctx.SlotOf(captured.extraDrivers[k]);
             const int parent = captured.extraParents[k].IsEmpty()
-                                   ? -1 : ctx.SlotOf(captured.extraParents[k]);
+                                   ? -1
+                                   : ctx.SlotOf(captured.extraParents[k]);
             if (driver < 0 ||
                 (parent < 0 && !captured.extraParents[k].IsEmpty())) {
                 ctx.Refuse("pose interpolator driver has no provider slot",
@@ -3866,8 +4107,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         }
         for (size_t k = 0; k < captured.driverAttributes.size(); ++k) {
             const SdfPath &value = captured.driverAttributes[k];
-            const UsdPrim owner =
-                B.stage->GetPrimAtPath(value.GetPrimPath());
+            const UsdPrim owner = B.stage->GetPrimAtPath(value.GetPrimPath());
             // NAMED, for invalidation, but NOT routed: a routed prim tells
             // SetOverrides that every read of it already goes through the
             // resolved inputs, and a drag on the dial would then be placed
@@ -3904,7 +4144,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
             out.primvarSources.push_back(int(captured.primvarSources[k]));
         }
         out.weightEnd = int(B.poseWeightPaths.size());
-        out.poseCount=out.poseSlots.size();
+        out.poseCount = out.poseSlots.size();
         out.kernelInputs.numeric.resize(out.valueInputs.size());
         out.kernelInputs.extraDrivers.resize(out.extraDriverSlots.size());
         B.poseInterpolators.push_back(std::move(out));
@@ -3917,38 +4157,44 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     // common graph binds the active selector and every frame producer.
     B.spaceSwitchBySlot.assign(B.paths.size(), -1);
     for (const RigExecRigEvaluator::_SpaceSwitch &sw : E._spaceSwitches) {
-        if(!sw.descriptor) {
-            ctx.Refuse("space switch has no detached descriptor",sw.switchPath);continue;
+        if (!sw.descriptor) {
+            ctx.Refuse("space switch has no detached descriptor",
+                       sw.switchPath);
+            continue;
         }
-        const auto &captured=*sw.descriptor;
+        const auto &captured = *sw.descriptor;
         RigExecBakedProgramImpl::SpaceSwitch out;
-        out.kernelRecord=captured.record;
+        out.kernelRecord = captured.record;
         out.slot = slotOf(captured.target);
-        if (out.slot < 0) continue;
-        for(size_t k=0;k<captured.sources.size();++k) {
-            const auto &source=captured.sources[k];
-            out.sourceSlots.push_back(source.IsEmpty()?-1:slotOf(source));
-            out.filters.push_back(RigExecRotationFilter(captured.record.filters[k]));
+        if (out.slot < 0)
+            continue;
+        for (size_t k = 0; k < captured.sources.size(); ++k) {
+            const auto &source = captured.sources[k];
+            out.sourceSlots.push_back(source.IsEmpty() ? -1 : slotOf(source));
+            out.filters.push_back(
+                RigExecRotationFilter(captured.record.filters[k]));
         }
-        out.twistAxis=captured.record.twistAxis;
-        out.spaceSlot=captured.space.IsEmpty()?-1:slotOf(captured.space);
-        for(size_t axis=0;axis<3;++axis) {
-            out.affectTranslation[axis]=captured.record.affectTranslation[axis];
-            out.affectRotation[axis]=captured.record.affectRotation[axis];
-            out.affectScale[axis]=captured.record.affectScale[axis];
+        out.twistAxis = captured.record.twistAxis;
+        out.spaceSlot = captured.space.IsEmpty() ? -1 : slotOf(captured.space);
+        for (size_t axis = 0; axis < 3; ++axis) {
+            out.affectTranslation[axis] =
+                captured.record.affectTranslation[axis];
+            out.affectRotation[axis] = captured.record.affectRotation[axis];
+            out.affectScale[axis] = captured.record.affectScale[axis];
         }
-        out.labels=captured.labels;
+        out.labels = captured.labels;
         const UsdPrim switchPrim = B.stage->GetPrimAtPath(sw.switchPath);
-        const UsdAttribute active = captured.activeAttribute.IsEmpty()
-            ? switchPrim.GetAttribute(_tokens->inputsActiveSpace)
-            : B.stage->GetAttributeAtPath(captured.activeAttribute);
+        const UsdAttribute active =
+            captured.activeAttribute.IsEmpty()
+                ? switchPrim.GetAttribute(_tokens->inputsActiveSpace)
+                : B.stage->GetAttributeAtPath(captured.activeAttribute);
         if (active && active.GetTypeName() == SdfValueTypeNames->Token) {
             out.tokenIndex = true;
-            out.activeTokenInput = ctx.Bind<TfToken>(active.GetPrim(),
-                active.GetName(), TfToken());
+            out.activeTokenInput = ctx.Bind<TfToken>(
+                active.GetPrim(), active.GetName(), TfToken());
         } else if (active) {
-            out.activeInput = ctx.Bind<double>(active.GetPrim(),
-                active.GetName(), captured.activeFallback);
+            out.activeInput = ctx.Bind<double>(
+                active.GetPrim(), active.GetName(), captured.activeFallback);
         }
         out.kernelInputs.sources.resize(out.sourceSlots.size());
         B.spaceSwitchBySlot[size_t(out.slot)] = int(B.spaceSwitches.size());
@@ -3958,7 +4204,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     // which sources ride the IK control is namespace topology, settled here.
     for (auto &c : B.constraints) {
         if (!c.ikFkMatch || c.sources.size() != 10 || c.sources[5] < 0 ||
-            c.sources[6] < 0) continue;
+            c.sources[6] < 0)
+            continue;
         const SdfPath &ik = B.paths[size_t(c.sources[5])];
         const int pole = c.sources[6];
         c.matchPoleSwitch = B.spaceSwitchBySlot[size_t(pole)];
@@ -3967,7 +4214,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
             for (const int source :
                  B.spaceSwitches[size_t(c.matchPoleSwitch)].sourceSlots) {
                 c.matchPoleSourceRides.push_back(
-                    source >= 0 && B.paths[size_t(source)].HasPrefix(ik) ? 1 : 0);
+                    source >= 0 && B.paths[size_t(source)].HasPrefix(ik) ? 1
+                                                                         : 0);
             }
             c.matchPoleInputs.sources.reserve(c.matchPoleSourceRides.size());
         }
@@ -3975,59 +4223,107 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         c.matchPoleParentRides =
             parent >= 0 && B.paths[size_t(parent)].HasPrefix(ik);
     }
-    B.autoClavicleBySlot.assign(B.paths.size(),-1);
-    for(const auto &[path,node]:B.sceneDescriptors->nodes) {
-        if(node.domain!=RigExecSceneDomain::AutoClavicle || !node.fact.active || !path.HasPrefix(E._rigPath))continue;
+    B.autoClavicleBySlot.assign(B.paths.size(), -1);
+    for (const auto &[path, node] : B.sceneDescriptors->nodes) {
+        if (node.domain != RigExecSceneDomain::AutoClavicle ||
+            !node.fact.active || !path.HasPrefix(E._rigPath))
+            continue;
         RigExecSceneCompileInputs source(*B.sceneDescriptors);
-        const auto prim=B.stage->GetPrimAtPath(path);
-        for (const TfToken &name : {_tokens->rigExecIkValue, _tokens->inputsGain, _tokens->rigExecBasis,
-                 _tokens->rigExecPoseRotations, _tokens->rigExecPoseFalloffs, _tokens->rigExecPoseGains,
-                 _tokens->rigExecKernel, _tokens->rigExecRegularization}) ctx.Fold(prim,name);
-        const auto targets=source.Targets(path.AppendProperty(_tokens->rigExecTarget));
-        if(targets.size()!=1 || slotOf(targets.front())<0){refuse("auto clavicle requires one provider target",path);return nullptr;}
-        RigExecBakedProgramImpl::AutoClavicle ac;ac.slot=slotOf(targets.front());
-        if(B.autoClavicleBySlot[size_t(ac.slot)]>=0){refuse("multiple auto clavicles target the same provider",path);return nullptr;}
-        RigExecValueId next=1;
+        const auto prim = B.stage->GetPrimAtPath(path);
+        for (const TfToken &name :
+             {_tokens->rigExecIkValue, _tokens->inputsGain,
+              _tokens->rigExecBasis, _tokens->rigExecPoseRotations,
+              _tokens->rigExecPoseFalloffs, _tokens->rigExecPoseGains,
+              _tokens->rigExecKernel, _tokens->rigExecRegularization})
+            ctx.Fold(prim, name);
+        const auto targets =
+            source.Targets(path.AppendProperty(_tokens->rigExecTarget));
+        if (targets.size() != 1 || slotOf(targets.front()) < 0) {
+            refuse("auto clavicle requires one provider target", path);
+            return nullptr;
+        }
+        RigExecBakedProgramImpl::AutoClavicle ac;
+        ac.slot = slotOf(targets.front());
+        if (B.autoClavicleBySlot[size_t(ac.slot)] >= 0) {
+            refuse("multiple auto clavicles target the same provider", path);
+            return nullptr;
+        }
+        RigExecValueId next = 1;
         RigExecSceneGraphBindingContext link;
-        link.resolve=[&](const RigExecSceneGraphReadRequest &request,RigExecValueId *id,std::string *why) {
-            *id=next++;
-            if(request.domain==RigExecSceneValueDomain::Pose) {
-                const int slot=slotOf(request.source);
-                if(slot<0){if(why)*why="missing auto clavicle frame: "+request.source.GetString();return false;}
+        // resolve's required id is a reference; the reason is optional and
+        // only filled when asked for.
+        link.resolve = [&](const RigExecSceneGraphReadRequest &request,
+                           RigExecValueId &id, std::string *why) {
+            id = next++;
+            if (request.domain == RigExecSceneValueDomain::Pose) {
+                const int slot = slotOf(request.source);
+                if (slot < 0) {
+                    if (why)
+                        *why = "missing auto clavicle frame: " +
+                               request.source.GetString();
+                    return false;
+                }
                 RigExecBakedProgramImpl::AutoClavicle::FrameRead read;
-                read.value=*id;read.slot=slot;read.computation=request.computation;
-                if(read.computation.empty() && request.source.HasPrefix(targets.front())) {
-                    for(int at=slot;at!=ac.slot;at=B.parent[size_t(at)]) {
-                        if(at<0){if(why)*why="auto clavicle descendant has no target ancestor";return false;}
-                        if(B.spaceSwitchBySlot[size_t(at)]>=0){if(why)*why="auto clavicle entering descendant has an independent space switch";return false;}
+                read.value = id;
+                read.slot = slot;
+                read.computation = request.computation;
+                if (read.computation.empty() &&
+                    request.source.HasPrefix(targets.front())) {
+                    for (int at = slot; at != ac.slot;
+                         at = B.parent[size_t(at)]) {
+                        if (at < 0) {
+                            if (why)
+                                *why = "auto clavicle descendant has no target "
+                                       "ancestor";
+                            return false;
+                        }
+                        if (B.spaceSwitchBySlot[size_t(at)] >= 0) {
+                            if (why)
+                                *why = "auto clavicle entering descendant has "
+                                       "an independent space switch";
+                            return false;
+                        }
                         read.recompose.push_back(at);
                     }
-                    std::reverse(read.recompose.begin(),read.recompose.end());
+                    std::reverse(read.recompose.begin(), read.recompose.end());
                 }
-                ac.frames.push_back(std::move(read));return true;
+                ac.frames.push_back(std::move(read));
+                return true;
             }
-            const auto attribute=B.stage->GetAttributeAtPath(request.source);
-            if(!attribute)return false;
-            RigExecBakedProgramImpl::AutoClavicle::ScalarRead read;read.value=*id;
-            read.isFloat=attribute.GetTypeName()==SdfValueTypeNames->Float;
-            if(read.isFloat)read.narrow=ctx.Bind<float>(attribute.GetPrim(),attribute.GetName(),0.0f);
-            else read.wide=ctx.Bind<double>(attribute.GetPrim(),attribute.GetName(),0.0);
-            ac.scalars.push_back(std::move(read));return true;
+            const auto attribute = B.stage->GetAttributeAtPath(request.source);
+            if (!attribute)
+                return false;
+            RigExecBakedProgramImpl::AutoClavicle::ScalarRead read;
+            read.value = id;
+            read.isFloat = attribute.GetTypeName() == SdfValueTypeNames->Float;
+            if (read.isFloat)
+                read.narrow = ctx.Bind<float>(attribute.GetPrim(),
+                                              attribute.GetName(), 0.0f);
+            else
+                read.wide = ctx.Bind<double>(attribute.GetPrim(),
+                                             attribute.GetName(), 0.0);
+            ac.scalars.push_back(std::move(read));
+            return true;
         };
         std::string invalid;
-        if(!RigExecDispatchBindAutoClavicle(*B.sceneDescriptors,path,link,0,UINT64_MAX,&ac.operation,&invalid)) {
-            refuse(invalid,path);return nullptr;
+        if (!RigExecDispatchBindAutoClavicle(*B.sceneDescriptors, path, link, 0,
+                                             UINT64_MAX, &ac.operation,
+                                             &invalid)) {
+            refuse(invalid, path);
+            return nullptr;
         }
-        ac.operation.output=next++;ac.values=RigExecTypedValueStore(size_t(next));
-        B.autoClavicleBySlot[size_t(ac.slot)]=int(B.autoClavicles.size());
+        ac.operation.output = next++;
+        ac.values = RigExecTypedValueStore(size_t(next));
+        B.autoClavicleBySlot[size_t(ac.slot)] = int(B.autoClavicles.size());
         B.autoClavicles.push_back(std::move(ac));
     }
     // Once every switched slot is known: which version of each frame a
     // switch reads depends on which controls above it are switched.
     {
         std::string invalid;
-        if(!RigExecBakedBindSpaceSwitchVersions(&B,&invalid)) {
-            refuse(invalid,E._rigPath);return nullptr;
+        if (!RigExecBakedBindSpaceSwitchVersions(&B, &invalid)) {
+            refuse(invalid, E._rigPath);
+            return nullptr;
         }
     }
 
@@ -4045,27 +4341,37 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
             spec.snapshotAfter = snapshotAfter(r.target, r.moverPath);
             return spec;
         };
-    const auto keepRevision = [&](const RigExecRigEvaluator::_GraphRevision &revision) {
-        if (!excludedSolverBodies.count(revision.binding.driverFrames)) return true;
-        const std::string reason = "driver frames " + revision.binding.driverFrames.GetString() +
-            " is not a solver of this rig; mover set aside";
-        const auto added = B.cycleSkipReasons.emplace(revision.moverPath, reason);
-        if (!added.second && added.first->second.find(reason) == std::string::npos)
-            added.first->second += "\n" + reason;
-        return false;
-    };
+    const auto keepRevision =
+        [&](const RigExecRigEvaluator::_GraphRevision &revision) {
+            if (!excludedSolverBodies.count(revision.binding.driverFrames))
+                return true;
+            // The reason is joined into a multi-line note the report prints
+            // long after Build, so the map holds the text it was built from.
+            const std::string reason =
+                "driver frames " + revision.binding.driverFrames.GetString() +
+                " is not a solver of this rig; mover set aside";
+            const auto added =
+                B.cycleSkipReasons.emplace(revision.moverPath, reason);
+            if (!added.second &&
+                added.first->second.find(reason) == std::string::npos)
+                added.first->second += "\n" + reason;
+            return false;
+        };
     for (const auto &[target, nativeRevisions] : E._graphChains) {
         const auto chainIt = E._graphChains.find(target);
-        if (chainIt == E._graphChains.end()) continue;
+        if (chainIt == E._graphChains.end())
+            continue;
         RigExecBakedChainSpec spec;
         spec.target = target;
         for (const auto &revision : chainIt->second) {
-            if (keepRevision(revision)) spec.revisions.push_back(revisionSpec(revision));
+            if (keepRevision(revision))
+                spec.revisions.push_back(revisionSpec(revision));
         }
         const auto derivedIt = E._graphDerivedChains.find(target);
         if (derivedIt != E._graphDerivedChains.end()) {
             for (const auto &derived : derivedIt->second) {
-                if (keepRevision(derived)) spec.derived.push_back(revisionSpec(derived));
+                if (keepRevision(derived))
+                    spec.derived.push_back(revisionSpec(derived));
             }
         }
         chainSpecs.push_back(std::move(spec));
@@ -4084,7 +4390,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         // rebuilds. Its value edits still route through the routed prim.
         B.named.insert(target);
         for (const RigExecRigEvaluator::_PropertyRevision &revision :
-                 revisions) {
+             revisions) {
             B.prims.insert(revision.moverPath);
             B.resolvedRoutedPrims.insert(revision.moverPath);
             // A path's curve points are read the same way, through the
@@ -4113,24 +4419,28 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     // mover packets. Register their bindings after all original bindings.
     const size_t packetObjects = B.weightObjects.size();
     for (const auto &constraint : B.constraints)
-        if (!constraint.weightObject.IsEmpty() && constraint.pointsTarget.IsEmpty())
-            RigExecBakedBakeWeightObject(&ctx,constraint.weightObject);
-    for (const auto &[target,revisions] : E._propertyChains)
+        if (!constraint.weightObject.IsEmpty() &&
+            constraint.pointsTarget.IsEmpty())
+            RigExecBakedBakeWeightObject(&ctx, constraint.weightObject);
+    for (const auto &[target, revisions] : E._propertyChains)
         for (const auto &revision : revisions) {
             const auto prim = B.stage->GetPrimAtPath(revision.moverPath);
             const auto rel = prim.GetRelationship(_tokens->rigExecWeightObject);
             SdfPathVector targets;
             if (rel && rel.GetTargets(&targets) && !targets.empty())
-                RigExecBakedBakeWeightObject(&ctx,targets[0]);
+                RigExecBakedBakeWeightObject(&ctx, targets[0]);
         }
-    for (size_t object=packetObjects;object<B.weightObjects.size();++object)
+    for (size_t object = packetObjects; object < B.weightObjects.size();
+         ++object)
         B.weightObjects[object].envelopeOnly = true;
-    if (!ctx.ok) return nullptr;
+    if (!ctx.ok)
+        return nullptr;
     _BindPropertyChains(E, &B);
     {
         std::string error;
-        if(!RigExecBakedBindOwnPropertySpaces(&B,&error)) {
-            refuse("own property space delivery could not bind: "+error,E._rigPath);
+        if (!RigExecBakedBindOwnPropertySpaces(&B, &error)) {
+            refuse("own property space delivery could not bind: " + error,
+                   E._rigPath);
             return nullptr;
         }
     }
@@ -4141,16 +4451,16 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     B.revisionIndex.clear();
     B.chainRevisionBegin.resize(B.chains.size());
     B.chainRevisionEnd.resize(B.chains.size());
-    for (size_t c=0;c<B.chains.size();++c) {
-        B.chainRevisionBegin[c]=int(B.revisionIndex.size());
-        for (size_t r=0;r<B.chains[c].revisions.size();++r)
-            B.revisionIndex.emplace_back(int(c),int(r));
-        B.chainRevisionEnd[c]=int(B.revisionIndex.size());
+    for (size_t c = 0; c < B.chains.size(); ++c) {
+        B.chainRevisionBegin[c] = int(B.revisionIndex.size());
+        for (size_t r = 0; r < B.chains[c].revisions.size(); ++r)
+            B.revisionIndex.emplace_back(int(c), int(r));
+        B.chainRevisionEnd[c] = int(B.revisionIndex.size());
     }
     {
         std::string invalid;
-        if (!RigExecBakedBuildWeightFields(E,&B,&invalid)) {
-            refuse(invalid,E._rigPath);
+        if (!RigExecBakedBuildWeightFields(E, &B, &invalid)) {
+            refuse(invalid, E._rigPath);
             return nullptr;
         }
     }
@@ -4200,8 +4510,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         }
         for (const SdfPath &path : _WalkVolumesWithoutASlot(
                  programVolumes, E._nativeVolumeProviders)) {
-            refuse("a volume weight the walk places has no program slot",
-                   path);
+            refuse("a volume weight the walk places has no program slot", path);
         }
     }
     // The mirror of IsBakeable's solver-checkpoint guard, so a forced bake
@@ -4213,15 +4522,21 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
                "for that joint",
                solver);
     }
-    if(!ctx.ok) return nullptr;
+    if (!ctx.ok)
+        return nullptr;
 
-    for(const auto &chain:B.chains) {
-        for(const auto &revision:chain.revisions) if(!revision.leaves.decl.assembles)
-            refuse("mover has no declared stage-free API4 assembly",revision.moverPath);
-        for(const auto &derived:chain.derived) if(!derived.revision.leaves.decl.assembles)
-            refuse("mover has no declared stage-free API4 assembly",derived.revision.moverPath);
+    for (const auto &chain : B.chains) {
+        for (const auto &revision : chain.revisions)
+            if (!revision.leaves.decl.assembles)
+                refuse("mover has no declared stage-free API4 assembly",
+                       revision.moverPath);
+        for (const auto &derived : chain.derived)
+            if (!derived.revision.leaves.decl.assembles)
+                refuse("mover has no declared stage-free API4 assembly",
+                       derived.revision.moverPath);
     }
-    if(!ctx.ok) return nullptr;
+    if (!ctx.ok)
+        return nullptr;
 
     phases.Next("Bake.the_step_graph");
     // Last, because it is derived from everything above: the steps are the
@@ -4233,8 +4548,10 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     RigExecProfilePhases graphPhases(&E._profiler, "compile");
     graphPhases.Next("Bake.the_step_graph.pose_steps");
     RigExecBakedBuildPoseSteps(&B);
-    if(!B.providerRefreshError.empty()) {
-        refuse("connected provider refresh could not bind: "+B.providerRefreshError,E._rigPath);
+    if (!B.providerRefreshError.empty()) {
+        refuse("connected provider refresh could not bind: " +
+                   B.providerRefreshError,
+               E._rigPath);
         return nullptr;
     }
     // The rest and ladder composes as head ops, one pair per compose group,
@@ -4260,8 +4577,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     // leaves are numbered and their steps built.
     {
         std::string invalid;
-        if(!RigExecBakedPruneProviderProgram(&B,&invalid)) {
-            refuse("provider pruning failed: "+invalid,E._rigPath);
+        if (!RigExecBakedPruneProviderProgram(&B, &invalid)) {
+            refuse("provider pruning failed: " + invalid, E._rigPath);
             return nullptr;
         }
     }
@@ -4275,167 +4592,252 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     RigExecBakedBuildSpaceSteps(&B);
     {
         std::string invalid;
-        if(!RigExecBakedFinalizeCrossDomainReads(&B,&invalid)) {
-            refuse("cross-domain input could not bind: "+invalid,E._rigPath);
+        if (!RigExecBakedFinalizeCrossDomainReads(&B, &invalid)) {
+            refuse("cross-domain input could not bind: " + invalid, E._rigPath);
             return nullptr;
         }
     }
-    for(auto &step:B.steps) if(step.kind==RigExecBakedStepKind::SpaceExpression && step.part==3)
-        RigExecBakedDeclareCrossDomainRead(B,B.providerRoutedReads[size_t(step.object)],&step.reads);
+    for (auto &step : B.steps)
+        if (step.kind == RigExecBakedStepKind::SpaceExpression &&
+            step.part == 3)
+            RigExecBakedDeclareCrossDomainRead(
+                B, B.providerRoutedReads[size_t(step.object)], &step.reads);
     // Keep authored revision identity stable when an earlier optional
     // revision was withdrawn. Runtime array indices remain dense and local;
     // only the compiler descriptor key uses the original authored position.
-    const auto authoredRevision = [&](const SdfPath &chain, const SdfPath &owner,
+    const auto authoredRevision = [&](const SdfPath &chain,
+                                      const SdfPath &owner,
                                       const SdfPath &target, bool derived) {
         const auto &chains = derived ? E._graphDerivedChains : E._graphChains;
         const auto found = chains.find(chain);
         int result = -1;
-        if (found != chains.end()) for (size_t i = 0; i < found->second.size(); ++i) {
-            const auto &revision = found->second[i];
-            if (revision.moverPath != owner || revision.target != target) continue;
-            if (result >= 0) {
-                ctx.Refuse("authored revision identity is ambiguous", owner);
-                return -1;
+        if (found != chains.end())
+            for (size_t i = 0; i < found->second.size(); ++i) {
+                const auto &revision = found->second[i];
+                if (revision.moverPath != owner || revision.target != target)
+                    continue;
+                if (result >= 0) {
+                    ctx.Refuse("authored revision identity is ambiguous",
+                               owner);
+                    return -1;
+                }
+                result = int(i);
             }
-            result = int(i);
-        }
-        if (result < 0) ctx.Refuse("authored revision identity is missing", owner);
+        if (result < 0)
+            ctx.Refuse("authored revision identity is missing", owner);
         return result;
     };
     // Keys describe authored owners and domain-local revisions, independently
     // of the descriptor emission or eventual execution order.
     RigExecPathText labelText;
     for (auto &step : B.steps) {
-        using K=RigExecBakedStepKind;
-        SdfPath owner,target;
-        int revision=-1,ordinal=-1;
+        using K = RigExecBakedStepKind;
+        SdfPath owner, target;
+        int revision = -1, ordinal = -1;
         std::string expression;
-        switch(step.kind) {
-        case K::ComposeSubtree: case K::RestCompose: case K::LadderCompose:
-            owner=B.paths[size_t(B.composeGroups[size_t(step.object)].begin)]; break;
-        case K::AvarInputs: case K::ProviderMatrix: case K::VolumePlacements:
-            owner=B.paths[size_t(step.object)]; break;
-        case K::Solve: owner=B.solvers[size_t(step.object)].path; break;
-        case K::SolverCommit: case K::Constraint: case K::CommitDelta:
-        case K::PropagateChunk: case K::CommitApply: {
-            const auto &commit=B.commits[size_t(step.object)]; owner=commit.moverPath;
-            if(owner.IsEmpty() && size_t(step.object)<B.walkSteps.size()) {
-                const auto &walk=B.walkSteps[size_t(step.object)];
-                if(!walk.batchSolvers.empty()) owner=B.solvers[size_t(walk.batchSolvers.front())].path;
+        switch (step.kind) {
+        case K::ComposeSubtree:
+        case K::RestCompose:
+        case K::LadderCompose:
+            owner = B.paths[size_t(B.composeGroups[size_t(step.object)].begin)];
+            break;
+        case K::AvarInputs:
+        case K::ProviderMatrix:
+        case K::VolumePlacements:
+            owner = B.paths[size_t(step.object)];
+            break;
+        case K::Solve:
+            owner = B.solvers[size_t(step.object)].path;
+            break;
+        case K::SolverCommit:
+        case K::Constraint:
+        case K::CommitDelta:
+        case K::PropagateChunk:
+        case K::CommitApply: {
+            const auto &commit = B.commits[size_t(step.object)];
+            owner = commit.moverPath;
+            if (owner.IsEmpty() && size_t(step.object) < B.walkSteps.size()) {
+                const auto &walk = B.walkSteps[size_t(step.object)];
+                if (!walk.batchSolvers.empty())
+                    owner = B.solvers[size_t(walk.batchSolvers.front())].path;
             }
-            if(!commit.slots.empty()) target=B.paths[size_t(commit.slots.front())];
+            if (!commit.slots.empty())
+                target = B.paths[size_t(commit.slots.front())];
             break;
         }
         case K::PropertyRevision: {
-            const auto &chain=B.propertyChains[size_t(step.object)]; target=chain.target;
-            revision=step.part; owner=step.part>0?chain.revisions[size_t(step.part-1)].mover:chain.target; break;
-        }
-        case K::SkinTopology: {
-            if (step.object < 0) { ctx.Refuse("layout has no authored revision", E._rigPath); return nullptr; }
-            const size_t layout = size_t(step.object);
-            if (layout < B.revisionIndex.size()) {
-                const auto &entry=B.revisionIndex[layout];
-                const auto &chain=B.chains[size_t(entry.first)];
-                owner=chain.revisions[size_t(entry.second)].moverPath; target=chain.target;
-                revision=authoredRevision(chain.target,owner,target,false);
-            } else if (layout-B.revisionIndex.size() < B.derivedIndex.size()) {
-                const auto &entry=B.derivedIndex[layout-B.revisionIndex.size()];
-                const auto &chain=B.chains[size_t(entry.first)];
-                const auto &derived=chain.derived[size_t(entry.second)];
-                owner=derived.revision.moverPath; target=derived.target;
-                revision=authoredRevision(chain.target,owner,target,true);
-            } else { ctx.Refuse("layout has no authored revision", E._rigPath); return nullptr; }
+            const auto &chain = B.propertyChains[size_t(step.object)];
+            target = chain.target;
+            revision = step.part;
+            owner = step.part > 0 ? chain.revisions[size_t(step.part - 1)].mover
+                                  : chain.target;
             break;
         }
-        case K::InfluenceFold: case K::RevisionStatic:
-        case K::RevisionChunk: case K::RevisionFuse: {
-            const auto &entry=B.revisionIndex[size_t(step.object)];
-            const auto &chain=B.chains[size_t(entry.first)];
-            owner=chain.revisions[size_t(entry.second)].moverPath;
-            target=chain.target;
-            revision=authoredRevision(chain.target,owner,target,false); break;
+        case K::SkinTopology: {
+            if (step.object < 0) {
+                ctx.Refuse("layout has no authored revision", E._rigPath);
+                return nullptr;
+            }
+            const size_t layout = size_t(step.object);
+            if (layout < B.revisionIndex.size()) {
+                const auto &entry = B.revisionIndex[layout];
+                const auto &chain = B.chains[size_t(entry.first)];
+                owner = chain.revisions[size_t(entry.second)].moverPath;
+                target = chain.target;
+                revision = authoredRevision(chain.target, owner, target, false);
+            } else if (layout - B.revisionIndex.size() <
+                       B.derivedIndex.size()) {
+                const auto &entry =
+                    B.derivedIndex[layout - B.revisionIndex.size()];
+                const auto &chain = B.chains[size_t(entry.first)];
+                const auto &derived = chain.derived[size_t(entry.second)];
+                owner = derived.revision.moverPath;
+                target = derived.target;
+                revision = authoredRevision(chain.target, owner, target, true);
+            } else {
+                ctx.Refuse("layout has no authored revision", E._rigPath);
+                return nullptr;
+            }
+            break;
+        }
+        case K::InfluenceFold:
+        case K::RevisionStatic:
+        case K::RevisionChunk:
+        case K::RevisionFuse: {
+            const auto &entry = B.revisionIndex[size_t(step.object)];
+            const auto &chain = B.chains[size_t(entry.first)];
+            owner = chain.revisions[size_t(entry.second)].moverPath;
+            target = chain.target;
+            revision = authoredRevision(chain.target, owner, target, false);
+            break;
         }
         case K::Derived: {
-            const auto &entry=B.derivedIndex[size_t(step.object)];
-            const auto &derived=B.chains[size_t(entry.first)].derived[size_t(entry.second)];
-            owner=derived.revision.moverPath; target=derived.target;
-            revision=authoredRevision(B.chains[size_t(entry.first)].target,owner,
-                derived.target,true); break;
+            const auto &entry = B.derivedIndex[size_t(step.object)];
+            const auto &derived =
+                B.chains[size_t(entry.first)].derived[size_t(entry.second)];
+            owner = derived.revision.moverPath;
+            target = derived.target;
+            revision = authoredRevision(B.chains[size_t(entry.first)].target,
+                                        owner, derived.target, true);
+            break;
         }
-        case K::ChainInputs: case K::ChainStatus: owner=B.chains[size_t(step.object)].target; break;
-        case K::PoseInterpolator: owner=B.poseInterpolators[size_t(step.object)].path; break;
+        case K::ChainInputs:
+        case K::ChainStatus:
+            owner = B.chains[size_t(step.object)].target;
+            break;
+        case K::PoseInterpolator:
+            owner = B.poseInterpolators[size_t(step.object)].path;
+            break;
         case K::FrameMatrix: {
-            const auto &record=B.frameRecords[size_t(step.object)];
-            owner=record.mover; target=B.paths[size_t(record.slot)]; break;
+            const auto &record = B.frameRecords[size_t(step.object)];
+            owner = record.mover;
+            target = B.paths[size_t(record.slot)];
+            break;
         }
-        case K::WeightPacket: owner=B.weightObjects[size_t(step.object)].path; break;
+        case K::WeightPacket:
+            owner = B.weightObjects[size_t(step.object)].path;
+            break;
         case K::WeightField: {
-            const auto &field=B.weightFields[size_t(step.object)];
-            owner=B.weightObjects[size_t(field.object)].path;
-            revision=field.part;
-            if(field.form==RigExecBakedProgramImpl::WeightField::Form::EnvelopeConstraint) {
-                if(field.consumer<0 || size_t(field.consumer)>=B.walkSteps.size() ||
-                   B.walkSteps[size_t(field.consumer)].solverBatch ||
-                   B.walkSteps[size_t(field.consumer)].index<0 ||
-                   size_t(B.walkSteps[size_t(field.consumer)].index)>=B.constraints.size()) {
-                    ctx.Refuse("weight field has no constraint owner",owner);return nullptr;
+            const auto &field = B.weightFields[size_t(step.object)];
+            owner = B.weightObjects[size_t(field.object)].path;
+            revision = field.part;
+            if (field.form == RigExecBakedProgramImpl::WeightField::Form::
+                                  EnvelopeConstraint) {
+                if (field.consumer < 0 ||
+                    size_t(field.consumer) >= B.walkSteps.size() ||
+                    B.walkSteps[size_t(field.consumer)].solverBatch ||
+                    B.walkSteps[size_t(field.consumer)].index < 0 ||
+                    size_t(B.walkSteps[size_t(field.consumer)].index) >=
+                        B.constraints.size()) {
+                    ctx.Refuse("weight field has no constraint owner", owner);
+                    return nullptr;
                 }
-                target=B.constraints[size_t(B.walkSteps[size_t(field.consumer)].index)].path;
-            }
-            else if(field.form==RigExecBakedProgramImpl::WeightField::Form::Revision) {
-                const auto &entry=B.revisionIndex[size_t(field.consumer)];
-                target=B.chains[size_t(entry.first)].target;
-                const auto &geometry=B.chains[size_t(entry.first)].revisions[size_t(entry.second)];
-                revision=authoredRevision(target,geometry.moverPath,target,false);
-            } else target=B.propertyChains[size_t(field.consumer)].target;
+                target = B
+                             .constraints[size_t(
+                                 B.walkSteps[size_t(field.consumer)].index)]
+                             .path;
+            } else if (field.form ==
+                       RigExecBakedProgramImpl::WeightField::Form::Revision) {
+                const auto &entry = B.revisionIndex[size_t(field.consumer)];
+                target = B.chains[size_t(entry.first)].target;
+                const auto &geometry = B.chains[size_t(entry.first)]
+                                           .revisions[size_t(entry.second)];
+                revision =
+                    authoredRevision(target, geometry.moverPath, target, false);
+            } else
+                target = B.propertyChains[size_t(field.consumer)].target;
             break;
         }
         case K::SpaceCheckpoint:
-            expression=B.switchFrameContexts[size_t(step.object)].key; break;
+            expression = B.switchFrameContexts[size_t(step.object)].key;
+            break;
         case K::ProviderRefresh:
-            expression=B.providerRefreshes[size_t(step.object)].key;
-            owner=B.paths[size_t(B.providerRefreshes[size_t(step.object)].slot)];break;
+            expression = B.providerRefreshes[size_t(step.object)].key;
+            owner =
+                B.paths[size_t(B.providerRefreshes[size_t(step.object)].slot)];
+            break;
         case K::SpaceExpression: {
-            RigExecValueId value=RigExecNoProviderValue;
-            const size_t object=size_t(step.object);
-            if(step.part==0) value=B.GetProviderProgram().ops[object].output;
-            else if(step.part==1) value=B.GetProviderProgram().externalInputs[object].value;
-            else if(step.part==2) value=B.GetProviderProgram().sampled[object].value;
-            else if(step.part==3) value=B.GetProviderProgram().routedInputs[object].value;
-            else if(step.part==4) value=B.providerFrameInputs[object].value;
-            expression=B.GetProviderProgram().valueKeys[size_t(value)]; break;
+            RigExecValueId value = RigExecNoProviderValue;
+            const size_t object = size_t(step.object);
+            if (step.part == 0)
+                value = B.GetProviderProgram().ops[object].output;
+            else if (step.part == 1)
+                value = B.GetProviderProgram().externalInputs[object].value;
+            else if (step.part == 2)
+                value = B.GetProviderProgram().sampled[object].value;
+            else if (step.part == 3)
+                value = B.GetProviderProgram().routedInputs[object].value;
+            else if (step.part == 4)
+                value = B.providerFrameInputs[object].value;
+            expression = B.GetProviderProgram().valueKeys[size_t(value)];
+            break;
         }
-        case K::SnapshotFinals: expression="retired"; break;
+        case K::SnapshotFinals:
+            expression = "retired";
+            break;
         }
-        const auto position=E._nativePoseOrdinals.find(owner);
-        if(position!=E._nativePoseOrdinals.end()) ordinal=position->second;
-        step.label=expression.empty()?labelText(owner):expression;
-        step.descriptorKey=step.label+"/category:"+std::to_string(int(step.kind))+
-            "/stack:"+std::to_string(ordinal)+"/target:"+labelText(target)+
-            "/revision:"+std::to_string(revision)+"/subindex:"+std::to_string(step.part);
+        const auto position = E._nativePoseOrdinals.find(owner);
+        if (position != E._nativePoseOrdinals.end())
+            ordinal = position->second;
+        step.label = expression.empty() ? labelText(owner) : expression;
+        step.descriptorKey = step.label +
+                             "/category:" + std::to_string(int(step.kind)) +
+                             "/stack:" + std::to_string(ordinal) +
+                             "/target:" + labelText(target) +
+                             "/revision:" + std::to_string(revision) +
+                             "/subindex:" + std::to_string(step.part);
     }
-    if (!ctx.ok) return nullptr;
+    if (!ctx.ok)
+        return nullptr;
     // Bind declared solver relationship prerequisites to canonical identities
     // after all numerical descriptors exist. No authored stack order or
     // generated scheduling predecessor is used as semantic authority.
     for (const auto &step : B.steps)
         if (step.kind == RigExecBakedStepKind::Solve)
-            B.solvers[size_t(step.object)].solveDescriptorKey = step.descriptorKey;
-    for (auto &step : B.steps) if (step.kind == RigExecBakedStepKind::Solve) {
-        for (const auto &requirement : B.solvers[size_t(step.object)].relationshipRequirements) {
-            const int source = requirement.second;
-            if (source < 0 || size_t(source) >= B.solvers.size() ||
-                B.solvers[size_t(source)].solveDescriptorKey.empty()) {
-                ctx.Refuse("solver relationship has no compiled Solve descriptor",
-                           B.solvers[size_t(step.object)].path);
-                return nullptr;
+            B.solvers[size_t(step.object)].solveDescriptorKey =
+                step.descriptorKey;
+    for (auto &step : B.steps)
+        if (step.kind == RigExecBakedStepKind::Solve) {
+            for (const auto &requirement :
+                 B.solvers[size_t(step.object)].relationshipRequirements) {
+                const int source = requirement.second;
+                if (source < 0 || size_t(source) >= B.solvers.size() ||
+                    B.solvers[size_t(source)].solveDescriptorKey.empty()) {
+                    ctx.Refuse(
+                        "solver relationship has no compiled Solve descriptor",
+                        B.solvers[size_t(step.object)].path);
+                    return nullptr;
+                }
+                step.semanticPredecessorKeys.push_back(
+                    B.solvers[size_t(source)].solveDescriptorKey);
             }
-            step.semanticPredecessorKeys.push_back(B.solvers[size_t(source)].solveDescriptorKey);
+            std::sort(step.semanticPredecessorKeys.begin(),
+                      step.semanticPredecessorKeys.end());
+            step.semanticPredecessorKeys.erase(
+                std::unique(step.semanticPredecessorKeys.begin(),
+                            step.semanticPredecessorKeys.end()),
+                step.semanticPredecessorKeys.end());
         }
-        std::sort(step.semanticPredecessorKeys.begin(), step.semanticPredecessorKeys.end());
-        step.semanticPredecessorKeys.erase(std::unique(step.semanticPredecessorKeys.begin(),
-            step.semanticPredecessorKeys.end()), step.semanticPredecessorKeys.end());
-    }
     // Every read is declared: the chains that run as one GPU program.
     RigExecBakedSelectGpuChains(&B);
     // Canonical graph order is the stored and exported order. Clusters and
@@ -4453,13 +4855,15 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
             B.steps[i].level = level;
         }
         RigExecBakedAssignStepCosts(&B);
-        if(!RigExecBakedTranslateOpGraph(&B,&invalid)) {
-            refuse("native operation clusters could not translate: "+invalid,E._rigPath);
+        if (!RigExecBakedTranslateOpGraph(&B, &invalid)) {
+            refuse("native operation clusters could not translate: " + invalid,
+                   E._rigPath);
             return nullptr;
         }
         RigExecBakedBuildCones(&B);
         if (!RigExecBakedSettleWindowedOps(&B, &invalid)) {
-            refuse("windowed operations could not settle: " + invalid, E._rigPath);
+            refuse("windowed operations could not settle: " + invalid,
+                   E._rigPath);
             return nullptr;
         }
     }
@@ -4474,7 +4878,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     B.compiledProviderProgram = std::make_shared<const RigExecProviderProgram>(
         std::move(B.providerProgram));
     return std::unique_ptr<RigExecBakedProgram>(
-        new RigExecBakedProgram(std::move(impl)));
+        std::make_unique<RigExecBakedProgram>(_FactoryTag(0), std::move(impl)));
 }
 
 // One frame.
@@ -4486,13 +4890,15 @@ namespace {
 
 // The per-source constraint tables Run reads, interned once at load:
 // interning takes the token registry's lock.
-const std::array<TfToken,4> kConstraintArrayNames = {
-    TfToken("inputs:sourceWeights"), TfToken("inputs:translationOffsets"),
-    TfToken("inputs:rotationOffsets"), TfToken("inputs:poleVectorWeights")};
+const std::array<TfToken, 4> kConstraintArrayNames = {
+    TfToken(SchemaAttrText::inputsSourceWeights),
+    TfToken(SchemaAttrText::inputsTranslationOffsets),
+    TfToken(SchemaAttrText::inputsRotationOffsets),
+    TfToken(SchemaAttrText::inputsPoleVectorWeights)};
 
 } // namespace
 
-const std::array<TfToken,4> &
+const std::array<TfToken, 4> &
 RigExecBakedProgramImpl::ConstraintArrays::Names()
 {
     return kConstraintArrayNames;
@@ -4503,7 +4909,8 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
 {
     RigExecBakedProgramImpl &B = *_impl;
     if (B.inputReplayCapture) {
-        RigExecInputReplayObserver::UnsupportedAction("RigExecBakedProgram::Run");
+        RigExecInputReplayObserver::UnsupportedAction(
+            "RigExecBakedProgram::Run");
     }
     _lastBail = RigExecBakedBail::None;
     RigExecRigEvaluator &E = *B.evaluator;
@@ -4517,8 +4924,13 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
         }
     }
     B.recordOpTimings = E.GetOpTimingEnabled();
-    if (E.cpuReference) { if (!B.oraclePublications) B.oraclePublications.emplace(); }
-    else { B.oraclePublications.reset(); B.oracleWeightInputs.clear(); }
+    if (E.cpuReference) {
+        if (!B.oraclePublications)
+            B.oraclePublications.emplace();
+    } else {
+        B.oraclePublications.reset();
+        B.oracleWeightInputs.clear();
+    }
     RIGEXEC_PROFILE_SCOPE_CAT(*B.profiler, "Baked", "baked");
     RigExecBakedClearRunStamps(&B);
     // Consumed by this run whatever becomes of it.
@@ -4558,9 +4970,8 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
             const size_t slot = size_t(B.xformSlots[k]);
             RigExecPointFrame frame;
             GfMatrix4d matrix(1.0);
-            if (!E._FrameFromXformRelativeToAsset(B.assetRoot, &cache,
-                                                  B.paths[slot], &frame,
-                                                  &matrix)) {
+            if (!E._FrameFromXformRelativeToAsset(
+                    B.assetRoot, &cache, B.paths[slot], &frame, &matrix)) {
                 if (B.requiredStageFramesAdmission.admitted) {
                     B.requiredStageFramesAdmission.admitted = false;
                     B.requiredStageFramesAdmission.firstBadTarget = int32_t(k);
@@ -4593,10 +5004,9 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
         for (size_t k = 0; k < B.nativeSources.size(); ++k) {
             RigExecPointFrame frame;
             B.nativeFrameOk[k] = E._FrameFromXformRelativeToAsset(
-                B.assetRoot, &cache, B.nativeSources[k].path, &frame,
-                nullptr);
-            B.nativeFrames[k] = B.nativeFrameOk[k] ? frame
-                                                   : RigExecPointFrame();
+                B.assetRoot, &cache, B.nativeSources[k].path, &frame, nullptr);
+            B.nativeFrames[k] =
+                B.nativeFrameOk[k] ? frame : RigExecPointFrame();
         }
         return true;
     };
@@ -4606,7 +5016,7 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
     // A channel is read again only when something that can move its raw
     // read moved (ConstraintArrays::variance); every other one keeps what
     // it holds, which is what the read would answer now.
-    const auto constraintArrays = [&B,&E,time,fullRunRequested]() {
+    const auto constraintArrays = [&B, &E, time, fullRunRequested]() {
         using Arrays = RigExecBakedProgramImpl::ConstraintArrays;
         const uint64_t serial = E.GetStageEditSerial();
         for (Arrays &arrays : B.constraintArrays) {
@@ -4681,7 +5091,8 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
         // reach a chain result are read once the chains are published.
         RigExecBakedSampleLeaves(&B, time, fullRunRequested,
                                  RigExecBakedLeafPass::BeforeHead);
-        if (B.hasPropertyChains || !B.weightFields.empty() || !B.headLeaves.empty()) {
+        if (B.hasPropertyChains || !B.weightFields.empty() ||
+            !B.headLeaves.empty()) {
             RIGEXEC_PROFILE_SCOPE_CAT(*B.profiler, "PropertyChains",
                                       "property");
             // The property revisions, from leaves sampled now. The bake's
@@ -4689,10 +5100,10 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
             // at its time; every other run re-runs only what moved, and the
             // publication refills the results and the overlay either way.
             for (auto &object : B.weightObjects) {
-                RigExecBakedSamplePathLeaves(&B,&object.oracleLeaves,time,fullRunRequested);
+                RigExecBakedSamplePathLeaves(&B, &object.oracleLeaves, time,
+                                             fullRunRequested);
             }
             RigExecBakedSampleHeadLeaves(&B, time, fullRunRequested);
-
         }
         RigExecBakedSampleLeaves(&B, time, fullRunRequested,
                                  RigExecBakedLeafPass::ChainRouted);
@@ -4700,7 +5111,7 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
         // channel among them): each re-runs only when what it reads moved,
         // and the bake's forced run composes them all at its time.
         _SampleIntervening(&B, time);
-        RigExecBakedSampleSpaces(&B,time,fullRunRequested);
+        RigExecBakedSampleSpaces(&B, time, fullRunRequested);
 
         // The skin layouts, from leaves sampled now: an op builds a new
         // handle only when its leaves moved, on every generation, and the
@@ -4708,10 +5119,12 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
         for (auto &chain : B.chains) {
             for (auto &revision : chain.revisions)
                 if (revision.op == RigExecRevisionOp::Skin)
-                    RigExecBakedSampleLayoutLeaves(&B,&revision,time,fullRunRequested);
+                    RigExecBakedSampleLayoutLeaves(&B, &revision, time,
+                                                   fullRunRequested);
             for (auto &derived : chain.derived)
                 if (derived.revision.op == RigExecRevisionOp::Skin)
-                    RigExecBakedSampleLayoutLeaves(&B,&derived.revision,time,fullRunRequested);
+                    RigExecBakedSampleLayoutLeaves(&B, &derived.revision, time,
+                                                   fullRunRequested);
         }
 
         RigExecBakedRunSolverSources(&B, time);
@@ -4801,8 +5214,7 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
             TF_WARN("rigExec: baked parity mismatch: %zu difference(s) "
                     "between the cone run (%zu of %zu cluster(s)) and the "
                     "whole program",
-                    mismatches, coneClusters,
-                    B.clustering.clusters.size());
+                    mismatches, coneClusters, B.clustering.clusters.size());
         }
         if (measuring) {
             // Charged to no phase at all. The block above ran the whole
@@ -4852,11 +5264,12 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
         RigExecBakedPublishVolumePlacements(B, &pose->weightFrames);
         RigExecBakedResolveGpuChains(&B, time);
         RigExecBakedPublishGeometry(&B, pose);
-        RigExecBakedAppendCycleDiagnostics(B,pose);
+        RigExecBakedAppendCycleDiagnostics(B, pose);
     }
-    const bool scalarReferenceValid=RigExecBakedRunScalarReference(&B,time,pose);
+    const bool scalarReferenceValid =
+        RigExecBakedRunScalarReference(&B, time, pose);
 
-    pose->executedOpCount=B.opExecution.executed;
+    pose->executedOpCount = B.opExecution.executed;
     pose->valid = scalarReferenceValid;
     if (measuring) {
         // Counted here, at the one exit that published a pose: a frame that
@@ -4882,9 +5295,9 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
 }
 
 bool
-RigExecBakedProgram::SampleStageFrameSeeds(
-    UsdTimeCode time, RigExecStageFrameSeeds *seeds,
-    std::string *error) const
+RigExecBakedProgram::SampleStageFrameSeeds(UsdTimeCode time,
+                                           RigExecStageFrameSeeds *seeds,
+                                           std::string *error) const
 {
     if (!seeds) {
         if (error) {
@@ -4901,17 +5314,18 @@ RigExecBakedProgram::SampleStageFrameSeeds(
     RigExecStageFrameSeeds sampled;
     sampled.xformBase = B.xformBase;
     sampled.xformFrames.reserve(B.xformSlots.size());
-    for (const int slot : B.xformSlots) sampled.xformFrames.push_back(B.base[size_t(slot)]);
+    for (const int slot : B.xformSlots)
+        sampled.xformFrames.push_back(B.base[size_t(slot)]);
     for (size_t k = 0; k < B.xformSlots.size(); ++k) {
         const size_t slot = size_t(B.xformSlots[k]);
         RigExecPointFrame frame;
         GfMatrix4d matrix(1.0);
         if (!E._FrameFromXformRelativeToAsset(B.assetRoot, &cache,
-                                              B.paths[slot], &frame,
-                                              &matrix)) {
+                                              B.paths[slot], &frame, &matrix)) {
             if (sampled.requiredStageFramesAdmission.admitted) {
                 sampled.requiredStageFramesAdmission.admitted = false;
-                sampled.requiredStageFramesAdmission.firstBadTarget = int32_t(k);
+                sampled.requiredStageFramesAdmission.firstBadTarget =
+                    int32_t(k);
             }
             break;
         }
@@ -4936,10 +5350,12 @@ RigExecBakedProgram::SampleStageFrameSeeds(
     for (size_t k = 0; k < B.nativeSources.size(); ++k) {
         RigExecPointFrame frame;
         const bool ok = sampled.requiredStageFramesAdmission.admitted
-            ? E._FrameFromXformRelativeToAsset(
-                B.assetRoot, &cache, B.nativeSources[k].path, &frame, nullptr)
-            : B.nativeFrameOk[k];
-        if (!sampled.requiredStageFramesAdmission.admitted) frame = B.nativeFrames[k];
+                            ? E._FrameFromXformRelativeToAsset(
+                                  B.assetRoot, &cache, B.nativeSources[k].path,
+                                  &frame, nullptr)
+                            : B.nativeFrameOk[k];
+        if (!sampled.requiredStageFramesAdmission.admitted)
+            frame = B.nativeFrames[k];
         sampled.nativeOk.push_back(ok);
         sampled.nativeFrames.push_back(ok ? frame : RigExecPointFrame());
     }
@@ -4947,11 +5363,14 @@ RigExecBakedProgram::SampleStageFrameSeeds(
     sampled.interveningReset.reserve(B.interveningSlots.size());
     for (size_t k = 0; k < B.interveningSlots.size(); ++k) {
         const size_t slot = size_t(B.interveningSlots[k]);
-        const UsdPrim parent = B.stage->GetPrimAtPath(B.paths[slot].GetParentPath());
+        const UsdPrim parent =
+            B.stage->GetPrimAtPath(B.paths[slot].GetParentPath());
         const UsdPrim anchor = B.stage->GetPrimAtPath(B.interveningAnchors[k]);
         bool reset = false;
-        GfMatrix4d matrix = parent && anchor && parent != anchor
-            ? cache.ComputeRelativeTransform(parent, anchor, &reset) : GfMatrix4d(1.0);
+        GfMatrix4d matrix =
+            parent && anchor && parent != anchor
+                ? cache.ComputeRelativeTransform(parent, anchor, &reset)
+                : GfMatrix4d(1.0);
         sampled.intervening.push_back(reset ? GfMatrix4d(1.0) : matrix);
         sampled.interveningReset.push_back(reset);
     }
@@ -4991,7 +5410,8 @@ RigExecBakedProbeTime(const UsdStageRefPtr &stage)
 
 void
 RigExecBakedProgramTesting::SetOpObservers(const RigExecBakedProgram &program,
-    std::function<void(uint32_t)> before, std::function<void(uint32_t)> after)
+                                           std::function<void(uint32_t)> before,
+                                           std::function<void(uint32_t)> after)
 {
     program._impl->opBeforeBody = std::move(before);
     program._impl->opAfterBody = std::move(after);
@@ -5012,8 +5432,7 @@ std::vector<SdfPath>
 RigExecBakedProgramTesting::SolverCheckpointsWithoutAnOutput(
     const std::map<SdfPath, std::set<SdfPath>> &snapshots,
     const std::map<SdfPath, std::set<SdfPath>> &solverDependencies,
-    const std::map<SdfPath, std::vector<std::pair<SdfPath, int>>>
-        &solverJoints,
+    const std::map<SdfPath, std::vector<std::pair<SdfPath, int>>> &solverJoints,
     const std::set<SdfPath> &batched)
 {
     return _SolverCheckpointsWithoutAnOutput(snapshots, solverDependencies,
@@ -5026,9 +5445,9 @@ RigExecBakedProgramTesting::SolverCheckpointsWithoutAnOutput(
 // depends on a run -- placement, counts, scalar values, recursion into the
 // objects this one composes -- is left to the port.
 void
-RigExecBakedProgram::DescribeWeightOracle(
-    const RigExecRigEvaluator &evaluator, const SdfPath &path,
-    UsdTimeCode time, RigExecWeightOracleFacts *facts)
+RigExecBakedProgram::DescribeWeightOracle(const RigExecRigEvaluator &evaluator,
+                                          const SdfPath &path, UsdTimeCode time,
+                                          RigExecWeightOracleFacts *facts)
 {
     const RigExecRigEvaluator &E = evaluator;
     *facts = RigExecWeightOracleFacts();
@@ -5040,8 +5459,7 @@ RigExecBakedProgram::DescribeWeightOracle(
     const TfToken typeName = prim.GetTypeName();
     if (!evaluatorDetail::_IsWeightObjectType(typeName)) {
         facts->staticError = "unknown weight object type " +
-                             typeName.GetString() + " on " +
-                             path.GetString();
+                             typeName.GetString() + " on " + path.GetString();
         return;
     }
     const auto readToken = [&](const TfToken &name, const TfToken &fallback) {
@@ -5053,10 +5471,12 @@ RigExecBakedProgram::DescribeWeightOracle(
     };
     const auto who = [&prim] { return prim.GetPath().GetAsString(); };
     if (typeName == _tokens->rigExecCombineWeight) {
-        const TfToken mode = readToken(_tokens->rigExecCombineMode, _tokens->multiply);
-        if (mode != "multiply" && mode != "add" && mode != "subtract" &&
-            mode != "max" && mode != "min" && mode != "average" &&
-            mode != "overlay") {
+        const TfToken mode =
+            readToken(_tokens->rigExecCombineMode, _tokens->multiply);
+        if (mode != SchemaValueText::multiply && mode != SchemaValueText::add &&
+            mode != SchemaValueText::subtract && mode != SchemaValueText::max &&
+            mode != SchemaValueText::min && mode != SchemaValueText::average &&
+            mode != SchemaValueText::overlay) {
             facts->staticError =
                 who() + ": unknown rigExec:combineMode " + mode.GetString();
         }
@@ -5072,12 +5492,14 @@ RigExecBakedProgram::DescribeWeightOracle(
         }
         RigExecReadPhase targetPhase;
         std::string targetPhaseError;
-        if (!RigExecResolveReadPhase(prim.GetRelationship(_tokens->rigExecWeightTarget),
-                                    &targetPhase,&targetPhaseError)) {
+        if (!RigExecResolveReadPhase(
+                prim.GetRelationship(_tokens->rigExecWeightTarget),
+                &targetPhase, &targetPhaseError)) {
             facts->phaseError = who() + ": " + targetPhaseError;
             return;
         }
-        facts->samplesInFlight = targetPhase.kind == RigExecReadPhaseKind::Preceding;
+        facts->samplesInFlight =
+            targetPhase.kind == RigExecReadPhaseKind::Preceding;
         // What the facts below hold at `time` only, while the oracle reads
         // it at every evaluation time.
         const auto noteAnimated = [&](const UsdAttribute &a) {
@@ -5095,18 +5517,17 @@ RigExecBakedProgram::DescribeWeightOracle(
             }
             return targets.size() == 1
                        ? E._stage->GetAttributeAtPath(
-                             evaluatorDetail::_ResolveGeometryInput(
-                                 E._stage, targets[0]))
+                             evaluatorDetail::_ResolveGeometryInput(E._stage,
+                                                                    targets[0]))
                        : UsdAttribute();
         };
         if (!inFlight) {
-            const bool fromSampleSource =
-                E._ReadTargetPoints(prim, _tokens->rigExecSampleSource,
-                                    time, &facts->samples);
+            const bool fromSampleSource = E._ReadTargetPoints(
+                prim, _tokens->rigExecSampleSource, time, &facts->samples);
             facts->haveSamples =
                 fromSampleSource ||
-                E._ReadTargetPoints(prim, _tokens->rigExecWeightTarget,
-                                    time, &facts->samples);
+                E._ReadTargetPoints(prim, _tokens->rigExecWeightTarget, time,
+                                    &facts->samples);
             if (!facts->haveSamples) {
                 facts->samples.clear();
             }
@@ -5116,10 +5537,9 @@ RigExecBakedProgram::DescribeWeightOracle(
             }
         }
         if (typeName == _tokens->rigExecCurveWeight) {
-            facts->haveCurve =
-                E._ReadTargetPoints(prim, _tokens->rigExecCurve, time,
-                                    &facts->curve) &&
-                !facts->curve.empty();
+            facts->haveCurve = E._ReadTargetPoints(prim, _tokens->rigExecCurve,
+                                                   time, &facts->curve) &&
+                               !facts->curve.empty();
             if (!facts->haveCurve) {
                 facts->curve.clear();
             }
@@ -5127,7 +5547,8 @@ RigExecBakedProgram::DescribeWeightOracle(
         }
         if (typeName == _tokens->rigExecPlaneWeight) {
             facts->planeAxis = readToken(_tokens->rigExecPlaneAxis, _tokens->y);
-            facts->planeBounds = readToken(_tokens->rigExecPlaneBounds, _tokens->unbounded);
+            facts->planeBounds =
+                readToken(_tokens->rigExecPlaneBounds, _tokens->unbounded);
             noteAnimated(prim.GetAttribute(_tokens->rigExecPlaneAxis));
             noteAnimated(prim.GetAttribute(_tokens->rigExecPlaneBounds));
         }
@@ -5136,13 +5557,16 @@ RigExecBakedProgram::DescribeWeightOracle(
 
     const TfToken representation =
         readToken(_tokens->rigExecRepresentation, _tokens->constant);
-    const TfToken rangePolicy = readToken(_tokens->rigExecRangePolicy, _tokens->strict);
-    if (rangePolicy != "strict" && rangePolicy != "clamp") {
+    const TfToken rangePolicy =
+        readToken(_tokens->rigExecRangePolicy, _tokens->strict);
+    if (rangePolicy != SchemaValueText::strict &&
+        rangePolicy != SchemaValueText::clamp) {
         facts->staticError = "unknown rangePolicy on " + path.GetString();
         return;
     }
     if (typeName == _tokens->rigExecDynamicWeight) {
-        if (readToken(_tokens->rigExecOperation, _tokens->multiply) != "multiply") {
+        if (readToken(_tokens->rigExecOperation, _tokens->multiply) !=
+            SchemaValueText::multiply) {
             facts->staticError =
                 "unknown dynamic-weight operation on " + path.GetString();
             return;
@@ -5159,7 +5583,7 @@ RigExecBakedProgram::DescribeWeightOracle(
             return;
         }
         if (baseTargets.empty()) {
-            if (representation != "constant") {
+            if (representation != SchemaValueText::constant) {
                 facts->staticError =
                     "no-base dynamic weight must be constant on " +
                     path.GetString();
@@ -5179,8 +5603,7 @@ RigExecBakedProgram::DescribeWeightOracle(
                 rel.GetTargets(&t);
             }
             return t.size() == 1
-                       ? evaluatorDetail::_ResolveGeometryInput(E._stage,
-                                                                t[0])
+                       ? evaluatorDetail::_ResolveGeometryInput(E._stage, t[0])
                        : SdfPath();
         };
         if (canonicalWeightTarget(prim) != canonicalWeightTarget(basePrim) ||
@@ -5195,11 +5618,11 @@ RigExecBakedProgram::DescribeWeightOracle(
             a.Get(&baseRepresentation, time);
         }
         if (baseRepresentation != representation) {
-            facts->staticError = "dynamic/base representation mismatch on " +
-                                 path.GetString();
+            facts->staticError =
+                "dynamic/base representation mismatch on " + path.GetString();
             return;
         }
-        if (representation == "sparse") {
+        if (representation == SchemaValueText::sparse) {
             VtIntArray mine;
             if (const UsdAttribute a =
                     prim.GetAttribute(_tokens->rigExecIndices)) {
@@ -5212,8 +5635,7 @@ RigExecBakedProgram::DescribeWeightOracle(
                     a.Get(&theirs, time);
                 }
                 const std::set<int> mySupport(mine.begin(), mine.end());
-                const std::set<int> baseSupport(theirs.begin(),
-                                                theirs.end());
+                const std::set<int> baseSupport(theirs.begin(), theirs.end());
                 if (mySupport != baseSupport) {
                     facts->staticError =
                         "dynamic/base sparse support mismatch on " +
@@ -5224,13 +5646,14 @@ RigExecBakedProgram::DescribeWeightOracle(
         return;
     }
     for (const TfToken &field :
-         {_tokens->rigExecValues, _tokens->rigExecIndices, _tokens->rigExecDefaultWeight,
-          _tokens->rigExecRepresentation, _tokens->rigExecRangePolicy}) {
+         {_tokens->rigExecValues, _tokens->rigExecIndices,
+          _tokens->rigExecDefaultWeight, _tokens->rigExecRepresentation,
+          _tokens->rigExecRangePolicy}) {
         const UsdAttribute a = prim.GetAttribute(field);
         if (a && (a.GetNumTimeSamples() > 0 || a.HasAuthoredConnections())) {
-            facts->staticError = std::string("static weight field ") + field.GetString() +
-                                 " has time samples or connections on " +
-                                 path.GetString();
+            facts->staticError =
+                std::string("static weight field ") + field.GetString() +
+                " has time samples or connections on " + path.GetString();
             return;
         }
     }
@@ -5244,19 +5667,26 @@ RigExecBakedProgram::ComposeEnvelopeObjects(
     std::map<SdfPath, int> *index, std::string *error)
 {
     objects->clear();
-    *index=program.weightIndex;
-    const auto require=[&](const SdfPath &path) {
-        if(path.IsEmpty()) return true;
-        const auto found=program.weightIndex.find(path);
-        if(found!=program.weightIndex.end() && found->second>=0) return true;
-        if(error) *error="weight envelope has no compiled descriptor: "+path.GetString();
+    *index = program.weightIndex;
+    const auto require = [&](const SdfPath &path) {
+        if (path.IsEmpty())
+            return true;
+        const auto found = program.weightIndex.find(path);
+        if (found != program.weightIndex.end() && found->second >= 0)
+            return true;
+        if (error)
+            *error = "weight envelope has no compiled descriptor: " +
+                     path.GetString();
         return false;
     };
-    for(const auto &constraint:program.constraints)
-        if(constraint.pointsTarget.IsEmpty() && !require(constraint.weightObject)) return false;
-    for(const auto &chain:program.propertyChains)
-        for(const auto &revision:chain.revisions)
-            if(!require(revision.weightObject)) return false;
+    for (const auto &constraint : program.constraints)
+        if (constraint.pointsTarget.IsEmpty() &&
+            !require(constraint.weightObject))
+            return false;
+    for (const auto &chain : program.propertyChains)
+        for (const auto &revision : chain.revisions)
+            if (!require(revision.weightObject))
+                return false;
     return true;
 }
 
@@ -5361,15 +5791,13 @@ RigExecBakedProgram::DescribePropertyChains(
             }
             chain.revisions.push_back(std::move(r));
         }
-        for (const RigExecPhasedConnection &connection :
-             E._phasedConnections) {
+        for (const RigExecPhasedConnection &connection : E._phasedConnections) {
             if (connection.target != chain.target) {
                 continue;
             }
             Desc::Phased phased;
             phased.consumer = connection.consumer;
-            const Desc::ValueType consumer =
-                valueType(connection.consumerType);
+            const Desc::ValueType consumer = valueType(connection.consumerType);
             phased.consumerType = consumer == Desc::ValueType::Float ||
                                           consumer == Desc::ValueType::Double
                                       ? consumer
@@ -5383,4 +5811,4 @@ RigExecBakedProgram::DescribePropertyChains(
     return true;
 }
 
-}  // namespace rigExec
+} // namespace rigExec

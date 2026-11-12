@@ -1,5 +1,6 @@
 // Guide rendering, part 2: the influence-volume iso-surfaces and the
 // weight overlay. Same component as bridgeGuides.cpp (bridgeGuides.h).
+#include "rigExecSchema/schemaNames.h"
 #include "bridgeGuides.h"
 
 #include "bridgeGuideGeometry.h"
@@ -130,15 +131,17 @@ RigExecBridgeGuides::_FillVolumeGuides(const RigExecGuideCall &call,
             }
         };
 
-        if (typeName == "RigExecPlaneWeight") {
-            TfToken axisToken("y");
+        if (typeName == SchemaTypeName::RigExecPlaneWeight) {
+            TfToken axisToken(SchemaValueText::y);
             if (UsdAttribute a = prim.GetAttribute(_tRigExecPlaneAxis)) {
                 a.Get(&axisToken, pose.time);
             }
             const int axis =
-                axisToken == "x"
+                axisToken == SchemaValueText::x
                     ? 0
-                    : (axisToken == "y" ? 1 : (axisToken == "z" ? 2 : -1));
+                    : (axisToken == SchemaValueText::y
+                           ? 1
+                           : (axisToken == SchemaValueText::z ? 2 : -1));
             if (axis < 0) {
                 continue; // the kernel rejects it too
             }
@@ -147,14 +150,15 @@ RigExecBridgeGuides::_FillVolumeGuides(const RigExecGuideCall &call,
             // size (a max(1, |min|, |max|) half-size would, on every scrub).
             const double extentU = readFloat(_volumeInputsExtentU, 1.0f);
             const double extentV = readFloat(_volumeInputsExtentV, 1.0f);
-            TfToken boundsToken("unbounded");
+            TfToken boundsToken(SchemaValueText::unbounded);
             if (UsdAttribute a = prim.GetAttribute(_tRigExecPlaneBounds)) {
                 a.Get(&boundsToken, pose.time);
             }
-            if (boundsToken != "unbounded" && boundsToken != "bounded") {
+            if (boundsToken != SchemaValueText::unbounded &&
+                boundsToken != SchemaValueText::bounded) {
                 continue; // the kernel rejects it too
             }
-            const bool bounded = boundsToken == "bounded";
+            const bool bounded = boundsToken == SchemaValueText::bounded;
             for (const double distance : {falloffMin, falloffMax}) {
                 const size_t first = elements.size();
                 if ((shell && distance == falloffMax) ||
@@ -183,7 +187,7 @@ RigExecBridgeGuides::_FillVolumeGuides(const RigExecGuideCall &call,
             if (!scaleOk) {
                 continue;
             }
-            if (typeName == "RigExecSphereWeight") {
+            if (typeName == SchemaTypeName::RigExecSphereWeight) {
                 const GfVec3d positiveScales(
                     readFloat(_volumeInputsScaleXPos, 1.0f),
                     readFloat(_volumeInputsScaleYPos, 1.0f),
@@ -233,7 +237,7 @@ RigExecBridgeGuides::_FillVolumeGuides(const RigExecGuideCall &call,
                     }
                     finishBoundary(first, surface == 1);
                 }
-            } else if (typeName == "RigExecCurveWeight") {
+            } else if (typeName == SchemaTypeName::RigExecCurveWeight) {
                 VtVec3fArray curvePoints;
                 if (!_ReadCurveGuidePoints(prim, pose.time, &curvePoints)) {
                     continue;

@@ -73,6 +73,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -96,6 +97,38 @@ const SdfPath kBarrel("/TurretAsset/Geom/Turret/Barrel");
 const char *kTrackTarget = "/TurretAsset/Rig/Controls/TrackTarget";
 const char *kTurretRig = "/TurretAsset/Rig";
 const char *kTail1 = "/TailAsset/Rig/Controls/Tail1";
+
+// Factory gates: every gated constructor takes a private non-aggregate
+// passkey, so a braced empty list cannot reach it. Each probe spells out
+// the remaining parameters (a null input scene index, a null store, a null
+// stage) so it is false for the gate, not for a missing argument.
+template <class T, class Params, class = void>
+struct _BraceConstructible : std::false_type {};
+
+template <class T, class... Args>
+struct _BraceConstructible<
+    T, void(Args...), std::void_t<decltype(T({}, std::declval<Args>()...))>>
+    : std::true_type {};
+
+static_assert(
+    !_BraceConstructible<RigExecImagingRegistry,
+                         void(uint64_t, UsdStageRefPtr)>::value,
+    "RigExecImagingRegistry: only the directory may construct a context");
+static_assert(
+    !_BraceConstructible<RigExecInternalPrimPruningSceneIndex,
+                         void(HdSceneIndexBaseRefPtr)>::value,
+    "RigExecInternalPrimPruningSceneIndex: only New() may construct it");
+static_assert(!_BraceConstructible<RigExecXformOverrideSceneIndex,
+                                   void(HdSceneIndexBaseRefPtr)>::value,
+              "RigExecXformOverrideSceneIndex: only New() may construct it");
+static_assert(!_BraceConstructible<RigExecBindingResolvingSceneIndex,
+                                   void(HdSceneIndexBaseRefPtr)>::value,
+              "RigExecBindingResolvingSceneIndex: only New() may construct it");
+static_assert(
+    !_BraceConstructible<RigExecResultsSceneIndex,
+                         void(HdSceneIndexBaseRefPtr,
+                              std::shared_ptr<RigExecSnapshotStore>)>::value,
+    "RigExecResultsSceneIndex: only New() may construct it");
 
 std::string
 _SchemaResourceDir(const std::string &examplesDir)
@@ -457,6 +490,44 @@ _Table(const std::vector<double> &flat)
         table[i] = GfVec2f(float(flat[2 * i]), float(flat[2 * i + 1]));
     }
     return table;
+}
+
+// New() adoption: TfCreateRefPtr takes over the one owner a fresh intrusive
+// object already has, so a factory-built chain is alive exactly while a
+// RefPtr of it is, and its weak identity expires with the last one.
+void
+TestFactoryAdoption()
+{
+    HdRetainedSceneIndexRefPtr upstream = HdRetainedSceneIndex::New();
+    upstream->AddPrims({{SdfPath("/Gate"), TfToken("mesh"),
+                         HdRetainedContainerDataSource::New()}});
+
+    TfWeakPtr<RigExecInternalPrimPruningSceneIndex> pruningWeak;
+    TfWeakPtr<RigExecXformOverrideSceneIndex> xformWeak;
+    TfWeakPtr<RigExecBindingResolvingSceneIndex> bindingWeak;
+    TfWeakPtr<RigExecResultsSceneIndex> resultsWeak;
+    {
+        auto pruning = RigExecInternalPrimPruningSceneIndex::New(upstream);
+        auto xforms = RigExecXformOverrideSceneIndex::New(pruning);
+        auto binding = RigExecBindingResolvingSceneIndex::New(xforms);
+        auto results = RigExecResultsSceneIndex::New(
+            binding, std::make_shared<RigExecSnapshotStore>());
+        CHECK(pruning && xforms && binding && results);
+        CHECK(results->GetStore() != nullptr);
+        // The chain is wired: a read walks the input indices to the
+        // retained one with no snapshot published.
+        CHECK(results->GetPrim(SdfPath("/Gate")).dataSource);
+        pruningWeak = TfWeakPtr<RigExecInternalPrimPruningSceneIndex>(pruning);
+        xformWeak = TfWeakPtr<RigExecXformOverrideSceneIndex>(xforms);
+        bindingWeak = TfWeakPtr<RigExecBindingResolvingSceneIndex>(binding);
+        resultsWeak = TfWeakPtr<RigExecResultsSceneIndex>(results);
+        CHECK(!pruningWeak.IsExpired() && !xformWeak.IsExpired() &&
+              !bindingWeak.IsExpired() && !resultsWeak.IsExpired());
+    }
+    // An extra owner from the adoption -- a RefPtr that also AddRef'd --
+    // would leave these alive past every handle here.
+    CHECK(pruningWeak.IsExpired() && xformWeak.IsExpired() &&
+          bindingWeak.IsExpired() && resultsWeak.IsExpired());
 }
 
 // float2[] slots: `<path>\t<elementCount>` previews a whole keys table
@@ -1552,6 +1623,7 @@ main(int argc, char **argv)
     }
 
     TestMultiStage(examplesDir);
+    TestFactoryAdoption();
     TestFloat2ArrayPreview();
     TestPointArrayPreview();
 

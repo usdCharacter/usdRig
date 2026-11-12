@@ -1,5 +1,6 @@
 // Frozen evaluation API, input containers, serial scopes, and purity audit.
 
+#include "rigExecSchema/schemaNames.h"
 #include "frozenContextInternal.h"
 #include "inputReplay.h"
 #include "frameCache.h"
@@ -17,15 +18,15 @@ namespace {
 
 TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
-    ((inputsEnabled, "inputs:enabled"))
-    ((inputsDefaultWeight, "inputs:defaultWeight"))
-    ((rigExecOperation, "rigExec:operation"))
-    ((inputsValue, "inputs:value"))
-    ((inputsMin, "inputs:min"))
-    ((inputsMax, "inputs:max"))
-    ((inputsKeys, "inputs:keys"))
-    ((inputsTangents, "inputs:tangents"))
-    ((rigExecWeightObject, "rigExec:weightObject"))
+    ((inputsEnabled, SchemaAttrText::inputsEnabled))
+    ((inputsDefaultWeight, SchemaAttrText::inputsDefaultWeight))
+    ((rigExecOperation, SchemaAttrText::rigExecOperation))
+    ((inputsValue, SchemaAttrText::inputsValue))
+    ((inputsMin, SchemaAttrText::inputsMin))
+    ((inputsMax, SchemaAttrText::inputsMax))
+    ((inputsKeys, SchemaAttrText::inputsKeys))
+    ((inputsTangents, SchemaAttrText::inputsTangents))
+    ((rigExecWeightObject, SchemaAttrText::rigExecWeightObject))
 );
 
 // Thread-local serial depth. A plain counter rather than a bool so scopes
@@ -53,8 +54,8 @@ RigExecUpstreamValuesOf(const std::vector<RigExecValueOverride> &inputs)
     std::vector<RigExecUpstreamValue> values;
     values.reserve(byPath.size());
     for (const auto &[path, value] : byPath) {
-        values.push_back(
-            RigExecUpstreamValue{path, *value, RigExecUpstreamFoldHash(*value)});
+        values.push_back(RigExecUpstreamValue{path, *value,
+                                              RigExecUpstreamFoldHash(*value)});
     }
     return values;
 }
@@ -74,8 +75,7 @@ namespace {
 
 // The constant head leaf keyed \p path, or -1.
 int
-_HeadConstantAt(const RigExecHeadLeafConstants *constants,
-                const SdfPath &path)
+_HeadConstantAt(const RigExecHeadLeafConstants *constants, const SdfPath &path)
 {
     if (!constants) {
         return -1;
@@ -171,8 +171,7 @@ RigExecFrozenSerialActive()
     return _frozenSerialDepth > 0;
 }
 
-RigExecFrozenSerialScope::RigExecFrozenSerialScope()
-    : _active(true)
+RigExecFrozenSerialScope::RigExecFrozenSerialScope() : _active(true)
 {
     ++_frozenSerialDepth;
 }
@@ -220,8 +219,7 @@ RigExecEvaluateFrozen(const RigExecFrozenEvalContext &context,
         return declined;
     }
     if (scheduler &&
-        !RigExecGenerationCheckAtStart(*scheduler, rig,
-                                       context.generation)) {
+        !RigExecGenerationCheckAtStart(*scheduler, rig, context.generation)) {
         return declined;
     }
     RigExecFrozenArena arena;
@@ -246,7 +244,10 @@ RigExecEvaluateFrozen(const RigExecFrozenEvalContext &context,
             {
                 _frozenRunReport = r;
             }
-            ~ReportScope() { _frozenRunReport = nullptr; }
+            ~ReportScope()
+            {
+                _frozenRunReport = nullptr;
+            }
         } reportScope(report);
         ran = runner(context, inputs, arena, &pose);
     }
@@ -257,9 +258,8 @@ RigExecEvaluateFrozen(const RigExecFrozenEvalContext &context,
         return declined;
     }
     pose.time = inputs.time;
-    if (scheduler &&
-        !RigExecGenerationCheckBeforePublish(*scheduler, rig,
-                                             context.generation)) {
+    if (scheduler && !RigExecGenerationCheckBeforePublish(*scheduler, rig,
+                                                          context.generation)) {
         return declined;
     }
     return pose;
@@ -291,13 +291,17 @@ RigExecRunFrozenHistoryTick(const RigExecFrozenEvalContext &context,
                             std::string *error)
 {
     const auto fail = [error](const char *why) {
-        if (error) *error = why;
+        if (error)
+            *error = why;
         return false;
     };
-    if (!captures) return fail("no capture destination");
+    if (!captures)
+        return fail("no capture destination");
     captures->clear();
-    if (!context.frozen) return fail("no frozen program");
-    if (context.flags & kRigExecFrozenBakeRefused) return fail("no admitted program");
+    if (!context.frozen)
+        return fail("no frozen program");
+    if (context.flags & kRigExecFrozenBakeRefused)
+        return fail("no admitted program");
     if (inputs.values.size() != context.varyingInputCount)
         return fail("history inputs were sampled for another program");
     if (!_RunFrozenHistoryTick(context, inputs, rings, captures))
@@ -380,8 +384,8 @@ RigExecBindChainSampleInputs(const RigExecRigEvaluator &evaluator,
             RigExecChainSampleRevision revision;
             revision.moverPath = mover.moverPath;
             revision.moverPrim = stage->GetPrimAtPath(mover.moverPath);
-            if (const UsdRelationship rel = revision.moverPrim.GetRelationship(
-                    T.rigExecWeightObject)) {
+            if (const UsdRelationship rel =
+                    revision.moverPrim.GetRelationship(T.rigExecWeightObject)) {
                 rel.GetTargets(&revision.weightObjects);
             }
             const UsdPrim &prim = revision.moverPrim;

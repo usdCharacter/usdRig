@@ -1,9 +1,11 @@
 // Runtime pose scratch allocation, input prologue, and ladder composition.
 
+#include "rigExecSchema/schemaNames.h"
 #include "poseInternal.h"
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <utility>
 
 namespace rigExec {
@@ -24,8 +26,8 @@ _RrNormalizeAvarScale(double value)
         return 1.0;
     }
     return std::abs(value) < _RrAvarScaleFloor
-        ? std::copysign(_RrAvarScaleFloor, value)
-        : value;
+               ? std::copysign(_RrAvarScaleFloor, value)
+               : value;
 }
 
 RrMat4d
@@ -68,8 +70,8 @@ _RrSameBits(const RrMat4d &a, const RrMat4d &b)
 // \p moved, lists the slots of [begin, end) whose composition moved: the
 // caller's own list, since compose ops of other groups run beside it.
 void
-_RrComposeLadder(RrProgram *program, std::vector<int> *moved,
-                 size_t begin, size_t end, bool restOnly, bool ladderOnly)
+_RrComposeLadder(RrProgram *program, std::vector<int> *moved, size_t begin,
+                 size_t end, bool restOnly, bool ladderOnly)
 {
     RrStore &store = program->store;
     RrPoseScratch *scratch = _RrScratch(program);
@@ -104,34 +106,46 @@ _RrComposeLadder(RrProgram *program, std::vector<int> *moved,
                 scratch->posedAuthored[i] = 0;
                 scratch->parentSpaceAuthored[i] = 0;
                 scratch->rotationSign[i] = 0;
-                scratch->rotOrder[i] = 0; // Empty token selects the existing XYZ fallback.
+                scratch->rotOrder[i] =
+                    0; // Empty token selects the existing XYZ fallback.
             }
             continue;
         }
         const auto &ladder = program->poses->ladders[i];
         const auto authoritative = [&](const auto &input, bool connected) {
-            const auto ready=[&](const auto &field,int channel) {
-                if(input.get()!=field.get() || size_t(channel)>=ladder.spaceValues.size()) return false;
-                const int id=ladder.spaceValues[size_t(channel)];
-                if(id<0 || size_t(id)>=store.providerValues.size()) return false;
-                const auto &value=store.providerValues[size_t(id)];
+            const auto ready = [&](const auto &field, int channel) {
+                if (input.get() != field.get() ||
+                    size_t(channel) >= ladder.spaceValues.size())
+                    return false;
+                const int id = ladder.spaceValues[size_t(channel)];
+                if (id < 0 || size_t(id) >= store.providerValues.size())
+                    return false;
+                const auto &value = store.providerValues[size_t(id)];
                 return value.initialized && !value.blocked &&
-                    std::holds_alternative<std::array<double,16>>(value.value);
+                       std::holds_alternative<std::array<double, 16>>(
+                           value.value);
             };
             // Ready default expressions supply defaults; readiness alone does not
             // make identity posed or parent space an authored replacement.
-            if(ready(ladder.defaultSpace,1) || ready(ladder.parentDefaultSpace,4) ||
-               ready(ladder.avarDefaultSpace,5) || ready(ladder.posedDefaultSpace,6)) return true;
+            if (ready(ladder.defaultSpace, 1) ||
+                ready(ladder.parentDefaultSpace, 4) ||
+                ready(ladder.avarDefaultSpace, 5) ||
+                ready(ladder.posedDefaultSpace, 6))
+                return true;
             const int index = input->overrideIndex;
-            return connected || (index >= 0 &&
-                size_t(index) < program->inputState.valueOverridden.size() &&
-                program->inputState.valueOverridden[size_t(index)]);
+            return connected ||
+                   (index >= 0 &&
+                    size_t(index) <
+                        program->inputState.valueOverridden.size() &&
+                    program->inputState.valueOverridden[size_t(index)]);
         };
-        const RrMat4d posed =
-            program->ReadLadder(i, RrLadderPosedSpace).matrix;
+        const RrMat4d posed = program->ReadLadder(i, RrLadderPosedSpace).matrix;
         if (!restOnly) {
             scratch->posedAuthored[i] =
-                (authoritative(ladder.posedSpace, ladder.posedSpaceConnected) || posed != identity) ? 1 : 0;
+                (authoritative(ladder.posedSpace, ladder.posedSpaceConnected) ||
+                 posed != identity)
+                    ? 1
+                    : 0;
             scratch->posedAuthoredM[i] = posed;
         }
 
@@ -148,109 +162,121 @@ _RrComposeLadder(RrProgram *program, std::vector<int> *moved,
         const RrInputValue restAvar5 =
             program->ReadLadder(i, RrLadderRestAvar0 + 5);
         RrMat4d rest =
-            _RrComposeAvars(restAvar0.f64, restAvar1.f64, restAvar2.f64,
-                            1, 1, 1, restAvar3.f64, restAvar4.f64,
-                            restAvar5.f64, 0, "XYZ") *
+            _RrComposeAvars(restAvar0.f64, restAvar1.f64, restAvar2.f64, 1, 1,
+                            1, restAvar3.f64, restAvar4.f64, restAvar5.f64, 0,
+                            SchemaValueText::xyz) *
             program->ReadLadder(i, RrLadderRestSpace).matrix;
         rest.Orthonormalize(false);
-        const int parent =
-            i < meta.parent.size() ? meta.parent[i] : -1;
+        const int parent = i < meta.parent.size() ? meta.parent[i] : -1;
         const RrMat4d parentRest =
-            parent >= 0 ? scratch->restRoundTrip[size_t(parent)]
-                        : identity;
+            parent >= 0 ? scratch->restRoundTrip[size_t(parent)] : identity;
         if (!ladderOnly) {
             const RrMat4d intervening =
                 program->ReadLadder(i, RrLadderInterveningSpace).matrix;
-            scratch->restM[i] = (intervening == identity ? rest : rest * intervening) * parentRest;
+            scratch->restM[i] =
+                (intervening == identity ? rest : rest * intervening) *
+                parentRest;
             scratch->restFrames[i] = RrFrameFromMatrix(scratch->restM[i]);
             scratch->restPts[i] = scratch->restFrames[i].points;
             scratch->restRoundTrip[i] = RrRoundTrip(scratch->restM[i]);
         }
         if (!restOnly) {
 
-        const RrMat4d authoredDefault =
-            program->ReadLadder(i, RrLadderDefaultSpace).matrix;
-        const RrMat4d authoredParentDefault =
-            program->ReadLadder(i, RrLadderParentDefaultSpace).matrix;
-        const RrMat4d parentDefault =
-            authoritative(ladder.parentDefaultSpace, ladder.parentDefaultSpaceConnected) ||
-            authoredParentDefault != identity ? authoredParentDefault :
-            (parent >= 0 ? scratch->defaultRoundTrip[size_t(parent)] : identity);
-        if (authoritative(ladder.defaultSpace, ladder.defaultSpaceConnected) ||
-            authoredDefault != identity) {
-            scratch->selfD[i] = authoredDefault;
-        } else {
-            const RrInputValue defAvar0 =
-                program->ReadLadder(i, RrLadderDefaultAvar0 + 0);
-            const RrInputValue defAvar1 =
-                program->ReadLadder(i, RrLadderDefaultAvar0 + 1);
-            const RrInputValue defAvar2 =
-                program->ReadLadder(i, RrLadderDefaultAvar0 + 2);
-            const RrInputValue defAvar3 =
-                program->ReadLadder(i, RrLadderDefaultAvar0 + 3);
-            const RrInputValue defAvar4 =
-                program->ReadLadder(i, RrLadderDefaultAvar0 + 4);
-            const RrInputValue defAvar5 =
-                program->ReadLadder(i, RrLadderDefaultAvar0 + 5);
-            const RrMat4d offset = _RrComposeAvars(
-                defAvar0.f64, defAvar1.f64, defAvar2.f64, 1, 1, 1,
-                defAvar3.f64, defAvar4.f64, defAvar5.f64, 0, "XYZ");
-            scratch->selfD[i] = offset * scratch->restRoundTrip[i] *
-                                parentRest.GetInverse() * parentDefault;
-        }
-        scratch->defaultRoundTrip[i] = RrRoundTrip(scratch->selfD[i]);
-        scratch->parentDinv[i] = parentDefault.GetInverse();
-        const RrMat4d authoredAvarDefault =
-            program->ReadLadder(i, RrLadderAvarDefaultSpace).matrix;
-        const RrMat4d avarDefault =
-            authoritative(ladder.avarDefaultSpace, ladder.avarDefaultSpaceConnected) ||
-            authoredAvarDefault != identity ? authoredAvarDefault : scratch->selfD[i];
-        const RrMat4d authoredPosedDefault =
-            program->ReadLadder(i, RrLadderPosedDefaultSpace).matrix;
-        scratch->posedD[i] =
-            authoritative(ladder.posedDefaultSpace, ladder.posedDefaultSpaceConnected) ||
-            authoredPosedDefault != identity ? authoredPosedDefault : avarDefault;
-        scratch->parentSpaceM[i] = program->ReadLadder(i, RrLadderParentSpace).matrix;
-        scratch->parentSpaceAuthored[i] =
-            authoritative(ladder.parentSpace, ladder.parentSpaceConnected) ||
-            scratch->parentSpaceM[i] != identity;
-        const auto sign = program->ReadLadder(i, RrLadderRotationSign).vec;
-        scratch->rotationSign[i] = (sign[0] < 0 ? 1u : 0u) |
-                                   (sign[1] < 0 ? 2u : 0u) |
-                                   (sign[2] < 0 ? 4u : 0u);
-
-        const uint32_t orderId =
-            program->ReadLadder(i, RrLadderRotationOrder).token;
-        scratch->rotOrder[i] = orderId;
-
-        if (i < store.ladders.size()) {
-            RrLadderLive &live = store.ladders[i];
-            live.restSpace =
-                program->ReadLadder(i, RrLadderRestSpace).matrix;
-            live.defaultSpace =
+            const RrMat4d authoredDefault =
                 program->ReadLadder(i, RrLadderDefaultSpace).matrix;
-            live.posedSpace = posed;
-            live.restAvars[0] = restAvar0.f64;
-            live.restAvars[1] = restAvar1.f64;
-            live.restAvars[2] = restAvar2.f64;
-            live.restAvars[3] = restAvar3.f64;
-            live.restAvars[4] = restAvar4.f64;
-            live.restAvars[5] = restAvar5.f64;
-            live.defaultAvars[0] =
-                program->ReadLadder(i, RrLadderDefaultAvar0 + 0).f64;
-            live.defaultAvars[1] =
-                program->ReadLadder(i, RrLadderDefaultAvar0 + 1).f64;
-            live.defaultAvars[2] =
-                program->ReadLadder(i, RrLadderDefaultAvar0 + 2).f64;
-            live.defaultAvars[3] =
-                program->ReadLadder(i, RrLadderDefaultAvar0 + 3).f64;
-            live.defaultAvars[4] =
-                program->ReadLadder(i, RrLadderDefaultAvar0 + 4).f64;
-            live.defaultAvars[5] =
-                program->ReadLadder(i, RrLadderDefaultAvar0 + 5).f64;
-            live.rotationOrder = orderId;
-        }
+            const RrMat4d authoredParentDefault =
+                program->ReadLadder(i, RrLadderParentDefaultSpace).matrix;
+            const RrMat4d parentDefault =
+                authoritative(ladder.parentDefaultSpace,
+                              ladder.parentDefaultSpaceConnected) ||
+                        authoredParentDefault != identity
+                    ? authoredParentDefault
+                    : (parent >= 0 ? scratch->defaultRoundTrip[size_t(parent)]
+                                   : identity);
+            if (authoritative(ladder.defaultSpace,
+                              ladder.defaultSpaceConnected) ||
+                authoredDefault != identity) {
+                scratch->selfD[i] = authoredDefault;
+            } else {
+                const RrInputValue defAvar0 =
+                    program->ReadLadder(i, RrLadderDefaultAvar0 + 0);
+                const RrInputValue defAvar1 =
+                    program->ReadLadder(i, RrLadderDefaultAvar0 + 1);
+                const RrInputValue defAvar2 =
+                    program->ReadLadder(i, RrLadderDefaultAvar0 + 2);
+                const RrInputValue defAvar3 =
+                    program->ReadLadder(i, RrLadderDefaultAvar0 + 3);
+                const RrInputValue defAvar4 =
+                    program->ReadLadder(i, RrLadderDefaultAvar0 + 4);
+                const RrInputValue defAvar5 =
+                    program->ReadLadder(i, RrLadderDefaultAvar0 + 5);
+                const RrMat4d offset =
+                    _RrComposeAvars(defAvar0.f64, defAvar1.f64, defAvar2.f64, 1,
+                                    1, 1, defAvar3.f64, defAvar4.f64,
+                                    defAvar5.f64, 0, SchemaValueText::xyz);
+                scratch->selfD[i] = offset * scratch->restRoundTrip[i] *
+                                    parentRest.GetInverse() * parentDefault;
+            }
+            scratch->defaultRoundTrip[i] = RrRoundTrip(scratch->selfD[i]);
+            scratch->parentDinv[i] = parentDefault.GetInverse();
+            const RrMat4d authoredAvarDefault =
+                program->ReadLadder(i, RrLadderAvarDefaultSpace).matrix;
+            const RrMat4d avarDefault =
+                authoritative(ladder.avarDefaultSpace,
+                              ladder.avarDefaultSpaceConnected) ||
+                        authoredAvarDefault != identity
+                    ? authoredAvarDefault
+                    : scratch->selfD[i];
+            const RrMat4d authoredPosedDefault =
+                program->ReadLadder(i, RrLadderPosedDefaultSpace).matrix;
+            scratch->posedD[i] =
+                authoritative(ladder.posedDefaultSpace,
+                              ladder.posedDefaultSpaceConnected) ||
+                        authoredPosedDefault != identity
+                    ? authoredPosedDefault
+                    : avarDefault;
+            scratch->parentSpaceM[i] =
+                program->ReadLadder(i, RrLadderParentSpace).matrix;
+            scratch->parentSpaceAuthored[i] =
+                authoritative(ladder.parentSpace,
+                              ladder.parentSpaceConnected) ||
+                scratch->parentSpaceM[i] != identity;
+            const auto sign = program->ReadLadder(i, RrLadderRotationSign).vec;
+            scratch->rotationSign[i] = (sign[0] < 0 ? 1u : 0u) |
+                                       (sign[1] < 0 ? 2u : 0u) |
+                                       (sign[2] < 0 ? 4u : 0u);
 
+            const uint32_t orderId =
+                program->ReadLadder(i, RrLadderRotationOrder).token;
+            scratch->rotOrder[i] = orderId;
+
+            if (i < store.ladders.size()) {
+                RrLadderLive &live = store.ladders[i];
+                live.restSpace =
+                    program->ReadLadder(i, RrLadderRestSpace).matrix;
+                live.defaultSpace =
+                    program->ReadLadder(i, RrLadderDefaultSpace).matrix;
+                live.posedSpace = posed;
+                live.restAvars[0] = restAvar0.f64;
+                live.restAvars[1] = restAvar1.f64;
+                live.restAvars[2] = restAvar2.f64;
+                live.restAvars[3] = restAvar3.f64;
+                live.restAvars[4] = restAvar4.f64;
+                live.restAvars[5] = restAvar5.f64;
+                live.defaultAvars[0] =
+                    program->ReadLadder(i, RrLadderDefaultAvar0 + 0).f64;
+                live.defaultAvars[1] =
+                    program->ReadLadder(i, RrLadderDefaultAvar0 + 1).f64;
+                live.defaultAvars[2] =
+                    program->ReadLadder(i, RrLadderDefaultAvar0 + 2).f64;
+                live.defaultAvars[3] =
+                    program->ReadLadder(i, RrLadderDefaultAvar0 + 3).f64;
+                live.defaultAvars[4] =
+                    program->ReadLadder(i, RrLadderDefaultAvar0 + 4).f64;
+                live.defaultAvars[5] =
+                    program->ReadLadder(i, RrLadderDefaultAvar0 + 5).f64;
+                live.rotationOrder = orderId;
+            }
         }
         if (!trackMoves) {
             continue;
@@ -260,11 +286,14 @@ _RrComposeLadder(RrProgram *program, std::vector<int> *moved,
             !_RrSameBits(scratch->selfD[i], scratch->lastSelfD[i]) ||
             !_RrSameBits(scratch->parentDinv[i], scratch->lastParentDinv[i]) ||
             scratch->posedAuthored[i] != scratch->lastPosedAuthored[i] ||
-            !_RrSameBits(scratch->posedAuthoredM[i], scratch->lastPosedAuthoredM[i]) ||
+            !_RrSameBits(scratch->posedAuthoredM[i],
+                         scratch->lastPosedAuthoredM[i]) ||
             scratch->rotOrder[i] != scratch->lastRotOrder[i] ||
             !_RrSameBits(scratch->posedD[i], scratch->lastPosedD[i]) ||
-            !_RrSameBits(scratch->parentSpaceM[i], scratch->lastParentSpaceM[i]) ||
-            scratch->parentSpaceAuthored[i] != scratch->lastParentSpaceAuthored[i] ||
+            !_RrSameBits(scratch->parentSpaceM[i],
+                         scratch->lastParentSpaceM[i]) ||
+            scratch->parentSpaceAuthored[i] !=
+                scratch->lastParentSpaceAuthored[i] ||
             scratch->rotationSign[i] != scratch->lastRotationSign[i]) {
             moved->push_back(int(i));
             scratch->lastRestM[i] = scratch->restM[i];
@@ -275,7 +304,8 @@ _RrComposeLadder(RrProgram *program, std::vector<int> *moved,
             scratch->lastRotOrder[i] = scratch->rotOrder[i];
             scratch->lastPosedD[i] = scratch->posedD[i];
             scratch->lastParentSpaceM[i] = scratch->parentSpaceM[i];
-            scratch->lastParentSpaceAuthored[i] = scratch->parentSpaceAuthored[i];
+            scratch->lastParentSpaceAuthored[i] =
+                scratch->parentSpaceAuthored[i];
             scratch->lastRotationSign[i] = scratch->rotationSign[i];
         }
     }
@@ -301,12 +331,12 @@ _RrComposeAvars(double tx, double ty, double tz, double sx, double sy,
                 double sz, double rx, double ry, double rz, double rspin,
                 const std::string &order)
 {
-    const RrVec3d axes[3] = {
-        RrVec3d(1, 0, 0), RrVec3d(0, 1, 0), RrVec3d(0, 0, 1)};
+    const RrVec3d axes[3] = {RrVec3d(1, 0, 0), RrVec3d(0, 1, 0),
+                             RrVec3d(0, 0, 1)};
     const double angles[3] = {rx, ry, rz};
     std::string sequence = order;
     if (sequence.size() != 3) {
-        sequence = "XYZ";
+        sequence = SchemaValueText::xyz;
     }
     RrMat4d m;
     m.SetIdentity();
@@ -316,8 +346,7 @@ _RrComposeAvars(double tx, double ty, double tz, double sx, double sy,
     for (const char axis : sequence) {
         const int index = axis == 'X' ? 0 : axis == 'Y' ? 1 : 2;
         if (angles[index] != 0.0) {
-            m = m * RrMat4d(RrRotation(axes[index], angles[index]),
-                            RrVec3d(0));
+            m = m * RrMat4d(RrRotation(axes[index], angles[index]), RrVec3d(0));
         }
     }
     if (rspin != 0.0) {
@@ -335,7 +364,8 @@ bool
 _RrLive(const RrProgram *program, const RigExecWireInput &read)
 {
     if ((read.flags & (uint8_t(RigExecWireInputReadFlags::Varying) |
-                       uint8_t(RigExecWireInputReadFlags::SourceBacked))) != 0) {
+                       uint8_t(RigExecWireInputReadFlags::SourceBacked))) !=
+        0) {
         return true;
     }
     return read.overrideIndex >= 0 &&
@@ -361,8 +391,7 @@ _RrScratch(RrProgram *program)
 const std::vector<RrPointFrame> &
 RrPoseRestFrames(const RrProgram *program)
 {
-    return static_cast<const RrPoseScratch *>(program->pose.get())
-        ->restFrames;
+    return static_cast<const RrPoseScratch *>(program->pose.get())->restFrames;
 }
 
 bool
@@ -379,11 +408,9 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
     const RigExecWireConstants &constants = *program->constants;
     const RigExecWireDomainPose &poses = *program->poses;
     const size_t slots = meta.paths.size();
-    if (constants.restM.size() != slots ||
-        constants.restPts.size() != slots ||
+    if (constants.restM.size() != slots || constants.restPts.size() != slots ||
         constants.restFrames.size() != slots ||
-        constants.selfD.size() != slots ||
-        constants.posedD.size() != slots ||
+        constants.selfD.size() != slots || constants.posedD.size() != slots ||
         constants.parentSpaceM.size() != slots ||
         constants.parentSpaceAuthored.size() != slots ||
         constants.parentDinv.size() != slots ||
@@ -398,11 +425,12 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
         }
         return false;
     }
-    RrPoseScratch *scratch = new RrPoseScratch();
+    auto scratch = std::make_shared<RrPoseScratch>();
     const RrMat4d identity = _RrIdentity();
     scratch->checkpointInputs.resize(poses.spaceCheckpoints.size());
-    for(size_t i=0;i<poses.spaceCheckpoints.size();++i)
-        scratch->checkpointInputs[i].resize(poses.spaceCheckpoints[i].recompose.size());
+    for (size_t i = 0; i < poses.spaceCheckpoints.size(); ++i)
+        scratch->checkpointInputs[i].resize(
+            poses.spaceCheckpoints[i].recompose.size());
     scratch->restM.assign(slots, identity);
     scratch->selfD.assign(slots, identity);
     scratch->posedD.assign(slots, identity);
@@ -424,23 +452,22 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
         scratch->selfD[i] = _RrWireMatrix(constants.selfD[i]);
         scratch->posedD[i] = _RrWireMatrix(constants.posedD[i]);
         scratch->parentSpaceM[i] = _RrWireMatrix(constants.parentSpaceM[i]);
-        scratch->parentSpaceAuthored[i] = constants.parentSpaceAuthored[i] ? 1 : 0;
+        scratch->parentSpaceAuthored[i] =
+            constants.parentSpaceAuthored[i] ? 1 : 0;
         scratch->parentDinv[i] = _RrWireMatrix(constants.parentDinv[i]);
-        scratch->posedAuthoredM[i] =
-            _RrWireMatrix(constants.posedAuthoredM[i]);
-        scratch->restRoundTrip[i] =
-            _RrWireMatrix(constants.restRoundTrip[i]);
+        scratch->posedAuthoredM[i] = _RrWireMatrix(constants.posedAuthoredM[i]);
+        scratch->restRoundTrip[i] = _RrWireMatrix(constants.restRoundTrip[i]);
         scratch->defaultRoundTrip[i] =
             _RrWireMatrix(constants.defaultRoundTrip[i]);
         scratch->restPts[i] = _RrWireLandmarks(constants.restPts[i]);
         scratch->restFrames[i] = RrWireToFrame(constants.restFrames[i]);
         scratch->rotOrder[i] = constants.rotOrder[i];
-        scratch->posedAuthored[i] =
-            constants.posedAuthored[i] ? 1 : 0;
-        scratch->noScaleAvars[i] =
-            constants.noScaleAvars[i] ? 1 : 0;
-        scratch->rotationSign[i] = i < constants.rotationSign.size()
-            ? (unsigned char)(constants.rotationSign[i] & 7u) : 0;
+        scratch->posedAuthored[i] = constants.posedAuthored[i] ? 1 : 0;
+        scratch->noScaleAvars[i] = constants.noScaleAvars[i] ? 1 : 0;
+        scratch->rotationSign[i] =
+            i < constants.rotationSign.size()
+                ? (unsigned char)(constants.rotationSign[i] & 7u)
+                : 0;
     }
     scratch->lastRestM = scratch->restM;
     scratch->lastSelfD = scratch->selfD;
@@ -466,8 +493,7 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
     scratch->interpScratch.assign(poses.poseInterpolators.size(), {});
     scratch->interpMethods.assign(poses.poseInterpolators.size(), {});
     for (size_t i = 0; i < poses.poseInterpolators.size(); ++i) {
-        const RigExecWireRbf &wire =
-            *poses.poseInterpolators[i].solver;
+        const RigExecWireRbf &wire = *poses.poseInterpolators[i].solver;
         std::vector<RrVec3d> rbfPoses;
         for (const RigExecWireVec3d &p : wire.poses) {
             rbfPoses.push_back(RrVec3d(p[0], p[1], p[2]));
@@ -482,12 +508,9 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
         }
         scratch->interpSolvers[i] = _RrRbfSolver(
             rbfPoses, rbfTranslations, rbfPoseTypes,
-            RrVec3d(wire.twistAxis[0], wire.twistAxis[1],
-                    wire.twistAxis[2]),
-            _RrRbfKernel(wire.kernel), wire.radius,
-            wire.translationRadius,
-            wire.normalize, wire.enableRotation,
-            wire.enableTranslation);
+            RrVec3d(wire.twistAxis[0], wire.twistAxis[1], wire.twistAxis[2]),
+            _RrRbfKernel(wire.kernel), wire.radius, wire.translationRadius,
+            wire.normalize, wire.enableRotation, wire.enableTranslation);
         std::vector<std::vector<double>> weights;
         weights.reserve(wire.weights.size());
         for (const fb::RigExecWireDoubleList &row : wire.weights) {
@@ -503,14 +526,12 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
                 std::vector<RigExecConditionalRow> rows;
                 for (size_t r = m->mapBegin[map]; r < m->mapBegin[map + 1];
                      ++r) {
-                    rows.push_back({m->rowInputs[r], m->rowFrom[r],
-                                    m->rowTo[r], m->rowSlope[r],
-                                    m->rowCut[r]});
+                    rows.push_back({m->rowInputs[r], m->rowFrom[r], m->rowTo[r],
+                                    m->rowSlope[r], m->rowCut[r]});
                 }
                 // Absent map_unclamped: every map clamps.
-                table.AddMap(std::move(rows),
-                             !(map < m->mapUnclamped.size() &&
-                               m->mapUnclamped[map] != 0));
+                table.AddMap(std::move(rows), !(map < m->mapUnclamped.size() &&
+                                                m->mapUnclamped[map] != 0));
             }
         }
         if (const auto &n = poses.poseInterpolators[i].network) {
@@ -523,8 +544,7 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
             }
             RigExecMlNetwork &net = scratch->interpNetworks[i];
             RigExecMlBuildNetwork(n->inputCount, n->layerSizes, activations,
-                                  alphas, n->weights, n->biases, &net,
-                                  nullptr);
+                                  alphas, n->weights, n->biases, &net, nullptr);
             net.inputMean = n->inputMean;
             net.inputScale = n->inputScale;
             net.defaults = n->outputDefaults;
@@ -534,7 +554,8 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
             table.solverType = RigExecRbfSolverType(m->solverType);
             table.distanceMethod = RigExecRbfDistanceMethod(m->distanceMethod);
             table.weightFunction = RigExecRbfWeightFunction(m->weightFunction);
-            table.normalizeMethod = RigExecRbfNormalizeMethod(m->normalizeMethod);
+            table.normalizeMethod =
+                RigExecRbfNormalizeMethod(m->normalizeMethod);
             table.twistAxis = int(m->twistAxis);
             table.rawCount = m->rawCount;
             table.targetCount = m->targetCount;
@@ -601,8 +622,7 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
         state.twistEndRest = _RrWireLandmarks(wire.twistEndRest);
         state.twistWeights = wire.twistWeights;
         for (const RigExecWireVec3f &p : wire.ribbonRestPoints) {
-            state.ribbonRestPoints.push_back(
-                RrVec3f(p[0], p[1], p[2]));
+            state.ribbonRestPoints.push_back(RrVec3f(p[0], p[1], p[2]));
         }
         if (const auto *skeleton = wire.skeleton2d.get()) {
             const size_t bones = skeleton->solveOrder.size();
@@ -642,30 +662,29 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
             state.jointGroups[g].memberCount = wire.jointGroups[g].memberCount;
             state.jointGroups[g].enabled = wire.jointGroups[g].enabled;
         }
-        state.jointGroupMembers.assign(wire.jointGroupMembers.begin(), wire.jointGroupMembers.end());
+        state.jointGroupMembers.assign(wire.jointGroupMembers.begin(),
+                                       wire.jointGroupMembers.end());
         state.jointGroupParents = wire.jointGroupParents;
     }
     scratch->recordAfter.assign(poses.commits.size(), 1);
     scratch->recordEveryTarget.assign(poses.commits.size(), 1);
     scratch->weightScratch.assign(poses.constraints.size(), {});
     scratch->weightError.assign(poses.constraints.size(), {});
-    scratch->deltaValues.assign(
-        program->geometry->deltaBasePaths.size(), identity);
-    scratch->deltaPresent.assign(
-        program->geometry->deltaBasePaths.size(), 0);
+    scratch->deltaValues.assign(program->geometry->deltaBasePaths.size(),
+                                identity);
+    scratch->deltaPresent.assign(program->geometry->deltaBasePaths.size(), 0);
     // Per-commit IK chains, sized from the wire commit the way Build
     // sizes them: the IK write-back and the atomic check walk these.
     RrStore &store = program->store;
-    for (size_t c = 0; c < poses.commits.size() &&
-         c < store.commits.size(); ++c) {
-        const size_t targets =
-            poses.commits[c].targetReads.size();
+    for (size_t c = 0; c < poses.commits.size() && c < store.commits.size();
+         ++c) {
+        const size_t targets = poses.commits[c].targetReads.size();
         store.commits[c].ikChain.assign(targets, RrPointFrame());
         store.commits[c].ikPrepared.assign(targets, RrPointFrame());
         store.commits[c].ikRest.assign(targets, RrPointFrame());
         store.commits[c].ikSolved.clear();
     }
-    program->pose = std::shared_ptr<void>(scratch);
+    program->pose = scratch;
     return true;
 }
 
@@ -676,8 +695,10 @@ RrRunRestHead(RrProgram *program, size_t group, bool ladder)
     std::vector<int> moved;
     _RrComposeLadder(program, &moved, size_t(range.begin), size_t(range.end),
                      !ladder, ladder);
-    auto &changed = ladder ? program->store.ladderChanged : program->store.restChanged;
-    for (const int slot : moved) changed[size_t(slot)] = 1;
+    auto &changed =
+        ladder ? program->store.ladderChanged : program->store.restChanged;
+    for (const int slot : moved)
+        changed[size_t(slot)] = 1;
     return !moved.empty();
 }
 
@@ -693,8 +714,10 @@ RrProloguePose(RrProgram *program)
     const RrStatic &statics = program->statics;
     const RrInputState &inputs = program->inputState;
     // Xform-derived slots, seeded from the stage values the bake captured.
-    const size_t captured=program->requiredStageFramesAdmission.admitted
-        ?meta.xformSlots.size():size_t(program->requiredStageFramesAdmission.firstBadTarget);
+    const size_t captured =
+        program->requiredStageFramesAdmission.admitted
+            ? meta.xformSlots.size()
+            : size_t(program->requiredStageFramesAdmission.firstBadTarget);
     for (size_t k = 0; k < captured; ++k) {
         const int slot = meta.xformSlots[k];
         const RrMat4d matrix = _RrWireMatrix(statics.XformBase(k));
@@ -703,7 +726,8 @@ RrProloguePose(RrProgram *program)
         store.base[size_t(slot)] = frame;
         store.fin[size_t(slot)] = frame;
     }
-    if(!program->requiredStageFramesAdmission.admitted)return;
+    if (!program->requiredStageFramesAdmission.admitted)
+        return;
     // The target transform each geometry-domain constraint measures
     // its delta against.
     for (size_t k = 0; k < geometry.deltaBasePaths.size(); ++k) {

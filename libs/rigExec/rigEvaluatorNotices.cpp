@@ -1,5 +1,6 @@
 // USD notice classification and compiled rig invalidation.
 
+#include "rigExecSchema/schemaNames.h"
 #include "rigEvaluatorInternal.h"
 #include "projectorCaptureNotice.h"
 #include "rigEvaluatorPropertyBindings.h"
@@ -15,6 +16,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <memory>
 #include <optional>
 #include <set>
 
@@ -32,18 +34,18 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
     (RigExecJoint)
     (RigExecControl)
     (RigExecPoseInterpolator)
-    ((rigExecJointElements, "rigExec:jointElements"))
-    ((avarsTx, "avars:tx"))
-    ((avarsTy, "avars:ty"))
-    ((avarsTz, "avars:tz"))
-    ((avarsSx, "avars:sx"))
-    ((avarsSy, "avars:sy"))
-    ((avarsSz, "avars:sz"))
-    ((avarsRx, "avars:rx"))
-    ((avarsRy, "avars:ry"))
-    ((avarsRz, "avars:rz"))
-    ((avarsRspin, "avars:rspin"))
-    ((avarsUnitScaleFactor, "avars:unitScaleFactor")));
+    ((rigExecJointElements, SchemaAttrText::rigExecJointElements))
+    ((avarsTx, SchemaAttrText::avarsTx))
+    ((avarsTy, SchemaAttrText::avarsTy))
+    ((avarsTz, SchemaAttrText::avarsTz))
+    ((avarsSx, SchemaAttrText::avarsSx))
+    ((avarsSy, SchemaAttrText::avarsSy))
+    ((avarsSz, SchemaAttrText::avarsSz))
+    ((avarsRx, SchemaAttrText::avarsRx))
+    ((avarsRy, SchemaAttrText::avarsRy))
+    ((avarsRz, SchemaAttrText::avarsRz))
+    ((avarsRspin, SchemaAttrText::avarsRspin))
+    ((avarsUnitScaleFactor, SchemaAttrText::avarsUnitScaleFactor)));
 
 using namespace evaluatorDetail;
 
@@ -55,9 +57,17 @@ namespace {
 const bool _kDigestGateVerifyRequested =
     TfGetenvBool("RIGEXEC_VERIFY_DIGEST_GATE", false);
 
-const TfToken _kAvarChannels[] = {
-    _tokens->avarsTx, _tokens->avarsTy, _tokens->avarsTz, _tokens->avarsSx, _tokens->avarsSy, _tokens->avarsSz,
-    _tokens->avarsRx, _tokens->avarsRy, _tokens->avarsRz, _tokens->avarsRspin, _tokens->avarsUnitScaleFactor};
+const TfToken _kAvarChannels[] = {_tokens->avarsTx,
+                                  _tokens->avarsTy,
+                                  _tokens->avarsTz,
+                                  _tokens->avarsSx,
+                                  _tokens->avarsSy,
+                                  _tokens->avarsSz,
+                                  _tokens->avarsRx,
+                                  _tokens->avarsRy,
+                                  _tokens->avarsRz,
+                                  _tokens->avarsRspin,
+                                  _tokens->avarsUnitScaleFactor};
 
 // Whether \p notice is provably nothing but new VALUES on the numeric avar
 // channels (see _OnObjectsChanged): the gate for the in-place patch path.
@@ -101,7 +111,7 @@ _NoticeIsAvarValuesOnly(const UsdNotice::ObjectsChanged &notice)
     }
     for (const SdfPath &path : notice.GetChangedInfoOnlyPaths()) {
         if (path.IsPrimPath()) {
-            continue;  // ancestor info around the edit
+            continue; // ancestor info around the edit
         }
         if (!isChannel(path.GetNameToken())) {
             return false;
@@ -119,8 +129,8 @@ _NoticeIsAvarValuesOnly(const UsdNotice::ObjectsChanged &notice)
 
 // Built while the library loads, so a notice on any thread compares without
 // a guarded static.
-const TfToken _mlMoverType("RigExecMlMover");
-const TfToken _animatedMapsType("RigExecAnimatedMaps");
+const TfToken _mlMoverType(SchemaTypeName::RigExecMlMover);
+const TfToken _animatedMapsType(SchemaTypeName::RigExecAnimatedMaps);
 
 // The types whose prims the digest writes the path of for the type alone,
 // wherever under the rig they sit: the discovered joints, controls, volume
@@ -150,14 +160,13 @@ _CertainStructuralVerifyCounts()
         }
         // Never freed: the exit hook reads it after statics may be gone.
         static _CertainStructuralCounts *const created =
-            new _CertainStructuralCounts();
+            std::make_unique<_CertainStructuralCounts>().release();
         std::atexit([]() {
             std::fprintf(stderr,
                          "RIGEXEC_VERIFY_CERTAIN_STRUCTURAL: %zu certainly "
                          "structural edit(s), %zu false positive(s); %zu "
                          "structural edit(s) found by the digest\n",
-                         created->tagged.load(),
-                         created->falsePositives.load(),
+                         created->tagged.load(), created->falsePositives.load(),
                          created->digestFound.load());
             std::fflush(stderr);
         });
@@ -343,8 +352,8 @@ RigExecRigEvaluator::_NoticeIsDigestValueNeutral(
                 fields.end()) {
                 return true;
             }
-            const TfToken now = attribute ? attribute.GetTypeName().GetAsToken()
-                                          : TfToken();
+            const TfToken now =
+                attribute ? attribute.GetTypeName().GetAsToken() : TfToken();
             if (now != found->second) {
                 return true;
             }
@@ -393,7 +402,7 @@ RigExecRigEvaluator::_NoticeIsDigestValueNeutral(
         const TfToken *type = nullptr;
         if (listed(path, &type) &&
             (!type || *type != attribute.GetTypeName().GetAsToken())) {
-            return false;  // appeared on, or retyped on, a listed prim
+            return false; // appeared on, or retyped on, a listed prim
         }
         sawValue = true;
     }
@@ -493,9 +502,9 @@ RigExecRigEvaluator::_NoteCertainStructuralCandidates(
     for (const SdfPath &path : notice.GetResyncedPaths()) {
         // A prim resync strictly inside the rig: at or above the rig root,
         // everything recomposes, and that is the digest's to judge.
-        const bool candidate = path.IsPrimPath()
-            ? path != _rigPath && path.HasPrefix(_rigPath)
-            : path.IsPropertyPath() && recorded(path);
+        const bool candidate =
+            path.IsPrimPath() ? path != _rigPath && path.HasPrefix(_rigPath)
+                              : path.IsPropertyPath() && recorded(path);
         if (candidate && !note(path)) {
             return;
         }
@@ -509,8 +518,8 @@ RigExecRigEvaluator::_NoteCertainStructuralCandidates(
         }
         bool listEdit = path.GetNameToken() == kJointElements;
         for (const TfToken &field : notice.GetChangedFields(path)) {
-            listEdit = listEdit || field == kTargetPaths ||
-                       field == kConnectionPaths;
+            listEdit =
+                listEdit || field == kTargetPaths || field == kConnectionPaths;
         }
         if (listEdit && recorded(path) && !note(path)) {
             return;
@@ -540,8 +549,8 @@ RigExecRigEvaluator::_EditIsCertainlyStructural() const
     // outside the walk is the case that cannot: a solver's rigExec:joints
     // still unions it into the joint set, so leaving the walk need not move
     // the digest.
-    const auto stateNow = [this](const SdfPath &path)
-        -> std::optional<TfToken> {
+    const auto stateNow =
+        [this](const SdfPath &path) -> std::optional<TfToken> {
         const UsdPrim prim = _stage->GetPrimAtPath(path);
         if (!prim) {
             return TfToken();
@@ -655,8 +664,8 @@ RigExecRigEvaluator::_EditIsCertainlyStructural() const
 }
 
 void
-RigExecRigEvaluator::_OnObjectsChanged(
-    const UsdNotice::ObjectsChanged &notice, const UsdStageWeakPtr &)
+RigExecRigEvaluator::_OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
+                                       const UsdStageWeakPtr &)
 {
     RIGEXEC_PROFILE_SCOPE_CAT(_profiler, "Notice.Evaluator", "notice");
     // Showing or hiding prims: no step reads visibility, so nothing the rig
@@ -703,11 +712,18 @@ RigExecRigEvaluator::_OnObjectsChanged(
     // Rebuild the immutable raw Default meshWorldInverse capture, not
     // unrelated sampled provider xforms. The new compile also rechecks the
     // static-transform admission when time samples are added or removed.
-    bool projectorCaptureChanged=false;
-    for(const auto &entry:_graphDerivedChains)for(const auto &revision:entry.second)
-        if((revision.op==RigExecRevisionOp::SurfaceProjector || revision.op==RigExecRevisionOp::ShaderDials) &&
-           RigExecProjectorMeshCaptureAffected(notice,revision.binding.base))projectorCaptureChanged=true;
-    if(projectorCaptureChanged) { _compiled=false; _structureDirty=true; }
+    bool projectorCaptureChanged = false;
+    for (const auto &entry : _graphDerivedChains)
+        for (const auto &revision : entry.second)
+            if ((revision.op == RigExecRevisionOp::SurfaceProjector ||
+                 revision.op == RigExecRevisionOp::ShaderDials) &&
+                RigExecProjectorMeshCaptureAffected(notice,
+                                                    revision.binding.base))
+                projectorCaptureChanged = true;
+    if (projectorCaptureChanged) {
+        _compiled = false;
+        _structureDirty = true;
+    }
     const bool avarValuesOnly = _NoticeIsAvarValuesOnly(notice);
     // ... unless the avar the notice names is one a property chain READS.
     //
@@ -718,13 +734,15 @@ RigExecRigEvaluator::_OnObjectsChanged(
     // test watches interactive overrides and upstream chains, not authored
     // values, so without this a drag would update such a chain and
     // AUTHORING the same avar would not.
-    const bool chainReadsAnEditedAvar = avarValuesOnly &&
-        !_propertyChainInputs.empty() && [this, &notice]() {
+    const bool chainReadsAnEditedAvar =
+        avarValuesOnly && !_propertyChainInputs.empty() && [this, &notice]() {
             for (const SdfPath &path : notice.GetResyncedPaths()) {
-                if (_propertyChainInputs.count(path)) return true;
+                if (_propertyChainInputs.count(path))
+                    return true;
             }
             for (const SdfPath &path : notice.GetChangedInfoOnlyPaths()) {
-                if (_propertyChainInputs.count(path)) return true;
+                if (_propertyChainInputs.count(path))
+                    return true;
             }
             return false;
         }();
@@ -785,8 +803,7 @@ RigExecRigEvaluator::_OnObjectsChanged(
             if (!_bakedProgram->ApplyAvarValueEdits(notice)) {
                 _bakedProgram->BumpProgramStamp();
             }
-        } else if (_lastNoticeDisposition ==
-                   RigExecNoticeDisposition::Edited) {
+        } else if (_lastNoticeDisposition == RigExecNoticeDisposition::Edited) {
             // Routed like an override placed for one run and lifted: the
             // inputs the edit reached are marked, and the next run re-runs
             // the cone of the steps that read them instead of everything.
@@ -799,8 +816,7 @@ RigExecRigEvaluator::_OnObjectsChanged(
                 !_bakedProgram->ApplyValueEdits(notice)) {
                 _bakedProgram->BumpProgramStamp();
             }
-        } else if (_lastNoticeDisposition ==
-                   RigExecNoticeDisposition::Stale) {
+        } else if (_lastNoticeDisposition == RigExecNoticeDisposition::Stale) {
             _bakedProgramStale = true;
             // Input sampling may precede the lazy rebuild. Retire held raw
             // reads too; a structural notice has no routed leaf edits.

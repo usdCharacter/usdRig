@@ -137,6 +137,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <string>
@@ -3224,8 +3225,7 @@ TestStackFullRangeCursorWarmsEveryFrame(const std::string &examplesDir)
     static_assert(std::atomic<uint8_t>::is_always_lock_free &&
                       std::atomic<size_t>::is_always_lock_free,
                   "publication observations must not introduce hidden locks");
-    std::unique_ptr<PublicationCell[]> publicationCells(
-        new PublicationCell[frames.size()]);
+    auto publicationCells = std::make_unique<PublicationCell[]>(frames.size());
     std::map<double, PublishedFrame> publications; // owner only
     std::atomic<bool> publicationFailure{false};
     static_assert(std::atomic<bool>::is_always_lock_free,

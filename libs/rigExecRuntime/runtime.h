@@ -50,16 +50,16 @@ struct RigExecRuntimeJointMatrix {
 // One provider's current Base/Final SSA frames and stable path metadata.
 struct RigExecRuntimeProviderFrames {
     std::string path;
-    uint8_t kind=0;
+    uint8_t kind = 0;
     // Exact publication membership: Other=0, Joint=1, Control=2, Both=3.
-    uint8_t publicationRole=0;
-    uint32_t baseVersion=0,finalVersion=0;
-    RrPointFrame base,final;
+    uint8_t publicationRole = 0;
+    uint32_t baseVersion = 0, finalVersion = 0;
+    RrPointFrame base, final;
 };
 
 struct RigExecRuntimeSolverFrames {
     std::string path;
-    uint32_t aggregate=0;
+    uint32_t aggregate = 0;
     std::vector<RrPointFrame> frames;
 };
 
@@ -74,21 +74,48 @@ struct RigExecRuntimeSolverFrames {
 // frame being drawn and read Vector() there. Assigning Vector() into a
 // std::vector is the owned copy, when a host still wants one. Do not
 // memcpy this object. See docs/specs/runtime-execute-buffers.md.
-template <class T>
-class RigExecSharedArray {
+template <class T> class RigExecSharedArray {
 public:
-    RigExecSharedArray() : _data(Empty()) {}
+    RigExecSharedArray() : _data(Empty())
+    {
+    }
     explicit RigExecSharedArray(std::shared_ptr<const std::vector<T>> data)
-        : _data(data ? std::move(data) : Empty()) {}
+        : _data(data ? std::move(data) : Empty())
+    {
+    }
 
-    size_t size() const { return _data->size(); }
-    bool empty() const { return _data->empty(); }
-    const T &operator[](size_t index) const { return (*_data)[index]; }
-    const T *data() const { return _data->data(); }
-    const T *begin() const { return data(); }
-    const T *end() const { return data() + size(); }
-    const std::vector<T> &Vector() const { return *_data; }
-    std::shared_ptr<const std::vector<T>> Share() const { return _data; }
+    size_t size() const
+    {
+        return _data->size();
+    }
+    bool empty() const
+    {
+        return _data->empty();
+    }
+    const T &operator[](size_t index) const
+    {
+        return (*_data)[index];
+    }
+    const T *data() const
+    {
+        return _data->data();
+    }
+    const T *begin() const
+    {
+        return data();
+    }
+    const T *end() const
+    {
+        return data() + size();
+    }
+    const std::vector<T> &Vector() const
+    {
+        return *_data;
+    }
+    std::shared_ptr<const std::vector<T>> Share() const
+    {
+        return _data;
+    }
     // Drops this view's retainer and returns it. Execute does this when it
     // replaces a frame the caller did not keep, so the storage can be reused.
     std::shared_ptr<const std::vector<T>> Release()
@@ -192,8 +219,7 @@ struct RigExecRuntimeCounters {
 // getters publish its outputs. A fresh reader executes its defaults, which
 // reproduce the rig at the bake time. Any failure returns false with a
 // reason; the reader keeps its last good state.
-class RigExecRuntimeReader
-{
+class RigExecRuntimeReader {
 public:
     ~RigExecRuntimeReader();
 
@@ -205,17 +231,18 @@ public:
     // rule of the format broken, the step graph's among them), or on
     // tables whose cross-references do not close (versions, input reads,
     // cone sizes).
-    static std::unique_ptr<RigExecRuntimeReader> Open(
-        const uint8_t *bytes, size_t size, std::string *error);
+    static std::unique_ptr<RigExecRuntimeReader>
+    Open(const uint8_t *bytes, size_t size, std::string *error);
 
     // Bind a host's USD-free modules at Open. Unused definitions are allowed;
     // duplicate names, incomplete callbacks and failed preparation are errors.
     // Module code must stay loaded for the reader's lifetime.
-    static std::unique_ptr<RigExecRuntimeReader> Open(
-        const uint8_t *bytes, size_t size, const RigExecMoverDefinition *movers,
-        size_t moverCount, std::string *error);
+    static std::unique_ptr<RigExecRuntimeReader>
+    Open(const uint8_t *bytes, size_t size,
+         const RigExecMoverDefinition *movers, size_t moverCount,
+         std::string *error);
     bool InstallMoverDefinitions(const RigExecMoverDefinition *movers,
-        size_t moverCount, std::string *error);
+                                 size_t moverCount, std::string *error);
 
     // The inputs: every attribute a read of the rig walks, sorted by path.
     size_t GetInputCount() const;
@@ -495,8 +522,7 @@ public:
     }
 
     // Constraint-driven provider transforms, in path order.
-    const std::vector<RigExecRuntimeProviderXform> &GetProviderXforms()
-        const
+    const std::vector<RigExecRuntimeProviderXform> &GetProviderXforms() const
     {
         return _providerXforms;
     }
@@ -507,13 +533,17 @@ public:
         return _diagnostics;
     }
 
-    RigExecRuntimeCounters GetCounters() const { return _counters; }
+    RigExecRuntimeCounters GetCounters() const
+    {
+        return _counters;
+    }
 
     // Family outputs for the parity tests: the SSA version pools, the
     // rest -> pose matrices, and the weight packets.
     const std::vector<RrPointFrame> &GetFinFrames() const;
     const std::vector<RrPointFrame> &GetBaseFrames() const;
-    std::vector<RigExecRuntimeProviderFrames> GetProviderFramePublications() const;
+    std::vector<RigExecRuntimeProviderFrames>
+    GetProviderFramePublications() const;
     // One slot of that list without building it: the publication role and
     // the final frame it reports. Slots are fixed per file; false when
     // \p slot is out of range.
@@ -524,6 +554,20 @@ public:
     const std::vector<RrMat4d> &GetFinalMatrices() const;
     const std::vector<RrMat4d> &GetBaseMatrices() const;
     const std::vector<RrWeightPacket> &GetWeightPackets() const;
+
+private:
+    // Non-aggregate: brace-initialisation cannot build it, so only a member
+    // can pass one to the tagged constructor.
+    struct _OpenTag {
+        explicit _OpenTag(int)
+        {
+        }
+    };
+
+public:
+    // Open() is the only caller. The tag is the gate; the constructor stays
+    // public so std::make_unique can reach it.
+    explicit RigExecRuntimeReader(_OpenTag);
 
 private:
     friend class RigExecRuntimeStageArrayInputs;
@@ -558,7 +602,7 @@ private:
         std::vector<size_t> positions;
     };
     PublicationOrder _jointOrder, _pointOrder, _matrixOrder, _weightFrameOrder,
-                     _weightOrder, _providerOrder;
+        _weightOrder, _providerOrder;
     std::vector<std::string> _diagnostics;
     RigExecRuntimeCounters _counters;
 };
@@ -566,12 +610,11 @@ private:
 // Serial and parallel skin on one synthetic mesh, including a NaN payload.
 // False when the bytes differ. The microsecond pointers receive the best of
 // three runs of a 26,276-point SIMD skin; null skips the timing write.
-bool RrGeoCompareSkinSplitForTesting(std::string *error,
-                                     double *linearSerialUs,
+bool RrGeoCompareSkinSplitForTesting(std::string *error, double *linearSerialUs,
                                      double *linearParallelUs,
                                      double *dualSerialUs,
                                      double *dualParallelUs);
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_RUNTIME_H
+#endif // RIGEXEC_RUNTIME_H

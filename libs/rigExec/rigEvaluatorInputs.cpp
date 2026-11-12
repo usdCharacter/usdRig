@@ -1,5 +1,6 @@
 // Input reads, interactive overrides, and value-cache invalidation.
 
+#include "rigExecSchema/schemaNames.h"
 #include "rigEvaluatorInternal.h"
 #include "rigEvaluatorPropertyBindings.h"
 #include "inputReplay.h"
@@ -21,20 +22,20 @@ TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
     (offsets)
     (pointIndices)
-    ((restSpace, "rest:space"))
-    ((restTx, "rest:tx"))
-    ((restTy, "rest:ty"))
-    ((restTz, "rest:tz"))
-    ((restRx, "rest:rx"))
-    ((restRy, "rest:ry"))
-    ((restRz, "rest:rz"))
+    ((restSpace, SchemaAttrText::restSpace))
+    ((restTx, SchemaAttrText::restTx))
+    ((restTy, SchemaAttrText::restTy))
+    ((restTz, SchemaAttrText::restTz))
+    ((restRx, SchemaAttrText::restRx))
+    ((restRy, SchemaAttrText::restRy))
+    ((restRz, SchemaAttrText::restRz))
 );
 
 using namespace evaluatorDetail;
 
 namespace {
 
-const TfToken _restPointsAttr("rigExec:restPoints");
+const TfToken _restPointsAttr(SchemaAttrText::rigExecRestPoints);
 const TfToken _poseSeedReadPhase("rigExecReadPhase");
 const TfToken _poseSeedInputElement("rigExecInputElement");
 
@@ -76,8 +77,7 @@ _OverridesReachBlendShapes(const std::vector<RigExecValueOverride> &overrides)
 //   * anything inside a prototype, because what the caches read through an
 //     instance proxy is keyed by the proxy's path and the notice names the
 //     prototype's.
-struct _NoticeReach
-{
+struct _NoticeReach {
     bool everything = false;
     std::vector<SdfPath> paths;
 
@@ -198,14 +198,14 @@ namespace {
 // Type names the predicates below compare against, interned once at load:
 // they are asked per weight object per frame, and token comparison is a
 // pointer comparison while literal comparison is not.
-const TfToken _kSphereWeightType("RigExecSphereWeight");
-const TfToken _kPlaneWeightType("RigExecPlaneWeight");
-const TfToken _kCurveWeightType("RigExecCurveWeight");
-const TfToken _kJointType("RigExecJoint");
-const TfToken _kControlType("RigExecControl");
-const TfToken _kStaticWeightType("RigExecStaticWeight");
-const TfToken _kDynamicWeightType("RigExecDynamicWeight");
-const TfToken _kCombineWeightType("RigExecCombineWeight");
+const TfToken _kSphereWeightType(SchemaTypeName::RigExecSphereWeight);
+const TfToken _kPlaneWeightType(SchemaTypeName::RigExecPlaneWeight);
+const TfToken _kCurveWeightType(SchemaTypeName::RigExecCurveWeight);
+const TfToken _kJointType(SchemaTypeName::RigExecJoint);
+const TfToken _kControlType(SchemaTypeName::RigExecControl);
+const TfToken _kStaticWeightType(SchemaTypeName::RigExecStaticWeight);
+const TfToken _kDynamicWeightType(SchemaTypeName::RigExecDynamicWeight);
+const TfToken _kCombineWeightType(SchemaTypeName::RigExecCombineWeight);
 
 } // namespace
 
@@ -240,7 +240,8 @@ _IsPoseInputSeed(const UsdAttribute &attribute)
         attribute.HasAuthoredConnections() ||
         attribute.HasAuthoredMetadata(_poseSeedReadPhase) ||
         attribute.HasAuthoredMetadata(_poseSeedInputElement) ||
-        TfStringStartsWith(attribute.GetName().GetString(), "rigExec:")) {
+        TfStringStartsWith(attribute.GetName().GetString(),
+                           SchemaNamePrefix::attribute)) {
         return true;
     }
     // Reserved engine properties include deprecated inputs compile rejects.
@@ -261,8 +262,7 @@ _IsPoseInputSeed(const UsdAttribute &attribute)
 bool
 _IsWeightObjectType(const TfToken &typeName)
 {
-    return typeName == _kStaticWeightType ||
-           typeName == _kDynamicWeightType ||
+    return typeName == _kStaticWeightType || typeName == _kDynamicWeightType ||
            typeName == _kCombineWeightType || _IsVolumeWeightType(typeName);
 }
 
@@ -324,21 +324,19 @@ _ProviderRestMightVary(const UsdStageRefPtr &stage,
 // a promise anything here should rely on. Removing the loser makes the answer
 // a property of this function.
 void
-_ApplyInteractiveOverrides(
-    const std::vector<RigExecValueOverride> &interactive,
-    std::vector<RigExecValueOverride> *overrides,
-    RigExecResolvedInputs *resolved)
+_ApplyInteractiveOverrides(const std::vector<RigExecValueOverride> &interactive,
+                           std::vector<RigExecValueOverride> *overrides,
+                           RigExecResolvedInputs *resolved)
 {
     for (const RigExecValueOverride &o : interactive) {
         if (overrides) {
             overrides->erase(
-                std::remove_if(
-                    overrides->begin(), overrides->end(),
-                    [&o](const RigExecValueOverride &existing) {
-                        return existing.prim == o.prim &&
-                               existing.attribute == o.attribute &&
-                               existing.computation == o.computation;
-                    }),
+                std::remove_if(overrides->begin(), overrides->end(),
+                               [&o](const RigExecValueOverride &existing) {
+                                   return existing.prim == o.prim &&
+                                          existing.attribute == o.attribute &&
+                                          existing.computation == o.computation;
+                               }),
                 overrides->end());
             overrides->push_back(o);
         }
@@ -416,7 +414,7 @@ RigExecRigEvaluator::_ClearValueCaches(const UsdNotice::ObjectsChanged &notice,
     // a stale value.
     if (_propertyChainBindings) {
         for (RigExecPropertyChainBindings::Chain &chain :
-                 _propertyChainBindings->chains) {
+             _propertyChainBindings->chains) {
             if (chain.stale) {
                 continue;
             }
@@ -424,8 +422,7 @@ RigExecRigEvaluator::_ClearValueCaches(const UsdNotice::ObjectsChanged &notice,
             for (size_t k = 0; !hit && k < chain.watch.size(); ++k) {
                 hit = reach.Reaches(chain.watch[k]);
             }
-            for (size_t k = 0; !hit && k < chain.missingSources.size();
-                 ++k) {
+            for (size_t k = 0; !hit && k < chain.missingSources.size(); ++k) {
                 hit = reach.Reaches(chain.missingSources[k]);
             }
             for (size_t k = 0; !hit && k < chain.moverPaths.size(); ++k) {
@@ -491,14 +488,13 @@ RigExecRigEvaluator::_ClearValueCaches(const UsdNotice::ObjectsChanged &notice,
             for (const auto &[target, revisions] : _graphChains) {
                 for (const _GraphRevision &revision : revisions) {
                     for (const auto &[input, samples] :
-                             revision.binding.blendSamples) {
+                         revision.binding.blendSamples) {
                         for (const RigExecBlendSampleBinding &sample :
-                                 samples) {
+                             samples) {
                             if (!sample.blendShape.IsEmpty()) {
                                 _blendSampleSources.push_back(
                                     {sample.sample,
-                                     sample.blendShape.GetPrimPath(),
-                                     target});
+                                     sample.blendShape.GetPrimPath(), target});
                             }
                         }
                     }
@@ -514,14 +510,14 @@ RigExecRigEvaluator::_ClearValueCaches(const UsdNotice::ObjectsChanged &notice,
             }
         }
     }
-
 }
 
 void
 RigExecRigEvaluator::SetInteractiveOverrides(
     std::vector<RigExecValueOverride> overrides)
 {
-    if (_inputReplayObserver) _inputReplayObserver->Interactive(overrides);
+    if (_inputReplayObserver)
+        _inputReplayObserver->Interactive(overrides);
     if (_scopedClearShadow) {
         _scopedClearShadow->SetInteractiveOverrides(overrides);
     }
@@ -597,12 +593,12 @@ RigExecRigEvaluator::SetInteractiveOverrides(
 void
 RigExecRigEvaluator::ClearInteractiveOverrides()
 {
-    if (_inputReplayObserver) _inputReplayObserver->ClearInteractive();
+    if (_inputReplayObserver)
+        _inputReplayObserver->ClearInteractive();
     if (_scopedClearShadow) {
         _scopedClearShadow->ClearInteractiveOverrides();
     }
-    const bool touchesLayout =
-        _OverridesReachSkinLayout(_interactiveOverrides);
+    const bool touchesLayout = _OverridesReachSkinLayout(_interactiveOverrides);
     const bool touchesShapes =
         _OverridesReachBlendShapes(_interactiveOverrides);
     _interactiveOverrides.clear();
@@ -653,10 +649,10 @@ RigExecRigEvaluator::_RebuildValueInputs()
 }
 
 void
-RigExecRigEvaluator::SetUpstreamInputs(
-    std::vector<RigExecValueOverride> inputs)
+RigExecRigEvaluator::SetUpstreamInputs(std::vector<RigExecValueOverride> inputs)
 {
-    if (_inputReplayObserver) _inputReplayObserver->Upstream(inputs);
+    if (_inputReplayObserver)
+        _inputReplayObserver->Upstream(inputs);
     if (_scopedClearShadow) {
         _scopedClearShadow->SetUpstreamInputs(inputs);
     }
@@ -755,14 +751,13 @@ RigExecRigEvaluator::_SetUpstreamAdmitted(
     // test an interactive change takes decides what they drop.
     std::vector<RigExecValueOverride> moved;
     for (const RigExecValueOverride &o : admitted) {
-        if (std::find(_upstreamAdmitted.begin(), _upstreamAdmitted.end(),
-                      o) == _upstreamAdmitted.end()) {
+        if (std::find(_upstreamAdmitted.begin(), _upstreamAdmitted.end(), o) ==
+            _upstreamAdmitted.end()) {
             moved.push_back(o);
         }
     }
     for (const RigExecValueOverride &o : _upstreamAdmitted) {
-        if (std::find(admitted.begin(), admitted.end(), o) ==
-            admitted.end()) {
+        if (std::find(admitted.begin(), admitted.end(), o) == admitted.end()) {
             moved.push_back(o);
         }
     }

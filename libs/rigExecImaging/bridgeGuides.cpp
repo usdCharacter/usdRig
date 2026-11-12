@@ -1,6 +1,7 @@
 // Guide rendering, part 1: the styling caches, joint-hierarchy cache, cloth
 // constraint bindings, and the joint/control guide fills. The volume guides
 // and the weight overlay are the same class in bridgeVolumeGuides.cpp.
+#include "rigExecSchema/schemaNames.h"
 #include "bridgeGuides.h"
 
 #include "bridgeGuideGeometry.h"
@@ -83,7 +84,8 @@ RigExecBridgeGuides::NoteGuideEdits(const UsdNotice::ObjectsChanged &notice)
                 it = it->first.HasPrefix(prim) ? _guideInputs.erase(it)
                                                : std::next(it);
             }
-        } else if (TfStringStartsWith(name.GetString(), "guide:")) {
+        } else if (TfStringStartsWith(name.GetString(),
+                                      SchemaNamePrefix::guide)) {
             _guideInputs.erase(prim);
         }
     }
@@ -315,7 +317,7 @@ RigExecBridgeGuides::_FillClothConstraintGuides(
     if (_clothGuideSerial != serial) {
         _clothGuideBindings.clear();
         for (const auto &mover : call.moverOrder) {
-            if (mover.schemaType != "RigExecClothMover")
+            if (mover.schemaType != SchemaTypeName::RigExecClothMover)
                 continue;
             const UsdPrim moverPrim =
                 call.stage->GetPrimAtPath(mover.moverPath);
@@ -334,7 +336,7 @@ RigExecBridgeGuides::_FillClothConstraintGuides(
                     auto declaration = cloth_inputs::StageDeclaration(
                         call.stage, &leaves, &binding);
                     if (declaration.type(constraint) !=
-                        "RigExecClothConstraintSet")
+                        SchemaTypeName::RigExecClothConstraintSet)
                         continue;
                     const auto &T = *cloth_inputs::_clothInputsTokens;
                     VtDictionary kind;
@@ -447,7 +449,7 @@ RigExecBridgeGuides::_FillClothConstraintGuides(
         const GfMatrix4d targetFrame = placement(guide.targetMesh);
         auto &published = snapshot->prims[guide.constraint];
         published.assetRoot = asset;
-        published.controlGuideShape = TfToken("custom");
+        published.controlGuideShape = TfToken(SchemaValueText::custom);
         published.controlGuideDrawMode = _tWire;
         published.controlGuidePlaneNormal = _tY;
         _ReadGuideStyleCached(_GuideInputsFor(call, guide.constraint), pose,
@@ -637,19 +639,19 @@ RigExecBridgeGuides::_FillControlGuides(const RigExecGuideCall &call,
                     a.Get(&inputs.offset, pose.time);
                     live = live || _GuideAttrIsLive(a);
                 }
-                if (UsdAttribute a =
-                        prim.GetAttribute(TfToken("guide:orient"))) {
+                if (UsdAttribute a = prim.GetAttribute(
+                        TfToken(SchemaAttrText::guideOrient))) {
                     a.Get(&inputs.orient, pose.time);
                     live = live || _GuideAttrIsLive(a);
                 }
-                if (inputs.shape == TfToken("custom")) {
-                    if (UsdAttribute a =
-                            prim.GetAttribute(TfToken("guide:points"))) {
+                if (inputs.shape == TfToken(SchemaValueText::custom)) {
+                    if (UsdAttribute a = prim.GetAttribute(
+                            TfToken(SchemaAttrText::guidePoints))) {
                         a.Get(&inputs.customPoints, pose.time);
                         live = live || _GuideAttrIsLive(a);
                     }
                     if (UsdAttribute a = prim.GetAttribute(
-                            TfToken("guide:curveVertexCounts"))) {
+                            TfToken(SchemaAttrText::guideCurveVertexCounts))) {
                         a.Get(&inputs.customCounts, pose.time);
                         live = live || _GuideAttrIsLive(a);
                     }
@@ -657,7 +659,7 @@ RigExecBridgeGuides::_FillControlGuides(const RigExecGuideCall &call,
             }
             if (prim) {
                 SdfPathVector targets;
-                prim.GetRelationship(TfToken("guide:source"))
+                prim.GetRelationship(TfToken(SchemaAttrText::guideSource))
                     .GetTargets(&targets);
                 if (targets.size() == 1)
                     inputs.guideSource = targets.front();
@@ -716,7 +718,7 @@ RigExecBridgeGuides::_FillControlGuides(const RigExecGuideCall &call,
         }
         RigExecPublishedPrim &published = snapshot->prims[controlPath];
         published.assetRoot = _rigPath.GetParentPath();
-        if (shape == TfToken("custom")) {
+        if (shape == TfToken(SchemaValueText::custom)) {
             size_t count = 0;
             bool valid = !inputs.customCounts.empty();
             for (int n : inputs.customCounts) {
@@ -746,7 +748,7 @@ RigExecBridgeGuides::_FillControlGuides(const RigExecGuideCall &call,
                                 inputs.offset[2] * evaluatedScale[2]);
             guideFrame = GfMatrix4d(1.0).SetTranslate(local) * placement;
         }
-        if (shape == TfToken("custom")) {
+        if (shape == TfToken(SchemaValueText::custom)) {
             // Custom shapes may be asymmetric. Preserve reflections and
             // affine axes instead of rebuilding them from axis magnitudes.
             const GfVec3d offset = std::isfinite(inputs.offset[0]) &&

@@ -1,3 +1,4 @@
+#include "rigExecSchema/schemaTokens.h"
 // Diagnostic probe: isolates which phase of evaluator compilation emits
 // the nonfatal "Applying predicate to invalid prim" coding error.
 #include "rigExec/rigEvaluator.h"
@@ -89,9 +90,9 @@ main(int argc, char **argv)
         UsdStageRefPtr s4 = UsdStage::Open(examplesDir + "/ArmRig.usda");
         TfErrorMark tapMark;
         RigExecTapSet taps(s4);
-        taps.Add(RigExecValueAddress::Prim(
-            SdfPath("/ArmAsset/Rig/Joints/Wrist"),
-            TfToken("computePointFrame")));
+        taps.Add(
+            RigExecValueAddress::Prim(SdfPath("/ArmAsset/Rig/Joints/Wrist"),
+                                      SchemaComputation::computePointFrame));
         taps.Prepare();
         taps.Evaluate(UsdTimeCode::Default());
         Report("plain taps (authored only)", tapMark);

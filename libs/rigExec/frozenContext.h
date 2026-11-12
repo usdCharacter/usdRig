@@ -70,11 +70,11 @@ struct RigExecFrozenAvarPatch;
 
 /// Capture live edit values on the owner thread. Applying the captured patch
 /// shares the immutable program and bindings and may run on a warming worker.
-bool RigExecCaptureFrozenAvarPatch(const RigExecFrozenProgram &base,
-    const RigExecBakedProgram &live,
+bool RigExecCaptureFrozenAvarPatch(
+    const RigExecFrozenProgram &base, const RigExecBakedProgram &live,
     std::shared_ptr<const RigExecFrozenAvarPatch> *out, std::string *error);
-bool RigExecApplyFrozenAvarPatch(const RigExecFrozenProgram &base,
-    const RigExecFrozenAvarPatch &patch,
+bool RigExecApplyFrozenAvarPatch(
+    const RigExecFrozenProgram &base, const RigExecFrozenAvarPatch &patch,
     std::shared_ptr<const RigExecFrozenProgram> *out, std::string *error);
 
 /// Burst-cache route of one sampled input. Fresh samples fold fresh;
@@ -154,8 +154,8 @@ struct RigExecUpstreamValue {
 
 /// \p inputs (attribute entries only) as upstream values: one per path, the
 /// last given winning, sorted by path, each with a zero fold hash.
-std::vector<RigExecUpstreamValue> RigExecUpstreamValuesOf(
-    const std::vector<RigExecValueOverride> &inputs);
+std::vector<RigExecUpstreamValue>
+RigExecUpstreamValuesOf(const std::vector<RigExecValueOverride> &inputs);
 
 /// The time-invariant half of a frozen job's head-leaf samples: every keyed
 /// head leaf (RigExecForEachHeadLeaf order) whose attribute holds no time
@@ -191,7 +191,7 @@ struct RigExecHeadLeafConstants {
 struct RigExecFrameInputs {
     /// Independently sampled job-time oracle facts, value-owned and stage-free.
     std::optional<RigExecOraclePublicationContext> oraclePublications;
-    std::map<SdfPath,RigExecWeightReferenceContext> oracleWeightInputs;
+    std::map<SdfPath, RigExecWeightReferenceContext> oracleWeightInputs;
     UsdTimeCode time = UsdTimeCode::Default();
     std::vector<RigExecSampledInput> values;
     /// Per SkinTopology index (RigExecBakedLayoutRevision: revisionIndex,
@@ -384,9 +384,9 @@ RigExecConstantRegionForBinding(size_t binding)
 /// patchable bindings \p paths name, sorted and unique. Unmapped paths
 /// contribute nothing. Carry-over across a constant-namespace change is
 /// sound only for entries that read none of these regions.
-std::vector<uint64_t> RigExecConstantRegionsForPaths(
-    const RigExecBakedProgram &program,
-    const std::vector<SdfPath> &paths);
+std::vector<uint64_t>
+RigExecConstantRegionsForPaths(const RigExecBakedProgram &program,
+                               const std::vector<SdfPath> &paths);
 
 /// The compiled rig half of a frame-cache key for \p evaluator's current program
 /// state: structure only -- the compiled rig digest, the
@@ -395,7 +395,8 @@ std::vector<uint64_t> RigExecConstantRegionsForPaths(
 /// they ride the control digest instead (see RigExecCompiledRigConstantDigest).
 /// A rig with no program keys on the compiled rig alone (its refusal digest
 /// carries the stage-edit serial instead).
-uint64_t RigExecFrameCacheCompiledRigSignature(const RigExecRigEvaluator &evaluator);
+uint64_t
+RigExecFrameCacheCompiledRigSignature(const RigExecRigEvaluator &evaluator);
 
 /// True when \p live has routed a stage value edit to an input, or bumped
 /// its program stamp, since \p base was frozen from it or last patched.
@@ -426,13 +427,29 @@ bool RigExecPatchFrozenAvarConstants(
 /// Retained execution state for one frozen snapshot and one execution lane.
 /// Reuse it for sequential jobs; overlapping jobs require separate workspaces.
 class RigExecFrozenWorkspace {
+private:
+    /// Factory-only construction: this passkey is private and not
+    /// default-constructible, so {} cannot build one outside this class.
+    struct _FactoryTag {
+        explicit _FactoryTag(int)
+        {
+        }
+    };
+
 public:
     ~RigExecFrozenWorkspace();
     RigExecFrozenWorkspace(const RigExecFrozenWorkspace &) = delete;
     RigExecFrozenWorkspace &operator=(const RigExecFrozenWorkspace &) = delete;
+    RigExecFrozenWorkspace(_FactoryTag,
+                           std::shared_ptr<const RigExecFrozenProgram> snapshot)
+        : RigExecFrozenWorkspace(std::move(snapshot))
+    {
+    }
+
 private:
     struct Impl;
-    explicit RigExecFrozenWorkspace(std::shared_ptr<const RigExecFrozenProgram>);
+    explicit RigExecFrozenWorkspace(
+        std::shared_ptr<const RigExecFrozenProgram>);
     std::unique_ptr<Impl> _impl;
     friend struct RigExecFrozenWorkspaceAccess;
     friend std::unique_ptr<RigExecFrozenWorkspace> RigExecCreateFrozenWorkspace(
@@ -503,7 +520,10 @@ static_assert(std::is_trivially_copyable<RigExecFrozenEvalContext>::value,
 class RigExecFrozenArena {
 public:
     RigExecFrozenArena() = default;
-    explicit RigExecFrozenArena(size_t slots) { Resize(slots); }
+    explicit RigExecFrozenArena(size_t slots)
+    {
+        Resize(slots);
+    }
 
     RigExecFrozenArena(const RigExecFrozenArena &) = delete;
     RigExecFrozenArena &operator=(const RigExecFrozenArena &) = delete;
@@ -519,10 +539,22 @@ public:
     /// count, having changed nothing.
     bool Resize(size_t slots);
 
-    double *Data() { return _slots.data(); }
-    const double *Data() const { return _slots.data(); }
-    size_t Size() const { return _slots.size(); }
-    size_t Bytes() const { return _slots.size() * sizeof(double); }
+    double *Data()
+    {
+        return _slots.data();
+    }
+    const double *Data() const
+    {
+        return _slots.data();
+    }
+    size_t Size() const
+    {
+        return _slots.size();
+    }
+    size_t Bytes() const
+    {
+        return _slots.size() * sizeof(double);
+    }
 
     /// Zeroes every slot without freeing. A reused arena cannot leak one
     /// frame's working state into another's.
@@ -555,8 +587,8 @@ public:
     ~RigExecFrozenSerialScope();
 
     RigExecFrozenSerialScope(const RigExecFrozenSerialScope &) = delete;
-    RigExecFrozenSerialScope &operator=(
-        const RigExecFrozenSerialScope &) = delete;
+    RigExecFrozenSerialScope &
+    operator=(const RigExecFrozenSerialScope &) = delete;
 
 private:
     bool _active = false;
@@ -600,9 +632,8 @@ struct RigExecFrozenRunReport {
 /// capturing it, and a capture is visible at the call site rather than
 /// buried three frames down.
 using RigExecFrozenStepRunner = std::function<bool(
-    const RigExecFrozenEvalContext &context,
-    const RigExecFrameInputs &inputs, RigExecFrozenArena &arena,
-    RigExecRigPose *pose)>;
+    const RigExecFrozenEvalContext &context, const RigExecFrameInputs &inputs,
+    RigExecFrozenArena &arena, RigExecRigPose *pose)>;
 
 /// Evaluates \p inputs under \p context with \p runner, reading nothing
 /// else. The returned pose is bit-identical to a live evaluation of the same
@@ -624,8 +655,8 @@ using RigExecFrozenStepRunner = std::function<bool(
 /// \p report, when given, is cleared and then filled by a production runner
 /// that ran the job (RigExecFrozenRunReport).
 RigExecRigPose RigExecEvaluateFrozen(
-    const RigExecFrozenEvalContext &context,
-    const RigExecFrameInputs &inputs, RigExecFrozenStepRunner runner,
+    const RigExecFrozenEvalContext &context, const RigExecFrameInputs &inputs,
+    RigExecFrozenStepRunner runner,
     const RigExecBackgroundScheduler *scheduler = nullptr,
     const SdfPath &rig = SdfPath(), RigExecFrozenRunReport *report = nullptr);
 
@@ -669,7 +700,10 @@ struct RigExecChainSampleInput {
     bool connected = false;
     bool constant = false;
     VtValue constantValue;
-    explicit operator bool() const { return bool(attribute); }
+    explicit operator bool() const
+    {
+        return bool(attribute);
+    }
 };
 
 /// One revision of one sampled chain, in the chain's own order.
@@ -727,9 +761,9 @@ struct RigExecChainSampleBindings {
 /// object binds and names its compiled field, so the caller can tell "no
 /// chains" (empty, success) from "unchainable" (failure). \p error, when
 /// given, says which.
-bool RigExecBindChainSampleInputs(
-    const RigExecRigEvaluator &evaluator, RigExecChainSampleBindings *out,
-    std::string *error = nullptr);
+bool RigExecBindChainSampleInputs(const RigExecRigEvaluator &evaluator,
+                                  RigExecChainSampleBindings *out,
+                                  std::string *error = nullptr);
 
 /// Whether \p bindings still name \p evaluator's compiled rig: the same math
 /// movers over the same targets of the same types, the same phased reads
@@ -762,10 +796,10 @@ bool RigExecChainSampleBindingsStillCurrent(
 /// where it does not. The shared graph evaluates property operations and
 /// resolves produced values in consuming operations through declared reader
 /// walks, exactly as live execution does.
-bool RigExecSampleFrameInputs(
-    const RigExecRigEvaluator &evaluator, UsdTimeCode time,
-    const std::vector<RigExecValueOverride> &overrides,
-    RigExecFrameInputs *out, std::string *error = nullptr);
+bool
+RigExecSampleFrameInputs(const RigExecRigEvaluator &evaluator, UsdTimeCode time,
+                         const std::vector<RigExecValueOverride> &overrides,
+                         RigExecFrameInputs *out, std::string *error = nullptr);
 
 /// UPSTREAM INPUTS. Each sampler also takes the frame's upstream values
 /// (none in the overloads without them). A value is kept only where live
@@ -778,11 +812,11 @@ bool RigExecSampleFrameInputs(
 /// where they would see the stage's. A path no value stands on reads the
 /// stage, so a job whose snapshot held a value since lifted needs nothing
 /// more: the worker diffs the job's table against the snapshot's.
-bool RigExecSampleFrameInputs(
-    const RigExecRigEvaluator &evaluator, UsdTimeCode time,
-    const std::vector<RigExecValueOverride> &overrides,
-    const std::vector<RigExecUpstreamValue> &upstream,
-    RigExecFrameInputs *out, std::string *error = nullptr);
+bool
+RigExecSampleFrameInputs(const RigExecRigEvaluator &evaluator, UsdTimeCode time,
+                         const std::vector<RigExecValueOverride> &overrides,
+                         const std::vector<RigExecUpstreamValue> &upstream,
+                         RigExecFrameInputs *out, std::string *error = nullptr);
 
 /// Samples one history tick of a rig with windowed operations
 /// (rigEvaluatorWindows.cpp): as the trusted pinned route, with no
@@ -915,19 +949,23 @@ struct RigExecBurstSampleCache {
 /// caller's, passed in ready. Answers false, having left \p cache
 /// unusable, when no frame of the burst could sample: a prologue decline
 /// or unplaceable overrides. \p error, when given, says which.
-bool RigExecBuildBurstSampleCache(
-    const RigExecBakedProgram &program,
-    const RigExecChainSampleBindings &bindings,
-    const std::vector<RigExecValueOverride> &overrides, uint64_t compiledRigSignature,
-    RigExecBurstSampleCache *cache, std::string *error = nullptr);
+bool
+RigExecBuildBurstSampleCache(const RigExecBakedProgram &program,
+                             const RigExecChainSampleBindings &bindings,
+                             const std::vector<RigExecValueOverride> &overrides,
+                             uint64_t compiledRigSignature,
+                             RigExecBurstSampleCache *cache,
+                             std::string *error = nullptr);
 /// The same, pinned to the burst's \p upstream values as well, which every
 /// frame of the burst is then sampled under (RigExecSampleFrameInputs).
-bool RigExecBuildBurstSampleCache(
-    const RigExecBakedProgram &program,
-    const RigExecChainSampleBindings &bindings,
-    const std::vector<RigExecValueOverride> &overrides,
-    const std::vector<RigExecUpstreamValue> &upstream, uint64_t compiledRigSignature,
-    RigExecBurstSampleCache *cache, std::string *error = nullptr);
+bool
+RigExecBuildBurstSampleCache(const RigExecBakedProgram &program,
+                             const RigExecChainSampleBindings &bindings,
+                             const std::vector<RigExecValueOverride> &overrides,
+                             const std::vector<RigExecUpstreamValue> &upstream,
+                             uint64_t compiledRigSignature,
+                             RigExecBurstSampleCache *cache,
+                             std::string *error = nullptr);
 
 /// Samples exactly as RigExecSampleFrameInputsWithChainBindings, but
 /// through \p cache: no currency re-verification, binding tables visited
@@ -978,7 +1016,7 @@ RigExecFrozenStepRunner RigExecMakeProductionStepRunner();
 /// sharing one key. Known-named types are the scalar, Gf, token, path, and
 /// array types the rig inputs actually hold (frozenContext.cpp).
 uint64_t RigExecFrozenControlDigest(const RigExecFrameInputs &inputs,
-                                   bool *exact = nullptr);
+                                    bool *exact = nullptr);
 
 /// What the purity audit concluded about one unit of evaluation code: every
 /// kernel and solver the audit examined, and the verdict each one earned.
@@ -1015,6 +1053,6 @@ struct RigExecPurityFinding {
 /// construction with the bypass named (LiveOnly).
 const std::vector<RigExecPurityFinding> &RigExecFrozenPurityAudit();
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_FROZEN_CONTEXT_H
+#endif // RIGEXEC_FROZEN_CONTEXT_H

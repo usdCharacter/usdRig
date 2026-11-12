@@ -10,6 +10,7 @@
 // the bake, every static datum whose source the stage animates, which the
 // binary holds at T only; it never changes the exit status.
 // Exit status is 2 on usage errors and 1 on compile, export or write failure.
+#include "rigExecSchema/schemaNames.h"
 #include "rigExecBake/bake.h"
 #include "rigExecBake/staticReport.h"
 #include "rigExec/bakedProgramImpl.h"
@@ -47,7 +48,8 @@ SdfPath
 FindRig(const UsdStageRefPtr &stage)
 {
     for (const UsdPrim &prim : stage->TraverseAll()) {
-        if (prim.GetTypeName() == TfToken("RigExecRoot")) {
+        if (prim.GetTypeName() ==
+            TfToken(rigExec::SchemaTypeName::RigExecRoot)) {
             return prim.GetPath();
         }
     }
@@ -67,16 +69,15 @@ ParseTime(const char *text, double *out)
     return true;
 }
 
-}  // namespace
+} // namespace
 
 int
 main(int argc, char **argv)
 {
     if (argc < 2) {
-        std::printf(
-            "usage: rigExecBake <stage> [--rig <primPath>] [--time T] "
-            "[--presentation <file.rexp>] [--report-static] "
-            "-o <file.rigexec>\n");
+        std::printf("usage: rigExecBake <stage> [--rig <primPath>] [--time T] "
+                    "[--presentation <file.rexp>] [--report-static] "
+                    "-o <file.rigexec>\n");
         return 2;
     }
     std::string stagePath = argv[1];
@@ -93,8 +94,7 @@ main(int argc, char **argv)
         } else if (arg == "--time" && i + 1 < argc) {
             const char *text = argv[++i];
             if (!ParseTime(text, &time)) {
-                std::printf("--time wants a finite number, not '%s'\n",
-                            text);
+                std::printf("--time wants a finite number, not '%s'\n", text);
                 return 2;
             }
             haveTime = true;
@@ -140,19 +140,17 @@ main(int argc, char **argv)
         std::printf("FATAL: cannot open %s\n", stagePath.c_str());
         return 2;
     }
-    const SdfPath rigPath =
-        rigArg.empty() ? FindRig(stage) : SdfPath(rigArg);
+    const SdfPath rigPath = rigArg.empty() ? FindRig(stage) : SdfPath(rigArg);
     if (rigPath.IsEmpty() || !stage->GetPrimAtPath(rigPath)) {
         std::printf("FATAL: no RigExecRoot in %s\n", stagePath.c_str());
         return 2;
     }
-    std::printf("stage %s\n  rig %s\n", stagePath.c_str(),
-                rigPath.GetText());
+    std::printf("stage %s\n  rig %s\n", stagePath.c_str(), rigPath.GetText());
 
     rigExec::RigExecRigEvaluator evaluator(stage, rigPath);
     rigExec::RigExecBakeOpts opts;
-    opts.time = haveTime ? time
-                         : rigExec::RigExecBakedProbeTime(stage).GetValue();
+    opts.time =
+        haveTime ? time : rigExec::RigExecBakedProbeTime(stage).GetValue();
     opts.presentation = std::move(presentation);
     rigExec::RigExecBakeResult result;
     std::string error;
@@ -163,8 +161,7 @@ main(int argc, char **argv)
     {
         std::ofstream stream(output, std::ios::binary);
         if (!stream) {
-            std::printf("  FAIL: cannot open %s for writing\n",
-                        output.c_str());
+            std::printf("  FAIL: cannot open %s for writing\n", output.c_str());
             return 1;
         }
         stream.write(reinterpret_cast<const char *>(result.bytes.data()),

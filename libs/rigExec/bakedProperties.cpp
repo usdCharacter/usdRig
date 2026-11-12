@@ -1,6 +1,7 @@
 // Property revisions: immutable compile bindings, sampled typed inputs,
 // canonical graph bodies and publication. Native and detached SceneDb
 // revisions use the same numerical property runner.
+#include "rigExecSchema/schemaNames.h"
 #include "rigExecScene/propertyProgram.h"
 #include "bakedProgram.h"
 #include "bakedProgramImpl.h"
@@ -53,15 +54,15 @@ namespace rigExec {
 namespace {
 
 // Interned at load; read at Build on the owning thread.
-const TfToken kEnabled("inputs:enabled");
-const TfToken kDefaultWeight("inputs:defaultWeight");
-const TfToken kOperation("rigExec:operation");
-const TfToken kValue("inputs:value");
-const TfToken kMin("inputs:min");
-const TfToken kMax("inputs:max");
-const TfToken kKeys("inputs:keys");
-const TfToken kTangents("inputs:tangents");
-const TfToken kWeightObject("rigExec:weightObject");
+const TfToken kEnabled(SchemaAttrText::inputsEnabled);
+const TfToken kDefaultWeight(SchemaAttrText::inputsDefaultWeight);
+const TfToken kOperation(SchemaAttrText::rigExecOperation);
+const TfToken kValue(SchemaAttrText::inputsValue);
+const TfToken kMin(SchemaAttrText::inputsMin);
+const TfToken kMax(SchemaAttrText::inputsMax);
+const TfToken kKeys(SchemaAttrText::inputsKeys);
+const TfToken kTangents(SchemaAttrText::inputsTangents);
+const TfToken kWeightObject(SchemaAttrText::rigExecWeightObject);
 const TfToken kInputElement(RigExecInputElementMetadataName);
 
 using HeadType = RigExecBakedHeadValueType;
@@ -77,24 +78,24 @@ BitSame(const T &a, const T &b)
 // The Gf payloads compared by their bytes hold their components and nothing
 // else, so equal bytes are equal values.
 static_assert(sizeof(GfVec2f) == 2 * sizeof(float) &&
-              sizeof(GfVec3f) == 3 * sizeof(float) &&
-              sizeof(GfVec4f) == 4 * sizeof(float) &&
-              sizeof(GfVec2d) == 2 * sizeof(double) &&
-              sizeof(GfVec3d) == 3 * sizeof(double) &&
-              sizeof(GfVec4d) == 4 * sizeof(double) &&
-              sizeof(GfVec2h) == 2 * sizeof(GfHalf) &&
-              sizeof(GfVec3h) == 3 * sizeof(GfHalf) &&
-              sizeof(GfVec4h) == 4 * sizeof(GfHalf) &&
-              sizeof(GfQuatf) == 4 * sizeof(float) &&
-              sizeof(GfQuatd) == 4 * sizeof(double) &&
-              sizeof(GfQuath) == 4 * sizeof(GfHalf) &&
-              sizeof(GfMatrix2f) == 4 * sizeof(float) &&
-              sizeof(GfMatrix3f) == 9 * sizeof(float) &&
-              sizeof(GfMatrix4f) == 16 * sizeof(float) &&
-              sizeof(GfMatrix2d) == 4 * sizeof(double) &&
-              sizeof(GfMatrix3d) == 9 * sizeof(double) &&
-              sizeof(GfMatrix4d) == 16 * sizeof(double) &&
-              sizeof(GfVec3i) == 3 * sizeof(int),
+                  sizeof(GfVec3f) == 3 * sizeof(float) &&
+                  sizeof(GfVec4f) == 4 * sizeof(float) &&
+                  sizeof(GfVec2d) == 2 * sizeof(double) &&
+                  sizeof(GfVec3d) == 3 * sizeof(double) &&
+                  sizeof(GfVec4d) == 4 * sizeof(double) &&
+                  sizeof(GfVec2h) == 2 * sizeof(GfHalf) &&
+                  sizeof(GfVec3h) == 3 * sizeof(GfHalf) &&
+                  sizeof(GfVec4h) == 4 * sizeof(GfHalf) &&
+                  sizeof(GfQuatf) == 4 * sizeof(float) &&
+                  sizeof(GfQuatd) == 4 * sizeof(double) &&
+                  sizeof(GfQuath) == 4 * sizeof(GfHalf) &&
+                  sizeof(GfMatrix2f) == 4 * sizeof(float) &&
+                  sizeof(GfMatrix3f) == 9 * sizeof(float) &&
+                  sizeof(GfMatrix4f) == 16 * sizeof(float) &&
+                  sizeof(GfMatrix2d) == 4 * sizeof(double) &&
+                  sizeof(GfMatrix3d) == 9 * sizeof(double) &&
+                  sizeof(GfMatrix4d) == 16 * sizeof(double) &&
+                  sizeof(GfVec3i) == 3 * sizeof(int),
               "a bytes compare needs padding-free payloads");
 
 /// One shared buffer, or one memcmp. Callers pass padding-free scalar and
@@ -149,16 +150,26 @@ TfType
 TypeOf(HeadType type)
 {
     switch (type) {
-    case HeadType::Bool: return SdfValueTypeNames->Bool.GetType();
-    case HeadType::Float: return SdfValueTypeNames->Float.GetType();
-    case HeadType::Double: return SdfValueTypeNames->Double.GetType();
-    case HeadType::Vec3f: return SdfValueTypeNames->Float3.GetType();
-    case HeadType::Matrix4d: return SdfValueTypeNames->Matrix4d.GetType();
-    case HeadType::Vec2fArray: return SdfValueTypeNames->Float2Array.GetType();
-    case HeadType::Int: return SdfValueTypeNames->Int.GetType();
-    case HeadType::Token: return SdfValueTypeNames->Token.GetType();
-    case HeadType::Vec3d: return SdfValueTypeNames->Double3.GetType();
-    case HeadType::Vec3fArray: return SdfValueTypeNames->Float3Array.GetType();
+    case HeadType::Bool:
+        return SdfValueTypeNames->Bool.GetType();
+    case HeadType::Float:
+        return SdfValueTypeNames->Float.GetType();
+    case HeadType::Double:
+        return SdfValueTypeNames->Double.GetType();
+    case HeadType::Vec3f:
+        return SdfValueTypeNames->Float3.GetType();
+    case HeadType::Matrix4d:
+        return SdfValueTypeNames->Matrix4d.GetType();
+    case HeadType::Vec2fArray:
+        return SdfValueTypeNames->Float2Array.GetType();
+    case HeadType::Int:
+        return SdfValueTypeNames->Int.GetType();
+    case HeadType::Token:
+        return SdfValueTypeNames->Token.GetType();
+    case HeadType::Vec3d:
+        return SdfValueTypeNames->Double3.GetType();
+    case HeadType::Vec3fArray:
+        return SdfValueTypeNames->Float3Array.GetType();
     }
     return TfType();
 }
@@ -183,18 +194,26 @@ SampleHead(const RigExecBakedHeadLeaf &leaf, UsdTimeCode time)
         return VtValue();
     }
     switch (leaf.type) {
-    case HeadType::Bool: return TypedGet<bool>(leaf.attribute, time);
-    case HeadType::Float: return TypedGet<float>(leaf.attribute, time);
-    case HeadType::Double: return TypedGet<double>(leaf.attribute, time);
-    case HeadType::Vec3f: return TypedGet<GfVec3f>(leaf.attribute, time);
+    case HeadType::Bool:
+        return TypedGet<bool>(leaf.attribute, time);
+    case HeadType::Float:
+        return TypedGet<float>(leaf.attribute, time);
+    case HeadType::Double:
+        return TypedGet<double>(leaf.attribute, time);
+    case HeadType::Vec3f:
+        return TypedGet<GfVec3f>(leaf.attribute, time);
     case HeadType::Matrix4d:
         return TypedGet<GfMatrix4d>(leaf.attribute, time);
     case HeadType::Vec2fArray:
         return TypedGet<VtArray<GfVec2f>>(leaf.attribute, time);
-    case HeadType::Int: return TypedGet<int>(leaf.attribute, time);
-    case HeadType::Token: return TypedGet<TfToken>(leaf.attribute, time);
-    case HeadType::Vec3d: return TypedGet<GfVec3d>(leaf.attribute, time);
-    case HeadType::Vec3fArray: return TypedGet<VtVec3fArray>(leaf.attribute, time);
+    case HeadType::Int:
+        return TypedGet<int>(leaf.attribute, time);
+    case HeadType::Token:
+        return TypedGet<TfToken>(leaf.attribute, time);
+    case HeadType::Vec3d:
+        return TypedGet<GfVec3d>(leaf.attribute, time);
+    case HeadType::Vec3fArray:
+        return TypedGet<VtVec3fArray>(leaf.attribute, time);
     }
     return VtValue();
 }
@@ -212,10 +231,14 @@ HeadType
 ArmType(Chain::Arm arm)
 {
     switch (arm) {
-    case Chain::Arm::Float: return HeadType::Float;
-    case Chain::Arm::Double: return HeadType::Double;
-    case Chain::Arm::Matrix4d: return HeadType::Matrix4d;
-    case Chain::Arm::Vec3f: return HeadType::Vec3f;
+    case Chain::Arm::Float:
+        return HeadType::Float;
+    case Chain::Arm::Double:
+        return HeadType::Double;
+    case Chain::Arm::Matrix4d:
+        return HeadType::Matrix4d;
+    case Chain::Arm::Vec3f:
+        return HeadType::Vec3f;
     }
     return HeadType::Float;
 }
@@ -290,23 +313,28 @@ struct BindState {
                 read.element = consumerElement;
                 // A source with no mover chain is an ordinary sampled array.
                 bool chain = false;
-                for (const auto &candidate : B.chains) chain = chain || candidate.target == hop.path;
-                if (!chain) read.rawLeaf = Leaf(attribute,HeadType::Vec3fArray);
+                for (const auto &candidate : B.chains)
+                    chain = chain || candidate.target == hop.path;
+                if (!chain)
+                    read.rawLeaf = Leaf(attribute, HeadType::Vec3fArray);
                 cross = true;
             } else if (consumerType == HeadType::Vec3fArray &&
                        attribute.GetTypeName().GetType() ==
                            SdfValueTypeNames->Float3Array.GetType()) {
-                cross = RigExecBakedBindConnectionValue(B,consumer.GetPath(),hop.path,consumerPhase,&read);
+                cross = RigExecBakedBindConnectionValue(
+                    B, consumer.GetPath(), hop.path, consumerPhase, &read);
             } else if (consumerType == HeadType::Matrix4d &&
                        attribute.GetTypeName() == SdfValueTypeNames->Matrix4d &&
                        !chainOfTarget.count(hop.path)) {
                 const auto provider = B.index.find(hop.path.GetPrimPath());
-                if (provider != B.index.end() && hop.path.GetName() == "posed:space") {
+                if (provider != B.index.end() &&
+                    hop.path.GetName() == SchemaAttrText::posedSpace) {
                     read.kind = RigExecCrossDomainRead::Kind::PoseFrame;
                     read.provider = provider->second;
                     cross = true;
                 } else {
-                    const auto space = B.GetProviderProgram().attributeValues.find(hop.path);
+                    const auto space =
+                        B.GetProviderProgram().attributeValues.find(hop.path);
                     if (space != B.GetProviderProgram().attributeValues.end()) {
                         read.kind = RigExecCrossDomainRead::Kind::SpaceValue;
                         read.spaceValue = int(space->second);
@@ -315,9 +343,12 @@ struct BindState {
                 }
             }
             if (cross) {
-                read.unavailable = "diag " + pathText(read.consumer) +
+                read.unavailable =
+                    "diag " + pathText(read.consumer) +
                     ": cross-domain input " + pathText(read.source) +
-                    (read.element >= 0 ? " element " + std::to_string(read.element) : std::string()) +
+                    (read.element >= 0
+                         ? " element " + std::to_string(read.element)
+                         : std::string()) +
                     " is unavailable; using the typed fallback";
                 hop.crossDomain = int(B.crossDomainReads.size());
                 B.crossDomainReads.push_back(std::move(read));
@@ -325,8 +356,9 @@ struct BindState {
         }
         const auto chain = chainOfTarget.find(hop.path);
         const bool ownEnteringHead = chain != chainOfTarget.end() &&
-            chain->second == reader && consumer &&
-            hop.path == consumer.GetPath() && !consumer.HasAuthoredConnections();
+                                     chain->second == reader && consumer &&
+                                     hop.path == consumer.GetPath() &&
+                                     !consumer.HasAuthoredConnections();
         if (chain != chainOfTarget.end() && !ownEnteringHead) {
             hop.chain = chain->second;
         }
@@ -357,13 +389,14 @@ struct BindState {
     // A typed phased record owns the source phase for this read. A later
     // target hop cannot replace Base/AtPrim with that target's Final. Keep
     // raw and override hops, and preserve mismatched double-tail records.
-    std::set<uint32_t> SelectPhasedSources(
-        std::vector<RigExecBakedWalkHop> *hops, HeadType readAs, int reader,
-        std::set<uint32_t> selected = {})
+    std::set<uint32_t>
+    SelectPhasedSources(std::vector<RigExecBakedWalkHop> *hops, HeadType readAs,
+                        int reader, std::set<uint32_t> selected = {})
     {
         // Ordinary readers retain conditional Final fallbacks and typed shadows.
         // Only a property revision owns an entering phase for its source walk.
-        if (reader == std::numeric_limits<int>::max()) return selected;
+        if (reader == std::numeric_limits<int>::max())
+            return selected;
         const RigExecBakedProgramImpl &B = *program;
         for (auto &hop : *hops) {
             if (hop.chain >= 0 && selected.count(uint32_t(hop.chain)))
@@ -414,15 +447,19 @@ struct BindState {
         consumerElement = -1;
         if (attribute) {
             std::string error;
-            if (!RigExecResolveReadPhase(attribute,&consumerPhase,&error))
+            if (!RigExecResolveReadPhase(attribute, &consumerPhase, &error))
                 program->crossDomainErrors.push_back(error);
             if (attribute.HasAuthoredMetadata(kInputElement)) {
                 VtValue element;
-                attribute.GetMetadata(kInputElement,&element);
-                if (type != HeadType::Vec3f || !element.IsHolding<int>() || element.UncheckedGet<int>() < 0)
-                    program->crossDomainErrors.push_back(attribute.GetPath().GetString()+
-                        ": rigExecInputElement requires a nonnegative int on a Vec3f input");
-                else consumerElement = element.UncheckedGet<int>();
+                attribute.GetMetadata(kInputElement, &element);
+                if (type != HeadType::Vec3f || !element.IsHolding<int>() ||
+                    element.UncheckedGet<int>() < 0)
+                    program->crossDomainErrors.push_back(
+                        attribute.GetPath().GetString() +
+                        ": rigExecInputElement requires a nonnegative int on a "
+                        "Vec3f input");
+                else
+                    consumerElement = element.UncheckedGet<int>();
             }
         }
         RigExecBakedWalk walk;
@@ -443,8 +480,7 @@ struct BindState {
         const bool isFloat = type == HeadType::Float;
         // A float read of a double attribute is GetAttribute<double> from
         // it, cast: no float overlay is consulted at its head.
-        if (isFloat &&
-            attribute.GetTypeName() == SdfValueTypeNames->Double) {
+        if (isFloat && attribute.GetTypeName() == SdfValueTypeNames->Double) {
             DoubleTail(attribute, reader, &walk.doubleHops);
             return walk;
         }
@@ -497,8 +533,7 @@ struct BindState {
         std::vector<SdfPath> *const outerSlots = newSlots;
         newSlots = &walkSlots;
         RigExecBakedReaderWalk reader;
-        reader.walk = Walk(attribute, type,
-                           std::numeric_limits<int>::max(),
+        reader.walk = Walk(attribute, type, std::numeric_limits<int>::max(),
                            /*pinned=*/false);
         newSlots = outerSlots;
         bool meets = false;
@@ -506,7 +541,8 @@ struct BindState {
         for (const std::vector<RigExecBakedWalkHop> *hops :
              {&reader.walk.hops, &reader.walk.doubleHops}) {
             for (const RigExecBakedWalkHop &hop : *hops) {
-                meets = meets || hop.chain >= 0 || hop.record >= 0 || hop.crossDomain >= 0;
+                meets = meets || hop.chain >= 0 || hop.record >= 0 ||
+                        hop.crossDomain >= 0;
                 if (hop.leaf >= 0) {
                     leaves.insert(uint32_t(hop.leaf));
                 }
@@ -550,9 +586,7 @@ struct BindState {
     }
 };
 
-template <class T>
-HeadType
-HeadTypeOf();
+template <class T> HeadType HeadTypeOf();
 template <>
 HeadType
 HeadTypeOf<double>()
@@ -617,19 +651,36 @@ PathLeafHeadType(const RigExecRevisionLeafKey &key,
         return false;
     }
     switch (key.type) {
-    case Type::Bool: *type = HeadType::Bool; return true;
-    case Type::Int: *type = HeadType::Int; return true;
-    case Type::Float: *type = HeadType::Float; return true;
-    case Type::Double: *type = HeadType::Double; return true;
-    case Type::Vec3f: *type = HeadType::Vec3f; return true;
-    case Type::Vec3fArray: *type = HeadType::Vec3fArray; return true;
-    case Type::Token: *type = HeadType::Token; return true;
-    case Type::Vec3d: *type = HeadType::Vec3d; return true;
-    case Type::Matrix4d: *type = HeadType::Matrix4d; return true;
+    case Type::Bool:
+        *type = HeadType::Bool;
+        return true;
+    case Type::Int:
+        *type = HeadType::Int;
+        return true;
+    case Type::Float:
+        *type = HeadType::Float;
+        return true;
+    case Type::Double:
+        *type = HeadType::Double;
+        return true;
+    case Type::Vec3f:
+        *type = HeadType::Vec3f;
+        return true;
+    case Type::Vec3fArray:
+        *type = HeadType::Vec3fArray;
+        return true;
+    case Type::Token:
+        *type = HeadType::Token;
+        return true;
+    case Type::Vec3d:
+        *type = HeadType::Vec3d;
+        return true;
+    case Type::Matrix4d:
+        *type = HeadType::Matrix4d;
+        return true;
     case Type::Dial:
         // RigExecReadProjectorTarget reads a float dial as a float.
-        *type = attribute &&
-                        attribute.GetTypeName() == SdfValueTypeNames->Float
+        *type = attribute && attribute.GetTypeName() == SdfValueTypeNames->Float
                     ? HeadType::Float
                     : HeadType::Double;
         return true;
@@ -652,9 +703,10 @@ Overlay(const RigExecBakedProgramImpl &B, const RigExecBakedWalkHop &hop)
     if (hop.chain >= 0) {
         // publishTarget replaces the override with the result.
         const Chain &chain = B.propertyChains[size_t(hop.chain)];
-        const uint32_t final = chain.versionBase + uint32_t(chain.revisions.size());
-        return B.propertyVersionValid[final]
-                   ? &B.chainFinal[size_t(hop.chain)] : standing;
+        const uint32_t final =
+            chain.versionBase + uint32_t(chain.revisions.size());
+        return B.propertyVersionValid[final] ? &B.chainFinal[size_t(hop.chain)]
+                                             : standing;
     }
     if (hop.record >= 0) {
         // An override on any hop of the record stands the reader aside.
@@ -664,8 +716,9 @@ Overlay(const RigExecBakedProgramImpl &B, const RigExecBakedWalkHop &hop)
         const RigExecBakedPropertyRecord &record =
             B.propertyRecords[size_t(hop.record)];
         const Chain &chain = B.propertyChains[record.chain];
-        const uint32_t source = chain.versionBase + uint32_t(
-            std::min(record.applied, chain.revisions.size()));
+        const uint32_t source =
+            chain.versionBase +
+            uint32_t(std::min(record.applied, chain.revisions.size()));
         if (B.recordStoodAside[size_t(hop.record)] ||
             !B.propertyVersionValid[source]) {
             return nullptr;
@@ -704,7 +757,7 @@ ResolveDouble(const RigExecBakedProgramImpl &B, const RigExecBakedWalk &walk,
     return false;
 }
 
-}  // namespace
+} // namespace
 
 /// \p walk's value as the read it restates answers it, or false where that
 /// read answers nothing (and its caller keeps its fallback). Pure: no stage,
@@ -726,7 +779,8 @@ RigExecBakedResolveWalk(const RigExecBakedProgramImpl &B,
             return true;
         }
         VtValue cross;
-        if (RigExecBakedReadCrossDomain(B,hop.crossDomain,&cross) && cross.IsHolding<T>()) {
+        if (RigExecBakedReadCrossDomain(B, hop.crossDomain, &cross) &&
+            cross.IsHolding<T>()) {
             *out = cross.UncheckedGet<T>();
             return true;
         }
@@ -756,7 +810,8 @@ RigExecBakedResolveWalk(const RigExecBakedProgramImpl &B,
         }
         for (const RigExecBakedWalkHop &hop : walk.hops) {
             VtValue cross;
-            if (RigExecBakedReadCrossDomain(B,hop.crossDomain,&cross) && cross.IsHolding<T>()) {
+            if (RigExecBakedReadCrossDomain(B, hop.crossDomain, &cross) &&
+                cross.IsHolding<T>()) {
                 *out = cross.UncheckedGet<T>();
                 return true;
             }
@@ -770,9 +825,11 @@ RigExecBakedResolveWalk(const RigExecBakedProgramImpl &B,
         }
         // The nearest readable upstream value, deepest first.
         for (auto it = walk.hops.rbegin(); it != walk.hops.rend(); ++it) {
-            if constexpr (std::is_same_v<T,VtVec3fArray>) {
-                if (it->crossDomain >= 0 && size_t(it->crossDomain) < B.crossDomainReads.size() &&
-                    B.crossDomainReads[size_t(it->crossDomain)].kind == RigExecCrossDomainRead::Kind::Points)
+            if constexpr (std::is_same_v<T, VtVec3fArray>) {
+                if (it->crossDomain >= 0 &&
+                    size_t(it->crossDomain) < B.crossDomainReads.size() &&
+                    B.crossDomainReads[size_t(it->crossDomain)].kind ==
+                        RigExecCrossDomainRead::Kind::Points)
                     continue; // a missing selected producer cannot become its authored source
             }
             const VtValue *v = LeafValue(B, *it);
@@ -807,13 +864,13 @@ RigExecBakedHeadValueSame(const VtValue &a, const VtValue &b)
     // or a NaN payload that moved is a change, and an equal NaN is not.
     // Integral, text and path values fall through to operator==, which is
     // already exact for them.
-#define RIGEXEC_HEAD_BITS(T)                                                 \
-    if (a.IsHolding<T>()) {                                                  \
-        return BitSame(a.UncheckedGet<T>(), b.UncheckedGet<T>());            \
-    }                                                                        \
-    if (a.IsHolding<VtArray<T>>()) {                                         \
-        return BitSameArray(a.UncheckedGet<VtArray<T>>(),                    \
-                            b.UncheckedGet<VtArray<T>>());                   \
+#define RIGEXEC_HEAD_BITS(T)                                                   \
+    if (a.IsHolding<T>()) {                                                    \
+        return BitSame(a.UncheckedGet<T>(), b.UncheckedGet<T>());              \
+    }                                                                          \
+    if (a.IsHolding<VtArray<T>>()) {                                           \
+        return BitSameArray(a.UncheckedGet<VtArray<T>>(),                      \
+                            b.UncheckedGet<VtArray<T>>());                     \
     }
     RIGEXEC_HEAD_BITS(float)
     RIGEXEC_HEAD_BITS(double)
@@ -860,7 +917,7 @@ ResolveReader(const RigExecBakedProgramImpl &B, int walk, T *out)
            RigExecBakedResolveWalk(B, B.readerWalks[size_t(walk)].walk, out);
 }
 
-}  // namespace
+} // namespace
 
 bool
 RigExecBakedResolveReaderWalk(const RigExecBakedProgramImpl &B, int walk,
@@ -919,38 +976,53 @@ RigExecBakedResolveReaderWalk(const RigExecBakedProgramImpl &B, int walk,
 }
 
 bool
-RigExecBakedResolveReaderWalk(const RigExecBakedProgramImpl &B,int walk,VtVec3fArray *out)
+RigExecBakedResolveReaderWalk(const RigExecBakedProgramImpl &B, int walk,
+                              VtVec3fArray *out)
 {
-    return ResolveReader(B,walk,out);
+    return ResolveReader(B, walk, out);
 }
 
 bool
-RigExecBakedResolveReaderWalk(const RigExecBakedProgramImpl &B,int walk,VtArray<GfVec2f> *out)
+RigExecBakedResolveReaderWalk(const RigExecBakedProgramImpl &B, int walk,
+                              VtArray<GfVec2f> *out)
 {
-    return ResolveReader(B,walk,out);
+    return ResolveReader(B, walk, out);
 }
 
 bool
 RigExecBakedResolveWalkValue(const RigExecBakedProgramImpl &B,
-                            const RigExecBakedWalk &walk,VtValue *out)
+                             const RigExecBakedWalk &walk, VtValue *out)
 {
-    if(!out) return false;
-    *out=VtValue();
-    const auto resolve=[&](auto value) {
-        if(!RigExecBakedResolveWalk(B,walk,&value)) return false;
-        *out=VtValue(value); return true;
+    if (!out)
+        return false;
+    *out = VtValue();
+    const auto resolve = [&](auto value) {
+        if (!RigExecBakedResolveWalk(B, walk, &value))
+            return false;
+        *out = VtValue(value);
+        return true;
     };
-    switch(walk.type) {
-    case RigExecBakedHeadValueType::Bool: return resolve(false);
-    case RigExecBakedHeadValueType::Float: return resolve(float(0));
-    case RigExecBakedHeadValueType::Double: return resolve(double(0));
-    case RigExecBakedHeadValueType::Int: return resolve(int(0));
-    case RigExecBakedHeadValueType::Token: return resolve(TfToken());
-    case RigExecBakedHeadValueType::Matrix4d: return resolve(GfMatrix4d(1));
-    case RigExecBakedHeadValueType::Vec3d: return resolve(GfVec3d(0));
-    case RigExecBakedHeadValueType::Vec3f: return resolve(GfVec3f(0));
-    case RigExecBakedHeadValueType::Vec3fArray: return resolve(VtVec3fArray());
-    case RigExecBakedHeadValueType::Vec2fArray: return resolve(VtArray<GfVec2f>());
+    switch (walk.type) {
+    case RigExecBakedHeadValueType::Bool:
+        return resolve(false);
+    case RigExecBakedHeadValueType::Float:
+        return resolve(float(0));
+    case RigExecBakedHeadValueType::Double:
+        return resolve(double(0));
+    case RigExecBakedHeadValueType::Int:
+        return resolve(int(0));
+    case RigExecBakedHeadValueType::Token:
+        return resolve(TfToken());
+    case RigExecBakedHeadValueType::Matrix4d:
+        return resolve(GfMatrix4d(1));
+    case RigExecBakedHeadValueType::Vec3d:
+        return resolve(GfVec3d(0));
+    case RigExecBakedHeadValueType::Vec3f:
+        return resolve(GfVec3f(0));
+    case RigExecBakedHeadValueType::Vec3fArray:
+        return resolve(VtVec3fArray());
+    case RigExecBakedHeadValueType::Vec2fArray:
+        return resolve(VtArray<GfVec2f>());
     }
     return false;
 }
@@ -987,9 +1059,9 @@ RigExecBakedNoteReaderWalks(RigExecBakedProgramImpl *program)
             moved = moved || B.headOverrideMoved[slot];
         }
         for (const uint32_t id : reader.versions) {
-            moved = moved || (B.propertyChanged[id] &&
-                              !RigExecBakedReadIsShadowed(B, reader.shadowed,
-                                                          id));
+            moved =
+                moved || (B.propertyChanged[id] &&
+                          !RigExecBakedReadIsShadowed(B, reader.shadowed, id));
         }
         B.readerWalkMoved[w] = moved ? 1 : 0;
         B.readerWalkChanged[w] = 0;
@@ -1002,8 +1074,7 @@ namespace {
 // ResolvedOnly (the walk) arms over \p fallback.
 template <class T>
 T
-WalkedPathRead(const RigExecBakedProgramImpl &B, int walk, bool raw,
-               T value)
+WalkedPathRead(const RigExecBakedProgramImpl &B, int walk, bool raw, T value)
 {
     if (RigExecBakedResolveReaderWalk(B, walk, &value) || !raw) {
         return value;
@@ -1027,7 +1098,7 @@ WalkedPathSample(const RigExecBakedProgramImpl &B,
         fallback));
 }
 
-}  // namespace
+} // namespace
 
 VtValue
 RigExecBakedSampleWalkedPathLeaf(const RigExecBakedProgramImpl &B,
@@ -1035,24 +1106,34 @@ RigExecBakedSampleWalkedPathLeaf(const RigExecBakedProgramImpl &B,
 {
     using Type = RigExecRevisionLeafType;
     switch (key.type) {
-    case Type::Bool: return WalkedPathSample<bool>(B, key, walk);
-    case Type::Int: return WalkedPathSample<int>(B, key, walk);
-    case Type::Float: return WalkedPathSample<float>(B, key, walk);
-    case Type::Double: return WalkedPathSample<double>(B, key, walk);
-    case Type::Vec3f: return WalkedPathSample<GfVec3f>(B, key, walk);
+    case Type::Bool:
+        return WalkedPathSample<bool>(B, key, walk);
+    case Type::Int:
+        return WalkedPathSample<int>(B, key, walk);
+    case Type::Float:
+        return WalkedPathSample<float>(B, key, walk);
+    case Type::Double:
+        return WalkedPathSample<double>(B, key, walk);
+    case Type::Vec3f:
+        return WalkedPathSample<GfVec3f>(B, key, walk);
     case Type::Vec3fArray: {
         VtVec3fArray value;
-        if (RigExecBakedResolveReaderWalk(B,walk,&value)) return VtValue(value);
+        if (RigExecBakedResolveReaderWalk(B, walk, &value))
+            return VtValue(value);
         if (key.flavour == RigExecRevisionLeafFlavour::Resolved) {
-            const int leaf=B.readerWalks[size_t(walk)].rawLeaf;
-            if (leaf >= 0 && B.headLeaves[size_t(leaf)].value.IsHolding<VtVec3fArray>())
+            const int leaf = B.readerWalks[size_t(walk)].rawLeaf;
+            if (leaf >= 0 &&
+                B.headLeaves[size_t(leaf)].value.IsHolding<VtVec3fArray>())
                 return B.headLeaves[size_t(leaf)].value;
         }
         return key.fallback;
     }
-    case Type::Token: return WalkedPathSample<TfToken>(B, key, walk);
-    case Type::Vec3d: return WalkedPathSample<GfVec3d>(B, key, walk);
-    case Type::Matrix4d: return WalkedPathSample<GfMatrix4d>(B, key, walk);
+    case Type::Token:
+        return WalkedPathSample<TfToken>(B, key, walk);
+    case Type::Vec3d:
+        return WalkedPathSample<GfVec3d>(B, key, walk);
+    case Type::Matrix4d:
+        return WalkedPathSample<GfMatrix4d>(B, key, walk);
     case Type::Dial:
         // A float dial reads as a float and widens; any other as a double.
         if (B.readerWalks[size_t(walk)].walk.type == HeadType::Float) {
@@ -1067,9 +1148,9 @@ RigExecBakedSampleWalkedPathLeaf(const RigExecBakedProgramImpl &B,
 
 RigExecBakedReaderWalk
 RigExecBakedBuildOracleRead(RigExecBakedProgramImpl *program,
-                           const UsdAttribute &attribute,
-                           const std::vector<int> &available,
-                           RigExecBakedOracleReadIndex *index)
+                            const UsdAttribute &attribute,
+                            const std::vector<int> &available,
+                            RigExecBakedOracleReadIndex *index)
 {
     RigExecBakedOracleReadIndex fresh;
     RigExecBakedOracleReadIndex &I = index ? *index : fresh;
@@ -1085,7 +1166,8 @@ RigExecBakedBuildOracleRead(RigExecBakedProgramImpl *program,
     // First leaf wins per (path, type), in leaf order.
     for (size_t i = I.leavesIndexed; i < B.headLeaves.size(); ++i) {
         const auto &leaf = B.headLeaves[i];
-        I.leafOf.emplace(std::make_pair(leaf.path, int(leaf.type)), uint32_t(i));
+        I.leafOf.emplace(std::make_pair(leaf.path, int(leaf.type)),
+                         uint32_t(i));
     }
     if (!I.versionsBuilt) {
         for (size_t c = 0; c < B.propertyChains.size(); ++c) {
@@ -1114,26 +1196,32 @@ RigExecBakedBuildOracleRead(RigExecBakedProgramImpl *program,
     RigExecBakedReaderWalk read;
     read.head = attribute ? attribute.GetPath() : SdfPath();
     read.walk = state.Walk(attribute, HeadType::Float,
-                          std::numeric_limits<int>::max(), false);
+                           std::numeric_limits<int>::max(), false);
     // The walk's own leaves entered leafOf as it made them.
     I.leafOf = std::move(state.leafOf);
     for (size_t i = I.leavesIndexed; i < B.headLeaves.size(); ++i) {
         const auto &leaf = B.headLeaves[i];
-        I.leafOf.emplace(std::make_pair(leaf.path, int(leaf.type)), uint32_t(i));
+        I.leafOf.emplace(std::make_pair(leaf.path, int(leaf.type)),
+                         uint32_t(i));
     }
     I.leavesIndexed = B.headLeaves.size();
 
     std::vector<char> isAvailable(B.propertyChains.size(), 0);
-    for (int c : available) isAvailable[size_t(c)] = 1;
+    for (int c : available)
+        isAvailable[size_t(c)] = 1;
     std::set<uint32_t> leaves, slots, versions;
     for (const auto *hops : {&read.walk.hops, &read.walk.doubleHops}) {
         for (const auto &hop : *hops) {
-            if (hop.leaf >= 0) leaves.insert(uint32_t(hop.leaf));
-            if (hop.overrideSlot >= 0) slots.insert(uint32_t(hop.overrideSlot));
+            if (hop.leaf >= 0)
+                leaves.insert(uint32_t(hop.leaf));
+            if (hop.overrideSlot >= 0)
+                slots.insert(uint32_t(hop.overrideSlot));
             const auto found = I.versions.find(hop.path);
-            if (found == I.versions.end()) continue;
+            if (found == I.versions.end())
+                continue;
             for (const auto &[chain, version] : found->second)
-                if (isAvailable[size_t(chain)]) versions.insert(version);
+                if (isAvailable[size_t(chain)])
+                    versions.insert(version);
         }
     }
     read.leaves.assign(leaves.begin(), leaves.end());
@@ -1141,7 +1229,8 @@ RigExecBakedBuildOracleRead(RigExecBakedProgramImpl *program,
     read.versions.assign(versions.begin(), versions.end());
     for (size_t i = I.leavesFrozen; i < B.headLeaves.size(); ++i) {
         auto &leaf = B.headLeaves[i];
-        if (leaf.typeMatches && leaf.frozenKey.IsEmpty() && leaf.path.IsPropertyPath())
+        if (leaf.typeMatches && leaf.frozenKey.IsEmpty() &&
+            leaf.path.IsPropertyPath())
             leaf.frozenKey = leaf.path.GetPrimPath().AppendProperty(
                 TfToken("frozenOracleHop:" + leaf.path.GetName()));
     }
@@ -1158,31 +1247,42 @@ RigExecBakedBuildOracleRead(RigExecBakedProgramImpl *program,
 
 float
 RigExecBakedReadOracleScalar(const RigExecBakedProgramImpl &B,
-                            const RigExecBakedReaderWalk &read,
-                            const std::vector<int> &available, float fallback)
+                             const RigExecBakedReaderWalk &read,
+                             const std::vector<int> &available, float fallback)
 {
-    const auto overlay = [&](const RigExecBakedWalkHop &hop) -> const VtValue * {
-        const VtValue *value = hop.overrideSlot >= 0 &&
-            size_t(hop.overrideSlot) < B.headOverrides.size() &&
-            !B.headOverrides[size_t(hop.overrideSlot)].IsEmpty()
-                ? &B.headOverrides[size_t(hop.overrideSlot)] : nullptr;
+    const auto overlay =
+        [&](const RigExecBakedWalkHop &hop) -> const VtValue * {
+        const VtValue *value =
+            hop.overrideSlot >= 0 &&
+                    size_t(hop.overrideSlot) < B.headOverrides.size() &&
+                    !B.headOverrides[size_t(hop.overrideSlot)].IsEmpty()
+                ? &B.headOverrides[size_t(hop.overrideSlot)]
+                : nullptr;
         // Publication is target then records, chain by chain. Later writers
         // replace earlier ones even when an input path also names a target.
         for (int c : available) {
             const auto &chain = B.propertyChains[size_t(c)];
-            bool relevant=chain.target==hop.path;
-            if(!relevant)for(uint32_t r:chain.records)
-                if(B.propertyRecords[r].consumer==hop.path){relevant=true;break;}
-            if(!relevant)continue;
-            const uint32_t final = chain.versionBase + uint32_t(chain.revisions.size());
+            bool relevant = chain.target == hop.path;
+            if (!relevant)
+                for (uint32_t r : chain.records)
+                    if (B.propertyRecords[r].consumer == hop.path) {
+                        relevant = true;
+                        break;
+                    }
+            if (!relevant)
+                continue;
+            const uint32_t final =
+                chain.versionBase + uint32_t(chain.revisions.size());
             if (chain.target == hop.path && B.propertyVersionValid[final])
                 value = &B.chainFinal[size_t(c)];
             for (uint32_t r : chain.records) {
                 const auto &record = B.propertyRecords[r];
-                const uint32_t source = chain.versionBase + uint32_t(
-                    std::min(record.applied, chain.revisions.size()));
+                const uint32_t source =
+                    chain.versionBase +
+                    uint32_t(std::min(record.applied, chain.revisions.size()));
                 if (record.consumer == hop.path && !B.recordStoodAside[r] &&
-                    B.propertyVersionValid[source]) value = &B.recordValues[r];
+                    B.propertyVersionValid[source])
+                    value = &B.recordValues[r];
             }
         }
         return value;
@@ -1190,9 +1290,16 @@ RigExecBakedReadOracleScalar(const RigExecBakedProgramImpl &B,
     const auto resolve = [&](const std::vector<RigExecBakedWalkHop> &hops,
                              bool asDouble, double *out) {
         const auto convert = [&](const VtValue *v) {
-            if (!v) return false;
-            if (asDouble && v->IsHolding<double>()) { *out = v->UncheckedGet<double>(); return true; }
-            if (!asDouble && v->IsHolding<float>()) { *out = v->UncheckedGet<float>(); return true; }
+            if (!v)
+                return false;
+            if (asDouble && v->IsHolding<double>()) {
+                *out = v->UncheckedGet<double>();
+                return true;
+            }
+            if (!asDouble && v->IsHolding<float>()) {
+                *out = v->UncheckedGet<float>();
+                return true;
+            }
             return false;
         };
         for (const auto &hop : hops) {
@@ -1202,10 +1309,12 @@ RigExecBakedReadOracleScalar(const RigExecBakedProgramImpl &B,
                 *out = B.poseWeights[size_t(hop.poseWeight)];
                 return true;
             }
-            if (convert(overlay(hop))) return true;
+            if (convert(overlay(hop)))
+                return true;
         }
         for (auto h = hops.rbegin(); h != hops.rend(); ++h)
-            if (h->leaf >= 0 && convert(&B.headLeaves[size_t(h->leaf)].value)) return true;
+            if (h->leaf >= 0 && convert(&B.headLeaves[size_t(h->leaf)].value))
+                return true;
         return false;
     };
     double value = fallback;
@@ -1213,11 +1322,14 @@ RigExecBakedReadOracleScalar(const RigExecBakedProgramImpl &B,
     // are unreachable once GetAttribute recurses to Double.
     if (!read.walk.doubleHops.empty()) {
         for (const auto &hop : read.walk.hops) {
-            if (hop.poseWeight >= 0) return B.poseWeights[size_t(hop.poseWeight)];
+            if (hop.poseWeight >= 0)
+                return B.poseWeights[size_t(hop.poseWeight)];
             const VtValue *v = overlay(hop);
-            if (v && v->IsHolding<float>()) return v->UncheckedGet<float>();
+            if (v && v->IsHolding<float>())
+                return v->UncheckedGet<float>();
         }
-        return resolve(read.walk.doubleHops, true, &value) ? float(value) : fallback;
+        return resolve(read.walk.doubleHops, true, &value) ? float(value)
+                                                           : fallback;
     }
     return resolve(read.walk.hops, false, &value) ? float(value) : fallback;
 }
@@ -1257,8 +1369,7 @@ RigExecBakedProgram::_BindPropertyChains(const RigExecRigEvaluator &E,
     // Their phased records, chain by chain in _phasedConnections order.
     for (size_t c = 0; c < B.propertyChains.size(); ++c) {
         Chain &chain = B.propertyChains[c];
-        for (const RigExecPhasedConnection &connection :
-             E._phasedConnections) {
+        for (const RigExecPhasedConnection &connection : E._phasedConnections) {
             if (connection.target != chain.target) {
                 continue;
             }
@@ -1270,8 +1381,8 @@ RigExecBakedProgram::_BindPropertyChains(const RigExecRigEvaluator &E,
             for (const SdfPath &hop : connection.hops) {
                 record.hopSlots.push_back(state.Slot(hop));
             }
-            state.recordOfConsumer.emplace(
-                connection.consumer, int(B.propertyRecords.size()));
+            state.recordOfConsumer.emplace(connection.consumer,
+                                           int(B.propertyRecords.size()));
             chain.records.push_back(uint32_t(B.propertyRecords.size()));
             B.propertyRecords.push_back(std::move(record));
         }
@@ -1288,18 +1399,17 @@ RigExecBakedProgram::_BindPropertyChains(const RigExecRigEvaluator &E,
         }
         // runChain's arm: every type the compiler admits beyond these three
         // is GfVec3f-backed.
-        chain.arm = chain.valueType == SdfValueTypeNames->Float
-                        ? Chain::Arm::Float
-                    : chain.valueType == SdfValueTypeNames->Double
-                        ? Chain::Arm::Double
-                    : chain.valueType == SdfValueTypeNames->Matrix4d
-                        ? Chain::Arm::Matrix4d
-                        : Chain::Arm::Vec3f;
+        chain.arm =
+            chain.valueType == SdfValueTypeNames->Float    ? Chain::Arm::Float
+            : chain.valueType == SdfValueTypeNames->Double ? Chain::Arm::Double
+            : chain.valueType == SdfValueTypeNames->Matrix4d
+                ? Chain::Arm::Matrix4d
+                : Chain::Arm::Vec3f;
         if (target) {
             chain.ownLeaf = state.Leaf(target, ArmType(chain.arm));
         }
-        const bool floatArm = chain.arm == Chain::Arm::Float ||
-                              chain.arm == Chain::Arm::Double;
+        const bool floatArm =
+            chain.arm == Chain::Arm::Float || chain.arm == Chain::Arm::Double;
         for (const RigExecRigEvaluator::_PropertyRevision &revision :
              *revisionsOf[c]) {
             Chain::Revision r;
@@ -1323,8 +1433,8 @@ RigExecBakedProgram::_BindPropertyChains(const RigExecRigEvaluator &E,
                     r.weightObject = targets[0];
                 }
             }
-            r.enabled = state.Walk(mover.GetAttribute(kEnabled),
-                                   HeadType::Bool, reader);
+            r.enabled = state.Walk(mover.GetAttribute(kEnabled), HeadType::Bool,
+                                   reader);
             r.defaultWeight = state.Walk(mover.GetAttribute(kDefaultWeight),
                                          HeadType::Float, reader);
             // rigExec:operation at Default, off the attribute, as
@@ -1361,8 +1471,7 @@ RigExecBakedProgram::_BindPropertyChains(const RigExecRigEvaluator &E,
                 const UsdAttribute tangents = mover.GetAttribute(kTangents);
                 r.keys = state.Walk(mover.GetAttribute(kKeys),
                                     HeadType::Vec2fArray, reader);
-                r.tangents =
-                    state.Walk(tangents, HeadType::Vec2fArray, reader);
+                r.tangents = state.Walk(tangents, HeadType::Vec2fArray, reader);
                 r.hasTangents = bool(tangents);
             }
             // A path reads its curve's points; what the settings came from
@@ -1389,8 +1498,7 @@ RigExecBakedProgram::_BindPropertyChains(const RigExecRigEvaluator &E,
     frozenDetail::_ForEachPatchableInput(B, [&](auto &input) {
         using T = std::decay_t<decltype(input.constant)>;
         input.walk = input.resolvedAttr
-                         ? state.ReaderWalk(input.resolvedAttr,
-                                            HeadTypeOf<T>(),
+                         ? state.ReaderWalk(input.resolvedAttr, HeadTypeOf<T>(),
                                             /*rawFallback=*/false)
                          : -1;
     });
@@ -1454,8 +1562,8 @@ Ranges(const std::set<uint32_t> &ids)
         if (!out.empty() && out.back().end == id) {
             ++out.back().end;
         } else {
-            out.push_back(RigExecBakedOne(
-                RigExecBakedSlotDomain::PropertyResult, id));
+            out.push_back(
+                RigExecBakedOne(RigExecBakedSlotDomain::PropertyResult, id));
         }
     }
     return out;
@@ -1483,7 +1591,7 @@ ForEachWalk(const Chain::Revision &r, Fn &&fn)
     }
 }
 
-}  // namespace
+} // namespace
 
 void
 RigExecBakedDeclareHeadReads(RigExecBakedProgramImpl *program)
@@ -1498,13 +1606,15 @@ RigExecBakedDeclareHeadReads(RigExecBakedProgramImpl *program)
         }
     };
     for (RigExecBakedStep &step : B.steps) {
-        if (step.isHead) continue;
+        if (step.isHead)
+            continue;
         if (step.kind == RigExecBakedStepKind::RevisionStatic ||
             step.kind == RigExecBakedStepKind::RevisionChunk) {
             const auto &[c, r] = B.revisionIndex[size_t(step.object)];
             const auto &revision = B.chains[size_t(c)].revisions[size_t(r)];
             for (size_t k = 0; k < revision.leaves.walks.size(); ++k)
-                if (revision.leaves.walks[k] >= 0 && RigExecBakedGeometryReadsLeaf(revision, step, k))
+                if (revision.leaves.walks[k] >= 0 &&
+                    RigExecBakedGeometryReadsLeaf(revision, step, k))
                     step.readerWalks.push_back(revision.leaves.walks[k]);
         } else if (step.kind == RigExecBakedStepKind::Derived) {
             const auto &[c, d] = B.derivedIndex[size_t(step.object)];
@@ -1518,8 +1628,7 @@ RigExecBakedDeclareHeadReads(RigExecBakedProgramImpl *program)
         std::set<uint32_t> versions, unshadowed;
         std::set<std::pair<uint32_t, uint32_t>> shadowed;
         for (const int walk : step.readerWalks) {
-            const RigExecBakedReaderWalk &reader =
-                B.readerWalks[size_t(walk)];
+            const RigExecBakedReaderWalk &reader = B.readerWalks[size_t(walk)];
             versions.insert(reader.versions.begin(), reader.versions.end());
             for (const uint32_t id : reader.versions) {
                 bool byRecord = false;
@@ -1535,7 +1644,7 @@ RigExecBakedDeclareHeadReads(RigExecBakedProgramImpl *program)
             }
         }
         const auto ranges = Ranges(versions);
-        step.reads.insert(step.reads.end(),ranges.begin(),ranges.end());
+        step.reads.insert(step.reads.end(), ranges.begin(), ranges.end());
         step.shadowedReads.clear();
         for (const auto &[id, record] : shadowed) {
             if (!unshadowed.count(id)) {
@@ -1544,8 +1653,7 @@ RigExecBakedDeclareHeadReads(RigExecBakedProgramImpl *program)
         }
     }
     B.avarHeadReads.assign(B.paths.size(), {});
-    for (const RigExecBakedProgramImpl::AvarBinding &binding :
-         B.avarBindings) {
+    for (const RigExecBakedProgramImpl::AvarBinding &binding : B.avarBindings) {
         if (binding.input.walk >= 0 && binding.slot / 11 < B.paths.size()) {
             const RigExecBakedReaderWalk &reader =
                 B.readerWalks[size_t(binding.input.walk)];
@@ -1572,9 +1680,9 @@ RigExecBakedBuildPropertySteps(RigExecBakedProgramImpl *program)
         record.id = id++;
     }
     B.propertyVersionCount = id;
-    B.propertyRecordById.assign(id,-1);
-    for(size_t r=0;r<B.propertyRecords.size();++r)
-        B.propertyRecordById[B.propertyRecords[r].id]=int(r);
+    B.propertyRecordById.assign(id, -1);
+    for (size_t r = 0; r < B.propertyRecords.size(); ++r)
+        B.propertyRecordById[B.propertyRecords[r].id] = int(r);
     B.steps.clear();
     for (size_t c = 0; c < B.propertyChains.size(); ++c) {
         const Chain &chain = B.propertyChains[c];
@@ -1595,8 +1703,8 @@ RigExecBakedBuildPropertySteps(RigExecBakedProgramImpl *program)
                 if (chain.targetSlot >= 0) {
                     slots.insert(uint32_t(chain.targetSlot));
                 }
-                step.label = "PropertyRevision " + pathText(chain.target) +
-                             " base";
+                step.label =
+                    "PropertyRevision " + pathText(chain.target) + " base";
             } else {
                 const Chain::Revision &r = chain.revisions[k - 1];
                 reads.insert(chain.versionBase + uint32_t(k) - 1);
@@ -1735,8 +1843,8 @@ RigExecBakedBuildPropertySteps(RigExecBakedProgramImpl *program)
 // The prologue.
 
 void
-RigExecBakedSampleHeadLeaves(RigExecBakedProgramImpl *program,
-                             UsdTimeCode time, bool all)
+RigExecBakedSampleHeadLeaves(RigExecBakedProgramImpl *program, UsdTimeCode time,
+                             bool all)
 {
     RigExecBakedProgramImpl &B = *program;
     all = all || !B.headLeavesSampled || B.headLeafStamp != B.programStamp;
@@ -1791,16 +1899,26 @@ RigExecBakedHeadLeafHolds(const RigExecBakedHeadLeaf &leaf,
                           const VtValue &value)
 {
     switch (leaf.type) {
-    case HeadType::Bool: return value.IsHolding<bool>();
-    case HeadType::Float: return value.IsHolding<float>();
-    case HeadType::Double: return value.IsHolding<double>();
-    case HeadType::Vec3f: return value.IsHolding<GfVec3f>();
-    case HeadType::Matrix4d: return value.IsHolding<GfMatrix4d>();
-    case HeadType::Vec2fArray: return value.IsHolding<VtArray<GfVec2f>>();
-    case HeadType::Int: return value.IsHolding<int>();
-    case HeadType::Token: return value.IsHolding<TfToken>();
-    case HeadType::Vec3d: return value.IsHolding<GfVec3d>();
-    case HeadType::Vec3fArray: return value.IsHolding<VtVec3fArray>();
+    case HeadType::Bool:
+        return value.IsHolding<bool>();
+    case HeadType::Float:
+        return value.IsHolding<float>();
+    case HeadType::Double:
+        return value.IsHolding<double>();
+    case HeadType::Vec3f:
+        return value.IsHolding<GfVec3f>();
+    case HeadType::Matrix4d:
+        return value.IsHolding<GfMatrix4d>();
+    case HeadType::Vec2fArray:
+        return value.IsHolding<VtArray<GfVec2f>>();
+    case HeadType::Int:
+        return value.IsHolding<int>();
+    case HeadType::Token:
+        return value.IsHolding<TfToken>();
+    case HeadType::Vec3d:
+        return value.IsHolding<GfVec3d>();
+    case HeadType::Vec3fArray:
+        return value.IsHolding<VtVec3fArray>();
     }
     return false;
 }
@@ -1827,13 +1945,13 @@ RigExecBakedPlaceHeadOverrides(RigExecBakedProgramImpl *program)
     }
     for (size_t s = 0; s < slots; ++s) {
         B.headOverrideMoved[s] = RigExecBakedHeadValueSame(
-                                     B.headOverrides[s],
-                                     B.lastHeadOverrides[s])
+                                     B.headOverrides[s], B.lastHeadOverrides[s])
                                      ? 0
                                      : 1;
     }
     std::fill(B.propertyChanged.begin(), B.propertyChanged.end(), char(0));
-    for (auto &field : B.weightFields) field.changed = false;
+    for (auto &field : B.weightFields)
+        field.changed = false;
     for (size_t r = 0; r < B.propertyRecords.size(); ++r) {
         const RigExecBakedPropertyRecord &record = B.propertyRecords[r];
         bool standing = false, moved = false;
@@ -1848,9 +1966,7 @@ RigExecBakedPlaceHeadOverrides(RigExecBakedProgramImpl *program)
 
 namespace {
 
-template <class T>
-T &
-Member(RigExecBakedPropertyValue &v);
+template <class T> T &Member(RigExecBakedPropertyValue &v);
 template <>
 float &
 Member<float>(RigExecBakedPropertyValue &v)
@@ -1878,15 +1994,18 @@ Member<GfMatrix4d>(RigExecBakedPropertyValue &v)
 
 // The version as a published value, in the chain's own type.
 VtValue
-VersionValue(const RigExecBakedProgramImpl &B, const Chain &chain,
-             uint32_t id)
+VersionValue(const RigExecBakedProgramImpl &B, const Chain &chain, uint32_t id)
 {
     const RigExecBakedPropertyValue &v = B.propertyValues[id];
     switch (chain.arm) {
-    case Chain::Arm::Float: return VtValue(v.f);
-    case Chain::Arm::Double: return VtValue(v.d);
-    case Chain::Arm::Matrix4d: return VtValue(v.m);
-    case Chain::Arm::Vec3f: return VtValue(v.v);
+    case Chain::Arm::Float:
+        return VtValue(v.f);
+    case Chain::Arm::Double:
+        return VtValue(v.d);
+    case Chain::Arm::Matrix4d:
+        return VtValue(v.m);
+    case Chain::Arm::Vec3f:
+        return VtValue(v.v);
     }
     return VtValue();
 }
@@ -1903,17 +2022,16 @@ Base(const RigExecBakedProgramImpl &B, const Chain &chain,
                               ? &B.headOverrides[size_t(chain.targetSlot)]
                               : nullptr;
     if (drag && !drag->IsEmpty()) {
-        const VtValue held =
-            RigExecPhasedConsumerValue(*drag, chain.valueType);
+        const VtValue held = RigExecPhasedConsumerValue(*drag, chain.valueType);
         if (held.IsHolding<ValueT>()) {
             *value = held.UncheckedGet<ValueT>();
             haveBase = true;
         }
     }
     if (!haveBase) {
-        const VtValue *own =
-            chain.ownLeaf >= 0 ? &B.headLeaves[size_t(chain.ownLeaf)].value
-                               : nullptr;
+        const VtValue *own = chain.ownLeaf >= 0
+                                 ? &B.headLeaves[size_t(chain.ownLeaf)].value
+                                 : nullptr;
         if (!own || !own->IsHolding<ValueT>()) {
             lines->push_back(chain.linePrefix +
                              ": target has no authored value; chain skipped");
@@ -1932,8 +2050,7 @@ Base(const RigExecBakedProgramImpl &B, const Chain &chain,
 
 template <class T>
 T
-Read(const RigExecBakedProgramImpl &B, const RigExecBakedWalk &walk,
-     T fallback)
+Read(const RigExecBakedProgramImpl &B, const RigExecBakedWalk &walk, T fallback)
 {
     T value;
     return RigExecBakedResolveWalk(B, walk, &value) ? value : fallback;
@@ -1941,25 +2058,35 @@ Read(const RigExecBakedProgramImpl &B, const RigExecBakedWalk &walk,
 
 // applyFloat.
 bool
-ApplyFloat(const RigExecBakedProgramImpl &B, const Chain::Revision &r,
-           float in, float envelope, float *out)
+ApplyFloat(const RigExecBakedProgramImpl &B, const Chain::Revision &r, float in,
+           float envelope, float *out)
 {
     RigExecFloatPropertyRecord record;
-    record.op=r.op;record.opValid=r.opValid;record.hasTangents=r.hasTangents;
-    record.value=Read(B,r.value,0.0f);record.minimum=Read(B,r.minimum,0.0f);record.maximum=Read(B,r.maximum,0.0f);
-    VtArray<GfVec2f> keys,tangents;
-    if(record.op==RigExecPropertyOp::Curve) {
-        keys=Read(B,r.keys,keys);record.keyData=keys.cdata();record.keyCount=keys.size();
-        if(r.hasTangents) {
-            tangents=Read(B,r.tangents,tangents);record.tangentData=tangents.cdata();record.tangentCount=tangents.size();
+    record.op = r.op;
+    record.opValid = r.opValid;
+    record.hasTangents = r.hasTangents;
+    record.value = Read(B, r.value, 0.0f);
+    record.minimum = Read(B, r.minimum, 0.0f);
+    record.maximum = Read(B, r.maximum, 0.0f);
+    VtArray<GfVec2f> keys, tangents;
+    if (record.op == RigExecPropertyOp::Curve) {
+        keys = Read(B, r.keys, keys);
+        record.keyData = keys.cdata();
+        record.keyCount = keys.size();
+        if (r.hasTangents) {
+            tangents = Read(B, r.tangents, tangents);
+            record.tangentData = tangents.cdata();
+            record.tangentCount = tangents.size();
         }
     }
     VtVec3fArray points;
-    if(record.op==RigExecPropertyOp::Path) {
-        points=Read(B,r.pathPoints,points);record.pathPointData=points.cdata();record.pathPointCount=points.size();
-        record.path=r.path;
+    if (record.op == RigExecPropertyOp::Path) {
+        points = Read(B, r.pathPoints, points);
+        record.pathPointData = points.cdata();
+        record.pathPointCount = points.size();
+        record.path = r.path;
     }
-    return RigExecRunProperty(record,in,envelope,out);
+    return RigExecRunProperty(record, in, envelope, out);
 }
 
 bool
@@ -1987,8 +2114,10 @@ Apply(const RigExecBakedProgramImpl &B, const Chain::Revision &r,
       const GfMatrix4d &in, float envelope, GfMatrix4d *out)
 {
     RigExecMatrixPropertyRecord record;
-    record.op=r.op;record.opValid=r.opValid;record.value=Read(B,r.value,GfMatrix4d(1.0));
-    return RigExecRunProperty(record,in,envelope,out);
+    record.op = r.op;
+    record.opValid = r.opValid;
+    record.value = Read(B, r.value, GfMatrix4d(1.0));
+    return RigExecRunProperty(record, in, envelope, out);
 }
 
 bool
@@ -1996,9 +2125,12 @@ Apply(const RigExecBakedProgramImpl &B, const Chain::Revision &r,
       const GfVec3f &in, float envelope, GfVec3f *out)
 {
     RigExecVec3PropertyRecord record;
-    record.op=r.op;record.opValid=r.opValid;record.value=Read(B,r.value,GfVec3f(0));
-    record.minimum=Read(B,r.minimum,GfVec3f(0));record.maximum=Read(B,r.maximum,GfVec3f(0));
-    return RigExecRunProperty(record,in,envelope,out);
+    record.op = r.op;
+    record.opValid = r.opValid;
+    record.value = Read(B, r.value, GfVec3f(0));
+    record.minimum = Read(B, r.minimum, GfVec3f(0));
+    record.maximum = Read(B, r.maximum, GfVec3f(0));
+    return RigExecRunProperty(record, in, envelope, out);
 }
 
 // One revision of runChain's loop: \p out is \p in where the revision
@@ -2078,15 +2210,18 @@ RunPart(RigExecBakedProgramImpl *program, RigExecBakedStep *step,
     } else if (B.propertyVersionValid[id - 1]) {
         // A skipped chain runs no revision and says nothing about them.
         const ValueT in = Member<ValueT>(B.propertyValues[id - 1]);
-        const auto &revision = chain.revisions[size_t(step->part)-1];
-        ForEachWalk(revision,[&](const RigExecBakedWalk &walk) {
-            for (const auto *hops : {&walk.hops,&walk.doubleHops})
-                for (const auto &hop : *hops) if (hop.crossDomain >= 0) {
-                    VtValue value;
-                    std::string diagnostic;
-                    if (!RigExecBakedReadCrossDomain(B,hop.crossDomain,&value,&diagnostic) &&
-                        !diagnostic.empty()) lines->push_back(diagnostic);
-                }
+        const auto &revision = chain.revisions[size_t(step->part) - 1];
+        ForEachWalk(revision, [&](const RigExecBakedWalk &walk) {
+            for (const auto *hops : {&walk.hops, &walk.doubleHops})
+                for (const auto &hop : *hops)
+                    if (hop.crossDomain >= 0) {
+                        VtValue value;
+                        std::string diagnostic;
+                        if (!RigExecBakedReadCrossDomain(B, hop.crossDomain,
+                                                         &value, &diagnostic) &&
+                            !diagnostic.empty())
+                            lines->push_back(diagnostic);
+                    }
         });
         Revise(B, chain.revisions[size_t(step->part) - 1], in, time, lines,
                &value);
@@ -2105,19 +2240,25 @@ RunPart(RigExecBakedProgramImpl *program, RigExecBakedStep *step,
     }
 }
 
-}  // namespace
+} // namespace
 
 void
 RigExecBakedRunPropertyStep(RigExecBakedProgramImpl *program,
                             RigExecBakedStep *step, UsdTimeCode time)
 {
     switch (program->propertyChains[size_t(step->object)].arm) {
-    case Chain::Arm::Float: RunPart<float>(program, step, time); return;
-    case Chain::Arm::Double: RunPart<double>(program, step, time); return;
+    case Chain::Arm::Float:
+        RunPart<float>(program, step, time);
+        return;
+    case Chain::Arm::Double:
+        RunPart<double>(program, step, time);
+        return;
     case Chain::Arm::Matrix4d:
         RunPart<GfMatrix4d>(program, step, time);
         return;
-    case Chain::Arm::Vec3f: RunPart<GfVec3f>(program, step, time); return;
+    case Chain::Arm::Vec3f:
+        RunPart<GfVec3f>(program, step, time);
+        return;
     }
 }
 
@@ -2150,16 +2291,15 @@ RigExecBakedFinishPropertyStep(RigExecBakedProgramImpl *program,
     if (size_t(step.part) == n && B.oraclePublications) {
         RigExecOraclePublicationContext::Writes writes;
         if (B.propertyVersionValid[id]) {
-            writes.emplace_back(chain.target,VersionValue(B,chain,id));
+            writes.emplace_back(chain.target, VersionValue(B, chain, id));
             for (const uint32_t record : chain.records)
                 if (!B.recordStoodAside[record]) {
                     writes.emplace_back(B.propertyRecords[record].consumer,
                                         B.recordValues[record]);
                 }
         }
-        B.oraclePublications->Finish(size_t(step.object),writes);
+        B.oraclePublications->Finish(size_t(step.object), writes);
     }
-
 }
 
 void
@@ -2170,21 +2310,26 @@ RigExecBakedPublishPropertyChains(RigExecBakedProgramImpl *program,
     end = std::min(end, B.propertyChains.size());
     for (size_t c = begin; c < end; ++c) {
         const Chain &chain = B.propertyChains[c];
-        const uint32_t final = chain.versionBase + uint32_t(chain.revisions.size());
+        const uint32_t final =
+            chain.versionBase + uint32_t(chain.revisions.size());
         if (B.propertyVersionValid[final]) {
             const VtValue &result = B.chainFinal[c];
-            if (results) B.propertyResults[chain.target] = result;
+            if (results)
+                B.propertyResults[chain.target] = result;
             B.resolvedInputs->SetProperty(chain.target, result);
         }
         for (const uint32_t r : chain.records) {
             const RigExecBakedPropertyRecord &record = B.propertyRecords[r];
-            const uint32_t source = chain.versionBase + uint32_t(
-                std::min(record.applied, chain.revisions.size()));
-            if (B.recordStoodAside[r] || !B.propertyVersionValid[source]) continue;
-            if (results) B.propertyResults[record.consumer] = B.recordValues[r];
+            const uint32_t source =
+                chain.versionBase +
+                uint32_t(std::min(record.applied, chain.revisions.size()));
+            if (B.recordStoodAside[r] || !B.propertyVersionValid[source])
+                continue;
+            if (results)
+                B.propertyResults[record.consumer] = B.recordValues[r];
             B.resolvedInputs->SetProperty(record.consumer, B.recordValues[r]);
         }
     }
 }
 
-}  // namespace rigExec
+} // namespace rigExec

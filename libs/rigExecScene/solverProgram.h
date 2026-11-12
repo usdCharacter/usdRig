@@ -1,5 +1,6 @@
 #ifndef RIGEXEC_GRAPH_SOLVER_PROGRAM_H
 #define RIGEXEC_GRAPH_SOLVER_PROGRAM_H
+#include "rigExecSchema/schemaNames.h"
 #include "rigExecMath/solvers.h"
 #include "rigExecMath/splineIk.h"
 #include "rigExecMath/skeleton2dKernel.h"
@@ -8,54 +9,76 @@
 namespace rigExec {
 // Defined in rigExec/types.h; held and passed by pointer here.
 struct RigExecPointFrameArray;
-enum class RigExecSolverKind { FkChain, TwoBoneIk, BlendPointFrames, TwistDistribution, Ribbon, SplineIk,
-    Skeleton2d };
+enum class RigExecSolverKind {
+    FkChain,
+    TwoBoneIk,
+    BlendPointFrames,
+    TwistDistribution,
+    Ribbon,
+    SplineIk,
+    Skeleton2d
+};
 /// Schema relationships that declare solver input prerequisites. A target
 /// solver remains a structural dependency even when its numerical frame/curve
 /// type is unavailable; scheduling comes only from the common op compiler.
-inline std::vector<std::string> RigExecSolverRelationshipPorts(RigExecSolverKind kind)
+inline std::vector<std::string>
+RigExecSolverRelationshipPorts(RigExecSolverKind kind)
 {
     switch (kind) {
-    case RigExecSolverKind::FkChain: return {"rigExec:controls", "rigExec:startFrame"};
+    case RigExecSolverKind::FkChain:
+        return {SchemaAttrText::rigExecControls,
+                SchemaAttrText::rigExecStartFrame};
     case RigExecSolverKind::TwoBoneIk:
-        return {"rigExec:rootControl", "rigExec:effectorControl", "rigExec:poleControl", "rigExec:space"};
-    case RigExecSolverKind::BlendPointFrames: return {"rigExec:inputA", "rigExec:inputB"};
-    case RigExecSolverKind::TwistDistribution: return {"rigExec:start", "rigExec:end"};
+        return {SchemaAttrText::rigExecRootControl,
+                SchemaAttrText::rigExecEffectorControl,
+                SchemaAttrText::rigExecPoleControl,
+                SchemaAttrText::rigExecSpace};
+    case RigExecSolverKind::BlendPointFrames:
+        return {SchemaAttrText::rigExecInputA, SchemaAttrText::rigExecInputB};
+    case RigExecSolverKind::TwistDistribution:
+        return {SchemaAttrText::rigExecStart, SchemaAttrText::rigExecEnd};
     case RigExecSolverKind::Ribbon:
-        return {"rigExec:driverCurve", "rigExec:startFrame", "rigExec:endFrame", "rigExec:twistFrames"};
+        return {SchemaAttrText::rigExecDriverCurve,
+                SchemaAttrText::rigExecStartFrame,
+                SchemaAttrText::rigExecEndFrame,
+                SchemaAttrText::rigExecTwistFrames};
     case RigExecSolverKind::SplineIk:
-        return {"rigExec:rootControl", "rigExec:midControl", "rigExec:endControl", "rigExec:space"};
+        return {SchemaAttrText::rigExecRootControl,
+                SchemaAttrText::rigExecMidControl,
+                SchemaAttrText::rigExecEndControl,
+                SchemaAttrText::rigExecSpace};
     case RigExecSolverKind::Skeleton2d:
         // Its avars are per-bone typed reads; the start frame is its only
         // solver-input relationship.
-        return {"rigExec:startFrame"};
+        return {SchemaAttrText::rigExecStartFrame};
     }
     return {};
 }
-using RigExecSolverRest = std::array<GfVec3d,4>;
+using RigExecSolverRest = std::array<GfVec3d, 4>;
 /// Detached structural/refresh data. Source bindings belong to the compiler,
 /// never this record. All rest data is in rig-common row-vector space.
 struct RigExecSolverRecord {
     RigExecSolverKind kind = RigExecSolverKind::FkChain;
-    bool degenerate=false, parentRelative=false, hasStart=false, scaleSegments=false;
+    bool degenerate = false, parentRelative = false, hasStart = false,
+         scaleSegments = false;
     std::vector<RigExecSolverRest> controlRests, jointRests;
     std::vector<bool> restIsLive;
     RigExecSolverRest startRest{};
-    std::array<RigExecSolverRest,3> ikRests{};
+    std::array<RigExecSolverRest, 3> ikRests{};
     RigExecTwoBoneIkParams ikParams;
-    RigExecScaleBlend scaleMode=RigExecScaleBlend::Log;
-    bool blendRotationRejected=false;
-    RigExecSolverRest twistStartRest{},twistEndRest{};
+    RigExecScaleBlend scaleMode = RigExecScaleBlend::Log;
+    bool blendRotationRejected = false;
+    RigExecSolverRest twistStartRest{}, twistEndRest{};
     std::vector<double> twistWeights;
     std::vector<GfVec3f> ribbonRestPoints;
     RigExecSplineIkRest splineRest;
     RigExecSplineIkParams splineParams;
     std::vector<RigExecPointFrame> splineRestFrames;
-    RigExecPointFrame splineRootRest,splineMidRest,splineEndRest;
+    RigExecPointFrame splineRootRest, splineMidRest, splineEndRest;
     std::vector<double> splineRestWeights;
-    RigExecSplineIkRestLength splineRestMode=RigExecSplineIkRestLength::Curve;
+    RigExecSplineIkRestLength splineRestMode = RigExecSplineIkRestLength::Curve;
     std::vector<RigExecSolverRest> splineJointRests;
-    size_t splineCount=0;
+    size_t splineCount = 0;
     /// Skeleton2d: rigExec:joints index per solve entry (parents first) and
     /// the structural setup in that order. Rests are jointRests (rigExec:joints
     /// order), refreshed by the solver rest route; the start frame rides on
@@ -76,21 +99,22 @@ struct RigExecSolverRecord {
 /// aggregate pointers preserve BlendPointFrames unwired-input pass-through.
 struct RigExecSolverInputs {
     std::vector<RigExecPointFrame> controls;
-    RigExecPointFrame start,root,mid,end,pole;
-    const RigExecPointFrameArray *blendA=nullptr,*blendB=nullptr;
-    double blendWeight=0,twistTurns=0;
+    RigExecPointFrame start, root, mid, end, pole;
+    const RigExecPointFrameArray *blendA = nullptr, *blendB = nullptr;
+    double blendWeight = 0, twistTurns = 0;
     std::vector<GfVec3f> ribbonPoints;
-    int ribbonSampleCount=0;
-    bool refreshIkParams=false;
-    double bend=0,upperOffset=0,lowerOffset=0;
-    float stretch=1,softness=0,pin=0,softDistance=0,limbTwist=0;
-    double upperScale=1,lowerScale=1;
-    GfMatrix4d ikSpace=GfMatrix4d(1.0);
-    bool hasSpace=false;
+    int ribbonSampleCount = 0;
+    bool refreshIkParams = false;
+    double bend = 0, upperOffset = 0, lowerOffset = 0;
+    float stretch = 1, softness = 0, pin = 0, softDistance = 0, limbTwist = 0;
+    double upperScale = 1, lowerScale = 1;
+    GfMatrix4d ikSpace = GfMatrix4d(1.0);
+    bool hasSpace = false;
     RigExecSolverRest spaceRest{};
     RigExecPointFrame space;
-    bool refreshSplineParams=false;
-    double preserveVolume=0,midFollowWeight=0,rollDegrees=0,twistDegrees=0,minLengthRatio=0;
+    bool refreshSplineParams = false;
+    double preserveVolume = 0, midFollowWeight = 0, rollDegrees = 0,
+           twistDegrees = 0, minLengthRatio = 0;
     /// Skeleton2d: each bone's channels, rigExec:joints order, and each
     /// space switch's active index. Its start frame is `start` and its
     /// outside parent spaces are `controls`.
@@ -114,7 +138,8 @@ struct RigExecSolverWorkspace {
 };
 /// One production numerical body for native and direct SceneDb graphs.
 /// Clears outputs even for malformed/degenerate bindings.
-bool RigExecRunSolver(const RigExecSolverRecord &,const RigExecSolverInputs &,
-    RigExecSolverWorkspace *,RigExecPointFrameArray *,std::string *error=nullptr);
-}
+bool RigExecRunSolver(const RigExecSolverRecord &, const RigExecSolverInputs &,
+                      RigExecSolverWorkspace *, RigExecPointFrameArray *,
+                      std::string *error = nullptr);
+} // namespace rigExec
 #endif

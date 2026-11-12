@@ -3,6 +3,7 @@
 // point fields and scalar envelopes use the diagnostic field policy and their
 // explicitly bound placement phase. Both source adapters use weightProgram;
 // weightReference retains independent scalar reference arithmetic.
+#include "rigExecSchema/schemaNames.h"
 #include "bakedProgramImpl.h"
 
 #include "types.h"
@@ -26,50 +27,50 @@
 // interned tokens rather than against literals.
 TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
-    ((staticWeight, "RigExecStaticWeight"))
-    ((dynamicWeight, "RigExecDynamicWeight"))
-    ((combineWeight, "RigExecCombineWeight"))
-    ((sphereWeight, "RigExecSphereWeight"))
-    ((planeWeight, "RigExecPlaneWeight"))
-    ((curveWeight, "RigExecCurveWeight"))
-    ((falloffSamples, "inputs:falloffSamples"))
-    ((rigExecValues, "rigExec:values"))
-    ((rigExecIndices, "rigExec:indices"))
-    ((rigExecFalloffProfile, "rigExec:falloffProfile"))
-    ((rigExecFalloffCurve, "rigExec:falloffCurve"))
-    ((rigExecDefaultWeight, "rigExec:defaultWeight"))
-    ((inputsDriver, "inputs:driver"))
-    ((inputsScale, "inputs:scale"))
-    ((inputsBias, "inputs:bias"))
-    ((inputsStrength, "inputs:strength"))
-    ((inputsInvert, "inputs:invert"))
-    ((inputsFalloffMin, "inputs:falloffMin"))
-    ((inputsFalloffMax, "inputs:falloffMax"))
-    ((inputsScaleXPos, "inputs:scaleXPos"))
-    ((inputsScaleYPos, "inputs:scaleYPos"))
-    ((inputsScaleZPos, "inputs:scaleZPos"))
-    ((inputsScaleXNeg, "inputs:scaleXNeg"))
-    ((inputsScaleYNeg, "inputs:scaleYNeg"))
-    ((inputsScaleZNeg, "inputs:scaleZNeg"))
-    ((inputsScaleX, "inputs:scaleX"))
-    ((inputsScaleY, "inputs:scaleY"))
-    ((inputsScaleZ, "inputs:scaleZ"))
-    ((inputsExtentU, "inputs:extentU"))
-    ((inputsExtentV, "inputs:extentV"))
-    ((rigExecBaseWeight, "rigExec:baseWeight"))
-    ((rigExecInputWeights, "rigExec:inputWeights"))
-    ((rigExecRepresentation, "rigExec:representation"))
+    ((staticWeight, rigExec::SchemaTypeName::RigExecStaticWeight))
+    ((dynamicWeight, rigExec::SchemaTypeName::RigExecDynamicWeight))
+    ((combineWeight, rigExec::SchemaTypeName::RigExecCombineWeight))
+    ((sphereWeight, rigExec::SchemaTypeName::RigExecSphereWeight))
+    ((planeWeight, rigExec::SchemaTypeName::RigExecPlaneWeight))
+    ((curveWeight, rigExec::SchemaTypeName::RigExecCurveWeight))
+    ((falloffSamples, rigExec::SchemaAttrText::inputsFalloffSamples))
+    ((rigExecValues, rigExec::SchemaAttrText::rigExecValues))
+    ((rigExecIndices, rigExec::SchemaAttrText::rigExecIndices))
+    ((rigExecFalloffProfile, rigExec::SchemaAttrText::rigExecFalloffProfile))
+    ((rigExecFalloffCurve, rigExec::SchemaAttrText::rigExecFalloffCurve))
+    ((rigExecDefaultWeight, rigExec::SchemaAttrText::rigExecDefaultWeight))
+    ((inputsDriver, rigExec::SchemaAttrText::inputsDriver))
+    ((inputsScale, rigExec::SchemaAttrText::inputsScale))
+    ((inputsBias, rigExec::SchemaAttrText::inputsBias))
+    ((inputsStrength, rigExec::SchemaAttrText::inputsStrength))
+    ((inputsInvert, rigExec::SchemaAttrText::inputsInvert))
+    ((inputsFalloffMin, rigExec::SchemaAttrText::inputsFalloffMin))
+    ((inputsFalloffMax, rigExec::SchemaAttrText::inputsFalloffMax))
+    ((inputsScaleXPos, rigExec::SchemaAttrText::inputsScaleXPos))
+    ((inputsScaleYPos, rigExec::SchemaAttrText::inputsScaleYPos))
+    ((inputsScaleZPos, rigExec::SchemaAttrText::inputsScaleZPos))
+    ((inputsScaleXNeg, rigExec::SchemaAttrText::inputsScaleXNeg))
+    ((inputsScaleYNeg, rigExec::SchemaAttrText::inputsScaleYNeg))
+    ((inputsScaleZNeg, rigExec::SchemaAttrText::inputsScaleZNeg))
+    ((inputsScaleX, rigExec::SchemaAttrText::inputsScaleX))
+    ((inputsScaleY, rigExec::SchemaAttrText::inputsScaleY))
+    ((inputsScaleZ, rigExec::SchemaAttrText::inputsScaleZ))
+    ((inputsExtentU, rigExec::SchemaAttrText::inputsExtentU))
+    ((inputsExtentV, rigExec::SchemaAttrText::inputsExtentV))
+    ((rigExecBaseWeight, rigExec::SchemaAttrText::rigExecBaseWeight))
+    ((rigExecInputWeights, rigExec::SchemaAttrText::rigExecInputWeights))
+    ((rigExecRepresentation, rigExec::SchemaAttrText::rigExecRepresentation))
     (constant)
-    ((rigExecRangePolicy, "rigExec:rangePolicy"))
+    ((rigExecRangePolicy, rigExec::SchemaAttrText::rigExecRangePolicy))
     (strict)
-    ((rigExecCombineMode, "rigExec:combineMode"))
-    ((rigExecPlaneAxis, "rigExec:planeAxis"))
+    ((rigExecCombineMode, rigExec::SchemaAttrText::rigExecCombineMode))
+    ((rigExecPlaneAxis, rigExec::SchemaAttrText::rigExecPlaneAxis))
     (y)
-    ((rigExecPlaneBounds, "rigExec:planeBounds"))
+    ((rigExecPlaneBounds, rigExec::SchemaAttrText::rigExecPlaneBounds))
     (unbounded)
-    ((rigExecWeightTarget, "rigExec:weightTarget"))
-    ((rigExecSampleSource, "rigExec:sampleSource"))
-    ((rigExecCurve, "rigExec:curve"))
+    ((rigExecWeightTarget, rigExec::SchemaAttrText::rigExecWeightTarget))
+    ((rigExecSampleSource, rigExec::SchemaAttrText::rigExecSampleSource))
+    ((rigExecCurve, rigExec::SchemaAttrText::rigExecCurve))
 );
 
 namespace rigExec {
@@ -81,8 +82,7 @@ RigExecBakedWeightsTouchTokens()
 }
 
 int
-RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx,
-                             const SdfPath &path)
+RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx, const SdfPath &path)
 {
     RigExecBakedProgramImpl &B = *ctx->program;
     if (path.IsEmpty()) {
@@ -90,8 +90,9 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx,
     }
     // Allocate identity on entry so authored back-edges survive discovery.
     // Canonical graph compilation owns SCC diagnosis and exclusion.
-    const auto seen=B.weightIndex.find(path);
-    if(seen!=B.weightIndex.end())return seen->second;
+    const auto seen = B.weightIndex.find(path);
+    if (seen != B.weightIndex.end())
+        return seen->second;
     const UsdPrim prim = B.stage->GetPrimAtPath(path);
     if (!prim) {
         // No marker left behind: there is nothing to recurse into, so a
@@ -100,8 +101,8 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx,
         ctx->Refuse("weight object prim is missing", path);
         return -1;
     }
-    const int index=int(B.weightObjects.size());
-    B.weightIndex[path]=index;
+    const int index = int(B.weightObjects.size());
+    B.weightIndex[path] = index;
     B.weightObjects.emplace_back();
 
     RigExecBakedProgramImpl::WeightObject object;
@@ -112,13 +113,13 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx,
     // so everything this object reads has to be in it already. The authored
     // order of rigExec:inputWeights is kept -- subtract and overlay are
     // order dependent by design.
-    object.base =
-        RigExecBakedBakeWeightObject(ctx, [&]() {
-            const SdfPathVector targets =
-                ctx->Targets(prim, _tokens->rigExecBaseWeight);
-            return targets.empty() ? SdfPath() : targets[0];
-        }());
-    for (const SdfPath &input : ctx->Targets(prim, _tokens->rigExecInputWeights)) {
+    object.base = RigExecBakedBakeWeightObject(ctx, [&]() {
+        const SdfPathVector targets =
+            ctx->Targets(prim, _tokens->rigExecBaseWeight);
+        return targets.empty() ? SdfPath() : targets[0];
+    }());
+    for (const SdfPath &input :
+         ctx->Targets(prim, _tokens->rigExecInputWeights)) {
         const int index = RigExecBakedBakeWeightObject(ctx, input);
         if (index >= 0) {
             object.inputs.push_back(index);
@@ -128,10 +129,12 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx,
     // The structural tokens are read the way the dynamic path reads them --
     // plainly, with no time and no resolution walk -- and land in `folded`,
     // so an edit to one rebuilds the program rather than being missed.
-    object.representation = ctx->ReadToken(prim, _tokens->rigExecRepresentation,
-                                           _tokens->constant);
-    object.rangePolicy = ctx->ReadToken(prim, _tokens->rigExecRangePolicy, _tokens->strict);
-    object.combineMode = ctx->ReadToken(prim, _tokens->rigExecCombineMode, TfToken());
+    object.representation =
+        ctx->ReadToken(prim, _tokens->rigExecRepresentation, _tokens->constant);
+    object.rangePolicy =
+        ctx->ReadToken(prim, _tokens->rigExecRangePolicy, _tokens->strict);
+    object.combineMode =
+        ctx->ReadToken(prim, _tokens->rigExecCombineMode, TfToken());
 
     // The painted arrays. Uniform by schema, so they fold; still named, so a
     // resync that authors one is seen.
@@ -211,9 +214,10 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx,
         object.scaleZ = ctx->Bind(prim, _tokens->inputsScaleZ, 1.0f);
         object.extentU = ctx->Bind(prim, _tokens->inputsExtentU, 1.0f);
         object.extentV = ctx->Bind(prim, _tokens->inputsExtentV, 1.0f);
-        object.planeAxis = ctx->ReadToken(prim, _tokens->rigExecPlaneAxis, _tokens->y);
-        object.planeBounds =
-            ctx->ReadToken(prim, _tokens->rigExecPlaneBounds, _tokens->unbounded);
+        object.planeAxis =
+            ctx->ReadToken(prim, _tokens->rigExecPlaneAxis, _tokens->y);
+        object.planeBounds = ctx->ReadToken(prim, _tokens->rigExecPlaneBounds,
+                                            _tokens->unbounded);
         // The authored profile supplies the default table. A declared sample
         // array can replace it without recompiling the profile during a drag.
         ctx->Fold(prim, _tokens->rigExecFalloffProfile);
@@ -230,7 +234,7 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx,
         // its own weight target only when no input is dense enough to carry
         // the cardinality itself.
         for (const SdfPath &target :
-                 ctx->Targets(prim, _tokens->rigExecWeightTarget)) {
+             ctx->Targets(prim, _tokens->rigExecWeightTarget)) {
             if (!target.IsPropertyPath()) {
                 continue;
             }
@@ -246,7 +250,7 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx,
     // any, else the painted table, else one element.
     object.costElements = std::max<size_t>(object.values.size(), 1);
     for (const std::vector<UsdAttribute> *points :
-             {&object.targetPoints, &object.combineTargetPoints}) {
+         {&object.targetPoints, &object.combineTargetPoints}) {
         for (const UsdAttribute &a : *points) {
             VtVec3fArray value;
             if (a.Get(&value, UsdTimeCode::EarliestTime())) {
@@ -277,15 +281,17 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx,
     if (volumetric) {
         const SdfPath samples = path.AppendProperty(_tokens->falloffSamples);
         object.falloffSamplesLeaf = int(object.pointLeaves.decl.keys.size());
-        object.pointLeaves.decl.Add({samples, RigExecRevisionLeafType::FloatArray,
-            RigExecRevisionLeafTime::AtTime, RigExecRevisionLeafFlavour::ResolvedOnly,
-            VtValue(VtFloatArray())});
+        object.pointLeaves.decl.Add({samples,
+                                     RigExecRevisionLeafType::FloatArray,
+                                     RigExecRevisionLeafTime::AtTime,
+                                     RigExecRevisionLeafFlavour::ResolvedOnly,
+                                     VtValue(VtFloatArray())});
         B.named.insert(samples);
         B.resolvedRoutedPrims.insert(path);
     }
     RigExecBakedBindPathLeaves(B.stage, &object.pointLeaves);
 
-    B.weightObjects[size_t(index)]=std::move(object);
+    B.weightObjects[size_t(index)] = std::move(object);
     return index;
 }
 
@@ -297,16 +303,20 @@ RigExecBakedWeightPacket(const RigExecBakedProgramImpl &program,
 {
     const RigExecBakedProgramImpl &B = program;
     RigExecBakedProgramImpl::WeightObject &object = *objectPtr;
-    const auto &record=B.weightProgram[size_t(objectPtr-B.weightObjects.data())];
+    const auto &record =
+        B.weightProgram[size_t(objectPtr - B.weightObjects.data())];
     // The object's inputs as the prologue sampled them.
     const auto rd = [&B](const auto &input) {
         return RigExecBakedLeafRead(B, input);
     };
     if (object.type == _tokens->staticWeight) {
-        RigExecWeightPacketInputs inputs;inputs.workspace=&object.packetWorkspace;
-        inputs.painted={object.representation,object.rangePolicy,object.values.data(),object.values.size(),
-            object.indices.data(),object.indices.size(),rd(object.defaultWeight)};
-        return RigExecRunWeightPacket(record,inputs);
+        RigExecWeightPacketInputs inputs;
+        inputs.workspace = &object.packetWorkspace;
+        inputs.painted = {object.representation,   object.rangePolicy,
+                          object.values.data(),    object.values.size(),
+                          object.indices.data(),   object.indices.size(),
+                          rd(object.defaultWeight)};
+        return RigExecRunWeightPacket(record, inputs);
     }
     if (object.type == _tokens->dynamicWeight) {
         RigExecDynamicWeightInputs inputs;
@@ -320,11 +330,14 @@ RigExecBakedWeightPacket(const RigExecBakedProgramImpl &program,
         // packet instead would be a different answer.
         const RigExecWeightPacket *base =
             object.base >= 0 ? &packets[size_t(object.base)] : nullptr;
-        RigExecWeightPacketInputs packet;packet.dynamic=std::move(inputs);packet.base=base;
-        return RigExecRunWeightPacket(record,packet);
+        RigExecWeightPacketInputs packet;
+        packet.dynamic = std::move(inputs);
+        packet.base = base;
+        return RigExecRunWeightPacket(record, packet);
     }
     if (object.type == _tokens->combineWeight) {
-        auto &inputs=object.packetInputRefs;inputs.clear();
+        auto &inputs = object.packetInputRefs;
+        inputs.clear();
         inputs.reserve(object.inputs.size());
         for (const int input : object.inputs) {
             inputs.push_back(&packets[size_t(input)]);
@@ -336,15 +349,19 @@ RigExecBakedWeightPacket(const RigExecBakedProgramImpl &program,
         // A read that found nothing is an empty leaf, and adds nothing.
         size_t targetCount = 0;
         for (size_t i = 0; i < object.combineTargetPoints.size(); ++i) {
-            targetCount += object.pointLeaves
-                               .Value<VtVec3fArray>(
-                                   int(object.combineLeaves + i),
-                                   VtVec3fArray())
-                               .size();
+            targetCount +=
+                object.pointLeaves
+                    .Value<VtVec3fArray>(int(object.combineLeaves + i),
+                                         VtVec3fArray())
+                    .size();
         }
-        RigExecWeightPacketInputs packet;packet.borrowedInputs=&inputs;packet.targetCount=targetCount;packet.workspace=&object.packetWorkspace;
-        packet.strength=rd(object.strength);packet.invert=rd(object.invert);
-        return RigExecRunWeightPacket(record,packet);
+        RigExecWeightPacketInputs packet;
+        packet.borrowedInputs = &inputs;
+        packet.targetCount = targetCount;
+        packet.workspace = &object.packetWorkspace;
+        packet.strength = rd(object.strength);
+        packet.invert = rd(object.invert);
+        return RigExecRunWeightPacket(record, packet);
     }
     if (object.type == _tokens->sphereWeight ||
         object.type == _tokens->planeWeight ||
@@ -372,17 +389,17 @@ RigExecBakedWeightPacket(const RigExecBakedProgramImpl &program,
         inputs.params.strength = rd(object.strength);
         const VtFloatArray samples = object.pointLeaves.Value<VtFloatArray>(
             object.falloffSamplesLeaf, VtFloatArray());
-        inputs.params.curveData = samples.empty() ? object.falloffCurve.data() : samples.cdata();
-        inputs.params.curveCount = samples.empty() ? object.falloffCurve.size() : samples.size();
+        inputs.params.curveData =
+            samples.empty() ? object.falloffCurve.data() : samples.cdata();
+        inputs.params.curveCount =
+            samples.empty() ? object.falloffCurve.size() : samples.size();
         if (object.type != _tokens->planeWeight) {
-            inputs.positiveScales = GfVec3f(
-                rd(object.scaleXPos),
-                rd(object.scaleYPos),
-                rd(object.scaleZPos));
-            inputs.negativeScales = GfVec3f(
-                rd(object.scaleXNeg),
-                rd(object.scaleYNeg),
-                rd(object.scaleZNeg));
+            inputs.positiveScales =
+                GfVec3f(rd(object.scaleXPos), rd(object.scaleYPos),
+                        rd(object.scaleZPos));
+            inputs.negativeScales =
+                GfVec3f(rd(object.scaleXNeg), rd(object.scaleYNeg),
+                        rd(object.scaleZNeg));
             inputs.scales = GfVec3f(rd(object.scaleX), rd(object.scaleY),
                                     rd(object.scaleZ));
         } else {
@@ -391,7 +408,7 @@ RigExecBakedWeightPacket(const RigExecBakedProgramImpl &program,
             // Only the bounded arm consults them: an unbounded plane is an
             // infinite half-space gradient, and a bad extent on one is a
             // legibility problem rather than a reason to invalidate the rig.
-            if (object.planeBounds == "bounded") {
+            if (object.planeBounds == SchemaValueText::bounded) {
                 inputs.extentU = rd(object.extentU);
                 inputs.extentV = rd(object.extentV);
             }
@@ -402,30 +419,41 @@ RigExecBakedWeightPacket(const RigExecBakedProgramImpl &program,
         // reason RigExecVolumeWeightCanBuild exists.
         // A read that found nothing is an empty leaf, and contributes
         // nothing to the concatenation.
-        inputs.usePointViews=true;inputs.localCurveScratch=&object.packetLocalCurve;
-        const auto gather = [&object](size_t key,size_t begin,size_t count,
+        inputs.usePointViews = true;
+        inputs.localCurveScratch = &object.packetLocalCurve;
+        const auto gather = [&object](size_t key, size_t begin, size_t count,
                                       RigExecWeightPointView *view) {
-            auto &held=object.packetPointViews[key];auto &scratch=object.packetPointScratch[key];
-            *view={};scratch.clear();held.clear();
-            if(count==1) {
-                held=object.pointLeaves.Value<VtVec3fArray>(int(begin),VtVec3fArray());
-                const auto &points=held;*view={points.data(),points.size()};
+            auto &held = object.packetPointViews[key];
+            auto &scratch = object.packetPointScratch[key];
+            *view = {};
+            scratch.clear();
+            held.clear();
+            if (count == 1) {
+                held = object.pointLeaves.Value<VtVec3fArray>(int(begin),
+                                                              VtVec3fArray());
+                const auto &points = held;
+                *view = {points.data(), points.size()};
             } else {
-                for(size_t i=0;i<count;++i) {
-                    const auto points=object.pointLeaves.Value<VtVec3fArray>(int(begin+i),VtVec3fArray());
-                    scratch.insert(scratch.end(),points.begin(),points.end());
+                for (size_t i = 0; i < count; ++i) {
+                    const auto points = object.pointLeaves.Value<VtVec3fArray>(
+                        int(begin + i), VtVec3fArray());
+                    scratch.insert(scratch.end(), points.begin(), points.end());
                 }
-                *view={scratch.data(),scratch.size()};
+                *view = {scratch.data(), scratch.size()};
             }
         };
         if (RigExecVolumeWeightCanBuild(object.type, inputs)) {
-            gather(1,object.targetLeaves,object.targetPoints.size(),&inputs.targetView);
-            gather(0,object.sampleLeaves,object.samplePoints.size(),&inputs.sampleView);
-            if(object.type==_tokens->curveWeight)
-                gather(2,object.curveLeaves,object.curvePoints.size(),&inputs.curveView);
+            gather(1, object.targetLeaves, object.targetPoints.size(),
+                   &inputs.targetView);
+            gather(0, object.sampleLeaves, object.samplePoints.size(),
+                   &inputs.sampleView);
+            if (object.type == _tokens->curveWeight)
+                gather(2, object.curveLeaves, object.curvePoints.size(),
+                       &inputs.curveView);
         }
-        RigExecWeightPacketInputs packet;packet.volume=std::move(inputs);
-        return RigExecRunWeightPacket(record,packet);
+        RigExecWeightPacketInputs packet;
+        packet.volume = std::move(inputs);
+        return RigExecRunWeightPacket(record, packet);
     }
     // Every weight object type the compiled rig can hold has an arm above.
     // IsBakeable refuses any other by name, so nothing reaches this -- and
@@ -467,8 +495,8 @@ RigExecBakedNoteWeightInputs(
     // a property chain or a drag on the weighted mesh reaches this step the
     // same way it reaches a geometry mover.
     for (const std::vector<UsdAttribute> *points :
-             {&weight.targetPoints, &weight.samplePoints, &weight.curvePoints,
-              &weight.combineTargetPoints}) {
+         {&weight.targetPoints, &weight.samplePoints, &weight.curvePoints,
+          &weight.combineTargetPoints}) {
         if (!points->empty()) {
             sink->resolvedReads = true;
             for (const UsdAttribute &a : *points) {
@@ -514,8 +542,10 @@ RigExecBakedBuildWeightSteps(RigExecBakedProgramImpl *program)
         base.object = int(i);
         base.part = 2;
         base.maxDiagnostics = 0;
-        base.reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::PoseBase,B.baseLast[i]));
-        base.writes.push_back(RigExecBakedOne(RigExecBakedSlotDomain::WeightFramesBase,int(i)));
+        base.reads.push_back(
+            RigExecBakedOne(RigExecBakedSlotDomain::PoseBase, B.baseLast[i]));
+        base.writes.push_back(
+            RigExecBakedOne(RigExecBakedSlotDomain::WeightFramesBase, int(i)));
         B.steps.push_back(std::move(base));
     }
     // The slot storage, sized once. A consumer holds a pointer into it for
@@ -536,15 +566,16 @@ RigExecBakedBuildWeightSteps(RigExecBakedProgramImpl *program)
                 RigExecBakedSlotDomain::WeightPacket, weight.base));
         }
         for (const int input : weight.inputs) {
-            step.reads.push_back(RigExecBakedOne(
-                RigExecBakedSlotDomain::WeightPacket, input));
+            step.reads.push_back(
+                RigExecBakedOne(RigExecBakedSlotDomain::WeightPacket, input));
         }
         // A volume's placement is a pose frame, which makes its step a
         // reader of the pose half and so neither a source nor a pure
         // function of the stage.
         if (weight.providerSlot >= 0) {
-            step.reads.push_back(RigExecBakedOne(
-                RigExecBakedSlotDomain::PoseBase, B.baseLast[size_t(weight.providerSlot)]));
+            step.reads.push_back(
+                RigExecBakedOne(RigExecBakedSlotDomain::PoseBase,
+                                B.baseLast[size_t(weight.providerSlot)]));
         }
         step.writes.push_back(
             RigExecBakedOne(RigExecBakedSlotDomain::WeightPacket, int(i)));
@@ -562,9 +593,11 @@ RigExecBakedRunWeightStep(RigExecBakedProgramImpl *program,
         // the dynamic refresh places it. Readers mask by placedVolumes.
         const size_t slot = size_t(step->object);
         if (step->part == 2) {
-            B.volumePlacementBase[slot] = RigExecVolumePlacement(B.base[size_t(B.baseLast[slot])]);
+            B.volumePlacementBase[slot] =
+                RigExecVolumePlacement(B.base[size_t(B.baseLast[slot])]);
         } else {
-            B.volumePlacement[slot] = RigExecVolumePlacement(B.fin[size_t(B.finLast[slot])]);
+            B.volumePlacement[slot] =
+                RigExecVolumePlacement(B.fin[size_t(B.finLast[slot])]);
         }
         return;
     }
@@ -599,7 +632,8 @@ RigExecBakedPublishVolumePlacements(const RigExecBakedProgramImpl &program,
     frames->clear();
     const std::vector<char> &slots = program.placedVolumes;
     for (size_t i = 0; i < slots.size() && i < program.paths.size() &&
-                       i < program.volumePlacement.size(); ++i) {
+                       i < program.volumePlacement.size();
+         ++i) {
         if (slots[i]) {
             // Slots are in path order, so each entry lands at the end.
             frames->emplace_hint(frames->end(), program.paths[i],
@@ -608,4 +642,4 @@ RigExecBakedPublishVolumePlacements(const RigExecBakedProgramImpl &program,
     }
 }
 
-}  // namespace rigExec
+} // namespace rigExec

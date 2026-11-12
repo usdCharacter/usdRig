@@ -2,6 +2,7 @@
 #ifndef RIGEXEC_MOVERS_MOVER_REGISTRY_H
 #define RIGEXEC_MOVERS_MOVER_REGISTRY_H
 
+#include "rigExecSchema/schemaNames.h"
 #include "../moverGraphTypes.h"
 #include "../types.h"
 #include "../oracleInputs.h"
@@ -14,6 +15,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -29,9 +31,9 @@ struct RigExecSceneDescriptors;
 /// statically typed for.
 enum class RigExecMoverDomain {
     Points,
-    PropertyFloat,   ///< float, or a control avar's double
-    PropertyVec3f,   ///< float3 and every GfVec3f-backed role
-    PropertyMatrix,  ///< matrix4d
+    PropertyFloat,  ///< float, or a control avar's double
+    PropertyVec3f,  ///< float3 and every GfVec3f-backed role
+    PropertyMatrix, ///< matrix4d
 };
 
 /// What a parity-oracle branch did with its revision. PassThrough is the
@@ -78,8 +80,12 @@ struct RigExecMoverOracleContext {
     const SdfPath &target;
     UsdTimeCode time;
     const RigExecOracleScene &resolved;
-    std::function<const VtValue *(const SdfPath &, const RigExecReadPhase &, const SdfPath &)> phasedPoints;
-    std::function<const GfMatrix4d *(const SdfPath &, const RigExecReadPhase &, const SdfPath &)> phasedMatrix;
+    std::function<const VtValue *(const SdfPath &, const RigExecReadPhase &,
+                                  const SdfPath &)>
+        phasedPoints;
+    std::function<const GfMatrix4d *(const SdfPath &, const RigExecReadPhase &,
+                                     const SdfPath &)>
+        phasedMatrix;
     const std::unordered_map<SdfPath, GfMatrix4d, SdfPath::Hash>
         &baseProviderMatrices;
     const std::unordered_map<SdfPath, GfMatrix4d, SdfPath::Hash>
@@ -104,8 +110,9 @@ struct RigExecMoverOracleContext {
     const std::vector<float> *envelope = nullptr;
     /// Copied declared upstream solver input, never this mover's result.
     /// A present adapter returning no value is an unavailable input.
-    std::function<const RigExecOracleFrameInput *(const SdfPath &, const SdfPath &,
-                                                 UsdTimeCode)> boundFrames = {};
+    std::function<const RigExecOracleFrameInput *(const SdfPath &,
+                                                  const SdfPath &, UsdTimeCode)>
+        boundFrames = {};
 };
 
 /// Pure external assembly inputs. Provider values contain only explicit arrays
@@ -121,7 +128,9 @@ struct RigExecExternalProviderValues {
     explicit RigExecExternalProviderValues(const RigExecProviderValues &v)
         : transform(v.transform), influenceTransforms(v.influenceTransforms),
           carry(v.carry), weights(v.weights), driverFrames(v.driverFrames),
-          basePoints(v.basePoints), blendDeltas(v.blendDeltas) {}
+          basePoints(v.basePoints), blendDeltas(v.blendDeltas)
+    {
+    }
 };
 struct RigExecExternalInputContext {
     const RigExecRevisionBinding &binding;
@@ -147,16 +156,17 @@ struct RigExecMoverValidateContext {
 /// it needs before registering.
 struct RigExecMoverHandler {
     RigExecMoverHandler(
-        const char *schemaType,
+        std::string_view schemaType,
         std::optional<RigExecRevisionOp> (*resolveOp)(const TfToken &),
         RigExecMoverDomain domain)
-        : schemaType(schemaType)
-        , resolveOp(resolveOp)
-        , domain(domain)
-    {}
+        : schemaType(schemaType), resolveOp(resolveOp), domain(domain)
+    {
+    }
 
     /// The schema type name, e.g. "RigExecMatrixMover". The lookup key.
-    const char *schemaType;
+    /// Registration copies it into a std::string and re-points this view at
+    /// that copy, so it stays valid for the registry's lifetime.
+    std::string_view schemaType;
     /// The revision op this mover performs. Most movers return a fixed
     /// op; the curve mover resolves its authored mode; property movers
     /// return nullopt (they revise no point chain).
@@ -196,8 +206,8 @@ struct RigExecMoverHandler {
     void (*bind)(const RigExecMoverBindContext &ctx) = nullptr;
     /// Mover-specific compile validation. Null when the generic target
     /// rules are the whole of it.
-    bool (*validate)(
-        const RigExecMoverValidateContext &ctx, std::string *error) = nullptr;
+    bool (*validate)(const RigExecMoverValidateContext &ctx,
+                     std::string *error) = nullptr;
     /// The parity-oracle branch. Null for property movers.
     RigExecOracleResult (*oracle)(const RigExecMoverOracleContext &ctx) =
         nullptr;
@@ -205,25 +215,26 @@ struct RigExecMoverHandler {
     /// External points movers declare source reads at compile and assemble a
     /// payload from sampled values. The engine owns enabled/envelope handling.
     /// Declaration order is also the assembly and runtime input order.
-    void (*declareExternalInputs)(
-        const RigExecMoverBindContext &ctx,
-        std::vector<RigExecRevisionLeafKey> *inputs) = nullptr;
+    void (*declareExternalInputs)(const RigExecMoverBindContext &ctx,
+                                  std::vector<RigExecRevisionLeafKey> *inputs) =
+        nullptr;
     /// Owner-thread detached compilation over composed, owned source facts.
     /// Produces the same immutable binding/declared inputs as native capture.
     /// Plugin-owned scene data schemas consumed by immutable detached capture.
     /// They are data records, not separately scheduled rig operations.
     std::vector<std::string> sceneDataSchemas;
-    bool (*compileScene)(const RigExecSceneDescriptors &,const SdfPath &mover,
-        const SdfPath &target,RigExecRevisionBinding *,std::string *error) = nullptr;
-    bool (*assembleExternal)(
-        const RigExecExternalInputContext &ctx, VtValue *data) = nullptr;
+    bool (*compileScene)(const RigExecSceneDescriptors &, const SdfPath &mover,
+                         const SdfPath &target, RigExecRevisionBinding *,
+                         std::string *error) = nullptr;
+    bool (*assembleExternal)(const RigExecExternalInputContext &ctx,
+                             VtValue *data) = nullptr;
     /// Pure, thread-safe computation over the payload and preceding points.
     /// Produce the full-strength candidate without changing point count.
     /// No stage access, mutable shared state, or envelope application here.
     /// Return false for invalid inputs; the engine preserves the preceding
     /// revision. The library and payload types must remain loaded.
-    bool (*applyExternal)(
-        const VtValue &data, std::vector<GfVec3f> *points) = nullptr;
+    bool (*applyExternal)(const VtValue &data,
+                          std::vector<GfVec3f> *points) = nullptr;
 
     /// .rigexec export, optional: a rig holding a mover without it does not
     /// export. Splits a payload assembleExternal produced into the bytes
@@ -237,10 +248,12 @@ struct RigExecMoverHandler {
     /// Immutable runtime schema/state encoded from compiled facts even when a
     /// declared dynamic sample is missing. No sampled payload is required.
     bool (*encodeExternalCompiledData)(const RigExecRevisionBinding &binding,
-        std::vector<uint8_t> *compiledRig) = nullptr;
-    bool (*encodeExternal)(
-        const VtValue &data, const RigExecRevisionBinding &binding,
-        std::vector<uint8_t> *compiledRig, std::vector<uint8_t> *frame) = nullptr;
+                                       std::vector<uint8_t> *compiledRig) =
+        nullptr;
+    bool (*encodeExternal)(const VtValue &data,
+                           const RigExecRevisionBinding &binding,
+                           std::vector<uint8_t> *compiledRig,
+                           std::vector<uint8_t> *frame) = nullptr;
     /// The playback half of encodeExternal, USD-free. A host that opens a
     /// .rigexec file installs it into the runtime; a runtime without it
     /// passes this mover's points through with a warning.
@@ -291,14 +304,18 @@ struct RigExecMoverHandler {
 /// captureWindow and applyWindow. Both structs grew, so a plugin built for 5
 /// is rebuilt.
 /// Version 7 adds windowFramesScene, required of a windowed mover.
-inline constexpr int RigExecMoverPluginApiVersion = 7;
+/// Version 8 stores the handler's schema type as std::string_view instead of
+/// const char *, so the first field's size and layout change: a plugin built
+/// for 7 must be rebuilt, and the loader refuses it before loading the
+/// library.
+inline constexpr int RigExecMoverPluginApiVersion = 8;
 
 /// Registers one mover, retaining an immutable copy and its schema name.
 /// Duplicate schema names and incomplete external callbacks are rejected.
 /// Existing handler pointers remain valid when another library registers.
 /// A library must remain loaded for the lifetime of every evaluator.
-bool RigExecRegisterMoverHandler(
-    RigExecMoverHandler handler, std::string *error = nullptr);
+bool RigExecRegisterMoverHandler(RigExecMoverHandler handler,
+                                 std::string *error = nullptr);
 
 /// Loads registered OpenUSD Plug libraries with Info.RigExecMoverPlugin
 /// equal to RigExecMoverPluginApiVersion. PXR_PLUGINPATH_NAME and
@@ -337,16 +354,15 @@ std::vector<RigExecMoverHandler> RigExecMoverHandlers();
 /// bottom of each mover TU.
 #define _RIGEXEC_MOVER_ANCHOR(line) _rigExecMoverAnchor##line
 #define _RIGEXEC_MOVER_ANCHOR_LINE(line) _RIGEXEC_MOVER_ANCHOR(line)
-#define RIGEXEC_REGISTER_MOVER(handlerExpr)                               \
-    static const bool _RIGEXEC_MOVER_ANCHOR_LINE(__LINE__) =              \
+#define RIGEXEC_REGISTER_MOVER(handlerExpr)                                    \
+    static const bool _RIGEXEC_MOVER_ANCHOR_LINE(__LINE__) =                   \
         (rigExec::RigExecRegisterMoverHandler(handlerExpr), true)
 
 /// Whether \p schemaType is a registered property-domain (math) mover.
 inline bool
 RigExecIsPropertyMover(const TfToken &schemaType)
 {
-    const RigExecMoverHandler *handler =
-        RigExecFindMoverHandler(schemaType);
+    const RigExecMoverHandler *handler = RigExecFindMoverHandler(schemaType);
     return handler && handler->domain != RigExecMoverDomain::Points;
 }
 
@@ -354,8 +370,7 @@ RigExecIsPropertyMover(const TfToken &schemaType)
 inline bool
 RigExecIsPointMover(const TfToken &schemaType)
 {
-    const RigExecMoverHandler *handler =
-        RigExecFindMoverHandler(schemaType);
+    const RigExecMoverHandler *handler = RigExecFindMoverHandler(schemaType);
     return handler && handler->domain == RigExecMoverDomain::Points;
 }
 
@@ -379,10 +394,9 @@ RigExecNoMoverOp(const TfToken &)
 /// token: binders run on parallel lanes, and the text form builds a token
 /// (which locks the registry) on every call. The text form stays for
 /// external movers.
-SdfPathVector RigExecRelationshipTargets(
-    const UsdPrim &prim, const TfToken &rel);
-SdfPathVector RigExecRelationshipTargets(
-    const UsdPrim &prim, const char *rel);
+SdfPathVector RigExecRelationshipTargets(const UsdPrim &prim,
+                                         const TfToken &rel);
+SdfPathVector RigExecRelationshipTargets(const UsdPrim &prim, const char *rel);
 
 /// The `points` property name, interned once.
 const TfToken &RigExecPointsToken();
@@ -398,16 +412,16 @@ RigExecPointsOf(const SdfPath &path)
 /// The read phase declared for the input \p rel names: the relationship's
 /// rigExecReadPhase metadata, or Base. See RigExecResolveReadPhase. As with
 /// RigExecRelationshipTargets, internal callers pass a token.
-RigExecReadPhase RigExecPhaseForInput(
-    const UsdPrim &moverPrim, const TfToken &rel);
-RigExecReadPhase RigExecPhaseForInput(
-    const UsdPrim &moverPrim, const char *rel);
+RigExecReadPhase RigExecPhaseForInput(const UsdPrim &moverPrim,
+                                      const TfToken &rel);
+RigExecReadPhase RigExecPhaseForInput(const UsdPrim &moverPrim,
+                                      const char *rel);
 
 /// A property-chain value as a phased input of \p consumerType holds it
 /// (RigExecPhasedConnection). Compile admits only the chain's own
 /// type, or float and double either way round, which this converts.
-VtValue RigExecPhasedConsumerValue(
-    const VtValue &chainValue, const SdfValueTypeName &consumerType);
+VtValue RigExecPhasedConsumerValue(const VtValue &chainValue,
+                                   const SdfValueTypeName &consumerType);
 
 /// The oracle's phased read of \p pointsPath, the input \p relName names
 /// on \p ctx's mover: resolves the phase and reads `ctx.entering` for
@@ -416,25 +430,23 @@ VtValue RigExecPhasedConsumerValue(
 /// Base or no snapshot was recorded. Deliberately independent of
 /// RigExecResolveRevisionBinding (that independence is what makes parity a
 /// real check) while sharing the authored intent.
-void RigExecReadPhasedPoints(
-    const RigExecMoverOracleContext &ctx,
-    const char *relName,
-    const SdfPath &pointsPath,
-    VtVec3fArray *out);
+void RigExecReadPhasedPoints(const RigExecMoverOracleContext &ctx,
+                             const char *relName, const SdfPath &pointsPath,
+                             VtVec3fArray *out);
 
 /// A bare prim path names the transform domain -- except on a PointBased
 /// prim, where the same prim owns both write sets and the path is
 /// ambiguous. There it is in practice a typo for <prim>.points.
 /// Shared because the compiler asks it to decide frame work, and the
 /// matrix mover's validator asks it to decide a diagnostic.
-bool RigExecIsTransformDomainAmbiguous(
-    const UsdStageRefPtr &stage, const SdfPath &target);
+bool RigExecIsTransformDomainAmbiguous(const UsdStageRefPtr &stage,
+                                       const SdfPath &target);
 
 /// The "did you mean .points?" hint appended to a target diagnostic when
 /// the target names a bare PointBased prim. Empty for anything else, so
 /// callers append unconditionally.
-std::string RigExecPointsTargetHint(
-    const UsdStageRefPtr &stage, const SdfPath &target);
+std::string RigExecPointsTargetHint(const UsdStageRefPtr &stage,
+                                    const SdfPath &target);
 
 /// The generic target rules for \p handler: every target's domain (a
 /// native PointBased point3f[] points property, or one exact scalar
@@ -442,12 +454,11 @@ std::string RigExecPointsTargetHint(
 /// cardinality. False with \p error filled on the first violation.
 /// Skipped outright for customTargetValidation handlers, whose
 /// validate() owns the target rules.
-bool RigExecValidateMoverTargets(
-    const UsdStageRefPtr &stage,
-    const UsdPrim &prim,
-    const RigExecMoverHandler *handler,
-    const std::vector<SdfPath> &targets,
-    std::string *error);
+bool RigExecValidateMoverTargets(const UsdStageRefPtr &stage,
+                                 const UsdPrim &prim,
+                                 const RigExecMoverHandler *handler,
+                                 const std::vector<SdfPath> &targets,
+                                 std::string *error);
 
 /// Resolves a UsdSkelBlendShape's offsets into a sample layout for a
 /// pointCount-point target. Returns false to REFUSE the cache (a
@@ -456,12 +467,11 @@ bool RigExecValidateMoverTargets(
 /// frame", not "this is unusable". Shared by the packet assembly and the
 /// oracle, which deliberately reads through this rather than the
 /// compiled rig cache.
-bool RigExecResolveBlendSampleLayout(
-    const UsdStageRefPtr &stage,
-    const SdfPath &blendShapePath,
-    size_t pointCount,
-    RigExecBlendSampleLayout *layout);
+bool RigExecResolveBlendSampleLayout(const UsdStageRefPtr &stage,
+                                     const SdfPath &blendShapePath,
+                                     size_t pointCount,
+                                     RigExecBlendSampleLayout *layout);
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_MOVERS_MOVER_REGISTRY_H
+#endif // RIGEXEC_MOVERS_MOVER_REGISTRY_H

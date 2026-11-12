@@ -5,6 +5,7 @@
 #include "rigEvaluatorConstraints.h"
 #include "parallel.h"
 #include "movers/moverRegistry.h"
+#include "rigExecSchema/schemaNames.h"
 
 #include "pxr/base/work/loops.h"
 #include "pxr/base/tf/diagnostic.h"
@@ -24,38 +25,38 @@ namespace rigExec {
 
 TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
-    ((rigExecJoint, "RigExecJoint"))
-    ((rigExecControl, "RigExecControl"))
-    ((rigExecPoseInterpolator, "RigExecPoseInterpolator"))
-    ((rigExecMlMover, "RigExecMlMover"))
-    ((rigExecAnimatedMaps, "RigExecAnimatedMaps"))
-    ((rigExecFkChain, "RigExecFkChain"))
-    ((rigExecTwoBoneIk, "RigExecTwoBoneIk"))
-    ((rigExecBlendPointFrames, "RigExecBlendPointFrames"))
-    ((rigExecTwistDistribution, "RigExecTwistDistribution"))
-    ((rigExecRibbon, "RigExecRibbon"))
-    ((rigExecSplineIk, "RigExecSplineIk"))
-    ((rigExecSkeleton2d, "RigExecSkeleton2d"))
-    ((rigExecJoints, "rigExec:joints"))
-    ((rigExecPoseInputs, "rigExec:poseInputs"))
-    ((parentSpace, "parent:space"))
-    ((parentDefaultSpace, "parent:defaultSpace"))
-    ((posedDefaultSpace, "posed:defaultSpace"))
-    ((avarsDefaultSpace, "avars:defaultSpace"))
-    ((defaultSpace, "default:space"))
-    ((defaultTx, "default:tx"))
-    ((defaultTy, "default:ty"))
-    ((defaultTz, "default:tz"))
-    ((defaultRx, "default:rx"))
-    ((defaultRy, "default:ry"))
-    ((defaultRz, "default:rz"))
-    ((restSpace, "rest:space"))
-    ((restTx, "rest:tx"))
-    ((restTy, "rest:ty"))
-    ((restTz, "rest:tz"))
-    ((restRx, "rest:rx"))
-    ((restRy, "rest:ry"))
-    ((restRz, "rest:rz"))
+    ((rigExecJoint, SchemaTypeName::RigExecJoint))
+    ((rigExecControl, SchemaTypeName::RigExecControl))
+    ((rigExecPoseInterpolator, SchemaTypeName::RigExecPoseInterpolator))
+    ((rigExecMlMover, SchemaTypeName::RigExecMlMover))
+    ((rigExecAnimatedMaps, SchemaTypeName::RigExecAnimatedMaps))
+    ((rigExecFkChain, SchemaTypeName::RigExecFkChain))
+    ((rigExecTwoBoneIk, SchemaTypeName::RigExecTwoBoneIk))
+    ((rigExecBlendPointFrames, SchemaTypeName::RigExecBlendPointFrames))
+    ((rigExecTwistDistribution, SchemaTypeName::RigExecTwistDistribution))
+    ((rigExecRibbon, SchemaTypeName::RigExecRibbon))
+    ((rigExecSplineIk, SchemaTypeName::RigExecSplineIk))
+    ((rigExecSkeleton2d, SchemaTypeName::RigExecSkeleton2d))
+    ((rigExecJoints, SchemaAttrText::rigExecJoints))
+    ((rigExecPoseInputs, SchemaAttrText::rigExecPoseInputs))
+    ((parentSpace, SchemaAttrText::parentSpace))
+    ((parentDefaultSpace, SchemaAttrText::parentDefaultSpace))
+    ((posedDefaultSpace, SchemaAttrText::posedDefaultSpace))
+    ((avarsDefaultSpace, SchemaAttrText::avarsDefaultSpace))
+    ((defaultSpace, SchemaAttrText::defaultSpace))
+    ((defaultTx, SchemaAttrText::defaultTx))
+    ((defaultTy, SchemaAttrText::defaultTy))
+    ((defaultTz, SchemaAttrText::defaultTz))
+    ((defaultRx, SchemaAttrText::defaultRx))
+    ((defaultRy, SchemaAttrText::defaultRy))
+    ((defaultRz, SchemaAttrText::defaultRz))
+    ((restSpace, SchemaAttrText::restSpace))
+    ((restTx, SchemaAttrText::restTx))
+    ((restTy, SchemaAttrText::restTy))
+    ((restTz, SchemaAttrText::restTz))
+    ((restRx, SchemaAttrText::restRx))
+    ((restRy, SchemaAttrText::restRy))
+    ((restRz, SchemaAttrText::restRz))
 );
 
 using namespace evaluatorDetail;
@@ -109,7 +110,8 @@ _CollectAttributeConnectionInputs(const UsdPrim &prim)
     }
     std::vector<SdfPath> pending;
     for (const UsdAttribute &attribute : prim.GetAttributes()) {
-        if (!_IsPoseInputSeed(attribute)) continue;
+        if (!_IsPoseInputSeed(attribute))
+            continue;
         pending.push_back(attribute.GetPath());
     }
     while (!pending.empty()) {
@@ -118,7 +120,8 @@ _CollectAttributeConnectionInputs(const UsdPrim &prim)
         if (!inputs.insert(path).second) {
             continue;
         }
-        const UsdAttribute attribute = prim.GetStage()->GetAttributeAtPath(path);
+        const UsdAttribute attribute =
+            prim.GetStage()->GetAttributeAtPath(path);
         if (attribute) {
             const SdfPathVector sources = _AuthoredConnections(attribute);
             pending.insert(pending.end(), sources.begin(), sources.end());
@@ -181,7 +184,8 @@ _DiscoverJointOutputs(const UsdStageRefPtr &stage, const SdfPath &rigPath,
     }
 
     for (const UsdPrim &prim : UsdPrimRange(rig)) {
-        if (prim.GetTypeName() == kJointType && seen.insert(prim.GetPath()).second) {
+        if (prim.GetTypeName() == kJointType &&
+            seen.insert(prim.GetPath()).second) {
             joints.push_back(prim.GetPath());
         }
     }
@@ -262,10 +266,10 @@ _DiscoverVolumeWeights(const UsdStageRefPtr &stage, const SdfPath &rigPath)
 // Every solver type that publishes computePointFrameArray for view-free
 // joint extraction.
 const TfToken _kAggregateSolverTypes[] = {
-    _tokens->rigExecFkChain, _tokens->rigExecTwoBoneIk,
-    _tokens->rigExecBlendPointFrames,
-    _tokens->rigExecTwistDistribution, _tokens->rigExecRibbon,
-    _tokens->rigExecSplineIk, _tokens->rigExecSkeleton2d};
+    _tokens->rigExecFkChain,          _tokens->rigExecTwoBoneIk,
+    _tokens->rigExecBlendPointFrames, _tokens->rigExecTwistDistribution,
+    _tokens->rigExecRibbon,           _tokens->rigExecSplineIk,
+    _tokens->rigExecSkeleton2d};
 
 bool
 _IsAggregateSolverType(const TfToken &typeName)
@@ -281,8 +285,7 @@ _IsAggregateSolverType(const TfToken &typeName)
 // requirement. Returned in namespace pre-order so the discovered order,
 // and with it the compiled rig signature, is stable against unrelated edits.
 std::vector<UsdPrim>
-_DiscoverAggregateSolvers(
-    const UsdStageRefPtr &stage, const SdfPath &rigPath)
+_DiscoverAggregateSolvers(const UsdStageRefPtr &stage, const SdfPath &rigPath)
 {
     std::vector<UsdPrim> solvers;
     const UsdPrim rig = stage->GetPrimAtPath(rigPath);
@@ -301,7 +304,8 @@ UsdPrim
 _NamespaceFrameProvider(UsdPrim prim)
 {
     for (prim = prim.GetParent(); prim; prim = prim.GetParent()) {
-        if (_IsFrameProvider(prim)) return prim;
+        if (_IsFrameProvider(prim))
+            return prim;
     }
     return UsdPrim();
 }
@@ -314,24 +318,30 @@ _PoseInputInfo
 _CollectPoseInputInfo(const UsdPrim &prim)
 {
     _PoseInputInfo info;
-    if (!prim) return info;
+    if (!prim)
+        return info;
     std::set<SdfPath> attributes;
     std::vector<std::pair<SdfPath, bool>> pending;
     std::set<std::pair<SdfPath, bool>> visited;
     for (const UsdAttribute &attribute : prim.GetAttributes()) {
-        if (!_IsPoseInputSeed(attribute)) continue;
+        if (!_IsPoseInputSeed(attribute))
+            continue;
         pending.emplace_back(attribute.GetPath(), false);
     }
     while (!pending.empty()) {
         const auto entry = pending.back();
         pending.pop_back();
-        if (!visited.insert(entry).second) continue;
+        if (!visited.insert(entry).second)
+            continue;
         const auto &[path, connected] = entry;
         attributes.insert(path);
-        const UsdAttribute attribute = prim.GetStage()->GetAttributeAtPath(path);
-        if (!attribute) continue;
+        const UsdAttribute attribute =
+            prim.GetStage()->GetAttributeAtPath(path);
+        if (!attribute)
+            continue;
         const SdfPathVector sources = _AuthoredConnections(attribute);
-        for (const SdfPath &source : sources) pending.emplace_back(source, true);
+        for (const SdfPath &source : sources)
+            pending.emplace_back(source, true);
         const UsdPrim provider = attribute.GetPrim();
         SdfPathVector frameInputs;
         if (auto rel = provider.GetRelationship(_tokens->rigExecPoseInputs))
@@ -340,11 +350,13 @@ _CollectPoseInputInfo(const UsdPrim &prim)
             info.providers.insert(input);
             info.connectedPose = info.connectedPose || connected;
         }
-        if (!_IsFrameProvider(provider)) continue;
+        if (!_IsFrameProvider(provider))
+            continue;
         const TfToken name = attribute.GetName();
         const auto add = [&](const UsdPrim &owner, const TfToken &input) {
-            if (owner) pending.emplace_back(owner.GetPath().AppendProperty(
-                input), connected);
+            if (owner)
+                pending.emplace_back(owner.GetPath().AppendProperty(input),
+                                     connected);
         };
         if (name == _tokens->parentSpace) {
             const UsdPrim parent = _NamespaceFrameProvider(provider);
@@ -360,17 +372,20 @@ _CollectPoseInputInfo(const UsdPrim &prim)
             add(provider, _tokens->defaultSpace);
         } else if (name == _tokens->defaultSpace) {
             add(provider, _tokens->parentDefaultSpace);
-            for (const TfToken &input : {_tokens->defaultTx, _tokens->defaultTy,
-                 _tokens->defaultTz, _tokens->defaultRx, _tokens->defaultRy,
-                 _tokens->defaultRz, _tokens->restSpace, _tokens->restTx,
-                 _tokens->restTy, _tokens->restTz, _tokens->restRx,
-                 _tokens->restRy, _tokens->restRz}) {
+            for (const TfToken &input :
+                 {_tokens->defaultTx, _tokens->defaultTy, _tokens->defaultTz,
+                  _tokens->defaultRx, _tokens->defaultRy, _tokens->defaultRz,
+                  _tokens->restSpace, _tokens->restTx, _tokens->restTy,
+                  _tokens->restTz, _tokens->restRx, _tokens->restRy,
+                  _tokens->restRz}) {
                 add(provider, input);
             }
             const UsdPrim parent = _NamespaceFrameProvider(provider);
-            for (const TfToken &input : {_tokens->restSpace, _tokens->restTx,
-                 _tokens->restTy, _tokens->restTz, _tokens->restRx,
-                 _tokens->restRy, _tokens->restRz}) add(parent, input);
+            for (const TfToken &input :
+                 {_tokens->restSpace, _tokens->restTx, _tokens->restTy,
+                  _tokens->restTz, _tokens->restRx, _tokens->restRy,
+                  _tokens->restRz})
+                add(parent, input);
         }
     }
     info.attributes.assign(attributes.begin(), attributes.end());
@@ -502,16 +517,23 @@ _PoseInputGraph::_MarkRead(uint32_t attr, bool exists, SdfPathVector &&sources)
     }
 }
 
-const TfToken _kExpandOwnInputs[] = {
-    _tokens->parentDefaultSpace, _tokens->defaultTx,
-    _tokens->defaultTy, _tokens->defaultTz, _tokens->defaultRx,
-    _tokens->defaultRy, _tokens->defaultRz, _tokens->restSpace,
-    _tokens->restTx, _tokens->restTy, _tokens->restTz,
-    _tokens->restRx, _tokens->restRy, _tokens->restRz};
+const TfToken _kExpandOwnInputs[] = {_tokens->parentDefaultSpace,
+                                     _tokens->defaultTx,
+                                     _tokens->defaultTy,
+                                     _tokens->defaultTz,
+                                     _tokens->defaultRx,
+                                     _tokens->defaultRy,
+                                     _tokens->defaultRz,
+                                     _tokens->restSpace,
+                                     _tokens->restTx,
+                                     _tokens->restTy,
+                                     _tokens->restTz,
+                                     _tokens->restRx,
+                                     _tokens->restRy,
+                                     _tokens->restRz};
 const TfToken _kExpandRestInputs[] = {
-    _tokens->restSpace, _tokens->restTx, _tokens->restTy,
-    _tokens->restTz, _tokens->restRx, _tokens->restRy,
-    _tokens->restRz};
+    _tokens->restSpace, _tokens->restTx, _tokens->restTy, _tokens->restTz,
+    _tokens->restRx,    _tokens->restRy, _tokens->restRz};
 
 void
 _PoseInputGraph::_ExpandNode(uint32_t node,
@@ -547,9 +569,9 @@ _PoseInputGraph::_ExpandNode(uint32_t node,
         for (size_t i = 0; i < _prims[owner].frameInputs.size(); ++i)
             _Ask(_prims[owner].frameInputs[i], skip);
         const TfToken &name = _attrs[attr].path.GetNameToken();
-        const bool ruled = name == parentSpace ||
-            name == parentDefaultSpace || name == posedDefaultSpace ||
-            name == avarsDefaultSpace || name == defaultSpace;
+        const bool ruled = name == parentSpace || name == parentDefaultSpace ||
+                           name == posedDefaultSpace ||
+                           name == avarsDefaultSpace || name == defaultSpace;
         if (ruled && _prims[owner].providerType) {
             // Copies: edgeTo can grow _prims.
             const SdfPath self = _prims[owner].path;
@@ -593,7 +615,7 @@ _PoseInputGraph::_Tarjan()
     std::vector<uint32_t> low(nodeCount, 0);
     std::vector<uint8_t> onStack(nodeCount, 0);
     std::vector<uint32_t> stack;
-    std::vector<std::pair<uint32_t, uint32_t>> calls;  // node, next edge
+    std::vector<std::pair<uint32_t, uint32_t>> calls; // node, next edge
     std::vector<uint32_t> own;
     std::vector<uint32_t> succSets;
     uint32_t counter = 0;
@@ -636,7 +658,8 @@ _PoseInputGraph::_Tarjan()
             const uint32_t edgesEnd = _edgeBegin[node] + _edgeCount[node];
             for (uint32_t e = _edgeBegin[node]; e < edgesEnd; ++e) {
                 const uint32_t to = _nodeComp[_edges[e]];
-                if (to == comp || _compMark[to] == comp) continue;
+                if (to == comp || _compMark[to] == comp)
+                    continue;
                 _compMark[to] = comp;
                 _compSuccs.push_back(to);
                 connected = connected || _compConnected[to];
@@ -710,8 +733,7 @@ _PoseInputGraph::_Reach(uint32_t prim, uint32_t stamp,
                         std::vector<uint32_t> *out) const
 {
     std::vector<uint32_t> pending;
-    for (uint32_t r = _prims[prim].rootsBegin; r < _prims[prim].rootsEnd;
-         ++r) {
+    for (uint32_t r = _prims[prim].rootsBegin; r < _prims[prim].rootsEnd; ++r) {
         const uint32_t comp = _nodeComp[2 * _roots[r]];
         if ((*compMark)[comp] != stamp) {
             (*compMark)[comp] = stamp;
@@ -749,10 +771,10 @@ _PoseInputGraph::Extend(
 {
     std::vector<uint32_t> asked;
     {
-        RIGEXEC_PROFILE_SCOPE_CAT(profiler, "PoseInfoPrefetch.Read",
-                                  "compile");
+        RIGEXEC_PROFILE_SCOPE_CAT(profiler, "PoseInfoPrefetch.Read", "compile");
         for (const SdfPath &path : seeds) {
-            if (!path.IsEmpty()) _Ask(_PrimOf(path), skip);
+            if (!path.IsEmpty())
+                _Ask(_PrimOf(path), skip);
         }
         while (!_askQueue.empty() || !_waiting.empty()) {
             // One task per prim: all of its attributes if it is asked for,
@@ -767,7 +789,8 @@ _PoseInputGraph::Extend(
             }
             for (const uint32_t prim : _waiting) {
                 const auto [it, added] = taskOf.emplace(prim, tasks.size());
-                if (added) tasks.emplace_back().prim = prim;
+                if (added)
+                    tasks.emplace_back().prim = prim;
                 tasks[it->second].attrs = std::move(_prims[prim].pendingAttrs);
                 _prims[prim].pendingAttrs.clear();
             }
@@ -782,7 +805,8 @@ _PoseInputGraph::Extend(
                     const UsdPrim prim =
                         stage->GetPrimAtPath(_prims[task.prim].path);
                     if (prim && !_prims[task.prim].read) {
-                        if (auto rel = prim.GetRelationship(_tokens->rigExecPoseInputs))
+                        if (auto rel = prim.GetRelationship(
+                                _tokens->rigExecPoseInputs))
                             rel.GetTargets(&read.frameInputs);
                         const TfToken type = prim.GetTypeName();
                         read.providerType = _IsFrameProviderType(type);
@@ -794,7 +818,8 @@ _PoseInputGraph::Extend(
                     if (task.all && prim) {
                         for (const UsdAttribute &attribute :
                              prim.GetAttributes()) {
-                            if (!_IsPoseInputSeed(attribute)) continue;
+                            if (!_IsPoseInputSeed(attribute))
+                                continue;
                             read.listed.emplace_back(
                                 attribute.GetPath(),
                                 _AuthoredConnections(attribute));
@@ -827,7 +852,8 @@ _PoseInputGraph::Extend(
             }
 
             size_t listed = 0;
-            for (const _Read &read : reads) listed += read.listed.size();
+            for (const _Read &read : reads)
+                listed += read.listed.size();
             _Reserve(_attrs.size() + listed);
             for (size_t t = 0; t < tasks.size(); ++t) {
                 const uint32_t prim = tasks[t].prim;
@@ -889,8 +915,7 @@ _PoseInputGraph::Extend(
             for (uint32_t r = _prims[prim].rootsBegin;
                  r < _prims[prim].rootsEnd; ++r) {
                 const uint32_t comp = _nodeComp[2 * _roots[r]];
-                info.connectedPose =
-                    info.connectedPose || _compConnected[comp];
+                info.connectedPose = info.connectedPose || _compConnected[comp];
                 if (_compProviders[comp] != 0) {
                     sets.push_back(_compProviders[comp]);
                 }
@@ -923,12 +948,11 @@ _PoseInputGraph::Extend(
             std::sort(attributes.begin(), attributes.end());
             const _PoseInputInfo walked =
                 _CollectPoseInputInfo(stage->GetPrimAtPath(path));
-            const char *field =
-                walked.providers != info.providers ? "providers"
-                : walked.attributes != attributes  ? "attributes"
-                : walked.connectedPose != info.connectedPose
-                    ? "connectedPose"
-                    : nullptr;
+            const char *field = walked.providers != info.providers ? "providers"
+                                : walked.attributes != attributes ? "attributes"
+                                : walked.connectedPose != info.connectedPose
+                                    ? "connectedPose"
+                                    : nullptr;
             if (field) {
                 TF_FATAL_ERROR(
                     "RIGEXEC_VERIFY_POSEINFO: the pose-input closure of <%s> "
@@ -945,12 +969,13 @@ _PoseInputGraph::Extend(
 }
 
 void
-_PoseInputGraph::MaterializeAttributes(
-    std::map<SdfPath, _PoseInputInfo> *infos, bool parallel)
+_PoseInputGraph::MaterializeAttributes(std::map<SdfPath, _PoseInputInfo> *infos,
+                                       bool parallel)
 {
     std::vector<_PoseInputInfo *> pending;
     for (auto &[path, info] : *infos) {
-        if (info.graphPrim >= 0) pending.push_back(&info);
+        if (info.graphPrim >= 0)
+            pending.push_back(&info);
     }
     if (pending.empty()) {
         return;
@@ -983,7 +1008,8 @@ _PoseInputGraph::MaterializeAttributes(
     };
     if (blocks > 1) {
         WorkParallelForN(blocks, [&](size_t begin, size_t end) {
-            for (size_t block = begin; block < end; ++block) fillBlock(block);
+            for (size_t block = begin; block < end; ++block)
+                fillBlock(block);
         });
     } else {
         fillBlock(0);
@@ -1039,17 +1065,19 @@ _BuildSolverInputIndex(
     std::unordered_map<const std::vector<SdfPath> *, size_t> poseSlot;
     std::vector<SdfPath> primPaths;
     std::vector<const std::vector<SdfPath> *> poseAttributes;
-    std::vector<std::pair<size_t, size_t>> registrations;      // batch, slot
-    std::vector<std::pair<size_t, size_t>> poseRegistrations;  // batch, slot
+    std::vector<std::pair<size_t, size_t>> registrations;     // batch, slot
+    std::vector<std::pair<size_t, size_t>> poseRegistrations; // batch, slot
     const auto slotOfPrim = [&](const SdfPath &path) {
         const auto [it, added] = primSlot.emplace(path, primPaths.size());
-        if (added) primPaths.push_back(path);
+        if (added)
+            primPaths.push_back(path);
         return it->second;
     };
     const auto slotOfPose = [&](const std::vector<SdfPath> *attributes) {
         const auto [it, added] =
             poseSlot.emplace(attributes, poseAttributes.size());
-        if (added) poseAttributes.push_back(attributes);
+        if (added)
+            poseAttributes.push_back(attributes);
         return it->second;
     };
     const auto registerInput = [&](size_t batch, const SdfPath &inputPath,
@@ -1058,7 +1086,8 @@ _BuildSolverInputIndex(
              !path.IsEmpty() && path != SdfPath::AbsoluteRootPath();
              path = followParents ? path.GetParentPath() : SdfPath()) {
             registrations.emplace_back(batch, slotOfPrim(path));
-            if (jointBinding.count(path)) break;
+            if (jointBinding.count(path))
+                break;
         }
     };
     for (size_t batch = 0; batch < batchSolvers.size(); ++batch) {
@@ -1077,12 +1106,14 @@ _BuildSolverInputIndex(
                 }
             }
             const UsdPrim prim = stage->GetPrimAtPath(solver);
-            if (!prim) continue;
+            if (!prim)
+                continue;
             for (const UsdRelationship &rel : prim.GetRelationships()) {
                 SdfPathVector targets;
                 rel.GetTargets(&targets);
                 for (const SdfPath &target : targets) {
-                    if (solverDependencies.count(target.GetPrimPath())) continue;
+                    if (solverDependencies.count(target.GetPrimPath()))
+                        continue;
                     registerInput(batch, target,
                                   isFrameProvider(target.GetPrimPath()));
                 }
@@ -1128,10 +1159,12 @@ _BuildSolverInputIndex(
     }
 
     for (const auto &[batch, slot] : registrations) {
-        for (const SdfPath &prim : primsOf[slot]) index[prim].insert(batch);
+        for (const SdfPath &prim : primsOf[slot])
+            index[prim].insert(batch);
     }
     for (const auto &[batch, slot] : poseRegistrations) {
-        for (const SdfPath &prim : posePrimsOf[slot]) index[prim].insert(batch);
+        for (const SdfPath &prim : posePrimsOf[slot])
+            index[prim].insert(batch);
     }
     return index;
 }

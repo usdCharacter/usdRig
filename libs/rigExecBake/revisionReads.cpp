@@ -1,4 +1,5 @@
 // .rigexec path-read enumeration.
+#include "rigExecSchema/schemaNames.h"
 #include "rigExecBake/revisionReads.h"
 #include "rigExec/bakedProgramImpl.h"
 #include "rigExec/moverGraph.h"
@@ -26,75 +27,75 @@ PXR_NAMESPACE_USING_DIRECTIVE
 // spell them.
 TF_DEFINE_PRIVATE_TOKENS(
     _readTokens,
-    ((enabled, "inputs:enabled"))
-    ((weightBlend, "rigExec:weightBlend"))
-    ((pointFrame, "rigExec:pointFrame"))
-    ((driverDeltaFrame, "rigExec:driverDeltaFrame"))
-    ((jointIndices, "rigExec:jointIndices"))
-    ((jointWeights, "rigExec:jointWeights"))
-    ((elementSize, "rigExec:elementSize"))
-    ((skinningMethod, "rigExec:skinningMethod"))
+    ((enabled, rigExec::SchemaAttrText::inputsEnabled))
+    ((weightBlend, rigExec::SchemaAttrText::rigExecWeightBlend))
+    ((pointFrame, rigExec::SchemaAttrText::rigExecPointFrame))
+    ((driverDeltaFrame, rigExec::SchemaAttrText::rigExecDriverDeltaFrame))
+    ((jointIndices, rigExec::SchemaAttrText::rigExecJointIndices))
+    ((jointWeights, rigExec::SchemaAttrText::rigExecJointWeights))
+    ((elementSize, rigExec::SchemaAttrText::rigExecElementSize))
+    ((skinningMethod, rigExec::SchemaAttrText::rigExecSkinningMethod))
     ((classicLinear, "classicLinear"))
-    ((divisions, "rigExec:divisions"))
-    ((restPoints, "inputs:restPoints"))
-    ((iterations, "inputs:iterations"))
-    ((step, "inputs:step"))
-    ((pinBorders, "inputs:pinBorders"))
-    ((distanceWeight, "inputs:distanceWeight"))
-    ((displacement, "inputs:displacement"))
-    ((topology, "inputs:topology"))
+    ((divisions, rigExec::SchemaAttrText::rigExecDivisions))
+    ((restPoints, rigExec::SchemaAttrText::inputsRestPoints))
+    ((iterations, rigExec::SchemaAttrText::inputsIterations))
+    ((step, rigExec::SchemaAttrText::inputsStep))
+    ((pinBorders, rigExec::SchemaAttrText::inputsPinBorders))
+    ((distanceWeight, rigExec::SchemaAttrText::inputsDistanceWeight))
+    ((displacement, rigExec::SchemaAttrText::inputsDisplacement))
+    ((topology, rigExec::SchemaAttrText::inputsTopology))
     ((cloth, "cloth"))
-    ((pinPoints, "inputs:pinPoints"))
-    ((neighborDistance, "inputs:neighborDistance"))
-    ((restLengthScale, "inputs:restLengthScale"))
-    ((stretchStiffness, "inputs:stretchStiffness"))
-    ((compressionStiffness, "inputs:compressionStiffness"))
-    ((bendStiffness, "inputs:bendStiffness"))
-    ((maxDisplacement, "inputs:maxDisplacement"))
-    ((tangentPlaneCollisions, "inputs:tangentPlaneCollisions"))
-    ((tangentPlaneInset, "inputs:tangentPlaneInset"))
-    ((wrinkleScale, "inputs:wrinkleScale"))
-    ((smoothingIterations, "inputs:smoothingIterations"))
-    ((driverWeights, "inputs:driverWeights"))
-    ((driverBaseWeights, "inputs:driverBaseWeights"))
+    ((pinPoints, rigExec::SchemaAttrText::inputsPinPoints))
+    ((neighborDistance, rigExec::SchemaAttrText::inputsNeighborDistance))
+    ((restLengthScale, rigExec::SchemaAttrText::inputsRestLengthScale))
+    ((stretchStiffness, rigExec::SchemaAttrText::inputsStretchStiffness))
+    ((compressionStiffness, rigExec::SchemaAttrText::inputsCompressionStiffness))
+    ((bendStiffness, rigExec::SchemaAttrText::inputsBendStiffness))
+    ((maxDisplacement, rigExec::SchemaAttrText::inputsMaxDisplacement))
+    ((tangentPlaneCollisions, rigExec::SchemaAttrText::inputsTangentPlaneCollisions))
+    ((tangentPlaneInset, rigExec::SchemaAttrText::inputsTangentPlaneInset))
+    ((wrinkleScale, rigExec::SchemaAttrText::inputsWrinkleScale))
+    ((smoothingIterations, rigExec::SchemaAttrText::inputsSmoothingIterations))
+    ((driverWeights, rigExec::SchemaAttrText::inputsDriverWeights))
+    ((driverBaseWeights, rigExec::SchemaAttrText::inputsDriverBaseWeights))
     ((rest, "rest"))
     ((local, "local"))
-    ((dropoffDistance, "inputs:dropoffDistance"))
-    ((rayOrigin, "rigExec:rayOrigin"))
-    ((rayDirection, "rigExec:rayDirection"))
-    ((rayUp, "rigExec:rayUp"))
-    ((shaderOffset, "rigExec:shaderOffset"))
-    ((projectionMode, "rigExec:projectionMode"))
+    ((dropoffDistance, rigExec::SchemaAttrText::inputsDropoffDistance))
+    ((rayOrigin, rigExec::SchemaAttrText::rigExecRayOrigin))
+    ((rayDirection, rigExec::SchemaAttrText::rigExecRayDirection))
+    ((rayUp, rigExec::SchemaAttrText::rigExecRayUp))
+    ((shaderOffset, rigExec::SchemaAttrText::rigExecShaderOffset))
+    ((projectionMode, rigExec::SchemaAttrText::rigExecProjectionMode))
     ((material, "material"))
-    ((smoothing, "inputs:smoothing"))
-    ((frameTransport, "inputs:frameTransport"))
-    ((smoothWeights, "inputs:smoothWeights"))
-    ((edges, "inputs:edges"))
-    ((onlySmooth, "inputs:onlySmooth"))
-    ((computationToTarget, "inputs:computationToTarget"))
+    ((smoothing, rigExec::SchemaAttrText::inputsSmoothing))
+    ((frameTransport, rigExec::SchemaAttrText::inputsFrameTransport))
+    ((smoothWeights, rigExec::SchemaAttrText::inputsSmoothWeights))
+    ((edges, rigExec::SchemaAttrText::inputsEdges))
+    ((onlySmooth, rigExec::SchemaAttrText::inputsOnlySmooth))
+    ((computationToTarget, rigExec::SchemaAttrText::inputsComputationToTarget))
     ((vertex, "vertex"))
-    ((evaluation, "rigExec:evaluation"))
-    ((interpolationU, "rigExec:interpolationU"))
-    ((interpolationV, "rigExec:interpolationV"))
-    ((interpolationW, "rigExec:interpolationW"))
-    ((origin, "rigExec:origin"))
-    ((spacing, "rigExec:spacing"))
-    ((strength, "rigExec:strength"))
-    ((mask, "rigExec:mask"))
-    ((cageMatrix, "rigExec:cageMatrix"))
-    ((targetMatrix, "rigExec:targetMatrix"))
-    ((pointSpace, "rigExec:pointSpace"))
+    ((evaluation, rigExec::SchemaAttrText::rigExecEvaluation))
+    ((interpolationU, rigExec::SchemaAttrText::rigExecInterpolationU))
+    ((interpolationV, rigExec::SchemaAttrText::rigExecInterpolationV))
+    ((interpolationW, rigExec::SchemaAttrText::rigExecInterpolationW))
+    ((origin, rigExec::SchemaAttrText::rigExecOrigin))
+    ((spacing, rigExec::SchemaAttrText::rigExecSpacing))
+    ((strength, rigExec::SchemaAttrText::rigExecStrength))
+    ((mask, rigExec::SchemaAttrText::rigExecMask))
+    ((cageMatrix, rigExec::SchemaAttrText::rigExecCageMatrix))
+    ((targetMatrix, rigExec::SchemaAttrText::rigExecTargetMatrix))
+    ((pointSpace, rigExec::SchemaAttrText::rigExecPointSpace))
     ((legacy, "legacy"))
     ((bspline, "bspline"))
-    ((snapMode, "rigExec:snapMode"))
-    ((offset, "rigExec:offset"))
-    ((triangles, "rigExec:triangles"))
-    ((surfaceMatrix, "rigExec:surfaceMatrix"))
+    ((snapMode, rigExec::SchemaAttrText::rigExecSnapMode))
+    ((offset, rigExec::SchemaAttrText::rigExecOffset))
+    ((triangles, rigExec::SchemaAttrText::rigExecTriangles))
+    ((surfaceMatrix, rigExec::SchemaAttrText::rigExecSurfaceMatrix))
     ((onSurface, "onSurface"))
-    ((combineWeight, "RigExecCombineWeight"))
-    ((sphereWeight, "RigExecSphereWeight"))
-    ((planeWeight, "RigExecPlaneWeight"))
-    ((curveWeight, "RigExecCurveWeight"))
+    ((combineWeight, rigExec::SchemaTypeName::RigExecCombineWeight))
+    ((sphereWeight, rigExec::SchemaTypeName::RigExecSphereWeight))
+    ((planeWeight, rigExec::SchemaTypeName::RigExecPlaneWeight))
+    ((curveWeight, rigExec::SchemaTypeName::RigExecCurveWeight))
 );
 
 namespace rigExec {
@@ -110,8 +111,8 @@ struct _Enumeration {
     UsdTimeCode time;
     const RigExecBakeRevisionReadSink *sink = nullptr;
 
-    void Emit(const SdfPath &path, UsdTimeCode at, bool resolved,
-              VtValue value, bool overlaid = false) const
+    void Emit(const SdfPath &path, UsdTimeCode at, bool resolved, VtValue value,
+              bool overlaid = false) const
     {
         // A relationship aimed at a prim where an attribute belongs holds
         // no value: the site reads its fallback, and so does the runtime,
@@ -147,8 +148,8 @@ struct _Enumeration {
 // connections.
 template <class T>
 void
-_ResolvedInput(const _Enumeration &E, const UsdPrim &prim,
-               const TfToken &name, T fallback, UsdTimeCode at)
+_ResolvedInput(const _Enumeration &E, const UsdPrim &prim, const TfToken &name,
+               T fallback, UsdTimeCode at)
 {
     const SdfPath key = prim.GetPath().AppendProperty(name);
     const UsdAttribute a = prim.GetAttribute(name);
@@ -168,8 +169,8 @@ _ResolvedInput(const _Enumeration &E, const UsdPrim &prim,
 // otherwise.
 template <class T>
 void
-_ResolvedOrRaw(const _Enumeration &E, const UsdPrim &prim,
-               const TfToken &name, T fallback, UsdTimeCode at)
+_ResolvedOrRaw(const _Enumeration &E, const UsdPrim &prim, const TfToken &name,
+               T fallback, UsdTimeCode at)
 {
     const UsdAttribute a = prim.GetAttribute(name);
     if (!a) {
@@ -209,8 +210,8 @@ _Enabled(const _Enumeration &E, const UsdPrim &prim, UsdTimeCode at)
 // the wire's dropoff).
 template <class T>
 void
-_RawAttribute(const _Enumeration &E, const UsdPrim &prim,
-              const TfToken &name, T fallback, UsdTimeCode at)
+_RawAttribute(const _Enumeration &E, const UsdPrim &prim, const TfToken &name,
+              T fallback, UsdTimeCode at)
 {
     if (const UsdAttribute a = prim.GetAttribute(name)) {
         T value = fallback;
@@ -228,8 +229,7 @@ _RawAttribute(const _Enumeration &E, const UsdPrim &prim,
 template <class T>
 void
 _RawPath(const _Enumeration &E, const UsdStageRefPtr &stage,
-         const SdfPath &path, T fallback, UsdTimeCode at,
-         bool overlay = false)
+         const SdfPath &path, T fallback, UsdTimeCode at, bool overlay = false)
 {
     if (path.IsEmpty()) {
         return;
@@ -239,8 +239,7 @@ _RawPath(const _Enumeration &E, const UsdStageRefPtr &stage,
     if (const UsdAttribute a = stage->GetAttributeAtPath(path)) {
         T value = fallback;
         a.Get(&value, at);
-        E.Emit(a.GetPath(), at, /*resolved=*/false, VtValue(value),
-               overlaid);
+        E.Emit(a.GetPath(), at, /*resolved=*/false, VtValue(value), overlaid);
     } else if (overlaid) {
         E.Emit(path, UsdTimeCode::Default(), /*resolved=*/false, VtValue(),
                /*overlaid=*/true);
@@ -304,19 +303,17 @@ _Projector(const _Enumeration &E, const UsdPrim &prim, RigExecRevisionOp op,
             } else if (!E.resolved->GetAttribute(a, at, &value)) {
                 a.Get(&value, at);
             }
-            E.Emit(dial, at, /*resolved=*/true, VtValue(value),
-                   E.Holds(dial));
+            E.Emit(dial, at, /*resolved=*/true, VtValue(value), E.Holds(dial));
         }
         return;
     }
-    _ResolvedInput(E, prim, _readTokens->rayOrigin, GfVec3d(0.0, 0.0, 0.0),
+    _ResolvedInput(E, prim, _readTokens->rayOrigin, GfVec3d(0.0, 0.0, 0.0), at);
+    _ResolvedInput(E, prim, _readTokens->rayDirection, GfVec3d(0.0, 0.0, 1.0),
                    at);
-    _ResolvedInput(E, prim, _readTokens->rayDirection,
-                   GfVec3d(0.0, 0.0, 1.0), at);
     _ResolvedInput(E, prim, _readTokens->rayUp, GfVec3d(0.0, 1.0, 0.0), at);
     _ResolvedInput(E, prim, _readTokens->shaderOffset, GfMatrix4d(1.0), at);
-    _RawAttribute(E, prim, _readTokens->projectionMode,
-                  _readTokens->material, at);
+    _RawAttribute(E, prim, _readTokens->projectionMode, _readTokens->material,
+                  at);
     _Topology(E, prim, binding);
 }
 
@@ -340,8 +337,7 @@ _RunOverlay(const RigExecBakedProgramImpl &program)
 void
 _Revision(const RigExecBakedProgramImpl &program,
           const RigExecResolvedInputs &overlay, _Enumeration E,
-          const RigExecBakedProgramImpl::GeomRevision &revision,
-          bool derived)
+          const RigExecBakedProgramImpl::GeomRevision &revision, bool derived)
 {
     const UsdPrim &prim = revision.moverPrim;
     // Every site keys off the mover prim, and none reads without one.
@@ -364,8 +360,7 @@ _Revision(const RigExecBakedProgramImpl &program,
     RigExecResolvedInputs phased;
     if (!binding.phases.empty()) {
         phased = overlay;
-        for (const RigExecBakedPointsBinding &bound :
-             revision.pointBindings) {
+        for (const RigExecBakedPointsBinding &bound : revision.pointBindings) {
             const GfVec3f *points = nullptr;
             size_t count = 0;
             if (RigExecBakedResolvePoints(program, bound, &points, &count)) {
@@ -423,26 +418,25 @@ _Revision(const RigExecBakedProgramImpl &program,
         _ResolvedInput(E, prim, _readTokens->triangles, VtIntArray(), at);
         _ResolvedInput(E, prim, _readTokens->surfaceMatrix, GfMatrix4d(1.0),
                        at);
-        _ResolvedInput(E, prim, _readTokens->targetMatrix, GfMatrix4d(1.0),
-                       at);
+        _ResolvedInput(E, prim, _readTokens->targetMatrix, GfMatrix4d(1.0), at);
         _ResolvedInput(E, prim, _readTokens->pointSpace, _readTokens->local,
                        at);
         break;
     case RigExecRevisionOp::DeltaMush:
-        _Array<GfVec3f>(
-            E, prim, prim.GetPath().AppendProperty(_readTokens->restPoints),
-            rest);
+        _Array<GfVec3f>(E, prim,
+                        prim.GetPath().AppendProperty(_readTokens->restPoints),
+                        rest);
         // The smoothing settings (format 21): the smoothing and transport
         // tokens and the explicit edges at Default, the rest at the time.
         _ResolvedInput(E, prim, _readTokens->smoothing, _readTokens->rest,
                        rest);
         _ResolvedInput(E, prim, _readTokens->frameTransport,
                        _readTokens->vertex, rest);
-        _Array<float>(
-            E, prim,
-            prim.GetPath().AppendProperty(_readTokens->smoothWeights), at);
-        _Array<int>(E, prim,
-                    prim.GetPath().AppendProperty(_readTokens->edges), rest);
+        _Array<float>(E, prim,
+                      prim.GetPath().AppendProperty(_readTokens->smoothWeights),
+                      at);
+        _Array<int>(E, prim, prim.GetPath().AppendProperty(_readTokens->edges),
+                    rest);
         _ResolvedInput(E, prim, _readTokens->onlySmooth, false, at);
         _ResolvedInput(E, prim, _readTokens->computationToTarget,
                        GfMatrix4d(1.0), at);
@@ -454,9 +448,9 @@ _Revision(const RigExecBakedProgramImpl &program,
         _ResolvedInput(E, prim, _readTokens->displacement, 1.0f, at);
         break;
     case RigExecRevisionOp::Wrinkle:
-        _Array<GfVec3f>(
-            E, prim, prim.GetPath().AppendProperty(_readTokens->restPoints),
-            rest);
+        _Array<GfVec3f>(E, prim,
+                        prim.GetPath().AppendProperty(_readTokens->restPoints),
+                        rest);
         _Topology(E, prim, binding);
         _ResolvedInput(E, prim, _readTokens->topology, _readTokens->cloth,
                        rest);
@@ -472,8 +466,7 @@ _Revision(const RigExecBakedProgramImpl &program,
         _ResolvedInput(E, prim, _readTokens->bendStiffness, 0.1f, at);
         _ResolvedInput(E, prim, _readTokens->maxDisplacement, 0.2f, at);
         _ResolvedInput(E, prim, _readTokens->pinBorders, true, at);
-        _ResolvedInput(E, prim, _readTokens->tangentPlaneCollisions, true,
-                       at);
+        _ResolvedInput(E, prim, _readTokens->tangentPlaneCollisions, true, at);
         _ResolvedInput(E, prim, _readTokens->tangentPlaneInset, 0.0f, at);
         _ResolvedInput(E, prim, _readTokens->wrinkleScale, 1.0f, at);
         _ResolvedInput(E, prim, _readTokens->smoothingIterations, 0, at);
@@ -494,8 +487,7 @@ _Revision(const RigExecBakedProgramImpl &program,
         _ResolvedInput(E, prim, _readTokens->strength, 1.0f, at);
         _ResolvedInput(E, prim, _readTokens->mask, VtFloatArray(), at);
         _ResolvedInput(E, prim, _readTokens->cageMatrix, GfMatrix4d(1.0), at);
-        _ResolvedInput(E, prim, _readTokens->targetMatrix, GfMatrix4d(1.0),
-                       at);
+        _ResolvedInput(E, prim, _readTokens->targetMatrix, GfMatrix4d(1.0), at);
         _ResolvedInput(E, prim, _readTokens->pointSpace, _readTokens->local,
                        at);
         // The bind-time cage reads past the overlay; the live one through
@@ -514,12 +506,12 @@ _Revision(const RigExecBakedProgramImpl &program,
         // Transform-driven control points read the drivers' weights and
         // frames; a curve-driven wire reads the curve live instead.
         if (binding.driverTransformCount > 0) {
-            _ResolvedOrRaw(E, prim, _readTokens->driverWeights,
-                           VtFloatArray(), at);
+            _ResolvedOrRaw(E, prim, _readTokens->driverWeights, VtFloatArray(),
+                           at);
             _ResolvedOrRaw(E, prim, _readTokens->driverBaseWeights,
                            VtFloatArray(), at);
-            _RawAttribute(E, prim, _readTokens->pointFrame,
-                          _readTokens->rest, at);
+            _RawAttribute(E, prim, _readTokens->pointFrame, _readTokens->rest,
+                          at);
             _RawAttribute(E, prim, _readTokens->driverDeltaFrame,
                           _readTokens->local, at);
         } else {
@@ -548,7 +540,7 @@ _Revision(const RigExecBakedProgramImpl &program,
     case RigExecRevisionOp::Skin:
     case RigExecRevisionOp::SurfaceProjector:
     case RigExecRevisionOp::ShaderDials:
-        break;  // handled above
+        break; // handled above
     }
 }
 
@@ -564,8 +556,8 @@ _Weight(const RigExecResolvedInputs &overlay, _Enumeration E,
         for (const UsdAttribute &a : attributes) {
             VtVec3fArray value;
             if (E.resolved->GetAttribute(a, E.time, &value)) {
-                E.Emit(a.GetPath(), E.time, /*resolved=*/true,
-                       VtValue(value), E.Holds(a.GetPath()));
+                E.Emit(a.GetPath(), E.time, /*resolved=*/true, VtValue(value),
+                       E.Holds(a.GetPath()));
             }
         }
     };
@@ -575,11 +567,13 @@ _Weight(const RigExecResolvedInputs &overlay, _Enumeration E,
                weight.type == _readTokens->planeWeight ||
                weight.type == _readTokens->curveWeight) {
         if (weight.falloffSamplesLeaf >= 0) {
-            const UsdAttribute &a = weight.pointLeaves.attributes[size_t(weight.falloffSamplesLeaf)];
+            const UsdAttribute &a =
+                weight.pointLeaves
+                    .attributes[size_t(weight.falloffSamplesLeaf)];
             VtFloatArray samples;
             if (E.resolved->GetAttribute(a, E.time, &samples)) {
-                E.Emit(a.GetPath(), E.time, /*resolved=*/true,
-                       VtValue(samples), E.Holds(a.GetPath()));
+                E.Emit(a.GetPath(), E.time, /*resolved=*/true, VtValue(samples),
+                       E.Holds(a.GetPath()));
             }
         }
         // Gathered only once the volume can build, which its inputs decide.
@@ -591,18 +585,19 @@ _Weight(const RigExecResolvedInputs &overlay, _Enumeration E,
     }
 }
 
-}  // namespace
+} // namespace
 
 void
-RigExecBakeEnumerateRevisionReads(
-    const RigExecBakedProgramImpl &program, size_t chainIndex,
-    size_t revisionIndex, bool derived, double time,
-    const RigExecBakeRevisionReadSink &sink)
+RigExecBakeEnumerateRevisionReads(const RigExecBakedProgramImpl &program,
+                                  size_t chainIndex, size_t revisionIndex,
+                                  bool derived, double time,
+                                  const RigExecBakeRevisionReadSink &sink)
 {
     if (chainIndex >= program.chains.size()) {
         return;
     }
-    const RigExecBakedProgramImpl::GeomChain &chain = program.chains[chainIndex];
+    const RigExecBakedProgramImpl::GeomChain &chain =
+        program.chains[chainIndex];
     const RigExecBakedProgramImpl::GeomRevision *revision = nullptr;
     if (derived) {
         if (revisionIndex >= chain.derived.size()) {
@@ -664,4 +659,4 @@ RigExecBakeEnumerateProgramReads(const RigExecBakedProgramImpl &program,
     }
 }
 
-}  // namespace rigExec
+} // namespace rigExec

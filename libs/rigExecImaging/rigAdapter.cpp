@@ -29,6 +29,7 @@
 // context binding"). Every other prim is untouched: a prim that is neither a
 // RigExecRoot nor top-level pays one type-name and one path-length
 // comparison and gets no subprim data, exactly as before.
+#include "rigExecSchema/schemaNames.h"
 #include "registry.h"
 #include "sceneIndices.h"
 
@@ -52,7 +53,7 @@ namespace {
 const TfToken &
 _RigExecRootTypeName()
 {
-    static const TfToken root("RigExecRoot");
+    static const TfToken root(rigExec::SchemaTypeName::RigExecRoot);
     return root;
 }
 
@@ -64,12 +65,14 @@ class _RigExecTimeDataSource final : public HdSampledDataSource {
 public:
     HD_DECLARE_DATASOURCE(_RigExecTimeDataSource);
 
-    VtValue GetValue(Time shutterOffset) override {
+    VtValue GetValue(Time shutterOffset) override
+    {
         return VtValue(_stageGlobals.GetTime());
     }
 
-    bool GetContributingSampleTimesForInterval(
-        Time, Time, std::vector<Time> *) override {
+    bool GetContributingSampleTimesForInterval(Time, Time,
+                                               std::vector<Time> *) override
+    {
         // A trigger, not render data: it names the frame Hydra is pulling,
         // and per-frame invalidation arrives through FlagAsTimeVarying, not
         // through samples.
@@ -79,7 +82,9 @@ public:
 private:
     explicit _RigExecTimeDataSource(
         const UsdImagingDataSourceStageGlobals &stageGlobals)
-        : _stageGlobals(stageGlobals) {}
+        : _stageGlobals(stageGlobals)
+    {
+    }
 
     // The same reference every UsdImagingDataSourceAttribute holds: the
     // globals outlive the data sources built from them.
@@ -90,20 +95,22 @@ private:
 /// answers without touching prim data: a top-level prim's path has exactly
 /// one element, and so does nothing else UsdImaging populates.
 bool
-_IsTopLevel(UsdPrim const& prim)
+_IsTopLevel(UsdPrim const &prim)
 {
     return prim.GetPath().GetPathElementCount() == 1;
 }
 
-}  // namespace
+} // namespace
 
 /// Contributes the rigExec/time trigger leaf to RigExecRoot prims and the
 /// rigExec/stageKey leaf to top-level prims, and activates the rig on first
 /// sight so hosts without explicit activation (usdrecord) evaluate.
 class RigExecImagingRigAdapter final : public UsdImagingAPISchemaAdapter {
 public:
-    TfTokenVector GetImagingSubprims(
-        UsdPrim const& prim, TfToken const& appliedInstanceName) override {
+    TfTokenVector
+    GetImagingSubprims(UsdPrim const &prim,
+                       TfToken const &appliedInstanceName) override
+    {
         if (!appliedInstanceName.IsEmpty()) {
             return {};
         }
@@ -129,17 +136,19 @@ public:
         return {TfToken()};
     }
 
-    TfToken GetImagingSubprimType(
-        UsdPrim const&, TfToken const&, TfToken const&) override {
+    TfToken GetImagingSubprimType(UsdPrim const &, TfToken const &,
+                                  TfToken const &) override
+    {
         // No opinion: the prim adapter (or the fallback, for a rig prim
         // nothing else adapted) owns the prim's Hydra type.
         return TfToken();
     }
 
     HdContainerDataSourceHandle GetImagingSubprimData(
-        UsdPrim const& prim, TfToken const& subprim,
-        TfToken const& appliedInstanceName,
-        const UsdImagingDataSourceStageGlobals &stageGlobals) override {
+        UsdPrim const &prim, TfToken const &subprim,
+        TfToken const &appliedInstanceName,
+        const UsdImagingDataSourceStageGlobals &stageGlobals) override
+    {
         if (!subprim.IsEmpty() || !appliedInstanceName.IsEmpty()) {
             return nullptr;
         }
@@ -181,9 +190,8 @@ public:
             // never flagged time-varying and never invalidated -- a stage
             // replaced under the engine re-adds its prims with new data.
             names[count] = rigExec::RigExecStageKeyLeafToken();
-            values[count] =
-                HdRetainedTypedSampledDataSource<uint64_t>::New(
-                    context->GetKey());
+            values[count] = HdRetainedTypedSampledDataSource<uint64_t>::New(
+                context->GetKey());
             ++count;
         }
         return HdRetainedContainerDataSource::New(
@@ -191,10 +199,11 @@ public:
             HdRetainedContainerDataSource::New(count, names, values));
     }
 
-    HdDataSourceLocatorSet InvalidateImagingSubprim(
-        UsdPrim const&, TfToken const&, TfToken const&,
-        TfTokenVector const&,
-        UsdImagingPropertyInvalidationType) override {
+    HdDataSourceLocatorSet
+    InvalidateImagingSubprim(UsdPrim const &, TfToken const &, TfToken const &,
+                             TfTokenVector const &,
+                             UsdImagingPropertyInvalidationType) override
+    {
         // Authored edits reach the rig through its context's own stage
         // notice (_OnObjectsChanged), which re-evaluates and republishes; no
         // USD property maps onto the trigger or the stage key.

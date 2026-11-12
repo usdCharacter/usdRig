@@ -1,3 +1,4 @@
+#include "rigExecSchema/schemaNames.h"
 // RigExec end-to-end evaluation tests over the spec §4.5/§4.6 arm assets:
 // OpenExec-evaluated transforms (controls, FK, IK, blend, joints), native
 // USD animation resolution parity, and the staged geometry mover pipeline.
@@ -61,12 +62,12 @@ SkipsOperations(RigExecRigEvaluator &evaluator,
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 static bool
@@ -103,19 +104,16 @@ GetAvar(const UsdPrim &prim, const char *name, UsdTimeCode time,
 static GfMatrix4d
 ComposeAvars(const UsdPrim &prim, UsdTimeCode time)
 {
-    static const GfVec3d axes[3] = {
-        GfVec3d(1, 0, 0), GfVec3d(0, 1, 0), GfVec3d(0, 0, 1)};
-    const double angles[3] = {
-        GetAvar(prim, "avars:rx", time), GetAvar(prim, "avars:ry", time),
-        GetAvar(prim, "avars:rz", time)};
+    static const GfVec3d axes[3] = {GfVec3d(1, 0, 0), GfVec3d(0, 1, 0),
+                                    GfVec3d(0, 0, 1)};
+    const double angles[3] = {GetAvar(prim, "avars:rx", time),
+                              GetAvar(prim, "avars:ry", time),
+                              GetAvar(prim, "avars:rz", time)};
     GfMatrix4d m(1.0);
-    m.SetScale(GfVec3d(
-        RigExecNormalizeAvarScale(
-            GetAvar(prim, "avars:sx", time, 1)),
-        RigExecNormalizeAvarScale(
-            GetAvar(prim, "avars:sy", time, 1)),
-        RigExecNormalizeAvarScale(
-            GetAvar(prim, "avars:sz", time, 1))));
+    m.SetScale(
+        GfVec3d(RigExecNormalizeAvarScale(GetAvar(prim, "avars:sx", time, 1)),
+                RigExecNormalizeAvarScale(GetAvar(prim, "avars:sy", time, 1)),
+                RigExecNormalizeAvarScale(GetAvar(prim, "avars:sz", time, 1))));
     for (int i = 0; i < 3; ++i) {
         if (angles[i] != 0.0) {
             m = m * GfMatrix4d(GfRotation(axes[i], angles[i]), GfVec3d(0));
@@ -155,15 +153,17 @@ static RigExecPointFrame
 DirectControlFrame(const UsdPrim &control, UsdTimeCode time)
 {
     RigExecPointFrame frame;
-    frame.points = MatrixLandmarks(
-        ComposeAvars(control, time) * GetRestSpace(control, time));
+    frame.points = MatrixLandmarks(ComposeAvars(control, time) *
+                                   GetRestSpace(control, time));
     frame.flags = RigExecPointFrameValid;
     return frame;
 }
 
-static const TfToken _computePointFrame("computePointFrame");
-static const TfToken _computeMatrix("computeMatrix");
-static const TfToken _computePointFrameArray("computePointFrameArray");
+static const TfToken
+    _computePointFrame(SchemaComputationText::computePointFrame);
+static const TfToken _computeMatrix(SchemaComputationText::computeMatrix);
+static const TfToken
+    _computePointFrameArray(SchemaComputationText::computePointFrameArray);
 
 // View-free joints are posed by their solver through an in-memory binding
 // that RigExecRigEvaluator resolves in Compile() and supplies to exec as a
@@ -184,8 +184,7 @@ CompiledJointFrame(const UsdStageRefPtr &stage, const SdfPath &rigPath,
     const RigExecRigPose pose = eval.Evaluate(time);
     const auto it = pose.jointFramesBase.find(jointPath);
     CHECK(it != pose.jointFramesBase.end());
-    return it != pose.jointFramesBase.end() ? it->second
-                                            : RigExecPointFrame();
+    return it != pose.jointFramesBase.end() ? it->second : RigExecPointFrame();
 }
 
 static void
@@ -193,17 +192,18 @@ TestRestPose(const std::string &examplesDir)
 {
     UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/ArmRig.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
 
     RigExecTapSet taps(stage);
     const SdfPath shoulderPath("/ArmAsset/Rig/Joints/Shoulder");
     const SdfPath wristPath("/ArmAsset/Rig/Joints/Shoulder/Elbow/Wrist");
-    const RigExecTapId shoulderTap = taps.Add(RigExecValueAddress::Prim(
-        shoulderPath, _computePointFrame));
-    const RigExecTapId wristTap = taps.Add(RigExecValueAddress::Prim(
-        wristPath, _computePointFrame));
-    const RigExecTapId wristMatrixTap = taps.Add(RigExecValueAddress::Prim(
-        wristPath, _computeMatrix));
+    const RigExecTapId shoulderTap =
+        taps.Add(RigExecValueAddress::Prim(shoulderPath, _computePointFrame));
+    const RigExecTapId wristTap =
+        taps.Add(RigExecValueAddress::Prim(wristPath, _computePointFrame));
+    const RigExecTapId wristMatrixTap =
+        taps.Add(RigExecValueAddress::Prim(wristPath, _computeMatrix));
     const RigExecTapId fkTap = taps.Add(RigExecValueAddress::Prim(
         SdfPath("/ArmAsset/Rig/Solvers/FK"), _computePointFrameArray));
     taps.Prepare();
@@ -224,8 +224,8 @@ TestRestPose(const std::string &examplesDir)
 
     // Paired matrix view: rest pose gives identity.
     const auto wristMatrix = snap.Get<GfMatrix4d>(wristMatrixTap);
-    CHECK(Near(wristMatrix.TransformAffine(GfVec3d(1, 2, 3)),
-               GfVec3d(1, 2, 3), 1e-9));
+    CHECK(Near(wristMatrix.TransformAffine(GfVec3d(1, 2, 3)), GfVec3d(1, 2, 3),
+               1e-9));
 
     // Aggregate solver result is extractable and complete.
     const auto fk = snap.Get<RigExecPointFrameArray>(fkTap);
@@ -240,7 +240,8 @@ TestIkAndBlend(const std::string &examplesDir)
 {
     UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/ArmRig.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
 
     // Author an IK goal (avars deltas from the rest at (8, 10, 0) to the
     // goal at (6, 13, 2)) and switch fully to IK before building.
@@ -249,8 +250,9 @@ TestIkAndBlend(const std::string &examplesDir)
     handIk.GetAttribute(TfToken("avars:tx")).Set(-2.0);
     handIk.GetAttribute(TfToken("avars:ty")).Set(3.0);
     handIk.GetAttribute(TfToken("avars:tz")).Set(2.0);
-    stage->GetAttributeAtPath(
-        SdfPath("/ArmAsset/Rig/Solvers/IKFKBlend.inputs:weight"))
+    stage
+        ->GetAttributeAtPath(
+            SdfPath("/ArmAsset/Rig/Solvers/IKFKBlend.inputs:weight"))
         .Set(1.0f);
 
     RigExecTapSet taps(stage);
@@ -283,15 +285,14 @@ TestIkAndBlend(const std::string &examplesDir)
     rests[0] = GetRestLandmarks(root, UsdTimeCode::Default());
     const GfVec3d restAim = (rests[0][1] - rests[0][0]).GetNormalized();
     rests[1] = rests[0];
-    for (auto &p : rests[1]) p += restAim * params.upperLength;
-    rests[2] =
-        GetRestLandmarks(handIk, UsdTimeCode::Default());
+    for (auto &p : rests[1])
+        p += restAim * params.upperLength;
+    rests[2] = GetRestLandmarks(handIk, UsdTimeCode::Default());
 
     const auto expected = RigExecSolveTwoBoneIk(
         DirectControlFrame(root, UsdTimeCode::Default()),
         DirectControlFrame(handIk, UsdTimeCode::Default()),
-        DirectControlFrame(pole, UsdTimeCode::Default()),
-        rests, params);
+        DirectControlFrame(pole, UsdTimeCode::Default()), rests, params);
 
     const auto ik = snap.Get<RigExecPointFrameArray>(ikTap);
     CHECK(ik.GetSize() == 3);
@@ -305,9 +306,8 @@ TestIkAndBlend(const std::string &examplesDir)
                     std::printf(
                         "  frame %d point %d exec (%g %g %g) "
                         "expected (%g %g %g)\n",
-                        i, p,
-                        ik.frames[i].points[p][0], ik.frames[i].points[p][1],
-                        ik.frames[i].points[p][2],
+                        i, p, ik.frames[i].points[p][0],
+                        ik.frames[i].points[p][1], ik.frames[i].points[p][2],
                         expected[i].points[p][0], expected[i].points[p][1],
                         expected[i].points[p][2]);
                 }
@@ -323,10 +323,10 @@ TestIkAndBlend(const std::string &examplesDir)
     // Full IK blend: the wrist joint publishes the IK end frame. Joints
     // are posed by the solver through the evaluator's in-memory binding
     // (view-free), so the joint frame comes from the compiled rig.
-    const auto wrist = CompiledJointFrame(
-        stage, SdfPath("/ArmAsset/Rig"),
-        SdfPath("/ArmAsset/Rig/Joints/Shoulder/Elbow/Wrist"),
-        UsdTimeCode::Default());
+    const auto wrist =
+        CompiledJointFrame(stage, SdfPath("/ArmAsset/Rig"),
+                           SdfPath("/ArmAsset/Rig/Joints/Shoulder/Elbow/Wrist"),
+                           UsdTimeCode::Default());
     CHECK(Near(wrist.Origin(), expected[2].Origin(), 1e-9));
 
     // The wrist reaches (or soft-clamps toward) the authored goal.
@@ -402,12 +402,12 @@ TestViewFreeValidation(const std::string &examplesDir)
         CHECK(stage);
         if (stage) {
             // A second unconsumed chain writing a joint IKFKBlend writes.
-            UsdPrim rogue = stage->DefinePrim(
-                SdfPath("/ArmAsset/Rig/Solvers/Rogue"),
-                TfToken("RigExecFkChain"));
+            UsdPrim rogue =
+                stage->DefinePrim(SdfPath("/ArmAsset/Rig/Solvers/Rogue"),
+                                  TfToken("RigExecFkChain"));
             CHECK(rogue);
-            rogue.CreateRelationship(TfToken("rigExec:controls")).SetTargets(
-                {SdfPath("/ArmAsset/Rig/Controls/ShoulderFK")});
+            rogue.CreateRelationship(TfToken("rigExec:controls"))
+                .SetTargets({SdfPath("/ArmAsset/Rig/Controls/ShoulderFK")});
             rogue.CreateRelationship(jointsTok).SetTargets(
                 {SdfPath("/ArmAsset/Rig/Joints/Shoulder")});
             RigExecRigEvaluator eval(stage, rigPath);
@@ -429,8 +429,7 @@ TestViewFreeValidation(const std::string &examplesDir)
                 const std::vector<SdfPath> &chain = shoulder->second;
                 CHECK(chain.size() == 2);
                 if (chain.size() == 2) {
-                    CHECK(chain[0] ==
-                          SdfPath("/ArmAsset/Rig/Solvers/Rogue"));
+                    CHECK(chain[0] == SdfPath("/ArmAsset/Rig/Solvers/Rogue"));
                     CHECK(chain[1] ==
                           SdfPath("/ArmAsset/Rig/Solvers/IKFKBlend"));
                 }
@@ -498,18 +497,18 @@ TestViewFreeValidation(const std::string &examplesDir)
             RigExecRigEvaluator eval(stage, tailRig);
             eval.cpuReference = true;
             CHECK(eval.Compile());
-            UsdPrim fk = stage->GetPrimAtPath(
-                SdfPath("/TailAsset/Rig/Solvers/TailFK"));
+            UsdPrim fk =
+                stage->GetPrimAtPath(SdfPath("/TailAsset/Rig/Solvers/TailFK"));
             CHECK(fk);
             if (fk) {
                 UsdRelationship controls =
                     fk.GetRelationship(TfToken("rigExec:controls"));
                 SdfPathVector ct;
                 controls.GetTargets(&ct);
-                CHECK(ct.size() > 1);  // 4 joints bind elements 0..3
+                CHECK(ct.size() > 1); // 4 joints bind elements 0..3
                 if (ct.size() > 1) {
                     ct.resize(1);
-                    controls.SetTargets(ct);  // now only element 0 is valid
+                    controls.SetTargets(ct); // now only element 0 is valid
                     const RigExecRigPose pose =
                         eval.Evaluate(UsdTimeCode::Default());
                     CHECK(pose.valid);
@@ -532,9 +531,10 @@ TestViewFreeValidation(const std::string &examplesDir)
             RigExecRigEvaluator eval(stage, spineRig);
             eval.cpuReference = true;
             std::vector<std::string> errors;
-            CHECK(eval.Compile(&errors));  // valid baseline
+            CHECK(eval.Compile(&errors)); // valid baseline
             const auto baseline = eval.Evaluate(UsdTimeCode::Default());
-            CHECK(baseline.valid);CHECK(!baseline.controlFrames.empty());
+            CHECK(baseline.valid);
+            CHECK(!baseline.controlFrames.empty());
             for (const std::string &e : errors) {
                 std::printf("  05 compile error: %s\n", e.c_str());
             }
@@ -553,40 +553,57 @@ TestViewFreeValidation(const std::string &examplesDir)
                 sc.Set(deflt, UsdTimeCode(2.0));
                 const RigExecRigPose pose =
                     eval.Evaluate(UsdTimeCode::Default());
-                CHECK(pose.valid);  // only unavailable aggregate consumers are set aside
+                CHECK(
+                    pose.valid); // only unavailable aggregate consumers are set aside
                 const auto skipped = eval.GetSkippedOperations();
                 CHECK(skipped.count(ribbon.GetPath()) == 1);
                 const SdfPath geometry("/SpineAsset/Rig/Movers/Geometry");
                 for (const char *name : {"RibbonWrap", "EmitGuides"}) {
-                    const auto found = skipped.find(geometry.AppendChild(TfToken(name)));
+                    const auto found =
+                        skipped.find(geometry.AppendChild(TfToken(name)));
                     CHECK(found != skipped.end());
                     if (found != skipped.end())
-                        CHECK(found->second == "driver frames " + ribbon.GetPath().GetString() +
-                            " is not a solver of this rig; mover set aside");
+                        CHECK(found->second ==
+                              "driver frames " + ribbon.GetPath().GetString() +
+                                  " is not a solver of this rig; mover set "
+                                  "aside");
                 }
                 CHECK(!skipped.count(geometry.AppendChild(TfToken("FinSkin"))));
-                CHECK(pose.controlFrames.size() == baseline.controlFrames.size());
+                CHECK(pose.controlFrames.size() ==
+                      baseline.controlFrames.size());
                 for (const auto &[path, expected] : baseline.controlFrames) {
-                    const auto found = pose.controlFrames.find(path);CHECK(found != pose.controlFrames.end());
+                    const auto found = pose.controlFrames.find(path);
+                    CHECK(found != pose.controlFrames.end());
                     if (found != pose.controlFrames.end()) {
                         CHECK(found->second.flags == expected.flags);
                         CHECK(found->second.points == expected.points);
                     }
                 }
                 const SdfPath fin("/SpineAsset/Geom/Fin.points");
-                CHECK(pose.movedProperties.count(fin));CHECK(baseline.movedProperties.count(fin));
-                if (pose.movedProperties.count(fin) && baseline.movedProperties.count(fin))
-                    CHECK(pose.movedProperties.at(fin) == baseline.movedProperties.at(fin));
-                const auto *program = eval.GetBakedProgram();CHECK(program);
-                if (program) for (const auto &chain : program->GetStepGraph().chains)
-                    for (const auto &revision : chain.revisions)
-                        CHECK(revision.moverPath != geometry.AppendChild(TfToken("RibbonWrap")) &&
-                              revision.moverPath != geometry.AppendChild(TfToken("EmitGuides")));
-                const auto held = eval.Evaluate(UsdTimeCode::Default());CHECK(held.valid);
+                CHECK(pose.movedProperties.count(fin));
+                CHECK(baseline.movedProperties.count(fin));
+                if (pose.movedProperties.count(fin) &&
+                    baseline.movedProperties.count(fin))
+                    CHECK(pose.movedProperties.at(fin) ==
+                          baseline.movedProperties.at(fin));
+                const auto *program = eval.GetBakedProgram();
+                CHECK(program);
+                if (program)
+                    for (const auto &chain : program->GetStepGraph().chains)
+                        for (const auto &revision : chain.revisions)
+                            CHECK(revision.moverPath !=
+                                      geometry.AppendChild(
+                                          TfToken("RibbonWrap")) &&
+                                  revision.moverPath !=
+                                      geometry.AppendChild(
+                                          TfToken("EmitGuides")));
+                const auto held = eval.Evaluate(UsdTimeCode::Default());
+                CHECK(held.valid);
                 CHECK(eval.GetSkippedOperations() == skipped);
                 CHECK(held.movedProperties == pose.movedProperties);
                 CHECK(sc.ClearAtTime(UsdTimeCode(2.0)));
-                const auto restored = eval.Evaluate(UsdTimeCode::Default());CHECK(restored.valid);
+                const auto restored = eval.Evaluate(UsdTimeCode::Default());
+                CHECK(restored.valid);
                 CHECK(eval.GetSkippedOperations().empty());
                 CHECK(restored.movedProperties == baseline.movedProperties);
             }
@@ -599,12 +616,12 @@ TestShotAnimation(const std::string &examplesDir)
 {
     UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/ArmShotAnim.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
 
     const SdfPath rigPath("/Shot/HeroArm/Rig");
-    const SdfPath weightPath =
-        rigPath.AppendPath(SdfPath("Solvers/IKFKBlend"))
-            .AppendProperty(TfToken("inputs:weight"));
+    const SdfPath weightPath = rigPath.AppendPath(SdfPath("Solvers/IKFKBlend"))
+                                   .AppendProperty(TfToken("inputs:weight"));
 
     RigExecTapSet taps(stage);
     const RigExecTapId weightTap =
@@ -655,7 +672,8 @@ TestShotAnimation(const std::string &examplesDir)
         rests[0] = GetRestLandmarks(root, t);
         const GfVec3d restAim = (rests[0][1] - rests[0][0]).GetNormalized();
         rests[1] = rests[0];
-        for (auto &p : rests[1]) p += restAim * params.upperLength;
+        for (auto &p : rests[1])
+            p += restAim * params.upperLength;
         rests[2] = GetRestLandmarks(handIk, t);
 
         const auto expected = RigExecSolveTwoBoneIk(
@@ -670,13 +688,15 @@ TestGeometryMovers(const std::string &examplesDir)
 {
     UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/ArmRig.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
 
     // Shape-preserving enable edit (value-only per spec §4.2): disable the
     // wrist aim so joint matrices are exactly identity at rest and the
     // geometry expectations below are closed-form.
-    stage->GetAttributeAtPath(
-        SdfPath("/ArmAsset/Rig/Movers/Pose/WristAim.inputs:enabled"))
+    stage
+        ->GetAttributeAtPath(
+            SdfPath("/ArmAsset/Rig/Movers/Pose/WristAim.inputs:enabled"))
         .Set(false);
 
     RigExecRigEvaluator evaluator(stage, SdfPath("/ArmAsset/Rig"));
@@ -687,7 +707,8 @@ TestGeometryMovers(const std::string &examplesDir)
         std::printf("compile error: %s\n", e.c_str());
     }
     CHECK(compiled);
-    if (!compiled) return;
+    if (!compiled)
+        return;
 
     // Reverse-sibling post-order: Geometry is displayed above Pose, so Pose
     // executes first; descendants still precede ancestors (spec §4.5).
@@ -707,9 +728,9 @@ TestGeometryMovers(const std::string &examplesDir)
     const int wristMatrixIdx = indexOf("WristMatrix");
     const int shoulderMatrixIdx = indexOf("ShoulderMatrix");
     const int volumeIdx = indexOf("VolumeCorrect");
-    CHECK(clampIdx >= 0 && aimIdx > clampIdx);        // child before parent
-    CHECK(aimIdx < blendIdx);                          // Pose before Geometry
-    CHECK(blendIdx < wristMatrixIdx);                  // deepest child first
+    CHECK(clampIdx >= 0 && aimIdx > clampIdx); // child before parent
+    CHECK(aimIdx < blendIdx);                  // Pose before Geometry
+    CHECK(blendIdx < wristMatrixIdx);          // deepest child first
     CHECK(wristMatrixIdx < shoulderMatrixIdx);
     CHECK(shoulderMatrixIdx < volumeIdx);
 
@@ -725,8 +746,7 @@ TestGeometryMovers(const std::string &examplesDir)
     // overrides or through the in-memory mover graph -- so there is nothing
     // to author and no stage to derive. The evaluation stage IS the source
     // stage, and the generated scope must not exist on it.
-    CHECK(!stage->GetPrimAtPath(
-        SdfPath("/ArmAsset/Rig/__RigExecGenerated")));
+    CHECK(!stage->GetPrimAtPath(SdfPath("/ArmAsset/Rig/__RigExecGenerated")));
     CHECK(stage->GetSessionLayer() &&
           stage->GetSessionLayer()->GetNumSubLayerPaths() == 0);
     CHECK(evaluator.GetEvaluationStage() == stage);
@@ -763,8 +783,7 @@ TestGeometryMovers(const std::string &examplesDir)
     // "0 chain(s) agreed" fails explicitly: a parity pass that silently
     // checked nothing is indistinguishable from one that passed.
     {
-        if (pose.referenceMismatches != 0 ||
-            pose.referenceAgreements == 0) {
+        if (pose.referenceMismatches != 0 || pose.referenceAgreements == 0) {
             for (const std::string &d : pose.diagnostics) {
                 if (d.find("scalar reference") != std::string::npos) {
                     std::printf("    %s\n", d.c_str());
@@ -776,8 +795,8 @@ TestGeometryMovers(const std::string &examplesDir)
     }
 
     // Derived chains: normals unit-length and extent bounds final points.
-    const auto normalsIt = pose.movedProperties.find(
-        SdfPath("/ArmAsset/Geom/ArmBody.normals"));
+    const auto normalsIt =
+        pose.movedProperties.find(SdfPath("/ArmAsset/Geom/ArmBody.normals"));
     CHECK(normalsIt != pose.movedProperties.end());
     if (normalsIt != pose.movedProperties.end()) {
         const auto normals = normalsIt->second.Get<VtVec3fArray>();
@@ -786,8 +805,8 @@ TestGeometryMovers(const std::string &examplesDir)
             CHECK(std::abs(n.GetLength() - 1.0f) < 1e-4f);
         }
     }
-    const auto extentIt = pose.movedProperties.find(
-        SdfPath("/ArmAsset/Geom/ArmBody.extent"));
+    const auto extentIt =
+        pose.movedProperties.find(SdfPath("/ArmAsset/Geom/ArmBody.extent"));
     CHECK(extentIt != pose.movedProperties.end());
 
     // Scalar-reference parity (spec §7.4): the generated OpenExec
@@ -808,9 +827,10 @@ TestGeometryMovers(const std::string &examplesDir)
     // moves relationship changes the compiled rig digest, and the next
     // Evaluate recompiles.
     const size_t compiledRigBefore = evaluator.GetCompiledRigSignature();
-    stage->GetPrimAtPath(
-             SdfPath("/ArmAsset/Rig/Movers/Geometry/VolumeCorrect/"
-                     "RibbonWrap/ShoulderMatrix/ElbowMatrix/WristMatrix"))
+    stage
+        ->GetPrimAtPath(
+            SdfPath("/ArmAsset/Rig/Movers/Geometry/VolumeCorrect/"
+                    "RibbonWrap/ShoulderMatrix/ElbowMatrix/WristMatrix"))
         .GetRelationship(TfToken("rigExec:transform"))
         .SetTargets({SdfPath("/ArmAsset/Rig/Joints/Shoulder/Elbow")});
     const RigExecRigPose pose2 = evaluator.Evaluate(UsdTimeCode::Default());
@@ -834,16 +854,15 @@ TestGeometryMovers(const std::string &examplesDir)
         const auto guides = guidesIt->second.Get<VtVec3fArray>();
         CHECK(guides.size() == 5);
         VtVec3fArray driverCvs;
-        stage->GetAttributeAtPath(
-                 SdfPath("/ArmAsset/Geom/RibbonDriver.points"))
+        stage->GetAttributeAtPath(SdfPath("/ArmAsset/Geom/RibbonDriver.points"))
             .Get(&driverCvs);
         const auto samples = RigExecSampleCurveRMF(
             std::vector<GfVec3f>(driverCvs.begin(), driverCvs.end()), 5);
         CHECK(samples.GetSize() == 5);
         if (guides.size() == 5 && samples.GetSize() == 5) {
             for (int i = 0; i < 5; ++i) {
-                CHECK(Near(GfVec3d(guides[i]),
-                           GfVec3d(samples.positions[i]), 1e-4));
+                CHECK(Near(GfVec3d(guides[i]), GfVec3d(samples.positions[i]),
+                           1e-4));
             }
         }
     }
@@ -860,15 +879,14 @@ TestBlendDeltasUseBase()
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Xform"));
 
     // Geometry: a four-point mesh and a target shape offset by +Z.
-    UsdPrim mesh =
-        stage->DefinePrim(SdfPath("/Asset/Geom/M"), TfToken("Mesh"));
-    const VtVec3fArray base = {
-        GfVec3f(0, 0, 0), GfVec3f(1, 0, 0), GfVec3f(1, 1, 0),
-        GfVec3f(0, 1, 0)};
-    mesh.CreateAttribute(TfToken("points"),
-                         SdfValueTypeNames->Point3fArray).Set(base);
+    UsdPrim mesh = stage->DefinePrim(SdfPath("/Asset/Geom/M"), TfToken("Mesh"));
+    const VtVec3fArray base = {GfVec3f(0, 0, 0), GfVec3f(1, 0, 0),
+                               GfVec3f(1, 1, 0), GfVec3f(0, 1, 0)};
+    mesh.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
+        .Set(base);
     mesh.CreateAttribute(TfToken("faceVertexCounts"),
-                         SdfValueTypeNames->IntArray).Set(VtIntArray{4});
+                         SdfValueTypeNames->IntArray)
+        .Set(VtIntArray{4});
     mesh.CreateAttribute(TfToken("faceVertexIndices"),
                          SdfValueTypeNames->IntArray)
         .Set(VtIntArray{0, 1, 2, 3});
@@ -878,8 +896,8 @@ TestBlendDeltasUseBase()
     for (GfVec3f &p : shapePoints) {
         p += GfVec3f(0, 0, 1);
     }
-    shape.CreateAttribute(TfToken("points"),
-                          SdfValueTypeNames->Point3fArray).Set(shapePoints);
+    shape.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
+        .Set(shapePoints);
 
     // Rig: one joint posed as a pure +2Y translation.
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
@@ -889,8 +907,7 @@ TestBlendDeltasUseBase()
     // posed:space poses the joint directly.
     GfMatrix4d posedSpace(1.0);
     posedSpace.SetTranslate(GfVec3d(0, 2, 0));
-    joint.CreateAttribute(TfToken("posed:space"),
-                          SdfValueTypeNames->Matrix4d)
+    joint.CreateAttribute(TfToken("posed:space"), SdfValueTypeNames->Matrix4d)
         .Set(posedSpace);
     // No rig-level output manifest: defining the RigExecJoint under the rig
     // is what publishes it (implicit discovery, replaces rigExec:jointOutputs).
@@ -903,12 +920,14 @@ TestBlendDeltasUseBase()
         w.CreateRelationship(TfToken("rigExec:weightTarget"))
             .SetTargets({SdfPath("/Asset/Geom/M.points")});
         w.CreateAttribute(TfToken("rigExec:representation"),
-                          SdfValueTypeNames->Token).Set(TfToken("dense"));
+                          SdfValueTypeNames->Token)
+            .Set(TfToken("dense"));
         w.CreateAttribute(TfToken("rigExec:values"),
                           SdfValueTypeNames->FloatArray)
             .Set(VtFloatArray{1, 1, 1, 1});
         w.CreateAttribute(TfToken("rigExec:defaultWeight"),
-                          SdfValueTypeNames->Float).Set(0.0f);
+                          SdfValueTypeNames->Float)
+            .Set(0.0f);
         return w;
     };
     UsdPrim moveWeight = makeWeight("All");
@@ -921,8 +940,8 @@ TestBlendDeltasUseBase()
     for (GfVec3f &p : halfPoints) {
         p += GfVec3f(0, 0, 0.8f);
     }
-    halfShape.CreateAttribute(TfToken("points"),
-                              SdfValueTypeNames->Point3fArray)
+    halfShape
+        .CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
         .Set(halfPoints);
 
     // Blend channel with an in-between at 0.5 and the full sample at 1,
@@ -930,20 +949,23 @@ TestBlendDeltasUseBase()
     // delta = 0.8 + (1.0 - 0.8) * 0.5 = 0.9 (spec §7.3).
     UsdPrim input = stage->DefinePrim(SdfPath("/Asset/Rig/BlendInputs/B"),
                                       TfToken("RigExecBlendInput"));
-    input.CreateAttribute(TfToken("inputs:weight"),
-                          SdfValueTypeNames->Float).Set(0.75f);
-    UsdPrim sample = stage->DefinePrim(
-        SdfPath("/Asset/Rig/BlendInputs/B/Full"),
-        TfToken("RigExecBlendSample"));
-    sample.CreateAttribute(TfToken("rigExec:activation"),
-                           SdfValueTypeNames->Float).Set(1.0f);
+    input.CreateAttribute(TfToken("inputs:weight"), SdfValueTypeNames->Float)
+        .Set(0.75f);
+    UsdPrim sample = stage->DefinePrim(SdfPath("/Asset/Rig/BlendInputs/B/Full"),
+                                       TfToken("RigExecBlendSample"));
+    sample
+        .CreateAttribute(TfToken("rigExec:activation"),
+                         SdfValueTypeNames->Float)
+        .Set(1.0f);
     sample.CreateRelationship(TfToken("rigExec:targetPoints"))
         .SetTargets({SdfPath("/Asset/Targets/T.points")});
-    UsdPrim halfSample = stage->DefinePrim(
-        SdfPath("/Asset/Rig/BlendInputs/B/Half"),
-        TfToken("RigExecBlendSample"));
-    halfSample.CreateAttribute(TfToken("rigExec:activation"),
-                               SdfValueTypeNames->Float).Set(0.5f);
+    UsdPrim halfSample =
+        stage->DefinePrim(SdfPath("/Asset/Rig/BlendInputs/B/Half"),
+                          TfToken("RigExecBlendSample"));
+    halfSample
+        .CreateAttribute(TfToken("rigExec:activation"),
+                         SdfValueTypeNames->Float)
+        .Set(0.5f);
     halfSample.CreateRelationship(TfToken("rigExec:targetPoints"))
         .SetTargets({SdfPath("/Asset/Targets/H.points")});
     input.CreateRelationship(TfToken("rigExec:samples"))
@@ -961,8 +983,8 @@ TestBlendDeltasUseBase()
     blend.CreateRelationship(TfToken("rigExec:weightObject"))
         .SetTargets({maskWeight.GetPath()});
 
-    UsdPrim mover = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Blend/JM"), TfToken("RigExecMatrixMover"));
+    UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Blend/JM"),
+                                      TfToken("RigExecMatrixMover"));
     mover.ApplyAPI(TfToken("RigExecMoverAPI"));
     mover.CreateRelationship(TfToken("rigExec:moves"))
         .SetTargets({SdfPath("/Asset/Geom/M.points")});
@@ -980,35 +1002,38 @@ TestBlendDeltasUseBase()
         std::printf("compile error: %s\n", e.c_str());
     }
     CHECK(compiled);
-    if (!compiled) return;
+    if (!compiled)
+        return;
 
     const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
     CHECK(pose.valid);
-    const auto it =
-        pose.movedProperties.find(SdfPath("/Asset/Geom/M.points"));
+    const auto it = pose.movedProperties.find(SdfPath("/Asset/Geom/M.points"));
     CHECK(it != pose.movedProperties.end());
-    if (it == pose.movedProperties.end()) return;
+    if (it == pose.movedProperties.end())
+        return;
     const auto points = it->second.Get<VtVec3fArray>();
     CHECK(points.size() == 4);
     for (size_t i = 0; i < points.size(); ++i) {
         // matrix move (+2Y) then in-between blend delta vs BASE (+0.9Z).
-        const GfVec3d expected =
-            GfVec3d(base[i]) + GfVec3d(0, 2, 0.9);
+        const GfVec3d expected = GfVec3d(base[i]) + GfVec3d(0, 2, 0.9);
         CHECK(Near(GfVec3d(points[i]), expected, 1e-5));
     }
 
     // A static sample has identical base/final/preceding values. Phase edits
     // remain valid and preserve that result without rebuilding point nodes.
     sample.GetRelationship(TfToken("rigExec:targetPoints"))
-        .SetMetadata(TfToken(RigExecReadPhaseMetadataName), std::string("final"));
+        .SetMetadata(TfToken(RigExecReadPhaseMetadataName),
+                     std::string("final"));
     const auto finalSample = evaluator.Evaluate(UsdTimeCode::Default());
     CHECK(finalSample.valid);
 
     sample.GetRelationship(TfToken("rigExec:targetPoints"))
-        .SetMetadata(TfToken(RigExecReadPhaseMetadataName), std::string("base"));
+        .SetMetadata(TfToken(RigExecReadPhaseMetadataName),
+                     std::string("base"));
     CHECK(evaluator.Evaluate(UsdTimeCode::Default()).valid);
     sample.GetRelationship(TfToken("rigExec:targetPoints"))
-        .SetMetadata(TfToken(RigExecReadPhaseMetadataName), std::string("preceding"));
+        .SetMetadata(TfToken(RigExecReadPhaseMetadataName),
+                     std::string("preceding"));
     CHECK(evaluator.Evaluate(UsdTimeCode::Default()).valid);
 }
 
@@ -1017,9 +1042,9 @@ DerivedEvaluateCount(const RigExecRigEvaluator &evaluator)
 {
     // Observe actual common operation execution, not a retired profiler label.
     const auto trace = evaluator.GetLastOpTrace();
-    return size_t(std::count_if(trace.begin(),trace.end(),[](const auto &row) {
-        return row.kind == "Derived";
-    }));
+    return size_t(
+        std::count_if(trace.begin(), trace.end(),
+                      [](const auto &row) { return row.kind == "Derived"; }));
 }
 
 static VtVec3fArray
@@ -1043,43 +1068,45 @@ TestDerivedMaintenanceDeferral()
     UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Xform"));
     UsdPrim mesh = stage->DefinePrim(SdfPath("/Asset/Geom/M"), TfToken("Mesh"));
-    const VtVec3fArray base = {
-        GfVec3f(0, 0, 0), GfVec3f(1, 0, 0), GfVec3f(1, 1, 0),
-        GfVec3f(0, 1, 0)};
-    mesh.CreateAttribute(TfToken("points"),
-                         SdfValueTypeNames->Point3fArray).Set(base);
+    const VtVec3fArray base = {GfVec3f(0, 0, 0), GfVec3f(1, 0, 0),
+                               GfVec3f(1, 1, 0), GfVec3f(0, 1, 0)};
+    mesh.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
+        .Set(base);
     mesh.CreateAttribute(TfToken("faceVertexCounts"),
-                         SdfValueTypeNames->IntArray).Set(VtIntArray{4});
+                         SdfValueTypeNames->IntArray)
+        .Set(VtIntArray{4});
     mesh.CreateAttribute(TfToken("faceVertexIndices"),
                          SdfValueTypeNames->IntArray)
         .Set(VtIntArray{0, 1, 2, 3});
-    mesh.CreateAttribute(TfToken("normals"),
-                         SdfValueTypeNames->Normal3fArray)
+    mesh.CreateAttribute(TfToken("normals"), SdfValueTypeNames->Normal3fArray)
         .Set(VtVec3fArray{base.size(), GfVec3f(0, 0, 1)});
-    mesh.CreateAttribute(TfToken("extent"),
-                         SdfValueTypeNames->Float3Array)
+    mesh.CreateAttribute(TfToken("extent"), SdfValueTypeNames->Float3Array)
         .Set(VtVec3fArray{GfVec3f(0, 0, 0), GfVec3f(1, 1, 0)});
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
     UsdPrim joint = stage->DefinePrim(SdfPath("/Asset/Rig/Joints/J"),
                                       TfToken("RigExecJoint"));
     GfMatrix4d posedSpace(1.0);
     posedSpace.SetTranslate(GfVec3d(0, 2, 0));
-    joint.CreateAttribute(TfToken("posed:space"),
-                          SdfValueTypeNames->Matrix4d)
+    joint.CreateAttribute(TfToken("posed:space"), SdfValueTypeNames->Matrix4d)
         .Set(posedSpace);
-    UsdPrim weight = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Weights/All"), TfToken("RigExecStaticWeight"));
+    UsdPrim weight = stage->DefinePrim(SdfPath("/Asset/Rig/Weights/All"),
+                                       TfToken("RigExecStaticWeight"));
     weight.CreateRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({SdfPath("/Asset/Geom/M.points")});
-    weight.CreateAttribute(TfToken("rigExec:representation"),
-                           SdfValueTypeNames->Token).Set(TfToken("dense"));
-    weight.CreateAttribute(TfToken("rigExec:values"),
-                           SdfValueTypeNames->FloatArray)
+    weight
+        .CreateAttribute(TfToken("rigExec:representation"),
+                         SdfValueTypeNames->Token)
+        .Set(TfToken("dense"));
+    weight
+        .CreateAttribute(TfToken("rigExec:values"),
+                         SdfValueTypeNames->FloatArray)
         .Set(VtFloatArray{1, 1, 1, 1});
-    weight.CreateAttribute(TfToken("rigExec:defaultWeight"),
-                           SdfValueTypeNames->Float).Set(0.0f);
-    UsdPrim mover = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/MM"), TfToken("RigExecMatrixMover"));
+    weight
+        .CreateAttribute(TfToken("rigExec:defaultWeight"),
+                         SdfValueTypeNames->Float)
+        .Set(0.0f);
+    UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/MM"),
+                                      TfToken("RigExecMatrixMover"));
     mover.ApplyAPI(TfToken("RigExecMoverAPI"));
     mover.CreateRelationship(TfToken("rigExec:moves"))
         .SetTargets({SdfPath("/Asset/Geom/M.points")});
@@ -1109,7 +1136,8 @@ TestDerivedMaintenanceDeferral()
     const VtVec3fArray secondNormals = MovedArray(second, normalsPath);
     const VtVec3fArray secondExtent = MovedArray(second, extentPath);
     CHECK(secondNormals.size() == firstNormals.size());
-    for (size_t i = 0; i < firstNormals.size() && i < secondNormals.size(); ++i) {
+    for (size_t i = 0; i < firstNormals.size() && i < secondNormals.size();
+         ++i) {
         CHECK(Near(GfVec3d(secondNormals[i]), GfVec3d(firstNormals[i]), 1e-6));
     }
     CHECK(secondExtent.size() == firstExtent.size());
@@ -1165,8 +1193,8 @@ EnvelopePoints(const RigExecRigPose &pose, const SdfPath &target)
     }
     CHECK(it->second.IsHolding<VtVec3fArray>());
     return it->second.IsHolding<VtVec3fArray>()
-        ? it->second.UncheckedGet<VtVec3fArray>()
-        : VtVec3fArray();
+               ? it->second.UncheckedGet<VtVec3fArray>()
+               : VtVec3fArray();
 }
 
 // Scale avars are part of the control's local affine transform, not guide
@@ -1180,9 +1208,9 @@ TestControlAvarScaleDrivesMatrixMover()
     const SdfPath rigPath("/Asset/Rig");
     const SdfPath controlPath("/Asset/Rig/Controls/C");
     const SdfPath target("/Asset/Geom/P.points");
-    const VtVec3fArray base = {
-        GfVec3f(0, 0, 0), GfVec3f(1, 0, 0), GfVec3f(0, 1, 0),
-        GfVec3f(0, 0, 1), GfVec3f(1, 2, 3)};
+    const VtVec3fArray base = {GfVec3f(0, 0, 0), GfVec3f(1, 0, 0),
+                               GfVec3f(0, 1, 0), GfVec3f(0, 0, 1),
+                               GfVec3f(1, 2, 3)};
 
     // Volume placement is intentionally rigid and exposes inputs:scaleX/Y/Z
     // instead. Future schema regeneration must not leak the control/joint
@@ -1195,8 +1223,9 @@ TestControlAvarScaleDrivesMatrixMover()
 
     const UsdPrim points =
         stage->DefinePrim(target.GetPrimPath(), TfToken("Points"));
-    points.CreateAttribute(
-              TfToken("points"), SdfValueTypeNames->Point3fArray, false)
+    points
+        .CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray,
+                         false)
         .Set(base);
     stage->DefinePrim(rigPath, TfToken("RigExecRoot"));
     const UsdPrim control =
@@ -1206,36 +1235,36 @@ TestControlAvarScaleDrivesMatrixMover()
     // authored constants so the non-commutative S * R * T order is explicit.
     const GfVec3d scaleAtZero(1, 1, 1);
     const GfVec3d scaleAtTen(2, 3, 4);
-    static const char *scaleNames[3] = {
-        "avars:sx", "avars:sy", "avars:sz"};
+    static const char *scaleNames[3] = {"avars:sx", "avars:sy", "avars:sz"};
     for (int axis = 0; axis < 3; ++axis) {
         const UsdAttribute attr = control.CreateAttribute(
             TfToken(scaleNames[axis]), SdfValueTypeNames->Double, false);
         CHECK(attr.Set(scaleAtZero[axis], UsdTimeCode(0)));
         CHECK(attr.Set(scaleAtTen[axis], UsdTimeCode(10)));
     }
-    control.CreateAttribute(
-               TfToken("avars:rz"), SdfValueTypeNames->Double, false)
+    control
+        .CreateAttribute(TfToken("avars:rz"), SdfValueTypeNames->Double, false)
         .Set(90.0);
-    control.CreateAttribute(
-               TfToken("avars:tx"), SdfValueTypeNames->Double, false)
+    control
+        .CreateAttribute(TfToken("avars:tx"), SdfValueTypeNames->Double, false)
         .Set(5.0);
-    control.CreateAttribute(
-               TfToken("avars:ty"), SdfValueTypeNames->Double, false)
+    control
+        .CreateAttribute(TfToken("avars:ty"), SdfValueTypeNames->Double, false)
         .Set(-2.0);
-    control.CreateAttribute(
-               TfToken("avars:tz"), SdfValueTypeNames->Double, false)
+    control
+        .CreateAttribute(TfToken("avars:tz"), SdfValueTypeNames->Double, false)
         .Set(7.0);
 
-    const UsdPrim mover = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/M"), TfToken("RigExecMatrixMover"));
+    const UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/M"),
+                                            TfToken("RigExecMatrixMover"));
     CHECK(mover.ApplyAPI(TfToken("RigExecMoverAPI")));
     mover.CreateRelationship(TfToken("rigExec:moves"), false)
         .SetTargets({target});
     mover.CreateRelationship(TfToken("rigExec:transform"), false)
         .SetTargets({controlPath});
-    mover.CreateAttribute(
-             TfToken("inputs:defaultWeight"), SdfValueTypeNames->Float, false)
+    mover
+        .CreateAttribute(TfToken("inputs:defaultWeight"),
+                         SdfValueTypeNames->Float, false)
         .Set(1.0f);
 
     RigExecRigEvaluator evaluator(stage, rigPath);
@@ -1256,9 +1285,8 @@ TestControlAvarScaleDrivesMatrixMover()
     auto expectedMatrix = [](const GfVec3d &scale) {
         GfMatrix4d result(1.0);
         result.SetScale(scale);
-        result = result * GfMatrix4d(
-                              GfRotation(GfVec3d(0, 0, 1), 90.0),
-                              GfVec3d(0));
+        result =
+            result * GfMatrix4d(GfRotation(GfVec3d(0, 0, 1), 90.0), GfVec3d(0));
         GfMatrix4d translation(1.0);
         translation.SetTranslate(GfVec3d(5, -2, 7));
         return result * translation;
@@ -1266,8 +1294,7 @@ TestControlAvarScaleDrivesMatrixMover()
 
     auto checkAtTime = [&](RigExecRigEvaluator &activeEvaluator, double time,
                            const GfVec3d &scale) {
-        const RigExecRigPose pose =
-            activeEvaluator.Evaluate(UsdTimeCode(time));
+        const RigExecRigPose pose = activeEvaluator.Evaluate(UsdTimeCode(time));
         CHECK(pose.valid);
         CHECK(pose.referenceMismatches == 0);
 
@@ -1289,8 +1316,7 @@ TestControlAvarScaleDrivesMatrixMover()
         }
     };
 
-    for (const auto &[time, scale] :
-         std::vector<std::pair<double, GfVec3d>>{
+    for (const auto &[time, scale] : std::vector<std::pair<double, GfVec3d>>{
              {0.0, scaleAtZero}, {10.0, scaleAtTen}}) {
         checkAtTime(evaluator, time, scale);
     }
@@ -1303,8 +1329,7 @@ TestControlAvarScaleDrivesMatrixMover()
     for (int axis = 0; axis < 3; ++axis) {
         // Non-const: UsdAttribute::SetSpline is const-only from 26.08; the
         // Vendored USD 26.05 still takes a mutable handle.
-        UsdAttribute attr = control.GetAttribute(
-            TfToken(scaleNames[axis]));
+        UsdAttribute attr = control.GetAttribute(TfToken(scaleNames[axis]));
         CHECK(attr.ClearAtTime(UsdTimeCode(0)));
         CHECK(attr.ClearAtTime(UsdTimeCode(10)));
         TsSpline spline(doubleType);
@@ -1324,9 +1349,8 @@ TestControlAvarScaleDrivesMatrixMover()
     const bool splineCompiled = splineEvaluator.Compile(&errors);
     if (!splineCompiled) {
         for (const std::string &error : errors) {
-            std::printf(
-                "single-knot control-scale compile error: %s\n",
-                error.c_str());
+            std::printf("single-knot control-scale compile error: %s\n",
+                        error.c_str());
         }
     }
     CHECK(splineCompiled);
@@ -1340,11 +1364,10 @@ TestControlAvarScaleDrivesMatrixMover()
     // Raw USD can bypass both strict authoring surfaces, so the computation
     // itself applies the same contract. Tiny values retain reflection sign;
     // non-finite values become identity scale instead of poisoning the frame.
-    auto checkRawScale = [&](const GfVec3d &raw,
-                             const GfVec3d &normalized) {
+    auto checkRawScale = [&](const GfVec3d &raw, const GfVec3d &normalized) {
         for (int axis = 0; axis < 3; ++axis) {
-            const UsdAttribute attr = control.GetAttribute(
-                TfToken(scaleNames[axis]));
+            const UsdAttribute attr =
+                control.GetAttribute(TfToken(scaleNames[axis]));
             CHECK(attr.Clear());
             CHECK(attr.Set(raw[axis]));
         }
@@ -1364,15 +1387,13 @@ TestControlAvarScaleDrivesMatrixMover()
         }
     };
 
-    checkRawScale(
-        GfVec3d(0.0, -0.0, -0.5 * RigExecAvarScaleFloor),
-        GfVec3d(RigExecAvarScaleFloor, -RigExecAvarScaleFloor,
-                -RigExecAvarScaleFloor));
-    checkRawScale(
-        GfVec3d(std::numeric_limits<double>::quiet_NaN(),
-                std::numeric_limits<double>::infinity(),
-                -std::numeric_limits<double>::infinity()),
-        GfVec3d(1.0));
+    checkRawScale(GfVec3d(0.0, -0.0, -0.5 * RigExecAvarScaleFloor),
+                  GfVec3d(RigExecAvarScaleFloor, -RigExecAvarScaleFloor,
+                          -RigExecAvarScaleFloor));
+    checkRawScale(GfVec3d(std::numeric_limits<double>::quiet_NaN(),
+                          std::numeric_limits<double>::infinity(),
+                          -std::numeric_limits<double>::infinity()),
+                  GfVec3d(1.0));
 }
 
 // Authors either a dense point field or a constant one-element field.  The
@@ -1380,25 +1401,27 @@ TestControlAvarScaleDrivesMatrixMover()
 // in the callers: a related object supersedes the scalar fallback rather than
 // multiplying it.
 static UsdPrim
-MakeEnvelopeWeight(
-    const UsdStageRefPtr &stage, const SdfPath &path,
-    const SdfPath &target, const VtFloatArray &values,
-    float constantValue = 0.0f)
+MakeEnvelopeWeight(const UsdStageRefPtr &stage, const SdfPath &path,
+                   const SdfPath &target, const VtFloatArray &values,
+                   float constantValue = 0.0f)
 {
     const UsdPrim weight =
         stage->DefinePrim(path, TfToken("RigExecStaticWeight"));
     weight.CreateRelationship(TfToken("rigExec:weightTarget"), false)
         .SetTargets({target});
     const bool constant = values.empty();
-    weight.CreateAttribute(TfToken("rigExec:representation"),
-                           SdfValueTypeNames->Token, false)
+    weight
+        .CreateAttribute(TfToken("rigExec:representation"),
+                         SdfValueTypeNames->Token, false)
         .Set(TfToken(constant ? "constant" : "dense"));
-    weight.CreateAttribute(TfToken("rigExec:defaultWeight"),
-                           SdfValueTypeNames->Float, false)
+    weight
+        .CreateAttribute(TfToken("rigExec:defaultWeight"),
+                         SdfValueTypeNames->Float, false)
         .Set(constant ? constantValue : 0.0f);
     if (!constant) {
-        weight.CreateAttribute(TfToken("rigExec:values"),
-                               SdfValueTypeNames->FloatArray, false)
+        weight
+            .CreateAttribute(TfToken("rigExec:values"),
+                             SdfValueTypeNames->FloatArray, false)
             .Set(values);
     }
     return weight;
@@ -1411,35 +1434,38 @@ static void
 TestMatrixMoverUniversalEnvelope()
 {
     const SdfPath target("/Asset/Geom/P.points");
-    const VtVec3fArray base = {
-        GfVec3f(0, 0, 0), GfVec3f(1, 0, 0), GfVec3f(2, 0, 0)};
+    const VtVec3fArray base = {GfVec3f(0, 0, 0), GfVec3f(1, 0, 0),
+                               GfVec3f(2, 0, 0)};
 
     auto evaluate = [&](float defaultWeight,
                         const VtFloatArray *spatial) -> RigExecRigPose {
         const UsdStageRefPtr stage = UsdStage::CreateInMemory();
         const UsdPrim points =
             stage->DefinePrim(SdfPath("/Asset/Geom/P"), TfToken("Points"));
-        points.CreateAttribute(TfToken("points"),
-                               SdfValueTypeNames->Point3fArray, false)
+        points
+            .CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray,
+                             false)
             .Set(base);
         stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-        const UsdPrim joint = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Joints/J"), TfToken("RigExecJoint"));
+        const UsdPrim joint = stage->DefinePrim(SdfPath("/Asset/Rig/Joints/J"),
+                                                TfToken("RigExecJoint"));
         GfMatrix4d posed(1.0);
         posed.SetTranslate(GfVec3d(0, 10, 0));
-        joint.CreateAttribute(TfToken("posed:space"),
-                              SdfValueTypeNames->Matrix4d, false)
+        joint
+            .CreateAttribute(TfToken("posed:space"),
+                             SdfValueTypeNames->Matrix4d, false)
             .Set(posed);
 
-        const UsdPrim mover = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Movers/M"), TfToken("RigExecMatrixMover"));
+        const UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/M"),
+                                                TfToken("RigExecMatrixMover"));
         CHECK(mover.ApplyAPI(TfToken("RigExecMoverAPI")));
         mover.CreateRelationship(TfToken("rigExec:moves"), false)
             .SetTargets({target});
         mover.CreateRelationship(TfToken("rigExec:transform"), false)
             .SetTargets({joint.GetPath()});
-        mover.CreateAttribute(TfToken("inputs:defaultWeight"),
-                              SdfValueTypeNames->Float, false)
+        mover
+            .CreateAttribute(TfToken("inputs:defaultWeight"),
+                             SdfValueTypeNames->Float, false)
             .Set(defaultWeight);
         if (spatial) {
             const UsdPrim weight = MakeEnvelopeWeight(
@@ -1472,17 +1498,18 @@ TestMatrixMoverUniversalEnvelope()
 
     // The common envelope is normalized.  Bad scalar values fail this one
     // application atomically and preserve the preceding value.
-    for (const float invalid : {
-             -0.01f, 1.01f, std::numeric_limits<float>::quiet_NaN()}) {
+    for (const float invalid :
+         {-0.01f, 1.01f, std::numeric_limits<float>::quiet_NaN()}) {
         const RigExecRigPose pose = evaluate(invalid, nullptr);
         const VtVec3fArray moved = EnvelopePoints(pose, target);
         CHECK(moved == base);
-        CHECK(std::any_of(
-            pose.diagnostics.begin(), pose.diagnostics.end(),
-            [](const std::string &diagnostic) {
-                return diagnostic.find("defaultWeight") != std::string::npos ||
-                       diagnostic.find("weight") != std::string::npos;
-            }));
+        CHECK(std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
+                          [](const std::string &diagnostic) {
+                              return diagnostic.find("defaultWeight") !=
+                                         std::string::npos ||
+                                     diagnostic.find("weight") !=
+                                         std::string::npos;
+                          }));
     }
 }
 
@@ -1496,25 +1523,30 @@ static void
 TestSkinMoverLinearBlend()
 {
     const SdfPath target("/Asset/Geom/P.points");
-    const VtVec3fArray base = {
-        GfVec3f(0, 0, 0), GfVec3f(1, 0, 0), GfVec3f(2, 0, 0)};
+    const VtVec3fArray base = {GfVec3f(0, 0, 0), GfVec3f(1, 0, 0),
+                               GfVec3f(2, 0, 0)};
 
     auto makeStage = [&]() {
         const UsdStageRefPtr stage = UsdStage::CreateInMemory();
         const UsdPrim points =
             stage->DefinePrim(SdfPath("/Asset/Geom/P"), TfToken("Points"));
-        points.CreateAttribute(TfToken("points"),
-                               SdfValueTypeNames->Point3fArray, false)
+        points
+            .CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray,
+                             false)
             .Set(base);
         stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
         GfMatrix4d posedA(1.0), posedB(1.0);
         posedA.SetTranslate(GfVec3d(0, 10, 0));
         posedB.SetTranslate(GfVec3d(4, 0, 0));
-        stage->DefinePrim(SdfPath("/Asset/Rig/Joints/A"), TfToken("RigExecJoint"))
+        stage
+            ->DefinePrim(SdfPath("/Asset/Rig/Joints/A"),
+                         TfToken("RigExecJoint"))
             .CreateAttribute(TfToken("posed:space"),
                              SdfValueTypeNames->Matrix4d, false)
             .Set(posedA);
-        stage->DefinePrim(SdfPath("/Asset/Rig/Joints/B"), TfToken("RigExecJoint"))
+        stage
+            ->DefinePrim(SdfPath("/Asset/Rig/Joints/B"),
+                         TfToken("RigExecJoint"))
             .CreateAttribute(TfToken("posed:space"),
                              SdfValueTypeNames->Matrix4d, false)
             .Set(posedB);
@@ -1530,14 +1562,17 @@ TestSkinMoverLinearBlend()
         mover.CreateRelationship(TfToken("rigExec:influences"), false)
             .SetTargets({SdfPath("/Asset/Rig/Joints/A"),
                          SdfPath("/Asset/Rig/Joints/B")});
-        mover.CreateAttribute(TfToken("rigExec:elementSize"),
-                              SdfValueTypeNames->Int, false)
+        mover
+            .CreateAttribute(TfToken("rigExec:elementSize"),
+                             SdfValueTypeNames->Int, false)
             .Set(elementSize);
-        mover.CreateAttribute(TfToken("rigExec:jointIndices"),
-                              SdfValueTypeNames->IntArray, false)
+        mover
+            .CreateAttribute(TfToken("rigExec:jointIndices"),
+                             SdfValueTypeNames->IntArray, false)
             .Set(indices);
-        mover.CreateAttribute(TfToken("rigExec:jointWeights"),
-                              SdfValueTypeNames->FloatArray, false)
+        mover
+            .CreateAttribute(TfToken("rigExec:jointWeights"),
+                             SdfValueTypeNames->FloatArray, false)
             .Set(weights);
         return mover;
     };
@@ -1551,11 +1586,13 @@ TestSkinMoverLinearBlend()
         CHECK(moved.size() == base.size());
         if (moved.size() == base.size()) {
             // Weight 1 on A alone: exactly A's translation.
-            CHECK(Near(GfVec3d(moved[0]), GfVec3d(base[0]) + GfVec3d(0, 10, 0)));
+            CHECK(
+                Near(GfVec3d(moved[0]), GfVec3d(base[0]) + GfVec3d(0, 10, 0)));
             // 0.5 / 0.5: the midpoint of A p and B p.
             CHECK(Near(GfVec3d(moved[1]), GfVec3d(base[1]) + GfVec3d(2, 5, 0)));
             // 0.25 / 0.25: half the rest point is retained.
-            CHECK(Near(GfVec3d(moved[2]), GfVec3d(base[2]) + GfVec3d(1, 2.5, 0)));
+            CHECK(
+                Near(GfVec3d(moved[2]), GfVec3d(base[2]) + GfVec3d(1, 2.5, 0)));
         }
         CHECK(pose.referenceMismatches == 0);
     }
@@ -1590,18 +1627,21 @@ TestSkinMoverLinearBlend()
     auto compileError = [&](const UsdStageRefPtr &stage) {
         RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
         std::vector<std::string> errors;
-        CHECK(SkipsOperations(evaluator, {SdfPath("/Asset/Rig/Movers/Skin")}, &errors));
+        CHECK(SkipsOperations(evaluator, {SdfPath("/Asset/Rig/Movers/Skin")},
+                              &errors));
         CHECK(evaluator.Evaluate(UsdTimeCode::Default()).valid);
         std::string joined;
-        for (const std::string &e : errors) joined += e + "\n";
+        for (const std::string &e : errors)
+            joined += e + "\n";
         return joined;
     };
     {
         const UsdStageRefPtr stage = makeStage();
-        const UsdPrim mover = addSkin(
-            stage, VtIntArray({0, 0, 0}), VtFloatArray({1, 1, 1}), 1);
-        mover.CreateAttribute(TfToken("rigExec:skinningMethod"),
-                              SdfValueTypeNames->Token, false)
+        const UsdPrim mover =
+            addSkin(stage, VtIntArray({0, 0, 0}), VtFloatArray({1, 1, 1}), 1);
+        mover
+            .CreateAttribute(TfToken("rigExec:skinningMethod"),
+                             SdfValueTypeNames->Token, false)
             .Set(TfToken("bogus"));
         CHECK(compileError(stage).find("unknown rigExec:skinningMethod") !=
               std::string::npos);
@@ -1641,8 +1681,8 @@ TestSkinMoverDualQuaternion()
     };
     // Row-vector [S | 0] * [R | t]: the stretch acts in the joint's
     // pre-rotation frame, which is the transform a scaled joint produces.
-    auto scaled = [&](const GfVec3d &scale, const GfVec3d &axis,
-                      double degrees, const GfVec3d &t) {
+    auto scaled = [&](const GfVec3d &scale, const GfVec3d &axis, double degrees,
+                      const GfVec3d &t) {
         return GfMatrix4d().SetScale(scale) * rigid(axis, degrees, t);
     };
 
@@ -1655,15 +1695,20 @@ TestSkinMoverDualQuaternion()
         const UsdStageRefPtr stage = UsdStage::CreateInMemory();
         const UsdPrim points =
             stage->DefinePrim(SdfPath("/Asset/Geom/P"), TfToken("Points"));
-        points.CreateAttribute(TfToken("points"),
-                               SdfValueTypeNames->Point3fArray, false)
+        points
+            .CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray,
+                             false)
             .Set(base);
         stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-        stage->DefinePrim(SdfPath("/Asset/Rig/Joints/A"), TfToken("RigExecJoint"))
+        stage
+            ->DefinePrim(SdfPath("/Asset/Rig/Joints/A"),
+                         TfToken("RigExecJoint"))
             .CreateAttribute(TfToken("posed:space"),
                              SdfValueTypeNames->Matrix4d, false)
             .Set(posedA);
-        stage->DefinePrim(SdfPath("/Asset/Rig/Joints/B"), TfToken("RigExecJoint"))
+        stage
+            ->DefinePrim(SdfPath("/Asset/Rig/Joints/B"),
+                         TfToken("RigExecJoint"))
             .CreateAttribute(TfToken("posed:space"),
                              SdfValueTypeNames->Matrix4d, false)
             .Set(posedB);
@@ -1675,17 +1720,21 @@ TestSkinMoverDualQuaternion()
         mover.CreateRelationship(TfToken("rigExec:influences"), false)
             .SetTargets({SdfPath("/Asset/Rig/Joints/A"),
                          SdfPath("/Asset/Rig/Joints/B")});
-        mover.CreateAttribute(TfToken("rigExec:elementSize"),
-                              SdfValueTypeNames->Int, false)
+        mover
+            .CreateAttribute(TfToken("rigExec:elementSize"),
+                             SdfValueTypeNames->Int, false)
             .Set(elementSize);
-        mover.CreateAttribute(TfToken("rigExec:jointIndices"),
-                              SdfValueTypeNames->IntArray, false)
+        mover
+            .CreateAttribute(TfToken("rigExec:jointIndices"),
+                             SdfValueTypeNames->IntArray, false)
             .Set(indices);
-        mover.CreateAttribute(TfToken("rigExec:jointWeights"),
-                              SdfValueTypeNames->FloatArray, false)
+        mover
+            .CreateAttribute(TfToken("rigExec:jointWeights"),
+                             SdfValueTypeNames->FloatArray, false)
             .Set(weights);
-        mover.CreateAttribute(TfToken("rigExec:skinningMethod"),
-                              SdfValueTypeNames->Token, false)
+        mover
+            .CreateAttribute(TfToken("rigExec:skinningMethod"),
+                             SdfValueTypeNames->Token, false)
             .Set(TfToken(method));
         const RigExecRigPose pose = EvaluateEnvelopeFixture(stage);
         // The oracle ran and agreed: the graph kernel and the independent
@@ -1704,17 +1753,17 @@ TestSkinMoverDualQuaternion()
     // Single influence at weight 1: DQS == classicLinear == T p (to float
     // precision, the points being GfVec3f).
     {
-        const GfMatrix4d t = rigid(
-            GfVec3d(1, 2, 3).GetNormalized(), 40.0, GfVec3d(1, -1, 4));
-        const VtVec3fArray base = {
-            GfVec3f(0, 0, 0), GfVec3f(1, 0, 0), GfVec3f(0, 1, 0),
-            GfVec3f(0.3f, -0.6f, 0.9f)};
+        const GfMatrix4d t =
+            rigid(GfVec3d(1, 2, 3).GetNormalized(), 40.0, GfVec3d(1, -1, 4));
+        const VtVec3fArray base = {GfVec3f(0, 0, 0), GfVec3f(1, 0, 0),
+                                   GfVec3f(0, 1, 0),
+                                   GfVec3f(0.3f, -0.6f, 0.9f)};
         const VtIntArray indices({0, 0, 0, 0});
         const VtFloatArray weights({1, 1, 1, 1});
-        const VtVec3fArray dq = skin(
-            base, t, GfMatrix4d(1.0), indices, weights, 1, "dualQuaternion");
-        const VtVec3fArray lbs = skin(
-            base, t, GfMatrix4d(1.0), indices, weights, 1, "classicLinear");
+        const VtVec3fArray dq = skin(base, t, GfMatrix4d(1.0), indices, weights,
+                                     1, "dualQuaternion");
+        const VtVec3fArray lbs = skin(base, t, GfMatrix4d(1.0), indices,
+                                      weights, 1, "classicLinear");
         for (size_t i = 0; i < base.size(); ++i) {
             const GfVec3d expected = t.TransformAffine(GfVec3d(base[i]));
             CHECK(nearPoint(dq[i], expected));
@@ -1731,13 +1780,13 @@ TestSkinMoverDualQuaternion()
     {
         const GfMatrix4d a = rigid(Z, 0.0, GfVec3d(0, 10, 0));
         const GfMatrix4d b = rigid(Z, 0.0, GfVec3d(4, 0, 0));
-        const VtVec3fArray base = {
-            GfVec3f(0, 0, 0), GfVec3f(1, 0, 0), GfVec3f(2, 0, 0)};
+        const VtVec3fArray base = {GfVec3f(0, 0, 0), GfVec3f(1, 0, 0),
+                                   GfVec3f(2, 0, 0)};
         for (const char *method : {"dualQuaternion", "classicLinear"}) {
-            const VtVec3fArray moved = skin(
-                base, a, b, VtIntArray({0, 1, 0, 1, 0, 1}),
-                VtFloatArray({1.0f, 0.0f, 0.5f, 0.5f, 0.25f, 0.25f}), 2,
-                method);
+            const VtVec3fArray moved =
+                skin(base, a, b, VtIntArray({0, 1, 0, 1, 0, 1}),
+                     VtFloatArray({1.0f, 0.0f, 0.5f, 0.5f, 0.25f, 0.25f}), 2,
+                     method);
             CHECK(nearPoint(moved[0], GfVec3d(base[0]) + GfVec3d(0, 10, 0)));
             CHECK(nearPoint(moved[1], GfVec3d(base[1]) + GfVec3d(2, 5, 0)));
             CHECK(nearPoint(moved[2], GfVec3d(base[2]) + GfVec3d(1, 2.5, 0)));
@@ -1752,14 +1801,14 @@ TestSkinMoverDualQuaternion()
     {
         const GfMatrix4d a = rigid(X, 0.0, GfVec3d(0));
         const GfMatrix4d b = rigid(X, 150.0, GfVec3d(0));
-        const VtVec3fArray base = {
-            GfVec3f(0, 1, 0), GfVec3f(0, 0, 1), GfVec3f(1, 0, 0)};
+        const VtVec3fArray base = {GfVec3f(0, 1, 0), GfVec3f(0, 0, 1),
+                                   GfVec3f(1, 0, 0)};
         const VtIntArray indices({0, 1, 0, 1, 0, 1});
         const VtFloatArray weights({0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f});
-        const VtVec3fArray dq = skin(
-            base, a, b, indices, weights, 2, "dualQuaternion");
-        const VtVec3fArray lbs = skin(
-            base, a, b, indices, weights, 2, "classicLinear");
+        const VtVec3fArray dq =
+            skin(base, a, b, indices, weights, 2, "dualQuaternion");
+        const VtVec3fArray lbs =
+            skin(base, a, b, indices, weights, 2, "classicLinear");
         const double c75 = std::cos(75.0 * kPi / 180.0);
         const double s75 = std::sin(75.0 * kPi / 180.0);
         const double c150 = std::cos(150.0 * kPi / 180.0);
@@ -1784,15 +1833,14 @@ TestSkinMoverDualQuaternion()
     {
         const GfMatrix4d a = scaled(GfVec3d(1, 2, 2), X, 0.0, GfVec3d(0));
         const GfMatrix4d b = rigid(X, 150.0, GfVec3d(0));
-        const VtVec3fArray base = {
-            GfVec3f(0, 1, 0), GfVec3f(0, 0, 1), GfVec3f(1, 0, 0),
-            GfVec3f(0, 1, 0)};
+        const VtVec3fArray base = {GfVec3f(0, 1, 0), GfVec3f(0, 0, 1),
+                                   GfVec3f(1, 0, 0), GfVec3f(0, 1, 0)};
         const VtIntArray indices({0, 0, 0, 0, 0, 0, 0, 1});
         const VtFloatArray weights({1, 0, 1, 0, 1, 0, 0.5f, 0.5f});
-        const VtVec3fArray dq = skin(
-            base, a, b, indices, weights, 2, "dualQuaternion");
-        const VtVec3fArray lbs = skin(
-            base, a, b, indices, weights, 2, "classicLinear");
+        const VtVec3fArray dq =
+            skin(base, a, b, indices, weights, 2, "dualQuaternion");
+        const VtVec3fArray lbs =
+            skin(base, a, b, indices, weights, 2, "classicLinear");
         const double c75 = std::cos(75.0 * kPi / 180.0);
         const double s75 = std::sin(75.0 * kPi / 180.0);
         CHECK(nearPoint(dq[0], GfVec3d(0, 2, 0)));
@@ -1816,10 +1864,10 @@ TestSkinMoverDualQuaternion()
         const VtVec3fArray base = {GfVec3f(1, 0, 0), GfVec3f(1, 0, 0)};
         const VtIntArray indices({0, 0});
         const VtFloatArray weights({0.5f, 0.0f});
-        const VtVec3fArray dq = skin(
-            base, a, GfMatrix4d(1.0), indices, weights, 1, "dualQuaternion");
-        const VtVec3fArray lbs = skin(
-            base, a, GfMatrix4d(1.0), indices, weights, 1, "classicLinear");
+        const VtVec3fArray dq = skin(base, a, GfMatrix4d(1.0), indices, weights,
+                                     1, "dualQuaternion");
+        const VtVec3fArray lbs = skin(base, a, GfMatrix4d(1.0), indices,
+                                      weights, 1, "classicLinear");
         const double c45 = std::cos(45.0 * kPi / 180.0);
         CHECK(nearPoint(dq[0], GfVec3d(c45, c45, 0)));
         CHECK(std::abs(length(dq[0]) - 1.0) < 1e-6);
@@ -1836,16 +1884,17 @@ static void
 TestBlendShapeUniversalEnvelope()
 {
     const SdfPath target("/Asset/Geom/P.points");
-    const VtVec3fArray base = {
-        GfVec3f(0, 0, 0), GfVec3f(1, 0, 0), GfVec3f(2, 0, 0)};
+    const VtVec3fArray base = {GfVec3f(0, 0, 0), GfVec3f(1, 0, 0),
+                               GfVec3f(2, 0, 0)};
 
     auto evaluate = [&](float defaultWeight,
                         const VtFloatArray *spatial) -> VtVec3fArray {
         const UsdStageRefPtr stage = UsdStage::CreateInMemory();
         const UsdPrim points =
             stage->DefinePrim(SdfPath("/Asset/Geom/P"), TfToken("Points"));
-        points.CreateAttribute(TfToken("points"),
-                               SdfValueTypeNames->Point3fArray, false)
+        points
+            .CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray,
+                             false)
             .Set(base);
         VtVec3fArray full = base;
         for (GfVec3f &point : full) {
@@ -1853,8 +1902,9 @@ TestBlendShapeUniversalEnvelope()
         }
         const UsdPrim targetShape = stage->DefinePrim(
             SdfPath("/Asset/Targets/Full"), TfToken("Points"));
-        targetShape.CreateAttribute(TfToken("points"),
-                                    SdfValueTypeNames->Point3fArray, false)
+        targetShape
+            .CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray,
+                             false)
             .Set(full);
 
         stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
@@ -1862,31 +1912,33 @@ TestBlendShapeUniversalEnvelope()
             SdfPath("/Asset/Rig/BlendInputs/B"), TfToken("RigExecBlendInput"));
         // This weight survives the migration: it is a blend-channel
         // amplitude, not a mover envelope.
-        input.CreateAttribute(TfToken("inputs:weight"),
-                              SdfValueTypeNames->Float, false)
+        input
+            .CreateAttribute(TfToken("inputs:weight"), SdfValueTypeNames->Float,
+                             false)
             .Set(1.0f);
-        const UsdPrim sample = stage->DefinePrim(
-            SdfPath("/Asset/Rig/BlendInputs/B/Full"),
-            TfToken("RigExecBlendSample"));
-        sample.CreateAttribute(TfToken("rigExec:activation"),
-                               SdfValueTypeNames->Float, false)
+        const UsdPrim sample =
+            stage->DefinePrim(SdfPath("/Asset/Rig/BlendInputs/B/Full"),
+                              TfToken("RigExecBlendSample"));
+        sample
+            .CreateAttribute(TfToken("rigExec:activation"),
+                             SdfValueTypeNames->Float, false)
             .Set(1.0f);
         sample.CreateRelationship(TfToken("rigExec:targetPoints"), false)
-            .SetTargets({targetShape.GetPath().AppendProperty(
-                TfToken("points"))});
+            .SetTargets(
+                {targetShape.GetPath().AppendProperty(TfToken("points"))});
         input.CreateRelationship(TfToken("rigExec:samples"), false)
             .SetTargets({sample.GetPath()});
 
         const UsdPrim mover = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Movers/B"),
-            TfToken("RigExecBlendShapeMover"));
+            SdfPath("/Asset/Rig/Movers/B"), TfToken("RigExecBlendShapeMover"));
         CHECK(mover.ApplyAPI(TfToken("RigExecMoverAPI")));
         mover.CreateRelationship(TfToken("rigExec:moves"), false)
             .SetTargets({target});
         mover.CreateRelationship(TfToken("rigExec:blendInputs"), false)
             .SetTargets({input.GetPath()});
-        mover.CreateAttribute(TfToken("inputs:defaultWeight"),
-                              SdfValueTypeNames->Float, false)
+        mover
+            .CreateAttribute(TfToken("inputs:defaultWeight"),
+                             SdfValueTypeNames->Float, false)
             .Set(defaultWeight);
         if (spatial) {
             const UsdPrim weight = MakeEnvelopeWeight(
@@ -1921,18 +1973,17 @@ static void
 TestSmoothMoverUniversalEnvelope()
 {
     const SdfPath target("/Asset/Geom/M.points");
-    const VtVec3fArray base = {
-        GfVec3f(0, 0, 0), GfVec3f(2, 0, 0),
-        GfVec3f(2, 2, 0), GfVec3f(0, 2, 0)};
+    const VtVec3fArray base = {GfVec3f(0, 0, 0), GfVec3f(2, 0, 0),
+                               GfVec3f(2, 2, 0), GfVec3f(0, 2, 0)};
     const GfVec3d center(1, 1, 0);
 
-    auto makeStage = [&](float defaultWeight,
-                         const VtFloatArray *spatial) {
+    auto makeStage = [&](float defaultWeight, const VtFloatArray *spatial) {
         const UsdStageRefPtr stage = UsdStage::CreateInMemory();
         const UsdPrim mesh =
             stage->DefinePrim(SdfPath("/Asset/Geom/M"), TfToken("Mesh"));
-        mesh.CreateAttribute(TfToken("points"),
-                             SdfValueTypeNames->Point3fArray, false).Set(base);
+        mesh.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray,
+                             false)
+            .Set(base);
         mesh.CreateAttribute(TfToken("faceVertexCounts"),
                              SdfValueTypeNames->IntArray, false)
             .Set(VtIntArray{4});
@@ -1940,13 +1991,14 @@ TestSmoothMoverUniversalEnvelope()
                              SdfValueTypeNames->IntArray, false)
             .Set(VtIntArray{0, 1, 2, 3});
         stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-        const UsdPrim mover = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Movers/S"), TfToken("RigExecSmoothMover"));
+        const UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/S"),
+                                                TfToken("RigExecSmoothMover"));
         CHECK(mover.ApplyAPI(TfToken("RigExecMoverAPI")));
         mover.CreateRelationship(TfToken("rigExec:moves"), false)
             .SetTargets({target});
-        mover.CreateAttribute(TfToken("inputs:defaultWeight"),
-                              SdfValueTypeNames->Float, false)
+        mover
+            .CreateAttribute(TfToken("inputs:defaultWeight"),
+                             SdfValueTypeNames->Float, false)
             .Set(defaultWeight);
         if (spatial) {
             const UsdPrim weight = MakeEnvelopeWeight(
@@ -1982,8 +2034,8 @@ TestSmoothMoverUniversalEnvelope()
     // an ignored custom attribute.
     const UsdStageRefPtr legacy = makeStage(1.0f, nullptr);
     legacy->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/S"))
-        .CreateAttribute(TfToken("inputs:strength"),
-                         SdfValueTypeNames->Float, true)
+        .CreateAttribute(TfToken("inputs:strength"), SdfValueTypeNames->Float,
+                         true)
         .Set(0.5f);
     RigExecRigEvaluator legacyEvaluator(legacy, SdfPath("/Asset/Rig"));
     legacyEvaluator.cpuReference = true;
@@ -2006,28 +2058,31 @@ TestPropertyMoverUniversalEnvelope()
         const UsdStageRefPtr stage = UsdStage::CreateInMemory();
         const UsdPrim channels =
             stage->DefinePrim(SdfPath("/Asset/Channels"), TfToken("Scope"));
-        channels.CreateAttribute(TfToken("value"), SdfValueTypeNames->Float,
-                                 true).Set(2.0f);
+        channels
+            .CreateAttribute(TfToken("value"), SdfValueTypeNames->Float, true)
+            .Set(2.0f);
         stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
         const UsdPrim mover = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Movers/Add"),
-            TfToken("RigExecFloatMathMover"));
+            SdfPath("/Asset/Rig/Movers/Add"), TfToken("RigExecFloatMathMover"));
         CHECK(mover.ApplyAPI(TfToken("RigExecMoverAPI")));
         mover.CreateRelationship(TfToken("rigExec:moves"), false)
             .SetTargets({target});
-        mover.CreateAttribute(TfToken("rigExec:operation"),
-                              SdfValueTypeNames->Token, false)
+        mover
+            .CreateAttribute(TfToken("rigExec:operation"),
+                             SdfValueTypeNames->Token, false)
             .Set(TfToken("add"));
-        mover.CreateAttribute(TfToken("inputs:value"),
-                              SdfValueTypeNames->Float, false)
+        mover
+            .CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float,
+                             false)
             .Set(8.0f);
-        mover.CreateAttribute(TfToken("inputs:defaultWeight"),
-                              SdfValueTypeNames->Float, false)
+        mover
+            .CreateAttribute(TfToken("inputs:defaultWeight"),
+                             SdfValueTypeNames->Float, false)
             .Set(defaultWeight);
         if (objectWeight) {
-            const UsdPrim weight = MakeEnvelopeWeight(
-                stage, SdfPath("/Asset/Rig/Weights/W"), target,
-                VtFloatArray(), *objectWeight);
+            const UsdPrim weight =
+                MakeEnvelopeWeight(stage, SdfPath("/Asset/Rig/Weights/W"),
+                                   target, VtFloatArray(), *objectWeight);
             mover.CreateRelationship(TfToken("rigExec:weightObject"), false)
                 .SetTargets({weight.GetPath()});
         }
@@ -2042,8 +2097,8 @@ TestPropertyMoverUniversalEnvelope()
             return 0.0f;
         }
         CHECK(it->second.IsHolding<float>());
-        return it->second.IsHolding<float>()
-            ? it->second.UncheckedGet<float>() : 0.0f;
+        return it->second.IsHolding<float>() ? it->second.UncheckedGet<float>()
+                                             : 0.0f;
     };
 
     for (const float weight : {0.0f, 0.5f, 1.0f}) {
@@ -2058,8 +2113,8 @@ TestPropertyMoverUniversalEnvelope()
     // alias: only BlendInput keeps that spelling for channel amplitude.
     const UsdStageRefPtr legacy = makeStage(1.0f, nullptr);
     legacy->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/Add"))
-        .CreateAttribute(TfToken("inputs:weight"),
-                         SdfValueTypeNames->Float, true)
+        .CreateAttribute(TfToken("inputs:weight"), SdfValueTypeNames->Float,
+                         true)
         .Set(0.5f);
     RigExecRigEvaluator legacyEvaluator(legacy, SdfPath("/Asset/Rig"));
     legacyEvaluator.cpuReference = true;
@@ -2079,7 +2134,8 @@ TestWeightTargetMismatchFailsCompile(const std::string &examplesDir)
 {
     UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/ArmRig.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     stage->GetPrimAtPath(SdfPath("/ArmAsset/Rig/Weights/ShoulderPoints"))
         .GetRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({SdfPath("/ArmAsset/Geom/RibbonGuides.points")});
@@ -2088,7 +2144,10 @@ TestWeightTargetMismatchFailsCompile(const std::string &examplesDir)
 
     evaluator.cpuReference = true;
     std::vector<std::string> errors;
-    CHECK(SkipsOperations(evaluator, {SdfPath("/ArmAsset/Rig/Movers/Geometry/VolumeCorrect/RibbonWrap/ShoulderMatrix")}, &errors));
+    CHECK(SkipsOperations(evaluator,
+                          {SdfPath("/ArmAsset/Rig/Movers/Geometry/"
+                                   "VolumeCorrect/RibbonWrap/ShoulderMatrix")},
+                          &errors));
     CHECK(evaluator.Evaluate(UsdTimeCode::Default()).valid);
     CHECK(!errors.empty());
 }
@@ -2101,10 +2160,11 @@ TestDerivedTargetAndFanoutRejected(const std::string &examplesDir)
 {
     UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/ArmRig.usda");
     CHECK(stage);
-    if (!stage) return;
-    UsdPrim mover = stage->DefinePrim(
-        SdfPath("/ArmAsset/Rig/Movers/Geometry/BadSmooth"),
-        TfToken("RigExecSmoothMover"));
+    if (!stage)
+        return;
+    UsdPrim mover =
+        stage->DefinePrim(SdfPath("/ArmAsset/Rig/Movers/Geometry/BadSmooth"),
+                          TfToken("RigExecSmoothMover"));
     CHECK(mover);
     CHECK(mover.ApplyAPI(TfToken("RigExecMoverAPI")));
     mover.CreateRelationship(TfToken("rigExec:moves"))
@@ -2113,7 +2173,9 @@ TestDerivedTargetAndFanoutRejected(const std::string &examplesDir)
         RigExecRigEvaluator evaluator(stage, SdfPath("/ArmAsset/Rig"));
         evaluator.cpuReference = true;
         std::vector<std::string> errors;
-        CHECK(SkipsOperations(evaluator, {SdfPath("/ArmAsset/Rig/Movers/Geometry/BadSmooth")}, &errors));
+        CHECK(SkipsOperations(
+            evaluator, {SdfPath("/ArmAsset/Rig/Movers/Geometry/BadSmooth")},
+            &errors));
         CHECK(!errors.empty());
     }
     mover.GetRelationship(TfToken("rigExec:moves"))
@@ -2123,15 +2185,16 @@ TestDerivedTargetAndFanoutRejected(const std::string &examplesDir)
         RigExecRigEvaluator evaluator(stage, SdfPath("/ArmAsset/Rig"));
         evaluator.cpuReference = true;
         std::vector<std::string> errors;
-        CHECK(SkipsOperations(evaluator, {SdfPath("/ArmAsset/Rig/Movers/Geometry/BadSmooth")}, &errors));
+        CHECK(SkipsOperations(
+            evaluator, {SdfPath("/ArmAsset/Rig/Movers/Geometry/BadSmooth")},
+            &errors));
         CHECK(!errors.empty());
     }
     // A custom point3f[] "points" attribute on a non-PointBased prim is
     // not a legal target either: the owner must be a stock PointBased.
-    UsdPrim junk = stage->DefinePrim(
-        SdfPath("/ArmAsset/Geom/Junk"), TfToken("Xform"));
-    junk.CreateAttribute(
-            TfToken("points"), SdfValueTypeNames->Point3fArray)
+    UsdPrim junk =
+        stage->DefinePrim(SdfPath("/ArmAsset/Geom/Junk"), TfToken("Xform"));
+    junk.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
         .Set(VtVec3fArray{GfVec3f(0)});
     mover.GetRelationship(TfToken("rigExec:moves"))
         .SetTargets({SdfPath("/ArmAsset/Geom/Junk.points")});
@@ -2139,7 +2202,9 @@ TestDerivedTargetAndFanoutRejected(const std::string &examplesDir)
         RigExecRigEvaluator evaluator(stage, SdfPath("/ArmAsset/Rig"));
         evaluator.cpuReference = true;
         std::vector<std::string> errors;
-        CHECK(SkipsOperations(evaluator, {SdfPath("/ArmAsset/Rig/Movers/Geometry/BadSmooth")}, &errors));
+        CHECK(SkipsOperations(
+            evaluator, {SdfPath("/ArmAsset/Rig/Movers/Geometry/BadSmooth")},
+            &errors));
         CHECK(!errors.empty());
     }
 }
@@ -2152,14 +2217,14 @@ TestNonMeshAuthoredNormalsRejected(const std::string &examplesDir)
 {
     UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/ArmRig.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     // RibbonGuides (BasisCurves) is moved by GuideFromRibbon; author
     // normals on it.
     UsdPrim guides =
         stage->GetPrimAtPath(SdfPath("/ArmAsset/Geom/RibbonGuides"));
     CHECK(guides);
-    guides.CreateAttribute(
-              TfToken("normals"), SdfValueTypeNames->Normal3fArray)
+    guides.CreateAttribute(TfToken("normals"), SdfValueTypeNames->Normal3fArray)
         .Set(VtVec3fArray(5, GfVec3f(0, 0, 1)));
     RigExecRigEvaluator evaluator(stage, SdfPath("/ArmAsset/Rig"));
     evaluator.cpuReference = true;
@@ -2204,7 +2269,8 @@ TestImplicitJointDiscovery(const std::string &examplesDir)
         UsdStageRefPtr stage =
             UsdStage::Open(examplesDir + "/01_FkChainTail.usda");
         CHECK(stage);
-        if (!stage) return;
+        if (!stage)
+            return;
         RigExecRigEvaluator evaluator(stage, SdfPath("/TailAsset/Rig"));
         evaluator.cpuReference = true;
         std::vector<std::string> errors;
@@ -2231,7 +2297,11 @@ TestPointReferenceKernels(const std::string &examplesDir)
     // ribbon, aim), and a chain whose provider values are wrong publishes
     // undeformed geometry rather than failing. The rig prim is discovered by
     // type so adding an example cannot silently skip it.
-    struct Case { const char *file; double time; bool useTime; };
+    struct Case {
+        const char *file;
+        double time;
+        bool useTime;
+    };
     const Case cases[] = {
         {"/01_FkChainTail.usda", 0, false},
         {"/02_TwoBoneIkLeg.usda", 0, false},
@@ -2293,11 +2363,9 @@ TestPointReferenceKernels(const std::string &examplesDir)
         // agreements. Asserting only "no mismatch" would pass a rig whose
         // chains were never compared at all -- which is how the
         // SurfaceProject regression reached usdview.
-        if (pose.referenceMismatches != 0 ||
-            pose.referenceAgreements == 0) {
+        if (pose.referenceMismatches != 0 || pose.referenceAgreements == 0) {
             std::printf("  (%s @%s parity diagnostics:)\n", c.file,
-                        c.useTime ? std::to_string(c.time).c_str()
-                                  : "default");
+                        c.useTime ? std::to_string(c.time).c_str() : "default");
             for (const std::string &d : pose.diagnostics) {
                 if (d.find("scalar reference") != std::string::npos) {
                     std::printf("    %s\n", d.c_str());
@@ -2308,7 +2376,6 @@ TestPointReferenceKernels(const std::string &examplesDir)
         CHECK(pose.referenceAgreements > 0);
 
         // Producer edges determine the solver-to-joint version dependencies.
-
 
         // Parity alone cannot say the movers DID anything -- two identical
         // pass-throughs agree perfectly. For the rigs that visibly deform at
@@ -2351,7 +2418,8 @@ TestPointReferenceKernels(const std::string &examplesDir)
             }
             if (!anyMoved) {
                 std::printf("  %s: published points equal the authored base "
-                            "-- movers did nothing\n", c.file);
+                            "-- movers did nothing\n",
+                            c.file);
             }
             CHECK(anyMoved);
         }
@@ -2388,8 +2456,8 @@ TestSolverCycleRejected(const std::string &examplesDir)
         CHECK(ok.Compile(&errors));
     }
 
-    UsdPrim fk = stage->GetPrimAtPath(
-        SdfPath("/SpineAsset/Rig/Solvers/SpineFK"));
+    UsdPrim fk =
+        stage->GetPrimAtPath(SdfPath("/SpineAsset/Rig/Solvers/SpineFK"));
     CHECK(fk);
     if (!fk) {
         return;
@@ -2399,18 +2467,18 @@ TestSolverCycleRejected(const std::string &examplesDir)
     // Keep the joint-mediated FK/Twist cycle and close Ribbon into the
     // same structural SCC through its authored twistFrames prerequisite.
     CHECK(fk.GetRelationship(TfToken("rigExec:controls"))
-        .AddTarget(SdfPath("/SpineAsset/Rig/Solvers/SpineRibbon")));
+              .AddTarget(SdfPath("/SpineAsset/Rig/Solvers/SpineRibbon")));
 
     RigExecRigEvaluator evaluator(stage, rigPath);
 
     evaluator.cpuReference = true;
     std::vector<std::string> errors;
     // A cycle is no one member's fault: every member is set aside.
-    CHECK(SkipsOperations(
-        evaluator, {SdfPath("/SpineAsset/Rig/Solvers/SpineFK"),
-                    SdfPath("/SpineAsset/Rig/Solvers/SpineRibbon"),
-                    SdfPath("/SpineAsset/Rig/Solvers/SpineTwist")},
-        &errors));
+    CHECK(SkipsOperations(evaluator,
+                          {SdfPath("/SpineAsset/Rig/Solvers/SpineFK"),
+                           SdfPath("/SpineAsset/Rig/Solvers/SpineRibbon"),
+                           SdfPath("/SpineAsset/Rig/Solvers/SpineTwist")},
+                          &errors));
     bool namedCycle = false;
     for (const std::string &e : errors) {
         if (e.find("solver dependency cycle") != std::string::npos) {
@@ -2451,43 +2519,58 @@ TestPureSolverToSolverCycleRejected(const std::string &examplesDir)
         std::vector<std::string> errors;
         CHECK(ok.Compile(&errors));
         CHECK(ok.GetBakedProgram());
-        if (!ok.GetBakedProgram()) return;
+        if (!ok.GetBakedProgram())
+            return;
         const auto &B = ok.GetBakedProgram()->GetStepGraph();
-        const auto producer = B.solverIndex.find(SdfPath("/BlendArmAsset/Rig/Solvers/ArmFK"));
-        const auto ik = B.solverIndex.find(SdfPath("/BlendArmAsset/Rig/Solvers/ArmIK"));
-        const auto blend = B.solverIndex.find(SdfPath("/BlendArmAsset/Rig/Solvers/IKFKBlend"));
-        CHECK(producer != B.solverIndex.end() && ik != B.solverIndex.end() && blend != B.solverIndex.end());
-        if (producer == B.solverIndex.end() || ik == B.solverIndex.end() || blend == B.solverIndex.end()) return;
+        const auto producer =
+            B.solverIndex.find(SdfPath("/BlendArmAsset/Rig/Solvers/ArmFK"));
+        const auto ik =
+            B.solverIndex.find(SdfPath("/BlendArmAsset/Rig/Solvers/ArmIK"));
+        const auto blend =
+            B.solverIndex.find(SdfPath("/BlendArmAsset/Rig/Solvers/IKFKBlend"));
+        CHECK(producer != B.solverIndex.end() && ik != B.solverIndex.end() &&
+              blend != B.solverIndex.end());
+        if (producer == B.solverIndex.end() || ik == B.solverIndex.end() ||
+            blend == B.solverIndex.end())
+            return;
         const auto &record = B.solvers[size_t(blend->second)];
-        CHECK(record.relationshipRequirements == (std::vector<std::pair<std::string,int>>{
-            {"rigExec:inputA",producer->second},{"rigExec:inputB",ik->second}}));
+        CHECK(record.relationshipRequirements ==
+              (std::vector<std::pair<std::string, int>>{
+                  {"rigExec:inputA", producer->second},
+                  {"rigExec:inputB", ik->second}}));
         std::vector<std::string> requiredKeys{
             B.solvers[size_t(producer->second)].solveDescriptorKey,
             B.solvers[size_t(ik->second)].solveDescriptorKey};
-        std::sort(requiredKeys.begin(),requiredKeys.end());
+        std::sort(requiredKeys.begin(), requiredKeys.end());
         CHECK(!requiredKeys[0].empty() && !requiredKeys[1].empty());
         bool encountered = false;
-        for (const auto &step : B.steps) if (step.kind == RigExecBakedStepKind::Solve && step.object == blend->second) {
-            encountered = true;
-            CHECK(step.descriptorKey == record.solveDescriptorKey);
-            CHECK(step.semanticPredecessorKeys == requiredKeys);
-            for (const auto &key : requiredKeys) {
-                const auto source = std::find_if(B.steps.begin(),B.steps.end(),[&](const auto &candidate) {
-                    return candidate.descriptorKey == key;
-                });
-                CHECK(source != B.steps.end());
-                if (source != B.steps.end())
-                    CHECK(std::find(step.preds.begin(),step.preds.end(),int(source-B.steps.begin())) != step.preds.end());
+        for (const auto &step : B.steps)
+            if (step.kind == RigExecBakedStepKind::Solve &&
+                step.object == blend->second) {
+                encountered = true;
+                CHECK(step.descriptorKey == record.solveDescriptorKey);
+                CHECK(step.semanticPredecessorKeys == requiredKeys);
+                for (const auto &key : requiredKeys) {
+                    const auto source =
+                        std::find_if(B.steps.begin(), B.steps.end(),
+                                     [&](const auto &candidate) {
+                                         return candidate.descriptorKey == key;
+                                     });
+                    CHECK(source != B.steps.end());
+                    if (source != B.steps.end())
+                        CHECK(std::find(step.preds.begin(), step.preds.end(),
+                                        int(source - B.steps.begin())) !=
+                              step.preds.end());
+                }
             }
-        }
         CHECK(encountered);
         CHECK(ok.Evaluate(UsdTimeCode(1001)).valid);
     }
 
-    UsdPrim fk = stage->GetPrimAtPath(
-        SdfPath("/BlendArmAsset/Rig/Solvers/ArmFK"));
-    const UsdPrim blend = stage->GetPrimAtPath(
-        SdfPath("/BlendArmAsset/Rig/Solvers/IKFKBlend"));
+    UsdPrim fk =
+        stage->GetPrimAtPath(SdfPath("/BlendArmAsset/Rig/Solvers/ArmFK"));
+    const UsdPrim blend =
+        stage->GetPrimAtPath(SdfPath("/BlendArmAsset/Rig/Solvers/IKFKBlend"));
     CHECK(fk);
     CHECK(blend);
     if (!fk || !blend) {
@@ -2520,10 +2603,10 @@ TestPureSolverToSolverCycleRejected(const std::string &examplesDir)
     evaluator.cpuReference = true;
     std::vector<std::string> errors;
     // A cycle is no one member's fault: every member is set aside.
-    CHECK(SkipsOperations(
-        evaluator, {SdfPath("/BlendArmAsset/Rig/Solvers/ArmFK"),
-                    SdfPath("/BlendArmAsset/Rig/Solvers/IKFKBlend")},
-        &errors));
+    CHECK(SkipsOperations(evaluator,
+                          {SdfPath("/BlendArmAsset/Rig/Solvers/ArmFK"),
+                           SdfPath("/BlendArmAsset/Rig/Solvers/IKFKBlend")},
+                          &errors));
     bool namedCycle = false;
     for (const std::string &e : errors) {
         if (e.find("solver dependency cycle") != std::string::npos) {
@@ -2541,8 +2624,10 @@ TestPureSolverToSolverCycleRejected(const std::string &examplesDir)
     CHECK(skipped.size() == 2);
     CHECK(!skipped.count(SdfPath("/BlendArmAsset/Rig/Solvers/ArmIK")));
     for (const auto &entry : skipped) {
-        CHECK(entry.second.find("/BlendArmAsset/Rig/Solvers/ArmFK") != std::string::npos);
-        CHECK(entry.second.find("/BlendArmAsset/Rig/Solvers/IKFKBlend") != std::string::npos);
+        CHECK(entry.second.find("/BlendArmAsset/Rig/Solvers/ArmFK") !=
+              std::string::npos);
+        CHECK(entry.second.find("/BlendArmAsset/Rig/Solvers/IKFKBlend") !=
+              std::string::npos);
         CHECK(entry.second.find(" -> ") != std::string::npos);
     }
     std::string before;
@@ -2553,11 +2638,14 @@ TestPureSolverToSolverCycleRejected(const std::string &examplesDir)
     const SdfPath independent("/BlendArmAsset/Rig/Controls/ElbowPole");
     const auto original = first.controlFrames.find(independent);
     const auto repeated = held.controlFrames.find(independent);
-    CHECK(original != first.controlFrames.end() && repeated != held.controlFrames.end());
-    if (original != first.controlFrames.end() && repeated != held.controlFrames.end()) {
-        CHECK(original->second.Origin() == GfVec3d(3,10,-3));
+    CHECK(original != first.controlFrames.end() &&
+          repeated != held.controlFrames.end());
+    if (original != first.controlFrames.end() &&
+        repeated != held.controlFrames.end()) {
+        CHECK(original->second.Origin() == GfVec3d(3, 10, -3));
         for (size_t point = 0; point < 4; ++point)
-            CHECK(original->second.points[point] == repeated->second.points[point]);
+            CHECK(original->second.points[point] ==
+                  repeated->second.points[point]);
         CHECK(original->second.flags == repeated->second.flags);
     }
     CHECK(evaluator.GetSkippedOperations() == skipped);
@@ -2580,8 +2668,7 @@ TestPureSolverToSolverCycleRejected(const std::string &examplesDir)
 static void
 TestAimConstraintRevisesJointFrame(const std::string &examplesDir)
 {
-    UsdStageRefPtr stage =
-        UsdStage::Open(examplesDir + "/08_AimEyes.usda");
+    UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/08_AimEyes.usda");
     CHECK(stage);
     if (!stage) {
         return;
@@ -2619,8 +2706,8 @@ TestAimConstraintRevisesJointFrame(const std::string &examplesDir)
         const GfVec3d toTarget = (lookAt - origin).GetNormalized();
         const double alignment = GfDot(axis, toTarget);
         if (alignment < 0.999) {
-            std::printf("  %s: aim axis . toTarget = %f (expected ~1)\n",
-                        name, alignment);
+            std::printf("  %s: aim axis . toTarget = %f (expected ~1)\n", name,
+                        alignment);
         }
         CHECK(alignment > 0.999);
 
@@ -2688,8 +2775,7 @@ _CheckRestEditRecalibrates(const std::string &stagePath, const char *rigPath,
     if (afterIt == after.jointFramesFinal.end()) {
         return;
     }
-    const double moved =
-        (afterIt->second.Origin() - beforeOrigin).GetLength();
+    const double moved = (afterIt->second.Origin() - beforeOrigin).GetLength();
     if (moved <= 1e-6) {
         std::printf("  %s: %s did not move after a rest edit -- the solver "
                     "is not measuring its joints' rests (does its "
@@ -2702,14 +2788,14 @@ _CheckRestEditRecalibrates(const std::string &stagePath, const char *rigPath,
 static void
 TestShippedTwoBoneIksRecalibrateOnRestEdit(const std::string &examplesDir)
 {
-    _CheckRestEditRecalibrates(
-        examplesDir + "/components/spider_leg_ik.usd", "/RigRoot",
-        "/RigRoot/Joints/Shoulder/ankle/foot", "rest:ty",
-        "/RigRoot/Joints/Shoulder/ankle");
-    _CheckRestEditRecalibrates(
-        examplesDir + "/02_TwoBoneIkLeg.usda", "/LegAsset/Rig",
-        "/LegAsset/Rig/Joints/Hip/Knee/Ankle", "rest:ty",
-        "/LegAsset/Rig/Joints/Hip/Knee");
+    _CheckRestEditRecalibrates(examplesDir + "/components/spider_leg_ik.usd",
+                               "/RigRoot",
+                               "/RigRoot/Joints/Shoulder/ankle/foot", "rest:ty",
+                               "/RigRoot/Joints/Shoulder/ankle");
+    _CheckRestEditRecalibrates(examplesDir + "/02_TwoBoneIkLeg.usda",
+                               "/LegAsset/Rig",
+                               "/LegAsset/Rig/Joints/Hip/Knee/Ankle", "rest:ty",
+                               "/LegAsset/Rig/Joints/Hip/Knee");
 }
 
 // 09 exercises the three property-domain math movers: the output domain that
@@ -2739,7 +2825,8 @@ TestPropertyMathMoversAreEvaluated(const std::string &examplesDir)
 
     // clamp: authored 2.5 into [0, 1].
     {
-        const auto it = pose.movedProperties.find(SdfPath(dials + "rigExec:gain"));
+        const auto it =
+            pose.movedProperties.find(SdfPath(dials + "rigExec:gain"));
         CHECK(it != pose.movedProperties.end());
         if (it != pose.movedProperties.end()) {
             CHECK(it->second.IsHolding<float>());
@@ -2753,8 +2840,7 @@ TestPropertyMathMoversAreEvaluated(const std::string &examplesDir)
         CHECK(it != pose.movedProperties.end());
         if (it != pose.movedProperties.end()) {
             CHECK(it->second.IsHolding<GfVec3f>());
-            CHECK(Near(GfVec3d(it->second.Get<GfVec3f>()),
-                       GfVec3d(0, 5, 0)));
+            CHECK(Near(GfVec3d(it->second.Get<GfVec3f>()), GfVec3d(0, 5, 0)));
         }
     }
     // multiply: authored identity post-multiplied by translate(0, 5, 0).
@@ -2831,11 +2917,13 @@ TestPropertyMoverFeedsConsumingComputation(const std::string &examplesDir)
     if (!mover) {
         return;
     }
-    mover.CreateAttribute(TfToken("rigExec:operation"),
-                          SdfValueTypeNames->Token, /*custom=*/false)
+    mover
+        .CreateAttribute(TfToken("rigExec:operation"), SdfValueTypeNames->Token,
+                         /*custom=*/false)
         .Set(TfToken("blend"));
-    mover.CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float,
-                          /*custom=*/false)
+    mover
+        .CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float,
+                         /*custom=*/false)
         .Set(0.0f);
 
     RigExecRigEvaluator forcedEval(forced, rigPath);
@@ -2881,14 +2969,15 @@ TestDisabledPropertyMoverPassesThrough(const std::string &examplesDir)
         return;
     }
     stage->SetEditTarget(stage->GetSessionLayer());
-    const UsdPrim mover = stage->GetPrimAtPath(
-        SdfPath("/PropMathAsset/Rig/Movers/ClampGain"));
+    const UsdPrim mover =
+        stage->GetPrimAtPath(SdfPath("/PropMathAsset/Rig/Movers/ClampGain"));
     CHECK(mover);
     if (!mover) {
         return;
     }
-    mover.CreateAttribute(TfToken("inputs:enabled"), SdfValueTypeNames->Bool,
-                          /*custom=*/false)
+    mover
+        .CreateAttribute(TfToken("inputs:enabled"), SdfValueTypeNames->Bool,
+                         /*custom=*/false)
         .Set(false);
 
     RigExecRigEvaluator evaluator(stage, SdfPath("/PropMathAsset/Rig"));
@@ -2919,16 +3008,16 @@ TestPropertyMoverTypeMismatchRejected(const std::string &examplesDir)
     }
     stage->SetEditTarget(stage->GetSessionLayer());
     // Point the float mover at the float3 dial.
-    const UsdPrim mover = stage->GetPrimAtPath(
-        SdfPath("/PropMathAsset/Rig/Movers/ClampGain"));
+    const UsdPrim mover =
+        stage->GetPrimAtPath(SdfPath("/PropMathAsset/Rig/Movers/ClampGain"));
     CHECK(mover);
     if (!mover) {
         return;
     }
     UsdRelationship moves = mover.CreateRelationship(TfToken("rigExec:moves"),
-                                                    /*custom=*/false);
-    moves.SetTargets({SdfPath(
-        "/PropMathAsset/Rig/Channels/Dials.rigExec:offset")});
+                                                     /*custom=*/false);
+    moves.SetTargets(
+        {SdfPath("/PropMathAsset/Rig/Channels/Dials.rigExec:offset")});
 
     RigExecRigEvaluator evaluator(stage, SdfPath("/PropMathAsset/Rig"));
 
@@ -3008,8 +3097,8 @@ TestAimConstraintDrivesXform(const std::string &examplesDir)
             std::printf("  z-axis at 1024 = (%f, %f, %f); expected +x lean\n",
                         z2[0], z2[1], z2[2]);
         }
-        CHECK(z2[0] > 0.0);        // target has swung to +x
-        CHECK((z2 - zAxis).GetLength() > 1e-3);  // and it actually moved
+        CHECK(z2[0] > 0.0);                     // target has swung to +x
+        CHECK((z2 - zAxis).GetLength() > 1e-3); // and it actually moved
     }
 }
 
@@ -3026,8 +3115,7 @@ TestAimConstraintDrivesXform(const std::string &examplesDir)
 static void
 TestJointFreeRigPublishesXform(const std::string &examplesDir)
 {
-    UsdStageRefPtr stage =
-        UsdStage::Open(examplesDir + "/rigexec_flat.usda");
+    UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/rigexec_flat.usda");
     CHECK(stage);
     if (!stage) {
         return;
@@ -3143,7 +3231,8 @@ TestMoverOrderIsComposedAndDynamic()
 {
     const SdfLayerRefPtr layer = SdfLayer::CreateAnonymous(".usda");
     CHECK(layer);
-    if (!layer || !rigExec::RigExecInputReplayImportFromString(layer, kOrderFixture)) {
+    if (!layer ||
+        !rigExec::RigExecInputReplayImportFromString(layer, kOrderFixture)) {
         std::printf("  could not build the ordering fixture\n");
         ++failures;
         return;
@@ -3183,7 +3272,8 @@ TestMoverOrderIsComposedAndDynamic()
     if (std::abs(value - 21.0f) > 1e-6f) {
         std::printf("  dial = %f; expected 21 ((2*10)+1). 3 means the "
                     "revisions did not chain; 30 means sibling execution "
-                    "was top-to-bottom\n", double(value));
+                    "was top-to-bottom\n",
+                    double(value));
     }
     CHECK(std::abs(value - 21.0f) < 1e-6f);
     const size_t firstDigest = evaluator.GetCompiledRigSignature();
@@ -3213,7 +3303,8 @@ TestMoverOrderIsComposedAndDynamic()
     CHECK(evaluator.GetCompiledRigSignature() != firstDigest);
     bool rebuilt = false;
     for (const std::string &d : second.diagnostics) {
-        rebuilt |= d.find("structural edit: compiled rig rebuilt") != std::string::npos;
+        rebuilt |= d.find("structural edit: compiled rig rebuilt") !=
+                   std::string::npos;
     }
     CHECK(rebuilt);
 
@@ -3221,17 +3312,19 @@ TestMoverOrderIsComposedAndDynamic()
     // gives it, still with no Compile call. Order being dynamic has to mean
     // the membership of the chain too, not only the permutation of a fixed
     // set.
-    const UsdPrim added = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/MinusFive"),
-        TfToken("RigExecFloatMathMover"));
+    const UsdPrim added =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Movers/MinusFive"),
+                          TfToken("RigExecFloatMathMover"));
     CHECK(added);
     if (added) {
         CHECK(added.ApplyAPI(TfToken("RigExecMoverAPI")));
-        added.CreateAttribute(TfToken("rigExec:operation"),
-                              SdfValueTypeNames->Token, /*custom=*/false)
+        added
+            .CreateAttribute(TfToken("rigExec:operation"),
+                             SdfValueTypeNames->Token, /*custom=*/false)
             .Set(TfToken("add"));
-        added.CreateAttribute(TfToken("inputs:value"),
-                              SdfValueTypeNames->Float, /*custom=*/false)
+        added
+            .CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float,
+                             /*custom=*/false)
             .Set(-5.0f);
         added.CreateRelationship(TfToken("rigExec:moves"), /*custom=*/false)
             .SetTargets({dial});
@@ -3243,7 +3336,8 @@ TestMoverOrderIsComposedAndDynamic()
         CHECK(dialValue(third, &value));
         if (std::abs(value + 20.0f) > 1e-6f) {
             std::printf("  after adding a third mover, dial = %f; expected -20 "
-                        "((2-5+1)*10)\n", double(value));
+                        "((2-5+1)*10)\n",
+                        double(value));
         }
         CHECK(std::abs(value + 20.0f) < 1e-6f);
     }
@@ -3251,8 +3345,8 @@ TestMoverOrderIsComposedAndDynamic()
     // The authored dial is still 2 on the stage: 21, 30 and -20 were
     // published, never written.
     float authored = 0;
-    CHECK(stage->GetAttributeAtPath(dial).Get(&authored,
-                                              UsdTimeCode::Default()));
+    CHECK(
+        stage->GetAttributeAtPath(dial).Get(&authored, UsdTimeCode::Default()));
     CHECK(std::abs(authored - 2.0f) < 1e-6f);
 }
 
@@ -3314,11 +3408,10 @@ TestPointChainConsumesPrecedingRevision(const std::string &examplesDir)
     CHECK(withLattice.size() == withoutLattice.size());
 
     double worst = 0;
-    for (size_t i = 0; i < withLattice.size() &&
-                       i < withoutLattice.size(); ++i) {
+    for (size_t i = 0; i < withLattice.size() && i < withoutLattice.size();
+         ++i) {
         worst = std::max(
-            worst,
-            double((withLattice[i] - withoutLattice[i]).GetLength()));
+            worst, double((withLattice[i] - withoutLattice[i]).GetLength()));
     }
     if (worst <= 1e-5) {
         std::printf("  disabling the first mover in the chain did not change "
@@ -3388,11 +3481,13 @@ TestPropertyMoverReachesStaticPacketReads(const std::string &examplesDir)
         return;
     }
     CHECK(mover.ApplyAPI(TfToken("RigExecMoverAPI")));
-    mover.CreateAttribute(TfToken("rigExec:operation"),
-                          SdfValueTypeNames->Token, /*custom=*/false)
+    mover
+        .CreateAttribute(TfToken("rigExec:operation"), SdfValueTypeNames->Token,
+                         /*custom=*/false)
         .Set(TfToken("blend"));
-    mover.CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float,
-                          /*custom=*/false)
+    mover
+        .CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float,
+                         /*custom=*/false)
         .Set(0.0f);
     mover.CreateRelationship(TfToken("rigExec:moves"), /*custom=*/false)
         .SetTargets({envelope});
@@ -3506,24 +3601,25 @@ TestReadPhaseSelectsRevision(const std::string &examplesDir)
         CHECK(moved.size() == authored.size());
         double worst = 0;
         for (size_t i = 0; i < moved.size() && i < authored.size(); ++i) {
-            worst = std::max(worst,
-                             double((moved[i] - authored[i]).GetLength()));
+            worst =
+                std::max(worst, double((moved[i] - authored[i]).GetLength()));
         }
         *out = worst;
 
         const size_t compiledRig = evaluator.GetCompiledRigSignature();
-        stage->GetAttributeAtPath(
-            SdfPath("/ReadPhaseAsset/Rig/Controls/LiftCtl.avars:tz")).Set(3.0);
+        stage
+            ->GetAttributeAtPath(
+                SdfPath("/ReadPhaseAsset/Rig/Controls/LiftCtl.avars:tz"))
+            .Set(3.0);
         const auto edited = evaluator.Evaluate(when);
         CHECK(edited.valid);
-
 
         CHECK(edited.referenceMismatches == 0);
         CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
         const auto after = edited.movedProperties.at(slab).Get<VtVec3fArray>();
         CHECK(after.size() == moved.size());
-        const GfVec3f delta = std::string(phase) == "base"
-            ? GfVec3f(0) : GfVec3f(0, 0, 3);
+        const GfVec3f delta =
+            std::string(phase) == "base" ? GfVec3f(0) : GfVec3f(0, 0, 3);
         for (size_t i = 0; i < after.size() && i < moved.size(); ++i) {
             CHECK(Near(GfVec3d(after[i] - moved[i]), GfVec3d(delta), 1e-4));
         }
@@ -3533,13 +3629,14 @@ TestReadPhaseSelectsRevision(const std::string &examplesDir)
 
     double atBase = -1, atLift = -1, atFinal = -1;
     CHECK(slabDisplacement("base", &atBase));
-    CHECK(slabDisplacement("/ReadPhaseAsset/Rig/Movers/Cage/CageLift",
-                           &atLift));
+    CHECK(
+        slabDisplacement("/ReadPhaseAsset/Rig/Movers/Cage/CageLift", &atLift));
     CHECK(slabDisplacement("final", &atFinal));
 
     if (std::abs(atBase) > 1e-4) {
         std::printf("  base phase moved the slab by %g; the authored cage "
-                    "should deform nothing\n", atBase);
+                    "should deform nothing\n",
+                    atBase);
     }
     CHECK(std::abs(atBase) < 1e-4);
 
@@ -3551,7 +3648,8 @@ TestReadPhaseSelectsRevision(const std::string &examplesDir)
 
     if (std::abs(atFinal - 2.5) > 1e-3) {
         std::printf("  final phase gave %g; expected 2.5 "
-                    "(sqrt(1.5^2 + 2^2))\n", atFinal);
+                    "(sqrt(1.5^2 + 2^2))\n",
+                    atFinal);
     }
     CHECK(std::abs(atFinal - 2.5) < 1e-3);
 }
@@ -3561,8 +3659,7 @@ TestReadPhaseSelectsRevision(const std::string &examplesDir)
 static void
 TestReadPhaseIsStructural(const std::string &examplesDir)
 {
-    UsdStageRefPtr stage =
-        UsdStage::Open(examplesDir + "/13_ReadPhases.usda");
+    UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/13_ReadPhases.usda");
     CHECK(stage);
     if (!stage) {
         return;
@@ -3599,7 +3696,8 @@ TestBadReadPhasesRejected(const std::string &examplesDir)
     const SdfPath cageRel(
         "/ReadPhaseAsset/Rig/Movers/Geometry/SlabLattice.rigExec:cage");
 
-    auto compileWith = [&](const char *phase, std::vector<std::string> *errors) {
+    auto compileWith = [&](const char *phase,
+                           std::vector<std::string> *errors) {
         UsdStageRefPtr stage =
             UsdStage::Open(examplesDir + "/13_ReadPhases.usda");
         if (!stage) {
@@ -3658,8 +3756,7 @@ TestConnectionReadPhasesSelectRevision(const std::string &examplesDir)
         const auto it = pose.movedProperties.find(SdfPath(
             std::string("/PhaseConnectAsset/Rig/Channels/Readouts.rigExec:") +
             name));
-        return it != pose.movedProperties.end() &&
-                       it->second.IsHolding<float>()
+        return it != pose.movedProperties.end() && it->second.IsHolding<float>()
                    ? double(it->second.UncheckedGet<float>())
                    : -1.0;
     };
@@ -3728,34 +3825,35 @@ TestBadConnectionReadPhasesRejected(const std::string &examplesDir)
     const TfToken phaseField("rigExecReadPhase");
     // Opens the example with \p edit applied in the session layer, compiles,
     // and answers whether the reader was set aside with \p expect said.
-    const auto setAside = [&](const std::function<void(const UsdStageRefPtr &)>
-                                  &edit,
-                              const char *expect) {
-        UsdStageRefPtr stage =
-            UsdStage::Open(examplesDir + "/16_ConnectionReadPhases.usda");
-        if (!stage) {
-            return false;
-        }
-        stage->SetEditTarget(stage->GetSessionLayer());
-        edit(stage);
-        RigExecRigEvaluator evaluator(stage, SdfPath("/PhaseConnectAsset/Rig"));
-        evaluator.cpuReference = true;
-        std::vector<std::string> errors;
-        const bool compiled = evaluator.Compile(&errors);
-        bool said = false;
-        for (const std::string &e : errors) {
-            said |= e.find(expect) != std::string::npos;
-        }
-        if (!said) {
-            std::printf("  expected \"%s\" among %zu compile message(s)\n",
-                        expect, errors.size());
-            for (const std::string &e : errors) {
-                std::printf("    %s\n", e.c_str());
+    const auto setAside =
+        [&](const std::function<void(const UsdStageRefPtr &)> &edit,
+            const char *expect) {
+            UsdStageRefPtr stage =
+                UsdStage::Open(examplesDir + "/16_ConnectionReadPhases.usda");
+            if (!stage) {
+                return false;
             }
-        }
-        return compiled && evaluator.GetSkippedOperations().count(reader) &&
-               said;
-    };
+            stage->SetEditTarget(stage->GetSessionLayer());
+            edit(stage);
+            RigExecRigEvaluator evaluator(stage,
+                                          SdfPath("/PhaseConnectAsset/Rig"));
+            evaluator.cpuReference = true;
+            std::vector<std::string> errors;
+            const bool compiled = evaluator.Compile(&errors);
+            bool said = false;
+            for (const std::string &e : errors) {
+                said |= e.find(expect) != std::string::npos;
+            }
+            if (!said) {
+                std::printf("  expected \"%s\" among %zu compile message(s)\n",
+                            expect, errors.size());
+                for (const std::string &e : errors) {
+                    std::printf("    %s\n", e.c_str());
+                }
+            }
+            return compiled && evaluator.GetSkippedOperations().count(reader) &&
+                   said;
+        };
     const auto withPhase = [&](const char *phase) {
         return [&, phase](const UsdStageRefPtr &stage) {
             stage->GetAttributeAtPath(readerInput)
@@ -3774,8 +3872,8 @@ TestBadConnectionReadPhasesRejected(const std::string &examplesDir)
         [&](const UsdStageRefPtr &stage) {
             const UsdPrim dial = stage->GetPrimAtPath(
                 SdfPath("/PhaseConnectAsset/Rig/Channels/Dial"));
-            UsdAttribute spare = dial.CreateAttribute(
-                TfToken("rigExec:spare"), SdfValueTypeNames->Float);
+            UsdAttribute spare = dial.CreateAttribute(TfToken("rigExec:spare"),
+                                                      SdfValueTypeNames->Float);
             spare.Set(0.3f);
             UsdAttribute input = stage->GetAttributeAtPath(readerInput);
             input.SetConnections({spare.GetPath()});
@@ -3794,12 +3892,14 @@ TestBadConnectionReadPhasesRejected(const std::string &examplesDir)
                 SdfPath("/PhaseConnectAsset/Rig/Movers/Readouts/Nudge"),
                 TfToken("RigExecFloatMathMover"));
             nudge.AddAppliedSchema(TfToken("RigExecMoverAPI"));
-            nudge.CreateAttribute(TfToken("rigExec:operation"),
-                                  SdfValueTypeNames->Token, false,
-                                  SdfVariabilityUniform)
+            nudge
+                .CreateAttribute(TfToken("rigExec:operation"),
+                                 SdfValueTypeNames->Token, false,
+                                 SdfVariabilityUniform)
                 .Set(TfToken("add"));
-            nudge.CreateAttribute(TfToken("inputs:value"),
-                                  SdfValueTypeNames->Float)
+            nudge
+                .CreateAttribute(TfToken("inputs:value"),
+                                 SdfValueTypeNames->Float)
                 .Set(0.1f);
             nudge.CreateRelationship(TfToken("rigExec:moves"), false)
                 .SetTargets({readerInput});
@@ -3817,8 +3917,8 @@ TestBadConnectionReadPhasesRejected(const std::string &examplesDir)
             stage->SetEditTarget(stage->GetSessionLayer());
             stage->GetAttributeAtPath(readerInput).SetConnections({});
             withPhase("/PhaseConnectAsset/Rig/Movers/Dial/Gain")(stage);
-            RigExecRigEvaluator evaluator(
-                stage, SdfPath("/PhaseConnectAsset/Rig"));
+            RigExecRigEvaluator evaluator(stage,
+                                          SdfPath("/PhaseConnectAsset/Rig"));
             evaluator.cpuReference = true;
             CHECK(evaluator.Compile(nullptr));
             CHECK(evaluator.GetSkippedOperations().empty());
@@ -3846,8 +3946,8 @@ TestBadConnectionReadPhasesRejected(const std::string &examplesDir)
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(1024));
         CHECK(pose.valid);
         CHECK(evaluator.GetCompiledRigSignature() != before);
-        const auto it = pose.movedProperties.find(SdfPath(
-            "/PhaseConnectAsset/Rig/Channels/Readouts.rigExec:base"));
+        const auto it = pose.movedProperties.find(
+            SdfPath("/PhaseConnectAsset/Rig/Channels/Readouts.rigExec:base"));
         CHECK(it != pose.movedProperties.end() &&
               it->second.IsHolding<float>() &&
               std::abs(it->second.UncheckedGet<float>() - 0.6f) < 1e-6f);
@@ -3872,8 +3972,7 @@ TestConnectionReadPhaseOnSolverInput(const std::string &examplesDir)
         ConnectedBase,
         ConnectedFinal
     };
-    const auto wristAt = [&](Wiring wiring,
-                             GfMatrix4d *out) {
+    const auto wristAt = [&](Wiring wiring, GfMatrix4d *out) {
         UsdStageRefPtr stage =
             UsdStage::Open(examplesDir + "/03_IkFkBlendClamp.usda");
         if (!stage) {
@@ -3892,8 +3991,7 @@ TestConnectionReadPhaseOnSolverInput(const std::string &examplesDir)
         }
         mover.GetAttribute(TfToken("rigExec:operation"))
             .Set(TfToken("multiply"));
-        mover.CreateAttribute(TfToken("inputs:value"),
-                              SdfValueTypeNames->Float)
+        mover.CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float)
             .Set(0.5f);
         mover.GetRelationship(TfToken("rigExec:moves"))
             .SetTargets({w.GetPath()});
@@ -3942,8 +4040,8 @@ TestConnectionReadPhaseOnSolverInput(const std::string &examplesDir)
         CHECK(Near(base.ExtractTranslation(), authored.ExtractTranslation(),
                    1e-9));
         // ...and `final` reads through it.
-        CHECK(Near(final.ExtractTranslation(), half.ExtractTranslation(),
-                   1e-9));
+        CHECK(
+            Near(final.ExtractTranslation(), half.ExtractTranslation(), 1e-9));
     }
 }
 
@@ -3962,7 +4060,7 @@ TestConnectionReadPhaseOnSolverInput(const std::string &examplesDir)
 // A reader through a hop reads at its own phase, whatever the hop declares;
 // a `final` that passes no recorded hop reads the dial's published value.
 static const char *const kPhaseReadouts[] = {
-    "Undeclared", "Final",   "Hop",       "FinalViaHop",
+    "Undeclared", "Final",           "Hop",        "FinalViaHop",
     "FinalHop",   "BaseViaFinalHop", "Checkpoint", "LastCheckpoint"};
 
 static UsdStageRefPtr
@@ -3972,25 +4070,22 @@ _PhaseRig()
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Xform"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
-    stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Readouts"),
-                      TfToken("Scope"));
+    stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Readouts"), TfToken("Scope"));
     const UsdAttribute dial =
-        stage->DefinePrim(SdfPath("/Asset/Rig/Channels/Dial"),
-                          TfToken("Scope"))
+        stage->DefinePrim(SdfPath("/Asset/Rig/Channels/Dial"), TfToken("Scope"))
             .CreateAttribute(TfToken("rigExec:amount"),
                              SdfValueTypeNames->Float);
     dial.Set(0.45f);
     const auto mover = [&](const std::string &path, const char *operation,
                            const SdfPath &target) {
-        const UsdPrim prim = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Movers/" + path),
-            TfToken("RigExecFloatMathMover"));
+        const UsdPrim prim =
+            stage->DefinePrim(SdfPath("/Asset/Rig/Movers/" + path),
+                              TfToken("RigExecFloatMathMover"));
         CHECK(prim.ApplyAPI(TfToken("RigExecMoverAPI")));
         prim.CreateAttribute(TfToken("rigExec:operation"),
                              SdfValueTypeNames->Token)
             .Set(TfToken(operation));
-        prim.CreateRelationship(TfToken("rigExec:moves"))
-            .SetTargets({target});
+        prim.CreateRelationship(TfToken("rigExec:moves")).SetTargets({target});
         return prim;
     };
     // A nested mover revises before its parent: Gain, then Limit.
@@ -4007,8 +4102,7 @@ _PhaseRig()
     const auto readout = [&](const char *name, const SdfPath &source,
                              const char *phase) {
         const UsdAttribute channel = readouts.CreateAttribute(
-            TfToken(std::string("rigExec:") + name),
-            SdfValueTypeNames->Float);
+            TfToken(std::string("rigExec:") + name), SdfValueTypeNames->Float);
         channel.Set(0.0f);
         const UsdAttribute value =
             mover(std::string("Readouts/") + name, "add", channel.GetPath())
@@ -4016,13 +4110,11 @@ _PhaseRig()
                                  SdfValueTypeNames->Float);
         value.SetConnections({source});
         if (phase) {
-            value.SetMetadata(TfToken("rigExecReadPhase"),
-                              std::string(phase));
+            value.SetMetadata(TfToken("rigExecReadPhase"), std::string(phase));
         }
     };
     const SdfPath hop("/Asset/Rig/Movers/Readouts/Hop.inputs:value");
-    const SdfPath finalHop(
-        "/Asset/Rig/Movers/Readouts/FinalHop.inputs:value");
+    const SdfPath finalHop("/Asset/Rig/Movers/Readouts/FinalHop.inputs:value");
     readout("Undeclared", dial.GetPath(), nullptr);
     readout("Final", dial.GetPath(), "final");
     readout("Hop", dial.GetPath(), "base");
@@ -4037,8 +4129,8 @@ _PhaseRig()
 static float
 _PhaseReadout(const RigExecRigPose &pose, const char *name)
 {
-    const auto it = pose.movedProperties.find(SdfPath(
-        std::string("/Asset/Rig/Channels/Readouts.rigExec:") + name));
+    const auto it = pose.movedProperties.find(
+        SdfPath(std::string("/Asset/Rig/Channels/Readouts.rigExec:") + name));
     return it != pose.movedProperties.end() && it->second.IsHolding<float>()
                ? it->second.UncheckedGet<float>()
                : -1.0f;
@@ -4054,8 +4146,7 @@ _PhaseReadoutsAre(const char *what, const RigExecRigPose &pose,
         const float got = _PhaseReadout(pose, kPhaseReadouts[i]);
         if (std::abs(got - expected[i]) > 1e-6f) {
             std::printf("  %s: %s reads %.9g, expected %.9g\n", what,
-                        kPhaseReadouts[i], double(got),
-                        double(expected[i]));
+                        kPhaseReadouts[i], double(got), double(expected[i]));
             same = false;
         }
     }
@@ -4126,8 +4217,7 @@ TestDefaultReadPhaseAndHeadWins()
 static void
 TestPhasedReadDragRules()
 {
-    const auto drag = [](const char *prim, const char *attribute,
-                         float value) {
+    const auto drag = [](const char *prim, const char *attribute, float value) {
         return RigExecValueOverride{SdfPath(prim), TfToken(),
                                     TfToken(attribute), VtValue(value)};
     };
@@ -4144,8 +4234,8 @@ TestPhasedReadDragRules()
                                 undragged));
 
         // A recorded reader's own input, which FinalViaHop's walk passes.
-        evaluator.SetInteractiveOverrides({drag(
-            "/Asset/Rig/Movers/Readouts/Hop", "inputs:value", 0.125f)});
+        evaluator.SetInteractiveOverrides(
+            {drag("/Asset/Rig/Movers/Readouts/Hop", "inputs:value", 0.125f)});
         CHECK(_PhaseReadoutsAre(
             "drag on Hop", evaluator.Evaluate(time),
             {0.45f, 0.6f, 0.125f, 0.125f, 0.6f, 0.45f, 0.9f, 0.6f}));
@@ -4216,8 +4306,8 @@ _ReadingsDiffer(const RigExecRigPose &a, const RigExecRigPose &b)
                0;
     };
     std::string why;
-    const auto compare = [&why](const auto &x, const auto &y,
-                                const char *what, auto same) {
+    const auto compare = [&why](const auto &x, const auto &y, const char *what,
+                                auto same) {
         if (!why.empty()) {
             return;
         }
@@ -4287,15 +4377,14 @@ _TargetDragRig()
     const auto control = [&](const char *path) {
         const UsdPrim prim =
             stage->DefinePrim(SdfPath(path), TfToken("RigExecControl"));
-        prim.CreateAttribute(TfToken("rest:space"),
-                             SdfValueTypeNames->Matrix4d)
+        prim.CreateAttribute(TfToken("rest:space"), SdfValueTypeNames->Matrix4d)
             .Set(GfMatrix4d(1.0));
         return prim;
     };
     const UsdPrim gauge = control("/Asset/Rig/Controls/Gauge");
     const auto avar = [&](const char *name, const char *phase) {
-        const UsdAttribute a = gauge.CreateAttribute(
-            TfToken(name), SdfValueTypeNames->Double);
+        const UsdAttribute a =
+            gauge.CreateAttribute(TfToken(name), SdfValueTypeNames->Double);
         a.SetConnections({dial});
         if (phase) {
             a.SetMetadata(TfToken("rigExecReadPhase"), std::string(phase));
@@ -4311,8 +4400,8 @@ _TargetDragRig()
         stage->DefinePrim(SdfPath("/Asset/Geom/Card"), TfToken("Points"));
     card.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
         .Set(VtVec3fArray{GfVec3f(1, 0, 0)});
-    const UsdPrim lift = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Lift"), TfToken("RigExecMatrixMover"));
+    const UsdPrim lift = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Lift"),
+                                           TfToken("RigExecMatrixMover"));
     CHECK(lift.ApplyAPI(TfToken("RigExecMoverAPI")));
     lift.CreateRelationship(TfToken("rigExec:moves"))
         .SetTargets({card.GetPath().AppendProperty(TfToken("points"))});
@@ -4347,17 +4436,17 @@ TestTargetDragEqualsRelease()
     const SdfPath gauge("/Asset/Rig/Controls/Gauge");
     const UsdTimeCode time(1.0);
     const auto dragTo = [&](float value) {
-        return std::vector<RigExecValueOverride>{RigExecValueOverride{
-            dial.GetPrimPath(), TfToken(), dial.GetNameToken(),
-            VtValue(value)}};
+        return std::vector<RigExecValueOverride>{
+            RigExecValueOverride{dial.GetPrimPath(), TfToken(),
+                                 dial.GetNameToken(), VtValue(value)}};
     };
     {
         // Each drag as an evaluator that ran the authored rig first reads it.
         std::map<float, RigExecRigPose> draggedTo;
         for (const float value : {0.25f, 0.4f, 1.4f, 1.5f}) {
             char label[64];
-            std::snprintf(label, sizeof(label), "%s drag %.9g",
-                          "canonical", double(value));
+            std::snprintf(label, sizeof(label), "%s drag %.9g", "canonical",
+                          double(value));
             const UsdStageRefPtr stage = _TargetDragRig();
             RigExecRigEvaluator evaluator(stage, rigPath);
 
@@ -4444,8 +4533,7 @@ _BlinkRig(bool lid, bool authored = true, bool clampEnabled = true)
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
     const UsdAttribute blink =
-        stage->DefinePrim(SdfPath("/Asset/Rig/Channels/Face"),
-                          TfToken("Scope"))
+        stage->DefinePrim(SdfPath("/Asset/Rig/Channels/Face"), TfToken("Scope"))
             .CreateAttribute(TfToken("rigExec:blink"),
                              SdfValueTypeNames->Float);
     if (authored) {
@@ -4453,15 +4541,14 @@ _BlinkRig(bool lid, bool authored = true, bool clampEnabled = true)
     }
     const auto mover = [&](const std::string &path, const char *operation,
                            const SdfPath &target) {
-        const UsdPrim prim = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Movers/" + path),
-            TfToken("RigExecFloatMathMover"));
+        const UsdPrim prim =
+            stage->DefinePrim(SdfPath("/Asset/Rig/Movers/" + path),
+                              TfToken("RigExecFloatMathMover"));
         CHECK(prim.ApplyAPI(TfToken("RigExecMoverAPI")));
         prim.CreateAttribute(TfToken("rigExec:operation"),
                              SdfValueTypeNames->Token)
             .Set(TfToken(operation));
-        prim.CreateRelationship(TfToken("rigExec:moves"))
-            .SetTargets({target});
+        prim.CreateRelationship(TfToken("rigExec:moves")).SetTargets({target});
         return prim;
     };
     const UsdPrim clamp = mover("ClampBlink", "clamp", blink.GetPath());
@@ -4470,16 +4557,15 @@ _BlinkRig(bool lid, bool authored = true, bool clampEnabled = true)
     clamp.CreateAttribute(TfToken("inputs:max"), SdfValueTypeNames->Float)
         .Set(1.0f);
     if (!clampEnabled) {
-        clamp.CreateAttribute(TfToken("inputs:enabled"),
-                              SdfValueTypeNames->Bool)
+        clamp
+            .CreateAttribute(TfToken("inputs:enabled"), SdfValueTypeNames->Bool)
             .Set(false);
     }
     const UsdPrim readouts = stage->DefinePrim(
         SdfPath("/Asset/Rig/Channels/Readouts"), TfToken("Scope"));
     for (const char *name : {"base", "final"}) {
         const UsdAttribute channel = readouts.CreateAttribute(
-            TfToken(std::string("rigExec:") + name),
-            SdfValueTypeNames->Float);
+            TfToken(std::string("rigExec:") + name), SdfValueTypeNames->Float);
         channel.Set(0.0f);
         const UsdAttribute input =
             mover(std::string("Readouts/") + name, "add", channel.GetPath())
@@ -4495,8 +4581,7 @@ _BlinkRig(bool lid, bool authored = true, bool clampEnabled = true)
         const UsdPrim control = stage->DefinePrim(
             SdfPath("/Asset/Rig/Controls/Lid"), TfToken("RigExecControl"));
         control
-            .CreateAttribute(TfToken("rest:space"),
-                             SdfValueTypeNames->Matrix4d)
+            .CreateAttribute(TfToken("rest:space"), SdfValueTypeNames->Matrix4d)
             .Set(GfMatrix4d(1.0));
         control.CreateAttribute(TfToken("avars:tx"), SdfValueTypeNames->Double)
             .SetConnections({blink.GetPath()});
@@ -4511,8 +4596,8 @@ _BlinkRig(bool lid, bool authored = true, bool clampEnabled = true)
 static float
 _BlinkReadout(const RigExecRigPose &pose, const char *name)
 {
-    const auto it = pose.movedProperties.find(SdfPath(
-        std::string("/Asset/Rig/Channels/Readouts.rigExec:") + name));
+    const auto it = pose.movedProperties.find(
+        SdfPath(std::string("/Asset/Rig/Channels/Readouts.rigExec:") + name));
     return it != pose.movedProperties.end() && it->second.IsHolding<float>()
                ? it->second.UncheckedGet<float>()
                : -1.0f;
@@ -4541,7 +4626,7 @@ TestBlinkDragEqualsRelease()
         const char *what;
         bool lid, authored, clampEnabled;
         float drag;
-        float base, final;  // the readouts while dragged; NaN: unchecked
+        float base, final; // the readouts while dragged; NaN: unchecked
     };
     const Case cases[] = {
         {"blink 1.4", true, true, true, 1.4f, 1.4f, 1.0f},
@@ -4552,8 +4637,7 @@ TestBlinkDragEqualsRelease()
     };
     {
         for (const Case &c : cases) {
-            const std::string label =
-                std::string("canonical") + " " + c.what;
+            const std::string label = std::string("canonical") + " " + c.what;
             const UsdStageRefPtr stage =
                 _BlinkRig(c.lid, c.authored, c.clampEnabled);
             RigExecRigEvaluator evaluator(stage, rigPath);
@@ -4562,9 +4646,9 @@ TestBlinkDragEqualsRelease()
             CHECK(evaluator.GetSkippedOperations().empty());
             const RigExecRigPose authored = evaluator.Evaluate(time);
             const size_t bakedBefore = evaluator.GetBakedGenerationCount();
-            evaluator.SetInteractiveOverrides({RigExecValueOverride{
-                blink.GetPrimPath(), TfToken(), blink.GetNameToken(),
-                VtValue(c.drag)}});
+            evaluator.SetInteractiveOverrides(
+                {RigExecValueOverride{blink.GetPrimPath(), TfToken(),
+                                      blink.GetNameToken(), VtValue(c.drag)}});
             const RigExecRigPose dragged = evaluator.Evaluate(time);
             CHECK(dragged.valid);
             {
@@ -4625,8 +4709,7 @@ TestBlinkDragEqualsRelease()
             CHECK(evaluator.Evaluate(time).valid);
             const size_t bakedBefore = evaluator.GetBakedGenerationCount();
             evaluator.SetInteractiveOverrides({RigExecValueOverride{
-                blink.GetPrimPath(), TfToken(), blink.GetNameToken(),
-                value}});
+                blink.GetPrimPath(), TfToken(), blink.GetNameToken(), value}});
             const RigExecRigPose pose = evaluator.Evaluate(time);
             CHECK(pose.valid);
             {
@@ -4642,8 +4725,8 @@ TestBlinkDragEqualsRelease()
             CHECK(evaluator.Evaluate(time).valid);
             const struct {
                 float drag, base, final;
-            } steps[] = {{1.4f, 1.4f, 1.0f}, {1.5f, 1.5f, 1.0f},
-                         {0.5f, 0.5f, 0.5f}};
+            } steps[] = {
+                {1.4f, 1.4f, 1.0f}, {1.5f, 1.5f, 1.0f}, {0.5f, 0.5f, 0.5f}};
             for (const auto &step : steps) {
                 char label[64];
                 std::snprintf(label, sizeof(label), "%s blink moved to %.9g",
@@ -4657,9 +4740,8 @@ TestBlinkDragEqualsRelease()
                 {
                     CHECK(evaluator.GetBakedGenerationCount() > bakedBefore);
                 }
-                const bool read =
-                    _BlinkReadout(moved, "base") == step.base &&
-                    _BlinkReadout(moved, "final") == step.final;
+                const bool read = _BlinkReadout(moved, "base") == step.base &&
+                                  _BlinkReadout(moved, "final") == step.final;
                 if (!read) {
                     std::printf("  %s: base reads %.9g, final %.9g\n", label,
                                 double(_BlinkReadout(moved, "base")),
@@ -4670,10 +4752,9 @@ TestBlinkDragEqualsRelease()
                                     moved));
             }
         }
-        CHECK(_SameReadings(std::string("canonical") +
-                                " blink dragged by a double",
-                            draggedStraight(VtValue(1.4f)),
-                            draggedStraight(VtValue(1.4))));
+        CHECK(_SameReadings(
+            std::string("canonical") + " blink dragged by a double",
+            draggedStraight(VtValue(1.4f)), draggedStraight(VtValue(1.4))));
     }
 }
 
@@ -4688,13 +4769,18 @@ TestBlinkDragEqualsRelease()
 static void
 TestConnectionReadPhaseOnConstraintAndAvar(const std::string &examplesDir)
 {
-    enum class Wiring { AuthoredBase, AuthoredFinal, Connected, ConnectedFinal };
+    enum class Wiring {
+        AuthoredBase,
+        AuthoredFinal,
+        Connected,
+        ConnectedFinal
+    };
 
     // The single-chain IK's twist: 20 degrees authored on the channel,
     // doubled to 40.
     const SdfPath elbow("/ScIkAsset/Rig/Joints/Shoulder/Elbow");
-    const auto twistElbow = [&](Wiring wiring,
-                                GfMatrix4d *out, bool floatChannel = false) {
+    const auto twistElbow = [&](Wiring wiring, GfMatrix4d *out,
+                                bool floatChannel = false) {
         UsdStageRefPtr stage = UsdStage::Open(
             examplesDir + "/../docs/examples/single_chain_ik_constraint.usda");
         if (!stage) {
@@ -4702,8 +4788,9 @@ TestConnectionReadPhaseOnConstraintAndAvar(const std::string &examplesDir)
         }
         stage->SetEditTarget(stage->GetSessionLayer());
         const UsdAttribute degrees =
-            stage->DefinePrim(SdfPath("/ScIkAsset/Rig/Channels/Twist"),
-                              TfToken("Scope"))
+            stage
+                ->DefinePrim(SdfPath("/ScIkAsset/Rig/Channels/Twist"),
+                             TfToken("Scope"))
                 .CreateAttribute(TfToken("rigExec:degrees"),
                                  floatChannel ? SdfValueTypeNames->Float
                                               : SdfValueTypeNames->Double);
@@ -4712,15 +4799,15 @@ TestConnectionReadPhaseOnConstraintAndAvar(const std::string &examplesDir)
         } else {
             degrees.Set(20.0);
         }
-        const UsdPrim twice = stage->DefinePrim(
-            SdfPath("/ScIkAsset/Rig/Movers/TwistTwice"),
-            TfToken("RigExecFloatMathMover"));
+        const UsdPrim twice =
+            stage->DefinePrim(SdfPath("/ScIkAsset/Rig/Movers/TwistTwice"),
+                              TfToken("RigExecFloatMathMover"));
         twice.ApplyAPI(TfToken("RigExecMoverAPI"));
-        twice.CreateAttribute(TfToken("rigExec:operation"),
-                              SdfValueTypeNames->Token)
+        twice
+            .CreateAttribute(TfToken("rigExec:operation"),
+                             SdfValueTypeNames->Token)
             .Set(TfToken("multiply"));
-        twice.CreateAttribute(TfToken("inputs:value"),
-                              SdfValueTypeNames->Float)
+        twice.CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float)
             .Set(2.0f);
         twice.CreateRelationship(TfToken("rigExec:moves"))
             .SetTargets({degrees.GetPath()});
@@ -4756,19 +4843,19 @@ TestConnectionReadPhaseOnConstraintAndAvar(const std::string &examplesDir)
     // A control whose avars:ty reads a height channel: 2 authored, scaled
     // by 1.5 to 3.
     const SdfPath control("/Asset/Rig/Controls/Lift");
-    const auto liftedTo = [&](Wiring wiring,
-                              double *out, bool floatChannel = false) {
+    const auto liftedTo = [&](Wiring wiring, double *out,
+                              bool floatChannel = false) {
         const UsdStageRefPtr stage = UsdStage::CreateInMemory();
         stage->DefinePrim(SdfPath("/Asset"), TfToken("Xform"));
         stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
         const UsdPrim lift =
             stage->DefinePrim(control, TfToken("RigExecControl"));
-        lift.CreateAttribute(TfToken("rest:space"),
-                             SdfValueTypeNames->Matrix4d)
+        lift.CreateAttribute(TfToken("rest:space"), SdfValueTypeNames->Matrix4d)
             .Set(GfMatrix4d(1.0));
         const UsdAttribute height =
-            stage->DefinePrim(SdfPath("/Asset/Rig/Channels/Lift"),
-                              TfToken("Scope"))
+            stage
+                ->DefinePrim(SdfPath("/Asset/Rig/Channels/Lift"),
+                             TfToken("Scope"))
                 .CreateAttribute(TfToken("rigExec:height"),
                                  floatChannel ? SdfValueTypeNames->Float
                                               : SdfValueTypeNames->Double);
@@ -4777,20 +4864,20 @@ TestConnectionReadPhaseOnConstraintAndAvar(const std::string &examplesDir)
         } else {
             height.Set(2.0);
         }
-        const UsdPrim raise = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Movers/Raise"),
-            TfToken("RigExecFloatMathMover"));
+        const UsdPrim raise =
+            stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Raise"),
+                              TfToken("RigExecFloatMathMover"));
         raise.ApplyAPI(TfToken("RigExecMoverAPI"));
-        raise.CreateAttribute(TfToken("rigExec:operation"),
-                              SdfValueTypeNames->Token)
+        raise
+            .CreateAttribute(TfToken("rigExec:operation"),
+                             SdfValueTypeNames->Token)
             .Set(TfToken("multiply"));
-        raise.CreateAttribute(TfToken("inputs:value"),
-                              SdfValueTypeNames->Float)
+        raise.CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float)
             .Set(1.5f);
         raise.CreateRelationship(TfToken("rigExec:moves"))
             .SetTargets({height.GetPath()});
-        const UsdAttribute ty = lift.CreateAttribute(
-            TfToken("avars:ty"), SdfValueTypeNames->Double);
+        const UsdAttribute ty = lift.CreateAttribute(TfToken("avars:ty"),
+                                                     SdfValueTypeNames->Double);
         if (wiring == Wiring::AuthoredBase) {
             ty.Set(2.0);
         } else if (wiring == Wiring::AuthoredFinal) {
@@ -4825,8 +4912,8 @@ TestConnectionReadPhaseOnConstraintAndAvar(const std::string &examplesDir)
         CHECK(twistElbow(Wiring::Connected, &connected));
         CHECK(twistElbow(Wiring::ConnectedFinal, &connectedFinal));
         // The doubling moves the elbow at all...
-        CHECK(!Near(base.ExtractTranslation(), final.ExtractTranslation(),
-                    1e-3));
+        CHECK(
+            !Near(base.ExtractTranslation(), final.ExtractTranslation(), 1e-3));
         // ...an undeclared twist reads around it, `final` through it.
         CHECK(Near(connected.ExtractTranslation(), base.ExtractTranslation(),
                    1e-9));
@@ -4834,8 +4921,7 @@ TestConnectionReadPhaseOnConstraintAndAvar(const std::string &examplesDir)
                    final.ExtractTranslation(), 1e-9));
         GfMatrix4d fromFloat, fromFloatFinal;
         CHECK(twistElbow(Wiring::Connected, &fromFloat, true));
-        CHECK(twistElbow(Wiring::ConnectedFinal, &fromFloatFinal,
-                         true));
+        CHECK(twistElbow(Wiring::ConnectedFinal, &fromFloatFinal, true));
         CHECK(Near(fromFloat.ExtractTranslation(), base.ExtractTranslation(),
                    1e-9));
         CHECK(Near(fromFloatFinal.ExtractTranslation(),
@@ -4852,8 +4938,7 @@ TestConnectionReadPhaseOnConstraintAndAvar(const std::string &examplesDir)
         CHECK(liftConnectedFinal == liftFinal);
         double liftFromFloat = -1, liftFromFloatFinal = -1;
         CHECK(liftedTo(Wiring::Connected, &liftFromFloat, true));
-        CHECK(liftedTo(Wiring::ConnectedFinal, &liftFromFloatFinal,
-                       true));
+        CHECK(liftedTo(Wiring::ConnectedFinal, &liftFromFloatFinal, true));
         CHECK(liftFromFloat == liftBase);
         CHECK(liftFromFloatFinal == liftFinal);
     }
@@ -4873,8 +4958,7 @@ TestUndeclaredSkipsCompileCleanly()
     const auto build = [](Mistyped mistyped) {
         const UsdStageRefPtr stage = _PhaseRig();
         const auto mover = [&](const char *path, const char *type,
-                               const char *operation,
-                               const SdfPath &target) {
+                               const char *operation, const SdfPath &target) {
             const UsdPrim prim = stage->DefinePrim(
                 SdfPath(std::string("/Asset/Rig/Movers/") + path),
                 TfToken(type));
@@ -4895,24 +4979,20 @@ TestUndeclaredSkipsCompileCleanly()
         out.Set(1.0f);
         out.SetConnections({dial});
         mover("Bump", "RigExecFloatMathMover", "add", out.GetPath())
-            .CreateAttribute(TfToken("inputs:value"),
-                             SdfValueTypeNames->Float)
+            .CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float)
             .Set(0.5f);
         // A color3f chain read by a float3 input: the same value type.
         const UsdAttribute paint = channels.CreateAttribute(
             TfToken("rigExec:paint"), SdfValueTypeNames->Color3f);
         paint.Set(GfVec3f(0.25f, 0.5f, 0.75f));
-        mover("Brighten", "RigExecVec3fMathMover", "multiply",
-              paint.GetPath())
-            .CreateAttribute(TfToken("inputs:value"),
-                             SdfValueTypeNames->Float3)
+        mover("Brighten", "RigExecVec3fMathMover", "multiply", paint.GetPath())
+            .CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float3)
             .Set(GfVec3f(2.0f));
         const UsdAttribute copy = channels.CreateAttribute(
             TfToken("rigExec:copy"), SdfValueTypeNames->Float3);
         copy.Set(GfVec3f(0.0f));
         mover("Copy", "RigExecVec3fMathMover", "add", copy.GetPath())
-            .CreateAttribute(TfToken("inputs:value"),
-                             SdfValueTypeNames->Float3)
+            .CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float3)
             .SetConnections({paint.GetPath()});
         if (mistyped != Mistyped::None) {
             // A float3 input connected to the float dial.
@@ -4920,8 +5000,7 @@ TestUndeclaredSkipsCompileCleanly()
                 TfToken("rigExec:tint"), SdfValueTypeNames->Float3);
             tint.Set(GfVec3f(0.0f));
             const UsdAttribute value =
-                mover("Tint", "RigExecVec3fMathMover", "add",
-                      tint.GetPath())
+                mover("Tint", "RigExecVec3fMathMover", "add", tint.GetPath())
                     .CreateAttribute(TfToken("inputs:value"),
                                      SdfValueTypeNames->Float3);
             value.SetConnections({dial});
@@ -4952,8 +5031,7 @@ TestUndeclaredSkipsCompileCleanly()
         CHECK(evaluator.GetSkippedOperations().empty());
         CHECK(recorded(evaluator, "/Asset/Rig/Channels/Dial.rigExec:out") ==
               -1);
-        CHECK(recorded(evaluator, "/Asset/Rig/Movers/Copy.inputs:value") ==
-              0);
+        CHECK(recorded(evaluator, "/Asset/Rig/Movers/Copy.inputs:value") == 0);
         // The connected target is its own chain's base, revised; the copy
         // reads the color chain's base.
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(1.0));
@@ -4974,8 +5052,7 @@ TestUndeclaredSkipsCompileCleanly()
         std::vector<std::string> errors;
         CHECK(evaluator.Compile(&errors));
         CHECK(evaluator.GetSkippedOperations().empty());
-        CHECK(recorded(evaluator, "/Asset/Rig/Movers/Tint.inputs:value") ==
-              -1);
+        CHECK(recorded(evaluator, "/Asset/Rig/Movers/Tint.inputs:value") == -1);
     }
     {
         RigExecRigEvaluator evaluator(build(Mistyped::Declared),
@@ -5018,12 +5095,12 @@ TestConstraintRewireIsStructural(const std::string &examplesDir)
     const UsdAttribute degrees = twistScope.CreateAttribute(
         TfToken("rigExec:degrees"), SdfValueTypeNames->Double);
     degrees.Set(20.0);
-    const UsdPrim twice = stage->DefinePrim(
-        SdfPath("/ScIkAsset/Rig/Movers/TwistTwice"),
-        TfToken("RigExecFloatMathMover"));
+    const UsdPrim twice =
+        stage->DefinePrim(SdfPath("/ScIkAsset/Rig/Movers/TwistTwice"),
+                          TfToken("RigExecFloatMathMover"));
     twice.ApplyAPI(TfToken("RigExecMoverAPI"));
-    twice.CreateAttribute(TfToken("rigExec:operation"),
-                          SdfValueTypeNames->Token)
+    twice
+        .CreateAttribute(TfToken("rigExec:operation"), SdfValueTypeNames->Token)
         .Set(TfToken("multiply"));
     twice.CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float)
         .Set(2.0f);
@@ -5127,8 +5204,9 @@ TestBadPhaseReaders(const std::string &examplesDir)
         CHECK(stage);
         if (stage) {
             stage->SetEditTarget(stage->GetSessionLayer());
-            stage->GetAttributeAtPath(
-                     SdfPath("/Asset/Rig/Weights/Ramp.inputs:driver"))
+            stage
+                ->GetAttributeAtPath(
+                    SdfPath("/Asset/Rig/Weights/Ramp.inputs:driver"))
                 .SetMetadata(phaseField, std::string("preceding"));
             CHECK(compile(stage, "/Asset/Rig", refusal, &skipped));
             CHECK(skipped.size() == 1 &&
@@ -5146,8 +5224,9 @@ TestBadPhaseReaders(const std::string &examplesDir)
         }
         stage->SetEditTarget(stage->GetSessionLayer());
         const UsdAttribute other =
-            stage->DefinePrim(SdfPath("/Asset/Rig/Channels/Other"),
-                              TfToken("Scope"))
+            stage
+                ->DefinePrim(SdfPath("/Asset/Rig/Channels/Other"),
+                             TfToken("Scope"))
                 .CreateAttribute(TfToken("rigExec:amount"),
                                  SdfValueTypeNames->Float);
         other.Set(1.0f);
@@ -5155,8 +5234,9 @@ TestBadPhaseReaders(const std::string &examplesDir)
         const UsdPrim mover =
             stage->DefinePrim(pulled, TfToken("RigExecFloatMathMover"));
         CHECK(mover.ApplyAPI(TfToken("RigExecMoverAPI")));
-        mover.CreateAttribute(TfToken("rigExec:operation"),
-                              SdfValueTypeNames->Token)
+        mover
+            .CreateAttribute(TfToken("rigExec:operation"),
+                             SdfValueTypeNames->Token)
             .Set(TfToken("add"));
         const UsdAttribute value = mover.CreateAttribute(
             TfToken("inputs:value"), SdfValueTypeNames->Float);
@@ -5178,14 +5258,15 @@ TestBadPhaseReaders(const std::string &examplesDir)
 
     // A space switch's own input.
     {
-        const UsdStageRefPtr stage = UsdStage::Open(
-            examplesDir + "/../docs/examples/space_switch.usda");
+        const UsdStageRefPtr stage =
+            UsdStage::Open(examplesDir + "/../docs/examples/space_switch.usda");
         CHECK(stage);
         if (stage) {
             stage->SetEditTarget(stage->GetSessionLayer());
             const UsdAttribute pick =
-                stage->DefinePrim(SdfPath("/SpaceSwitchAsset/Rig/Channels"),
-                                  TfToken("Scope"))
+                stage
+                    ->DefinePrim(SdfPath("/SpaceSwitchAsset/Rig/Channels"),
+                                 TfToken("Scope"))
                     .CreateAttribute(TfToken("rigExec:pick"),
                                      SdfValueTypeNames->Double);
             pick.Set(1.0);
@@ -5197,8 +5278,7 @@ TestBadPhaseReaders(const std::string &examplesDir)
                                      SdfValueTypeNames->Double);
             active.SetConnections({pick.GetPath()});
             active.SetMetadata(phaseField, std::string("preceding"));
-            CHECK(!compile(stage, "/SpaceSwitchAsset/Rig", refusal,
-                           &skipped));
+            CHECK(!compile(stage, "/SpaceSwitchAsset/Rig", refusal, &skipped));
         }
     }
 }
@@ -5212,32 +5292,36 @@ TestBadPhaseReaders(const std::string &examplesDir)
 static void
 TestOutsideNamedAttributeReadPhase(const std::string &examplesDir)
 {
-    enum class Wiring { AuthoredBase, AuthoredFinal, Connected, ConnectedFinal };
+    enum class Wiring {
+        AuthoredBase,
+        AuthoredFinal,
+        Connected,
+        ConnectedFinal
+    };
     const SdfPath hand("/SpaceSwitchAsset/Rig/Controls/Hand");
     const SdfPath dial("/SpaceSwitchAsset/Dials.rigExec:space");
-    const auto handAt = [&](Wiring wiring,
-                            GfVec3d *out, long *applied) {
-        const UsdStageRefPtr stage = UsdStage::Open(
-            examplesDir + "/../docs/examples/space_switch.usda");
+    const auto handAt = [&](Wiring wiring, GfVec3d *out, long *applied) {
+        const UsdStageRefPtr stage =
+            UsdStage::Open(examplesDir + "/../docs/examples/space_switch.usda");
         if (!stage) {
             return false;
         }
         stage->SetEditTarget(stage->GetSessionLayer());
         const UsdAttribute pick =
-            stage->DefinePrim(SdfPath("/SpaceSwitchAsset/Rig/Channels"),
-                              TfToken("Scope"))
+            stage
+                ->DefinePrim(SdfPath("/SpaceSwitchAsset/Rig/Channels"),
+                             TfToken("Scope"))
                 .CreateAttribute(TfToken("rigExec:pick"),
                                  SdfValueTypeNames->Double);
         pick.Set(0.0);
-        const UsdPrim next = stage->DefinePrim(
-            SdfPath("/SpaceSwitchAsset/Rig/Movers/NextSpace"),
-            TfToken("RigExecFloatMathMover"));
+        const UsdPrim next =
+            stage->DefinePrim(SdfPath("/SpaceSwitchAsset/Rig/Movers/NextSpace"),
+                              TfToken("RigExecFloatMathMover"));
         next.ApplyAPI(TfToken("RigExecMoverAPI"));
         next.CreateAttribute(TfToken("rigExec:operation"),
                              SdfValueTypeNames->Token)
             .Set(TfToken("add"));
-        next.CreateAttribute(TfToken("inputs:value"),
-                             SdfValueTypeNames->Float)
+        next.CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float)
             .Set(1.0f);
         next.CreateRelationship(TfToken("rigExec:moves"))
             .SetTargets({pick.GetPath()});
@@ -5256,13 +5340,10 @@ TestOutsideNamedAttributeReadPhase(const std::string &examplesDir)
             space.SetMetadata(TfToken("rigExecReadPhase"),
                               std::string("final"));
         }
-        stage
-            ->GetPrimAtPath(
-                SdfPath("/SpaceSwitchAsset/Rig/Spaces/HandSpaces"))
+        stage->GetPrimAtPath(SdfPath("/SpaceSwitchAsset/Rig/Spaces/HandSpaces"))
             .GetRelationship(TfToken("rigExec:activeSpaceAttribute"))
             .SetTargets({dial});
-        RigExecRigEvaluator evaluator(stage,
-                                      SdfPath("/SpaceSwitchAsset/Rig"));
+        RigExecRigEvaluator evaluator(stage, SdfPath("/SpaceSwitchAsset/Rig"));
         evaluator.cpuReference = true;
 
         if (!evaluator.Compile(nullptr) ||
@@ -5295,8 +5376,7 @@ TestOutsideNamedAttributeReadPhase(const std::string &examplesDir)
         CHECK(handAt(Wiring::Connected, &connected, &applied));
         CHECK(applied == 0);
         CHECK(Near(connected, base, 1e-12));
-        CHECK(handAt(Wiring::ConnectedFinal, &connectedFinal,
-                     &applied));
+        CHECK(handAt(Wiring::ConnectedFinal, &connectedFinal, &applied));
         CHECK(applied == -1);
         CHECK(Near(connectedFinal, final, 1e-12));
     }
@@ -5316,26 +5396,28 @@ TestPropertyMoverDrivesDynamicWeight()
     points.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
         .Set(VtVec3fArray{GfVec3f(0)});
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const UsdPrim joint = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Joints/J"), TfToken("RigExecJoint"));
+    const UsdPrim joint = stage->DefinePrim(SdfPath("/Asset/Rig/Joints/J"),
+                                            TfToken("RigExecJoint"));
     GfMatrix4d posed(1.0);
     posed.SetTranslate(GfVec3d(10, 0, 0));
     joint.CreateAttribute(TfToken("posed:space"), SdfValueTypeNames->Matrix4d)
         .Set(posed);
 
-    const UsdPrim weight = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Weights/W"), TfToken("RigExecDynamicWeight"));
+    const UsdPrim weight = stage->DefinePrim(SdfPath("/Asset/Rig/Weights/W"),
+                                             TfToken("RigExecDynamicWeight"));
     weight.CreateRelationship(TfToken("rigExec:weightTarget"), false)
         .SetTargets({target});
-    weight.CreateAttribute(TfToken("rigExec:representation"),
-                           SdfValueTypeNames->Token, false)
+    weight
+        .CreateAttribute(TfToken("rigExec:representation"),
+                         SdfValueTypeNames->Token, false)
         .Set(TfToken("constant"));
-    weight.CreateAttribute(TfToken("inputs:driver"),
-                           SdfValueTypeNames->Float, false)
+    weight
+        .CreateAttribute(TfToken("inputs:driver"), SdfValueTypeNames->Float,
+                         false)
         .Set(0.0f);
 
-    const UsdPrim mover = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/M"), TfToken("RigExecMatrixMover"));
+    const UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/M"),
+                                            TfToken("RigExecMatrixMover"));
     CHECK(mover.ApplyAPI(TfToken("RigExecMoverAPI")));
     mover.CreateRelationship(TfToken("rigExec:moves"), false)
         .SetTargets({target});
@@ -5345,18 +5427,19 @@ TestPropertyMoverDrivesDynamicWeight()
         .SetTargets({weight.GetPath()});
 
     const UsdPrim driver = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Driver"),
-        TfToken("RigExecFloatMathMover"));
+        SdfPath("/Asset/Rig/Movers/Driver"), TfToken("RigExecFloatMathMover"));
     CHECK(driver.ApplyAPI(TfToken("RigExecMoverAPI")));
-    driver.CreateAttribute(TfToken("rigExec:operation"),
-                           SdfValueTypeNames->Token, false)
+    driver
+        .CreateAttribute(TfToken("rigExec:operation"), SdfValueTypeNames->Token,
+                         false)
         .Set(TfToken("add"));
-    driver.CreateAttribute(TfToken("inputs:value"),
-                           SdfValueTypeNames->Float, false)
+    driver
+        .CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float,
+                         false)
         .Set(1.0f);
     driver.CreateRelationship(TfToken("rigExec:moves"), false)
-        .SetTargets({weight.GetPath().AppendProperty(
-            TfToken("inputs:driver"))});
+        .SetTargets(
+            {weight.GetPath().AppendProperty(TfToken("inputs:driver"))});
 
     RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
 
@@ -5392,31 +5475,35 @@ TestPropertyChainDependencyOrderAndExactEndpoint()
         .Set(2.0f);
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
 
-    const UsdPrim consumer = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Consumer"),
-        TfToken("RigExecFloatMathMover"));
+    const UsdPrim consumer =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Consumer"),
+                          TfToken("RigExecFloatMathMover"));
     CHECK(consumer.ApplyAPI(TfToken("RigExecMoverAPI")));
-    consumer.CreateAttribute(TfToken("rigExec:operation"),
-                             SdfValueTypeNames->Token, false)
+    consumer
+        .CreateAttribute(TfToken("rigExec:operation"), SdfValueTypeNames->Token,
+                         false)
         .Set(TfToken("add"));
-    consumer.CreateAttribute(TfToken("inputs:value"),
-                             SdfValueTypeNames->Float, false)
+    consumer
+        .CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float,
+                         false)
         .Set(8.0f);
-    consumer.CreateAttribute(TfToken("inputs:defaultWeight"),
-                             SdfValueTypeNames->Float, false)
+    consumer
+        .CreateAttribute(TfToken("inputs:defaultWeight"),
+                         SdfValueTypeNames->Float, false)
         .Set(0.0f);
     consumer.CreateRelationship(TfToken("rigExec:moves"), false)
         .SetTargets({valuePath});
 
     const UsdPrim driver = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Driver"),
-        TfToken("RigExecFloatMathMover"));
+        SdfPath("/Asset/Rig/Movers/Driver"), TfToken("RigExecFloatMathMover"));
     CHECK(driver.ApplyAPI(TfToken("RigExecMoverAPI")));
-    driver.CreateAttribute(TfToken("rigExec:operation"),
-                           SdfValueTypeNames->Token, false)
+    driver
+        .CreateAttribute(TfToken("rigExec:operation"), SdfValueTypeNames->Token,
+                         false)
         .Set(TfToken("add"));
-    driver.CreateAttribute(TfToken("inputs:value"),
-                           SdfValueTypeNames->Float, false)
+    driver
+        .CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float,
+                         false)
         .Set(1.0f);
     driver.CreateRelationship(TfToken("rigExec:moves"), false)
         .SetTargets({consumer.GetPath().AppendProperty(
@@ -5466,14 +5553,14 @@ MakeConnectedMatrixWeightStage(bool dynamicWeight)
     inputs.CreateAttribute(TfToken("wrong"), SdfValueTypeNames->Int, true)
         .Set(1);
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const UsdPrim joint = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Joints/J"), TfToken("RigExecJoint"));
+    const UsdPrim joint = stage->DefinePrim(SdfPath("/Asset/Rig/Joints/J"),
+                                            TfToken("RigExecJoint"));
     GfMatrix4d posed(1.0);
     posed.SetTranslate(GfVec3d(10, 0, 0));
     joint.CreateAttribute(TfToken("posed:space"), SdfValueTypeNames->Matrix4d)
         .Set(posed);
-    const UsdPrim mover = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/M"), TfToken("RigExecMatrixMover"));
+    const UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/M"),
+                                            TfToken("RigExecMatrixMover"));
     CHECK(mover.ApplyAPI(TfToken("RigExecMoverAPI")));
     mover.CreateRelationship(TfToken("rigExec:moves"), false)
         .SetTargets({target});
@@ -5484,17 +5571,20 @@ MakeConnectedMatrixWeightStage(bool dynamicWeight)
             SdfPath("/Asset/Rig/Weights/W"), TfToken("RigExecDynamicWeight"));
         weight.CreateRelationship(TfToken("rigExec:weightTarget"), false)
             .SetTargets({target});
-        weight.CreateAttribute(TfToken("rigExec:representation"),
-                               SdfValueTypeNames->Token, false)
+        weight
+            .CreateAttribute(TfToken("rigExec:representation"),
+                             SdfValueTypeNames->Token, false)
             .Set(TfToken("constant"));
-        weight.CreateAttribute(TfToken("inputs:driver"),
-                               SdfValueTypeNames->Float, false)
+        weight
+            .CreateAttribute(TfToken("inputs:driver"), SdfValueTypeNames->Float,
+                             false)
             .SetConnections({SdfPath("/Asset/Inputs.a")});
         mover.CreateRelationship(TfToken("rigExec:weightObject"), false)
             .SetTargets({weight.GetPath()});
     } else {
-        mover.CreateAttribute(TfToken("inputs:defaultWeight"),
-                              SdfValueTypeNames->Float, false)
+        mover
+            .CreateAttribute(TfToken("inputs:defaultWeight"),
+                             SdfValueTypeNames->Float, false)
             .SetConnections({SdfPath("/Asset/Inputs.a")});
     }
     return stage;
@@ -5508,14 +5598,13 @@ TestConnectedWeightsRewireAndValidate()
     for (const bool dynamicWeight : {false, true}) {
         const UsdStageRefPtr stage =
             MakeConnectedMatrixWeightStage(dynamicWeight);
-        const SdfPath inputPath = dynamicWeight
-            ? SdfPath("/Asset/Rig/Weights/W.inputs:driver")
-            : SdfPath("/Asset/Rig/Movers/M.inputs:defaultWeight");
+        const SdfPath inputPath =
+            dynamicWeight ? SdfPath("/Asset/Rig/Weights/W.inputs:driver")
+                          : SdfPath("/Asset/Rig/Movers/M.inputs:defaultWeight");
         RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
         evaluator.cpuReference = true;
         CHECK(evaluator.Compile(nullptr));
-        const RigExecRigPose first =
-            evaluator.Evaluate(UsdTimeCode::Default());
+        const RigExecRigPose first = evaluator.Evaluate(UsdTimeCode::Default());
         CHECK(first.valid);
         CHECK(first.referenceMismatches == 0);
         VtVec3fArray moved =
@@ -5542,8 +5631,7 @@ TestConnectedWeightsRewireAndValidate()
             const UsdStageRefPtr bad =
                 MakeConnectedMatrixWeightStage(dynamicWeight);
             bad->GetAttributeAtPath(inputPath).SetConnections(sources);
-            RigExecRigEvaluator badEvaluator(
-                bad, SdfPath("/Asset/Rig"));
+            RigExecRigEvaluator badEvaluator(bad, SdfPath("/Asset/Rig"));
             std::vector<std::string> errors;
             // Refused: set aside with a warning while the rig compiles on,
             // or -- when the mover is the rig's only output, so nothing is
@@ -5554,8 +5642,8 @@ TestConnectedWeightsRewireAndValidate()
                                  SdfPath("/Asset/Rig/Movers/M"));
             return refused && !errors.empty();
         };
-        CHECK(rejects(
-            {SdfPath("/Asset/Inputs.a"), SdfPath("/Asset/Inputs.b")}));
+        CHECK(
+            rejects({SdfPath("/Asset/Inputs.a"), SdfPath("/Asset/Inputs.b")}));
         CHECK(rejects({SdfPath("/Asset/Inputs.wrong")}));
         CHECK(rejects({SdfPath("/Asset/Inputs.missing")}));
     }
@@ -5567,40 +5655,45 @@ TestConnectedWeightsRewireAndValidate()
 static void
 TestWeightDescriptorValidationAndCompiledRig()
 {
-    auto makeStage = [](const VtFloatArray &values, bool sampledPoints = false) {
+    auto makeStage = [](const VtFloatArray &values,
+                        bool sampledPoints = false) {
         const UsdStageRefPtr stage = UsdStage::CreateInMemory();
         const SdfPath target("/Asset/Geom/P.points");
         const UsdPrim points =
             stage->DefinePrim(SdfPath("/Asset/Geom/P"), TfToken("Points"));
         const UsdAttribute pointsAttr = points.CreateAttribute(
             TfToken("points"), SdfValueTypeNames->Point3fArray);
-        const VtVec3fArray base = {
-            GfVec3f(0), GfVec3f(1, 0, 0), GfVec3f(2, 0, 0)};
-        pointsAttr.Set(
-            base, sampledPoints ? UsdTimeCode(1) : UsdTimeCode::Default());
+        const VtVec3fArray base = {GfVec3f(0), GfVec3f(1, 0, 0),
+                                   GfVec3f(2, 0, 0)};
+        pointsAttr.Set(base,
+                       sampledPoints ? UsdTimeCode(1) : UsdTimeCode::Default());
         stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-        const UsdPrim joint = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Joints/J"), TfToken("RigExecJoint"));
+        const UsdPrim joint = stage->DefinePrim(SdfPath("/Asset/Rig/Joints/J"),
+                                                TfToken("RigExecJoint"));
         GfMatrix4d posed(1.0);
         posed.SetTranslate(GfVec3d(1, 0, 0));
-        joint.CreateAttribute(
-                 TfToken("posed:space"), SdfValueTypeNames->Matrix4d)
+        joint
+            .CreateAttribute(TfToken("posed:space"),
+                             SdfValueTypeNames->Matrix4d)
             .Set(posed);
         const UsdPrim weight = stage->DefinePrim(
             SdfPath("/Asset/Rig/Weights/W"), TfToken("RigExecStaticWeight"));
         weight.CreateRelationship(TfToken("rigExec:weightTarget"), false)
             .SetTargets({target});
-        weight.CreateAttribute(TfToken("rigExec:representation"),
-                               SdfValueTypeNames->Token, false)
+        weight
+            .CreateAttribute(TfToken("rigExec:representation"),
+                             SdfValueTypeNames->Token, false)
             .Set(TfToken("dense"));
-        weight.CreateAttribute(TfToken("rigExec:values"),
-                               SdfValueTypeNames->FloatArray, false)
+        weight
+            .CreateAttribute(TfToken("rigExec:values"),
+                             SdfValueTypeNames->FloatArray, false)
             .Set(values);
-        weight.CreateAttribute(TfToken("rigExec:defaultWeight"),
-                               SdfValueTypeNames->Float, false)
+        weight
+            .CreateAttribute(TfToken("rigExec:defaultWeight"),
+                             SdfValueTypeNames->Float, false)
             .Set(0.0f);
-        const UsdPrim mover = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Movers/M"), TfToken("RigExecMatrixMover"));
+        const UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/M"),
+                                                TfToken("RigExecMatrixMover"));
         CHECK(mover.ApplyAPI(TfToken("RigExecMoverAPI")));
         mover.CreateRelationship(TfToken("rigExec:moves"), false)
             .SetTargets({target});
@@ -5615,31 +5708,28 @@ TestWeightDescriptorValidationAndCompiledRig()
         const UsdStageRefPtr bad = makeStage(VtFloatArray{1, 1});
         RigExecRigEvaluator evaluator(bad, SdfPath("/Asset/Rig"));
         evaluator.cpuReference = true;
-        CHECK(SkipsOperations(evaluator, {SdfPath("/Asset/Rig/Movers/M")}, nullptr));
+        CHECK(SkipsOperations(evaluator, {SdfPath("/Asset/Rig/Movers/M")},
+                              nullptr));
         CHECK(evaluator.Evaluate(UsdTimeCode::Default()).valid);
     }
     {
         // Numeric packet contents are value state, unlike the dense array's
         // descriptor cardinality.  A strict violation therefore compiles and
         // fails just this mover revision back to the preceding points.
-        const UsdStageRefPtr badValue =
-            makeStage(VtFloatArray{1, 2, 1});
+        const UsdStageRefPtr badValue = makeStage(VtFloatArray{1, 2, 1});
         RigExecRigEvaluator evaluator(badValue, SdfPath("/Asset/Rig"));
         evaluator.cpuReference = true;
         CHECK(evaluator.Compile(nullptr));
-        const RigExecRigPose pose =
-            evaluator.Evaluate(UsdTimeCode::Default());
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
         CHECK(pose.valid);
         CHECK(EnvelopePoints(pose, SdfPath("/Asset/Geom/P.points")) ==
-              VtVec3fArray({
-                  GfVec3f(0), GfVec3f(1, 0, 0), GfVec3f(2, 0, 0)}));
+              VtVec3fArray({GfVec3f(0), GfVec3f(1, 0, 0), GfVec3f(2, 0, 0)}));
     }
     {
         // A points property authored only at a time sample is a valid domain;
         // the compiled rig freezes its sampled cardinality instead of requiring a
         // default opinion.
-        const UsdStageRefPtr sampled =
-            makeStage(VtFloatArray{1, 1, 1}, true);
+        const UsdStageRefPtr sampled = makeStage(VtFloatArray{1, 1, 1}, true);
         RigExecRigEvaluator evaluator(sampled, SdfPath("/Asset/Rig"));
         evaluator.cpuReference = true;
         CHECK(evaluator.Compile(nullptr));
@@ -5651,24 +5741,26 @@ TestWeightDescriptorValidationAndCompiledRig()
         evaluator.cpuReference = true;
         CHECK(evaluator.Compile(nullptr));
         CHECK(evaluator.Evaluate(UsdTimeCode::Default()).valid);
-        stage->GetAttributeAtPath(
-                 SdfPath("/Asset/Rig/Weights/W.rigExec:values"))
+        stage
+            ->GetAttributeAtPath(SdfPath("/Asset/Rig/Weights/W.rigExec:values"))
             .Set(VtFloatArray{1, 1});
         CHECK(evaluator.Evaluate(UsdTimeCode::Default()).valid);
-        CHECK(evaluator.GetSkippedOperations().count(SdfPath("/Asset/Rig/Movers/M")) == 1);
-        stage->GetAttributeAtPath(
-                 SdfPath("/Asset/Rig/Weights/W.rigExec:values"))
+        CHECK(evaluator.GetSkippedOperations().count(
+                  SdfPath("/Asset/Rig/Movers/M")) == 1);
+        stage
+            ->GetAttributeAtPath(SdfPath("/Asset/Rig/Weights/W.rigExec:values"))
             .Set(VtFloatArray{1, 1, 1});
         CHECK(evaluator.Evaluate(UsdTimeCode::Default()).valid);
         CHECK(evaluator.GetSkippedOperations().empty());
 
-        const UsdAttribute points = stage->GetAttributeAtPath(
-            SdfPath("/Asset/Geom/P.points"));
+        const UsdAttribute points =
+            stage->GetAttributeAtPath(SdfPath("/Asset/Geom/P.points"));
         points.Set(VtVec3fArray{GfVec3f(0), GfVec3f(1, 0, 0)});
         CHECK(evaluator.Evaluate(UsdTimeCode::Default()).valid);
-        CHECK(evaluator.GetSkippedOperations().count(SdfPath("/Asset/Rig/Movers/M")) == 1);
-        points.Set(VtVec3fArray{
-            GfVec3f(0), GfVec3f(1, 0, 0), GfVec3f(2, 0, 0)});
+        CHECK(evaluator.GetSkippedOperations().count(
+                  SdfPath("/Asset/Rig/Movers/M")) == 1);
+        points.Set(
+            VtVec3fArray{GfVec3f(0), GfVec3f(1, 0, 0), GfVec3f(2, 0, 0)});
         CHECK(evaluator.Evaluate(UsdTimeCode::Default()).valid);
         CHECK(evaluator.GetSkippedOperations().empty());
     }
@@ -5678,12 +5770,14 @@ TestWeightDescriptorValidationAndCompiledRig()
             stage->DefinePrim(SdfPath("/Asset/Inputs"), TfToken("Scope"));
         inputs.CreateAttribute(TfToken("w"), SdfValueTypeNames->Float, true)
             .Set(1.0f);
-        stage->GetAttributeAtPath(
-                 SdfPath("/Asset/Rig/Weights/W.rigExec:defaultWeight"))
+        stage
+            ->GetAttributeAtPath(
+                SdfPath("/Asset/Rig/Weights/W.rigExec:defaultWeight"))
             .SetConnections({SdfPath("/Asset/Inputs.w")});
         RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
         evaluator.cpuReference = true;
-        CHECK(SkipsOperations(evaluator, {SdfPath("/Asset/Rig/Movers/M")}, nullptr));
+        CHECK(SkipsOperations(evaluator, {SdfPath("/Asset/Rig/Movers/M")},
+                              nullptr));
         CHECK(evaluator.Evaluate(UsdTimeCode::Default()).valid);
     }
 }
@@ -5691,8 +5785,7 @@ TestWeightDescriptorValidationAndCompiledRig()
 // Synthesized normals/extent maintenance has no authored mover. Custom
 // lookalike attributes on the owner mesh must not disable or envelope it.
 static void
-TestDerivedMaintenanceIgnoresOwnerLookalikes(
-    const std::string &examplesDir)
+TestDerivedMaintenanceIgnoresOwnerLookalikes(const std::string &examplesDir)
 {
     auto evaluate = [&](bool authorLookalikes) {
         const UsdStageRefPtr stage =
@@ -5710,17 +5803,19 @@ TestDerivedMaintenanceIgnoresOwnerLookalikes(
             body.CreateAttribute(TfToken("inputs:enabled"),
                                  SdfValueTypeNames->Bool, true)
                 .Set(false);
-            const UsdPrim trapWeight = stage->DefinePrim(
-                SdfPath("/ArmAsset/Rig/Weights/DerivedTrap"),
-                TfToken("RigExecStaticWeight"));
-            trapWeight.CreateRelationship(
-                          TfToken("rigExec:weightTarget"), false)
+            const UsdPrim trapWeight =
+                stage->DefinePrim(SdfPath("/ArmAsset/Rig/Weights/DerivedTrap"),
+                                  TfToken("RigExecStaticWeight"));
+            trapWeight
+                .CreateRelationship(TfToken("rigExec:weightTarget"), false)
                 .SetTargets({SdfPath("/ArmAsset/Geom/ArmBody.points")});
-            trapWeight.CreateAttribute(TfToken("rigExec:representation"),
-                                       SdfValueTypeNames->Token, false)
+            trapWeight
+                .CreateAttribute(TfToken("rigExec:representation"),
+                                 SdfValueTypeNames->Token, false)
                 .Set(TfToken("constant"));
-            trapWeight.CreateAttribute(TfToken("rigExec:defaultWeight"),
-                                       SdfValueTypeNames->Float, false)
+            trapWeight
+                .CreateAttribute(TfToken("rigExec:defaultWeight"),
+                                 SdfValueTypeNames->Float, false)
                 .Set(0.0f);
             body.CreateRelationship(TfToken("rigExec:weightObject"), false)
                 .SetTargets({trapWeight.GetPath()});
@@ -5737,8 +5832,8 @@ TestDerivedMaintenanceIgnoresOwnerLookalikes(
     CHECK(baseline.valid);
     CHECK(lookalikes.valid);
     for (const char *property : {"normals", "extent"}) {
-        const SdfPath path = SdfPath("/ArmAsset/Geom/ArmBody")
-                                 .AppendProperty(TfToken(property));
+        const SdfPath path =
+            SdfPath("/ArmAsset/Geom/ArmBody").AppendProperty(TfToken(property));
         const auto expected = baseline.movedProperties.find(path);
         const auto actual = lookalikes.movedProperties.find(path);
         CHECK(expected != baseline.movedProperties.end());
@@ -5756,8 +5851,7 @@ TestDerivedMaintenanceIgnoresOwnerLookalikes(
 static void
 TestRigWithNoOutputsRejected(const std::string &examplesDir)
 {
-    UsdStageRefPtr stage =
-        UsdStage::Open(examplesDir + "/rigexec_flat.usda");
+    UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/rigexec_flat.usda");
     CHECK(stage);
     if (!stage) {
         return;
@@ -5811,11 +5905,9 @@ main(int argc, char **argv)
 
     // Register the codeless RigExec schema plugin.
     const std::string resources = _SchemaResourceDir(examplesDir);
-    const auto plugins =
-        PlugRegistry::GetInstance().RegisterPlugins(resources);
+    const auto plugins = PlugRegistry::GetInstance().RegisterPlugins(resources);
     if (plugins.empty()) {
-        std::printf("FATAL: no schema plugin found at %s\n",
-                    resources.c_str());
+        std::printf("FATAL: no schema plugin found at %s\n", resources.c_str());
         return 2;
     }
 

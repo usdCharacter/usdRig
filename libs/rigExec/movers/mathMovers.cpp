@@ -7,6 +7,7 @@
 // exec-side computation, no revision binding, and no parity-oracle
 // branch; compile validation is the generic property-target rules plus
 // the shared operation check below.
+#include "rigExecSchema/schemaNames.h"
 #include "moverRegistry.h"
 #include "pathOperation.h"
 
@@ -20,15 +21,15 @@ PXR_NAMESPACE_USING_DIRECTIVE
 // Interned once: callbacks, binders and validators run on parallel
 // lanes, and building a token from text takes the registry lock.
 TF_DEFINE_PRIVATE_TOKENS(_mathTokens,
-    ((operation, "rigExec:operation"))
-    ((inputsKeys, "inputs:keys"))
-    ((inputsTangents, "inputs:tangents")));
+    ((operation, rigExec::SchemaAttrText::rigExecOperation))
+    ((inputsKeys, rigExec::SchemaAttrText::inputsKeys))
+    ((inputsTangents, rigExec::SchemaAttrText::inputsTangents)));
 
 namespace {
 
 bool
-_ValidateMathMoverOp(
-    const rigExec::RigExecMoverValidateContext &ctx, std::string *error)
+_ValidateMathMoverOp(const rigExec::RigExecMoverValidateContext &ctx,
+                     std::string *error)
 {
     const UsdPrim &prim = ctx.prim;
     const rigExec::RigExecMoverDomain domain = ctx.handler->domain;
@@ -40,8 +41,7 @@ _ValidateMathMoverOp(
     // operation would otherwise fall through to a silent
     // pass-through every frame.
     TfToken operation;
-    if (const UsdAttribute a = prim.GetAttribute(
-            _mathTokens->operation)) {
+    if (const UsdAttribute a = prim.GetAttribute(_mathTokens->operation)) {
         a.Get(&operation);
     }
     rigExec::RigExecPropertyOp op;
@@ -56,24 +56,21 @@ _ValidateMathMoverOp(
             prim.GetAttribute(_mathTokens->inputsKeys);
         if (domain != rigExec::RigExecMoverDomain::PropertyFloat) {
             *error = who() + ": rigExec:operation 'curve' is defined only "
-                           "for RigExecFloatMathMover";
+                             "for RigExecFloatMathMover";
             return false;
         }
         VtArray<GfVec2f> tangents;
-        if (const UsdAttribute t = prim.GetAttribute(
-                _mathTokens->inputsTangents)) {
+        if (const UsdAttribute t =
+                prim.GetAttribute(_mathTokens->inputsTangents)) {
             t.Get(&tangents);
         }
-        if (!keysAttr || !keysAttr.Get(&keys) ||
-            keys.empty() ||
-            !rigExec::RigExecValidateLinearKeys(
-                keys.cdata(), keys.size()) ||
-            (!tangents.empty() &&
-             tangents.size() != keys.size())) {
+        if (!keysAttr || !keysAttr.Get(&keys) || keys.empty() ||
+            !rigExec::RigExecValidateLinearKeys(keys.cdata(), keys.size()) ||
+            (!tangents.empty() && tangents.size() != keys.size())) {
             *error = who() + ": rigExec:operation 'curve' needs "
-                           "inputs:keys with finite keys strictly "
-                           "increasing in input, and inputs:tangents "
-                           "empty or one per key";
+                             "inputs:keys with finite keys strictly "
+                             "increasing in input, and inputs:tangents "
+                             "empty or one per key";
             return false;
         }
     }
@@ -104,10 +101,10 @@ rigExec::RigExecMoverHandler
 _MakeFloatHandler()
 {
     rigExec::RigExecMoverHandler handler(
-        "RigExecFloatMathMover", &rigExec::RigExecNoMoverOp,
-        rigExec::RigExecMoverDomain::PropertyFloat);
+        rigExec::SchemaTypeName::RigExecFloatMathMover,
+        &rigExec::RigExecNoMoverOp, rigExec::RigExecMoverDomain::PropertyFloat);
     handler.singleTarget = true;
-    handler.legacyEnvelopeAttribute = "inputs:weight";
+    handler.legacyEnvelopeAttribute = rigExec::SchemaAttrText::inputsWeight;
     handler.validate = &_ValidateMathMoverOp;
     return handler;
 }
@@ -116,10 +113,10 @@ rigExec::RigExecMoverHandler
 _MakeVec3fHandler()
 {
     rigExec::RigExecMoverHandler handler(
-        "RigExecVec3fMathMover", &rigExec::RigExecNoMoverOp,
-        rigExec::RigExecMoverDomain::PropertyVec3f);
+        rigExec::SchemaTypeName::RigExecVec3fMathMover,
+        &rigExec::RigExecNoMoverOp, rigExec::RigExecMoverDomain::PropertyVec3f);
     handler.singleTarget = true;
-    handler.legacyEnvelopeAttribute = "inputs:weight";
+    handler.legacyEnvelopeAttribute = rigExec::SchemaAttrText::inputsWeight;
     handler.validate = &_ValidateMathMoverOp;
     return handler;
 }
@@ -128,15 +125,16 @@ rigExec::RigExecMoverHandler
 _MakeMatrixHandler()
 {
     rigExec::RigExecMoverHandler handler(
-        "RigExecMatrixMathMover", &rigExec::RigExecNoMoverOp,
+        rigExec::SchemaTypeName::RigExecMatrixMathMover,
+        &rigExec::RigExecNoMoverOp,
         rigExec::RigExecMoverDomain::PropertyMatrix);
     handler.singleTarget = true;
-    handler.legacyEnvelopeAttribute = "inputs:weight";
+    handler.legacyEnvelopeAttribute = rigExec::SchemaAttrText::inputsWeight;
     handler.validate = &_ValidateMathMoverOp;
     return handler;
 }
 
-}  // namespace
+} // namespace
 
 RIGEXEC_REGISTER_MOVER(_MakeFloatHandler());
 RIGEXEC_REGISTER_MOVER(_MakeVec3fHandler());

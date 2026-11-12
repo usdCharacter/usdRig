@@ -53,7 +53,7 @@ function(rigexec_add_mover name)
     file(CONFIGURE OUTPUT "${_kernel}" CONTENT
         "// Generated typed mover registration.\n#include \"${_definition}\"\n#include \"${name}Schema.h\"\n#include \"${name}Registration.h\"\nnamespace rigExec {\nRigExecMoverDefinition RigExecDefine${name}() { return {${name}Schema::Type, RigExecMakeMoverKernel<${M_TYPE}>()}; }\n}\n")
     file(CONFIGURE OUTPUT "${_adapter}" CONTENT
-        "// Generated USD adapter registration.\n#include \"rigExec/movers/moverRegistry.h\"\n#include \"${name}Registration.h\"\nnamespace rigExec {\nRigExecMoverHandler ${M_FACTORY}(const char *schemaType);\nnamespace {\nbool Register() {\n    const auto definition = RigExecDefine${name}();\n    auto handler = ${M_FACTORY}(definition.schemaType);\n    handler.runtimeKernel = definition.kernel;\n    return RigExecRegisterMoverHandler(std::move(handler));\n}\nconst bool registered = Register();\n}\n}\n")
+        "// Generated USD adapter registration.\n#include \"rigExec/movers/moverRegistry.h\"\n#include \"${name}Registration.h\"\nnamespace rigExec {\nRigExecMoverHandler ${M_FACTORY}(std::string_view schemaType);\nnamespace {\nbool Register() {\n    const auto definition = RigExecDefine${name}();\n    auto handler = ${M_FACTORY}(definition.schemaType);\n    handler.runtimeKernel = definition.kernel;\n    return RigExecRegisterMoverHandler(std::move(handler));\n}\nconst bool registered = Register();\n}\n}\n")
     set(_schema_outputs "${_schema_header}")
     set(_schema_args)
     foreach(_read IN LISTS M_SCHEMA_READS)

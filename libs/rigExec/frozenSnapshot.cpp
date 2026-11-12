@@ -1,5 +1,6 @@
 // Stage-side program snapshot construction and constant patching.
 
+#include "rigExecSchema/schemaNames.h"
 #include "frozenContextInternal.h"
 #include "inputReplay.h"
 #include "oracleDispatch.h"
@@ -17,12 +18,12 @@ namespace {
 
 TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
-    ((inputsEnabled, "inputs:enabled"))
-    ((inputsDefaultWeight, "inputs:defaultWeight"))
-    ((rigExecSkinningMethod, "rigExec:skinningMethod"))
+    ((inputsEnabled, SchemaAttrText::inputsEnabled))
+    ((inputsDefaultWeight, SchemaAttrText::inputsDefaultWeight))
+    ((rigExecSkinningMethod, SchemaAttrText::rigExecSkinningMethod))
 );
 
-}  // namespace
+} // namespace
 
 namespace frozenDetail {
 
@@ -62,20 +63,28 @@ bool
 _CloneKeysStand(const RigExecBakedProgramImpl &src,
                 const RigExecBakedProgramImpl &copy)
 {
-    bool retainedComplete = src.everRan && src.opAdapter.compiled &&
-        src.opAdapter.everRan && src.opAdapter.inputKeys.size()==src.steps.size() &&
-        src.opAdapter.sourceKeys.size()==src.steps.size() &&
-        src.opAdapter.inputExact.size()==src.steps.size();
-    for(const auto &op:src.opGraph.ops)for(const auto id:op.descriptor.writes) {
-        if(id>=copy.opAdapter.values.size()) { retainedComplete=false; continue; }
-        const auto &value=copy.opAdapter.values[size_t(id)];
-        const auto domain=RigExecBakedSlotDomain(value.domain);
-        if(!value.initialized || !RigExecBakedOpValueKeyIsExact(copy,domain,value.slot)) {
-            retainedComplete=false; continue;
+    bool retainedComplete =
+        src.everRan && src.opAdapter.compiled && src.opAdapter.everRan &&
+        src.opAdapter.inputKeys.size() == src.steps.size() &&
+        src.opAdapter.sourceKeys.size() == src.steps.size() &&
+        src.opAdapter.inputExact.size() == src.steps.size();
+    for (const auto &op : src.opGraph.ops)
+        for (const auto id : op.descriptor.writes) {
+            if (id >= copy.opAdapter.values.size()) {
+                retainedComplete = false;
+                continue;
+            }
+            const auto &value = copy.opAdapter.values[size_t(id)];
+            const auto domain = RigExecBakedSlotDomain(value.domain);
+            if (!value.initialized ||
+                !RigExecBakedOpValueKeyIsExact(copy, domain, value.slot)) {
+                retainedComplete = false;
+                continue;
+            }
+            if (!RigExecBakedOpValueKeyStands(copy, domain, value.slot,
+                                              value.key))
+                retainedComplete = false;
         }
-        if(!RigExecBakedOpValueKeyStands(copy,domain,value.slot,value.key))
-            retainedComplete=false;
-    }
     return retainedComplete;
 }
 
@@ -83,10 +92,11 @@ void
 _AdoptCloneVerdict(RigExecBakedProgramImpl *program, bool stands)
 {
     program->opAdapter.everRan = stands;
-    if (!stands) program->opAdapter.retainedFirst.clear();
+    if (!stands)
+        program->opAdapter.retainedFirst.clear();
 }
 
-}  // namespace
+} // namespace
 
 // Memberwise program clone. The copy is explicit, field by field, in struct
 // order. Live pointers are nulled -- the worker repoints
@@ -356,10 +366,12 @@ _CloneImpl(const RigExecBakedProgramImpl &src, RigExecBakedProgramImpl *dst,
             revision.devicePending = false;
             revision.deviceTicks.clear();
             revision.revisionInputs.Clear();
-            for (auto &group : revision.groups) RigExecDropGroupSpare(&group);
+            for (auto &group : revision.groups)
+                RigExecDropGroupSpare(&group);
             _DropRevisionScratch(&revision);
         }
-        for (auto &group : chain.baseGroups) RigExecDropGroupSpare(&group);
+        for (auto &group : chain.baseGroups)
+            RigExecDropGroupSpare(&group);
         for (auto &derived : chain.derived) {
             derived.revision.revisionInputs.Clear();
             _DropRevisionScratch(&derived.revision);
@@ -378,7 +390,8 @@ _CloneImpl(const RigExecBakedProgramImpl &src, RigExecBakedProgramImpl *dst,
     D.weightFields = src.weightFields;
     for (auto &field : D.weightFields) {
         _DropScratch(&field.enteringGather);
-        for (auto &input : field.pointReads) _DropScratch(&input.binding.gather);
+        for (auto &input : field.pointReads)
+            _DropScratch(&input.binding.gather);
     }
     D.volumePlacementBase = src.volumePlacementBase;
     D.weightIndex = src.weightIndex;
@@ -453,7 +466,8 @@ _CloneImpl(const RigExecBakedProgramImpl &src, RigExecBakedProgramImpl *dst,
     D.propertyRecordById = src.propertyRecordById;
     D.poseDependencyPaths = src.poseDependencyPaths;
     D.compiledProviderProgram = src.compiledProviderProgram;
-    if (!D.compiledProviderProgram) D.providerProgram = src.providerProgram;
+    if (!D.compiledProviderProgram)
+        D.providerProgram = src.providerProgram;
     D.providerValues = src.providerValues;
     D.providerLeaves = src.providerLeaves;
     D.providerLeafBlocked = src.providerLeafBlocked;
@@ -542,7 +556,8 @@ bool
 RigExecCanFreezeProgram(const RigExecRigEvaluator &evaluator,
                         std::string *error)
 {
-    if (evaluator.cpuReference && !RigExecOracleAvailable(error)) return false;
+    if (evaluator.cpuReference && !RigExecOracleAvailable(error))
+        return false;
     const auto fail = [&error](const std::string &why) {
         if (error) {
             *error = why;
@@ -571,10 +586,11 @@ RigExecCanFreezeProgram(const RigExecRigEvaluator &evaluator,
         for (const RigExecBakedPropertyChain &chain : B.propertyChains) {
             for (const RigExecBakedPropertyChain::Revision &revision :
                  chain.revisions) {
-                if (!revision.weightObject.IsEmpty() && revision.weightField < 0) {
-                    return fail(
-                        "diag " + revision.mover.GetString() +
-                        " has no compiled weight field for its property envelope");
+                if (!revision.weightObject.IsEmpty() &&
+                    revision.weightField < 0) {
+                    return fail("diag " + revision.mover.GetString() +
+                                " has no compiled weight field for its "
+                                "property envelope");
                 }
             }
         }
@@ -611,25 +627,25 @@ RigExecCanFreezeProgram(const RigExecRigEvaluator &evaluator,
                 revision.op != RigExecRevisionOp::Ribbon &&
                 revision.op != RigExecRevisionOp::EmitGuidePoints &&
                 revision.op != RigExecRevisionOp::External) {
-                return fail("revision " +
-                            revision.moverPath.GetString() + " runs op '" +
-                            RigExecRevisionKindToken(revision.op)
-                                .GetString() +
+                return fail("revision " + revision.moverPath.GetString() +
+                            " runs op '" +
+                            RigExecRevisionKindToken(revision.op).GetString() +
                             "', which the frozen executor does not "
                             "implement");
             }
             if (revision.op == RigExecRevisionOp::External &&
                 (!revision.binding.handler || !revision.leaves.decl.assembles))
-                return fail("external revision " + revision.moverPath.GetString() +
+                return fail("external revision " +
+                            revision.moverPath.GetString() +
                             " has no compiled stage-free handler declaration");
             // Phase reads consume the worker's current typed point/frame
             // versions. Revision assembly uses captured source facts.
             // Dense blend samples use those bindings; sparse blend-shape
             // offsets are authored layout data, without point-chain phases.
             if (revision.weightCurrentPhase && revision.weightField < 0) {
-                return fail("revision " +
-                            revision.moverPath.GetString() +
-                            " has no compiled field for its current-phase weight");
+                return fail(
+                    "revision " + revision.moverPath.GetString() +
+                    " has no compiled field for its current-phase weight");
             }
             // Driver frames and the geometry-delta hand-off use the
             // worker's own Solve-step aggregate, read in program order,
@@ -646,8 +662,7 @@ RigExecCanFreezeProgram(const RigExecRigEvaluator &evaluator,
             if (derived.revision.op != RigExecRevisionOp::RecomputeNormals &&
                 derived.revision.op != RigExecRevisionOp::RecomputeExtent &&
                 !RigExecIsDerivedMatrixOp(derived.revision.op)) {
-                return fail("derived target " +
-                            derived.target.GetString() +
+                return fail("derived target " + derived.target.GetString() +
                             " runs an op the frozen executor does not "
                             "implement");
             }
@@ -685,12 +700,10 @@ RigExecFreezeProgram(const RigExecRigEvaluator &evaluator,
     snapshot->inputReplayOwner = std::this_thread::get_id();
     // Settled below, after the snapshot's own edits; its lanes inherit it.
     _CloneImpl(B, program.get(), _CloneVerdict::Defer);
-    program->verifyCloneKeys =
-        TfGetenvBool("RIGEXEC_VERIFY_CLONE_KEYS", false);
+    program->verifyCloneKeys = TfGetenvBool("RIGEXEC_VERIFY_CLONE_KEYS", false);
     // Workers clone this snapshot and index its spelled slot paths unchecked.
     if (!TF_VERIFY(program->pathTexts &&
-                   program->pathTexts->size() ==
-                       program->paths.size())) {
+                   program->pathTexts->size() == program->paths.size())) {
         if (error) {
             *error = "slot path texts do not match the slot table";
         }
@@ -703,7 +716,8 @@ RigExecFreezeProgram(const RigExecRigEvaluator &evaluator,
         auto &reference = *program;
         struct SourceCaptureScope {
             RigExecBakedProgramImpl &program;
-            ~SourceCaptureScope() {
+            ~SourceCaptureScope()
+            {
                 program.stage = UsdStageRefPtr();
                 program.resolvedInputs = nullptr;
             }
@@ -721,12 +735,14 @@ RigExecFreezeProgram(const RigExecRigEvaluator &evaluator,
     // Handle identities, captured here (UI thread) as plain data: the
     // worker must not even ask a handle whether it is valid.
     _ForEachPatchableInput(
-        B, [&bindings](const auto &input) {
-            bindings->inputHeadPaths.push_back(
-                input.head ? input.head.GetPath() : SdfPath());
+        B,
+        [&bindings](const auto &input) {
+            bindings->inputHeadPaths.push_back(input.head ? input.head.GetPath()
+                                                          : SdfPath());
             bindings->inputConstants.push_back(VtValue(
                 input.sourceBacked ? input.sourceFallback : input.constant));
-        }, /*includeIntervening=*/false);
+        },
+        /*includeIntervening=*/false);
     // The samplers' own keys, empty where they read nothing: one source of
     // keys for the sampler, the worker and the snapshot.
     for (const RigExecBakedProgramImpl::ConstraintArrays &arrays :
@@ -738,8 +754,8 @@ RigExecFreezeProgram(const RigExecRigEvaluator &evaluator,
         }
     }
     for (const RigExecBakedProgramImpl::GeomChain &chain : B.chains) {
-        bindings->chainBaseQueryValid.push_back(
-            chain.baseQuery.IsValid() ? 1 : 0);
+        bindings->chainBaseQueryValid.push_back(chain.baseQuery.IsValid() ? 1
+                                                                          : 0);
     }
     for (const auto &[chainIndex, derivedIndex] : B.derivedIndex) {
         const RigExecBakedProgramImpl::GeomChain::Derived &derived =
@@ -757,19 +773,12 @@ RigExecFreezeProgram(const RigExecRigEvaluator &evaluator,
             B.chains[size_t(chainIndex)].revisions[size_t(revisionIndex)];
         const UsdPrim &moverPrim = revision.moverPrim;
         bindings->moverHasEnabled.push_back(
-            moverPrim && moverPrim.GetAttribute(T.inputsEnabled)
-                ? 1
-                : 0);
+            moverPrim && moverPrim.GetAttribute(T.inputsEnabled) ? 1 : 0);
         bindings->moverHasDefaultWeight.push_back(
-            moverPrim &&
-                    moverPrim.GetAttribute(T.inputsDefaultWeight)
-                ? 1
-                : 0);
+            moverPrim && moverPrim.GetAttribute(T.inputsDefaultWeight) ? 1 : 0);
         bindings->moverHasMethod.push_back(
-            moverPrim &&
-                    moverPrim.GetAttribute(T.rigExecSkinningMethod)
-                ? 1
-                : 0);
+            moverPrim && moverPrim.GetAttribute(T.rigExecSkinningMethod) ? 1
+                                                                         : 0);
         // The sampler's key for the mover's defaultWeight sample.
         bindings->moverDefaultWeightKeys.push_back(
             revision.moverPath.AppendProperty(T.inputsDefaultWeight));
@@ -794,11 +803,14 @@ bool
 RigExecFrozenSnapshotOwesLiveEdits(const RigExecFrozenProgram &base,
                                    const RigExecBakedProgram &live)
 {
-    if (!base.program) return true;
+    if (!base.program)
+        return true;
     const RigExecBakedProgramImpl &L = live.GetStepGraph();
     const auto *patch = base.avarPatch.get();
-    const uint64_t serial = patch ? patch->valueEditSerial : base.program->valueEditSerial;
-    const uint64_t stamp = patch ? patch->programStamp : base.program->programStamp;
+    const uint64_t serial =
+        patch ? patch->valueEditSerial : base.program->valueEditSerial;
+    const uint64_t stamp =
+        patch ? patch->programStamp : base.program->programStamp;
     return L.valueEditSerial != serial || L.programStamp != stamp;
 }
 

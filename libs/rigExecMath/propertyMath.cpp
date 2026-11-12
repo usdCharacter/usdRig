@@ -1,5 +1,6 @@
 // RigExec property-domain math kernels: the Gf instantiations of
 // propertyMathKernel.h, which holds the arithmetic.
+#include "rigExecSchema/schemaNames.h"
 #include "propertyMath.h"
 
 namespace rigExec {
@@ -10,17 +11,17 @@ RigExecParsePropertyOp(const TfToken &token, RigExecPropertyOp *op)
     if (!op) {
         return false;
     }
-    if (token == "add") {
+    if (token == SchemaValueText::add) {
         *op = RigExecPropertyOp::Add;
-    } else if (token == "multiply") {
+    } else if (token == SchemaValueText::multiply) {
         *op = RigExecPropertyOp::Multiply;
-    } else if (token == "clamp") {
+    } else if (token == SchemaValueText::clamp) {
         *op = RigExecPropertyOp::Clamp;
     } else if (token == "remap") {
         *op = RigExecPropertyOp::Remap;
     } else if (token == "blend") {
         *op = RigExecPropertyOp::Blend;
-    } else if (token == "curve") {
+    } else if (token == SchemaValueText::curve) {
         *op = RigExecPropertyOp::Curve;
     } else if (token == "quantize") {
         *op = RigExecPropertyOp::Quantize;
@@ -33,17 +34,16 @@ RigExecParsePropertyOp(const TfToken &token, RigExecPropertyOp *op)
 }
 
 bool
-RigExecParsePathComponent(const TfToken &token,
-                          RigExecPathComponent *component)
+RigExecParsePathComponent(const TfToken &token, RigExecPathComponent *component)
 {
     if (!component) {
         return false;
     }
-    if (token == "x") {
+    if (token == SchemaValueText::x) {
         *component = RigExecPathComponent::X;
-    } else if (token == "y") {
+    } else if (token == SchemaValueText::y) {
         *component = RigExecPathComponent::Y;
-    } else if (token == "z") {
+    } else if (token == SchemaValueText::z) {
         *component = RigExecPathComponent::Z;
     } else if (token == "heading") {
         *component = RigExecPathComponent::Heading;
@@ -57,8 +57,7 @@ RigExecParsePathComponent(const TfToken &token,
 
 bool
 RigExecParsePathBasis(const TfToken &type, const TfToken &basis,
-                      const TfToken &wrap, RigExecPathBasis *out,
-                      bool *pinned)
+                      const TfToken &wrap, RigExecPathBasis *out, bool *pinned)
 {
     if (!out || !pinned) {
         return false;
@@ -70,7 +69,7 @@ RigExecParsePathBasis(const TfToken &type, const TfToken &basis,
     } else {
         return false;
     }
-    if (type == "linear") {
+    if (type == SchemaValueText::linear) {
         *out = RigExecPathBasis::Linear;
     } else if (type != "cubic") {
         return false;
@@ -106,25 +105,25 @@ RigExecValidateLinearKeys(const GfVec2f *keys, size_t keyCount)
 }
 
 float
-RigExecApplyFloatMath(
-    float base, const RigExecPropertyMathParams<float> &params)
+RigExecApplyFloatMath(float base,
+                      const RigExecPropertyMathParams<float> &params)
 {
     return RigExecApplyFloatMathKernel(base, params);
 }
 
 GfVec3f
-RigExecApplyVec3fMath(
-    const GfVec3f &base, const RigExecPropertyMathParams<GfVec3f> &params)
+RigExecApplyVec3fMath(const GfVec3f &base,
+                      const RigExecPropertyMathParams<GfVec3f> &params)
 {
     return RigExecApplyVec3fMathKernel(base, params);
 }
 
 bool
-RigExecApplyMatrixMath(
-    const GfMatrix4d &base, RigExecPropertyOp op, const GfMatrix4d &value,
-    float weight, GfMatrix4d *result)
+RigExecApplyMatrixMath(const GfMatrix4d &base, RigExecPropertyOp op,
+                       const GfMatrix4d &value, float weight,
+                       GfMatrix4d *result)
 {
     return RigExecApplyMatrixMathKernel(base, op, value, weight, result);
 }
 
-}  // namespace rigExec
+} // namespace rigExec

@@ -1,5 +1,6 @@
 // Runtime aggregate solvers: FK, two-bone IK, spline IK, ribbon, and twist.
 
+#include "rigExecSchema/schemaNames.h"
 #include "poseInternal.h"
 #include <algorithm>
 #include <limits>
@@ -37,13 +38,12 @@ _RrSolveFkChain(const std::vector<RrPoseFkElement> &elements)
         RrMat4d own = _RrIdentity();
         RrPointsToMatrix(e.restPoints, e.posePoints, &own);
         RrMat4d w = own;
-        if (e.parentIndex >= 0 &&
-            size_t(e.parentIndex) < accumulated.size()) {
+        if (e.parentIndex >= 0 && size_t(e.parentIndex) < accumulated.size()) {
             w = own * accumulated[size_t(e.parentIndex)];
         }
         accumulated.push_back(w);
-        result.push_back(RrMatrixToPoints(
-            e.hasOutRest ? e.outRestPoints : e.restPoints, w));
+        result.push_back(
+            RrMatrixToPoints(e.hasOutRest ? e.outRestPoints : e.restPoints, w));
     }
     return result;
 }
@@ -58,8 +58,8 @@ _RrFrameFromAxes(const std::array<RrVec3d, 4> &restPoints,
     RrVec3d ey = eyCandidate - ex * RrDot(ex, eyCandidate);
     const double eyLen = ey.GetLength();
     if (eyLen < 1e-12) {
-        const RrVec3d axes[3] = {
-            RrVec3d(0, 1, 0), RrVec3d(0, 0, 1), RrVec3d(1, 0, 0)};
+        const RrVec3d axes[3] = {RrVec3d(0, 1, 0), RrVec3d(0, 0, 1),
+                                 RrVec3d(1, 0, 0)};
         for (const RrVec3d &axis : axes) {
             ey = axis - ex * RrDot(ex, axis);
             if (ey.GetLength() >= 1e-12) {
@@ -92,10 +92,8 @@ _RrTwoBoneIkLengths(const std::array<std::array<RrVec3d, 4>, 3> &restPoints,
                     double lowerOffset, double *upperLength,
                     double *lowerLength)
 {
-    const double rawUpper =
-        (restPoints[1][0] - restPoints[0][0]).GetLength();
-    const double rawLower =
-        (restPoints[2][0] - restPoints[1][0]).GetLength();
+    const double rawUpper = (restPoints[1][0] - restPoints[0][0]).GetLength();
+    const double rawLower = (restPoints[2][0] - restPoints[1][0]).GetLength();
     const RrVec3d s0 = space.Transform(restPoints[0][0]);
     const RrVec3d s1 = space.Transform(restPoints[1][0]);
     const RrVec3d s2 = space.Transform(restPoints[2][0]);
@@ -113,11 +111,11 @@ _RrTwoBoneIkLengths(const std::array<std::array<RrVec3d, 4>, 3> &restPoints,
 
 // RigExecSolveTwoBoneIk: analytic two-bone IK with pole vector.
 std::array<RrPointFrame, 3>
-_RrSolveTwoBoneIk(
-    const RrPointFrame &rootFrame, const RrPointFrame &effectorFrame,
-    const RrPointFrame &poleFrame,
-    const std::array<std::array<RrVec3d, 4>, 3> &restPoints,
-    const RrPoseTwoBoneIkParams &params)
+_RrSolveTwoBoneIk(const RrPointFrame &rootFrame,
+                  const RrPointFrame &effectorFrame,
+                  const RrPointFrame &poleFrame,
+                  const std::array<std::array<RrVec3d, 4>, 3> &restPoints,
+                  const RrPoseTwoBoneIkParams &params)
 {
     const RrVec3d root = rootFrame.points[0];
     const RrVec3d goal = effectorFrame.points[0];
@@ -135,8 +133,8 @@ _RrSolveTwoBoneIk(
     } else {
         const RrVec3d rootAim = rootFrame.points[1] - root;
         if (rootAim.GetLength() < 1e-12) {
-            std::array<RrPointFrame, 3> failed = {
-                rootFrame, rootFrame, effectorFrame};
+            std::array<RrPointFrame, 3> failed = {rootFrame, rootFrame,
+                                                  effectorFrame};
             for (auto &f : failed) {
                 f.flags |= RrPointFrameDegenerate;
             }
@@ -150,29 +148,29 @@ _RrSolveTwoBoneIk(
     if (params.softDistancePolicy) {
         // RigExecSolveTwoBoneIk's limb model, through the shared kernel.
         rigExec::RigExecLimbSegmentLengths(
-            l1, l2, dist, (pole - root).GetLength(),
-            (goal - pole).GetLength(), params.limb, &s1, &s2);
+            l1, l2, dist, (pole - root).GetLength(), (goal - pole).GetLength(),
+            params.limb, &s1, &s2);
         s1 = std::max(s1, 1e-9);
         s2 = std::max(s2, 1e-9);
         reach = std::min(dist, s1 + s2);
     } else {
-    const double soft = std::max(params.softness, 0.0) * chain;
-    if (soft > 1e-12 && dist > chain - soft) {
-        reach = chain - soft * std::exp(-(dist - (chain - soft)) / soft);
-    } else if (dist > chain) {
-        reach = chain;
-    }
-
-    if (dist > reach && params.stretch > 0.0) {
-        const double factor =
-            1.0 + (dist / chain - 1.0) *
-                std::min(std::max(params.stretch, 0.0), 1.0);
-        if (factor > 1.0) {
-            s1 = l1 * factor;
-            s2 = l2 * factor;
-            reach = std::min(dist, s1 + s2);
+        const double soft = std::max(params.softness, 0.0) * chain;
+        if (soft > 1e-12 && dist > chain - soft) {
+            reach = chain - soft * std::exp(-(dist - (chain - soft)) / soft);
+        } else if (dist > chain) {
+            reach = chain;
         }
-    }
+
+        if (dist > reach && params.stretch > 0.0) {
+            const double factor =
+                1.0 + (dist / chain - 1.0) *
+                          std::min(std::max(params.stretch, 0.0), 1.0);
+            if (factor > 1.0) {
+                s1 = l1 * factor;
+                s2 = l2 * factor;
+                reach = std::min(dist, s1 + s2);
+            }
+        }
     }
     reach = std::min(reach, s1 + s2);
     reach = std::max(reach, std::abs(s1 - s2) + 1e-12);
@@ -186,8 +184,8 @@ _RrSolveTwoBoneIk(
         RrVec3d candidate = restPoints[0][2] - restPoints[0][0];
         candidate -= aim * RrDot(aim, candidate);
         if (candidate.GetLength() < 1e-12) {
-            const RrVec3d axes[3] = {
-                RrVec3d(1, 0, 0), RrVec3d(0, 1, 0), RrVec3d(0, 0, 1)};
+            const RrVec3d axes[3] = {RrVec3d(1, 0, 0), RrVec3d(0, 1, 0),
+                                     RrVec3d(0, 0, 1)};
             double best = 2.0;
             for (const RrVec3d &axis : axes) {
                 const double align = std::abs(RrDot(axis, aim));
@@ -211,8 +209,7 @@ _RrSolveTwoBoneIk(
 
     const double cosAlpha =
         (s1 * s1 + reach * reach - s2 * s2) / (2 * s1 * reach);
-    const double alpha =
-        std::acos(std::min(std::max(cosAlpha, -1.0), 1.0));
+    const double alpha = std::acos(std::min(std::max(cosAlpha, -1.0), 1.0));
 
     const RrVec3d upperDir = _RrRotate(aim, bendAxis, alpha);
     const RrVec3d mid = root + upperDir * s1;
@@ -235,9 +232,11 @@ _RrSolveTwoBoneIk(
             for (size_t a = 1; a < 4; ++a) {
                 const RrVec3d handle = out[f].points[a] - origin;
                 const double length = handle.GetLength();
-                if (length < 1e-12) continue;
+                if (length < 1e-12)
+                    continue;
                 const RrVec3d direction = handle / length;
-                const double factor = params.space.TransformDir(direction).GetLength();
+                const double factor =
+                    params.space.TransformDir(direction).GetLength();
                 out[f].points[a] = origin + direction * (length * factor);
             }
         }
@@ -256,13 +255,13 @@ _RrSolveTwoBoneIk(
 // (RigExecSplineIkCurve, splineIk.cpp).
 constexpr double _RrSplineIkEpsilon = 1e-10;
 
-class _RrSplineIkCurve
-{
+class _RrSplineIkCurve {
 public:
-    _RrSplineIkCurve() : _RrSplineIkCurve(_ZeroCvs()) {}
+    _RrSplineIkCurve() : _RrSplineIkCurve(_ZeroCvs())
+    {
+    }
 
-    explicit _RrSplineIkCurve(const std::array<RrVec3d, 4> &cvs)
-        : _cvs(cvs)
+    explicit _RrSplineIkCurve(const std::array<RrVec3d, 4> &cvs) : _cvs(cvs)
     {
         const int cells = 2 * 32;
         _u.resize(size_t(cells) + 1);
@@ -281,8 +280,7 @@ public:
                 sum += _GaussWeights[g] * d.GetLength();
             }
             _u[size_t(i) + 1] = b;
-            _cumulative[size_t(i) + 1] = _cumulative[size_t(i)] +
-                                        sum * half;
+            _cumulative[size_t(i) + 1] = _cumulative[size_t(i)] + sum * half;
         }
         _length = _cumulative[size_t(cells)];
         if (!std::isfinite(_length)) {
@@ -290,9 +288,15 @@ public:
         }
     }
 
-    double ArcLength() const { return _length; }
+    double ArcLength() const
+    {
+        return _length;
+    }
 
-    const std::array<RrVec3d, 4> &Cvs() const { return _cvs; }
+    const std::array<RrVec3d, 4> &Cvs() const
+    {
+        return _cvs;
+    }
 
     bool IsDegenerate() const
     {
@@ -305,8 +309,8 @@ public:
             return 0.0;
         }
         distance = std::clamp(distance, 0.0, _length);
-        const auto it = std::lower_bound(
-            _cumulative.begin(), _cumulative.end(), distance);
+        const auto it =
+            std::lower_bound(_cumulative.begin(), _cumulative.end(), distance);
         size_t hi = size_t(it - _cumulative.begin());
         if (hi == 0) {
             return _u[0];
@@ -317,8 +321,7 @@ public:
         const size_t lo = hi - 1;
         const double a = _u[lo], b = _u[hi];
         const double cellLength = _cumulative[hi] - _cumulative[lo];
-        if (cellLength <=
-            _RrSplineIkEpsilon * std::max(1.0, _length)) {
+        if (cellLength <= _RrSplineIkEpsilon * std::max(1.0, _length)) {
             return a;
         }
         const double target = distance - _cumulative[lo];
@@ -351,8 +354,8 @@ public:
             RrVec3d d(0.0);
             Evaluate(u, nullptr, &d);
             const double speed = d.GetLength();
-            double next = (speed > _RrSplineIkEpsilon) ? u - g / speed
-                                                       : 0.5 * (bl + bh);
+            double next =
+                (speed > _RrSplineIkEpsilon) ? u - g / speed : 0.5 * (bl + bh);
             if (!(next > bl && next < bh)) {
                 next = 0.5 * (bl + bh);
             }
@@ -385,8 +388,7 @@ public:
         double speed = dir.GetLength();
         if (speed <= _RrSplineIkEpsilon) {
             const double step = 1.0 / 32;
-            for (int i = 1;
-                 i <= 2 * 32 && speed <= _RrSplineIkEpsilon; ++i) {
+            for (int i = 1; i <= 2 * 32 && speed <= _RrSplineIkEpsilon; ++i) {
                 RrVec3d ahead(0.0), behind(0.0);
                 Evaluate(u + i * step, &ahead, nullptr);
                 Evaluate(u - i * step, &behind, nullptr);
@@ -420,8 +422,7 @@ public:
         return true;
     }
 
-    void Evaluate(double u, RrVec3d *position,
-                  RrVec3d *derivative) const
+    void Evaluate(double u, RrVec3d *position, RrVec3d *derivative) const
     {
         const double clamped = RrClamp(u, 0.0, 2.0);
         const int span = clamped < 1.0 ? 0 : 1;
@@ -439,8 +440,7 @@ public:
             q[2] = _cvs[3];
         }
         if (position) {
-            *position = q[0] * (s * s) + q[1] * (2.0 * s * t) +
-                        q[2] * (t * t);
+            *position = q[0] * (s * s) + q[1] * (2.0 * s * t) + q[2] * (t * t);
         }
         if (derivative) {
             // dB/dt = 2[(1-t)(q1-q0) + t(q2-q1)], and du = dt within
@@ -462,8 +462,8 @@ private:
 
     static constexpr double _GaussNodes[8] = {
         -0.9602898564975363, -0.7966664774136267, -0.5255324099163290,
-        -0.1834346424956498, 0.1834346424956498, 0.5255324099163290,
-        0.7966664774136267, 0.9602898564975363,
+        -0.1834346424956498, 0.1834346424956498,  0.5255324099163290,
+        0.7966664774136267,  0.9602898564975363,
     };
     static constexpr double _GaussWeights[8] = {
         0.1012285362903763, 0.2223810344533745, 0.3137066458778873,
@@ -511,8 +511,7 @@ _RrSplineIkMakeRest(const std::vector<RrPointFrame> &joints,
         chainLength += rest.segmentLengths[i];
     }
     rest.restArcLength =
-        restLengthChain ? chainLength
-                        : _RrSplineIkCurve(rest.cvs).ArcLength();
+        restLengthChain ? chainLength : _RrSplineIkCurve(rest.cvs).ArcLength();
     return rest;
 }
 
@@ -531,19 +530,16 @@ _RrRefreshSolverRests(RrProgram *program, size_t step, size_t solver,
                k < wire.restReads.size() &&
                size_t(wire.restReads[k]) < store.fin.size();
     };
-    for (size_t k = 0; k < wire.restRefs.size() &&
-         k < s.jointRests.size(); ++k) {
+    for (size_t k = 0; k < wire.restRefs.size() && k < s.jointRests.size();
+         ++k) {
         const int slot = wire.restRefs[k].first;
         if (liveRest(k)) {
-            s.jointRests[k] =
-                store.fin[size_t(wire.restReads[k])].points;
-        } else if (slot >= 0 &&
-                   size_t(slot) < scratch->restPts.size()) {
+            s.jointRests[k] = store.fin[size_t(wire.restReads[k])].points;
+        } else if (slot >= 0 && size_t(slot) < scratch->restPts.size()) {
             s.jointRests[k] = scratch->restPts[size_t(slot)];
         } else {
             if (error) {
-                *error = _RrStepHead(program, step) +
-                         " names no rest slot";
+                *error = _RrStepHead(program, step) + " names no rest slot";
             }
             return false;
         }
@@ -565,30 +561,28 @@ _RrRefreshSolverRests(RrProgram *program, size_t step, size_t solver,
     };
     const std::string type = program->TextOrEmpty(wire.type);
     // A 2D skeleton's controls are its outside parent spaces.
-    if (type == "RigExecFkChain" || type == "RigExecSkeleton2d") {
+    if (type == SchemaTypeName::RigExecFkChain ||
+        type == SchemaTypeName::RigExecSkeleton2d) {
         for (size_t k = 0; k < wire.controls.size(); ++k) {
             if (k >= s.controlRests.size() || wire.controls[k] < 0 ||
                 size_t(wire.controls[k]) >= scratch->restPts.size()) {
                 if (error) {
-                    *error = _RrStepHead(program, step) +
-                             " names no rest slot";
+                    *error = _RrStepHead(program, step) + " names no rest slot";
                 }
                 return false;
             }
-            s.controlRests[k] =
-                scratch->restPts[size_t(wire.controls[k])];
+            s.controlRests[k] = scratch->restPts[size_t(wire.controls[k])];
         }
         if (wire.start >= 0) {
             if (size_t(wire.start) >= scratch->restPts.size()) {
                 if (error) {
-                    *error = _RrStepHead(program, step) +
-                             " names no rest slot";
+                    *error = _RrStepHead(program, step) + " names no rest slot";
                 }
                 return false;
             }
             s.startRest = scratch->restPts[size_t(wire.start)];
         }
-    } else if (type == "RigExecTwoBoneIk") {
+    } else if (type == SchemaTypeName::RigExecTwoBoneIk) {
         for (size_t k = 0; k < wire.restRefs.size(); ++k) {
             const int slot = wire.restRefs[k].first;
             const int element = wire.restRefs[k].second;
@@ -598,21 +592,18 @@ _RrRefreshSolverRests(RrProgram *program, size_t step, size_t solver,
                         store.fin[size_t(wire.restReads[k])].points;
                 } else if (slot >= 0 &&
                            size_t(slot) < scratch->restPts.size()) {
-                    s.ikRests[size_t(element)] =
-                        scratch->restPts[size_t(slot)];
+                    s.ikRests[size_t(element)] = scratch->restPts[size_t(slot)];
                 } else {
                     if (error) {
-                        *error = _RrStepHead(program, step) +
-                                 " names no rest slot";
+                        *error =
+                            _RrStepHead(program, step) + " names no rest slot";
                     }
                     return false;
                 }
             }
         }
-        s.upperLengthBase =
-            (s.ikRests[1][0] - s.ikRests[0][0]).GetLength();
-        s.lowerLengthBase =
-            (s.ikRests[2][0] - s.ikRests[1][0]).GetLength();
+        s.upperLengthBase = (s.ikRests[1][0] - s.ikRests[0][0]).GetLength();
+        s.lowerLengthBase = (s.ikRests[2][0] - s.ikRests[1][0]).GetLength();
         // The constant arm's lengths, measured in the folded spaceMatrix as
         // the baked rest refresh measures them.
         const std::array<int32_t, RrSolverFieldCount> &reads =
@@ -627,13 +618,12 @@ _RrRefreshSolverRests(RrProgram *program, size_t step, size_t solver,
         if (!refreshSpaceRest()) {
             return false;
         }
-    } else if (type == "RigExecSplineIk") {
+    } else if (type == SchemaTypeName::RigExecSplineIk) {
         std::vector<RrPointFrame> restJoints(size_t(wire.splineCount));
         for (size_t k = 0; k < wire.restRefs.size(); ++k) {
             const int slot = wire.restRefs[k].first;
             const int element = wire.restRefs[k].second;
-            if (element >= 0 &&
-                size_t(element) < size_t(wire.splineCount)) {
+            if (element >= 0 && size_t(element) < size_t(wire.splineCount)) {
                 if (liveRest(k)) {
                     restJoints[size_t(element)] =
                         store.fin[size_t(wire.restReads[k])];
@@ -652,8 +642,8 @@ _RrRefreshSolverRests(RrProgram *program, size_t step, size_t solver,
                     }
                 } else {
                     if (error) {
-                        *error = _RrStepHead(program, step) +
-                                 " names no rest slot";
+                        *error =
+                            _RrStepHead(program, step) + " names no rest slot";
                     }
                     return false;
                 }
@@ -662,41 +652,37 @@ _RrRefreshSolverRests(RrProgram *program, size_t step, size_t solver,
         const RrPointFrame noFrame;
         s.splineRest = _RrSplineIkMakeRest(
             restJoints,
-            wire.root >= 0 ? scratch->restFrames[size_t(wire.root)]
-                           : noFrame,
-            wire.mid >= 0 ? scratch->restFrames[size_t(wire.mid)]
-                          : noFrame,
-            wire.end >= 0 ? scratch->restFrames[size_t(wire.end)]
-                          : noFrame,
+            wire.root >= 0 ? scratch->restFrames[size_t(wire.root)] : noFrame,
+            wire.mid >= 0 ? scratch->restFrames[size_t(wire.mid)] : noFrame,
+            wire.end >= 0 ? scratch->restFrames[size_t(wire.end)] : noFrame,
             wire.splineRestWeights, wire.splineRestMode);
         if (!refreshSpaceRest()) {
             return false;
         }
-    } else if (type == "RigExecTwistDistribution") {
+    } else if (type == SchemaTypeName::RigExecTwistDistribution) {
         if (wire.root >= 0 && wire.end >= 0 &&
             size_t(wire.root) < scratch->restPts.size() &&
             size_t(wire.end) < scratch->restPts.size()) {
-            s.twistStartRest =
-                scratch->restPts[size_t(wire.root)];
+            s.twistStartRest = scratch->restPts[size_t(wire.root)];
             s.twistEndRest = scratch->restPts[size_t(wire.end)];
         }
     }
     return true;
 }
 
-RrPointFrameArray _RrSolveTwistDistribution(
-    const RrPointFrame &start, const RrPointFrame &end,
-    const std::array<RrVec3d, 4> &startRest,
-    const std::array<RrVec3d, 4> &endRest,
-    const std::vector<double> &weights, double twistTurns,
-    const std::vector<std::array<RrVec3d, 4>> &jointRests,
-    const std::vector<char> &jointRestLive);
+RrPointFrameArray
+_RrSolveTwistDistribution(const RrPointFrame &start, const RrPointFrame &end,
+                          const std::array<RrVec3d, 4> &startRest,
+                          const std::array<RrVec3d, 4> &endRest,
+                          const std::vector<double> &weights, double twistTurns,
+                          const std::vector<std::array<RrVec3d, 4>> &jointRests,
+                          const std::vector<char> &jointRestLive);
 
-RrPointFrameArray _RrSampleRibbonFrames(
-    const std::vector<RrVec3f> &posed,
-    const std::vector<RrVec3f> &rest, int sampleCount,
-    const std::vector<std::array<RrVec3d, 4>> &jointRests,
-    const std::vector<char> &jointRestLive);
+RrPointFrameArray
+_RrSampleRibbonFrames(const std::vector<RrVec3f> &posed,
+                      const std::vector<RrVec3f> &rest, int sampleCount,
+                      const std::vector<std::array<RrVec3d, 4>> &jointRests,
+                      const std::vector<char> &jointRestLive);
 
 struct _RrSplineIkControls {
     RrPointFrame root;
@@ -740,8 +726,7 @@ std::vector<RrPointFrame>
 _RrDistributeTwist(const RrPointFrame &start, const RrPointFrame &end,
                    const std::array<RrVec3d, 4> &startRest,
                    const std::array<RrVec3d, 4> &endRest,
-                   const std::vector<double> &weights,
-                   double twistTurns)
+                   const std::vector<double> &weights, double twistTurns)
 {
     std::vector<RrPointFrame> result;
     if (!std::isfinite(twistTurns)) {
@@ -750,10 +735,8 @@ _RrDistributeTwist(const RrPointFrame &start, const RrPointFrame &end,
     result.reserve(weights.size());
 
     _RrTransformParams ps, pe;
-    const bool okS =
-        _RrPointsToParams(startRest, start.points, 2, &ps);
-    const bool okE =
-        _RrPointsToParams(endRest, end.points, 2, &pe);
+    const bool okS = _RrPointsToParams(startRest, start.points, 2, &ps);
+    const bool okE = _RrPointsToParams(endRest, end.points, 2, &pe);
     if (!okS || !okE) {
         for (double w : weights) {
             RrPointFrame f = (w < 0.5) ? start : end;
@@ -763,8 +746,7 @@ _RrDistributeTwist(const RrPointFrame &start, const RrPointFrame &end,
         return result;
     }
 
-    const RrVec3d aim =
-        (start.points[1] - start.points[0]).GetNormalized();
+    const RrVec3d aim = (start.points[1] - start.points[0]).GetNormalized();
     RrQuatd qs = ps.rotation, qe = pe.rotation;
     if (RrDot(qs.GetImaginary(), qe.GetImaginary()) +
             qs.GetReal() * qe.GetReal() <
@@ -777,8 +759,8 @@ _RrDistributeTwist(const RrPointFrame &start, const RrPointFrame &end,
     RrQuatd swing, twist;
     _RrSwingTwist(rel, localAim, &swing, &twist);
 
-    double twistAngle = 2.0 * std::atan2(
-        RrDot(twist.GetImaginary(), localAim), twist.GetReal());
+    double twistAngle = 2.0 * std::atan2(RrDot(twist.GetImaginary(), localAim),
+                                         twist.GetReal());
     twistAngle += 2.0 * std::acos(-1.0) * twistTurns;
     if (!std::isfinite(twistAngle)) {
         return result;
@@ -790,21 +772,18 @@ _RrDistributeTwist(const RrPointFrame &start, const RrPointFrame &end,
         const RrQuatd swingK =
             RrSlerp(w, RrQuatd::GetIdentity(), swing).GetNormalized();
         const double angK = twistAngle * w;
-        const RrQuatd twistK(
-            std::cos(angK / 2), localAim * std::sin(angK / 2));
+        const RrQuatd twistK(std::cos(angK / 2), localAim * std::sin(angK / 2));
         const RrQuatd qk = (qs * swingK * twistK).GetNormalized();
 
         _RrTransformParams pk;
-        pk.translation =
-            ps.translation * (1 - w) + pe.translation * w;
+        pk.translation = ps.translation * (1 - w) + pe.translation * w;
         pk.rotation = qk;
         pk.scale = ps.scale * (1 - w) + pe.scale * w;
         pk.shear = ps.shear * (1 - w) + pe.shear * w;
 
         const RrMat4d m = _RrParamsToMatrix(pk);
         RrPointFrame f = RrMatrixToPoints(startRest, m);
-        const RrVec3d origin =
-            start.points[0] * (1 - w) + end.points[0] * w;
+        const RrVec3d origin = start.points[0] * (1 - w) + end.points[0] * w;
         const RrVec3d shift = origin - f.points[0];
         for (auto &p : f.points) {
             p += shift;
@@ -823,12 +802,15 @@ struct _RrCurveFrameSamples {
     std::vector<RrVec3f> binormals;
     std::vector<float> parameters;
 
-    size_t GetSize() const { return positions.size(); }
+    size_t GetSize() const
+    {
+        return positions.size();
+    }
 };
 
 RrVec3f
-_RrBsplinePoint(const RrVec3f &p0, const RrVec3f &p1,
-                const RrVec3f &p2, const RrVec3f &p3, float t)
+_RrBsplinePoint(const RrVec3f &p0, const RrVec3f &p1, const RrVec3f &p2,
+                const RrVec3f &p3, float t)
 {
     const float t2 = t * t, t3 = t2 * t;
     const float b0 = (1 - 3 * t + 3 * t2 - t3) / 6.0f;
@@ -842,8 +824,7 @@ _RrBsplinePoint(const RrVec3f &p0, const RrVec3f &p1,
 // arc-length parameters, rotation-minimizing frames by the
 // double-reflection method.
 _RrCurveFrameSamples
-_RrSampleCurveRMF(const std::vector<RrVec3f> &controlPoints,
-                  int sampleCount)
+_RrSampleCurveRMF(const std::vector<RrVec3f> &controlPoints, int sampleCount)
 {
     _RrCurveFrameSamples samples;
     if (sampleCount < 2 || controlPoints.size() < 2) {
@@ -861,18 +842,15 @@ _RrSampleCurveRMF(const std::vector<RrVec3f> &controlPoints,
             const int span = std::min(spans - 1, int(s));
             const float t = s - span;
             densePoints.push_back(_RrBsplinePoint(
-                controlPoints[size_t(span)],
-                controlPoints[size_t(span) + 1],
+                controlPoints[size_t(span)], controlPoints[size_t(span) + 1],
                 controlPoints[size_t(span) + 2],
                 controlPoints[size_t(span) + 3], t));
         } else {
             const float s = u * (controlPoints.size() - 1);
-            const int seg = std::min(
-                int(controlPoints.size()) - 2, int(s));
+            const int seg = std::min(int(controlPoints.size()) - 2, int(s));
             densePoints.push_back(
                 controlPoints[size_t(seg)] +
-                (controlPoints[size_t(seg) + 1] -
-                 controlPoints[size_t(seg)]) *
+                (controlPoints[size_t(seg) + 1] - controlPoints[size_t(seg)]) *
                     (s - seg));
         }
     }
@@ -896,9 +874,8 @@ _RrSampleCurveRMF(const std::vector<RrVec3f> &controlPoints,
             ++cursor;
         }
         const float span = arcLength[cursor + 1] - arcLength[cursor];
-        const float t = span > 1e-12f
-            ? (target - arcLength[cursor]) / span
-            : 0.0f;
+        const float t =
+            span > 1e-12f ? (target - arcLength[cursor]) / span : 0.0f;
         samples.positions.push_back(
             densePoints[cursor] +
             (densePoints[cursor + 1] - densePoints[cursor]) * t);
@@ -907,8 +884,7 @@ _RrSampleCurveRMF(const std::vector<RrVec3f> &controlPoints,
 
     samples.tangents.resize(size_t(sampleCount));
     for (int k = 0; k < sampleCount; ++k) {
-        const RrVec3f &prev =
-            samples.positions[size_t(std::max(0, k - 1))];
+        const RrVec3f &prev = samples.positions[size_t(std::max(0, k - 1))];
         const RrVec3f &next =
             samples.positions[size_t(std::min(sampleCount - 1, k + 1))];
         RrVec3f tangent = next - prev;
@@ -923,8 +899,7 @@ _RrSampleCurveRMF(const std::vector<RrVec3f> &controlPoints,
         RrVec3f candidate(1, 0, 0);
         float best = 2.0f;
         for (const RrVec3f axis :
-             {RrVec3f(1, 0, 0), RrVec3f(0, 1, 0),
-              RrVec3f(0, 0, 1)}) {
+             {RrVec3f(1, 0, 0), RrVec3f(0, 1, 0), RrVec3f(0, 0, 1)}) {
             const float align = std::abs(RrDot(axis, t0));
             if (align < best) {
                 best = align;
@@ -942,29 +917,25 @@ _RrSampleCurveRMF(const std::vector<RrVec3f> &controlPoints,
         const float c1 = RrDot(v1, v1);
         if (c1 <= 1e-20f) {
             samples.normals[size_t(k) + 1] = samples.normals[size_t(k)];
-            samples.binormals[size_t(k) + 1] =
-                samples.binormals[size_t(k)];
+            samples.binormals[size_t(k) + 1] = samples.binormals[size_t(k)];
             continue;
         }
         const RrVec3f nL =
-            samples.normals[size_t(k)] - v1 * (2.0f / c1) *
-                RrDot(v1, samples.normals[size_t(k)]);
+            samples.normals[size_t(k)] -
+            v1 * (2.0f / c1) * RrDot(v1, samples.normals[size_t(k)]);
         const RrVec3f tL =
-            samples.tangents[size_t(k)] - v1 * (2.0f / c1) *
-                RrDot(v1, samples.tangents[size_t(k)]);
+            samples.tangents[size_t(k)] -
+            v1 * (2.0f / c1) * RrDot(v1, samples.tangents[size_t(k)]);
         const RrVec3f v2 = samples.tangents[size_t(k) + 1] - tL;
         const float c2 = RrDot(v2, v2);
-        RrVec3f n = c2 > 1e-20f
-            ? nL - v2 * (2.0f / c2) * RrDot(v2, nL)
-            : nL;
+        RrVec3f n = c2 > 1e-20f ? nL - v2 * (2.0f / c2) * RrDot(v2, nL) : nL;
         n -= samples.tangents[size_t(k) + 1] *
              RrDot(samples.tangents[size_t(k) + 1], n);
         const float len = n.GetLength();
         samples.normals[size_t(k) + 1] =
             len > 1e-12f ? n / len : samples.normals[size_t(k)];
         samples.binormals[size_t(k) + 1] = RrCross(
-            samples.tangents[size_t(k) + 1],
-            samples.normals[size_t(k) + 1]);
+            samples.tangents[size_t(k) + 1], samples.normals[size_t(k) + 1]);
     }
     return samples;
 }
@@ -979,8 +950,7 @@ _RrWiden(const RrVec3f &v)
 // (solverKernels.cpp).
 bool
 _RrRebaseElement(const std::array<RrVec3d, 4> &ownRest,
-                 const std::array<RrVec3d, 4> &jointRest,
-                 RrPointFrame *frame)
+                 const std::array<RrVec3d, 4> &jointRest, RrPointFrame *frame)
 {
     RrMat4d map = _RrIdentity();
     if (!RrPointsToMatrix(ownRest, frame->points, &map)) {
@@ -994,11 +964,10 @@ _RrRebaseElement(const std::array<RrVec3d, 4> &ownRest,
 
 // RigExecSampleRibbonFrames (solverKernels.cpp).
 RrPointFrameArray
-_RrSampleRibbonFrames(
-    const std::vector<RrVec3f> &posed,
-    const std::vector<RrVec3f> &rest, int sampleCount,
-    const std::vector<std::array<RrVec3d, 4>> &jointRests,
-    const std::vector<char> &jointRestLive)
+_RrSampleRibbonFrames(const std::vector<RrVec3f> &posed,
+                      const std::vector<RrVec3f> &rest, int sampleCount,
+                      const std::vector<std::array<RrVec3d, 4>> &jointRests,
+                      const std::vector<char> &jointRestLive)
 {
     RrPointFrameArray result;
     if (posed.empty() || rest.empty() || sampleCount < 2) {
@@ -1016,14 +985,13 @@ _RrSampleRibbonFrames(
     result.rests.reserve(size_t(sampleCount));
     for (int k = 0; k < sampleCount; ++k) {
         RrPointFrame frame;
-        frame.points = {
-            _RrWiden(posedSamples.positions[size_t(k)]),
-            _RrWiden(posedSamples.positions[size_t(k)] +
-                     posedSamples.tangents[size_t(k)]),
-            _RrWiden(posedSamples.positions[size_t(k)] +
-                     posedSamples.normals[size_t(k)]),
-            _RrWiden(posedSamples.positions[size_t(k)] +
-                     posedSamples.binormals[size_t(k)])};
+        frame.points = {_RrWiden(posedSamples.positions[size_t(k)]),
+                        _RrWiden(posedSamples.positions[size_t(k)] +
+                                 posedSamples.tangents[size_t(k)]),
+                        _RrWiden(posedSamples.positions[size_t(k)] +
+                                 posedSamples.normals[size_t(k)]),
+                        _RrWiden(posedSamples.positions[size_t(k)] +
+                                 posedSamples.binormals[size_t(k)])};
         frame.flags = RrPointFrameValid;
         std::array<RrVec3d, 4> restPoints = {
             _RrWiden(restSamples.positions[size_t(k)]),
@@ -1033,8 +1001,8 @@ _RrSampleRibbonFrames(
                      restSamples.normals[size_t(k)]),
             _RrWiden(restSamples.positions[size_t(k)] +
                      restSamples.binormals[size_t(k)])};
-        if (size_t(k) < jointRests.size() &&
-            size_t(k) < jointRestLive.size() && jointRestLive[size_t(k)] &&
+        if (size_t(k) < jointRests.size() && size_t(k) < jointRestLive.size() &&
+            jointRestLive[size_t(k)] &&
             _RrRebaseElement(restPoints, jointRests[size_t(k)], &frame)) {
             restPoints = jointRests[size_t(k)];
         }
@@ -1047,23 +1015,21 @@ _RrSampleRibbonFrames(
 // RigExecSolveTwistDistribution (solverKernels.cpp): every frame paired
 // with the START landmarks, re-based where a lower step wrote.
 RrPointFrameArray
-_RrSolveTwistDistribution(
-    const RrPointFrame &start, const RrPointFrame &end,
-    const std::array<RrVec3d, 4> &startRest,
-    const std::array<RrVec3d, 4> &endRest,
-    const std::vector<double> &weights, double twistTurns,
-    const std::vector<std::array<RrVec3d, 4>> &jointRests,
-    const std::vector<char> &jointRestLive)
+_RrSolveTwistDistribution(const RrPointFrame &start, const RrPointFrame &end,
+                          const std::array<RrVec3d, 4> &startRest,
+                          const std::array<RrVec3d, 4> &endRest,
+                          const std::vector<double> &weights, double twistTurns,
+                          const std::vector<std::array<RrVec3d, 4>> &jointRests,
+                          const std::vector<char> &jointRestLive)
 {
     RrPointFrameArray result;
-    result.frames = _RrDistributeTwist(start, end, startRest, endRest,
-                                       weights, twistTurns);
+    result.frames =
+        _RrDistributeTwist(start, end, startRest, endRest, weights, twistTurns);
     result.rests.assign(result.frames.size(), startRest);
     for (size_t k = 0; k < result.frames.size(); ++k) {
         if (k < jointRests.size() && k < jointRestLive.size() &&
             jointRestLive[k] &&
-            _RrRebaseElement(startRest, jointRests[k],
-                             &result.frames[k])) {
+            _RrRebaseElement(startRest, jointRests[k], &result.frames[k])) {
             result.rests[k] = jointRests[k];
         }
     }
@@ -1075,8 +1041,7 @@ _RrSolveTwistDistribution(
 bool
 _RrSplineIsFinite(const RrVec3d &v)
 {
-    return std::isfinite(v[0]) && std::isfinite(v[1]) &&
-           std::isfinite(v[2]);
+    return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
 }
 
 bool
@@ -1092,8 +1057,7 @@ _RrSplineIsFinite(const RrPointFrame &f)
 
 // Rotates v by the minimal rotation taking unit `from` to unit `to`.
 RrVec3d
-_RrSplineRotateToward(const RrVec3d &from, const RrVec3d &to,
-                      const RrVec3d &v)
+_RrSplineRotateToward(const RrVec3d &from, const RrVec3d &to, const RrVec3d &v)
 {
     const RrVec3d axis = RrCross(from, to);
     const double s = axis.GetLength();
@@ -1176,14 +1140,13 @@ _RrSplineMakeBasis(const RrPointFrame &frame)
 bool
 _RrSplineIkPoseCvs(const RrPoseSplineIkRest &rest,
                    const _RrSplineIkControls &controls,
-                   const _RrSplineIkParams &params,
-                   std::array<RrVec3d, 4> *cvs)
+                   const _RrSplineIkParams &params, std::array<RrVec3d, 4> *cvs)
 {
     *cvs = rest.cvs;
     RrMat4d rootMap = _RrIdentity();
     RrMat4d endMap = _RrIdentity();
-    if (!RrPointsToMatrix(rest.rootControl.points,
-                          controls.root.points, &rootMap) ||
+    if (!RrPointsToMatrix(rest.rootControl.points, controls.root.points,
+                          &rootMap) ||
         !RrPointsToMatrix(rest.endControl.points, controls.end.points,
                           &endMap)) {
         return false;
@@ -1202,16 +1165,14 @@ _RrSplineIkPoseCvs(const RrPoseSplineIkRest &rest,
     const RrVec3d restChord = rest.cvs[3] - rest.cvs[0];
     const double restChordLength = restChord.GetLength();
     RrVec3d rootAxis = rootMap.TransformDir(restChord);
-    const bool haveAxis =
-        restChordLength > _RrSplineIkEpsilon &&
-        rootAxis.GetLength() > _RrSplineIkEpsilon;
+    const bool haveAxis = restChordLength > _RrSplineIkEpsilon &&
+                          rootAxis.GetLength() > _RrSplineIkEpsilon;
     if (haveAxis) {
         rootAxis.Normalize();
     }
 
     if (params.minLengthRatio > 0.0 && haveAxis) {
-        const double minAlong =
-            params.minLengthRatio * restChordLength;
+        const double minAlong = params.minLengthRatio * restChordLength;
         const double along = RrDot((*cvs)[3] - (*cvs)[0], rootAxis);
         if (along < minAlong) {
             const RrVec3d lift = rootAxis * (minAlong - along);
@@ -1223,9 +1184,9 @@ _RrSplineIkPoseCvs(const RrPoseSplineIkRest &rest,
     if (params.aimRootTangent && haveAxis) {
         const RrVec3d to = (*cvs)[3] - (*cvs)[0];
         if (to.GetLength() > _RrSplineIkEpsilon) {
-            (*cvs)[1] = (*cvs)[0] + _RrSplineRotateToward(
-                rootAxis, to.GetNormalized(),
-                (*cvs)[1] - (*cvs)[0]);
+            (*cvs)[1] =
+                (*cvs)[0] + _RrSplineRotateToward(rootAxis, to.GetNormalized(),
+                                                  (*cvs)[1] - (*cvs)[0]);
         }
     }
 
@@ -1245,14 +1206,11 @@ _RrSplineIkPoseCvs(const RrPoseSplineIkRest &rest,
 // about the axis, radians in [-pi, pi].
 double
 _RrSplineIkTwistAboutAxis(const RrPointFrame &restFrame,
-                          const RrPointFrame &posedFrame,
-                          const RrVec3d &axis)
+                          const RrPointFrame &posedFrame, const RrVec3d &axis)
 {
     const double axisLength = axis.GetLength();
-    if (!_RrSplineIsFinite(axis) ||
-        axisLength <= _RrSplineIkEpsilon ||
-        !_RrSplineIsFinite(restFrame) ||
-        !_RrSplineIsFinite(posedFrame)) {
+    if (!_RrSplineIsFinite(axis) || axisLength <= _RrSplineIkEpsilon ||
+        !_RrSplineIsFinite(restFrame) || !_RrSplineIsFinite(posedFrame)) {
         return 0.0;
     }
     RrMat4d map = _RrIdentity();
@@ -1277,8 +1235,7 @@ _RrSplineIkTwistAboutAxis(const RrPointFrame &restFrame,
 bool
 _RrSolveSplineIk(const RrPoseSplineIkRest &rest,
                  const _RrSplineIkControls &controls,
-                 const _RrSplineIkParams &params,
-                 _RrSplineIkResult *result)
+                 const _RrSplineIkParams &params, _RrSplineIkResult *result)
 {
     *result = _RrSplineIkResult();
     result->cvs = rest.cvs;
@@ -1292,17 +1249,15 @@ _RrSolveSplineIk(const RrPoseSplineIkRest &rest,
     const auto failWithRest = [&]() {
         result->joints.resize(n);
         for (size_t i = 0; i < n; ++i) {
-            result->joints[i].frame =
-                _RrSplineDegenerateCopy(rest.joints[i]);
+            result->joints[i].frame = _RrSplineDegenerateCopy(rest.joints[i]);
         }
         return false;
     };
 
-    bool finiteInputs = std::isfinite(params.preserveVolume) &&
-                        std::isfinite(params.midFollowWeight) &&
-                        std::isfinite(params.roll) &&
-                        std::isfinite(params.twist) &&
-                        std::isfinite(rest.restArcLength);
+    bool finiteInputs =
+        std::isfinite(params.preserveVolume) &&
+        std::isfinite(params.midFollowWeight) && std::isfinite(params.roll) &&
+        std::isfinite(params.twist) && std::isfinite(rest.restArcLength);
     for (const double s : rest.segmentLengths) {
         finiteInputs = finiteInputs && std::isfinite(s);
     }
@@ -1323,16 +1278,15 @@ _RrSolveSplineIk(const RrPoseSplineIkRest &rest,
 
     RrVec3d chainAxis = rest.cvs[3] - rest.cvs[0];
     if (chainAxis.GetLength() <= _RrSplineIkEpsilon) {
-        chainAxis = rest.rootControl.points[1] -
-                    rest.rootControl.points[0];
+        chainAxis = rest.rootControl.points[1] - rest.rootControl.points[0];
     }
     double rootTwist = 0.0, endTwist = 0.0;
     if (chainAxis.GetLength() > _RrSplineIkEpsilon) {
         chainAxis.Normalize();
-        rootTwist = _RrSplineIkTwistAboutAxis(
-            rest.rootControl, controls.root, chainAxis);
-        endTwist = _RrSplineIkTwistAboutAxis(
-            rest.endControl, controls.end, chainAxis);
+        rootTwist = _RrSplineIkTwistAboutAxis(rest.rootControl, controls.root,
+                                              chainAxis);
+        endTwist =
+            _RrSplineIkTwistAboutAxis(rest.endControl, controls.end, chainAxis);
     }
     result->roll = rootTwist + params.roll;
     result->twist = (endTwist - rootTwist) + params.twist;
@@ -1346,8 +1300,7 @@ _RrSolveSplineIk(const RrPoseSplineIkRest &rest,
         }
         const double d = result->ratio * cumulative;
         result->joints[i].arcDistance = d;
-        result->joints[i].arcParam =
-            curveOk ? d / result->arcLength : 0.0;
+        result->joints[i].arcParam = curveOk ? d / result->arcLength : 0.0;
         result->joints[i].twist =
             result->roll + result->twist * result->joints[i].arcParam;
         if (!curve.PointAtArcLength(d, &positions[i], &tangents[i])) {
@@ -1359,16 +1312,15 @@ _RrSolveSplineIk(const RrPoseSplineIkRest &rest,
     bool allOk = curveOk;
     for (size_t i = 0; i < n; ++i) {
         _RrSplineIkJoint &joint = result->joints[i];
-        const _RrSplineBasis restBasis =
-            _RrSplineMakeBasis(rest.joints[i]);
+        const _RrSplineBasis restBasis = _RrSplineMakeBasis(rest.joints[i]);
         if (!restBasis.ok) {
             joint.frame = _RrSplineDegenerateCopy(rest.joints[i]);
             allOk = false;
             continue;
         }
 
-        RrVec3d aim = (i + 1 < n) ? positions[i + 1] - positions[i]
-                                  : tangents[i];
+        RrVec3d aim =
+            (i + 1 < n) ? positions[i + 1] - positions[i] : tangents[i];
         if (aim.GetLength() <= _RrSplineIkEpsilon) {
             aim = tangents[i];
         }
@@ -1392,9 +1344,8 @@ _RrSolveSplineIk(const RrPoseSplineIkRest &rest,
             y * std::cos(theta) + RrCross(x, y) * std::sin(theta);
         const RrVec3d z = RrCross(x, yTwisted) * restBasis.handedness;
 
-        const double w = rest.volumeWeights.empty()
-            ? 0.0
-            : rest.volumeWeights[i];
+        const double w =
+            rest.volumeWeights.empty() ? 0.0 : rest.volumeWeights[i];
         const double s =
             1.0 - w * params.preserveVolume * (result->ratio - 1.0);
         joint.scale = RrVec3d(1.0, s, s);
@@ -1423,8 +1374,7 @@ _RrSolveSplineIk(const RrPoseSplineIkRest &rest,
 
 namespace runtimePoseDetail {
 
-bool _RrRunSolveStep(RrProgram *program, size_t step,
-                     std::string *error);
+bool _RrRunSolveStep(RrProgram *program, size_t step, std::string *error);
 
 bool _RrRunSolverCommitStep(RrProgram *program, size_t step,
                             std::string *error);
@@ -1444,33 +1394,29 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
         }
         return false;
     }
-    const RigExecWireSolver &ws =
-        program->poses->solvers[size_t(wire.object)];
+    const RigExecWireSolver &ws = program->poses->solvers[size_t(wire.object)];
     RrPoseSolverState &s = scratch->solvers[size_t(wire.object)];
-    const std::vector<std::array<RrVec3d, 4>> &liveRests =
-        s.jointRests;
+    const std::vector<std::array<RrVec3d, 4>> &liveRests = s.jointRests;
     std::vector<char> liveFlags;
     if (ws.hasLiveRest) {
         liveFlags.assign(s.jointRests.size(), 0);
-        for (size_t k = 0;
-             k < ws.restIsLive.size() && k < liveFlags.size(); ++k) {
+        for (size_t k = 0; k < ws.restIsLive.size() && k < liveFlags.size();
+             ++k) {
             liveFlags[k] = ws.restIsLive[k];
         }
     }
     bool restMoved = false;
     for (const int slot : ws.restSlots) {
         restMoved = restMoved ||
-            (slot >= 0 && size_t(slot) < store.restChanged.size() &&
-             store.restChanged[size_t(slot)]);
+                    (slot >= 0 && size_t(slot) < store.restChanged.size() &&
+                     store.restChanged[size_t(slot)]);
     }
     if (restMoved || ws.hasLiveRest) {
-        if (!_RrRefreshSolverRests(program, step, size_t(wire.object),
-                                   error)) {
+        if (!_RrRefreshSolverRests(program, step, size_t(wire.object), error)) {
             return false;
         }
     }
-    RrPointFrameArray &aggregate =
-        store.aggregates[size_t(wire.object)];
+    RrPointFrameArray &aggregate = store.aggregates[size_t(wire.object)];
     aggregate.frames.clear();
     aggregate.rests.clear();
     const std::string type = program->TextOrEmpty(ws.type);
@@ -1485,14 +1431,14 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
             program->solverJointGroupRead[size_t(wire.object)];
         s.jointGroupSelectors.resize(groupReads.size());
         for (size_t g = 0; g < groupReads.size(); ++g) {
-            s.jointGroupSelectors[g] = program->ReadRegistered(groupReads[g]).f64;
+            s.jointGroupSelectors[g] =
+                program->ReadRegistered(groupReads[g]).f64;
         }
     }
     const auto finAt = [&](uint32_t version, const RrPointFrame **out) {
         if (size_t(version) >= store.fin.size()) {
             if (error) {
-                *error = _RrStepHead(program, step) +
-                         " names no fin version";
+                *error = _RrStepHead(program, step) + " names no fin version";
             }
             return false;
         }
@@ -1500,18 +1446,17 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
         return true;
     };
     if (ws.degenerate) {
-    } else if (type == "RigExecFkChain") {
+    } else if (type == SchemaTypeName::RigExecFkChain) {
         const size_t base = ws.start >= 0 ? 1 : 0;
         if (s.elements.size() != ws.controls.size() + base ||
             ws.controlReads.size() != ws.controls.size()) {
             if (error) {
-                *error = _RrStepHead(program, step) +
-                         " names no solver control";
+                *error =
+                    _RrStepHead(program, step) + " names no solver control";
             }
             return false;
         }
-        const bool jointBasis =
-            s.jointRests.size() == ws.controls.size();
+        const bool jointBasis = s.jointRests.size() == ws.controls.size();
         aggregate.rests = s.controlRests;
         if (base) {
             s.elements[0].restPoints = s.startRest;
@@ -1526,8 +1471,8 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
         for (size_t k = 0; k < ws.controls.size(); ++k) {
             if (k >= s.controlRests.size()) {
                 if (error) {
-                    *error = _RrStepHead(program, step) +
-                             " names no solver control";
+                    *error =
+                        _RrStepHead(program, step) + " names no solver control";
                 }
                 return false;
             }
@@ -1538,15 +1483,14 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
                 return false;
             }
             s.elements[e].posePoints = pose->points;
-            const bool live = jointBasis && k < ws.restIsLive.size() &&
-                              ws.restIsLive[k];
+            const bool live =
+                jointBasis && k < ws.restIsLive.size() && ws.restIsLive[k];
             s.elements[e].hasOutRest = live;
             if (live) {
-                if (k >= s.jointRests.size() ||
-                    k >= aggregate.rests.size()) {
+                if (k >= s.jointRests.size() || k >= aggregate.rests.size()) {
                     if (error) {
-                        *error = _RrStepHead(program, step) +
-                                 " names no live rest";
+                        *error =
+                            _RrStepHead(program, step) + " names no live rest";
                     }
                     return false;
                 }
@@ -1557,14 +1501,22 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
                 ws.parentRelative ? int(base) - 1 : int(k) + int(base) - 1;
         }
         aggregate.frames = _RrSolveFkChain(s.elements);
-        if(ws.scaleSegments) {
-            for(size_t k=0;k+1<s.elements.size() && k+1<aggregate.frames.size();++k) {
-                const auto &a=s.elements[k];const auto &b=s.elements[k+1];
-                const auto &ra=a.hasOutRest?a.outRestPoints:a.restPoints;
-                const auto &rb=b.hasOutRest?b.outRestPoints:b.restPoints;
-                const double rest=RigExecBoneLengthUnderFrame(ra.data(),aggregate.frames[k].points.data(),RrVec3d(rb[0]-ra[0]));
-                const auto bone=aggregate.frames[k+1].points[0]-aggregate.frames[k].points[0];
-                if(rest>1e-12 && bone.GetLength()>1e-12)RigExecScaleFrameAlong(aggregate.frames[k].points.data(),bone,bone.GetLength()/rest);
+        if (ws.scaleSegments) {
+            for (size_t k = 0;
+                 k + 1 < s.elements.size() && k + 1 < aggregate.frames.size();
+                 ++k) {
+                const auto &a = s.elements[k];
+                const auto &b = s.elements[k + 1];
+                const auto &ra = a.hasOutRest ? a.outRestPoints : a.restPoints;
+                const auto &rb = b.hasOutRest ? b.outRestPoints : b.restPoints;
+                const double rest = RigExecBoneLengthUnderFrame(
+                    ra.data(), aggregate.frames[k].points.data(),
+                    RrVec3d(rb[0] - ra[0]));
+                const auto bone = aggregate.frames[k + 1].points[0] -
+                                  aggregate.frames[k].points[0];
+                if (rest > 1e-12 && bone.GetLength() > 1e-12)
+                    RigExecScaleFrameAlong(aggregate.frames[k].points.data(),
+                                           bone, bone.GetLength() / rest);
             }
         }
         if (base && !aggregate.frames.empty()) {
@@ -1575,32 +1527,36 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
             // member publishes its output rest through the start delta.
             if (s.jointGroupSelectors.size() != s.jointGroups.size()) {
                 if (error) {
-                    *error = _RrStepHead(program, step) + " names no joint group";
+                    *error =
+                        _RrStepHead(program, step) + " names no joint group";
                 }
                 return false;
             }
             const size_t joints = s.jointGroupParents.size();
             s.jointGroupActive.resize(joints);
             s.jointGroupSlots.resize(s.jointGroups.size());
-            RigExecResolveJointGroups(joints,
-                [&s](size_t i) { return s.jointGroupParents[i]; },
-                s.jointGroups.data(), s.jointGroups.size(), s.jointGroupMembers.data(),
-                s.jointGroupSelectors.data(), s.jointGroupSlots.data(),
-                s.jointGroupActive.data());
+            RigExecResolveJointGroups(
+                joints, [&s](size_t i) { return s.jointGroupParents[i]; },
+                s.jointGroups.data(), s.jointGroups.size(),
+                s.jointGroupMembers.data(), s.jointGroupSelectors.data(),
+                s.jointGroupSlots.data(), s.jointGroupActive.data());
             RrMat4d start = _RrIdentity();
             if (base) {
-                RrPointsToMatrix(s.elements[0].restPoints, s.elements[0].posePoints, &start);
+                RrPointsToMatrix(s.elements[0].restPoints,
+                                 s.elements[0].posePoints, &start);
             }
             for (size_t k = 0; k < joints && k < aggregate.frames.size(); ++k) {
                 if (s.jointGroupActive[k]) {
                     continue;
                 }
                 const RrPoseFkElement &element = s.elements[k + base];
-                aggregate.frames[k] = RrMatrixToPoints(
-                    element.hasOutRest ? element.outRestPoints : element.restPoints, start);
+                aggregate.frames[k] =
+                    RrMatrixToPoints(element.hasOutRest ? element.outRestPoints
+                                                        : element.restPoints,
+                                     start);
             }
         }
-    } else if (type == "RigExecTwoBoneIk") {
+    } else if (type == SchemaTypeName::RigExecTwoBoneIk) {
         RrPoseTwoBoneIkParams params = s.ikParams;
         const size_t solver = size_t(wire.object);
         // rigExec:spaceMatrix, composed after rigExec:space's rest -> pose
@@ -1633,38 +1589,51 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
                 program->ReadSolver(solver, RrSolverLowerOffset).f64,
                 &params.upperLength, &params.lowerLength);
         }
-        params.softDistancePolicy=ws.softDistancePolicy;params.scaleSegments=ws.ikScaleSegments;
-        params.limb.stretch=params.stretch;
-        params.limb.pin=ws.pin?program->ReadSolver(solver,RrSolverPin).f32:0;
-        params.limb.upperScale=ws.upperScale?program->ReadSolver(solver,RrSolverUpperScale).f64:1;
-        params.limb.lowerScale=ws.lowerScale?program->ReadSolver(solver,RrSolverLowerScale).f64:1;
-        params.limb.scaleCalibration=ws.scaleCalibration;
-        double rawUpper=0,rawLower=0,upper=0,lower=0;
-        _RrTwoBoneIkLengths(s.ikRests,RrMat4d(1.0),0,0,&rawUpper,&rawLower);
-        _RrTwoBoneIkLengths(s.ikRests,ikSpace,0,0,&upper,&lower);
-        const double rawLength=rawUpper+rawLower;
-        const double spaceFactor=rawLength>1e-12?(upper+lower)/rawLength:1;
-        params.limb.softDistance=ws.softDistance?program->ReadSolver(solver,RrSolverSoftDistance).f32*spaceFactor:0;
-        params.twistRadians=ws.limbTwist?program->ReadSolver(solver,RrSolverLimbTwist).f32*_RrPi/180.0:0;
+        params.softDistancePolicy = ws.softDistancePolicy;
+        params.scaleSegments = ws.ikScaleSegments;
+        params.limb.stretch = params.stretch;
+        params.limb.pin =
+            ws.pin ? program->ReadSolver(solver, RrSolverPin).f32 : 0;
+        params.limb.upperScale =
+            ws.upperScale ? program->ReadSolver(solver, RrSolverUpperScale).f64
+                          : 1;
+        params.limb.lowerScale =
+            ws.lowerScale ? program->ReadSolver(solver, RrSolverLowerScale).f64
+                          : 1;
+        params.limb.scaleCalibration = ws.scaleCalibration;
+        double rawUpper = 0, rawLower = 0, upper = 0, lower = 0;
+        _RrTwoBoneIkLengths(s.ikRests, RrMat4d(1.0), 0, 0, &rawUpper,
+                            &rawLower);
+        _RrTwoBoneIkLengths(s.ikRests, ikSpace, 0, 0, &upper, &lower);
+        const double rawLength = rawUpper + rawLower;
+        const double spaceFactor =
+            rawLength > 1e-12 ? (upper + lower) / rawLength : 1;
+        params.limb.softDistance =
+            ws.softDistance
+                ? program->ReadSolver(solver, RrSolverSoftDistance).f32 *
+                      spaceFactor
+                : 0;
+        params.twistRadians =
+            ws.limbTwist ? program->ReadSolver(solver, RrSolverLimbTwist).f32 *
+                               _RrPi / 180.0
+                         : 0;
         const RrPointFrame *root = nullptr;
         const RrPointFrame *end = nullptr;
         const RrPointFrame *pole = nullptr;
-        if (!finAt(ws.rootRead, &root) ||
-            !finAt(ws.endRead, &end) || !finAt(ws.poleRead, &pole)) {
+        if (!finAt(ws.rootRead, &root) || !finAt(ws.endRead, &end) ||
+            !finAt(ws.poleRead, &pole)) {
             return false;
         }
         const std::array<RrPointFrame, 3> frames =
             _RrSolveTwoBoneIk(*root, *end, *pole, s.ikRests, params);
         aggregate.frames.assign(frames.begin(), frames.end());
         aggregate.rests.assign(s.ikRests.begin(), s.ikRests.end());
-    } else if (type == "RigExecBlendPointFrames") {
-        if ((ws.inA >= 0 &&
-             size_t(ws.inA) >= store.aggregates.size()) ||
-            (ws.inB >= 0 &&
-             size_t(ws.inB) >= store.aggregates.size())) {
+    } else if (type == SchemaTypeName::RigExecBlendPointFrames) {
+        if ((ws.inA >= 0 && size_t(ws.inA) >= store.aggregates.size()) ||
+            (ws.inB >= 0 && size_t(ws.inB) >= store.aggregates.size())) {
             if (error) {
-                *error = _RrStepHead(program, step) +
-                         " names no solver aggregate";
+                *error =
+                    _RrStepHead(program, step) + " names no solver aggregate";
             }
             return false;
         }
@@ -1681,56 +1650,50 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
         } else if (ws.blendRotationRejected) {
         } else {
             const size_t n = a->frames.size();
-            const double w = std::min(
-                std::max(double(program->ReadSolver(size_t(wire.object),
-                                                    RrSolverBlendWeight)
-                                    .f32),
-                         0.0),
-                1.0);
+            const double w =
+                std::min(std::max(double(program
+                                             ->ReadSolver(size_t(wire.object),
+                                                          RrSolverBlendWeight)
+                                             .f32),
+                                  0.0),
+                         1.0);
             if (n == b->frames.size() && a->rests.size() == n) {
                 aggregate.frames.reserve(n);
                 aggregate.rests.reserve(n);
                 for (size_t k = 0; k < n; ++k) {
-                    const bool live = k < liveFlags.size() &&
-                                      liveFlags[k] &&
+                    const bool live = k < liveFlags.size() && liveFlags[k] &&
                                       k < liveRests.size();
                     aggregate.frames.push_back(_RrBlendFrames(
                         a->frames[k], b->frames[k], a->rests[k], w,
-                        ws.scaleMode == 0,
-                        live ? &liveRests[k] : nullptr));
-                    aggregate.rests.push_back(
-                        live ? liveRests[k] : a->rests[k]);
+                        ws.scaleMode == 0, live ? &liveRests[k] : nullptr));
+                    aggregate.rests.push_back(live ? liveRests[k]
+                                                   : a->rests[k]);
                 }
             }
         }
-    } else if (type == "RigExecTwistDistribution") {
+    } else if (type == SchemaTypeName::RigExecTwistDistribution) {
         const RrPointFrame *start = nullptr;
         const RrPointFrame *end = nullptr;
-        if (!finAt(ws.rootRead, &start) ||
-            !finAt(ws.endRead, &end)) {
+        if (!finAt(ws.rootRead, &start) || !finAt(ws.endRead, &end)) {
             return false;
         }
         aggregate = _RrSolveTwistDistribution(
-            *start, *end, s.twistStartRest, s.twistEndRest,
-            s.twistWeights,
-            program->ReadSolver(size_t(wire.object),
-                                RrSolverTwistTurns).f64,
+            *start, *end, s.twistStartRest, s.twistEndRest, s.twistWeights,
+            program->ReadSolver(size_t(wire.object), RrSolverTwistTurns).f64,
             liveRests, liveFlags);
-    } else if (type == "RigExecRibbon") {
+    } else if (type == SchemaTypeName::RigExecRibbon) {
         if (size_t(wire.object) >= store.ribbonConstant.size()) {
             if (error) {
-                *error = _RrStepHead(program, step) +
-                         " names no solver";
+                *error = _RrStepHead(program, step) + " names no solver";
             }
             return false;
         }
         aggregate = _RrSampleRibbonFrames(
-            store.ribbonConstant[size_t(wire.object)],
-            s.ribbonRestPoints,
-            program->ReadSolver(size_t(wire.object),
-                                RrSolverRibbonSampleCount).i32,
+            store.ribbonConstant[size_t(wire.object)], s.ribbonRestPoints,
+            program->ReadSolver(size_t(wire.object), RrSolverRibbonSampleCount)
+                .i32,
             liveRests, liveFlags);
-    } else if (type == "RigExecSkeleton2d") {
+    } else if (type == SchemaTypeName::RigExecSkeleton2d) {
         // The native body (RigExecRunSolver's Skeleton2d arm): rests and
         // outputs in rigExec:joints order, the kernel in solve order in the
         // start frame's plane, setup frames for every bone when the solve
@@ -1756,10 +1719,12 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
             }
             return false;
         }
-        const std::vector<int32_t> &selectorReads = program->solverBone2dSelectorRead[object];
+        const std::vector<int32_t> &selectorReads =
+            program->solverBone2dSelectorRead[object];
         s.bone2dSelectors.resize(selectorReads.size());
         for (size_t g = 0; g < selectorReads.size(); ++g) {
-            s.bone2dSelectors[g] = program->ReadRegistered(selectorReads[g]).f64;
+            s.bone2dSelectors[g] =
+                program->ReadRegistered(selectorReads[g]).f64;
         }
         RigExecSkeleton2dLandmarkInputs<std::array<RrVec3d, 4>> frames;
         if (ws.start >= 0) {
@@ -1796,8 +1761,9 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
                     const RrInputValue value = program->ReadRegistered(
                         reads[j * kRigExecBone2dChannelCount + c]);
                     RigExecBone2dSetChannel(channels, c,
-                        value.tag == RrInputTag::Bool ? (value.boolean ? 1.0 : 0.0)
-                                                      : value.f64);
+                                            value.tag == RrInputTag::Bool
+                                                ? (value.boolean ? 1.0 : 0.0)
+                                                : value.f64);
                 }
             },
             RrPointFrameValid, &s.bone2d, &aggregate.frames);
@@ -1808,7 +1774,7 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
             return false;
         }
         aggregate.rests = s.jointRests;
-    } else if (type == "RigExecSplineIk") {
+    } else if (type == SchemaTypeName::RigExecSplineIk) {
         _RrSplineIkParams params;
         params.preserveVolume = ws.splineParams.preserveVolume;
         params.midFollowWeight = ws.splineParams.midFollowWeight;
@@ -1822,25 +1788,23 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
             _RrLiveSolver(program, size_t(wire.object),
                           RrSolverMidFollowWeight) ||
             _RrLiveSolver(program, size_t(wire.object), RrSolverRoll) ||
-            _RrLiveSolver(program, size_t(wire.object),
-                          RrSolverTwist) ||
+            _RrLiveSolver(program, size_t(wire.object), RrSolverTwist) ||
             _RrLiveSolver(program, size_t(wire.object),
                           RrSolverMinLengthRatio)) {
             params.preserveVolume =
-                program->ReadSolver(size_t(wire.object),
-                                    RrSolverPreserveVolume).f64;
+                program->ReadSolver(size_t(wire.object), RrSolverPreserveVolume)
+                    .f64;
             params.midFollowWeight =
-                program->ReadSolver(size_t(wire.object),
-                                    RrSolverMidFollowWeight).f64;
+                program
+                    ->ReadSolver(size_t(wire.object), RrSolverMidFollowWeight)
+                    .f64;
             params.roll = RrDegreesToRadians(
-                program->ReadSolver(size_t(wire.object),
-                                    RrSolverRoll).f64);
+                program->ReadSolver(size_t(wire.object), RrSolverRoll).f64);
             params.twist = RrDegreesToRadians(
-                program->ReadSolver(size_t(wire.object),
-                                    RrSolverTwist).f64);
+                program->ReadSolver(size_t(wire.object), RrSolverTwist).f64);
             params.minLengthRatio =
-                program->ReadSolver(size_t(wire.object),
-                                    RrSolverMinLengthRatio).f64;
+                program->ReadSolver(size_t(wire.object), RrSolverMinLengthRatio)
+                    .f64;
         }
         // The rest rebuilt in rigExec:space once the space has moved
         // (bakedPose.cpp): the bind-time rest is measured at identity and
@@ -1873,8 +1837,8 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
         const RrPointFrame *root = nullptr;
         const RrPointFrame *mid = nullptr;
         const RrPointFrame *end = nullptr;
-        if (!finAt(ws.rootRead, &root) ||
-            !finAt(ws.midRead, &mid) || !finAt(ws.endRead, &end)) {
+        if (!finAt(ws.rootRead, &root) || !finAt(ws.midRead, &mid) ||
+            !finAt(ws.endRead, &end)) {
             return false;
         }
         _RrSplineIkControls controls;
@@ -1910,8 +1874,7 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
     for (size_t k = 0; k < ws.outputs.size(); ++k) {
         const int32_t slot = ws.outputs[k].first;
         const int32_t element = ws.outputs[k].second;
-        if (element < 0 ||
-            size_t(element) >= aggregate.frames.size()) {
+        if (element < 0 || size_t(element) >= aggregate.frames.size()) {
             store.solverOutPresent[size_t(wire.object)][k] = 0;
             (void)slot;
             continue;
@@ -1924,8 +1887,7 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
 }
 
 bool
-_RrRunSolverCommitStep(RrProgram *program, size_t step,
-                       std::string *error)
+_RrRunSolverCommitStep(RrProgram *program, size_t step, std::string *error)
 {
     RrStore &store = program->store;
     const RigExecWireStep &wire = (*program->steps)[step];
@@ -1944,26 +1906,20 @@ _RrRunSolverCommitStep(RrProgram *program, size_t step,
     std::fill(commit.present.begin(), commit.present.end(), 0);
     for (const int si :
          program->poses->walkSteps[size_t(wire.object)].batchSolvers) {
-        if (si < 0 ||
-            size_t(si) >= program->poses->solvers.size() ||
+        if (si < 0 || size_t(si) >= program->poses->solvers.size() ||
             size_t(si) >= store.solverOutFrames.size() ||
             size_t(si) >= store.solverOutPresent.size()) {
             if (error) {
-                *error = _RrStepHead(program, step) +
-                         " names no solver";
+                *error = _RrStepHead(program, step) + " names no solver";
             }
             return false;
         }
-        const RigExecWireSolver &s =
-            program->poses->solvers[size_t(si)];
-        if (store.solverOutFrames[size_t(si)].size() !=
-                s.outputs.size() ||
-            store.solverOutPresent[size_t(si)].size() !=
-                s.outputs.size() ||
+        const RigExecWireSolver &s = program->poses->solvers[size_t(si)];
+        if (store.solverOutFrames[size_t(si)].size() != s.outputs.size() ||
+            store.solverOutPresent[size_t(si)].size() != s.outputs.size() ||
             s.outPosition.size() != s.outputs.size()) {
             if (error) {
-                *error = _RrStepHead(program, step) +
-                         " names no solver";
+                *error = _RrStepHead(program, step) + " names no solver";
             }
             return false;
         }
@@ -1975,8 +1931,8 @@ _RrRunSolverCommitStep(RrProgram *program, size_t step,
             if (size_t(s.outPosition[k]) >= commit.frames.size() ||
                 size_t(s.outPosition[k]) >= commit.present.size()) {
                 if (error) {
-                    *error = _RrStepHead(program, step) +
-                             " names no candidate slot";
+                    *error =
+                        _RrStepHead(program, step) + " names no candidate slot";
                 }
                 return false;
             }
@@ -1985,9 +1941,8 @@ _RrRunSolverCommitStep(RrProgram *program, size_t step,
             commit.present[size_t(s.outPosition[k])] = 1;
         }
     }
-    commit.abandoned =
-        std::find(commit.present.begin(), commit.present.end(), 1) ==
-        commit.present.end();
+    commit.abandoned = std::find(commit.present.begin(), commit.present.end(),
+                                 1) == commit.present.end();
     if (wireCommit.split) {
         return true;
     }

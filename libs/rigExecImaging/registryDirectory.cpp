@@ -87,7 +87,7 @@ public:
         Ptr result;
         {
             std::lock_guard<std::mutex> lock(_mutex);
-            _PruneLocked(&released);
+            _PruneLocked(released);
             const UsdStage *raw = get_pointer(stage);
             const auto found = _keyByStage.find(raw);
             if (found != _keyByStage.end()) {
@@ -102,7 +102,7 @@ public:
             }
             if (!result && create) {
                 const uint64_t key = ++_nextKey;
-                result = Ptr(new Ctx(key, stage));
+                result = std::make_shared<Ctx>(Ctx::_FactoryTag{0}, key, stage);
                 _entries[key] = Entry{UsdStageWeakPtr(stage), result};
                 _keyByStage[raw] = key;
             }
@@ -117,7 +117,7 @@ public:
         }
         std::vector<Ptr> released;
         std::lock_guard<std::mutex> lock(_mutex);
-        _PruneLocked(&released);
+        _PruneLocked(released);
         const auto entry = _entries.find(key);
         Ptr result = entry == _entries.end() ? nullptr : entry->second.context;
         // `released` is declared before the guard, so it is destroyed after
@@ -129,7 +129,7 @@ public:
     {
         std::vector<Ptr> released;
         std::lock_guard<std::mutex> lock(_mutex);
-        _PruneLocked(&released);
+        _PruneLocked(released);
         return _entries.size();
     }
 
@@ -221,7 +221,7 @@ private:
     /// Drops contexts whose stage has expired, handing them to \p released
     /// so their destructors run after the caller unlocks. An expired stage
     /// means an inactive context: an active one holds its stage.
-    void _PruneLocked(std::vector<Ptr> *released)
+    void _PruneLocked(std::vector<Ptr> &released)
     {
         for (auto it = _entries.begin(); it != _entries.end();) {
             if (it->second.stage) {
@@ -232,7 +232,7 @@ private:
                 raw = raw->second == it->first ? _keyByStage.erase(raw)
                                                : std::next(raw);
             }
-            released->push_back(std::move(it->second.context));
+            released.push_back(std::move(it->second.context));
             it = _entries.erase(it);
         }
     }
@@ -279,7 +279,7 @@ RigExecImagingRegistry::ContextCount()
     return RigExecImagingDirectory::Get().ContextCount();
 }
 
-RigExecImagingRegistry::RigExecImagingRegistry(uint64_t key,
+RigExecImagingRegistry::RigExecImagingRegistry(_FactoryTag, uint64_t key,
                                                const UsdStageRefPtr &stage)
     : _key(key), _boundStage(stage),
       _store(std::make_shared<RigExecSnapshotStore>()),

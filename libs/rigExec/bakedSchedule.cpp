@@ -1,3 +1,4 @@
+#include "rigExecSchema/schemaNames.h"
 #include "rigExec/weightField.h"
 // The baked program's scheduler: edges, executors and the report.
 // See bakedSchedule.h for what belongs here and what belongs with a domain.
@@ -46,53 +47,91 @@ namespace {
 std::string StepLabel(const RigExecBakedProgramImpl &, const RigExecBakedStep &,
                       RigExecPathText &);
 // Interned at load: Build runs on parallel lanes.
-const TfToken _elementSizeToken("rigExec:elementSize");
-}
+const TfToken _elementSizeToken(SchemaAttrText::rigExecElementSize);
+} // namespace
 
 const char *
 RigExecBakedSlotDomainName(RigExecBakedSlotDomain domain)
 {
     switch (domain) {
-    case RigExecBakedSlotDomain::Avars: return "Avars";
-    case RigExecBakedSlotDomain::PoseBase: return "PoseBase";
-    case RigExecBakedSlotDomain::PoseFin: return "PoseFin";
-    case RigExecBakedSlotDomain::PosedM: return "PosedM";
-    case RigExecBakedSlotDomain::FinalMatrix: return "FinalMatrix";
-    case RigExecBakedSlotDomain::BaseMatrix: return "BaseMatrix";
-    case RigExecBakedSlotDomain::Aggregate: return "Aggregate";
-    case RigExecBakedSlotDomain::SolverPoints: return "SolverPoints";
-    case RigExecBakedSlotDomain::Candidates: return "Candidates";
-    case RigExecBakedSlotDomain::CommitTable: return "CommitTable";
-    case RigExecBakedSlotDomain::CommitDelta: return "CommitDelta";
-    case RigExecBakedSlotDomain::CommitStaging: return "CommitStaging";
-    case RigExecBakedSlotDomain::ConstraintDelta: return "ConstraintDelta";
-    case RigExecBakedSlotDomain::PropertyResult: return "PropertyResult";
-    case RigExecBakedSlotDomain::ChainBase: return "ChainBase";
-    case RigExecBakedSlotDomain::RevisionPacket: return "RevisionPacket";
+    case RigExecBakedSlotDomain::Avars:
+        return "Avars";
+    case RigExecBakedSlotDomain::PoseBase:
+        return "PoseBase";
+    case RigExecBakedSlotDomain::PoseFin:
+        return "PoseFin";
+    case RigExecBakedSlotDomain::PosedM:
+        return "PosedM";
+    case RigExecBakedSlotDomain::FinalMatrix:
+        return "FinalMatrix";
+    case RigExecBakedSlotDomain::BaseMatrix:
+        return "BaseMatrix";
+    case RigExecBakedSlotDomain::Aggregate:
+        return "Aggregate";
+    case RigExecBakedSlotDomain::SolverPoints:
+        return "SolverPoints";
+    case RigExecBakedSlotDomain::Candidates:
+        return "Candidates";
+    case RigExecBakedSlotDomain::CommitTable:
+        return "CommitTable";
+    case RigExecBakedSlotDomain::CommitDelta:
+        return "CommitDelta";
+    case RigExecBakedSlotDomain::CommitStaging:
+        return "CommitStaging";
+    case RigExecBakedSlotDomain::ConstraintDelta:
+        return "ConstraintDelta";
+    case RigExecBakedSlotDomain::PropertyResult:
+        return "PropertyResult";
+    case RigExecBakedSlotDomain::ChainBase:
+        return "ChainBase";
+    case RigExecBakedSlotDomain::RevisionPacket:
+        return "RevisionPacket";
     case RigExecBakedSlotDomain::RevisionTransforms:
         return "RevisionTransforms";
-    case RigExecBakedSlotDomain::RevisionOut: return "RevisionOut";
-    case RigExecBakedSlotDomain::RevisionDone: return "RevisionDone";
-    case RigExecBakedSlotDomain::ChainDirty: return "ChainDirty";
-    case RigExecBakedSlotDomain::ChainPoints: return "ChainPoints";
-    case RigExecBakedSlotDomain::DerivedOut: return "DerivedOut";
-    case RigExecBakedSlotDomain::WeightPacket: return "WeightPacket";
-    case RigExecBakedSlotDomain::WeightFrames: return "WeightFrames";
-    case RigExecBakedSlotDomain::PoseWeight: return "PoseWeight";
-    case RigExecBakedSlotDomain::Snapshots: return "Snapshots";
-    case RigExecBakedSlotDomain::FrameMatrix: return "FrameMatrix";
-    case RigExecBakedSlotDomain::Rest: return "Rest";
-    case RigExecBakedSlotDomain::Ladder: return "Ladder";
-    case RigExecBakedSlotDomain::SkinTopology: return "SkinTopology";
-    case RigExecBakedSlotDomain::WeightField: return "WeightField";
-    case RigExecBakedSlotDomain::WeightFramesBase: return "WeightFramesBase";
-    case RigExecBakedSlotDomain::SpaceValue: return "SpaceValue";
-    case RigExecBakedSlotDomain::SpaceLeaf: return "SpaceLeaf";
-    case RigExecBakedSlotDomain::DerivedBase: return "DerivedBase";
-    case RigExecBakedSlotDomain::ChainInput: return "ChainInput";
-    case RigExecBakedSlotDomain::ConstraintInputs: return "ConstraintInputs";
-    case RigExecBakedSlotDomain::SwitchFrame: return "SwitchFrame";
-    case RigExecBakedSlotDomain::RequiredStageFramesAdmission: return "RequiredStageFramesAdmission";
+    case RigExecBakedSlotDomain::RevisionOut:
+        return "RevisionOut";
+    case RigExecBakedSlotDomain::RevisionDone:
+        return "RevisionDone";
+    case RigExecBakedSlotDomain::ChainDirty:
+        return "ChainDirty";
+    case RigExecBakedSlotDomain::ChainPoints:
+        return "ChainPoints";
+    case RigExecBakedSlotDomain::DerivedOut:
+        return "DerivedOut";
+    case RigExecBakedSlotDomain::WeightPacket:
+        return "WeightPacket";
+    case RigExecBakedSlotDomain::WeightFrames:
+        return "WeightFrames";
+    case RigExecBakedSlotDomain::PoseWeight:
+        return "PoseWeight";
+    case RigExecBakedSlotDomain::Snapshots:
+        return "Snapshots";
+    case RigExecBakedSlotDomain::FrameMatrix:
+        return "FrameMatrix";
+    case RigExecBakedSlotDomain::Rest:
+        return "Rest";
+    case RigExecBakedSlotDomain::Ladder:
+        return "Ladder";
+    case RigExecBakedSlotDomain::SkinTopology:
+        return "SkinTopology";
+    case RigExecBakedSlotDomain::WeightField:
+        return "WeightField";
+    case RigExecBakedSlotDomain::WeightFramesBase:
+        return "WeightFramesBase";
+    case RigExecBakedSlotDomain::SpaceValue:
+        return "SpaceValue";
+    case RigExecBakedSlotDomain::SpaceLeaf:
+        return "SpaceLeaf";
+    case RigExecBakedSlotDomain::DerivedBase:
+        return "DerivedBase";
+    case RigExecBakedSlotDomain::ChainInput:
+        return "ChainInput";
+    case RigExecBakedSlotDomain::ConstraintInputs:
+        return "ConstraintInputs";
+    case RigExecBakedSlotDomain::SwitchFrame:
+        return "SwitchFrame";
+    case RigExecBakedSlotDomain::RequiredStageFramesAdmission:
+        return "RequiredStageFramesAdmission";
     }
     return "unknown";
 }
@@ -101,35 +140,64 @@ const char *
 RigExecBakedStepKindName(RigExecBakedStepKind kind)
 {
     switch (kind) {
-    case RigExecBakedStepKind::ComposeSubtree: return "ComposeSubtree";
-    case RigExecBakedStepKind::Solve: return "Solve";
-    case RigExecBakedStepKind::SolverCommit: return "SolverCommit";
-    case RigExecBakedStepKind::Constraint: return "Constraint";
-    case RigExecBakedStepKind::CommitDelta: return "CommitDelta";
-    case RigExecBakedStepKind::PropagateChunk: return "PropagateChunk";
-    case RigExecBakedStepKind::CommitApply: return "CommitApply";
-    case RigExecBakedStepKind::ProviderMatrix: return "ProviderMatrix";
-    case RigExecBakedStepKind::SnapshotFinals: return "SnapshotFinals";
-    case RigExecBakedStepKind::PoseInterpolator: return "PoseInterpolator";
-    case RigExecBakedStepKind::VolumePlacements: return "VolumePlacements";
-    case RigExecBakedStepKind::WeightPacket: return "WeightPacket";
-    case RigExecBakedStepKind::InfluenceFold: return "InfluenceFold";
-    case RigExecBakedStepKind::RevisionStatic: return "RevisionStatic";
-    case RigExecBakedStepKind::RevisionChunk: return "RevisionChunk";
-    case RigExecBakedStepKind::RevisionFuse: return "RevisionFuse";
-    case RigExecBakedStepKind::ChainStatus: return "ChainStatus";
-    case RigExecBakedStepKind::Derived: return "Derived";
-    case RigExecBakedStepKind::FrameMatrix: return "FrameMatrix";
-    case RigExecBakedStepKind::PropertyRevision: return "PropertyRevision";
-    case RigExecBakedStepKind::RestCompose: return "RestCompose";
-    case RigExecBakedStepKind::LadderCompose: return "LadderCompose";
-    case RigExecBakedStepKind::SkinTopology: return "SkinTopology";
-    case RigExecBakedStepKind::WeightField: return "WeightField";
-    case RigExecBakedStepKind::SpaceExpression: return "SpaceExpression";
-    case RigExecBakedStepKind::ChainInputs: return "ChainInputs";
-    case RigExecBakedStepKind::AvarInputs: return "AvarInputs";
-    case RigExecBakedStepKind::SpaceCheckpoint: return "SpaceCheckpoint";
-    case RigExecBakedStepKind::ProviderRefresh: return "ProviderRefresh";
+    case RigExecBakedStepKind::ComposeSubtree:
+        return "ComposeSubtree";
+    case RigExecBakedStepKind::Solve:
+        return "Solve";
+    case RigExecBakedStepKind::SolverCommit:
+        return "SolverCommit";
+    case RigExecBakedStepKind::Constraint:
+        return "Constraint";
+    case RigExecBakedStepKind::CommitDelta:
+        return "CommitDelta";
+    case RigExecBakedStepKind::PropagateChunk:
+        return "PropagateChunk";
+    case RigExecBakedStepKind::CommitApply:
+        return "CommitApply";
+    case RigExecBakedStepKind::ProviderMatrix:
+        return "ProviderMatrix";
+    case RigExecBakedStepKind::SnapshotFinals:
+        return "SnapshotFinals";
+    case RigExecBakedStepKind::PoseInterpolator:
+        return "PoseInterpolator";
+    case RigExecBakedStepKind::VolumePlacements:
+        return "VolumePlacements";
+    case RigExecBakedStepKind::WeightPacket:
+        return "WeightPacket";
+    case RigExecBakedStepKind::InfluenceFold:
+        return "InfluenceFold";
+    case RigExecBakedStepKind::RevisionStatic:
+        return "RevisionStatic";
+    case RigExecBakedStepKind::RevisionChunk:
+        return "RevisionChunk";
+    case RigExecBakedStepKind::RevisionFuse:
+        return "RevisionFuse";
+    case RigExecBakedStepKind::ChainStatus:
+        return "ChainStatus";
+    case RigExecBakedStepKind::Derived:
+        return "Derived";
+    case RigExecBakedStepKind::FrameMatrix:
+        return "FrameMatrix";
+    case RigExecBakedStepKind::PropertyRevision:
+        return "PropertyRevision";
+    case RigExecBakedStepKind::RestCompose:
+        return "RestCompose";
+    case RigExecBakedStepKind::LadderCompose:
+        return "LadderCompose";
+    case RigExecBakedStepKind::SkinTopology:
+        return "SkinTopology";
+    case RigExecBakedStepKind::WeightField:
+        return "WeightField";
+    case RigExecBakedStepKind::SpaceExpression:
+        return "SpaceExpression";
+    case RigExecBakedStepKind::ChainInputs:
+        return "ChainInputs";
+    case RigExecBakedStepKind::AvarInputs:
+        return "AvarInputs";
+    case RigExecBakedStepKind::SpaceCheckpoint:
+        return "SpaceCheckpoint";
+    case RigExecBakedStepKind::ProviderRefresh:
+        return "ProviderRefresh";
     }
     return "unknown";
 }
@@ -217,25 +285,25 @@ constexpr size_t kStepKindCount =
 // stated size accepts too few rows and zero-fills the rest, which would make
 // a newly added step kind free and the schedule silently wrong.
 constexpr StepCostConstants kStepCosts[] = {
-    {0.0401, 0.087594},   // ComposeSubtree   93 samples
-    {0.0000, 0.385597},   // Solve            14
-    {0.0862, 0.024661},   // SolverCommit     14
-    {1.2290, 0.014504},   // Constraint       65
-    {0.0000, 0.066000},   // CommitDelta       2
-    {0.0324, 0.016869},   // PropagateChunk    4
-    {0.0000, 0.004088},   // CommitApply       2
-    {0.0000, 0.051952},   // ProviderMatrix  252
-    {0.0000, 0.077140},   // SnapshotFinals    1 -- 13_ReadPhases; retired
-    {0.2000, 0.020000},   // PoseInterpolator  unfitted -- see below
-    {0.0000, 0.143880},   // VolumePlacements  1 -- 11_VolumeWeights
-    {0.0000, 0.066481},   // WeightPacket      5 -- 11_VolumeWeights
-    {0.0000, 0.003781},   // InfluenceFold     1
-    {0.0000, 0.000487},   // RevisionStatic    1
-    {11.3239, 0.000714},  // RevisionChunk     7 -- see below
-    {0.0000, 0.594000},   // RevisionFuse      1
-    {0.0000, 0.000336},   // ChainStatus       1 -- see below
-    {0.0000, 0.003744},   // Derived           1
-    {0.0000, 0.051952},   // FrameMatrix       unfitted -- ProviderMatrix's row
+    {0.0401, 0.087594},  // ComposeSubtree   93 samples
+    {0.0000, 0.385597},  // Solve            14
+    {0.0862, 0.024661},  // SolverCommit     14
+    {1.2290, 0.014504},  // Constraint       65
+    {0.0000, 0.066000},  // CommitDelta       2
+    {0.0324, 0.016869},  // PropagateChunk    4
+    {0.0000, 0.004088},  // CommitApply       2
+    {0.0000, 0.051952},  // ProviderMatrix  252
+    {0.0000, 0.077140},  // SnapshotFinals    1 -- 13_ReadPhases; retired
+    {0.2000, 0.020000},  // PoseInterpolator  unfitted -- see below
+    {0.0000, 0.143880},  // VolumePlacements  1 -- 11_VolumeWeights
+    {0.0000, 0.066481},  // WeightPacket      5 -- 11_VolumeWeights
+    {0.0000, 0.003781},  // InfluenceFold     1
+    {0.0000, 0.000487},  // RevisionStatic    1
+    {11.3239, 0.000714}, // RevisionChunk     7 -- see below
+    {0.0000, 0.594000},  // RevisionFuse      1
+    {0.0000, 0.000336},  // ChainStatus       1 -- see below
+    {0.0000, 0.003744},  // Derived           1
+    {0.0000, 0.051952},  // FrameMatrix       unfitted -- ProviderMatrix's row
     {0.0, 0.0},          // PropertyRevision: serial prologue
     {0.0, 0.0},          // RestCompose: serial prologue
     {0.0, 0.0},          // LadderCompose: serial prologue
@@ -308,7 +376,6 @@ static_assert(sizeof(kStepCosts) / sizeof(kStepCosts[0]) == kStepKindCount,
 //    then the row predicts the biped's chunks within a microsecond or two,
 //    and a cost row can only pack a bin badly, never change an answer.
 
-
 /// What a task costs to hand to the arena and pick up again, in the same
 /// microseconds. The absorb rule compares a cluster against twice this: a
 /// cluster that does not cost two dispatches is cheaper to run inside its
@@ -323,8 +390,8 @@ constexpr double kSpawnCostUs = 1.0;
 /// estimate rather than a fact -- which is all a cost model is, and the
 /// program resets such a chain in its prologue anyway.
 struct GeometrySizes {
-    std::vector<double> revisionUnits;   ///< vertices x elementSize
-    std::vector<double> revisionPoints;  ///< vertices
+    std::vector<double> revisionUnits;  ///< vertices x elementSize
+    std::vector<double> revisionPoints; ///< vertices
     /// The influence slots one vertex stores, per revision id: the factor a
     /// chunk's own vertex range is multiplied by.
     std::vector<double> revisionElementSize;
@@ -472,13 +539,13 @@ StepSize(const RigExecBakedProgramImpl &B, LazyGeometrySizes &geometry,
     case RigExecBakedStepKind::SpaceCheckpoint:
         return double(B.switchFrameContexts[object].recompose.size());
     case RigExecBakedStepKind::ProviderRefresh:
-        return double(1+B.providerRefreshes[object].carries.size());
+        return double(1 + B.providerRefreshes[object].carries.size());
     case RigExecBakedStepKind::SnapshotFinals:
         return double(B.paths.size());
     case RigExecBakedStepKind::PoseInterpolator:
         // One kernel row per pose in the solve.
-        return double(std::max<size_t>(
-            B.poseInterpolators[object].poseSlots.size(), 1));
+        return double(
+            std::max<size_t>(B.poseInterpolators[object].poseSlots.size(), 1));
     case RigExecBakedStepKind::VolumePlacements:
         // One decomposition: the step places one volume; the fitted row is
         // per volume.
@@ -520,10 +587,9 @@ StepSize(const RigExecBakedProgramImpl &B, LazyGeometrySizes &geometry,
                 geom.chunks[size_t(step.part)];
             const double points =
                 double(B.chains[size_t(chain)].groupPointCount);
-            return points > 0.0
-                       ? geometry.Get().revisionUnits[object] *
-                             double(chunk.end - chunk.begin) / points
-                       : 0.0;
+            return points > 0.0 ? geometry.Get().revisionUnits[object] *
+                                      double(chunk.end - chunk.begin) / points
+                                : 0.0;
         }
         if (geom.chunked && step.part >= 0 &&
             size_t(step.part) < geom.chunks.size()) {
@@ -569,11 +635,10 @@ RangeFixedUs(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step,
     return steps > 0 ? fixedUs / double(steps) : fixedUs;
 }
 
-}  // namespace
+} // namespace
 
 void
-RigExecBakedAssignStepCosts(RigExecBakedProgramImpl *program,
-                            size_t firstStep)
+RigExecBakedAssignStepCosts(RigExecBakedProgramImpl *program, size_t firstStep)
 {
     RigExecBakedProgramImpl &B = *program;
     LazyGeometrySizes geometry(B);
@@ -584,7 +649,8 @@ RigExecBakedAssignStepCosts(RigExecBakedProgramImpl *program,
         // still derive a label before the final descriptor is assigned.
         const auto category = step.descriptorKey.rfind("/category:");
         step.label = category == std::string::npos
-            ? StepLabel(B, step, labels) : step.descriptorKey.substr(0, category);
+                         ? StepLabel(B, step, labels)
+                         : step.descriptorKey.substr(0, category);
         const StepCostConstants &constants = kStepCosts[size_t(step.kind)];
         step.sizeUnits = StepSize(B, geometry, step);
         step.cost = RangeFixedUs(B, step, constants.fixedUs) +
@@ -647,7 +713,8 @@ struct GraphViolations {
     std::string first;
     size_t count = 0;
 
-    void Add(std::string line) {
+    void Add(std::string line)
+    {
         if (count++ == 0) {
             first = std::move(line);
         }
@@ -732,16 +799,20 @@ ValidateStepEdges(const RigExecBakedProgramImpl &B, GraphViolations *out)
 
 bool
 IsDeclaredSeedOrExcluded(const RigExecBakedProgramImpl &B,
-                     RigExecBakedSlotDomain domain, uint32_t entry)
+                         RigExecBakedSlotDomain domain, uint32_t entry)
 {
     if ((domain == RigExecBakedSlotDomain::PoseFin ||
-         domain == RigExecBakedSlotDomain::PoseBase) && entry < B.paths.size() &&
-        std::find(B.xformSlots.begin(), B.xformSlots.end(), int(entry)) != B.xformSlots.end())
+         domain == RigExecBakedSlotDomain::PoseBase) &&
+        entry < B.paths.size() &&
+        std::find(B.xformSlots.begin(), B.xformSlots.end(), int(entry)) !=
+            B.xformSlots.end())
         return true;
     for (const auto id : B.opAdapter.excludedValues) {
-        if (id >= B.opAdapter.values.size()) continue;
+        if (id >= B.opAdapter.values.size())
+            continue;
         const auto &value = B.opAdapter.values[size_t(id)];
-        if (value.domain == uint32_t(domain) && value.slot == entry) return true;
+        if (value.domain == uint32_t(domain) && value.slot == entry)
+            return true;
     }
     return false;
 }
@@ -753,70 +824,101 @@ IsDeclaredSeedOrExcluded(const RigExecBakedProgramImpl &B,
 // numerical reads. Validate their captured identities before inspecting the
 // generated dependency graph; an arbitrary historical pred is not authority.
 void
-ValidateSemanticRequirements(const RigExecBakedProgramImpl &B, GraphViolations *out)
+ValidateSemanticRequirements(const RigExecBakedProgramImpl &B,
+                             GraphViolations *out)
 {
-    std::map<std::string,int> active;
+    std::map<std::string, int> active;
     for (size_t i = 0; i < B.steps.size(); ++i)
-        if (!B.steps[i].descriptorKey.empty() && !active.emplace(B.steps[i].descriptorKey,int(i)).second)
-            out->Add(NameStep(B,int(i)) + " repeats a descriptor key");
+        if (!B.steps[i].descriptorKey.empty() &&
+            !active.emplace(B.steps[i].descriptorKey, int(i)).second)
+            out->Add(NameStep(B, int(i)) + " repeats a descriptor key");
     for (size_t i = 0; i < B.steps.size(); ++i) {
         const auto &step = B.steps[i];
         if (step.kind != RigExecBakedStepKind::Solve) {
             if (!step.semanticPredecessorKeys.empty())
-                out->Add(NameStep(B,int(i)) + " declares solver requirements on another body");
+                out->Add(NameStep(B, int(i)) +
+                         " declares solver requirements on another body");
             continue;
         }
-        if (step.object < 0 || size_t(step.object) >= B.solvers.size()) continue;
+        if (step.object < 0 || size_t(step.object) >= B.solvers.size())
+            continue;
         const auto &solver = B.solvers[size_t(step.object)];
         // Pure numerical fixtures have no authored relationship metadata.
-        if (solver.solveDescriptorKey.empty() && solver.relationshipRequirements.empty() &&
-            step.semanticPredecessorKeys.empty()) continue;
-        if (!solver.solveDescriptorKey.empty() && solver.solveDescriptorKey != step.descriptorKey)
-            out->Add(NameStep(B,int(i)) + " differs from its solver descriptor identity");
+        if (solver.solveDescriptorKey.empty() &&
+            solver.relationshipRequirements.empty() &&
+            step.semanticPredecessorKeys.empty())
+            continue;
+        if (!solver.solveDescriptorKey.empty() &&
+            solver.solveDescriptorKey != step.descriptorKey)
+            out->Add(NameStep(B, int(i)) +
+                     " differs from its solver descriptor identity");
         const auto ports = RigExecSolverRelationshipPorts(solver.kind);
-        std::set<std::pair<std::string,int>> seen;
-        std::map<std::string,size_t> portCounts;
+        std::set<std::pair<std::string, int>> seen;
+        std::map<std::string, size_t> portCounts;
         std::vector<std::string> required;
         for (const auto &requirement : solver.relationshipRequirements) {
-            if (std::find(ports.begin(),ports.end(),requirement.first) == ports.end() ||
+            if (std::find(ports.begin(), ports.end(), requirement.first) ==
+                    ports.end() ||
                 !seen.insert(requirement).second ||
-                (requirement.first != "rigExec:controls" &&
-                 !(solver.kind == RigExecSolverKind::Ribbon && requirement.first != "rigExec:driverCurve") &&
+                (requirement.first != SchemaAttrText::rigExecControls &&
+                 !(solver.kind == RigExecSolverKind::Ribbon &&
+                   requirement.first != SchemaAttrText::rigExecDriverCurve) &&
                  ++portCounts[requirement.first] > 1) ||
-                requirement.second < 0 || size_t(requirement.second) >= B.solvers.size()) {
-                out->Add(NameStep(B,int(i)) + " has an invalid solver relationship requirement");
+                requirement.second < 0 ||
+                size_t(requirement.second) >= B.solvers.size()) {
+                out->Add(NameStep(B, int(i)) +
+                         " has an invalid solver relationship requirement");
                 continue;
             }
             if (solver.kind == RigExecSolverKind::BlendPointFrames &&
-                ((requirement.first == "rigExec:inputA" && requirement.second != solver.inA) ||
-                 (requirement.first == "rigExec:inputB" && requirement.second != solver.inB)))
-                out->Add(NameStep(B,int(i)) + " has a relationship differing from its aggregate binding");
+                ((requirement.first == SchemaAttrText::rigExecInputA &&
+                  requirement.second != solver.inA) ||
+                 (requirement.first == SchemaAttrText::rigExecInputB &&
+                  requirement.second != solver.inB)))
+                out->Add(
+                    NameStep(B, int(i)) +
+                    " has a relationship differing from its aggregate binding");
             const auto &source = B.solvers[size_t(requirement.second)];
             if (source.solveDescriptorKey.empty()) {
-                out->Add(NameStep(B,int(i)) + " requires a solver with no descriptor identity");
+                out->Add(NameStep(B, int(i)) +
+                         " requires a solver with no descriptor identity");
                 continue;
             }
             required.push_back(source.solveDescriptorKey);
             const auto found = active.find(source.solveDescriptorKey);
             if (found != active.end()) {
                 const auto &producer = B.steps[size_t(found->second)];
-                if (producer.kind != RigExecBakedStepKind::Solve || producer.object != requirement.second ||
-                    !SortedContains(step.preds,found->second))
-                    out->Add(NameStep(B,int(i)) + " omits its declared solver prerequisite");
-            } else if (!IsDeclaredSeedOrExcluded(B,RigExecBakedSlotDomain::Aggregate,uint32_t(requirement.second)) ||
-                       !IsDeclaredSeedOrExcluded(B,RigExecBakedSlotDomain::Candidates,uint32_t(requirement.second)))
-                out->Add(NameStep(B,int(i)) + " requires a solver that is neither active nor excluded");
+                if (producer.kind != RigExecBakedStepKind::Solve ||
+                    producer.object != requirement.second ||
+                    !SortedContains(step.preds, found->second))
+                    out->Add(NameStep(B, int(i)) +
+                             " omits its declared solver prerequisite");
+            } else if (!IsDeclaredSeedOrExcluded(
+                           B, RigExecBakedSlotDomain::Aggregate,
+                           uint32_t(requirement.second)) ||
+                       !IsDeclaredSeedOrExcluded(
+                           B, RigExecBakedSlotDomain::Candidates,
+                           uint32_t(requirement.second)))
+                out->Add(
+                    NameStep(B, int(i)) +
+                    " requires a solver that is neither active nor excluded");
         }
         if (solver.kind == RigExecSolverKind::BlendPointFrames) {
-            if (solver.inA >= 0 && !seen.count({"rigExec:inputA",solver.inA}))
-                out->Add(NameStep(B,int(i)) + " omits its inputA relationship requirement");
-            if (solver.inB >= 0 && !seen.count({"rigExec:inputB",solver.inB}))
-                out->Add(NameStep(B,int(i)) + " omits its inputB relationship requirement");
+            if (solver.inA >= 0 &&
+                !seen.count({SchemaAttrText::rigExecInputA, solver.inA}))
+                out->Add(NameStep(B, int(i)) +
+                         " omits its inputA relationship requirement");
+            if (solver.inB >= 0 &&
+                !seen.count({SchemaAttrText::rigExecInputB, solver.inB}))
+                out->Add(NameStep(B, int(i)) +
+                         " omits its inputB relationship requirement");
         }
-        std::sort(required.begin(),required.end());
-        required.erase(std::unique(required.begin(),required.end()),required.end());
+        std::sort(required.begin(), required.end());
+        required.erase(std::unique(required.begin(), required.end()),
+                       required.end());
         if (step.semanticPredecessorKeys != required)
-            out->Add(NameStep(B,int(i)) + " differs from its declared solver prerequisites");
+            out->Add(NameStep(B, int(i)) +
+                     " differs from its declared solver prerequisites");
     }
 }
 
@@ -830,9 +932,13 @@ ValidateSlotProducers(const RigExecBakedProgramImpl &B, GraphViolations *out)
         const RigExecBakedStep &step = B.steps[size_t(index)];
         for (const auto *ranges : {&step.reads, &step.writes}) {
             for (const RigExecBakedSlotRange &range : *ranges) {
-                if (range.domain == RigExecBakedSlotDomain::RequiredStageFramesAdmission &&
-                    (range.begin != 0 || range.end != 1 || ranges == &step.writes))
-                    out->Add(NameStep(B, index) + " has an invalid source-only stage-frame admission range");
+                if (range.domain ==
+                        RigExecBakedSlotDomain::RequiredStageFramesAdmission &&
+                    (range.begin != 0 || range.end != 1 ||
+                     ranges == &step.writes))
+                    out->Add(NameStep(B, index) +
+                             " has an invalid source-only stage-frame "
+                             "admission range");
                 if (range.domain == RigExecBakedSlotDomain::Snapshots) {
                     out->Add(NameStep(B, index) +
                              " declares the retired Snapshots domain");
@@ -844,7 +950,7 @@ ValidateSlotProducers(const RigExecBakedProgramImpl &B, GraphViolations *out)
     std::array<std::vector<int>, RigExecBakedSlotDomainCount> firstWriter;
     for (int index = 0; index < int(B.steps.size()); ++index) {
         for (const RigExecBakedSlotRange &write :
-                 B.steps[size_t(index)].writes) {
+             B.steps[size_t(index)].writes) {
             if (!checked(write.domain) || write.IsEmpty()) {
                 continue;
             }
@@ -860,8 +966,7 @@ ValidateSlotProducers(const RigExecBakedProgramImpl &B, GraphViolations *out)
         }
     }
     for (int index = 0; index < int(B.steps.size()); ++index) {
-        for (const RigExecBakedSlotRange &read :
-                 B.steps[size_t(index)].reads) {
+        for (const RigExecBakedSlotRange &read : B.steps[size_t(index)].reads) {
             if (read.IsEmpty()) {
                 continue;
             }
@@ -884,12 +989,15 @@ ValidateSlotProducers(const RigExecBakedProgramImpl &B, GraphViolations *out)
                 if (writer >= 0 && writer < index) {
                     if (!SortedContains(B.steps[size_t(index)].preds, writer))
                         out->Add(NameStep(B, index) + " reads " +
-                            RigExecBakedSlotDomainName(read.domain) + "[" +
-                            std::to_string(slot) + "] without an edge from its producer " +
-                            NameStep(B, writer));
+                                 RigExecBakedSlotDomainName(read.domain) + "[" +
+                                 std::to_string(slot) +
+                                 "] without an edge from its producer " +
+                                 NameStep(B, writer));
                     continue;
                 }
-                if (writer < 0 && IsDeclaredSeedOrExcluded(B, read.domain, slot)) continue;
+                if (writer < 0 &&
+                    IsDeclaredSeedOrExcluded(B, read.domain, slot))
+                    continue;
                 if (bad++ == 0) {
                     firstBad = slot;
                     badWriter = writer;
@@ -904,7 +1012,8 @@ ValidateSlotProducers(const RigExecBakedProgramImpl &B, GraphViolations *out)
             line += badWriter < 0
                         ? ", which no step writes"
                         : ", which no step before it writes (the first "
-                          "writer is " + NameStep(B, badWriter) + ")";
+                          "writer is " +
+                              NameStep(B, badWriter) + ")";
             if (bad > 1) {
                 line += "; " + std::to_string(bad) + " slots of " + range() +
                         " are unproduced";
@@ -923,7 +1032,7 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
 {
     const size_t n = B.paths.size();
     if (n == 0) {
-        return;  // No pose slots, so nothing is bound.
+        return; // No pose slots, so nothing is bound.
     }
     if (B.finLast.size() != n || B.baseLast.size() != n) {
         out->Add("the last-version table holds " +
@@ -1029,35 +1138,43 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
 
     for (int index = 0; index < int(B.steps.size()); ++index) {
         const auto &step = B.steps[size_t(index)];
-        if (step.kind == RigExecBakedStepKind::ComposeSubtree || IsCommitStep(step.kind)) continue;
+        if (step.kind == RigExecBakedStepKind::ComposeSubtree ||
+            IsCommitStep(step.kind))
+            continue;
         for (const auto &write : step.writes) {
-            if (write.domain != kFin && write.domain != kBase) continue;
+            if (write.domain != kFin && write.domain != kBase)
+                continue;
             for (uint32_t entry = write.begin; entry < write.end; ++entry)
                 record(write.domain, entry, index, -1);
         }
     }
     const auto covers = [](const auto &ranges, RigExecBakedSlotDomain domain,
                            uint32_t entry) {
-        return std::any_of(ranges.begin(), ranges.end(), [&](const auto &range) {
-            return range.domain == domain && range.begin <= entry && entry < range.end;
-        });
+        return std::any_of(ranges.begin(), ranges.end(),
+                           [&](const auto &range) {
+                               return range.domain == domain &&
+                                      range.begin <= entry && entry < range.end;
+                           });
     };
     // A carry may name a value written within the same apply body. Every
     // other binding must name its declared SSA input and its unique producer.
     const auto check = [&](RigExecBakedSlotDomain domain, uint32_t entry,
                            int reader, int own) {
-        if (reader < 0 || size_t(reader) >= B.steps.size()) return;
+        if (reader < 0 || size_t(reader) >= B.steps.size())
+            return;
         const auto &step = B.steps[size_t(reader)];
-        const std::vector<int> &writers = domain == kFin ? finWriter : baseWriter;
+        const std::vector<int> &writers =
+            domain == kFin ? finWriter : baseWriter;
         const int writer = entry < writers.size() ? writers[entry] : -1;
         const bool internal = writer == own && own == reader &&
                               covers(step.writes, domain, entry);
-        const bool available = writer >= 0 ? writer < reader || internal
-                                          : IsDeclaredSeedOrExcluded(B, domain, entry);
+        const bool available = writer >= 0
+                                   ? writer < reader || internal
+                                   : IsDeclaredSeedOrExcluded(B, domain, entry);
         const auto line = [&] {
             std::string text = NameStep(B, reader) + " is bound to " +
-                               RigExecBakedSlotDomainName(domain) + " version " +
-                               std::to_string(entry);
+                               RigExecBakedSlotDomainName(domain) +
+                               " version " + std::to_string(entry);
             const std::vector<int> &slots = domain == kFin ? finSlot : baseSlot;
             const int slot = entry < slots.size() ? slots[entry] : -1;
             if (slot >= 0 && size_t(slot) < n)
@@ -1065,35 +1182,43 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
             return text;
         };
         if (!available) {
-            out->Add(line() + (writer < 0 ? std::string(", which no step writes")
-                : ", which " + NameStep(B, writer) + " writes at or after it"));
+            out->Add(line() + (writer < 0
+                                   ? std::string(", which no step writes")
+                                   : ", which " + NameStep(B, writer) +
+                                         " writes at or after it"));
             return;
         }
-        if (internal) return;
+        if (internal)
+            return;
         if (!covers(step.reads, domain, entry)) {
             out->Add(line() + " without declaring it");
             return;
         }
         if (writer >= 0 && !SortedContains(step.preds, writer))
-            out->Add(line() + " without an edge from its producer " + NameStep(B, writer));
+            out->Add(line() + " without an edge from its producer " +
+                     NameStep(B, writer));
     };
 
     for (int reader = 0; reader < int(B.steps.size()); ++reader) {
         const auto &step = B.steps[size_t(reader)];
-        const auto all = [&](RigExecBakedSlotDomain domain, const auto &values, int own = -1) {
-            for (const auto value : values) check(domain, value, reader, own);
+        const auto all = [&](RigExecBakedSlotDomain domain, const auto &values,
+                             int own = -1) {
+            for (const auto value : values)
+                check(domain, value, reader, own);
         };
         if (step.kind == RigExecBakedStepKind::Solve && step.object >= 0 &&
             size_t(step.object) < B.solvers.size()) {
             const auto &solver = B.solvers[size_t(step.object)];
             all(kFin, solver.controlReads);
-            for (const auto binding : {std::make_pair(solver.start, solver.startRead),
-                 std::make_pair(solver.root, solver.rootRead),
-                 std::make_pair(solver.mid, solver.midRead),
-                 std::make_pair(solver.end, solver.endRead),
-                 std::make_pair(solver.pole, solver.poleRead),
-                 std::make_pair(solver.spaceSlot, uint32_t(solver.spaceRead))})
-                if (binding.first >= 0) check(kFin, binding.second, reader, -1);
+            for (const auto binding :
+                 {std::make_pair(solver.start, solver.startRead),
+                  std::make_pair(solver.root, solver.rootRead),
+                  std::make_pair(solver.mid, solver.midRead),
+                  std::make_pair(solver.end, solver.endRead),
+                  std::make_pair(solver.pole, solver.poleRead),
+                  std::make_pair(solver.spaceSlot, uint32_t(solver.spaceRead))})
+                if (binding.first >= 0)
+                    check(kFin, binding.second, reader, -1);
             for (size_t k = 0; k < solver.restReads.size(); ++k)
                 if (k < solver.restIsLive.size() && solver.restIsLive[k])
                     check(kFin, solver.restReads[k], reader, -1);
@@ -1103,61 +1228,94 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
             if (step.kind == RigExecBakedStepKind::Constraint &&
                 size_t(step.object) < B.walkSteps.size()) {
                 const int constraint = B.walkSteps[size_t(step.object)].index;
-                if (constraint >= 0 && size_t(constraint) < B.constraints.size()) {
+                if (constraint >= 0 &&
+                    size_t(constraint) < B.constraints.size()) {
                     const auto &c = B.constraints[size_t(constraint)];
-                    for (size_t k = 0; k < c.sources.size() && k < commit.sourceReads.size(); ++k)
-                        if (c.sources[k] >= 0) check(kFin, commit.sourceReads[k], reader, -1);
-                    if (c.target >= 0) check(kFin, commit.targetRead, reader, -1);
+                    for (size_t k = 0;
+                         k < c.sources.size() && k < commit.sourceReads.size();
+                         ++k)
+                        if (c.sources[k] >= 0)
+                            check(kFin, commit.sourceReads[k], reader, -1);
+                    if (c.target >= 0)
+                        check(kFin, commit.targetRead, reader, -1);
                     all(kFin, commit.targetReads);
-                    if (c.worldUpObject >= 0) check(kFin, commit.worldUpRead, reader, -1);
-                    if (c.effector >= 0) check(kFin, commit.effectorRead, reader, -1);
-                    for (size_t k = 0; k < c.poleObjects.size() && k < commit.poleReads.size(); ++k)
-                        if (c.poleObjects[k] >= 0) check(kFin, commit.poleReads[k], reader, -1);
+                    if (c.worldUpObject >= 0)
+                        check(kFin, commit.worldUpRead, reader, -1);
+                    if (c.effector >= 0)
+                        check(kFin, commit.effectorRead, reader, -1);
+                    for (size_t k = 0; k < c.poleObjects.size() &&
+                                       k < commit.poleReads.size();
+                         ++k)
+                        if (c.poleObjects[k] >= 0)
+                            check(kFin, commit.poleReads[k], reader, -1);
                     const auto ancestors = [&](const auto &values) {
                         for (const auto &value : values) {
                             check(kFin, value.fin, reader, -1);
                             check(kBase, value.base, reader, -1);
                         }
                     };
-                    for (const auto &values : commit.sourceAncestors) ancestors(values);
-                    for (const auto &values : commit.poleAncestors) ancestors(values);
-                    ancestors(commit.worldUpAncestors); ancestors(commit.effectorAncestors);
+                    for (const auto &values : commit.sourceAncestors)
+                        ancestors(values);
+                    for (const auto &values : commit.poleAncestors)
+                        ancestors(values);
+                    ancestors(commit.worldUpAncestors);
+                    ancestors(commit.effectorAncestors);
                 }
             }
-            const bool apply = step.kind == RigExecBakedStepKind::CommitApply ||
-                (!commit.split && (step.kind == RigExecBakedStepKind::Constraint ||
-                                   step.kind == RigExecBakedStepKind::SolverCommit));
-            if (step.kind == RigExecBakedStepKind::CommitDelta || (apply && !commit.split))
+            const bool apply =
+                step.kind == RigExecBakedStepKind::CommitApply ||
+                (!commit.split &&
+                 (step.kind == RigExecBakedStepKind::Constraint ||
+                  step.kind == RigExecBakedStepKind::SolverCommit));
+            if (step.kind == RigExecBakedStepKind::CommitDelta ||
+                (apply && !commit.split))
                 all(kFin, commit.slotReads);
-            if (step.kind == RigExecBakedStepKind::PropagateChunk || (apply && !commit.split)) {
-                const size_t begin = step.kind == RigExecBakedStepKind::PropagateChunk
-                    ? size_t(step.part) * 64 : 0;
-                const size_t end = step.kind == RigExecBakedStepKind::PropagateChunk
-                    ? std::min(begin + 64, commit.propagate.size()) : commit.propagate.size();
+            if (step.kind == RigExecBakedStepKind::PropagateChunk ||
+                (apply && !commit.split)) {
+                const size_t begin =
+                    step.kind == RigExecBakedStepKind::PropagateChunk
+                        ? size_t(step.part) * 64
+                        : 0;
+                const size_t end =
+                    step.kind == RigExecBakedStepKind::PropagateChunk
+                        ? std::min(begin + 64, commit.propagate.size())
+                        : commit.propagate.size();
                 for (size_t k = begin; k < end; ++k) {
-                    if (k < commit.descendantReads.size()) check(kFin, commit.descendantReads[k], reader, -1);
-                    if (k < commit.closestReads.size()) check(kFin, commit.closestReads[k], reader, -1);
+                    if (k < commit.descendantReads.size())
+                        check(kFin, commit.descendantReads[k], reader, -1);
+                    if (k < commit.closestReads.size())
+                        check(kFin, commit.closestReads[k], reader, -1);
                 }
             }
             if (apply) {
-                all(kFin, commit.slotCarry); all(kBase, commit.slotBaseCarry);
-                const auto descendantCarries = [&](RigExecBakedSlotDomain domain,
-                                                   const auto &values, const auto &candidateWrites) {
-                    for (size_t k = 0; k < values.size(); ++k) {
-                        bool earlierCandidate = false;
-                        for (size_t pos = 0; pos < commit.slots.size() && pos < candidateWrites.size(); ++pos)
-                            if (k < commit.propagate.size() &&
-                                commit.slots[pos] == commit.propagate[k].first &&
-                                candidateWrites[pos] == values[k]) earlierCandidate = true;
-                        check(domain, values[k], reader, earlierCandidate ? reader : -1);
-                    }
-                };
+                all(kFin, commit.slotCarry);
+                all(kBase, commit.slotBaseCarry);
+                const auto descendantCarries =
+                    [&](RigExecBakedSlotDomain domain, const auto &values,
+                        const auto &candidateWrites) {
+                        for (size_t k = 0; k < values.size(); ++k) {
+                            bool earlierCandidate = false;
+                            for (size_t pos = 0; pos < commit.slots.size() &&
+                                                 pos < candidateWrites.size();
+                                 ++pos)
+                                if (k < commit.propagate.size() &&
+                                    commit.slots[pos] ==
+                                        commit.propagate[k].first &&
+                                    candidateWrites[pos] == values[k])
+                                    earlierCandidate = true;
+                            check(domain, values[k], reader,
+                                  earlierCandidate ? reader : -1);
+                        }
+                    };
                 // FinishCommit writes all candidate outcomes, including their
                 // fallback copies, before a descendant can carry one of them.
-                descendantCarries(kFin, commit.descendantCarry, commit.slotWrites);
-                descendantCarries(kBase, commit.descendantBaseCarry, commit.slotBaseWrites);
+                descendantCarries(kFin, commit.descendantCarry,
+                                  commit.slotWrites);
+                descendantCarries(kBase, commit.descendantBaseCarry,
+                                  commit.slotBaseWrites);
             }
-        } else if (step.kind == RigExecBakedStepKind::ProviderRefresh && step.object >= 0 &&
+        } else if (step.kind == RigExecBakedStepKind::ProviderRefresh &&
+                   step.object >= 0 &&
                    size_t(step.object) < B.providerRefreshes.size()) {
             const auto &refresh = B.providerRefreshes[size_t(step.object)];
             check(kBase, refresh.baseRead, reader, -1);
@@ -1168,20 +1326,25 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
             }
             for (const auto value : {refresh.baseValue, refresh.currentValue}) {
                 if (value >= B.providerValues.values.size() ||
-                    !covers(step.reads, RigExecBakedSlotDomain::SpaceValue, uint32_t(value)))
+                    !covers(step.reads, RigExecBakedSlotDomain::SpaceValue,
+                            uint32_t(value)))
                     out->Add(NameStep(B, reader) + " consumes SpaceValue[" +
                              std::to_string(value) + "] without declaring it");
             }
             for (const auto &prior : refresh.priorConstraints)
-                if (!covers(step.reads, RigExecBakedSlotDomain::CommitTable, prior.first))
+                if (!covers(step.reads, RigExecBakedSlotDomain::CommitTable,
+                            prior.first))
                     out->Add(NameStep(B, reader) + " inspects commit " +
-                             std::to_string(prior.first) + " without declaring it");
-        } else if (step.kind == RigExecBakedStepKind::ProviderMatrix && step.object >= 0 &&
-                   size_t(step.object) < n) {
+                             std::to_string(prior.first) +
+                             " without declaring it");
+        } else if (step.kind == RigExecBakedStepKind::ProviderMatrix &&
+                   step.object >= 0 && size_t(step.object) < n) {
             const size_t slot = size_t(step.object);
-            if (step.part) check(kFin, B.finLast[slot], reader, -1);
+            if (step.part)
+                check(kFin, B.finLast[slot], reader, -1);
             check(kBase, B.baseLast[slot], reader, -1);
-        } else if (step.kind == RigExecBakedStepKind::PoseInterpolator && step.object >= 0 &&
+        } else if (step.kind == RigExecBakedStepKind::PoseInterpolator &&
+                   step.object >= 0 &&
                    size_t(step.object) < B.poseInterpolators.size()) {
             const auto &interp = B.poseInterpolators[size_t(step.object)];
             if (interp.driverSlot >= 0 && size_t(interp.driverSlot) < n)
@@ -1189,7 +1352,8 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
             if (interp.parentSlot >= 0 && size_t(interp.parentSlot) < n)
                 check(kFin, B.finLast[size_t(interp.parentSlot)], reader, -1);
             for (size_t e = 0; e < interp.extraDriverSlots.size(); ++e) {
-                for (const int slot : {interp.extraDriverSlots[e], interp.extraParentSlots[e]})
+                for (const int slot :
+                     {interp.extraDriverSlots[e], interp.extraParentSlots[e]})
                     if (slot >= 0 && size_t(slot) < n)
                         check(kFin, B.finLast[size_t(slot)], reader, -1);
             }
@@ -1242,15 +1406,18 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                      ", which is not the provider it records");
         }
         const int head = commitFirst[size_t(frameRecord.commit)];
-        if (head < 0 && IsDeclaredSeedOrExcluded(B, RigExecBakedSlotDomain::CommitTable,
-                                              uint32_t(frameRecord.commit))) continue;
+        if (head < 0 &&
+            IsDeclaredSeedOrExcluded(B, RigExecBakedSlotDomain::CommitTable,
+                                     uint32_t(frameRecord.commit)))
+            continue;
         if (head < 0 || head >= reader) {
             out->Add(NameStep(B, reader) + " reads the exit of commit " +
                      std::to_string(frameRecord.commit) + ", which " +
                      (head < 0 ? std::string("no step writes")
                                : NameStep(B, head) + " writes at or after it"));
         } else if (!covers(B.steps[size_t(reader)].reads,
-                           RigExecBakedSlotDomain::CommitTable, uint32_t(frameRecord.commit)) ||
+                           RigExecBakedSlotDomain::CommitTable,
+                           uint32_t(frameRecord.commit)) ||
                    !SortedContains(B.steps[size_t(reader)].preds, head)) {
             out->Add(NameStep(B, reader) + " reads the exit of commit " +
                      std::to_string(frameRecord.commit) +
@@ -1261,12 +1428,12 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
     // must never be reinterpreted as a provider slot and mapped through last.
     for (int index = 0; index < int(B.steps.size()); ++index) {
         for (const auto &read : B.steps[size_t(index)].reads) {
-            if (read.domain != kFin && read.domain != kBase) continue;
+            if (read.domain != kFin && read.domain != kBase)
+                continue;
             for (uint32_t entry = read.begin; entry < read.end; ++entry)
                 check(read.domain, entry, index, -1);
         }
     }
-
 }
 
 /// The clusters partition the steps with members in program order, their
@@ -1337,7 +1504,7 @@ ValidateClusters(const RigExecBakedProgramImpl &B, GraphViolations *out)
         const int to = C.clusterOf[size_t(index)];
         for (const int pred : B.steps[size_t(index)].preds) {
             if (pred < 0 || pred >= steps) {
-                continue;  // ValidateStepEdges reports it.
+                continue; // ValidateStepEdges reports it.
             }
             const int from = C.clusterOf[size_t(pred)];
             if (from != to &&
@@ -1393,8 +1560,7 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
     if (B.revisionFuseStep.size() != revisions) {
         out->Add("the program records " +
                  std::to_string(B.revisionFuseStep.size()) +
-                 " fuse steps for " + std::to_string(revisions) +
-                 " revisions");
+                 " fuse steps for " + std::to_string(revisions) + " revisions");
         return;
     }
     const int count = int(B.steps.size());
@@ -1403,8 +1569,10 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
         if (fuse < 0 || fuse >= count ||
             B.steps[size_t(fuse)].kind != RigExecBakedStepKind::RevisionFuse ||
             B.steps[size_t(fuse)].object != int(r)) {
-            out->Add("revision " + std::to_string(r) + "'s fuse is recorded "
-                     "as " + NameStep(B, fuse) + ", which is not its fuse");
+            out->Add("revision " + std::to_string(r) +
+                     "'s fuse is recorded "
+                     "as " +
+                     NameStep(B, fuse) + ", which is not its fuse");
             return;
         }
     }
@@ -1433,8 +1601,7 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                 out->Add(NameStep(B, index) + " writes " +
                          RigExecBakedSlotDomainName(write.domain) + "[" +
                          std::to_string(write.end - 1) + "], past the " +
-                         "table's " + std::to_string(revisions) +
-                         " revisions");
+                         "table's " + std::to_string(revisions) + " revisions");
             }
             for (uint32_t slot = write.begin;
                  slot < write.end && slot < revisions; ++slot) {
@@ -1456,8 +1623,7 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                 out->Add(NameStep(B, index) + " reads " +
                          RigExecBakedSlotDomainName(read.domain) + "[" +
                          std::to_string(read.end - 1) + "], past the " +
-                         "table's " + std::to_string(revisions) +
-                         " revisions");
+                         "table's " + std::to_string(revisions) + " revisions");
             }
             for (uint32_t slot = read.begin;
                  slot < read.end && slot < revisions; ++slot) {
@@ -1465,8 +1631,10 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                 if (!SortedContains(step.preds, fuse)) {
                     out->Add(NameStep(B, index) + " reads " +
                              RigExecBakedSlotDomainName(read.domain) + "[" +
-                             std::to_string(slot) + "] without an edge from "
-                             "its producer " + NameStep(B, fuse));
+                             std::to_string(slot) +
+                             "] without an edge from "
+                             "its producer " +
+                             NameStep(B, fuse));
                 }
             }
         }
@@ -1489,59 +1657,61 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
         if (bound) {
             const auto checkBinding =
                 [&](const RigExecBakedPointsBinding &binding) {
-                for (const RigExecBakedPointVersion &candidate :
+                    for (const RigExecBakedPointVersion &candidate :
                          binding.candidates) {
-                    const std::string what =
-                        " point version " + std::to_string(candidate.version) +
-                        " of chain " + std::to_string(candidate.chain);
-                    if (candidate.chain < 0 ||
-                        size_t(candidate.chain) >=
-                            B.chainRevisionBegin.size()) {
-                        out->Add(NameStep(B, index) + " binds" + what +
-                                 ", which is not a chain");
-                        continue;
+                        const std::string what =
+                            " point version " +
+                            std::to_string(candidate.version) + " of chain " +
+                            std::to_string(candidate.chain);
+                        if (candidate.chain < 0 ||
+                            size_t(candidate.chain) >=
+                                B.chainRevisionBegin.size()) {
+                            out->Add(NameStep(B, index) + " binds" + what +
+                                     ", which is not a chain");
+                            continue;
+                        }
+                        const int first =
+                            B.chainRevisionBegin[size_t(candidate.chain)];
+                        const int last =
+                            B.chainRevisionEnd[size_t(candidate.chain)];
+                        bool declared = false;
+                        if (binding.finalRead) {
+                            declared = covers(
+                                step.reads, RigExecBakedSlotDomain::ChainPoints,
+                                candidate.chain);
+                        } else if (candidate.version == 0) {
+                            declared = covers(step.reads,
+                                              RigExecBakedSlotDomain::ChainBase,
+                                              candidate.chain);
+                        } else if (candidate.version < 0 ||
+                                   first + candidate.version - 1 >= last) {
+                            out->Add(NameStep(B, index) + " binds" + what +
+                                     ", past the chain's " +
+                                     std::to_string(last - first) +
+                                     " revisions");
+                            continue;
+                        } else {
+                            const int slot = first + candidate.version - 1;
+                            declared =
+                                covers(step.reads,
+                                       RigExecBakedSlotDomain::RevisionDone,
+                                       slot) &&
+                                covers(step.reads,
+                                       RigExecBakedSlotDomain::ChainDirty,
+                                       slot);
+                        }
+                        if (!declared) {
+                            out->Add(NameStep(B, index) + " binds" + what +
+                                     " without declaring it");
+                        }
                     }
-                    const int first =
-                        B.chainRevisionBegin[size_t(candidate.chain)];
-                    const int last =
-                        B.chainRevisionEnd[size_t(candidate.chain)];
-                    bool declared = false;
-                    if (binding.finalRead) {
-                        declared = covers(step.reads,
-                                          RigExecBakedSlotDomain::ChainPoints,
-                                          candidate.chain);
-                    } else if (candidate.version == 0) {
-                        declared = covers(step.reads,
-                                          RigExecBakedSlotDomain::ChainBase,
-                                          candidate.chain);
-                    } else if (candidate.version < 0 ||
-                               first + candidate.version - 1 >= last) {
-                        out->Add(NameStep(B, index) + " binds" + what +
-                                 ", past the chain's " +
-                                 std::to_string(last - first) +
-                                 " revisions");
-                        continue;
-                    } else {
-                        const int slot = first + candidate.version - 1;
-                        declared =
-                            covers(step.reads,
-                                   RigExecBakedSlotDomain::RevisionDone,
-                                   slot) &&
-                            covers(step.reads,
-                                   RigExecBakedSlotDomain::ChainDirty, slot);
-                    }
-                    if (!declared) {
-                        out->Add(NameStep(B, index) + " binds" + what +
-                                 " without declaring it");
-                    }
-                }
-            };
+                };
             for (const RigExecBakedPointsBinding &binding :
-                     bound->pointBindings) {
+                 bound->pointBindings) {
                 checkBinding(binding);
             }
             for (const RigExecBakedProgramImpl::GeomBlendChannel &channel :
-                     bound->blendChannels) {
+                 bound->blendChannels) {
                 for (const auto &sample : channel.samples) {
                     checkBinding(sample.pointBinding);
                 }
@@ -1553,28 +1723,36 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
         if (step.kind == RigExecBakedStepKind::RevisionChunk ||
             step.kind == RigExecBakedStepKind::RevisionFuse)
             enteringRevision = step.object;
-        else if (step.kind == RigExecBakedStepKind::WeightField && step.object >= 0 &&
+        else if (step.kind == RigExecBakedStepKind::WeightField &&
+                 step.object >= 0 &&
                  size_t(step.object) < B.weightFields.size() &&
-                 B.weightFields[size_t(step.object)].form == RigExecBakedProgramImpl::WeightField::Form::Revision)
+                 B.weightFields[size_t(step.object)].form ==
+                     RigExecBakedProgramImpl::WeightField::Form::Revision)
             enteringRevision = B.weightFields[size_t(step.object)].consumer;
-        else if (step.kind == RigExecBakedStepKind::RevisionStatic && step.object >= 0 &&
-                 size_t(step.object) < revisions) {
-            const auto [chain,r] = B.revisionIndex[size_t(step.object)];
+        else if (step.kind == RigExecBakedStepKind::RevisionStatic &&
+                 step.object >= 0 && size_t(step.object) < revisions) {
+            const auto [chain, r] = B.revisionIndex[size_t(step.object)];
             const auto &revision = B.chains[size_t(chain)].revisions[size_t(r)];
             // Assembly adopts the field; the field owns the entering points.
             if (revision.weightCurrentPhase && revision.weightObject >= 0) {
                 const int field = revision.weightField;
                 if (field < 0 || size_t(field) >= B.weightFields.size() ||
-                    B.weightFields[size_t(field)].form != RigExecBakedProgramImpl::WeightField::Form::Revision ||
+                    B.weightFields[size_t(field)].form !=
+                        RigExecBakedProgramImpl::WeightField::Form::Revision ||
                     B.weightFields[size_t(field)].consumer != step.object ||
-                    B.weightFields[size_t(field)].object != revision.weightObject)
-                    out->Add(NameStep(B,index) + " has no matching current-phase WeightField");
+                    B.weightFields[size_t(field)].object !=
+                        revision.weightObject)
+                    out->Add(NameStep(B, index) +
+                             " has no matching current-phase WeightField");
             }
             if (revision.weightField >= 0 &&
-                !covers(step.reads,RigExecBakedSlotDomain::WeightField,revision.weightField))
-                out->Add(NameStep(B,index) + " adopts its WeightField without declaring it");
+                !covers(step.reads, RigExecBakedSlotDomain::WeightField,
+                        revision.weightField))
+                out->Add(NameStep(B, index) +
+                         " adopts its WeightField without declaring it");
         }
-        if (enteringRevision < 0 || size_t(enteringRevision) >= revisions) continue;
+        if (enteringRevision < 0 || size_t(enteringRevision) >= revisions)
+            continue;
         const auto &[chain, r] = B.revisionIndex[size_t(enteringRevision)];
         const RigExecBakedProgramImpl::GeomRevision &own =
             B.chains[size_t(chain)].revisions[size_t(r)];
@@ -1585,7 +1763,8 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
         if (groupStep) {
             if (B.revisionChunkBase.size() != revisions ||
                 B.revisionChunkCount.size() != revisions) {
-                out->Add(NameStep(B, index) + " belongs to a range-chain "
+                out->Add(NameStep(B, index) +
+                         " belongs to a range-chain "
                          "revision of a program without its chunk tables");
                 continue;
             }
@@ -1602,9 +1781,8 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
             // a structured binding in C++17, so the chain is copied.)
             const int chainIndex = chain;
             const auto groupSlot = [&](size_t g) {
-                const int writer = g < own.enteringWriter.size()
-                                       ? own.enteringWriter[g]
-                                       : -1;
+                const int writer =
+                    g < own.enteringWriter.size() ? own.enteringWriter[g] : -1;
                 return writer < 0
                            ? -1
                            : RigExecBakedGroupSlot(
@@ -1616,7 +1794,8 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
             const auto readsGroup = [&](size_t g) {
                 const int slot = groupSlot(g);
                 return slot < 0
-                           ? covers(step.reads, RigExecBakedSlotDomain::ChainBase,
+                           ? covers(step.reads,
+                                    RigExecBakedSlotDomain::ChainBase,
                                     chainIndex)
                            : covers(step.reads,
                                     RigExecBakedSlotDomain::RevisionOut, slot);
@@ -1629,7 +1808,8 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                     (range && !own.groupWritten[g])) {
                     out->Add(NameStep(B, index) + " is group " +
                              std::to_string(step.part) + " of revision " +
-                             std::to_string(id) + ", which writes no such "
+                             std::to_string(id) +
+                             ", which writes no such "
                              "group");
                     continue;
                 }
@@ -1666,9 +1846,12 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                          ++slot) {
                         if (std::find(allowed.begin(), allowed.end(),
                                       int(slot)) == allowed.end()) {
-                            out->Add(NameStep(B, index) + " reads RevisionOut[" +
-                                     std::to_string(slot) + "], which is not "
-                                     "group " + std::to_string(g) + version);
+                            out->Add(NameStep(B, index) +
+                                     " reads RevisionOut[" +
+                                     std::to_string(slot) +
+                                     "], which is not "
+                                     "group " +
+                                     std::to_string(g) + version);
                         }
                     }
                 }
@@ -1679,7 +1862,8 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                             id - 1))) {
                     out->Add(NameStep(B, index) + " reads point version " +
                              std::to_string(r) + " of chain " +
-                             std::to_string(chain) + ", which a group step "
+                             std::to_string(chain) +
+                             ", which a group step "
                              "must not wait for");
                 }
                 continue;
@@ -1691,9 +1875,10 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                         !covers(step.reads, RigExecBakedSlotDomain::RevisionOut,
                                 base + int(g))) {
                         out->Add(NameStep(B, index) + " joins revision " +
-                                 std::to_string(id) + " without declaring "
-                                 "RevisionOut[" + std::to_string(base + int(g)) +
-                                 "]");
+                                 std::to_string(id) +
+                                 " without declaring "
+                                 "RevisionOut[" +
+                                 std::to_string(base + int(g)) + "]");
                     }
                 }
                 for (size_t g = 0; g < groups; ++g) {
@@ -1706,9 +1891,10 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                     if (write.domain == RigExecBakedSlotDomain::RevisionOut &&
                         !write.IsEmpty()) {
                         out->Add(NameStep(B, index) + " joins revision " +
-                                 std::to_string(id) + " and writes "
-                                 "RevisionOut[" + std::to_string(write.begin) +
-                                 "]");
+                                 std::to_string(id) +
+                                 " and writes "
+                                 "RevisionOut[" +
+                                 std::to_string(write.begin) + "]");
                     }
                 }
                 continue;
@@ -1717,9 +1903,11 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                 // entering group it may pass through.
                 const int published = base + int(own.chunks.size());
                 for (size_t g = 0; g < groups; ++g) {
-                    if (!covers(step.writes, RigExecBakedSlotDomain::RevisionOut,
+                    if (!covers(step.writes,
+                                RigExecBakedSlotDomain::RevisionOut,
                                 published + int(g))) {
-                        out->Add(NameStep(B, index) + " does not publish group " +
+                        out->Add(NameStep(B, index) +
+                                 " does not publish group " +
                                  std::to_string(g) + " of revision " +
                                  std::to_string(id) + " (RevisionOut[" +
                                  std::to_string(published + int(g)) + "])");
@@ -1745,20 +1933,21 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                    enteringRevision - 1);
         if (!declared) {
             out->Add(NameStep(B, index) + " reads point version " +
-                     std::to_string(r) + " of chain " +
-                     std::to_string(chain) + " without declaring it");
+                     std::to_string(r) + " of chain " + std::to_string(chain) +
+                     " without declaring it");
         }
     }
     // One writer per RevisionOut slot, and a reader only of a written one.
     const size_t outSlots = B.chunkRevision.size();
     std::vector<int> outWriter(outSlots, -1);
     for (int index = 0; index < count; ++index) {
-        for (const RigExecBakedSlotRange &write : B.steps[size_t(index)].writes) {
+        for (const RigExecBakedSlotRange &write :
+             B.steps[size_t(index)].writes) {
             if (write.domain != RigExecBakedSlotDomain::RevisionOut) {
                 continue;
             }
-            for (uint32_t slot = write.begin; slot < write.end && slot < outSlots;
-                 ++slot) {
+            for (uint32_t slot = write.begin;
+                 slot < write.end && slot < outSlots; ++slot) {
                 if (outWriter[slot] >= 0 && outWriter[slot] != index) {
                     out->Add(NameStep(B, index) + " writes RevisionOut[" +
                              std::to_string(slot) + "], which " +
@@ -1784,7 +1973,7 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
     }
 }
 
-}  // namespace
+} // namespace
 
 bool
 RigExecBakedValidateStepGraph(const RigExecBakedProgramImpl &program,
@@ -1794,16 +1983,25 @@ RigExecBakedValidateStepGraph(const RigExecBakedProgramImpl &program,
     ValidateStepEdges(program, &violations);
     ValidateSemanticRequirements(program, &violations);
     ValidateSlotProducers(program, &violations);
-    const auto admissionReads = RigExecBakedExpectedStageFramesAdmissionReads(program);
+    const auto admissionReads =
+        RigExecBakedExpectedStageFramesAdmissionReads(program);
     for (size_t i = 0; i < program.steps.size(); ++i) {
-        const auto count = std::count_if(program.steps[i].reads.begin(), program.steps[i].reads.end(),
-            [](const auto &range) { return range.domain == RigExecBakedSlotDomain::RequiredStageFramesAdmission; });
+        const auto count = std::count_if(
+            program.steps[i].reads.begin(), program.steps[i].reads.end(),
+            [](const auto &range) {
+                return range.domain ==
+                       RigExecBakedSlotDomain::RequiredStageFramesAdmission;
+            });
         if (size_t(count) != size_t(bool(admissionReads[i])))
-            violations.Add(NameStep(program, int(i)) + " differs from its required stage-frame admission role");
+            violations.Add(
+                NameStep(program, int(i)) +
+                " differs from its required stage-frame admission role");
     }
     std::string headError;
-    if (!RigExecBakedValidateHeadTier(program,&headError)) violations.Add(headError);
-    if (!RigExecBakedValidateHeadReads(program,&headError)) violations.Add(headError);
+    if (!RigExecBakedValidateHeadTier(program, &headError))
+        violations.Add(headError);
+    if (!RigExecBakedValidateHeadReads(program, &headError))
+        violations.Add(headError);
     ValidatePoseVersions(program, &violations);
     ValidatePointVersions(program, &violations);
     ValidateClusters(program, &violations);
@@ -1813,8 +2011,8 @@ RigExecBakedValidateStepGraph(const RigExecBakedProgramImpl &program,
     if (error) {
         *error = violations.first;
         if (violations.count > 1) {
-            *error += " (and " + std::to_string(violations.count - 1) +
-                      " more)";
+            *error +=
+                " (and " + std::to_string(violations.count - 1) + " more)";
         }
     }
     return false;
@@ -1848,7 +2046,8 @@ RigExecBakedClusterTopologicalOrder(const RigExecBakedClustering &clustering)
     }
     std::vector<int> ready;
     for (size_t c = 0; c < count; ++c) {
-        if (remaining[c] == 0) ready.push_back(int(c));
+        if (remaining[c] == 0)
+            ready.push_back(int(c));
     }
     while (!ready.empty()) {
         const int cluster = ready.back();
@@ -1862,7 +2061,8 @@ RigExecBakedClusterTopologicalOrder(const RigExecBakedClustering &clustering)
     }
     TF_VERIFY(order.size() == count,
               "rigExec: the baked cluster graph has a cycle (%zu of %zu "
-              "clusters ordered)", order.size(), count);
+              "clusters ordered)",
+              order.size(), count);
     return order;
 }
 
@@ -1889,8 +2089,10 @@ RigExecBakedBuildCones(RigExecBakedProgramImpl *program)
     cones.always.Resize(count);
     cones.poseClusters.Resize(count);
     for (size_t c = 0; c < count; ++c) {
-        if(count>8192)closures[c].ResizeSparse(count);
-        else closures[c].Resize(count);
+        if (count > 8192)
+            closures[c].ResizeSparse(count);
+        else
+            closures[c].Resize(count);
     }
     cones.alwaysSteps.Resize(stepCount);
     cones.poseSteps.Resize(stepCount);
@@ -1907,7 +2109,8 @@ RigExecBakedBuildCones(RigExecBakedProgramImpl *program)
             cones.poseClusters.Set(step.cluster);
             cones.poseSteps.Set(index);
         }
-        if (step.varyingInputs || resolvedReaders[size_t(&step - B.steps.data())]) {
+        if (step.varyingInputs ||
+            resolvedReaders[size_t(&step - B.steps.data())]) {
             cones.varyingSteps.push_back(int(&step - B.steps.data()));
         }
         if (!step.overrideInputs.empty()) {
@@ -1970,8 +2173,7 @@ RigExecBakedBuildCones(RigExecBakedProgramImpl *program)
                     continue;
                 }
                 for (uint32_t slot = range.begin;
-                     slot < range.end &&
-                     slot < cones.avarVersionSteps.size();
+                     slot < range.end && slot < cones.avarVersionSteps.size();
                      ++slot) {
                     if (int(slot) < group.begin || int(slot) >= group.end) {
                         cones.avarVersionSteps[slot].push_back(index);
@@ -1982,13 +2184,11 @@ RigExecBakedBuildCones(RigExecBakedProgramImpl *program)
         for (const RigExecBakedSlotRange &range : step.reads) {
             if (range.domain == RigExecBakedSlotDomain::ChainBase) {
                 for (uint32_t c = range.begin;
-                     c < range.end && c < cones.chainBaseClusters.size();
-                     ++c) {
+                     c < range.end && c < cones.chainBaseClusters.size(); ++c) {
                     cones.chainBaseClusters[c].push_back(step.cluster);
                     cones.chainBaseSteps[c].push_back(index);
                 }
-            } else if (range.domain ==
-                       RigExecBakedSlotDomain::SolverPoints) {
+            } else if (range.domain == RigExecBakedSlotDomain::SolverPoints) {
                 for (uint32_t si = range.begin;
                      si < range.end && si < cones.solverPointsClusters.size();
                      ++si) {
@@ -2005,8 +2205,7 @@ RigExecBakedBuildCones(RigExecBakedProgramImpl *program)
         case RigExecBakedStepKind::InfluenceFold:
         case RigExecBakedStepKind::RevisionChunk:
         case RigExecBakedStepKind::RevisionFuse:
-            cones.revisionClusters[size_t(step.object)].push_back(
-                step.cluster);
+            cones.revisionClusters[size_t(step.object)].push_back(step.cluster);
             cones.revisionSteps[size_t(step.object)].push_back(index);
             break;
         default:
@@ -2022,7 +2221,8 @@ RigExecBakedBuildCones(RigExecBakedProgramImpl *program)
     cones.ladderReaders.assign(B.paths.size(), {});
     cones.walkReaders.assign(B.readerWalks.size(), {});
     for (const RigExecBakedStep &step : B.steps) {
-        if (step.isHead) continue;
+        if (step.isHead)
+            continue;
         const int index = int(&step - B.steps.data());
         if (step.kind == RigExecBakedStepKind::WeightField)
             cones.fieldSteps[size_t(step.object)] = index;
@@ -2079,18 +2279,17 @@ RigExecBakedBuildCones(RigExecBakedProgramImpl *program)
         if (constraint.worldUpNative >= 0) {
             cones.nativeSourceClusters[size_t(constraint.worldUpNative)]
                 .push_back(step.cluster);
-            cones.nativeSourceSteps[size_t(constraint.worldUpNative)]
-                .push_back(index);
+            cones.nativeSourceSteps[size_t(constraint.worldUpNative)].push_back(
+                index);
         }
         if (constraint.deltaBase >= 0) {
             cones.deltaBaseClusters[size_t(constraint.deltaBase)].push_back(
                 step.cluster);
-            cones.deltaBaseSteps[size_t(constraint.deltaBase)].push_back(
-                index);
+            cones.deltaBaseSteps[size_t(constraint.deltaBase)].push_back(index);
         }
         if (constraint.arrays >= 0) {
-            cones.constraintArrayClusters[size_t(constraint.arrays)]
-                .push_back(step.cluster);
+            cones.constraintArrayClusters[size_t(constraint.arrays)].push_back(
+                step.cluster);
             cones.constraintArraySteps[size_t(constraint.arrays)].push_back(
                 index);
         }
@@ -2137,7 +2336,7 @@ namespace {
 thread_local bool tRigExecInOpBody = false;
 thread_local std::atomic<uint64_t> *tRigExecPurityViolations = nullptr;
 
-}  // namespace
+} // namespace
 
 bool
 RigExecInOpBody()
@@ -2158,8 +2357,7 @@ RigExecReportBodyRead()
 }
 
 RigExecOpBodyScope::RigExecOpBodyScope(std::atomic<uint64_t> *violations)
-    : _wasInBody(tRigExecInOpBody)
-    , _wasViolations(tRigExecPurityViolations)
+    : _wasInBody(tRigExecInOpBody), _wasViolations(tRigExecPurityViolations)
 {
     tRigExecInOpBody = true;
     tRigExecPurityViolations = violations;
@@ -2171,8 +2369,7 @@ RigExecOpBodyScope::~RigExecOpBodyScope()
     tRigExecPurityViolations = _wasViolations;
 }
 
-RigExecVolatileRead::RigExecVolatileRead()
-    : _wasInBody(tRigExecInOpBody)
+RigExecVolatileRead::RigExecVolatileRead() : _wasInBody(tRigExecInOpBody)
 {
     tRigExecInOpBody = false;
 }
@@ -2192,8 +2389,8 @@ RunStepBody(RigExecBakedProgramImpl *B, RigExecBakedStep *step,
             UsdTimeCode time)
 {
     // Every domain body is dispatched through the shared executor.
-    const RigExecOpBodyScope body(
-        B->purityAudit ? &B->purityViolations.count : nullptr);
+    const RigExecOpBodyScope body(B->purityAudit ? &B->purityViolations.count
+                                                 : nullptr);
     // A run's output is cleared HERE rather than in the body, so that the
     // clearing is the executor's promise and not something fifteen bodies
     // each have to remember.
@@ -2202,45 +2399,54 @@ RunStepBody(RigExecBakedProgramImpl *B, RigExecBakedStep *step,
     // shared memo/scheduler still executes its ordinary pure outcome; no
     // arithmetic or owned post-refusal state is changed on refusal.
     if (RigExecBakedRequiresStageFramesAdmission(*step) &&
-        !B->requiredStageFramesAdmission.admitted) return;
+        !B->requiredStageFramesAdmission.admitted)
+        return;
     if (step->isHead) {
         switch (step->kind) {
         case RigExecBakedStepKind::WeightField:
-            RigExecBakedRunWeightField(B,step); break;
+            RigExecBakedRunWeightField(B, step);
+            break;
         case RigExecBakedStepKind::PropertyRevision:
-            RigExecBakedRunPropertyStep(B,step,time); break;
+            RigExecBakedRunPropertyStep(B, step, time);
+            break;
         case RigExecBakedStepKind::RestCompose: {
             const auto &g = B->composeGroups[size_t(step->object)];
-            RigExecBakedComposeRestRange(B,g.begin,g.end,true); break;
+            RigExecBakedComposeRestRange(B, g.begin, g.end, true);
+            break;
         }
         case RigExecBakedStepKind::LadderCompose: {
             const auto &g = B->composeGroups[size_t(step->object)];
-            RigExecBakedComposeLadderRange(B,g.begin,g.end,true); break;
+            RigExecBakedComposeLadderRange(B, g.begin, g.end, true);
+            break;
         }
         case RigExecBakedStepKind::SkinTopology: {
-            auto *revision = RigExecBakedLayoutRevision(B,size_t(step->object));
+            auto *revision =
+                RigExecBakedLayoutRevision(B, size_t(step->object));
             if (revision) {
                 const auto before = revision->layoutHandle;
-                RigExecBakedRunLayoutOp(*B,revision);
+                RigExecBakedRunLayoutOp(*B, revision);
                 revision->layoutRan = true;
-                revision->layoutOutputChanged = before != revision->layoutHandle;
+                revision->layoutOutputChanged =
+                    before != revision->layoutHandle;
             }
             break;
         }
-        default: TF_VERIFY(false,"invalid head operation"); break;
+        default:
+            TF_VERIFY(false, "invalid head operation");
+            break;
         }
     } else if (step->kind == RigExecBakedStepKind::SpaceExpression) {
-        RigExecBakedRunSpaceOp(B,step);
+        RigExecBakedRunSpaceOp(B, step);
     } else if (step->kind == RigExecBakedStepKind::SpaceCheckpoint) {
-        RigExecBakedRunSpaceCheckpoint(B,step);
+        RigExecBakedRunSpaceCheckpoint(B, step);
     } else if (step->kind == RigExecBakedStepKind::ProviderRefresh) {
-        RigExecBakedRunProviderRefresh(B,step);
+        RigExecBakedRunProviderRefresh(B, step);
     } else if (step->kind == RigExecBakedStepKind::AvarInputs) {
-        RigExecBakedRunAvarOp(B,step);
+        RigExecBakedRunAvarOp(B, step);
     } else if (step->kind == RigExecBakedStepKind::WeightField) {
-        RigExecBakedRunWeightField(B,step);
+        RigExecBakedRunWeightField(B, step);
     } else if (step->kind == RigExecBakedStepKind::WeightPacket ||
-        step->kind == RigExecBakedStepKind::VolumePlacements) {
+               step->kind == RigExecBakedStepKind::VolumePlacements) {
         // Neither half's: a weight object is bound by movers and by
         // constraints, so its packet is built between the two rather than
         // inside either (bakedWeights.cpp).
@@ -2255,10 +2461,11 @@ RunStepBody(RigExecBakedProgramImpl *B, RigExecBakedStep *step,
     // the declaration exists to prevent.
     TF_VERIFY(step->diagnostics.size() <= step->maxDiagnostics,
               "rigExec: baked step emitted %zu diagnostics, at most %zu "
-              "declared", step->diagnostics.size(), step->maxDiagnostics);
+              "declared",
+              step->diagnostics.size(), step->maxDiagnostics);
 }
 
-}  // namespace
+} // namespace
 
 /// The profiler's microseconds are the right unit for a trace and the wrong
 /// one for a cost model: most steps of a biped frame are under a microsecond,
@@ -2272,23 +2479,28 @@ RigExecBakedNowNs()
 }
 
 namespace {
-bool OriginalPreparationKind(RigExecBakedStepKind kind)
+bool
+OriginalPreparationKind(RigExecBakedStepKind kind)
 {
     using K = RigExecBakedStepKind;
     return kind == K::PropertyRevision || kind == K::RestCompose ||
            kind == K::LadderCompose || kind == K::SkinTopology;
 }
-}
+} // namespace
 
-bool RigExecBakedRequiresStageFramesAdmission(const RigExecBakedStep &step)
+bool
+RigExecBakedRequiresStageFramesAdmission(const RigExecBakedStep &step)
 {
     for (const auto &r : step.reads)
         if (r.domain == RigExecBakedSlotDomain::RequiredStageFramesAdmission &&
-            r.begin == 0 && r.end == 1) return true;
+            r.begin == 0 && r.end == 1)
+            return true;
     return false;
 }
 
-std::vector<char> RigExecBakedExpectedStageFramesAdmissionReads(const RigExecBakedProgramImpl &program)
+std::vector<char>
+RigExecBakedExpectedStageFramesAdmissionReads(
+    const RigExecBakedProgramImpl &program)
 {
     const auto *B = &program;
     // Genuine compiler-emitted value edges, never vector order or extra
@@ -2302,17 +2514,21 @@ std::vector<char> RigExecBakedExpectedStageFramesAdmissionReads(const RigExecBak
     std::vector<size_t> pending;
     for (size_t i = 0; i < B->steps.size(); ++i)
         if (OriginalPreparationKind(B->steps[i].kind)) {
-            ancestry[i] = 1; pending.push_back(i);
+            ancestry[i] = 1;
+            pending.push_back(i);
         }
     while (!pending.empty()) {
-        const size_t i = pending.back(); pending.pop_back();
+        const size_t i = pending.back();
+        pending.pop_back();
         for (const auto &r : B->steps[i].reads)
             for (uint32_t slot = r.begin; slot < r.end; ++slot) {
                 const auto at = writers.find((uint64_t(r.domain) << 32) | slot);
-                if (at == writers.end()) continue;
+                if (at == writers.end())
+                    continue;
                 for (const size_t producer : at->second)
                     if (!ancestry[producer]) {
-                        ancestry[producer] = 1; pending.push_back(producer);
+                        ancestry[producer] = 1;
+                        pending.push_back(producer);
                     }
             }
     }
@@ -2320,73 +2536,91 @@ std::vector<char> RigExecBakedExpectedStageFramesAdmissionReads(const RigExecBak
     std::vector<char> required(B->steps.size(), 0);
     for (size_t i = 0; i < B->steps.size(); ++i) {
         const auto &step = B->steps[i];
-        const bool preparation = OriginalPreparationKind(step.kind) ||
-            step.kind == K::AvarInputs ||
-            (ancestry[i] && (step.kind == K::SpaceExpression || step.kind == K::WeightField));
+        const bool preparation =
+            OriginalPreparationKind(step.kind) || step.kind == K::AvarInputs ||
+            (ancestry[i] &&
+             (step.kind == K::SpaceExpression || step.kind == K::WeightField));
         required[i] = !preparation && step.kind != K::SnapshotFinals;
     }
     return required;
 }
 
-void RigExecBakedDeclareStageFramesAdmission(RigExecBakedProgramImpl *B)
+void
+RigExecBakedDeclareStageFramesAdmission(RigExecBakedProgramImpl *B)
 {
     const auto required = RigExecBakedExpectedStageFramesAdmissionReads(*B);
     for (size_t i = 0; i < B->steps.size(); ++i)
-        if (required[i] && !RigExecBakedRequiresStageFramesAdmission(B->steps[i]))
-            B->steps[i].reads.push_back({RigExecBakedSlotDomain::RequiredStageFramesAdmission, 0, 1});
+        if (required[i] &&
+            !RigExecBakedRequiresStageFramesAdmission(B->steps[i]))
+            B->steps[i].reads.push_back(
+                {RigExecBakedSlotDomain::RequiredStageFramesAdmission, 0, 1});
 }
 
-bool RigExecBakedPublishStageFramesRefusal(RigExecBakedProgramImpl *B,
-                                         RigExecRigPose *pose)
+bool
+RigExecBakedPublishStageFramesRefusal(RigExecBakedProgramImpl *B,
+                                      RigExecRigPose *pose)
 {
     const auto &a = B->requiredStageFramesAdmission;
-    if (a.admitted) return false;
-    if (a.firstBadTarget < 0 || size_t(a.firstBadTarget) >= B->xformSlots.size())
+    if (a.admitted)
+        return false;
+    if (a.firstBadTarget < 0 ||
+        size_t(a.firstBadTarget) >= B->xformSlots.size())
         return false;
     std::vector<const RigExecBakedStep *> lines;
     for (const auto &step : B->steps)
         if (step.kind == RigExecBakedStepKind::PropertyRevision)
             lines.push_back(&step);
     std::sort(lines.begin(), lines.end(), [](const auto *a, const auto *b) {
-        return std::make_pair(a->object,a->part) < std::make_pair(b->object,b->part);
+        return std::make_pair(a->object, a->part) <
+               std::make_pair(b->object, b->part);
     });
     for (const auto *step : lines) {
         // ORIGINAL's pre-refusal property tier replays cached lines;
         // later body diagnostics never become this refused publication.
-        pose->diagnostics.insert(pose->diagnostics.end(), step->lines.begin(), step->lines.end());
+        pose->diagnostics.insert(pose->diagnostics.end(), step->lines.begin(),
+                                 step->lines.end());
     }
     for (const auto &entry : B->propertyResults)
-        pose->movedProperties.emplace_hint(pose->movedProperties.end(), entry.first, entry.second);
+        pose->movedProperties.emplace_hint(pose->movedProperties.end(),
+                                           entry.first, entry.second);
     const int slot = B->xformSlots[size_t(a.firstBadTarget)];
-    if (slot < 0 || size_t(slot) >= B->paths.size()) return false;
+    if (slot < 0 || size_t(slot) >= B->paths.size())
+        return false;
     pose->diagnostics.push_back("could not resolve constraint target " +
-        B->paths[size_t(slot)].GetString() + " relative to the asset root");
+                                B->paths[size_t(slot)].GetString() +
+                                " relative to the asset root");
     // Caller-owned validity/maps/time remain as supplied, exactly as direct
     // ORIGINAL Run; a fresh output is already invalid.
-    if (B->programStamp == B->lastProgramStamp) ++B->programStamp;
+    if (B->programStamp == B->lastProgramStamp)
+        ++B->programStamp;
     return true;
 }
 
 void
-RigExecBakedRunStepBody(RigExecBakedProgramImpl *B,
-                                RigExecBakedStep *step, UsdTimeCode time,
-                                bool profiling)
+RigExecBakedRunStepBody(RigExecBakedProgramImpl *B, RigExecBakedStep *step,
+                        UsdTimeCode time, bool profiling)
 {
-    const bool measuring=B->opAdapter.measuring && !B->measurementSuspended &&
-        !B->coldRunExcluded;
-    const uint64_t began=profiling ? RigExecProfiler::NowUs() : 0;
-    const uint64_t beganNs=measuring ? RigExecBakedNowNs() : 0;
-    const size_t index=size_t(step-B->steps.data());
-    if(profiling) step->runner=std::this_thread::get_id();
-    if(B->execCheckRows) B->execCheckRows->BeforeStep(*B,index);
-    RunStepBody(B,step,time);
-    if(B->execCheckRows) B->execCheckRows->AfterStep(*B,index);
-    if(measuring) {
-        step->bodyEndNs=RigExecBakedNowNs();
-        step->measuredUs+=double(step->bodyEndNs-beganNs)/1000.0; ++step->measuredRuns;
+    const bool measuring = B->opAdapter.measuring && !B->measurementSuspended &&
+                           !B->coldRunExcluded;
+    const uint64_t began = profiling ? RigExecProfiler::NowUs() : 0;
+    const uint64_t beganNs = measuring ? RigExecBakedNowNs() : 0;
+    const size_t index = size_t(step - B->steps.data());
+    if (profiling)
+        step->runner = std::this_thread::get_id();
+    if (B->execCheckRows)
+        B->execCheckRows->BeforeStep(*B, index);
+    RunStepBody(B, step, time);
+    if (B->execCheckRows)
+        B->execCheckRows->AfterStep(*B, index);
+    if (measuring) {
+        step->bodyEndNs = RigExecBakedNowNs();
+        step->measuredUs += double(step->bodyEndNs - beganNs) / 1000.0;
+        ++step->measuredRuns;
     }
-    if(profiling) { step->startUs=began; step->endUs=RigExecProfiler::NowUs(); }
-
+    if (profiling) {
+        step->startUs = began;
+        step->endUs = RigExecProfiler::NowUs();
+    }
 }
 
 void
@@ -2395,10 +2629,12 @@ RigExecBakedClearRunStamps(RigExecBakedProgramImpl *program)
     // Only a listed step can hold a stamp, so a frame's clear costs its
     // candidates rather than the whole program.
     for (const uint32_t index : program->stampedSteps) {
-        if (index >= program->steps.size()) continue;
+        if (index >= program->steps.size())
+            continue;
         RigExecBakedStep &step = program->steps[index];
         step.startUs = step.endUs = 0;
-        step.memoStartNs = step.memoEndNs = step.bodyEndNs = step.publishEndNs = 0;
+        step.memoStartNs = step.memoEndNs = step.bodyEndNs = step.publishEndNs =
+            0;
     }
     program->stampedSteps.clear();
     // Through the execution's own record. The workspace is the executor's
@@ -2409,9 +2645,10 @@ RigExecBakedClearRunStamps(RigExecBakedProgramImpl *program)
 }
 
 bool
-RigExecBakedRunSteps(RigExecBakedProgramImpl *program, UsdTimeCode time, bool force)
+RigExecBakedRunSteps(RigExecBakedProgramImpl *program, UsdTimeCode time,
+                     bool force)
 {
-    return RigExecBakedExecuteOpGraph(program,time,force);
+    return RigExecBakedExecuteOpGraph(program, time, force);
 }
 
 // Calibration.
@@ -2483,7 +2720,7 @@ FitKind(const std::vector<std::pair<double, double>> &samples,
     return fitted;
 }
 
-}  // namespace
+} // namespace
 
 void
 RigExecBakedScheduleCalibrate(RigExecBakedProgramImpl *program)
@@ -2496,8 +2733,7 @@ RigExecBakedScheduleCalibrate(RigExecBakedProgramImpl *program)
     if (++framesSeen < B.calibrationFrames) {
         return;
     }
-    std::array<std::vector<std::pair<double, double>>, kStepKindCount>
-        samples;
+    std::array<std::vector<std::pair<double, double>>, kStepKindCount> samples;
     for (const RigExecBakedStep &step : B.steps) {
         if (!step.measuredRuns) {
             continue;
@@ -2537,7 +2773,7 @@ StepTimingFrames()
     return value > 1 ? value : 8;
 }
 
-}  // namespace
+} // namespace
 
 void
 RigExecBakedStepTimingReport(RigExecBakedProgramImpl *program)
@@ -2588,8 +2824,8 @@ RigExecBakedStepTimingTable(const RigExecBakedProgramImpl &B)
     out += line;
     // The steps sum to less than the region: the region also computes the
     // dirty closure, runs the sources and, in parallel mode, waits.
-    std::snprintf(line, sizeof(line),
-                  "  step bodies %8.1f of the region\n", steps / frames);
+    std::snprintf(line, sizeof(line), "  step bodies %8.1f of the region\n",
+                  steps / frames);
     out += line;
     std::vector<std::pair<double, size_t>> order;
     for (size_t kind = 0; kind < kStepKindCount; ++kind) {
@@ -2600,11 +2836,11 @@ RigExecBakedStepTimingTable(const RigExecBakedProgramImpl &B)
     std::sort(order.begin(), order.end(),
               [](const auto &a, const auto &b) { return a.first > b.first; });
     for (const auto &[total, kind] : order) {
-        std::snprintf(
-            line, sizeof(line), "  %-16s %8.2f  %6.2f per run, %zu run(s)\n",
-            RigExecBakedStepKindName(RigExecBakedStepKind(kind)),
-            total / frames, total / double(runsByKind[kind]),
-            size_t(double(runsByKind[kind]) / frames + 0.5));
+        std::snprintf(line, sizeof(line),
+                      "  %-16s %8.2f  %6.2f per run, %zu run(s)\n",
+                      RigExecBakedStepKindName(RigExecBakedStepKind(kind)),
+                      total / frames, total / double(runsByKind[kind]),
+                      size_t(double(runsByKind[kind]) / frames + 0.5));
         out += line;
     }
     // Then what an op holds its thread for around its body: the memo,
@@ -2628,13 +2864,13 @@ RigExecBakedStepTimingTable(const RigExecBakedProgramImpl &B)
               [](const auto &a, const auto &b) { return a.first > b.first; });
     for (const auto &entry : order) {
         const size_t kind = entry.second;
-        std::snprintf(
-            line, sizeof(line), "  %-16s memo %8.2f over %zu memo(s)  "
-            "publish %8.2f\n",
-            RigExecBakedStepKindName(RigExecBakedStepKind(kind)),
-            memoByKind[kind] / frames,
-            size_t(double(memoRunsByKind[kind]) / frames + 0.5),
-            publishByKind[kind] / frames);
+        std::snprintf(line, sizeof(line),
+                      "  %-16s memo %8.2f over %zu memo(s)  "
+                      "publish %8.2f\n",
+                      RigExecBakedStepKindName(RigExecBakedStepKind(kind)),
+                      memoByKind[kind] / frames,
+                      size_t(double(memoRunsByKind[kind]) / frames + 0.5),
+                      publishByKind[kind] / frames);
         out += line;
     }
     // Last, so that every line above keeps its position: the cold runs the
@@ -2659,34 +2895,48 @@ std::string
 StepLabel(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step,
           RigExecPathText &text)
 {
-    const auto revisionOf = [&B](int id) -> const
-        RigExecBakedProgramImpl::GeomRevision & {
+    const auto revisionOf =
+        [&B](int id) -> const RigExecBakedProgramImpl::GeomRevision & {
         const auto &[chain, revision] = B.revisionIndex[size_t(id)];
         return B.chains[size_t(chain)].revisions[size_t(revision)];
     };
     switch (step.kind) {
     case RigExecBakedStepKind::SpaceCheckpoint:
-        return step.object>=0 && size_t(step.object)<B.switchFrameContexts.size()
-            ? B.switchFrameContexts[size_t(step.object)].key : "invalid space checkpoint";
+        return step.object >= 0 &&
+                       size_t(step.object) < B.switchFrameContexts.size()
+                   ? B.switchFrameContexts[size_t(step.object)].key
+                   : "invalid space checkpoint";
     case RigExecBakedStepKind::ProviderRefresh:
-        return step.object>=0 && size_t(step.object)<B.providerRefreshes.size()
-            ? B.providerRefreshes[size_t(step.object)].key : "invalid provider refresh";
+        return step.object >= 0 &&
+                       size_t(step.object) < B.providerRefreshes.size()
+                   ? B.providerRefreshes[size_t(step.object)].key
+                   : "invalid provider refresh";
     case RigExecBakedStepKind::AvarInputs:
         return text(B.paths[size_t(step.object)]);
     case RigExecBakedStepKind::ChainInputs:
         return text(B.chains[size_t(step.object)].target);
 
     case RigExecBakedStepKind::SpaceExpression: {
-        RigExecValueId value=RigExecNoProviderValue;
-        if(step.object>=0) {
-            const size_t object=size_t(step.object);
-            if(step.part==0 && object<B.GetProviderProgram().ops.size()) value=B.GetProviderProgram().ops[object].output;
-            else if(step.part==1 && object<B.GetProviderProgram().externalInputs.size()) value=B.GetProviderProgram().externalInputs[object].value;
-            else if(step.part==2 && object<B.GetProviderProgram().sampled.size()) value=B.GetProviderProgram().sampled[object].value;
-            else if(step.part==3 && object<B.GetProviderProgram().routedInputs.size()) value=B.GetProviderProgram().routedInputs[object].value;
-            else if(step.part==4 && object<B.providerFrameInputs.size()) value=B.providerFrameInputs[object].value;
+        RigExecValueId value = RigExecNoProviderValue;
+        if (step.object >= 0) {
+            const size_t object = size_t(step.object);
+            if (step.part == 0 && object < B.GetProviderProgram().ops.size())
+                value = B.GetProviderProgram().ops[object].output;
+            else if (step.part == 1 &&
+                     object < B.GetProviderProgram().externalInputs.size())
+                value = B.GetProviderProgram().externalInputs[object].value;
+            else if (step.part == 2 &&
+                     object < B.GetProviderProgram().sampled.size())
+                value = B.GetProviderProgram().sampled[object].value;
+            else if (step.part == 3 &&
+                     object < B.GetProviderProgram().routedInputs.size())
+                value = B.GetProviderProgram().routedInputs[object].value;
+            else if (step.part == 4 && object < B.providerFrameInputs.size())
+                value = B.providerFrameInputs[object].value;
         }
-        return value<B.GetProviderProgram().valueKeys.size() ? B.GetProviderProgram().valueKeys[size_t(value)] : "invalid provider value";
+        return value < B.GetProviderProgram().valueKeys.size()
+                   ? B.GetProviderProgram().valueKeys[size_t(value)]
+                   : "invalid provider value";
     }
 
     case RigExecBakedStepKind::ComposeSubtree:
@@ -2712,8 +2962,7 @@ StepLabel(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step,
     case RigExecBakedStepKind::FrameMatrix: {
         // Range-checked: the validator names a step whose record is out of
         // the table.
-        if (step.object < 0 ||
-            size_t(step.object) >= B.frameRecords.size()) {
+        if (step.object < 0 || size_t(step.object) >= B.frameRecords.size()) {
             return "record " + std::to_string(step.object);
         }
         const RigExecBakedFrameRecord &record =
@@ -2731,14 +2980,21 @@ StepLabel(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step,
         // step (part -1) has no slot to name.
         if ((step.part == 1 || step.part == 2) && step.object >= 0 &&
             size_t(step.object) < B.paths.size()) {
-            return text(B.paths[size_t(step.object)]) + (step.part == 2 ? " base" : "");
+            return text(B.paths[size_t(step.object)]) +
+                   (step.part == 2 ? " base" : "");
         }
         return "every volume weight";
     case RigExecBakedStepKind::WeightField:
-        return text(B.weightObjects[size_t(B.weightFields[size_t(step.object)].object)].path) +
-               " form " + std::to_string(int(B.weightFields[size_t(step.object)].form)) +
-               " consumer " + std::to_string(B.weightFields[size_t(step.object)].consumer) +
-               " part " + std::to_string(B.weightFields[size_t(step.object)].part);
+        return text(B
+                        .weightObjects[size_t(
+                            B.weightFields[size_t(step.object)].object)]
+                        .path) +
+               " form " +
+               std::to_string(int(B.weightFields[size_t(step.object)].form)) +
+               " consumer " +
+               std::to_string(B.weightFields[size_t(step.object)].consumer) +
+               " part " +
+               std::to_string(B.weightFields[size_t(step.object)].part);
     case RigExecBakedStepKind::WeightPacket:
         return text(B.weightObjects[size_t(step.object)].path);
     case RigExecBakedStepKind::InfluenceFold:
@@ -2758,7 +3014,7 @@ StepLabel(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step,
 
 void
 AppendRanges(std::string *out, const char *what,
-              const std::vector<RigExecBakedSlotRange> &ranges)
+             const std::vector<RigExecBakedSlotRange> &ranges)
 {
     *out += "        ";
     *out += what;
@@ -2785,7 +3041,7 @@ Fixed(double value)
     return text;
 }
 
-}  // namespace
+} // namespace
 
 std::string
 RigExecBakedScheduleReport(const RigExecBakedProgramImpl &B)
@@ -2801,22 +3057,24 @@ RigExecBakedScheduleReport(const RigExecBakedProgramImpl &B)
     for (const RigExecBakedCluster &cluster : schedule.clusters) {
         clusterEdges += cluster.preds.size();
     }
-    std::string out = "rigExec baked schedule: " +
-                      std::to_string(B.steps.size()) + " step(s), " +
-                      std::to_string(edges) + " edge(s), " +
-                      std::to_string(B.paths.size()) + " provider slot(s)\n";
+    std::string out =
+        "rigExec baked schedule: " + std::to_string(B.steps.size()) +
+        " step(s), " + std::to_string(edges) + " edge(s), " +
+        std::to_string(B.paths.size()) + " provider slot(s)\n";
     out += "  mode=";
     out += B.scheduleParallel ? "parallel" : "serial";
-    out += " grain=" + Fixed(schedule.grainUs) + "us concurrency=" +
-           std::to_string(WorkGetConcurrencyLimit()) + " reference=" +
-           std::to_string(RigExecBakedTranslationConcurrency(B)) + "\n";
+    out +=
+        " grain=" + Fixed(schedule.grainUs) +
+        "us concurrency=" + std::to_string(WorkGetConcurrencyLimit()) +
+        " reference=" + std::to_string(RigExecBakedTranslationConcurrency(B)) +
+        "\n";
     out += "  clusters=" + std::to_string(schedule.clusters.size()) + " (" +
-           std::to_string(clusterEdges) + " edge(s)) serial=" +
-           Fixed(schedule.serialCost) + "us criticalPath=" +
-           Fixed(schedule.criticalPathCost) + "us";
+           std::to_string(clusterEdges) +
+           " edge(s)) serial=" + Fixed(schedule.serialCost) +
+           "us criticalPath=" + Fixed(schedule.criticalPathCost) + "us";
     if (schedule.criticalPathCost > 0) {
-        out += " (" +
-               Fixed(schedule.serialCost / schedule.criticalPathCost) + "x)";
+        out += " (" + Fixed(schedule.serialCost / schedule.criticalPathCost) +
+               "x)";
     }
     out += "\n";
     for (const auto &[kind, count] : byKind) {
@@ -2833,9 +3091,8 @@ RigExecBakedScheduleReport(const RigExecBakedProgramImpl &B)
     for (size_t c = 0; c < schedule.clusters.size(); ++c) {
         const RigExecBakedCluster &cluster = schedule.clusters[c];
         out += "  cluster [" + std::to_string(c) + "] level " +
-               std::to_string(cluster.level) + " cost " +
-               Fixed(cluster.cost) + "us " +
-               std::to_string(cluster.members.size()) + " step(s)\n";
+               std::to_string(cluster.level) + " cost " + Fixed(cluster.cost) +
+               "us " + std::to_string(cluster.members.size()) + " step(s)\n";
         out += "        preds";
         if (cluster.preds.empty()) {
             out += " -";
@@ -2856,8 +3113,8 @@ RigExecBakedScheduleReport(const RigExecBakedProgramImpl &B)
             out += " #" + std::to_string(step.part);
         }
         out += " cluster " + std::to_string(step.cluster) + " level " +
-               std::to_string(step.level) + " size " +
-               Fixed(step.sizeUnits) + " cost " + Fixed(step.cost) + "us";
+               std::to_string(step.level) + " size " + Fixed(step.sizeUnits) +
+               " cost " + Fixed(step.cost) + "us";
         out += "\n";
         AppendRanges(&out, "reads ", step.reads);
         AppendRanges(&out, "writes", step.writes);
@@ -2873,7 +3130,6 @@ RigExecBakedScheduleReport(const RigExecBakedProgramImpl &B)
     return out;
 }
 
-
 std::string
 RigExecBakedScheduleRunReport(const RigExecBakedProgramImpl &B)
 {
@@ -2886,18 +3142,21 @@ RigExecBakedScheduleRunReport(const RigExecBakedProgramImpl &B)
         out += "  operation body timings were not enabled\n";
         return out;
     }
-    uint64_t opened=UINT64_MAX;
-    for(const auto &cluster:schedule.clusters)
-        if(cluster.startUs) opened=std::min(opened,cluster.startUs);
-    for(size_t c=0;c<schedule.clusters.size();++c) {
-        const auto &cluster=schedule.clusters[c];
-        if(!cluster.startUs) continue;
-        size_t executed=0;
-        for(int member:cluster.members) executed+=B.opExecution.ran[size_t(member)]!=0;
-        out += "  cluster ["+std::to_string(c)+"] start "+
-            Fixed(double(cluster.startUs-opened))+"us run "+
-            Fixed(double(cluster.endUs-cluster.startUs))+"us "+
-            std::to_string(executed)+" operation(s)\n";
+    uint64_t opened = UINT64_MAX;
+    for (const auto &cluster : schedule.clusters)
+        if (cluster.startUs)
+            opened = std::min(opened, cluster.startUs);
+    for (size_t c = 0; c < schedule.clusters.size(); ++c) {
+        const auto &cluster = schedule.clusters[c];
+        if (!cluster.startUs)
+            continue;
+        size_t executed = 0;
+        for (int member : cluster.members)
+            executed += B.opExecution.ran[size_t(member)] != 0;
+        out += "  cluster [" + std::to_string(c) + "] start " +
+               Fixed(double(cluster.startUs - opened)) + "us run " +
+               Fixed(double(cluster.endUs - cluster.startUs)) + "us " +
+               std::to_string(executed) + " operation(s)\n";
     }
     return out;
 }
@@ -2970,12 +3229,12 @@ RigExecBakedReplayStepTimings(const RigExecBakedProgramImpl &B)
         if (cluster.endUs <= cluster.startUs) {
             continue;
         }
-        size_t executed=0;
-        for(int member:cluster.members) executed+=B.opExecution.ran[size_t(member)]!=0;
-        B.profiler->RecordOn(
-            cluster.runner, "cluster " + std::to_string(c), "cluster",
-            cluster.startUs, cluster.endUs,
-            {{"operations", std::to_string(executed)}});
+        size_t executed = 0;
+        for (int member : cluster.members)
+            executed += B.opExecution.ran[size_t(member)] != 0;
+        B.profiler->RecordOn(cluster.runner, "cluster " + std::to_string(c),
+                             "cluster", cluster.startUs, cluster.endUs,
+                             {{"operations", std::to_string(executed)}});
     }
 }
 
@@ -2983,8 +3242,7 @@ RigExecBakedReplayStepTimings(const RigExecBakedProgramImpl &B)
 
 namespace {
 
-constexpr size_t kHeadDomainCount =
-    RigExecBakedSlotDomainCount;
+constexpr size_t kHeadDomainCount = RigExecBakedSlotDomainCount;
 
 // Per head domain, the head step writing each slot (-1 for none); a slot
 // with two writers keeps the first, and `*duplicate` names the slot.
@@ -2993,7 +3251,8 @@ HeadWriters(const RigExecBakedProgramImpl &B, std::string *duplicate)
 {
     std::array<std::vector<int>, kHeadDomainCount> writers;
     for (size_t i = 0; i < B.steps.size(); ++i) {
-        if (!B.steps[i].isHead) continue;
+        if (!B.steps[i].isHead)
+            continue;
         for (const RigExecBakedSlotRange &range : B.steps[i].writes) {
             std::vector<int> &table = writers[size_t(range.domain)];
             if (table.size() < range.end) {
@@ -3002,11 +3261,10 @@ HeadWriters(const RigExecBakedProgramImpl &B, std::string *duplicate)
             for (uint32_t slot = range.begin; slot < range.end; ++slot) {
                 if (table[slot] >= 0) {
                     if (duplicate && duplicate->empty()) {
-                        *duplicate =
-                            std::string("head ") +
-                            RigExecBakedSlotDomainName(range.domain) +
-                            " slot " + std::to_string(slot) +
-                            " has more than one head producer";
+                        *duplicate = std::string("head ") +
+                                     RigExecBakedSlotDomainName(range.domain) +
+                                     " slot " + std::to_string(slot) +
+                                     " has more than one head producer";
                     }
                     continue;
                 }
@@ -3017,7 +3275,7 @@ HeadWriters(const RigExecBakedProgramImpl &B, std::string *duplicate)
     return writers;
 }
 
-}  // namespace
+} // namespace
 
 bool
 RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
@@ -3033,82 +3291,132 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
     };
     for (const auto &step : B.steps) {
         if (step.kind == RigExecBakedStepKind::WeightField) {
-            if (step.object < 0 || size_t(step.object) >= B.weightFields.size()) {
-                add("WeightField step " + step.label + " names an invalid field");
+            if (step.object < 0 ||
+                size_t(step.object) >= B.weightFields.size()) {
+                add("WeightField step " + step.label +
+                    " names an invalid field");
                 continue;
             }
             const auto &field = B.weightFields[size_t(step.object)];
-            if (field.object < 0 || size_t(field.object) >= B.weightObjects.size())
-                add("WeightField step " + step.label + " names an invalid weight object");
+            if (field.object < 0 ||
+                size_t(field.object) >= B.weightObjects.size())
+                add("WeightField step " + step.label +
+                    " names an invalid weight object");
             if (field.scalarReads.size() != field.scalarObjects.size() ||
                 field.scalarReads.size() != field.scalarMembers.size())
-                add("WeightField step " + step.label + " has inconsistent scalar provenance");
-            const auto own = RigExecBakedOne(RigExecBakedSlotDomain::WeightField,step.object);
+                add("WeightField step " + step.label +
+                    " has inconsistent scalar provenance");
+            const auto own = RigExecBakedOne(
+                RigExecBakedSlotDomain::WeightField, step.object);
             if (step.writes.size() != 1 || !(step.writes[0] == own))
-                add("WeightField step " + step.label + " does not write exactly its field");
-            if (field.form == RigExecBakedProgramImpl::WeightField::Form::EnvelopeProperty) {
-                if (field.consumer < 0 || size_t(field.consumer) >= B.propertyChains.size() ||
-                    field.part <= 0 || size_t(field.part) > B.propertyChains[size_t(field.consumer)].revisions.size() ||
-                    B.propertyChains[size_t(field.consumer)].revisions[size_t(field.part-1)].weightField != step.object)
-                    add("WeightField step " + step.label + " has no matching property consumer");
-            } else if (field.form == RigExecBakedProgramImpl::WeightField::Form::EnvelopeConstraint) {
-                if (field.consumer < 0 || size_t(field.consumer) >= B.walkSteps.size()) {
-                    add("WeightField step " + step.label + " names an invalid constraint consumer");
+                add("WeightField step " + step.label +
+                    " does not write exactly its field");
+            if (field.form ==
+                RigExecBakedProgramImpl::WeightField::Form::EnvelopeProperty) {
+                if (field.consumer < 0 ||
+                    size_t(field.consumer) >= B.propertyChains.size() ||
+                    field.part <= 0 ||
+                    size_t(field.part) >
+                        B.propertyChains[size_t(field.consumer)]
+                            .revisions.size() ||
+                    B.propertyChains[size_t(field.consumer)]
+                            .revisions[size_t(field.part - 1)]
+                            .weightField != step.object)
+                    add("WeightField step " + step.label +
+                        " has no matching property consumer");
+            } else if (field.form == RigExecBakedProgramImpl::WeightField::
+                                         Form::EnvelopeConstraint) {
+                if (field.consumer < 0 ||
+                    size_t(field.consumer) >= B.walkSteps.size()) {
+                    add("WeightField step " + step.label +
+                        " names an invalid constraint consumer");
                 } else {
                     const auto &walk = B.walkSteps[size_t(field.consumer)];
-                    if (walk.solverBatch || walk.index < 0 || size_t(walk.index) >= B.constraints.size() ||
-                        B.constraints[size_t(walk.index)].weightField != step.object)
-                        add("WeightField step " + step.label + " has no matching constraint consumer");
+                    if (walk.solverBatch || walk.index < 0 ||
+                        size_t(walk.index) >= B.constraints.size() ||
+                        B.constraints[size_t(walk.index)].weightField !=
+                            step.object)
+                        add("WeightField step " + step.label +
+                            " has no matching constraint consumer");
                 }
-            } else if (field.form == RigExecBakedProgramImpl::WeightField::Form::Revision) {
-                if (field.consumer < 0 || size_t(field.consumer) >= B.revisionIndex.size()) {
-                    add("WeightField step " + step.label + " names an invalid revision consumer");
+            } else if (field.form ==
+                       RigExecBakedProgramImpl::WeightField::Form::Revision) {
+                if (field.consumer < 0 ||
+                    size_t(field.consumer) >= B.revisionIndex.size()) {
+                    add("WeightField step " + step.label +
+                        " names an invalid revision consumer");
                 } else {
-                    const auto [chain,part] = B.revisionIndex[size_t(field.consumer)];
-                    const auto covers = [&](RigExecBakedSlotDomain domain, uint32_t slot) {
-                        return std::any_of(step.reads.begin(),step.reads.end(),
+                    const auto [chain, part] =
+                        B.revisionIndex[size_t(field.consumer)];
+                    const auto covers = [&](RigExecBakedSlotDomain domain,
+                                            uint32_t slot) {
+                        return std::any_of(
+                            step.reads.begin(), step.reads.end(),
                             [&](const RigExecBakedSlotRange &range) {
-                                return range.domain == domain && slot >= range.begin &&
-                                       slot < range.end;
+                                return range.domain == domain &&
+                                       slot >= range.begin && slot < range.end;
                             });
                     };
-                    if (!covers(RigExecBakedSlotDomain::ChainBase,uint32_t(chain)))
-                        add("WeightField step " + step.label + " omits its entering base");
+                    if (!covers(RigExecBakedSlotDomain::ChainBase,
+                                uint32_t(chain)))
+                        add("WeightField step " + step.label +
+                            " omits its entering base");
                     for (int earlier = 0; earlier < part; ++earlier) {
-                        const int revision = B.chainRevisionBegin[size_t(chain)] + earlier;
-                        if (!covers(RigExecBakedSlotDomain::RevisionDone,uint32_t(revision)))
-                            add("WeightField step " + step.label + " omits an entering completed revision");
-                    }                    if (B.chains[chain].revisions[part].weightField != step.object)
-                        add("WeightField step " + step.label + " has no matching revision consumer");
+                        const int revision =
+                            B.chainRevisionBegin[size_t(chain)] + earlier;
+                        if (!covers(RigExecBakedSlotDomain::RevisionDone,
+                                    uint32_t(revision)))
+                            add("WeightField step " + step.label +
+                                " omits an entering completed revision");
+                    }
+                    if (B.chains[chain].revisions[part].weightField !=
+                        step.object)
+                        add("WeightField step " + step.label +
+                            " has no matching revision consumer");
                 }
-            } else add("WeightField step " + step.label + " has an unknown consumer form");
+            } else
+                add("WeightField step " + step.label +
+                    " has an unknown consumer form");
             for (const auto &read : field.scalarReads) {
                 for (uint32_t version : read.versions) {
-                    const auto declared = RigExecBakedOne(RigExecBakedSlotDomain::PropertyResult,int(version));
-                    if (std::find(step.reads.begin(),step.reads.end(),declared) == step.reads.end())
-                        add("WeightField step " + step.label + " omits an oracle property version");
+                    const auto declared = RigExecBakedOne(
+                        RigExecBakedSlotDomain::PropertyResult, int(version));
+                    if (std::find(step.reads.begin(), step.reads.end(),
+                                  declared) == step.reads.end())
+                        add("WeightField step " + step.label +
+                            " omits an oracle property version");
                 }
             }
             for (int slot : field.volumes) {
                 if (slot < 0 || size_t(slot) >= B.paths.size()) {
-                    add("WeightField step " + step.label + " names an invalid placement slot");
+                    add("WeightField step " + step.label +
+                        " names an invalid placement slot");
                     continue;
                 }
-                const auto domain = field.placementPhase == RigExecBakedProgramImpl::WeightField::PlacementPhase::Base
-                    ? RigExecBakedSlotDomain::WeightFramesBase : RigExecBakedSlotDomain::WeightFrames;
-                const auto declared = RigExecBakedOne(domain,slot);
-                if (std::find(step.reads.begin(),step.reads.end(),declared) == step.reads.end())
-                    add("WeightField step " + step.label + " omits its placement read");
+                const auto domain =
+                    field.placementPhase ==
+                            RigExecBakedProgramImpl::WeightField::
+                                PlacementPhase::Base
+                        ? RigExecBakedSlotDomain::WeightFramesBase
+                        : RigExecBakedSlotDomain::WeightFrames;
+                const auto declared = RigExecBakedOne(domain, slot);
+                if (std::find(step.reads.begin(), step.reads.end(), declared) ==
+                    step.reads.end())
+                    add("WeightField step " + step.label +
+                        " omits its placement read");
             }
         }
-        const bool headKind = step.kind == RigExecBakedStepKind::PropertyRevision ||
+        const bool headKind =
+            step.kind == RigExecBakedStepKind::PropertyRevision ||
             step.kind == RigExecBakedStepKind::RestCompose ||
             step.kind == RigExecBakedStepKind::LadderCompose ||
             step.kind == RigExecBakedStepKind::SkinTopology ||
-            (step.kind == RigExecBakedStepKind::WeightField && step.object >= 0 &&
-             size_t(step.object) < B.weightFields.size() &&
-             B.weightFields[size_t(step.object)].form != RigExecBakedProgramImpl::WeightField::Form::Revision);
-        if (step.isHead != headKind) add("step " + step.label + " has inconsistent head kind");
+            (step.kind == RigExecBakedStepKind::WeightField &&
+             step.object >= 0 && size_t(step.object) < B.weightFields.size() &&
+             B.weightFields[size_t(step.object)].form !=
+                 RigExecBakedProgramImpl::WeightField::Form::Revision);
+        if (step.isHead != headKind)
+            add("step " + step.label + " has inconsistent head kind");
         if (step.isHead && (step.isSource || step.externalReads))
             add("head step " + step.label + " is a source or always step");
     }
@@ -3131,58 +3439,91 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
             continue;
         }
         const RigExecBakedStep &step = B.steps[index];
-        const auto contains = [](const auto &ranges, RigExecBakedSlotDomain domain, uint32_t id) {
-            return std::any_of(ranges.begin(),ranges.end(),[&](const auto &r) {
-                return r.domain == domain && r.begin <= id && id < r.end;
-            });
+        const auto contains = [](const auto &ranges,
+                                 RigExecBakedSlotDomain domain, uint32_t id) {
+            return std::any_of(
+                ranges.begin(), ranges.end(), [&](const auto &r) {
+                    return r.domain == domain && r.begin <= id && id < r.end;
+                });
         };
         if (step.kind == RigExecBakedStepKind::PropertyRevision) {
-            if (step.object < 0 || size_t(step.object) >= B.propertyChains.size() ||
-                step.part < 0 || size_t(step.part) > B.propertyChains[size_t(step.object)].revisions.size()) {
-                add("head step " + step.label + " has an invalid chain or revision part");
+            if (step.object < 0 ||
+                size_t(step.object) >= B.propertyChains.size() ||
+                step.part < 0 ||
+                size_t(step.part) >
+                    B.propertyChains[size_t(step.object)].revisions.size()) {
+                add("head step " + step.label +
+                    " has an invalid chain or revision part");
                 continue;
             }
             const auto &chain = B.propertyChains[size_t(step.object)];
             const uint32_t own = chain.versionBase + uint32_t(step.part);
             std::set<uint32_t> expected{own};
             for (const uint32_t r : chain.records) {
-                if (r >= B.propertyRecords.size()) { add("head step " + step.label + " has an invalid phased record"); continue; }
+                if (r >= B.propertyRecords.size()) {
+                    add("head step " + step.label +
+                        " has an invalid phased record");
+                    continue;
+                }
                 const auto &record = B.propertyRecords[r];
-                if (std::min(record.applied,chain.revisions.size()) == size_t(step.part)) expected.insert(record.id);
+                if (std::min(record.applied, chain.revisions.size()) ==
+                    size_t(step.part))
+                    expected.insert(record.id);
             }
             std::set<uint32_t> actual;
             for (const auto &range : step.writes) {
                 if (range.domain != RigExecBakedSlotDomain::PropertyResult) {
-                    add("head step " + step.label + " writes a non-property domain"); continue;
+                    add("head step " + step.label +
+                        " writes a non-property domain");
+                    continue;
                 }
-                for (uint32_t id=range.begin;id<range.end;++id) actual.insert(id);
+                for (uint32_t id = range.begin; id < range.end; ++id)
+                    actual.insert(id);
             }
-            if (actual != expected) add("head step " + step.label + " does not write exactly its version and owned records");
-            if (step.part > 0 && !contains(step.reads,RigExecBakedSlotDomain::PropertyResult,own-1))
-                add("head step " + step.label + " omits its predecessor property version");
-            if (step.part == 0 && !step.reads.empty()) add("head step " + step.label + " base reads a produced value");
-        } else if (step.kind == RigExecBakedStepKind::RestCompose || step.kind == RigExecBakedStepKind::LadderCompose) {
-            if (step.object < 0 || size_t(step.object) >= B.composeGroups.size()) {
-                add("head step " + step.label + " has an invalid compose group"); continue;
+            if (actual != expected)
+                add("head step " + step.label +
+                    " does not write exactly its version and owned records");
+            if (step.part > 0 &&
+                !contains(step.reads, RigExecBakedSlotDomain::PropertyResult,
+                          own - 1))
+                add("head step " + step.label +
+                    " omits its predecessor property version");
+            if (step.part == 0 && !step.reads.empty())
+                add("head step " + step.label + " base reads a produced value");
+        } else if (step.kind == RigExecBakedStepKind::RestCompose ||
+                   step.kind == RigExecBakedStepKind::LadderCompose) {
+            if (step.object < 0 ||
+                size_t(step.object) >= B.composeGroups.size()) {
+                add("head step " + step.label +
+                    " has an invalid compose group");
+                continue;
             }
             const auto &group = B.composeGroups[size_t(step.object)];
-            const auto domain = step.kind == RigExecBakedStepKind::RestCompose ? RigExecBakedSlotDomain::Rest : RigExecBakedSlotDomain::Ladder;
-            if (step.part != (domain == RigExecBakedSlotDomain::Rest ? 0 : 1) || step.writes.size()!=1 ||
-                step.writes[0].domain != domain || step.writes[0].begin != uint32_t(group.begin) || step.writes[0].end != uint32_t(group.end))
-                add("head step " + step.label + " does not write its complete compose group");
+            const auto domain = step.kind == RigExecBakedStepKind::RestCompose
+                                    ? RigExecBakedSlotDomain::Rest
+                                    : RigExecBakedSlotDomain::Ladder;
+            if (step.part != (domain == RigExecBakedSlotDomain::Rest ? 0 : 1) ||
+                step.writes.size() != 1 || step.writes[0].domain != domain ||
+                step.writes[0].begin != uint32_t(group.begin) ||
+                step.writes[0].end != uint32_t(group.end))
+                add("head step " + step.label +
+                    " does not write its complete compose group");
             const auto require = [&](RigExecBakedSlotDomain input, int slot) {
                 if (slot >= 0 && size_t(slot) < B.paths.size() &&
                     !contains(step.reads, input, uint32_t(slot)))
                     add("head step " + step.label + " omits required " +
-                        RigExecBakedSlotDomainName(input) + " slot " + std::to_string(slot));
+                        RigExecBakedSlotDomainName(input) + " slot " +
+                        std::to_string(slot));
             };
             for (int slot = std::max(0, group.begin);
                  slot < std::min(int(B.paths.size()), group.end); ++slot) {
                 if (domain == RigExecBakedSlotDomain::Ladder)
                     require(RigExecBakedSlotDomain::Rest, slot);
                 if (size_t(slot) >= B.slotKind.size() ||
-                    B.slotKind[size_t(slot)] != RigExecBakedSlotKind::FirstFramePose ||
-                    size_t(slot) >= B.parent.size()) continue;
+                    B.slotKind[size_t(slot)] !=
+                        RigExecBakedSlotKind::FirstFramePose ||
+                    size_t(slot) >= B.parent.size())
+                    continue;
                 const int parent = B.parent[size_t(slot)];
                 if (parent < group.begin || parent >= group.end) {
                     require(RigExecBakedSlotDomain::Rest, parent);
@@ -3191,10 +3532,17 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
                 }
             }
         } else if (step.kind == RigExecBakedStepKind::SkinTopology) {
-            const auto *revision = step.object < 0 ? nullptr : RigExecBakedLayoutRevision(B,size_t(step.object));
-            if (!revision || revision->op != RigExecRevisionOp::Skin || step.part != 0 || step.writes.size()!=1 ||
-                step.writes[0].domain!=RigExecBakedSlotDomain::SkinTopology || step.writes[0].begin!=uint32_t(step.object) || step.writes[0].end!=uint32_t(step.object)+1)
-                add("head step " + step.label + " does not write its fixed layout revision");
+            const auto *revision =
+                step.object < 0
+                    ? nullptr
+                    : RigExecBakedLayoutRevision(B, size_t(step.object));
+            if (!revision || revision->op != RigExecRevisionOp::Skin ||
+                step.part != 0 || step.writes.size() != 1 ||
+                step.writes[0].domain != RigExecBakedSlotDomain::SkinTopology ||
+                step.writes[0].begin != uint32_t(step.object) ||
+                step.writes[0].end != uint32_t(step.object) + 1)
+                add("head step " + step.label +
+                    " does not write its fixed layout revision");
         }
         // Completeness: every chain target or record consumer a walk of a
         // property revision meets is declared.
@@ -3220,8 +3568,8 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
         const RigExecBakedPropertyChain::Revision &r =
             chain.revisions[size_t(step.part) - 1];
         for (const RigExecBakedWalk *walk :
-             {&r.enabled, &r.defaultWeight, &r.value, &r.minimum,
-              &r.maximum, &r.keys, &r.tangents, &r.pathPoints}) {
+             {&r.enabled, &r.defaultWeight, &r.value, &r.minimum, &r.maximum,
+              &r.keys, &r.tangents, &r.pathPoints}) {
             for (const std::vector<RigExecBakedWalkHop> *hops :
                  {&walk->hops, &walk->doubleHops}) {
                 for (const RigExecBakedWalkHop &hop : *hops) {
@@ -3237,8 +3585,7 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
                     }
                     if (hop.record >= 0 &&
                         size_t(hop.record) < B.propertyRecords.size() &&
-                        !declares(
-                            B.propertyRecords[size_t(hop.record)].id)) {
+                        !declares(B.propertyRecords[size_t(hop.record)].id)) {
                         add("walk " + hop.path.GetString() +
                             " meets record without declaring it");
                     }
@@ -3246,13 +3593,16 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
             }
         }
     }
-    const auto &propertyWriters = writers[size_t(RigExecBakedSlotDomain::PropertyResult)];
-    for (uint32_t id=0;id<B.propertyVersionCount;++id)
-        if (id>=propertyWriters.size() || propertyWriters[id]<0)
-            add("property version " + std::to_string(id) + " has no head producer");
-    if (heads.size() != std::count_if(B.steps.begin(), B.steps.end(), [](const auto &s) { return s.isHead; })) {
-        add("the head order holds " + std::to_string(heads.size()) +
-            " of " + std::to_string(B.steps.size()) + " head step(s)");
+    const auto &propertyWriters =
+        writers[size_t(RigExecBakedSlotDomain::PropertyResult)];
+    for (uint32_t id = 0; id < B.propertyVersionCount; ++id)
+        if (id >= propertyWriters.size() || propertyWriters[id] < 0)
+            add("property version " + std::to_string(id) +
+                " has no head producer");
+    if (heads.size() != std::count_if(B.steps.begin(), B.steps.end(),
+                                      [](const auto &s) { return s.isHead; })) {
+        add("the head order holds " + std::to_string(heads.size()) + " of " +
+            std::to_string(B.steps.size()) + " head step(s)");
     }
     if (count == 0) {
         return true;
@@ -3287,7 +3637,8 @@ RigExecBakedValidateHeadReads(const RigExecBakedProgramImpl &B,
         return producedIn(RigExecBakedSlotDomain::PropertyResult, id);
     };
     for (const RigExecBakedStep &step : B.steps) {
-        if (step.isHead) continue;
+        if (step.isHead)
+            continue;
         const auto declares = [&step](uint32_t id) {
             for (const RigExecBakedSlotRange &range : step.reads) {
                 if (range.domain == RigExecBakedSlotDomain::PropertyResult &&
@@ -3298,7 +3649,8 @@ RigExecBakedValidateHeadReads(const RigExecBakedProgramImpl &B,
             return false;
         };
         for (const RigExecBakedSlotRange &range : step.reads) {
-            if (!RigExecBakedIsHeadDomain(range.domain)) continue;
+            if (!RigExecBakedIsHeadDomain(range.domain))
+                continue;
             for (uint32_t id = range.begin; id < range.end; ++id) {
                 if (!producedIn(range.domain, id)) {
                     add("step " + step.label + " reads " +
@@ -3307,13 +3659,17 @@ RigExecBakedValidateHeadReads(const RigExecBakedProgramImpl &B,
                 }
             }
         }
-        for (const auto &required : RigExecBakedRequiredRestReads(B,step)) {
-            for (uint32_t id=required.begin;id<required.end;++id) {
-                const bool declared = std::any_of(step.reads.begin(),step.reads.end(),[&](const auto &r) {
-                    return r.domain==required.domain && r.begin<=id && id<r.end;
-                });
-                if (!declared) add("step " + step.label + " omits required " +
-                    RigExecBakedSlotDomainName(required.domain) + " slot " + std::to_string(id));
+        for (const auto &required : RigExecBakedRequiredRestReads(B, step)) {
+            for (uint32_t id = required.begin; id < required.end; ++id) {
+                const bool declared = std::any_of(
+                    step.reads.begin(), step.reads.end(), [&](const auto &r) {
+                        return r.domain == required.domain && r.begin <= id &&
+                               id < r.end;
+                    });
+                if (!declared)
+                    add("step " + step.label + " omits required " +
+                        RigExecBakedSlotDomainName(required.domain) + " slot " +
+                        std::to_string(id));
             }
         }
         size_t layout = 0;
@@ -3321,14 +3677,27 @@ RigExecBakedValidateHeadReads(const RigExecBakedProgramImpl &B,
         switch (step.kind) {
         case RigExecBakedStepKind::RevisionStatic:
         case RigExecBakedStepKind::RevisionChunk:
-        case RigExecBakedStepKind::RevisionFuse: layout=size_t(step.object); break;
-        case RigExecBakedStepKind::Derived: layout=B.revisionIndex.size()+size_t(step.object); break;
-        default: layoutReader=false; break;
+        case RigExecBakedStepKind::RevisionFuse:
+            layout = size_t(step.object);
+            break;
+        case RigExecBakedStepKind::Derived:
+            layout = B.revisionIndex.size() + size_t(step.object);
+            break;
+        default:
+            layoutReader = false;
+            break;
         }
-        const auto *revision = layoutReader ? RigExecBakedLayoutRevision(B,layout) : nullptr;
-        if (revision && revision->op == RigExecRevisionOp::Skin && !std::any_of(step.reads.begin(),step.reads.end(),[&](const auto &r) {
-            return r.domain==RigExecBakedSlotDomain::SkinTopology && r.begin<=layout && layout<r.end;
-        })) add("step " + step.label + " omits its required SkinTopology slot " + std::to_string(layout));
+        const auto *revision =
+            layoutReader ? RigExecBakedLayoutRevision(B, layout) : nullptr;
+        if (revision && revision->op == RigExecRevisionOp::Skin &&
+            !std::any_of(
+                step.reads.begin(), step.reads.end(), [&](const auto &r) {
+                    return r.domain == RigExecBakedSlotDomain::SkinTopology &&
+                           r.begin <= layout && layout < r.end;
+                }))
+            add("step " + step.label +
+                " omits its required SkinTopology slot " +
+                std::to_string(layout));
         // Completeness: every chain target or record consumer a walk the
         // step reads meets is declared.
         for (const int walk : step.readerWalks) {
@@ -3382,34 +3751,49 @@ RigExecBakedValidateHeadReads(const RigExecBakedProgramImpl &B,
     return false;
 }
 
-void RigExecBakedPrepareHeadOps(RigExecBakedProgramImpl *program)
+void
+RigExecBakedPrepareHeadOps(RigExecBakedProgramImpl *program)
 {
     auto &B = *program;
-    std::fill(B.propertyChanged.begin(),B.propertyChanged.end(),uint8_t(0));
-    for (int slot : B.restMoved) B.restChanged[size_t(slot)] = 0;
-    for (int slot : B.ladderMoved) B.ladderChanged[size_t(slot)] = 0;
-    B.restMoved.clear(); B.ladderMoved.clear();
-    for (auto &field : B.weightFields) field.changed = false;
+    std::fill(B.propertyChanged.begin(), B.propertyChanged.end(), uint8_t(0));
+    for (int slot : B.restMoved)
+        B.restChanged[size_t(slot)] = 0;
+    for (int slot : B.ladderMoved)
+        B.ladderChanged[size_t(slot)] = 0;
+    B.restMoved.clear();
+    B.ladderMoved.clear();
+    for (auto &field : B.weightFields)
+        field.changed = false;
     for (int layout : B.skinTopologyLayouts)
-        if (auto *revision = RigExecBakedLayoutRevision(&B,size_t(layout))) revision->layoutOutputChanged = false;
+        if (auto *revision = RigExecBakedLayoutRevision(&B, size_t(layout)))
+            revision->layoutOutputChanged = false;
 }
-void RigExecBakedFinishHeadOp(RigExecBakedProgramImpl *B,const RigExecBakedStep &step)
+void
+RigExecBakedFinishHeadOp(RigExecBakedProgramImpl *B,
+                         const RigExecBakedStep &step)
 {
-    if (step.kind == RigExecBakedStepKind::PropertyRevision) RigExecBakedFinishPropertyStep(B,step);
+    if (step.kind == RigExecBakedStepKind::PropertyRevision)
+        RigExecBakedFinishPropertyStep(B, step);
 }
-bool RigExecBakedHeadValueChanged(const RigExecBakedProgramImpl &B,
-                                  RigExecBakedSlotDomain domain,uint32_t slot)
+bool
+RigExecBakedHeadValueChanged(const RigExecBakedProgramImpl &B,
+                             RigExecBakedSlotDomain domain, uint32_t slot)
 {
     switch (domain) {
-    case RigExecBakedSlotDomain::PropertyResult: return slot < B.propertyChanged.size() && B.propertyChanged[slot];
-    case RigExecBakedSlotDomain::Rest: return slot < B.restChanged.size() && B.restChanged[slot];
-    case RigExecBakedSlotDomain::Ladder: return slot < B.ladderChanged.size() && B.ladderChanged[slot];
-    case RigExecBakedSlotDomain::WeightField: return slot < B.weightFields.size() && B.weightFields[slot].changed;
+    case RigExecBakedSlotDomain::PropertyResult:
+        return slot < B.propertyChanged.size() && B.propertyChanged[slot];
+    case RigExecBakedSlotDomain::Rest:
+        return slot < B.restChanged.size() && B.restChanged[slot];
+    case RigExecBakedSlotDomain::Ladder:
+        return slot < B.ladderChanged.size() && B.ladderChanged[slot];
+    case RigExecBakedSlotDomain::WeightField:
+        return slot < B.weightFields.size() && B.weightFields[slot].changed;
     case RigExecBakedSlotDomain::SkinTopology: {
-        const auto *revision = RigExecBakedLayoutRevision(B,slot);
+        const auto *revision = RigExecBakedLayoutRevision(B, slot);
         return revision && revision->layoutOutputChanged;
     }
-    default: return false;
+    default:
+        return false;
     }
 }
 
@@ -3450,7 +3834,7 @@ RigExecBakedHeadOpSeeds(const RigExecBakedProgramImpl &B)
                     readers(B.cones.ladderReaders, id);
                     break;
                 case RigExecBakedSlotDomain::WeightField:
-                    readers(B.cones.fieldReaders,id);
+                    readers(B.cones.fieldReaders, id);
                     break;
                 case RigExecBakedSlotDomain::SkinTopology:
                     break;
@@ -3495,7 +3879,8 @@ RigExecBakedHeadOpsReading(const RigExecBakedProgramImpl &B, int index)
     }
     const uint32_t leaf = uint32_t(B.leafOfOverride[size_t(index)]);
     for (size_t i = 0; i < B.steps.size(); ++i) {
-        if (!B.steps[i].isHead) continue;
+        if (!B.steps[i].isHead)
+            continue;
         const std::vector<uint32_t> &leaves = B.steps[i].bindingLeaves;
         if (std::find(leaves.begin(), leaves.end(), leaf) != leaves.end()) {
             ops.push_back(uint32_t(i));
@@ -3511,4 +3896,4 @@ RigExecBakedHeadSeeds(const RigExecBakedProgramImpl &B, int index)
                                      RigExecBakedHeadOpsReading(B, index));
 }
 
-}  // namespace rigExec
+} // namespace rigExec

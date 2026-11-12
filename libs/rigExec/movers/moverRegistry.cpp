@@ -15,7 +15,9 @@
 #include <cmath>
 #include <cstring>
 #include <deque>
+#include <memory>
 #include <mutex>
+#include <string_view>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -39,7 +41,7 @@ struct _Entry {
     explicit _Entry(RigExecMoverHandler value)
         : schemaType(value.schemaType), handler(std::move(value))
     {
-        handler.schemaType = schemaType.c_str();
+        handler.schemaType = std::string_view(schemaType);
         registration.handler = &handler;
         registration.schemaType = TfToken(schemaType);
         registration.transformRelationship =
@@ -68,7 +70,9 @@ struct _Registry {
 _Registry &
 _GetRegistry()
 {
-    static _Registry *registry = new _Registry;
+    static _Registry *const registry = [] {
+        return std::make_unique<_Registry>().release();
+    }();
     return *registry;
 }
 
@@ -105,30 +109,36 @@ _Find(const TfToken &schemaType)
     return nullptr;
 }
 
-}  // namespace
+} // namespace
 
 bool
 RigExecRegisterMoverHandler(RigExecMoverHandler handler, std::string *error)
 {
-    const auto fail = [error](const std::string &message) {
+    // Every diagnostic is prose glued to a mover name. The view is valid for
+    // the whole call; the copy is made only where the message is stored, and
+    // TF_WARN needs a null-terminated string.
+    const auto fail = [error](std::string_view message) {
         if (error) {
-            *error = message;
+            *error = std::string(message);
         } else {
-            TF_WARN("%s", message.c_str());
+            TF_WARN("%s", std::string(message).c_str());
         }
         return false;
     };
-    if (!handler.schemaType || !*handler.schemaType || !handler.resolveOp) {
+    if (handler.schemaType.empty() || !handler.resolveOp) {
         return fail("Mover registration requires a schema type and resolveOp");
     }
     const bool external =
         handler.resolveOp(TfToken()) == RigExecRevisionOp::External;
     if (external || handler.assembleExternal || handler.applyExternal) {
         if (!external || handler.domain != RigExecMoverDomain::Points ||
-            !handler.declareExternalInputs || !handler.compileScene || !handler.assembleExternal || !handler.applyExternal) {
-            return fail(std::string(handler.schemaType) +
+            !handler.declareExternalInputs || !handler.compileScene ||
+            !handler.assembleExternal || !handler.applyExternal) {
+            return fail(
+                std::string(handler.schemaType) +
                 ": external movers require the External points operation "
-                "and declareExternalInputs, compileScene, assembleExternal and applyExternal callbacks");
+                "and declareExternalInputs, compileScene, assembleExternal and "
+                "applyExternal callbacks");
         }
         if (!handler.oracle) {
             handler.hasScalarOracle = false;
@@ -139,22 +149,23 @@ RigExecRegisterMoverHandler(RigExecMoverHandler handler, std::string *error)
     if ((windowed || handler.applyWindowDevice) &&
         (!external || !handler.windowFrames || !handler.windowFramesScene ||
          !handler.captureWindow || !handler.applyWindow)) {
-        return fail(std::string(handler.schemaType) +
+        return fail(
+            std::string(handler.schemaType) +
             ": a windowed mover is an external mover with windowFrames, "
             "windowFramesScene, captureWindow and applyWindow");
     }
     if ((handler.runtimeKernel.captureWindow != nullptr) !=
         (handler.runtimeKernel.applyWindow != nullptr)) {
-        return fail(std::string(handler.schemaType) +
+        return fail(
+            std::string(handler.schemaType) +
             ": a windowed playback kernel needs captureWindow and applyWindow");
     }
-    const bool applies = handler.runtimeKernel.apply ||
-                         handler.runtimeKernel.applyWithProviders;
-    if ((handler.encodeExternal || handler.runtimeKernel.prepare ||
-         applies) &&
-        (!external ||
-         (handler.runtimeKernel.prepare != nullptr) != applies)) {
-        return fail(std::string(handler.schemaType) +
+    const bool applies =
+        handler.runtimeKernel.apply || handler.runtimeKernel.applyWithProviders;
+    if ((handler.encodeExternal || handler.runtimeKernel.prepare || applies) &&
+        (!external || (handler.runtimeKernel.prepare != nullptr) != applies)) {
+        return fail(
+            std::string(handler.schemaType) +
             ": .rigexec export and playback callbacks belong to external "
             "movers, and a playback kernel needs both prepare and apply");
     }
@@ -189,13 +200,19 @@ RigExecLoadMoverPlugins(std::vector<std::string> *diagnostics)
     }
     struct _LoadingGuard {
         bool &flag;
-        explicit _LoadingGuard(bool &value) : flag(value) { flag = true; }
-        ~_LoadingGuard() { flag = false; }
+        explicit _LoadingGuard(bool &value) : flag(value)
+        {
+            flag = true;
+        }
+        ~_LoadingGuard()
+        {
+            flag = false;
+        }
     } guard(loading);
     loader.discovered = true;
     bool ok = true;
     for (const PlugPluginPtr &plugin :
-             PlugRegistry::GetInstance().GetAllPlugins()) {
+         PlugRegistry::GetInstance().GetAllPlugins()) {
         const JsObject metadata = plugin->GetMetadata();
         const auto version = metadata.find("RigExecMoverPlugin");
         if (version == metadata.end()) {
@@ -205,8 +222,9 @@ RigExecLoadMoverPlugins(std::vector<std::string> *diagnostics)
         if (!version->second.IsInt() ||
             version->second.GetInt() != RigExecMoverPluginApiVersion) {
             message = "Mover plugin " + plugin->GetName() +
-                " has an incompatible RigExecMoverPlugin API version; "
-                "expected " + std::to_string(RigExecMoverPluginApiVersion);
+                      " has an incompatible RigExecMoverPlugin API version; "
+                      "expected " +
+                      std::to_string(RigExecMoverPluginApiVersion);
         } else if (!plugin->Load()) {
             message = "Could not load mover plugin " + plugin->GetName();
         }
@@ -265,7 +283,7 @@ RigExecMoverHandlers()
 namespace {
 // Interned at load: RigExecPointsOf runs in binders on parallel lanes.
 const TfToken _pointsToken("points");
-}  // namespace
+} // namespace
 
 const TfToken &
 RigExecPointsToken()
@@ -309,7 +327,8 @@ SdfPathVector
 RigExecRelationshipTargets(const RigExecOraclePrim &prim, const TfToken &name)
 {
     for (const auto &entry : prim.relationships) {
-        if (entry.first == name) return entry.second.targets;
+        if (entry.first == name)
+            return entry.second.targets;
     }
     return {};
 }
@@ -318,7 +337,8 @@ RigExecReadPhase
 RigExecPhaseForInput(const RigExecOraclePrim &prim, const TfToken &name)
 {
     for (const auto &entry : prim.relationships) {
-        if (entry.first == name) return entry.second.phase;
+        if (entry.first == name)
+            return entry.second.phase;
     }
     return {};
 }
@@ -328,7 +348,8 @@ SdfPathVector
 RigExecRelationshipTargets(const RigExecOraclePrim &prim, const char *name)
 {
     for (const auto &entry : prim.relationships) {
-        if (std::strcmp(entry.first.GetText(), name) == 0) return entry.second.targets;
+        if (std::strcmp(entry.first.GetText(), name) == 0)
+            return entry.second.targets;
     }
     return {};
 }
@@ -337,7 +358,8 @@ RigExecReadPhase
 RigExecPhaseForInput(const RigExecOraclePrim &prim, const char *name)
 {
     for (const auto &entry : prim.relationships) {
-        if (std::strcmp(entry.first.GetText(), name) == 0) return entry.second.phase;
+        if (std::strcmp(entry.first.GetText(), name) == 0)
+            return entry.second.phase;
     }
     return {};
 }
@@ -358,11 +380,9 @@ RigExecPhasedConsumerValue(const VtValue &chainValue,
 }
 
 void
-RigExecReadPhasedPoints(
-    const RigExecMoverOracleContext &ctx,
-    const char *relName,
-    const SdfPath &pointsPath,
-    VtVec3fArray *out)
+RigExecReadPhasedPoints(const RigExecMoverOracleContext &ctx,
+                        const char *relName, const SdfPath &pointsPath,
+                        VtVec3fArray *out)
 {
     const RigExecReadPhase phase = RigExecPhaseForInput(ctx.prim, relName);
     // The reader's own record is made after it reads, so no snapshot holds
@@ -373,30 +393,32 @@ RigExecReadPhasedPoints(
         return;
     }
     if (!phase.IsBase()) {
-        if (const VtValue *v = ctx.phasedPoints ? ctx.phasedPoints(
-                pointsPath, phase, ctx.moverPath) : nullptr) {
+        if (const VtValue *v =
+                ctx.phasedPoints
+                    ? ctx.phasedPoints(pointsPath, phase, ctx.moverPath)
+                    : nullptr) {
             if (v->IsHolding<VtVec3fArray>()) {
                 *out = v->UncheckedGet<VtVec3fArray>();
                 return;
             }
         }
     }
-    if (const RigExecOracleAttribute a = ctx.stage->GetAttributeAtPath(pointsPath)) {
+    if (const RigExecOracleAttribute a =
+            ctx.stage->GetAttributeAtPath(pointsPath)) {
         a.Get(out, ctx.time);
     }
 }
 
 bool
-RigExecIsTransformDomainAmbiguous(
-    const UsdStageRefPtr &stage, const SdfPath &target)
+RigExecIsTransformDomainAmbiguous(const UsdStageRefPtr &stage,
+                                  const SdfPath &target)
 {
     const UsdPrim prim = stage->GetPrimAtPath(target);
     return prim && prim.IsA<UsdGeomPointBased>();
 }
 
 std::string
-RigExecPointsTargetHint(
-    const UsdStageRefPtr &stage, const SdfPath &target)
+RigExecPointsTargetHint(const UsdStageRefPtr &stage, const SdfPath &target)
 {
     if (!target.IsPrimPath()) {
         return std::string();
@@ -405,17 +427,15 @@ RigExecPointsTargetHint(
     if (!prim || !prim.IsA<UsdGeomPointBased>()) {
         return std::string();
     }
-    return ". Did you mean " +
-           target.AppendProperty(_pointsToken).GetString() + "?";
+    return ". Did you mean " + target.AppendProperty(_pointsToken).GetString() +
+           "?";
 }
 
 bool
-RigExecValidateMoverTargets(
-    const UsdStageRefPtr &stage,
-    const UsdPrim &prim,
-    const RigExecMoverHandler *handler,
-    const std::vector<SdfPath> &targets,
-    std::string *error)
+RigExecValidateMoverTargets(const UsdStageRefPtr &stage, const UsdPrim &prim,
+                            const RigExecMoverHandler *handler,
+                            const std::vector<SdfPath> &targets,
+                            std::string *error)
 {
     if (!handler || handler->customTargetValidation) {
         return true;
@@ -428,15 +448,13 @@ RigExecValidateMoverTargets(
         // pass validation yet silently produce no application.
         for (const SdfPath &t : targets) {
             const UsdPrim owner = t.IsPropertyPath()
-                ? stage->GetPrimAtPath(t.GetPrimPath())
-                : UsdPrim();
+                                      ? stage->GetPrimAtPath(t.GetPrimPath())
+                                      : UsdPrim();
             const UsdAttribute attr = t.IsPropertyPath()
-                ? stage->GetAttributeAtPath(t)
-                : UsdAttribute();
-            if (!t.IsPropertyPath() ||
-                t.GetNameToken() != "points" ||
-                !owner || !owner.IsA<UsdGeomPointBased>() ||
-                !attr ||
+                                          ? stage->GetAttributeAtPath(t)
+                                          : UsdAttribute();
+            if (!t.IsPropertyPath() || t.GetNameToken() != "points" || !owner ||
+                !owner.IsA<UsdGeomPointBased>() || !attr ||
                 attr.GetTypeName() != SdfValueTypeNames->Point3fArray) {
                 *error = who + " target " + t.GetString() +
                          " is not a native UsdGeomPointBased "
@@ -465,12 +483,11 @@ RigExecValidateMoverTargets(
     const SdfPath &t = targets[0];
     // A prim path canonicalizes to .points, which is never what a
     // property mover means; require the exact property the author wrote.
-    const UsdAttribute attr = t.IsPropertyPath()
-        ? stage->GetAttributeAtPath(t)
-        : UsdAttribute();
+    const UsdAttribute attr =
+        t.IsPropertyPath() ? stage->GetAttributeAtPath(t) : UsdAttribute();
     if (!attr) {
-        *error = who + " target " + t.GetString() +
-                 " is not an exact property path";
+        *error =
+            who + " target " + t.GetString() + " is not an exact property path";
         return false;
     }
     const SdfValueTypeName valueType = attr.GetTypeName();
@@ -500,20 +517,21 @@ RigExecValidateMoverTargets(
     }
     if (!typeOk) {
         *error = who + " target " + t.GetString() + " has type " +
-                 valueType.GetAsToken().GetString() + "; expected " +
-                 expected;
+                 valueType.GetAsToken().GetString() + "; expected " + expected;
         return false;
     }
     return true;
 }
 
 bool
-RigExecResolveBlendSampleLayout(const RigExecOracleScene &scene, const SdfPath &path,
-    size_t pointCount, RigExecBlendSampleLayout *layout)
+RigExecResolveBlendSampleLayout(const RigExecOracleScene &scene,
+                                const SdfPath &path, size_t pointCount,
+                                RigExecBlendSampleLayout *layout)
 {
     layout->pointCount = pointCount;
     layout->valid = false;
-    if (!scene.BlendShapes().count(path.GetPrimPath())) return true;
+    if (!scene.BlendShapes().count(path.GetPrimPath()))
+        return true;
     const auto shape = scene.GetPrimAtPath(path.GetPrimPath());
     const TfToken &offsetsToken = _tokens->offsets;
     const TfToken &indicesToken = _tokens->pointIndices;
@@ -525,9 +543,11 @@ RigExecResolveBlendSampleLayout(const RigExecOracleScene &scene, const SdfPath &
     offsetsAttr.Get(&offsets);
     indicesAttr.Get(&indices);
     if (!indices.empty()) {
-        if (indices.size() != offsets.size()) return cacheable;
+        if (indices.size() != offsets.size())
+            return cacheable;
         for (int index : indices) {
-            if (index < 0 || size_t(index) >= pointCount) return cacheable;
+            if (index < 0 || size_t(index) >= pointCount)
+                return cacheable;
         }
     } else if (!offsets.empty() && offsets.size() != pointCount) {
         return cacheable;
@@ -545,11 +565,10 @@ RigExecResolveBlendSampleLayout(const RigExecOracleScene &scene, const SdfPath &
 }
 
 bool
-RigExecResolveBlendSampleLayout(
-    const UsdStageRefPtr &stage,
-    const SdfPath &blendShapePath,
-    size_t pointCount,
-    RigExecBlendSampleLayout *layout)
+RigExecResolveBlendSampleLayout(const UsdStageRefPtr &stage,
+                                const SdfPath &blendShapePath,
+                                size_t pointCount,
+                                RigExecBlendSampleLayout *layout)
 {
     layout->pointCount = pointCount;
     layout->valid = false;
@@ -557,7 +576,7 @@ RigExecResolveBlendSampleLayout(
     const UsdSkelBlendShape shape(
         stage->GetPrimAtPath(blendShapePath.GetPrimPath()));
     if (!shape) {
-        return true;   // cache the miss; it cannot become a hit this compiled rig
+        return true; // cache the miss; it cannot become a hit this compiled rig
     }
     const UsdAttribute offsetsAttr = shape.GetOffsetsAttr();
     const UsdAttribute indicesAttr = shape.GetPointIndicesAttr();
@@ -579,8 +598,8 @@ RigExecResolveBlendSampleLayout(
     offsetsAttr.Get(&offsets);
     indicesAttr.Get(&indices);
 
-    RigExecBuildGeometryBlendLayout(offsets,indices,pointCount,layout);
+    RigExecBuildGeometryBlendLayout(offsets, indices, pointCount, layout);
     return cacheable;
 }
 
-}  // namespace rigExec
+} // namespace rigExec

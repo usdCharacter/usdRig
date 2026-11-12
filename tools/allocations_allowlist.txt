@@ -1,0 +1,5 @@
+# Deliberate hits of tools/check_allocations.py: file | kind | line.
+# Each is a passkey factory, a TfRefPtr adopted once, a documented
+# process-lifetime .release() contract, or a test that deliberately
+# keeps an evaluator open. Regenerate with --write-allowlist and
+# review the diff like code.

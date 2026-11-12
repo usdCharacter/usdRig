@@ -1,6 +1,7 @@
 // Stage-side property-chain discovery and binding, for the freeze gate and
 // the samplers' compiled rig currency check.
 
+#include "rigExecSchema/schemaNames.h"
 #include "frozenContextInternal.h"
 #include "movers/moverRegistry.h"
 #include <algorithm>
@@ -14,17 +15,17 @@ namespace {
 
 TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
-    ((inputsEnabled, "inputs:enabled"))
-    ((inputsDefaultWeight, "inputs:defaultWeight"))
-    ((rigExecOperation, "rigExec:operation"))
-    ((inputsValue, "inputs:value"))
-    ((inputsMin, "inputs:min"))
-    ((inputsMax, "inputs:max"))
-    ((inputsKeys, "inputs:keys"))
-    ((inputsTangents, "inputs:tangents"))
-    ((rigExecWeightObject, "rigExec:weightObject"))
-    ((rigExecInputWeights, "rigExec:inputWeights"))
-    ((rigExecBaseWeight, "rigExec:baseWeight"))
+    ((inputsEnabled, SchemaAttrText::inputsEnabled))
+    ((inputsDefaultWeight, SchemaAttrText::inputsDefaultWeight))
+    ((rigExecOperation, SchemaAttrText::rigExecOperation))
+    ((inputsValue, SchemaAttrText::inputsValue))
+    ((inputsMin, SchemaAttrText::inputsMin))
+    ((inputsMax, SchemaAttrText::inputsMax))
+    ((inputsKeys, SchemaAttrText::inputsKeys))
+    ((inputsTangents, SchemaAttrText::inputsTangents))
+    ((rigExecWeightObject, SchemaAttrText::rigExecWeightObject))
+    ((rigExecInputWeights, SchemaAttrText::rigExecInputWeights))
+    ((rigExecBaseWeight, SchemaAttrText::rigExecBaseWeight))
 );
 
 bool
@@ -37,14 +38,22 @@ const RigExecChainSampleInput *
 _ChainBoundInput(const RigExecChainSampleRevision &revision, size_t i)
 {
     switch (i) {
-    case 0: return &revision.enabled;
-    case 1: return &revision.defaultWeight;
-    case 2: return &revision.operation;
-    case 3: return &revision.value;
-    case 4: return &revision.minimum;
-    case 5: return &revision.maximum;
-    case 6: return &revision.keys;
-    default: return &revision.tangents;
+    case 0:
+        return &revision.enabled;
+    case 1:
+        return &revision.defaultWeight;
+    case 2:
+        return &revision.operation;
+    case 3:
+        return &revision.value;
+    case 4:
+        return &revision.minimum;
+    case 5:
+        return &revision.maximum;
+    case 6:
+        return &revision.keys;
+    default:
+        return &revision.tangents;
     }
 }
 
@@ -64,8 +73,7 @@ _DiscoverChainMovers(const RigExecRigEvaluator &evaluator,
         if (!_IsChainMathMover(record.schemaType)) {
             continue;
         }
-        if (record.targets.size() != 1 ||
-            !record.targets[0].IsPropertyPath()) {
+        if (record.targets.size() != 1 || !record.targets[0].IsPropertyPath()) {
             if (error) {
                 *error = record.schemaType.GetString() + " " +
                          record.moverPath.GetString() +
@@ -101,20 +109,20 @@ _OrderDiscoveredChains(
         std::set<SdfPath> visited;
         std::function<void(const UsdAttribute &)> walk =
             [&](const UsdAttribute &a) {
-            if (!a || !visited.insert(a.GetPath()).second) {
-                return;
-            }
-            if (chains.count(a.GetPath())) {
-                dependsOn[consumer].insert(a.GetPath());
-            }
-            SdfPathVector connections;
-            if (a.HasAuthoredConnections()) {
-                a.GetConnections(&connections);
-            }
-            for (const SdfPath &sourcePath : connections) {
-                walk(stage->GetAttributeAtPath(sourcePath));
-            }
-        };
+                if (!a || !visited.insert(a.GetPath()).second) {
+                    return;
+                }
+                if (chains.count(a.GetPath())) {
+                    dependsOn[consumer].insert(a.GetPath());
+                }
+                SdfPathVector connections;
+                if (a.HasAuthoredConnections()) {
+                    a.GetConnections(&connections);
+                }
+                for (const SdfPath &sourcePath : connections) {
+                    walk(stage->GetAttributeAtPath(sourcePath));
+                }
+            };
         walk(attribute);
     };
     auto addPrimDependencies = [&](const SdfPath &consumer,
@@ -127,9 +135,9 @@ _OrderDiscoveredChains(
         }
     };
     std::function<void(const SdfPath &, const SdfPath &, std::set<SdfPath> *)>
-        addWeightDependencies =
-            [&](const SdfPath &consumer, const SdfPath &weightPath,
-                std::set<SdfPath> *visited) {
+        addWeightDependencies = [&](const SdfPath &consumer,
+                                    const SdfPath &weightPath,
+                                    std::set<SdfPath> *visited) {
             if (!visited->insert(weightPath).second) {
                 return;
             }
@@ -153,8 +161,8 @@ _OrderDiscoveredChains(
             const UsdPrim mover = stage->GetPrimAtPath(revision.moverPath);
             addPrimDependencies(target, mover);
             SdfPathVector weights;
-            if (const UsdRelationship rel = mover.GetRelationship(
-                    _tokens->rigExecWeightObject)) {
+            if (const UsdRelationship rel =
+                    mover.GetRelationship(_tokens->rigExecWeightObject)) {
                 rel.GetTargets(&weights);
             }
             std::set<SdfPath> visitedWeights;
@@ -275,8 +283,8 @@ RigExecChainSampleBindingsStillCurrent(
     // The eight inputs a revision pins, by attribute name.
     const TfToken *const chainInputNames[8] = {
         &T.inputsEnabled, &T.inputsDefaultWeight, &T.rigExecOperation,
-        &T.inputsValue, &T.inputsMin, &T.inputsMax, &T.inputsKeys,
-        &T.inputsTangents};
+        &T.inputsValue,   &T.inputsMin,           &T.inputsMax,
+        &T.inputsKeys,    &T.inputsTangents};
     // The same phased reads, each over the same hops: a phase edit or a
     // rewire recompiles the evaluator, which resolves them afresh, and the
     // hops decide who stands aside for a drag.
@@ -316,8 +324,7 @@ RigExecChainSampleBindingsStillCurrent(
             return false;
         }
         for (size_t i = 0; i < chain.revisions.size(); ++i) {
-            if (found->second[i].moverPath !=
-                    chain.revisions[i].moverPath ||
+            if (found->second[i].moverPath != chain.revisions[i].moverPath ||
                 found->second[i].schemaType !=
                     chain.revisions[i].moverPrim.GetTypeName()) {
                 return false;
@@ -340,8 +347,8 @@ RigExecChainSampleBindingsStillCurrent(
                 return false;
             }
             SdfPathVector weights;
-            if (const UsdRelationship rel = mover.GetRelationship(
-                    T.rigExecWeightObject)) {
+            if (const UsdRelationship rel =
+                    mover.GetRelationship(T.rigExecWeightObject)) {
                 rel.GetTargets(&weights);
             }
             if (weights != revision.weightObjects) {
@@ -363,9 +370,9 @@ RigExecChainSampleBindingsStillCurrent(
                     continue;
                 }
                 const bool connected = fresh.HasAuthoredConnections();
-                const bool constant =
-                    !connected && !fresh.ValueMightBeTimeVarying() &&
-                    fresh.GetNumTimeSamples() == 0;
+                const bool constant = !connected &&
+                                      !fresh.ValueMightBeTimeVarying() &&
+                                      fresh.GetNumTimeSamples() == 0;
                 if (connected != pinned->connected ||
                     constant != pinned->constant) {
                     return false;
@@ -384,8 +391,7 @@ RigExecChainSampleBindingsStillCurrent(
 }
 
 bool
-RigExecSampleFrameInputs(const RigExecRigEvaluator &evaluator,
-                         UsdTimeCode time,
+RigExecSampleFrameInputs(const RigExecRigEvaluator &evaluator, UsdTimeCode time,
                          const std::vector<RigExecValueOverride> &overrides,
                          RigExecFrameInputs *out, std::string *error)
 {
@@ -393,13 +399,11 @@ RigExecSampleFrameInputs(const RigExecRigEvaluator &evaluator,
     // share every line below the bind, and the equivalence test holds them
     // to account sample by sample. A bind failure names no chains at all,
     // so no vector is built.
-    return RigExecSampleFrameInputs(evaluator, time, overrides, {}, out,
-                                    error);
+    return RigExecSampleFrameInputs(evaluator, time, overrides, {}, out, error);
 }
 
 bool
-RigExecSampleFrameInputs(const RigExecRigEvaluator &evaluator,
-                         UsdTimeCode time,
+RigExecSampleFrameInputs(const RigExecRigEvaluator &evaluator, UsdTimeCode time,
                          const std::vector<RigExecValueOverride> &overrides,
                          const std::vector<RigExecUpstreamValue> &upstream,
                          RigExecFrameInputs *out, std::string *error)

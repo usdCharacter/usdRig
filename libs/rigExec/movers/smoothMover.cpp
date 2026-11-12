@@ -5,6 +5,7 @@
 // and its parity-oracle branch, and registers the row that points at
 // them. Compile validation is the generic points-target + single-target
 // rules.
+#include "rigExecSchema/schemaNames.h"
 #include "moverRegistry.h"
 #include "moverExecCommon.h"
 
@@ -15,8 +16,8 @@
 #include "pxr/exec/vdf/context.h"
 #include "pxr/exec/vdf/readIterator.h"
 
-using rigExec::RigExecMoverParameters;
 using rigExec::RigExecMoverExecTokens;
+using rigExec::RigExecMoverParameters;
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -30,7 +31,6 @@ TF_DEFINE_PRIVATE_TOKENS(_smoothTokens,
 namespace {
 const TfToken _oracleToken0("faceVertexCounts");
 const TfToken _oracleToken1("faceVertexIndices");
-
 
 // RigExecSmoothMover parameters: fixed-adjacency Laplacian smoothing of
 // the destination's standard topology.
@@ -82,16 +82,12 @@ _OracleSmoothMover(const rigExec::RigExecMoverOracleContext &ctx)
         stage->GetPrimAtPath(target.GetPrimPath());
     VtIntArray counts, indices;
     if (owner) {
-        owner.GetAttribute(_oracleToken0)
-            .Get(&counts, time);
-        owner.GetAttribute(_oracleToken1)
-            .Get(&indices, time);
+        owner.GetAttribute(_oracleToken0).Get(&counts, time);
+        owner.GetAttribute(_oracleToken1).Get(&indices, time);
     }
     rigExec::RigExecApplyLaplacianSmooth(
-        &scratch,
-        std::vector<int>(counts.begin(), counts.end()),
-        std::vector<int>(indices.begin(), indices.end()),
-        1.0f);
+        &scratch, std::vector<int>(counts.begin(), counts.end()),
+        std::vector<int>(indices.begin(), indices.end()), 1.0f);
     std::copy(scratch.begin(), scratch.end(), points.begin());
     return RigExecOracleResult::Blend;
 }
@@ -100,17 +96,17 @@ rigExec::RigExecMoverHandler
 _MakeHandler()
 {
     rigExec::RigExecMoverHandler handler(
-        "RigExecSmoothMover",
+        rigExec::SchemaTypeName::RigExecSmoothMover,
         &rigExec::RigExecFixedMoverOp<rigExec::RigExecRevisionOp::Smooth>,
         rigExec::RigExecMoverDomain::Points);
     handler.singleTarget = true;
-    handler.legacyEnvelopeAttribute = "inputs:strength";
+    handler.legacyEnvelopeAttribute = rigExec::SchemaAttrText::inputsStrength;
     handler.bind = &_BindSmoothMover;
     handler.oracle = &_OracleSmoothMover;
     return handler;
 }
 
-}  // namespace
+} // namespace
 
 // EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA opens/closes the pxr namespace
 // itself, so the registration block stays at global scope.
@@ -118,24 +114,22 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecSmoothMover)
 {
     self.PrimComputation(RigExecMoverExecTokens->computeMoverParameters)
         .Callback<RigExecMoverParameters>(&_BuildSmoothMoverParameters)
-        .Inputs(
-            RIGEXEC_MOVER_COMMON_INPUTS,
-            Relationship(RigExecMoverExecTokens->resolvedTopologyCounts)
-                .TargetedObjects<int>(ExecBuiltinComputations->computeValue)
-                .InputName(RigExecMoverExecTokens->topologyCounts),
-            Relationship(RigExecMoverExecTokens->resolvedTopologyIndices)
-                .TargetedObjects<int>(ExecBuiltinComputations->computeValue)
-                .InputName(RigExecMoverExecTokens->topologyIndices));
+        .Inputs(RIGEXEC_MOVER_COMMON_INPUTS,
+                Relationship(RigExecMoverExecTokens->resolvedTopologyCounts)
+                    .TargetedObjects<int>(ExecBuiltinComputations->computeValue)
+                    .InputName(RigExecMoverExecTokens->topologyCounts),
+                Relationship(RigExecMoverExecTokens->resolvedTopologyIndices)
+                    .TargetedObjects<int>(ExecBuiltinComputations->computeValue)
+                    .InputName(RigExecMoverExecTokens->topologyIndices));
 
     self.PrimComputation(RigExecMoverExecTokens->computeMoverStatus)
         .Callback<rigExec::RigExecMoverStatus>(
             &rigExec::RigExecMoverBuildStatus)
-        .Inputs(
-            Computation<RigExecMoverParameters>(
-                RigExecMoverExecTokens->computeMoverParameters)
-                .Required(),
-            Computation<SdfPath>(ExecBuiltinComputations->computePath)
-                .InputName(RigExecMoverExecTokens->moverPath));
+        .Inputs(Computation<RigExecMoverParameters>(
+                    RigExecMoverExecTokens->computeMoverParameters)
+                    .Required(),
+                Computation<SdfPath>(ExecBuiltinComputations->computePath)
+                    .InputName(RigExecMoverExecTokens->moverPath));
 }
 
 RIGEXEC_REGISTER_MOVER(_MakeHandler());

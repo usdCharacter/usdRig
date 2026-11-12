@@ -49,8 +49,7 @@ using RigExecXformOverrideSceneIndexRefPtr =
 /// unrecognized pair has to mean something definite -- it means nothing is
 /// drawn, and the extent has to agree or a host frames empty space around a
 /// guide that does not exist.
-bool RigExecControlGuideIsDrawn(
-    const TfToken &shape, const TfToken &drawMode);
+bool RigExecControlGuideIsDrawn(const TfToken &shape, const TfToken &drawMode);
 
 /// The checked inverse the results scene index composes driven transforms
 /// with: false for a non-finite, ill-conditioned or singular \p m, and
@@ -95,10 +94,13 @@ uint64_t RigExecStageKeyFromAddedEntries(
 class RigExecInternalPrimPruningSceneIndex final
     : public HdSingleInputFilteringSceneIndexBase {
 public:
-    static RigExecInternalPrimPruningSceneIndexRefPtr New(
-        const HdSceneIndexBaseRefPtr &inputSceneIndex) {
+    static RigExecInternalPrimPruningSceneIndexRefPtr
+    New(const HdSceneIndexBaseRefPtr &inputSceneIndex)
+    {
         return TfCreateRefPtr(
-            new RigExecInternalPrimPruningSceneIndex(inputSceneIndex));
+            std::make_unique<RigExecInternalPrimPruningSceneIndex>(
+                _FactoryTag{0}, inputSceneIndex)
+                .release());
     }
 
     /// Registers/replaces the owned generated scopes (one per rig).
@@ -108,9 +110,9 @@ public:
     SdfPathVector GetChildPrimPaths(const SdfPath &primPath) const override;
 
 protected:
-    void _PrimsAdded(
-        const HdSceneIndexBase &sender,
-        const HdSceneIndexObserver::AddedPrimEntries &entries) override;
+    void
+    _PrimsAdded(const HdSceneIndexBase &sender,
+                const HdSceneIndexObserver::AddedPrimEntries &entries) override;
     void _PrimsRemoved(
         const HdSceneIndexBase &sender,
         const HdSceneIndexObserver::RemovedPrimEntries &entries) override;
@@ -119,9 +121,19 @@ protected:
         const HdSceneIndexObserver::DirtiedPrimEntries &entries) override;
 
 private:
-    explicit RigExecInternalPrimPruningSceneIndex(
-        const HdSceneIndexBaseRefPtr &inputSceneIndex);
+    /// Passkey for New(): not an aggregate, so a braced empty list cannot
+    /// build it, and only this class can name the type.
+    struct _FactoryTag {
+        explicit _FactoryTag(int)
+        {
+        }
+    };
 
+public:
+    RigExecInternalPrimPruningSceneIndex(
+        _FactoryTag, const HdSceneIndexBaseRefPtr &inputSceneIndex);
+
+private:
     bool _IsOwned(const SdfPath &path) const;
 
     std::set<SdfPath> _ownedScopes;
@@ -162,10 +174,12 @@ private:
 class RigExecXformOverrideSceneIndex final
     : public HdSingleInputFilteringSceneIndexBase {
 public:
-    static RigExecXformOverrideSceneIndexRefPtr New(
-        const HdSceneIndexBaseRefPtr &inputSceneIndex) {
-        return TfCreateRefPtr(
-            new RigExecXformOverrideSceneIndex(inputSceneIndex));
+    static RigExecXformOverrideSceneIndexRefPtr
+    New(const HdSceneIndexBaseRefPtr &inputSceneIndex)
+    {
+        return TfCreateRefPtr(std::make_unique<RigExecXformOverrideSceneIndex>(
+                                  _FactoryTag{0}, inputSceneIndex)
+                                  .release());
     }
 
     /// Replaces every preview delta and dirties the xform locator across the
@@ -173,20 +187,24 @@ public:
     void SetWorldDeltas(const std::map<SdfPath, GfMatrix4d> &deltas);
 
     /// Equivalent to SetWorldDeltas({}), named for the call site that means it.
-    void ClearWorldDeltas() { SetWorldDeltas({}); }
+    void ClearWorldDeltas()
+    {
+        SetWorldDeltas({});
+    }
 
     bool HasWorldDeltas() const;
 
     HdSceneIndexPrim GetPrim(const SdfPath &primPath) const override;
 
-    SdfPathVector GetChildPrimPaths(const SdfPath &primPath) const override {
+    SdfPathVector GetChildPrimPaths(const SdfPath &primPath) const override
+    {
         return _GetInputSceneIndex()->GetChildPrimPaths(primPath);
     }
 
 protected:
-    void _PrimsAdded(
-        const HdSceneIndexBase &sender,
-        const HdSceneIndexObserver::AddedPrimEntries &entries) override;
+    void
+    _PrimsAdded(const HdSceneIndexBase &sender,
+                const HdSceneIndexObserver::AddedPrimEntries &entries) override;
     void _PrimsRemoved(
         const HdSceneIndexBase &sender,
         const HdSceneIndexObserver::RemovedPrimEntries &entries) override;
@@ -195,17 +213,27 @@ protected:
         const HdSceneIndexObserver::DirtiedPrimEntries &entries) override;
 
 private:
-    explicit RigExecXformOverrideSceneIndex(
-        const HdSceneIndexBaseRefPtr &inputSceneIndex);
+    /// Passkey for New(): not an aggregate, so a braced empty list cannot
+    /// build it, and only this class can name the type.
+    struct _FactoryTag {
+        explicit _FactoryTag(int)
+        {
+        }
+    };
 
+public:
+    RigExecXformOverrideSceneIndex(
+        _FactoryTag, const HdSceneIndexBaseRefPtr &inputSceneIndex);
+
+private:
     /// The delta governing \p path: the nearest previewed ancestor's, or
     /// its own. Null when no preview applies.
     const GfMatrix4d *_FindDelta(const SdfPath &path) const;
 
     /// Dirties the xform locator on \p path and every descendant upstream.
-    void _DirtyXformSubtree(
-        const SdfPath &path,
-        HdSceneIndexObserver::DirtiedPrimEntries *entries) const;
+    void
+    _DirtyXformSubtree(const SdfPath &path,
+                       HdSceneIndexObserver::DirtiedPrimEntries *entries) const;
 
     /// Hydra pulls on its own thread while the application sets deltas on its
     /// own; the map is small and the critical sections are tiny.
@@ -228,19 +256,24 @@ public:
         uint64_t id = 0;
         std::set<SdfPath> publishedPrims;
     };
-    using CompiledRigBindingConstPtr = std::shared_ptr<const CompiledRigBinding>;
+    using CompiledRigBindingConstPtr =
+        std::shared_ptr<const CompiledRigBinding>;
 
-    static RigExecBindingResolvingSceneIndexRefPtr New(
-        const HdSceneIndexBaseRefPtr &inputSceneIndex) {
+    static RigExecBindingResolvingSceneIndexRefPtr
+    New(const HdSceneIndexBaseRefPtr &inputSceneIndex)
+    {
         return TfCreateRefPtr(
-            new RigExecBindingResolvingSceneIndex(inputSceneIndex));
+            std::make_unique<RigExecBindingResolvingSceneIndex>(_FactoryTag{0},
+                                                                inputSceneIndex)
+                .release());
     }
 
     /// Atomically swaps the compiled rig and dirties the affected outputs
     /// (universal locator for output-set changes).
     void SetCompiledRigBinding(CompiledRigBindingConstPtr compiledRig);
 
-    CompiledRigBindingConstPtr GetCompiledRigBinding() const {
+    CompiledRigBindingConstPtr GetCompiledRigBinding() const
+    {
         return std::atomic_load(&_compiledRig);
     }
 
@@ -248,9 +281,9 @@ public:
     SdfPathVector GetChildPrimPaths(const SdfPath &primPath) const override;
 
 protected:
-    void _PrimsAdded(
-        const HdSceneIndexBase &sender,
-        const HdSceneIndexObserver::AddedPrimEntries &entries) override;
+    void
+    _PrimsAdded(const HdSceneIndexBase &sender,
+                const HdSceneIndexObserver::AddedPrimEntries &entries) override;
     void _PrimsRemoved(
         const HdSceneIndexBase &sender,
         const HdSceneIndexObserver::RemovedPrimEntries &entries) override;
@@ -259,9 +292,19 @@ protected:
         const HdSceneIndexObserver::DirtiedPrimEntries &entries) override;
 
 private:
-    explicit RigExecBindingResolvingSceneIndex(
-        const HdSceneIndexBaseRefPtr &inputSceneIndex);
+    /// Passkey for New(): not an aggregate, so a braced empty list cannot
+    /// build it, and only this class can name the type.
+    struct _FactoryTag {
+        explicit _FactoryTag(int)
+        {
+        }
+    };
 
+public:
+    RigExecBindingResolvingSceneIndex(
+        _FactoryTag, const HdSceneIndexBaseRefPtr &inputSceneIndex);
+
+private:
     CompiledRigBindingConstPtr _compiledRig;
 };
 
@@ -274,11 +317,14 @@ private:
 class RigExecResultsSceneIndex final
     : public HdSingleInputFilteringSceneIndexBase {
 public:
-    static RigExecResultsSceneIndexRefPtr New(
-        const HdSceneIndexBaseRefPtr &inputSceneIndex,
-        std::shared_ptr<RigExecSnapshotStore> store) {
+    static RigExecResultsSceneIndexRefPtr
+    New(const HdSceneIndexBaseRefPtr &inputSceneIndex,
+        std::shared_ptr<RigExecSnapshotStore> store)
+    {
         return TfCreateRefPtr(
-            new RigExecResultsSceneIndex(inputSceneIndex, std::move(store)));
+            std::make_unique<RigExecResultsSceneIndex>(
+                _FactoryTag{0}, inputSceneIndex, std::move(store))
+                .release());
     }
 
     /// Tells the directory this chain is gone (RigExecImagingRegistry::
@@ -295,25 +341,23 @@ public:
     /// structural entries use universal dirtiness.
     /// Resolves \p primPath's world transform against every constraint-driven
     /// ancestor (or itself). False when none applies.
-    bool _ComputeDrivenXform(
-        const SdfPath &primPath,
-        const HdContainerDataSourceHandle &inputDataSource,
-        const RigExecImagingSnapshot &snapshot,
-        GfMatrix4d *result, float shutterOffset = 0.0f) const;
+    bool _ComputeDrivenXform(const SdfPath &primPath,
+                             const HdContainerDataSourceHandle &inputDataSource,
+                             const RigExecImagingSnapshot &snapshot,
+                             GfMatrix4d *result,
+                             float shutterOffset = 0.0f) const;
 
     /// Dirties \p locators on every descendant present upstream, plus the
     /// synthesized guide children present only here.
-    void _DirtySubtree(
-        const SdfPath &path,
-        const HdDataSourceLocatorSet &locators,
-        HdSceneIndexObserver::DirtiedPrimEntries *entries) const;
+    void _DirtySubtree(const SdfPath &path,
+                       const HdDataSourceLocatorSet &locators,
+                       HdSceneIndexObserver::DirtiedPrimEntries *entries) const;
 
     /// Dirties \p locators on the synthesized guide children announced
     /// under \p path. Their matrices bake the asset root's world transform,
     /// so no ancestor's dirtiness reaches them.
     void _DirtyAnnouncedGuideChildren(
-        const SdfPath &path,
-        const HdDataSourceLocatorSet &locators,
+        const SdfPath &path, const HdDataSourceLocatorSet &locators,
         HdSceneIndexObserver::DirtiedPrimEntries *entries) const;
 
     /// Does the current generation drive this prim's transform?
@@ -321,9 +365,9 @@ public:
 
     /// The asset root's world transform as THIS index reports it, so a
     /// driven asset root carries its guides with it.
-    GfMatrix4d _ResolveAssetRootWorld(
-        const SdfPath &assetRoot,
-        const RigExecImagingSnapshot &snapshot) const;
+    GfMatrix4d
+    _ResolveAssetRootWorld(const SdfPath &assetRoot,
+                           const RigExecImagingSnapshot &snapshot) const;
 
     /// Brings _announcedDrivenXforms for \p path in line with the current
     /// generation. Runs whether or not this index is observed.
@@ -364,8 +408,7 @@ public:
     /// _RefreshAnnouncedGuides does.
     void _RefreshAnnouncedVolumeGuides(const SdfPath &path);
 
-    void NotifyGenerationPublished(
-        const RigExecPublishedDirtyVector &dirtied);
+    void NotifyGenerationPublished(const RigExecPublishedDirtyVector &dirtied);
 
     /// Frames on demand: the frame table gained or lost frames. Dirties the
     /// value leaves every published prim answers at a time offset
@@ -375,7 +418,8 @@ public:
     void NotifyFramesChanged();
 
     /// The store this index reads (atomically swappable, see SetStore).
-    std::shared_ptr<RigExecSnapshotStore> GetStore() const {
+    std::shared_ptr<RigExecSnapshotStore> GetStore() const
+    {
         return std::atomic_load(&_store);
     }
 
@@ -390,8 +434,14 @@ public:
     /// The imaging context this index's chain is bound to (0 = unbound).
     /// Written by the registry directory when it (re)binds the chain; the
     /// time trigger and eager activation resolve their context through it.
-    uint64_t GetContextKey() const { return _contextKey.load(); }
-    void SetContextKey(uint64_t key) { _contextKey.store(key); }
+    uint64_t GetContextKey() const
+    {
+        return _contextKey.load();
+    }
+    void SetContextKey(uint64_t key)
+    {
+        _contextKey.store(key);
+    }
 
     /// Pulls this chain's upstream inputs again over the context's current
     /// window (RigExecImagingRegistry::SetWarmRange calls it after a window
@@ -403,7 +453,8 @@ public:
 
     /// The table this chain last handed to its context (null before any
     /// pull, or while no prim carries `rigExecInputs`). For tests.
-    std::shared_ptr<const RigExecUpstreamTable> GetUpstreamTable() const {
+    std::shared_ptr<const RigExecUpstreamTable> GetUpstreamTable() const
+    {
         return std::atomic_load(&_upstreamTable);
     }
 
@@ -411,9 +462,9 @@ public:
     SdfPathVector GetChildPrimPaths(const SdfPath &primPath) const override;
 
 protected:
-    void _PrimsAdded(
-        const HdSceneIndexBase &sender,
-        const HdSceneIndexObserver::AddedPrimEntries &entries) override;
+    void
+    _PrimsAdded(const HdSceneIndexBase &sender,
+                const HdSceneIndexObserver::AddedPrimEntries &entries) override;
     void _PrimsRemoved(
         const HdSceneIndexBase &sender,
         const HdSceneIndexObserver::RemovedPrimEntries &entries) override;
@@ -422,12 +473,23 @@ protected:
         const HdSceneIndexObserver::DirtiedPrimEntries &entries) override;
 
 private:
-    RigExecResultsSceneIndex(
-        const HdSceneIndexBaseRefPtr &inputSceneIndex,
-        std::shared_ptr<RigExecSnapshotStore> store);
+    /// Passkey for New(): not an aggregate, so a braced empty list cannot
+    /// build it, and only this class can name the type.
+    struct _FactoryTag {
+        explicit _FactoryTag(int)
+        {
+        }
+    };
 
+public:
+    RigExecResultsSceneIndex(_FactoryTag,
+                             const HdSceneIndexBaseRefPtr &inputSceneIndex,
+                             std::shared_ptr<RigExecSnapshotStore> store);
+
+private:
     /// The current generation of the bound store (null when none).
-    RigExecImagingSnapshotConstPtr _CurrentSnapshot() const {
+    RigExecImagingSnapshotConstPtr _CurrentSnapshot() const
+    {
         const std::shared_ptr<RigExecSnapshotStore> store = GetStore();
         return store ? store->Get() : nullptr;
     }
@@ -435,8 +497,8 @@ private:
     /// Pulls the batch's rigExec/stageKey and asks the directory to
     /// (re)bind this chain when it names another context than the bound
     /// one. Runs whether or not this index is observed.
-    void _BindToStageContext(
-        const HdSceneIndexObserver::AddedPrimEntries &entries);
+    void
+    _BindToStageContext(const HdSceneIndexObserver::AddedPrimEntries &entries);
 
     /// Whether \p entry dirties the rigExec/time trigger of an active rig
     /// root of this chain's context.
@@ -452,8 +514,8 @@ private:
 
     /// Notes the added prims whose data carries `rigExecInputs`; true when
     /// a noted prim was added.
-    bool _NoteUpstreamAdded(
-        const HdSceneIndexObserver::AddedPrimEntries &entries);
+    bool
+    _NoteUpstreamAdded(const HdSceneIndexObserver::AddedPrimEntries &entries);
 
     /// Notes the prims whose dirty intersects `rigExecInputs` (a universal
     /// dirty only on a prim already noted); true when any.
@@ -480,24 +542,23 @@ private:
     /// published prim against the current snapshot, emitting exact
     /// PrimsAdded/PrimsRemoved entries (joints and aggregate solvers
     /// draw as guide geometry like OpenExec's IrJointScope).
-    void _SyncGuideChildren(
-        const SdfPath &path,
-        HdSceneIndexObserver::AddedPrimEntries *added,
-        HdSceneIndexObserver::RemovedPrimEntries *removed);
+    void _SyncGuideChildren(const SdfPath &path,
+                            HdSceneIndexObserver::AddedPrimEntries *added,
+                            HdSceneIndexObserver::RemovedPrimEntries *removed);
 
     /// The same reconciliation for the single synthesized control-guide
     /// child, whose desired state is a prim type rather than a count.
-    void _SyncControlGuideChild(
-        const SdfPath &path,
-        HdSceneIndexObserver::AddedPrimEntries *added,
-        HdSceneIndexObserver::RemovedPrimEntries *removed);
+    void
+    _SyncControlGuideChild(const SdfPath &path,
+                           HdSceneIndexObserver::AddedPrimEntries *added,
+                           HdSceneIndexObserver::RemovedPrimEntries *removed);
 
     /// The same reconciliation for the volume weight iso-surface
     /// children, whose desired state is a per-index list of prim types.
-    void _SyncVolumeGuideChildren(
-        const SdfPath &path,
-        HdSceneIndexObserver::AddedPrimEntries *added,
-        HdSceneIndexObserver::RemovedPrimEntries *removed);
+    void
+    _SyncVolumeGuideChildren(const SdfPath &path,
+                             HdSceneIndexObserver::AddedPrimEntries *added,
+                             HdSceneIndexObserver::RemovedPrimEntries *removed);
 
     /// Swapped atomically by SetStore (chain rebinding); every read goes
     /// through GetStore().
@@ -568,6 +629,6 @@ private:
     void _RefreshAnnouncedGpuDeform(const SdfPath &path);
 };
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_IMAGING_SCENE_INDICES_H
+#endif // RIGEXEC_IMAGING_SCENE_INDICES_H

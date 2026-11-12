@@ -1,5 +1,6 @@
 // Runtime constraints, source resolution, and single-chain IK.
 
+#include "rigExecSchema/schemaNames.h"
 #include "poseInternal.h"
 #include <algorithm>
 #include <limits>
@@ -102,8 +103,7 @@ _RrConstraintFrameUsable(const RrPointFrame &frame)
 bool
 _RrConstraintVecFinite(const RrVec3d &v)
 {
-    return std::isfinite(v[0]) && std::isfinite(v[1]) &&
-           std::isfinite(v[2]);
+    return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
 }
 
 RrPointFrame
@@ -121,8 +121,7 @@ _RrDecomposeConstraintFrame(const RrPointFrame &frame,
                             _RrTransformParams *params)
 {
     if (!_RrConstraintFrameUsable(frame) ||
-        !_RrPointsToParams(RrIdentityLandmarks(), frame.points, 2,
-                           params)) {
+        !_RrPointsToParams(RrIdentityLandmarks(), frame.points, 2, params)) {
         return false;
     }
     return _RrConstraintVecFinite(params->translation) &&
@@ -136,8 +135,8 @@ RrPointFrame
 _RrFrameFromConstraintParams(const RrPointFrame &input,
                              const _RrTransformParams &params)
 {
-    RrPointFrame result = RrMatrixToPoints(
-        RrIdentityLandmarks(), _RrParamsToMatrix(params));
+    RrPointFrame result =
+        RrMatrixToPoints(RrIdentityLandmarks(), _RrParamsToMatrix(params));
     if (!_RrHasFinitePoints(result)) {
         return _RrConstraintFailure(input);
     }
@@ -221,14 +220,13 @@ _RrOrderIndices(_RrEulerOrder order)
 RrQuatd
 _RrQuatFromEulerDegrees(const RrVec3d &degrees, _RrEulerOrder order)
 {
-    const RrVec3d axes[3] = {
-        RrVec3d(1, 0, 0), RrVec3d(0, 1, 0), RrVec3d(0, 0, 1)};
+    const RrVec3d axes[3] = {RrVec3d(1, 0, 0), RrVec3d(0, 1, 0),
+                             RrVec3d(0, 0, 1)};
     RrMat4d matrix = _RrIdentity();
     const std::array<int, 3> indices = _RrOrderIndices(order);
     for (const int axis : indices) {
         matrix = matrix *
-                 RrMat4d(RrRotation(axes[axis], degrees[axis]),
-                         RrVec3d(0.0));
+                 RrMat4d(RrRotation(axes[axis], degrees[axis]), RrVec3d(0.0));
     }
     return matrix.ExtractRotation().GetQuat().GetNormalized();
 }
@@ -236,8 +234,8 @@ _RrQuatFromEulerDegrees(const RrVec3d &degrees, _RrEulerOrder order)
 RrVec3d
 _RrEulerDegreesFromQuat(const RrQuatd &rotation, _RrEulerOrder order)
 {
-    const RrVec3d axes[3] = {
-        RrVec3d(1, 0, 0), RrVec3d(0, 1, 0), RrVec3d(0, 0, 1)};
+    const RrVec3d axes[3] = {RrVec3d(1, 0, 0), RrVec3d(0, 1, 0),
+                             RrVec3d(0, 0, 1)};
     const std::array<int, 3> indices = _RrOrderIndices(order);
     // GfRotation::Decompose(a,b,c) describes row-matrix factors in the
     // reverse order Rc * Rb * Ra.  Pass the authored application sequence
@@ -264,8 +262,7 @@ _RrShortestDegrees(double degrees)
 }
 
 RrVec3d
-_RrApplyEulerDelta(const RrVec3d &inputEuler,
-                   const RrVec3d &targetEuler,
+_RrApplyEulerDelta(const RrVec3d &inputEuler, const RrVec3d &targetEuler,
                    const _RrConstraintAxisMask &affect, double weight)
 {
     RrVec3d output = inputEuler;
@@ -278,8 +275,8 @@ _RrApplyEulerDelta(const RrVec3d &inputEuler,
             if (weight >= 1.0) {
                 output[axis] = targetEuler[axis];
             } else {
-                output[axis] += weight * _RrShortestDegrees(
-                    targetEuler[axis] - inputEuler[axis]);
+                output[axis] += weight * _RrShortestDegrees(targetEuler[axis] -
+                                                            inputEuler[axis]);
             }
         }
     }
@@ -303,9 +300,9 @@ _RrNormalizeDirection(RrVec3d *direction, double eps = 1e-12)
     if (!_RrConstraintVecFinite(*direction)) {
         return false;
     }
-    const double largest = std::max(
-        {std::abs((*direction)[0]), std::abs((*direction)[1]),
-         std::abs((*direction)[2])});
+    const double largest =
+        std::max({std::abs((*direction)[0]), std::abs((*direction)[1]),
+                  std::abs((*direction)[2])});
     if (largest < eps) {
         return false;
     }
@@ -343,10 +340,9 @@ _RrRotateOntoProjected(const RrVec3d &v1, const RrVec3d &v2,
 }
 
 RrPointFrame
-_RrApplyPositionConstraint(
-    const RrPointFrame &input,
-    const std::vector<_RrConstraintSource> &sources,
-    const _RrPositionConstraintParams &params)
+_RrApplyPositionConstraint(const RrPointFrame &input,
+                           const std::vector<_RrConstraintSource> &sources,
+                           const _RrPositionConstraintParams &params)
 {
     double globalWeight = 0.0;
     if (!_RrValidateGlobalWeight(params.weight, &globalWeight)) {
@@ -376,8 +372,7 @@ _RrApplyPositionConstraint(
         totalWeight += source.normalizedWeight;
     }
     if (totalWeight <= 0.0 || !std::isfinite(totalWeight)) {
-        return totalWeight == 0.0 ? input
-                                  : _RrConstraintFailure(input);
+        return totalWeight == 0.0 ? input : _RrConstraintFailure(input);
     }
     target = target / totalWeight + params.offset;
     if (!_RrConstraintVecFinite(target)) {
@@ -398,13 +393,11 @@ _RrApplyPositionConstraint(
     if (globalWeight >= 1.0) {
         for (size_t point = 1; point < output.points.size(); ++point) {
             output.points[point] =
-                constrainedOrigin +
-                (input.points[point] - input.points[0]);
+                constrainedOrigin + (input.points[point] - input.points[0]);
         }
         output.points[0] = constrainedOrigin;
     } else {
-        const RrVec3d translation =
-            constrainedOrigin - input.points[0];
+        const RrVec3d translation = constrainedOrigin - input.points[0];
         for (RrVec3d &point : output.points) {
             point += translation;
         }
@@ -413,10 +406,9 @@ _RrApplyPositionConstraint(
 }
 
 RrPointFrame
-_RrApplyRotationConstraint(
-    const RrPointFrame &input,
-    const std::vector<_RrConstraintSource> &sources,
-    const _RrRotationConstraintParams &params)
+_RrApplyRotationConstraint(const RrPointFrame &input,
+                           const std::vector<_RrConstraintSource> &sources,
+                           const _RrRotationConstraintParams &params)
 {
     double globalWeight = 0.0;
     if (!_RrValidateGlobalWeight(params.weight, &globalWeight)) {
@@ -446,8 +438,7 @@ _RrApplyRotationConstraint(
         return _RrConstraintFailure(input);
     }
     const RrVec3d inputEuler =
-        _RrEulerDegreesFromQuat(inputParams.rotation,
-                                params.rotationOrder);
+        _RrEulerDegreesFromQuat(inputParams.rotation, params.rotationOrder);
     if (!_RrConstraintVecFinite(inputEuler)) {
         return _RrConstraintFailure(input);
     }
@@ -478,15 +469,14 @@ _RrApplyRotationConstraint(
             hasSourceAnchor = true;
         }
         for (int axis = 0; axis < 3; ++axis) {
-            weightedDelta[axis] += source.normalizedWeight *
-                _RrShortestDegrees(sourceEuler[axis] -
-                                   sourceAnchor[axis]);
+            weightedDelta[axis] +=
+                source.normalizedWeight *
+                _RrShortestDegrees(sourceEuler[axis] - sourceAnchor[axis]);
         }
         totalWeight += source.normalizedWeight;
     }
     if (totalWeight <= 0.0 || !std::isfinite(totalWeight)) {
-        return totalWeight == 0.0 ? input
-                                  : _RrConstraintFailure(input);
+        return totalWeight == 0.0 ? input : _RrConstraintFailure(input);
     }
     const RrVec3d targetEuler =
         sourceAnchor + weightedDelta / totalWeight + params.offsetDegrees;
@@ -494,8 +484,8 @@ _RrApplyRotationConstraint(
         !_RrConstraintVecFinite(targetEuler)) {
         return _RrConstraintFailure(input);
     }
-    const RrVec3d outputEuler = _RrApplyEulerDelta(
-        inputEuler, targetEuler, params.affect, globalWeight);
+    const RrVec3d outputEuler = _RrApplyEulerDelta(inputEuler, targetEuler,
+                                                   params.affect, globalWeight);
     inputParams.rotation =
         _RrQuatFromEulerDegrees(outputEuler, params.rotationOrder);
     const RrPointFrame solved =
@@ -507,10 +497,9 @@ _RrApplyRotationConstraint(
 }
 
 RrPointFrame
-_RrApplyScaleConstraint(
-    const RrPointFrame &input,
-    const std::vector<_RrConstraintSource> &sources,
-    const _RrScaleConstraintParams &params)
+_RrApplyScaleConstraint(const RrPointFrame &input,
+                        const std::vector<_RrConstraintSource> &sources,
+                        const _RrScaleConstraintParams &params)
 {
     double globalWeight = 0.0;
     if (!_RrValidateGlobalWeight(params.weight, &globalWeight)) {
@@ -547,8 +536,7 @@ _RrApplyScaleConstraint(
         totalWeight += source.normalizedWeight;
     }
     if (totalWeight <= 0.0 || !std::isfinite(totalWeight)) {
-        return totalWeight == 0.0 ? input
-                                  : _RrConstraintFailure(input);
+        return totalWeight == 0.0 ? input : _RrConstraintFailure(input);
     }
     targetScale = targetScale / totalWeight + params.offset;
     if (!_RrConstraintVecFinite(targetScale)) {
@@ -574,10 +562,9 @@ _RrApplyScaleConstraint(
 }
 
 RrPointFrame
-_RrApplyParentConstraint(
-    const RrPointFrame &input,
-    const std::vector<_RrConstraintSource> &sources,
-    const _RrParentConstraintParams &params)
+_RrApplyParentConstraint(const RrPointFrame &input,
+                         const std::vector<_RrConstraintSource> &sources,
+                         const _RrParentConstraintParams &params)
 {
     double globalWeight = 0.0;
     if (!_RrValidateGlobalWeight(params.weight, &globalWeight)) {
@@ -604,8 +591,7 @@ _RrApplyParentConstraint(
         return _RrConstraintFailure(input);
     }
     const RrVec3d inputEuler =
-        _RrEulerDegreesFromQuat(inputParams.rotation,
-                                params.rotationOrder);
+        _RrEulerDegreesFromQuat(inputParams.rotation, params.rotationOrder);
     if (!_RrConstraintVecFinite(inputEuler)) {
         return _RrConstraintFailure(input);
     }
@@ -642,14 +628,13 @@ _RrApplyParentConstraint(
             source.rotationOffsetDegrees, params.rotationOrder);
         const RrMat4d targetMatrix =
             _RrParamsToMatrix(offsetParams) * sourceMatrix;
-        const RrPointFrame targetFrame = RrMatrixToPoints(
-            RrIdentityLandmarks(), targetMatrix);
+        const RrPointFrame targetFrame =
+            RrMatrixToPoints(RrIdentityLandmarks(), targetMatrix);
         _RrTransformParams targetParams;
         if (!_RrDecomposeConstraintFrame(targetFrame, &targetParams)) {
             return _RrConstraintFailure(input);
         }
-        targetTranslation +=
-            targetParams.translation * source.normalizedWeight;
+        targetTranslation += targetParams.translation * source.normalizedWeight;
         targetScale += targetParams.scale * source.normalizedWeight;
         if (params.blendShear) {
             targetShear += targetParams.shear * source.normalizedWeight;
@@ -665,15 +650,14 @@ _RrApplyParentConstraint(
             hasSourceAnchor = true;
         }
         for (int axis = 0; axis < 3; ++axis) {
-            weightedRotationDelta[axis] += source.normalizedWeight *
-                _RrShortestDegrees(sourceEuler[axis] -
-                                   sourceAnchor[axis]);
+            weightedRotationDelta[axis] +=
+                source.normalizedWeight *
+                _RrShortestDegrees(sourceEuler[axis] - sourceAnchor[axis]);
         }
         totalWeight += source.normalizedWeight;
     }
     if (totalWeight <= 0.0 || !std::isfinite(totalWeight)) {
-        return totalWeight == 0.0 ? input
-                                  : _RrConstraintFailure(input);
+        return totalWeight == 0.0 ? input : _RrConstraintFailure(input);
     }
     targetTranslation /= totalWeight;
     targetScale /= totalWeight;
@@ -692,9 +676,9 @@ _RrApplyParentConstraint(
 
     for (int axis = 0; axis < 3; ++axis) {
         if (_RrAffects(params.translationAxes, axis)) {
-            inputParams.translation[axis] = _RrBlendEnvelope(
-                inputParams.translation[axis], targetTranslation[axis],
-                globalWeight);
+            inputParams.translation[axis] =
+                _RrBlendEnvelope(inputParams.translation[axis],
+                                 targetTranslation[axis], globalWeight);
         }
         if (_RrAffects(params.scaleAxes, axis)) {
             inputParams.scale[axis] = _RrBlendEnvelope(
@@ -718,8 +702,7 @@ _RrApplyParentConstraint(
 }
 
 RrPointFrame
-_RrApplyAimConstraint(const RrPointFrame &input,
-                      const RrVec3d &targetPoint,
+_RrApplyAimConstraint(const RrPointFrame &input, const RrVec3d &targetPoint,
                       const _RrAimConstraintParams &params)
 {
     double globalWeight = 0.0;
@@ -793,8 +776,7 @@ _RrApplyAimConstraint(const RrPointFrame &input,
                 return _RrConstraintFailure(input);
             }
         } else {
-            desiredUp =
-                currentUp - targetAim * RrDot(targetAim, currentUp);
+            desiredUp = currentUp - targetAim * RrDot(targetAim, currentUp);
             if (!_RrNormalizeDirection(&desiredUp)) {
                 desiredUp = swungUp;
             }
@@ -828,9 +810,8 @@ _RrApplyAimConstraint(const RrPointFrame &input,
 }
 
 RrPointFrame
-_RrApplyAimLandmarks(const RrPointFrame &input,
-                     const RrVec3d &targetOrigin, double weight,
-                     int aimLandmarkIndex)
+_RrApplyAimLandmarks(const RrPointFrame &input, const RrVec3d &targetOrigin,
+                     double weight, int aimLandmarkIndex)
 {
     if (!std::isfinite(weight)) {
         RrPointFrame flagged = input;
@@ -847,8 +828,7 @@ _RrApplyAimLandmarks(const RrPointFrame &input,
     const RrVec3d currentAim = input.points[size_t(aimIdx)] - origin;
     const double aimLen = currentAim.GetLength();
     const RrVec3d toTarget = targetOrigin - origin;
-    if (aimLen < 1e-12 || toTarget.GetLength() < 1e-12 ||
-        weight <= 0.0) {
+    if (aimLen < 1e-12 || toTarget.GetLength() < 1e-12 || weight <= 0.0) {
         return input;
     }
     const RrVec3d a0 = currentAim / aimLen;
@@ -860,11 +840,9 @@ _RrApplyAimLandmarks(const RrPointFrame &input,
         RrDot(RrCross(currentAim, inUp), inSide) < 0 ? -1.0 : 1.0;
 
     const RrRotation full(a0, a1);
-    const RrRotation partial(full.GetAxis(),
-                             full.GetAngle() * weight);
-    const RrVec3d newAim = weight >= 1.0
-        ? a1
-        : partial.TransformDir(a0).GetNormalized();
+    const RrRotation partial(full.GetAxis(), full.GetAngle() * weight);
+    const RrVec3d newAim =
+        weight >= 1.0 ? a1 : partial.TransformDir(a0).GetNormalized();
 
     const double upLen = inUp.GetLength();
     const double sideLen = inSide.GetLength();
@@ -881,8 +859,7 @@ _RrApplyAimLandmarks(const RrPointFrame &input,
         return flagged;
     }
     up.Normalize();
-    const RrVec3d side =
-        handedness * RrCross(newAim, up).GetNormalized();
+    const RrVec3d side = handedness * RrCross(newAim, up).GetNormalized();
 
     RrPointFrame out = input;
     out.points[size_t(aimIdx)] = origin + newAim * aimLen;
@@ -906,15 +883,14 @@ struct _RrSingleChainIkParams {
     _RrSingleChainIkMode mode = _RrSingleChainIkMode::RotatePlane;
     RrVec3d pole{0.0, 1.0, 0.0};
     double twistDegrees = 0.0;
-    double stretch=0;
+    double stretch = 0;
     double weight = 1.0;
 };
 
 bool
 _RrIkVecFinite(const RrVec3d &v)
 {
-    return std::isfinite(v[0]) && std::isfinite(v[1]) &&
-           std::isfinite(v[2]);
+    return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
 }
 
 bool
@@ -969,21 +945,20 @@ _RrIkWorldAxisLeastParallel(const RrVec3d &axis)
 
 RrVec3d
 _RrIkStablePerpendicular(const RrVec3d &axis, const RrVec3d &first,
-                          const RrVec3d &second, double epsilon)
+                         const RrVec3d &second, double epsilon)
 {
     auto normalized = [](const RrVec3d &candidate) {
         const double length = candidate.GetLength();
-        return std::isfinite(length) && length > 0.0
-            ? candidate / length
-            : RrVec3d(0.0);
+        return std::isfinite(length) && length > 0.0 ? candidate / length
+                                                     : RrVec3d(0.0);
     };
     RrVec3d result = _RrIkProjectPerpendicular(normalized(first), axis);
     if (result.GetLength() <= epsilon) {
         result = _RrIkProjectPerpendicular(normalized(second), axis);
     }
     if (result.GetLength() <= epsilon) {
-        result = _RrIkProjectPerpendicular(
-            _RrIkWorldAxisLeastParallel(axis), axis);
+        result =
+            _RrIkProjectPerpendicular(_RrIkWorldAxisLeastParallel(axis), axis);
     }
     return result.GetNormalized();
 }
@@ -999,13 +974,12 @@ _RrIkRotate(const RrVec3d &v, const RrVec3d &unitAxis, double radians)
 
 RrVec3d
 _RrIkRotateToward(const RrVec3d &v, const RrVec3d &fromAxis,
-                  const RrVec3d &toAxis, double weight,
-                  const RrVec3d &fallback, double epsilon)
+                  const RrVec3d &toAxis, double weight, const RrVec3d &fallback,
+                  double epsilon)
 {
     const RrVec3d from = fromAxis.GetNormalized();
     const RrVec3d to = toAxis.GetNormalized();
-    const double dot =
-        std::min(std::max(RrDot(from, to), -1.0), 1.0);
+    const double dot = std::min(std::max(RrDot(from, to), -1.0), 1.0);
     RrVec3d rotationAxis = RrCross(from, to);
     const double sinAngle = rotationAxis.GetLength();
     double angle = 0.0;
@@ -1013,8 +987,8 @@ _RrIkRotateToward(const RrVec3d &v, const RrVec3d &fromAxis,
         rotationAxis /= sinAngle;
         angle = std::atan2(sinAngle, dot);
     } else if (dot < 0.0) {
-        rotationAxis = _RrIkStablePerpendicular(
-            from, fallback, RrVec3d(0.0), epsilon);
+        rotationAxis =
+            _RrIkStablePerpendicular(from, fallback, RrVec3d(0.0), epsilon);
         angle = _RrPi;
     } else {
         return v;
@@ -1023,9 +997,8 @@ _RrIkRotateToward(const RrVec3d &v, const RrVec3d &fromAxis,
 }
 
 RrVec3d
-_RrIkBlendDirection(const RrVec3d &from, const RrVec3d &to,
-                    double weight, const RrVec3d &fallback,
-                    double epsilon)
+_RrIkBlendDirection(const RrVec3d &from, const RrVec3d &to, double weight,
+                    const RrVec3d &fallback, double epsilon)
 {
     RrVec3d result =
         _RrIkRotateToward(from, from, to, weight, fallback, epsilon);
@@ -1057,8 +1030,7 @@ _RrIkExtractBasis(const RrPointFrame &frame, double epsilon,
     const double zLength = z.GetLength();
     const double frameScale = std::max({xLength, yLength, zLength});
     if (!std::isfinite(frameScale) || frameScale <= 0.0 ||
-        xLength <= frameScale * epsilon ||
-        yLength <= frameScale * epsilon ||
+        xLength <= frameScale * epsilon || yLength <= frameScale * epsilon ||
         zLength <= frameScale * epsilon) {
         return false;
     }
@@ -1070,8 +1042,8 @@ _RrIkExtractBasis(const RrPointFrame &frame, double epsilon,
     }
     up.Normalize();
 
-    const double determinant = RrDot(
-        RrCross(x / xLength, y / yLength), z / zLength);
+    const double determinant =
+        RrDot(RrCross(x / xLength, y / yLength), z / zLength);
     if (!std::isfinite(determinant) || std::abs(determinant) <= 1e-10) {
         return false;
     }
@@ -1107,12 +1079,11 @@ _RrIkFrameBasis
 _RrIkAimedBasis(const _RrIkFrameBasis &basis, const RrVec3d &unitAim,
                 double epsilon)
 {
-    RrVec3d up = _RrIkRotateToward(basis.up, basis.x, unitAim, 1.0,
-                                   basis.up, epsilon);
+    RrVec3d up =
+        _RrIkRotateToward(basis.up, basis.x, unitAim, 1.0, basis.up, epsilon);
     up = _RrIkProjectPerpendicular(up, unitAim);
     if (up.GetLength() <= epsilon) {
-        up = _RrIkStablePerpendicular(unitAim, basis.up, basis.x,
-                                       epsilon);
+        up = _RrIkStablePerpendicular(unitAim, basis.up, basis.x, epsilon);
     } else {
         up.Normalize();
     }
@@ -1124,22 +1095,19 @@ _RrIkAimedBasis(const _RrIkFrameBasis &basis, const RrVec3d &unitAim,
 
 _RrIkFrameBasis
 _RrIkTransportedBasis(const _RrIkFrameBasis &basis,
-                      const RrVec3d &fromDirection,
-                      const RrVec3d &toDirection, double epsilon)
+                      const RrVec3d &fromDirection, const RrVec3d &toDirection,
+                      double epsilon)
 {
     _RrIkFrameBasis transported = basis;
-    transported.x = _RrIkRotateToward(basis.x, fromDirection,
-                                      toDirection, 1.0, basis.up,
-                                      epsilon);
+    transported.x = _RrIkRotateToward(basis.x, fromDirection, toDirection, 1.0,
+                                      basis.up, epsilon);
     transported.x.Normalize();
-    transported.up = _RrIkRotateToward(basis.up, fromDirection,
-                                       toDirection, 1.0, basis.up,
-                                       epsilon);
-    transported.up = _RrIkProjectPerpendicular(transported.up,
-                                                transported.x);
+    transported.up = _RrIkRotateToward(basis.up, fromDirection, toDirection,
+                                       1.0, basis.up, epsilon);
+    transported.up = _RrIkProjectPerpendicular(transported.up, transported.x);
     if (transported.up.GetLength() <= epsilon) {
-        transported.up = _RrIkStablePerpendicular(
-            transported.x, basis.up, basis.x, epsilon);
+        transported.up =
+            _RrIkStablePerpendicular(transported.x, basis.up, basis.x, epsilon);
     } else {
         transported.up.Normalize();
     }
@@ -1150,39 +1118,35 @@ double
 _RrIkSignedAngle(const RrVec3d &from, const RrVec3d &to,
                  const RrVec3d &unitAxis)
 {
-    return std::atan2(
-        RrDot(unitAxis, RrCross(from, to)),
-        std::min(std::max(RrDot(from, to), -1.0), 1.0));
+    return std::atan2(RrDot(unitAxis, RrCross(from, to)),
+                      std::min(std::max(RrDot(from, to), -1.0), 1.0));
 }
 
 RrPointFrame
 _RrIkBlendEndFrame(const _RrIkFrameBasis &input,
-                   const _RrIkFrameBasis &effector,
-                   const RrVec3d &origin, double weight,
-                   double epsilon)
+                   const _RrIkFrameBasis &effector, const RrVec3d &origin,
+                   double weight, double epsilon)
 {
-    const RrVec3d x = _RrIkBlendDirection(
-        input.x, effector.x, weight, input.up, epsilon);
+    const RrVec3d x =
+        _RrIkBlendDirection(input.x, effector.x, weight, input.up, epsilon);
 
-    RrVec3d carriedAtTarget = _RrIkRotateToward(
-        input.up, input.x, effector.x, 1.0, input.up, epsilon);
-    carriedAtTarget =
-        _RrIkProjectPerpendicular(carriedAtTarget, effector.x);
+    RrVec3d carriedAtTarget = _RrIkRotateToward(input.up, input.x, effector.x,
+                                                1.0, input.up, epsilon);
+    carriedAtTarget = _RrIkProjectPerpendicular(carriedAtTarget, effector.x);
     if (carriedAtTarget.GetLength() <= epsilon) {
-        carriedAtTarget = _RrIkStablePerpendicular(
-            effector.x, input.up, effector.up, epsilon);
+        carriedAtTarget = _RrIkStablePerpendicular(effector.x, input.up,
+                                                   effector.up, epsilon);
     } else {
         carriedAtTarget.Normalize();
     }
     const double roll =
         _RrIkSignedAngle(carriedAtTarget, effector.up, effector.x);
 
-    RrVec3d up = _RrIkRotateToward(input.up, input.x, effector.x,
-                                   weight, input.up, epsilon);
+    RrVec3d up = _RrIkRotateToward(input.up, input.x, effector.x, weight,
+                                   input.up, epsilon);
     up = _RrIkProjectPerpendicular(up, x);
     if (up.GetLength() <= epsilon) {
-        up = _RrIkStablePerpendicular(x, input.up, effector.up,
-                                       epsilon);
+        up = _RrIkStablePerpendicular(x, input.up, effector.up, epsilon);
     } else {
         up.Normalize();
     }
@@ -1191,8 +1155,7 @@ _RrIkBlendEndFrame(const _RrIkFrameBasis &input,
 }
 
 RrVec3d
-_RrIkDirectionOrFallback(const RrVec3d &direction,
-                         const RrVec3d &fallback,
+_RrIkDirectionOrFallback(const RrVec3d &direction, const RrVec3d &fallback,
                          double positionEpsilon, double angularEpsilon)
 {
     const double directionLength = direction.GetLength();
@@ -1207,13 +1170,12 @@ _RrIkDirectionOrFallback(const RrVec3d &direction,
 }
 
 std::vector<RrVec3d>
-_RrIkSolvePositions(
-    const std::vector<RrVec3d> &original,
-    const std::vector<double> &lengths,
-    const std::vector<_RrIkFrameBasis> &bases,
-    const _RrIkFrameBasis &effectorBasis, const RrVec3d &goal,
-    const _RrSingleChainIkParams &params, double positionEpsilon,
-    double angularEpsilon)
+_RrIkSolvePositions(const std::vector<RrVec3d> &original,
+                    const std::vector<double> &lengths,
+                    const std::vector<_RrIkFrameBasis> &bases,
+                    const _RrIkFrameBasis &effectorBasis, const RrVec3d &goal,
+                    const _RrSingleChainIkParams &params,
+                    double positionEpsilon, double angularEpsilon)
 {
     const size_t count = original.size();
     const RrVec3d root = original.front();
@@ -1234,8 +1196,8 @@ _RrIkSolvePositions(
         if (solveAxis.GetLength() <= positionEpsilon) {
             solveAxis = original[1] - root;
         }
-        solveAxis = _RrIkDirectionOrFallback(
-            solveAxis, bases.front().x, positionEpsilon, angularEpsilon);
+        solveAxis = _RrIkDirectionOrFallback(solveAxis, bases.front().x,
+                                             positionEpsilon, angularEpsilon);
     }
 
     if (goalDistance >= totalLength - positionEpsilon &&
@@ -1256,15 +1218,14 @@ _RrIkSolvePositions(
         if (poleOffset.GetLength() <= positionEpsilon) {
             poleOffset = RrVec3d(0.0);
         }
-        planeUp = _RrIkStablePerpendicular(
-            solveAxis, poleOffset, bases.front().up, angularEpsilon);
-        planeUp = _RrIkRotate(
-            planeUp, solveAxis, params.twistDegrees * (_RrPi / 180.0));
+        planeUp = _RrIkStablePerpendicular(solveAxis, poleOffset,
+                                           bases.front().up, angularEpsilon);
+        planeUp = _RrIkRotate(planeUp, solveAxis,
+                              params.twistDegrees * (_RrPi / 180.0));
         planeUp.Normalize();
     } else {
-        planeUp = _RrIkStablePerpendicular(
-            solveAxis, effectorBasis.up, effectorBasis.x,
-            angularEpsilon);
+        planeUp = _RrIkStablePerpendicular(solveAxis, effectorBasis.up,
+                                           effectorBasis.x, angularEpsilon);
     }
     planeNormal = RrCross(solveAxis, planeUp).GetNormalized();
 
@@ -1272,28 +1233,26 @@ _RrIkSolvePositions(
         const RrVec3d relative = positions[i] - root;
         const double along = RrDot(relative, solveAxis);
         const double towardPlane = std::abs(RrDot(relative, planeUp));
-        positions[i] =
-            root + solveAxis * along + planeUp * towardPlane;
+        positions[i] = root + solveAxis * along + planeUp * towardPlane;
     }
 
     double maxOffAxis = 0.0;
     for (size_t i = 1; i + 1 < count; ++i) {
-        maxOffAxis = std::max(
-            maxOffAxis,
-            _RrIkProjectPerpendicular(positions[i] - root, solveAxis)
-                .GetLength());
+        maxOffAxis =
+            std::max(maxOffAxis,
+                     _RrIkProjectPerpendicular(positions[i] - root, solveAxis)
+                         .GetLength());
     }
     if (count > 2 && maxOffAxis <= positionEpsilon * 8.0 &&
         goalDistance < totalLength - positionEpsilon) {
         const RrVec3d bend = planeUp;
         double distance = 0.0;
-        const double amplitude = std::max(
-            totalLength * 0.05, positionEpsilon * 16.0);
+        const double amplitude =
+            std::max(totalLength * 0.05, positionEpsilon * 16.0);
         for (size_t i = 1; i + 1 < count; ++i) {
             distance += lengths[i - 1];
-            positions[i] += bend *
-                (amplitude *
-                 std::sin(_RrPi * distance / totalLength));
+            positions[i] +=
+                bend * (amplitude * std::sin(_RrPi * distance / totalLength));
         }
     }
 
@@ -1301,30 +1260,29 @@ _RrIkSolvePositions(
     for (size_t i = 0; i < lengths.size(); ++i) {
         RrVec3d direction = positions[i + 1] - positions[i];
         direction -= planeNormal * RrDot(direction, planeNormal);
-        fallback[i] = _RrIkDirectionOrFallback(
-            direction, solveAxis, positionEpsilon, angularEpsilon);
+        fallback[i] = _RrIkDirectionOrFallback(direction, solveAxis,
+                                               positionEpsilon, angularEpsilon);
     }
 
     std::vector<RrVec3d> best = positions;
     double bestError = std::numeric_limits<double>::infinity();
-    const double tolerance = std::max(
-        positionEpsilon * 8.0, totalLength * 1e-12);
-    for (int iteration = 0; iteration < _RrFabrikIterations;
-         ++iteration) {
+    const double tolerance =
+        std::max(positionEpsilon * 8.0, totalLength * 1e-12);
+    for (int iteration = 0; iteration < _RrFabrikIterations; ++iteration) {
         positions.back() = goal;
 
         for (size_t i = count - 1; i-- > 0;) {
             const RrVec3d direction = _RrIkDirectionOrFallback(
-                positions[i] - positions[i + 1], -fallback[i],
-                positionEpsilon, angularEpsilon);
+                positions[i] - positions[i + 1], -fallback[i], positionEpsilon,
+                angularEpsilon);
             positions[i] = positions[i + 1] + direction * lengths[i];
         }
 
         positions[0] = root;
         for (size_t i = 0; i < lengths.size(); ++i) {
             const RrVec3d direction = _RrIkDirectionOrFallback(
-                positions[i + 1] - positions[i], fallback[i],
-                positionEpsilon, angularEpsilon);
+                positions[i + 1] - positions[i], fallback[i], positionEpsilon,
+                angularEpsilon);
             positions[i + 1] = positions[i] + direction * lengths[i];
             fallback[i] = direction;
         }
@@ -1349,8 +1307,7 @@ _RrSolveSingleChainIk(const std::vector<RrPointFrame> &currentFrames,
     if (!std::isfinite(params.weight)) {
         return _RrIkDegenerate(currentFrames);
     }
-    const double weight =
-        std::min(std::max(params.weight, 0.0), 1.0);
+    const double weight = std::min(std::max(params.weight, 0.0), 1.0);
     if (weight <= 0.0) {
         return currentFrames;
     }
@@ -1365,8 +1322,7 @@ _RrSolveSingleChainIk(const std::vector<RrPointFrame> &currentFrames,
         return _RrIkDegenerate(currentFrames);
     }
     if (params.mode == _RrSingleChainIkMode::RotatePlane &&
-        (!_RrIkVecFinite(params.pole) ||
-         !std::isfinite(params.twistDegrees))) {
+        (!_RrIkVecFinite(params.pole) || !std::isfinite(params.twistDegrees))) {
         return _RrIkDegenerate(currentFrames);
     }
     for (const RrPointFrame &frame : currentFrames) {
@@ -1382,8 +1338,7 @@ _RrSolveSingleChainIk(const std::vector<RrPointFrame> &currentFrames,
         original[i] = currentFrames[i].points[0];
         if (i + 1 < currentFrames.size()) {
             lengths[i] =
-                (currentFrames[i + 1].points[0] - original[i])
-                    .GetLength();
+                (currentFrames[i + 1].points[0] - original[i]).GetLength();
             segmentScale = std::max(segmentScale, lengths[i]);
         }
     }
@@ -1395,16 +1350,14 @@ _RrSolveSingleChainIk(const std::vector<RrPointFrame> &currentFrames,
 
     std::vector<_RrIkFrameBasis> bases(currentFrames.size());
     for (size_t i = 0; i < currentFrames.size(); ++i) {
-        if (!_RrIkExtractBasis(currentFrames[i], angularEpsilon,
-                               &bases[i])) {
+        if (!_RrIkExtractBasis(currentFrames[i], angularEpsilon, &bases[i])) {
             return _RrIkDegenerate(currentFrames);
         }
     }
     _RrIkFrameBasis effectorBasis = bases.back();
     if (params.mode == _RrSingleChainIkMode::SingleChain) {
         if (!_RrIkFrameFinite(effectorFrame) ||
-            !_RrIkExtractBasis(effectorFrame, angularEpsilon,
-                               &effectorBasis)) {
+            !_RrIkExtractBasis(effectorFrame, angularEpsilon, &effectorBasis)) {
             return _RrIkDegenerate(currentFrames);
         }
     }
@@ -1414,14 +1367,25 @@ _RrSolveSingleChainIk(const std::vector<RrPointFrame> &currentFrames,
         }
     }
 
-    if(!std::isfinite(params.stretch) || params.stretch<0 || params.stretch>1)return _RrIkDegenerate(currentFrames);
-    double totalLength=0;for(double length:lengths)totalLength+=length;
-    const double growth=1+params.stretch*std::max(0.0,(effectorFrame.points[0]-original.front()).GetLength()/totalLength-1);
-    auto solveLengths=lengths;for(double &length:solveLengths)length*=growth;
+    if (!std::isfinite(params.stretch) || params.stretch < 0 ||
+        params.stretch > 1)
+        return _RrIkDegenerate(currentFrames);
+    double totalLength = 0;
+    for (double length : lengths)
+        totalLength += length;
+    const double growth =
+        1 +
+        params.stretch *
+            std::max(0.0,
+                     (effectorFrame.points[0] - original.front()).GetLength() /
+                             totalLength -
+                         1);
+    auto solveLengths = lengths;
+    for (double &length : solveLengths)
+        length *= growth;
     const std::vector<RrVec3d> solved = _RrIkSolvePositions(
-        original, solveLengths, bases, effectorBasis,
-        effectorFrame.points[0], params, positionEpsilon,
-        angularEpsilon);
+        original, solveLengths, bases, effectorBasis, effectorFrame.points[0],
+        params, positionEpsilon, angularEpsilon);
     if (solved.size() != currentFrames.size()) {
         return _RrIkDegenerate(currentFrames);
     }
@@ -1444,8 +1408,7 @@ _RrSolveSingleChainIk(const std::vector<RrPointFrame> &currentFrames,
         const RrVec3d solvedTerminal =
             solvedTerminalSegment / solvedTerminalSegment.GetLength();
         solvedBases.back() = _RrIkTransportedBasis(
-            bases.back(), currentTerminal, solvedTerminal,
-            angularEpsilon);
+            bases.back(), currentTerminal, solvedTerminal, angularEpsilon);
     }
 
     std::vector<RrPointFrame> result(currentFrames.size());
@@ -1463,22 +1426,25 @@ _RrSolveSingleChainIk(const std::vector<RrPointFrame> &currentFrames,
             const RrVec3d solvedSegment = solved[i + 1] - solved[i];
             const RrVec3d solvedDirection =
                 solvedSegment / solvedSegment.GetLength();
-            const RrVec3d direction = _RrIkBlendDirection(
-                currentDirection, solvedDirection, weight, bases[i].up,
-                angularEpsilon);
-            blended[i + 1] = blended[i] + direction * lengths[i] * (1+weight*(growth-1));
+            const RrVec3d direction =
+                _RrIkBlendDirection(currentDirection, solvedDirection, weight,
+                                    bases[i].up, angularEpsilon);
+            blended[i + 1] = blended[i] + direction * lengths[i] *
+                                              (1 + weight * (growth - 1));
         }
         for (size_t i = 0; i < result.size(); ++i) {
-            result[i] = _RrIkBlendEndFrame(
-                bases[i], solvedBases[i], blended[i], weight,
-                angularEpsilon);
+            result[i] = _RrIkBlendEndFrame(bases[i], solvedBases[i], blended[i],
+                                           weight, angularEpsilon);
         }
     }
 
-    if(growth!=1)for(size_t i=0;i+1<result.size();++i) {
-        const auto bone=result[i+1].points[0]-result[i].points[0];
-        RigExecScaleFrameAlong(result[i].points.data(),bone.GetNormalized(),bone.GetLength()/lengths[i]);
-    }
+    if (growth != 1)
+        for (size_t i = 0; i + 1 < result.size(); ++i) {
+            const auto bone = result[i + 1].points[0] - result[i].points[0];
+            RigExecScaleFrameAlong(result[i].points.data(),
+                                   bone.GetNormalized(),
+                                   bone.GetLength() / lengths[i]);
+        }
     for (const RrPointFrame &frame : result) {
         if (!_RrIkFrameFinite(frame)) {
             return _RrIkDegenerate(currentFrames);
@@ -1490,10 +1456,9 @@ _RrSolveSingleChainIk(const std::vector<RrPointFrame> &currentFrames,
 // RigExecPrepareRestDerivedIkChain (rigEvaluator.cpp): rest segment
 // lengths laid along the current chain's directions.
 bool
-_RrPrepareRestDerivedIkChain(
-    const std::vector<RrPointFrame> &current,
-    const std::vector<RrPointFrame> &rest,
-    std::vector<RrPointFrame> *prepared)
+_RrPrepareRestDerivedIkChain(const std::vector<RrPointFrame> &current,
+                             const std::vector<RrPointFrame> &rest,
+                             std::vector<RrPointFrame> *prepared)
 {
     if (current.size() != rest.size() || current.empty()) {
         return false;
@@ -1521,11 +1486,9 @@ _RrPrepareRestDerivedIkChain(
             RrMat4d parentRest = _RrIdentity();
             RrMat4d parentPrepared = _RrIdentity();
             if (!RrPointsToMatrix(RrIdentityLandmarks(),
-                                  lengthReference[i - 1].points,
-                                  &parentRest) ||
+                                  lengthReference[i - 1].points, &parentRest) ||
                 !RrPointsToMatrix(RrIdentityLandmarks(),
-                                  prepared->back().points,
-                                  &parentPrepared)) {
+                                  prepared->back().points, &parentPrepared)) {
                 return false;
             }
             origin = parentPrepared.TransformAffine(
@@ -1536,15 +1499,13 @@ _RrPrepareRestDerivedIkChain(
         RrPointFrame frame = current[i];
         frame.points[0] = origin;
         for (size_t axis = 1; axis < frame.points.size(); ++axis) {
-            RrVec3d direction =
-                current[i].points[axis] - current[i].points[0];
+            RrVec3d direction = current[i].points[axis] - current[i].points[0];
             const double directionLength = direction.GetLength();
             const double length =
-                (lengthReference[i].points[axis] -
-                 lengthReference[i].points[0]).GetLength();
+                (lengthReference[i].points[axis] - lengthReference[i].points[0])
+                    .GetLength();
             if (!std::isfinite(length) || length <= 0.0 ||
-                !std::isfinite(directionLength) ||
-                directionLength <= 0.0) {
+                !std::isfinite(directionLength) || directionLength <= 0.0) {
                 return false;
             }
             direction /= directionLength;
@@ -1567,8 +1528,7 @@ _RrPrepareRestDerivedIkChain(
 bool
 _RrApplyRevisedAncestorDelta(
     const RrProgram *program, const std::string &xformPath,
-    const std::vector<RigExecWireAncestorRead> &ancestors,
-    RrPointFrame *frame)
+    const std::vector<RigExecWireAncestorRead> &ancestors, RrPointFrame *frame)
 {
     const RrStore &store = program->store;
     const auto elementCount = [](const std::string &path) {
@@ -1577,8 +1537,7 @@ _RrApplyRevisedAncestorDelta(
     std::string closest;
     RrPointFrame closestBase, closestCurrent;
     for (const RigExecWireAncestorRead &a : ancestors) {
-        if (a.slot < 0 ||
-            size_t(a.slot) >= program->slotMeta->paths.size() ||
+        if (a.slot < 0 || size_t(a.slot) >= program->slotMeta->paths.size() ||
             size_t(a.base) >= store.base.size() ||
             size_t(a.fin) >= store.fin.size()) {
             return false;
@@ -1587,15 +1546,13 @@ _RrApplyRevisedAncestorDelta(
             program->TextOrEmpty(program->slotMeta->paths[size_t(a.slot)]);
         const RrPointFrame &base = store.base[size_t(a.base)];
         const RrPointFrame &current = store.fin[size_t(a.fin)];
-        if (provider == xformPath ||
-            xformPath.size() <= provider.size() ||
+        if (provider == xformPath || xformPath.size() <= provider.size() ||
             xformPath.compare(0, provider.size(), provider) != 0 ||
             xformPath[provider.size()] != '/' ||
             current.points == base.points) {
             continue;
         }
-        if (closest.empty() ||
-            elementCount(provider) > elementCount(closest)) {
+        if (closest.empty() || elementCount(provider) > elementCount(closest)) {
             closest = provider;
             closestBase = base;
             closestCurrent = current;
@@ -1616,12 +1573,10 @@ _RrApplyRevisedAncestorDelta(
 
 namespace runtimePoseDetail {
 
-bool _RrRunConstraintStep(RrProgram *program, size_t step,
-                          std::string *error);
+bool _RrRunConstraintStep(RrProgram *program, size_t step, std::string *error);
 
 bool
-_RrRunConstraintStep(RrProgram *program, size_t step,
-                     std::string *error)
+_RrRunConstraintStep(RrProgram *program, size_t step, std::string *error)
 {
     RrStore &store = program->store;
     RrPoseScratch *scratch = _RrScratch(program);
@@ -1638,15 +1593,13 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
     const RigExecWireCommit &wireCommit =
         program->poses->commits[size_t(wire.object)];
     RrCommitScratch &commit = store.commits[size_t(wire.object)];
-    const int walkIndex =
-        program->poses->walkSteps[size_t(wire.object)].index;
+    const int walkIndex = program->poses->walkSteps[size_t(wire.object)].index;
     if (walkIndex < 0 ||
         size_t(walkIndex) >= program->poses->constraints.size() ||
         size_t(walkIndex) >= scratch->weightScratch.size() ||
         size_t(walkIndex) >= scratch->weightError.size()) {
         if (error) {
-            *error = _RrStepHead(program, step) +
-                     " names no constraint";
+            *error = _RrStepHead(program, step) + " names no constraint";
         }
         return false;
     }
@@ -1654,7 +1607,8 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
     const RigExecWireConstraint &c = program->poses->constraints[ci];
     const std::string cpath = program->TextOrEmpty(c.path);
     RrStepOutput &output = store.stepOutputs[step];
-    if (ci < store.matchValid.size()) store.matchValid[ci] = 0;
+    if (ci < store.matchValid.size())
+        store.matchValid[ci] = 0;
     commit.abandoned = true;
     std::fill(commit.present.begin(), commit.present.end(), 0);
 
@@ -1663,16 +1617,14 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
             return true;
         }
         if (!commit.abandoned) {
-            if (!_RrComputeCommitDeltas(program, step, wireCommit,
-                                        &commit, error) ||
-                !_RrStageCommitPairs(program, step, wireCommit, &commit,
-                                     0, wireCommit.propagate.size(),
-                                     error)) {
+            if (!_RrComputeCommitDeltas(program, step, wireCommit, &commit,
+                                        error) ||
+                !_RrStageCommitPairs(program, step, wireCommit, &commit, 0,
+                                     wireCommit.propagate.size(), error)) {
                 return false;
             }
         }
-        return _RrFinishCommit(program, step, size_t(wire.object),
-                               error);
+        return _RrFinishCommit(program, step, size_t(wire.object), error);
     };
 
     const int deltaBase = c.deltaBase;
@@ -1689,8 +1641,7 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
         if (size_t(deltaBase) >= scratch->deltaPresent.size() ||
             size_t(deltaBase) >= store.deltaPresent.size()) {
             if (error) {
-                *error = _RrStepHead(program, step) +
-                         " names no delta path";
+                *error = _RrStepHead(program, step) + " names no delta path";
             }
             return false;
         }
@@ -1699,15 +1650,16 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
         // baked B.deltaValues/deltaPresent the fold consumes).
         store.deltaPresent[size_t(deltaBase)] = 0;
     }
-    if (ci < store.matchShownMask.size()) store.matchShownMask[ci] = 0;
+    if (ci < store.matchShownMask.size())
+        store.matchShownMask[ci] = 0;
     if (c.ikFkMatch) {
         // RunIkFkMatch (bakedPose.cpp), on the runtime's own stores:
         // presentation and values only, so the commit stays abandoned.
         if (!program->ReadConstraint(ci, RrConstraintEnabled).boolean) {
             return finish();
         }
-        const double envelope = double(
-            program->ReadConstraint(ci, RrConstraintDefaultWeight).f32);
+        const double envelope =
+            double(program->ReadConstraint(ci, RrConstraintDefaultWeight).f32);
         const double weight = std::isfinite(envelope) ? envelope : 0.0;
         const auto matrixOf = [](const RrPointFrame &frame, RrMat4d *out) {
             return RrFrameUsable(frame) &&
@@ -1785,10 +1737,10 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
                 spaceMatrix = space;
             }
         }
-        double restOrigins[3][3], restUpper = 0, restLower = 0,
-            spaceFactor = 1;
+        double restOrigins[3][3], restUpper = 0, restLower = 0, spaceFactor = 1;
         for (size_t i = 0; i < 3; ++i) {
-            for (int k = 0; k < 3; ++k) restOrigins[i][k] = rest[i][3][k];
+            for (int k = 0; k < 3; ++k)
+                restOrigins[i][k] = rest[i][3][k];
         }
         RigExecIkFkMatchRestLengths(restOrigins, spaceMatrix,
                                     c.matchConstants[2], c.matchConstants[3],
@@ -1796,7 +1748,8 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
         limb.softDistance *= spaceFactor;
 
         RigExecIkFkMatchIkInputs ikIn;
-        for (size_t i = 0; i < 3; ++i) ikIn.joints[i] = raw(input[i]);
+        for (size_t i = 0; i < 3; ++i)
+            ikIn.joints[i] = raw(input[i]);
         ikIn.root = raw(input[3]);
         ikIn.effectorPosed = raw(input[4]);
         ikIn.ikPosed = raw(control[0]);
@@ -1804,7 +1757,8 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
         ikIn.twistRadians = twistDegrees * std::acos(-1.0) / 180.0;
         ikIn.poleDistance =
             (rest[4].ExtractTranslation() - rest[1].ExtractTranslation())
-                .GetLength() * spaceFactor;
+                .GetLength() *
+            spaceFactor;
         ikIn.polePosed = raw(control[1]);
         ikIn.hasStretch = c.matchStretchLimb;
         ikIn.limb = limb;
@@ -1881,7 +1835,8 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
             break;
         case RigExecIkFkMatchShown::FkSide:
             if (fk.ok) {
-                for (size_t i = 0; i < 3; ++i) show(2 + i, fk.frames[i]);
+                for (size_t i = 0; i < 3; ++i)
+                    show(2 + i, fk.frames[i]);
             }
             break;
         case RigExecIkFkMatchShown::None:
@@ -1903,8 +1858,8 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
             (c.spaceSlot >= 0 && size_t(c.spaceSlot) >= store.posedM.size()) ||
             c.harmonicsConstants.size() != 3) {
             if (error) {
-                *error = _RrStepHead(program, step) +
-                         " names no harmonics window";
+                *error =
+                    _RrStepHead(program, step) + " names no harmonics window";
             }
             return false;
         }
@@ -1916,21 +1871,26 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
             space = store.posedM[size_t(c.spaceSlot)];
             const double det = space.GetDeterminant();
             spaceUsable = std::isfinite(det) && det != 0.0;
-            if (spaceUsable) toSpace = space.GetInverse();
+            if (spaceUsable)
+                toSpace = space.GetInverse();
         }
         RigExecWindowPacketPtr captured;
         if (spaceUsable && RrFrameUsable(input)) {
-            const RrVec3d p = c.spaceSlot >= 0 ? toSpace.Transform(input.points[0])
-                                               : input.points[0];
-            if (std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2])) {
+            const RrVec3d p = c.spaceSlot >= 0
+                                  ? toSpace.Transform(input.points[0])
+                                  : input.points[0];
+            if (std::isfinite(p[0]) && std::isfinite(p[1]) &&
+                std::isfinite(p[2])) {
                 auto packet = std::make_shared<RigExecWindowPacket>();
                 packet->scalars = {p[0], p[1], p[2]};
                 captured = std::move(packet);
             }
         }
         RigExecWindowPacketPtr &held = store.windowCaptures[size_t(c.window)];
-        if (!RigExecWindowPacketsEqual(held, captured)) held = std::move(captured);
-        if (store.historyTick && !program->windowedOps[size_t(c.window)].feedsWindow) {
+        if (!RigExecWindowPacketsEqual(held, captured))
+            held = std::move(captured);
+        if (store.historyTick &&
+            !program->windowedOps[size_t(c.window)].feedsWindow) {
             return finish();
         }
         if (!program->ReadConstraint(ci, RrConstraintEnabled).boolean) {
@@ -1946,19 +1906,21 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
             }
             weight = field.values[0];
         } else {
-            weight = double(program->ReadConstraint(ci, RrConstraintDefaultWeight).f32);
+            weight = double(
+                program->ReadConstraint(ci, RrConstraintDefaultWeight).f32);
             if (!std::isfinite(weight) || weight < 0.0 || weight > 1.0) {
                 output.diagnostics.push_back(
-                    cpath +
-                    " has inputs:defaultWeight outside finite [0, 1]; "
-                    "constraint passed through");
+                    cpath + " has inputs:defaultWeight outside finite [0, 1]; "
+                            "constraint passed through");
                 return finish();
             }
         }
-        if (weight <= 0.0) return finish();
+        if (weight <= 0.0)
+            return finish();
         const std::string targetPath =
             size_t(c.target) < program->slotMeta->paths.size()
-                ? program->TextOrEmpty(program->slotMeta->paths[size_t(c.target)])
+                ? program->TextOrEmpty(
+                      program->slotMeta->paths[size_t(c.target)])
                 : std::string();
         if (!held) {
             output.diagnostics.push_back(
@@ -1969,18 +1931,21 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
         }
         const RigExecWindowRing &ring = store.windowRings[size_t(c.window)];
         size_t begin = ring.size();
-        while (begin > 0 && ring[begin - 1] && ring[begin - 1]->scalars.size() == 3)
+        while (begin > 0 && ring[begin - 1] &&
+               ring[begin - 1]->scalars.size() == 3)
             --begin;
         std::vector<double> positions;
         positions.reserve(3 * (ring.size() - begin + 1));
         for (size_t k = begin; k < ring.size(); ++k)
             positions.insert(positions.end(), ring[k]->scalars.begin(),
                              ring[k]->scalars.end());
-        positions.insert(positions.end(), held->scalars.begin(), held->scalars.end());
+        positions.insert(positions.end(), held->scalars.begin(),
+                         held->scalars.end());
         const auto scalar = [&](int k) {
             const RrInputValue value =
                 program->ReadConstraint(ci, RrConstraintHarmonicsFirst + k);
-            return value.tag == RrInputTag::Float ? double(value.f32) : value.f64;
+            return value.tag == RrInputTag::Float ? double(value.f32)
+                                                  : value.f64;
         };
         RigExecHarmonicsSettings settings;
         settings.waves = c.harmonicsConstants[0];
@@ -1991,7 +1956,8 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
         params.amplitude = scalar(0);
         params.decay = scalar(1);
         params.termination = scalar(2);
-        const RrVec3d axis = program->ReadConstraint(ci, RrConstraintOffset).vec;
+        const RrVec3d axis =
+            program->ReadConstraint(ci, RrConstraintOffset).vec;
         params.axisAmplitude[0] = axis[0];
         params.axisAmplitude[1] = axis[1];
         params.axisAmplitude[2] = axis[2];
@@ -2012,10 +1978,12 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
             return finish();
         }
         RrVec3d offset(ring3[0], ring3[1], ring3[2]);
-        if (c.spaceSlot >= 0) offset = space.TransformDir(offset);
+        if (c.spaceSlot >= 0)
+            offset = space.TransformDir(offset);
         offset *= weight;
         RrPointFrame candidate = input;
-        for (RrVec3d &q : candidate.points) q += offset;
+        for (RrVec3d &q : candidate.points)
+            q += offset;
         if (!RrFrameUsable(candidate)) {
             output.diagnostics.push_back(
                 cpath + " produced an invalid or degenerate frame for " +
@@ -2053,21 +2021,18 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
         envelope = field.values;
         envelopeError = field.error;
         if (!field.ok || envelope.size() != 1) {
-            output.diagnostics.push_back(
-                cpath + ": " + envelopeError +
-                "; constraint passed through");
+            output.diagnostics.push_back(cpath + ": " + envelopeError +
+                                         "; constraint passed through");
             return finish();
         }
         weight = envelope[0];
     } else if (c.weightObject == 0) {
-        weight = double(program->ReadConstraint(ci,
-                                                RrConstraintDefaultWeight)
-                            .f32);
+        weight =
+            double(program->ReadConstraint(ci, RrConstraintDefaultWeight).f32);
         if (!std::isfinite(weight) || weight < 0.0 || weight > 1.0) {
             output.diagnostics.push_back(
-                cpath +
-                " has inputs:defaultWeight outside finite [0, 1]; "
-                "constraint passed through");
+                cpath + " has inputs:defaultWeight outside finite [0, 1]; "
+                        "constraint passed through");
             return finish();
         }
     }
@@ -2077,8 +2042,8 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
                 size_t(deltaBase) >= store.deltaValues.size() ||
                 size_t(deltaBase) >= store.deltaPresent.size()) {
                 if (error) {
-                    *error = _RrStepHead(program, step) +
-                             " names no delta path";
+                    *error =
+                        _RrStepHead(program, step) + " names no delta path";
                 }
                 return false;
             }
@@ -2105,8 +2070,7 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
                 *out = store.fin[size_t(finRead)];
                 return out->IsValid();
             }
-            if (native < 0 ||
-                size_t(native) >= store.nativeFrameOk.size() ||
+            if (native < 0 || size_t(native) >= store.nativeFrameOk.size() ||
                 size_t(native) >= store.nativeFrames.size() ||
                 size_t(native) >= program->poses->nativeSources.size() ||
                 !store.nativeFrameOk[size_t(native)]) {
@@ -2125,61 +2089,81 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
 
     if (size_t(c.arrays) >= store.arrays.size()) {
         if (error) {
-            *error = _RrStepHead(program, step) +
-                     " names no constraint arrays";
+            *error = _RrStepHead(program, step) + " names no constraint arrays";
         }
         return false;
     }
     RrConstraintArraysLive &arrays = store.arrays[size_t(c.arrays)];
-    const auto &arrayWire=program->poses->constraintArrays[size_t(c.arrays)];
-    const auto arrayPath=program->TextOrEmpty(arrayWire.prim);
-    arrays.diagnostics.clear(); arrays.poleDiagnostics.clear();
-    const auto weights=[&](size_t channel,size_t count,const char *name,
-                          std::vector<std::string> *lines,std::vector<double> *values) {
-        const int slot=arrayWire.rawSlots[channel];
-        const auto *raw=slot>=0 && RrInputHasValue(program,uint32_t(slot))
-            ? RrInputArray<float>(program,uint32_t(slot)) : nullptr;
-        if(raw && !raw->empty() && raw->size()!=count) {
-            lines->push_back(arrayPath+" "+name+" has "+std::to_string(raw->size())+
-                             " entries for "+std::to_string(count)+" sources");
+    const auto &arrayWire = program->poses->constraintArrays[size_t(c.arrays)];
+    const auto arrayPath = program->TextOrEmpty(arrayWire.prim);
+    arrays.diagnostics.clear();
+    arrays.poleDiagnostics.clear();
+    const auto weights = [&](size_t channel, size_t count, const char *name,
+                             std::vector<std::string> *lines,
+                             std::vector<double> *values) {
+        const int slot = arrayWire.rawSlots[channel];
+        const auto *raw = slot >= 0 && RrInputHasValue(program, uint32_t(slot))
+                              ? RrInputArray<float>(program, uint32_t(slot))
+                              : nullptr;
+        if (raw && !raw->empty() && raw->size() != count) {
+            lines->push_back(arrayPath + " " + name + " has " +
+                             std::to_string(raw->size()) + " entries for " +
+                             std::to_string(count) + " sources");
             return false;
         }
-        values->assign(count,1.0);
-        if(raw) for(size_t k=0;k<raw->size();++k) (*values)[k]=(*raw)[k];
+        values->assign(count, 1.0);
+        if (raw)
+            for (size_t k = 0; k < raw->size(); ++k)
+                (*values)[k] = (*raw)[k];
         return true;
     };
-    const auto offsets=[&](size_t channel,const char *name,std::vector<RrVec3d> *values) {
-        const int slot=arrayWire.rawSlots[channel];
-        const auto *raw=slot>=0 && RrInputHasValue(program,uint32_t(slot))
-            ? RrInputArray<RigExecWireVec3d>(program,uint32_t(slot)) : nullptr;
-        if(raw && !raw->empty() && raw->size()!=arrayWire.sourceCount) {
-            arrays.diagnostics.push_back(arrayPath+" "+name+" has "+std::to_string(raw->size())+
-                             " entries for "+std::to_string(arrayWire.sourceCount)+" sources");
+    const auto offsets = [&](size_t channel, const char *name,
+                             std::vector<RrVec3d> *values) {
+        const int slot = arrayWire.rawSlots[channel];
+        const auto *raw =
+            slot >= 0 && RrInputHasValue(program, uint32_t(slot))
+                ? RrInputArray<RigExecWireVec3d>(program, uint32_t(slot))
+                : nullptr;
+        if (raw && !raw->empty() && raw->size() != arrayWire.sourceCount) {
+            arrays.diagnostics.push_back(
+                arrayPath + " " + name + " has " + std::to_string(raw->size()) +
+                " entries for " + std::to_string(arrayWire.sourceCount) +
+                " sources");
             return false;
         }
-        values->assign(size_t(arrayWire.sourceCount),RrVec3d(0));
-        if(raw) for(size_t k=0;k<raw->size();++k)
-            (*values)[k]=RrVec3d((*raw)[k][0],(*raw)[k][1],(*raw)[k][2]);
+        values->assign(size_t(arrayWire.sourceCount), RrVec3d(0));
+        if (raw)
+            for (size_t k = 0; k < raw->size(); ++k)
+                (*values)[k] =
+                    RrVec3d((*raw)[k][0], (*raw)[k][1], (*raw)[k][2]);
         return true;
     };
-    arrays.ok=weights(0,size_t(arrayWire.sourceCount),"inputs:sourceWeights",&arrays.diagnostics,&arrays.weights);
-    if(arrayWire.parentOffsets)
-        arrays.ok=arrays.ok && offsets(1,"inputs:translationOffsets",&arrays.translationOffsets) &&
-                              offsets(2,"inputs:rotationOffsets",&arrays.rotationOffsets);
+    arrays.ok = weights(0, size_t(arrayWire.sourceCount),
+                        SchemaAttrText::inputsSourceWeights,
+                        &arrays.diagnostics, &arrays.weights);
+    if (arrayWire.parentOffsets)
+        arrays.ok = arrays.ok &&
+                    offsets(1, SchemaAttrText::inputsTranslationOffsets,
+                            &arrays.translationOffsets) &&
+                    offsets(2, SchemaAttrText::inputsRotationOffsets,
+                            &arrays.rotationOffsets);
     else {
-        arrays.translationOffsets.assign(size_t(arrayWire.sourceCount),RrVec3d(0));
-        arrays.rotationOffsets.assign(size_t(arrayWire.sourceCount),RrVec3d(0));
+        arrays.translationOffsets.assign(size_t(arrayWire.sourceCount),
+                                         RrVec3d(0));
+        arrays.rotationOffsets.assign(size_t(arrayWire.sourceCount),
+                                      RrVec3d(0));
     }
-    if(arrayWire.readPole)
-        arrays.poleOk=weights(3,size_t(arrayWire.poleCount),"inputs:poleVectorWeights",&arrays.poleDiagnostics,&arrays.poleWeights);
+    if (arrayWire.readPole)
+        arrays.poleOk = weights(3, size_t(arrayWire.poleCount),
+                                SchemaAttrText::inputsPoleVectorWeights,
+                                &arrays.poleDiagnostics, &arrays.poleWeights);
 
     if (c.singleChainIk) {
         if (wireCommit.targetReads.size() != c.targetSlots.size() ||
             commit.ikChain.size() != c.targetSlots.size() ||
             commit.ikRest.size() != c.targetSlots.size()) {
             if (error) {
-                *error = _RrStepHead(program, step) +
-                         " names no chain target";
+                *error = _RrStepHead(program, step) + " names no chain target";
             }
             return false;
         }
@@ -2187,41 +2171,39 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
         for (size_t k = 0; k < c.targetSlots.size(); ++k) {
             if (size_t(wireCommit.targetReads[k]) >= store.fin.size()) {
                 if (error) {
-                    *error = _RrStepHead(program, step) +
-                             " names no fin version";
+                    *error =
+                        _RrStepHead(program, step) + " names no fin version";
                 }
                 return false;
             }
-            commit.ikChain[k] =
-                store.fin[size_t(wireCommit.targetReads[k])];
+            commit.ikChain[k] = store.fin[size_t(wireCommit.targetReads[k])];
         }
         RrPointFrame effector;
         if (!resolveSource(c.effector, wireCommit.effectorRead,
-                           c.effectorNative,
-                           wireCommit.effectorAncestors, &effector)) {
+                           c.effectorNative, wireCommit.effectorAncestors,
+                           &effector)) {
             output.diagnostics.push_back(
                 cpath + " could not resolve its effector; constraint "
-                "passed through");
+                        "passed through");
             inputsValid = false;
         }
         _RrSingleChainIkParams params;
-        params.stretch=c.stretch?program->ReadConstraint(ci,RrConstraintStretch).f32:0;
+        params.stretch =
+            c.stretch ? program->ReadConstraint(ci, RrConstraintStretch).f32
+                      : 0;
         params.mode = _RrSingleChainIkMode(c.ikMode);
         params.weight = weight;
         if (c.ikMode == 0) {
-            params.pole = program->ReadConstraint(ci,
-                                                   RrConstraintPoleVector)
-                              .vec;
+            params.pole =
+                program->ReadConstraint(ci, RrConstraintPoleVector).vec;
             params.twistDegrees =
-                program->ReadConstraint(ci,
-                                        RrConstraintTwistDegrees)
-                    .f64;
+                program->ReadConstraint(ci, RrConstraintTwistDegrees).f64;
         }
         if (inputsValid && c.ikMode == 0 && c.poleModeObject) {
             if (c.poleObjects.empty()) {
                 output.diagnostics.push_back(
                     cpath + " uses object pole mode with no pole-vector "
-                    "objects; constraint passed through");
+                            "objects; constraint passed through");
                 inputsValid = false;
             }
             if (inputsValid && !arrays.poleOk) {
@@ -2232,8 +2214,7 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
             }
             RrVec3d polePoint(0.0);
             double total = 0;
-            for (size_t k = 0;
-                 inputsValid && k < c.poleObjects.size(); ++k) {
+            for (size_t k = 0; inputsValid && k < c.poleObjects.size(); ++k) {
                 if (k >= wireCommit.poleReads.size() ||
                     k >= wireCommit.poleAncestors.size() ||
                     k >= c.poleObjectNatives.size() ||
@@ -2245,26 +2226,24 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
                     return false;
                 }
                 RrPointFrame poleFrame;
-                if (!resolveSource(
-                        c.poleObjects[k], wireCommit.poleReads[k],
-                        c.poleObjectNatives[k],
-                        wireCommit.poleAncestors[k].v, &poleFrame) ||
+                if (!resolveSource(c.poleObjects[k], wireCommit.poleReads[k],
+                                   c.poleObjectNatives[k],
+                                   wireCommit.poleAncestors[k].v, &poleFrame) ||
                     !std::isfinite(arrays.poleWeights[k]) ||
                     arrays.poleWeights[k] < 0) {
                     output.diagnostics.push_back(
                         cpath + " has an invalid pole-vector source or "
-                        "weight; constraint passed through");
+                                "weight; constraint passed through");
                     inputsValid = false;
                     break;
                 }
-                polePoint +=
-                    poleFrame.points[0] * arrays.poleWeights[k];
+                polePoint += poleFrame.points[0] * arrays.poleWeights[k];
                 total += arrays.poleWeights[k];
             }
             if (inputsValid && total <= 0) {
                 output.diagnostics.push_back(
                     cpath + " has zero total pole-vector weight; "
-                    "constraint passed through");
+                            "constraint passed through");
                 inputsValid = false;
             }
             if (inputsValid) {
@@ -2275,11 +2254,10 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
         if (inputsValid && !c.useAnimatedTs) {
             for (size_t k = 0; k < c.targetSlots.size(); ++k) {
                 if (c.targetSlots[k] < 0 ||
-                    size_t(c.targetSlots[k]) >=
-                        scratch->restFrames.size()) {
+                    size_t(c.targetSlots[k]) >= scratch->restFrames.size()) {
                     if (error) {
-                        *error = _RrStepHead(program, step) +
-                                 " names no rest slot";
+                        *error =
+                            _RrStepHead(program, step) + " names no rest slot";
                     }
                     return false;
                 }
@@ -2289,12 +2267,11 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
                         ? commit.ikChain[k]
                         : scratch->restFrames[size_t(c.targetSlots[k])];
             }
-            if (!_RrPrepareRestDerivedIkChain(commit.ikChain,
-                                              commit.ikRest,
+            if (!_RrPrepareRestDerivedIkChain(commit.ikChain, commit.ikRest,
                                               &commit.ikPrepared)) {
                 output.diagnostics.push_back(
                     cpath + " could not prepare rest-derived IK inputs; "
-                    "constraint passed through");
+                            "constraint passed through");
                 inputsValid = false;
             } else {
                 solveChain = &commit.ikPrepared;
@@ -2313,14 +2290,14 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
                          }))) {
             output.diagnostics.push_back(
                 cpath + " failed to solve its joint chain; constraint "
-                "passed through atomically");
+                        "passed through atomically");
             inputsValid = false;
         }
         if (inputsValid) {
             for (size_t k = 0; k < c.targetSlots.size(); ++k) {
-                const auto found = std::lower_bound(
-                    wireCommit.slots.begin(), wireCommit.slots.end(),
-                    c.targetSlots[k]);
+                const auto found =
+                    std::lower_bound(wireCommit.slots.begin(),
+                                     wireCommit.slots.end(), c.targetSlots[k]);
                 if (found == wireCommit.slots.end() ||
                     *found != c.targetSlots[k]) {
                     continue;
@@ -2353,22 +2330,20 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
     for (size_t k = 0; sourcesReady && k < c.sources.size(); ++k) {
         if (k >= wireCommit.sourceReads.size() ||
             k >= wireCommit.sourceAncestors.size() ||
-            k >= c.sourceNatives.size() ||
-            k >= c.sourcePaths.size() ||
-            k >= commit.sources.size() ||
-            k >= arrays.weights.size() ||
+            k >= c.sourceNatives.size() || k >= c.sourcePaths.size() ||
+            k >= commit.sources.size() || k >= arrays.weights.size() ||
             k >= arrays.translationOffsets.size() ||
             k >= arrays.rotationOffsets.size()) {
             if (error) {
-                *error = _RrStepHead(program, step) +
-                         " names no constraint source";
+                *error =
+                    _RrStepHead(program, step) + " names no constraint source";
             }
             return false;
         }
         RrPointFrame frame;
         if (!resolveSource(c.sources[k], wireCommit.sourceReads[k],
-                           c.sourceNatives[k],
-                           wireCommit.sourceAncestors[k].v, &frame)) {
+                           c.sourceNatives[k], wireCommit.sourceAncestors[k].v,
+                           &frame)) {
             output.diagnostics.push_back(
                 cpath + " could not resolve source " +
                 program->TextOrEmpty(c.sourcePaths[k]));
@@ -2377,15 +2352,13 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
         }
         commit.sources[k].frame = frame;
         commit.sources[k].normalizedWeight = arrays.weights[k];
-        commit.sources[k].translationOffset =
-            arrays.translationOffsets[k];
-        commit.sources[k].rotationOffsetDegrees =
-            arrays.rotationOffsets[k];
+        commit.sources[k].translationOffset = arrays.translationOffsets[k];
+        commit.sources[k].rotationOffsetDegrees = arrays.rotationOffsets[k];
     }
     if (!sourcesReady) {
         output.diagnostics.push_back(
             cpath + " has unusable constraint inputs; constraint passed "
-            "through");
+                    "through");
         return finish();
     }
     scratch->recordAfter[size_t(wire.object)] = deltaBase < 0 ? 1 : 0;
@@ -2396,8 +2369,7 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
         }
         return false;
     }
-    const std::vector<RrConstraintSource> &scratchSources =
-        commit.sources;
+    const std::vector<RrConstraintSource> &scratchSources = commit.sources;
     std::vector<_RrConstraintSource> sources;
     sources.reserve(scratchSources.size());
     for (const RrConstraintSource &s : scratchSources) {
@@ -2408,8 +2380,7 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
         out.rotationOffsetDegrees = s.rotationOffsetDegrees;
         sources.push_back(out);
     }
-    const RrPointFrame input =
-        store.fin[size_t(wireCommit.targetRead)];
+    const RrPointFrame input = store.fin[size_t(wireCommit.targetRead)];
     RrPointFrame candidate = input;
     bool candidateReady = true;
     _RrConstraintAxisMask affect;
@@ -2427,25 +2398,23 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
         if (size_t(c.spaceSlot) >= store.posedM.size() ||
             size_t(c.spaceSlot) >= scratch->defaultRoundTrip.size()) {
             if (error) {
-                *error = _RrStepHead(program, step) +
-                         " names no space slot";
+                *error = _RrStepHead(program, step) + " names no space slot";
             }
             return false;
         }
-        carry = scratch->defaultRoundTrip[size_t(c.spaceSlot)]
-                    .GetInverse() *
+        carry = scratch->defaultRoundTrip[size_t(c.spaceSlot)].GetInverse() *
                 store.posedM[size_t(c.spaceSlot)];
     }
-    if (ctype == "RigExecMatrixMover") {
+    if (ctype == SchemaTypeName::RigExecMatrixMover) {
         // The transform-domain matrix mover, as the USD walks take it: each
         // source measured as its rest->posed map, the transform in its
         // space, and the envelope applied to the target's four landmarks
         // with the point kernel's rule.
         const auto mapOf = [&](size_t k, RrMat4d *out) {
             const int32_t slot = c.sources[k];
-            const bool haveRest =
-                slot >= 0 && size_t(slot) < scratch->restFrames.size() &&
-                scratch->restFrames[size_t(slot)].IsValid();
+            const bool haveRest = slot >= 0 &&
+                                  size_t(slot) < scratch->restFrames.size() &&
+                                  scratch->restFrames[size_t(slot)].IsValid();
             const std::array<RrVec3d, 4> &landmarks =
                 haveRest ? scratch->restFrames[size_t(slot)].points
                          : RrIdentityLandmarks();
@@ -2455,7 +2424,7 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
         if (sources.empty() || !mapOf(0, &transform)) {
             output.diagnostics.push_back(
                 cpath + " could not resolve rigExec:transform; mover passed "
-                "through");
+                        "through");
             return finish();
         }
         if (sources.size() > 1) {
@@ -2463,7 +2432,7 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
             if (!mapOf(1, &space)) {
                 output.diagnostics.push_back(
                     cpath + " could not resolve rigExec:transformSpace; "
-                    "mover passed through");
+                            "mover passed through");
                 return finish();
             }
             transform = RrMeasureInSpace(transform, space);
@@ -2480,14 +2449,13 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
             }
         }
         candidate = solved;
-    } else if (ctype == "RigExecPositionConstraint") {
+    } else if (ctype == SchemaTypeName::RigExecPositionConstraint) {
         _RrPositionConstraintParams params;
-        params.offset =
-            program->ReadConstraint(ci, RrConstraintOffset).vec;
+        params.offset = program->ReadConstraint(ci, RrConstraintOffset).vec;
         params.affect = affect;
         params.weight = solveWeight;
         candidate = _RrApplyPositionConstraint(input, sources, params);
-    } else if (ctype == "RigExecRotationConstraint") {
+    } else if (ctype == SchemaTypeName::RigExecRotationConstraint) {
         _RrRotationConstraintParams params;
         params.offsetDegrees =
             program->ReadConstraint(ci, RrConstraintOffset).vec;
@@ -2496,16 +2464,14 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
         params.weight = solveWeight;
         params.carry = hasCarry ? &carry : nullptr;
         candidate = _RrApplyRotationConstraint(input, sources, params);
-    } else if (ctype == "RigExecScaleConstraint") {
+    } else if (ctype == SchemaTypeName::RigExecScaleConstraint) {
         _RrScaleConstraintParams params;
-        params.offset =
-            program->ReadConstraint(ci, RrConstraintOffset).vec;
+        params.offset = program->ReadConstraint(ci, RrConstraintOffset).vec;
         params.affect = affect;
         params.weight = solveWeight;
-        params.blendShear =
-            (c.flags & RigExecWireConstraintBlendShear) != 0;
+        params.blendShear = (c.flags & RigExecWireConstraintBlendShear) != 0;
         candidate = _RrApplyScaleConstraint(input, sources, params);
-    } else if (ctype == "RigExecParentConstraint") {
+    } else if (ctype == SchemaTypeName::RigExecParentConstraint) {
         _RrParentConstraintParams params;
         params.translationAxes.x =
             program->ReadConstraint(ci, RrConstraintTX).boolean;
@@ -2528,8 +2494,7 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
         params.rotationOrder = order;
         params.weight = solveWeight;
         params.carry = hasCarry ? &carry : nullptr;
-        params.blendShear =
-            (c.flags & RigExecWireConstraintBlendShear) != 0;
+        params.blendShear = (c.flags & RigExecWireConstraintBlendShear) != 0;
         candidate = _RrApplyParentConstraint(input, sources, params);
     } else {
         RrVec3d target(0.0);
@@ -2539,7 +2504,7 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
                 source.normalizedWeight < 0) {
                 output.diagnostics.push_back(
                     cpath + " has an invalid source weight; constraint "
-                    "passed through");
+                            "passed through");
                 candidateReady = false;
                 break;
             }
@@ -2551,28 +2516,23 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
             _RrAimConstraintParams params;
             params.localAimVector =
                 c.aimVectorAuthored
-                    ? program->ReadConstraint(ci,
-                                              RrConstraintAimVector).vec
+                    ? program->ReadConstraint(ci, RrConstraintAimVector).vec
                     : RrVec3d(c.aimAxisFallback[0], c.aimAxisFallback[1],
                               c.aimAxisFallback[2]);
             params.localUpVector =
                 program->ReadConstraint(ci, RrConstraintUpVector).vec;
             params.rotationOffsetDegrees =
-                program->ReadConstraint(ci,
-                                        RrConstraintRotationOffset).vec;
+                program->ReadConstraint(ci, RrConstraintRotationOffset).vec;
             params.affectRotation = affect;
             params.rotationOrder = order;
             params.weight = solveWeight;
             params.preserveInputUp = c.preserveInputUp;
             const RrVec3d authoredWorldUp =
-                program->ReadConstraint(ci,
-                                        RrConstraintWorldUpVector).vec;
-            const RrVec3d sceneUp(c.sceneUp[0], c.sceneUp[1],
-                                  c.sceneUp[2]);
+                program->ReadConstraint(ci, RrConstraintWorldUpVector).vec;
+            const RrVec3d sceneUp(c.sceneUp[0], c.sceneUp[1], c.sceneUp[2]);
             RrVec3d worldUpStorage(0.0);
             bool haveWorldUp = false;
-            const std::string worldUpType =
-                program->TextOrEmpty(c.worldUpType);
+            const std::string worldUpType = program->TextOrEmpty(c.worldUpType);
             if (worldUpType == "sceneUp") {
                 worldUpStorage = sceneUp;
                 haveWorldUp = true;
@@ -2584,18 +2544,16 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
                 if (!c.worldUpObjectNamed) {
                     worldUpStorage = -input.points[0];
                     haveWorldUp = true;
-                } else if (!resolveSource(c.worldUpObject,
-                                          wireCommit.worldUpRead,
-                                          c.worldUpNative,
-                                          wireCommit.worldUpAncestors,
-                                          &upObject)) {
+                } else if (!resolveSource(
+                               c.worldUpObject, wireCommit.worldUpRead,
+                               c.worldUpNative, wireCommit.worldUpAncestors,
+                               &upObject)) {
                     output.diagnostics.push_back(
                         cpath + " could not resolve its world-up object; "
-                        "constraint passed through");
+                                "constraint passed through");
                     candidateReady = false;
                 } else {
-                    worldUpStorage =
-                        upObject.points[0] - input.points[0];
+                    worldUpStorage = upObject.points[0] - input.points[0];
                     haveWorldUp = true;
                 }
             } else if (worldUpType == "objectRotationUp") {
@@ -2604,15 +2562,13 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
                     haveWorldUp = true;
                 } else {
                     RrPointFrame upObject;
-                    if (!resolveSource(c.worldUpObject,
-                                       wireCommit.worldUpRead,
+                    if (!resolveSource(c.worldUpObject, wireCommit.worldUpRead,
                                        c.worldUpNative,
                                        wireCommit.worldUpAncestors,
                                        &upObject)) {
                         output.diagnostics.push_back(
-                            cpath +
-                            " could not resolve its world-up object; "
-                            "constraint passed through");
+                            cpath + " could not resolve its world-up object; "
+                                    "constraint passed through");
                         candidateReady = false;
                     }
                     RrMat4d up = _RrIdentity();
@@ -2629,8 +2585,7 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
                             (c.flags &
                              RigExecWireConstraintWorldUpRotationOnly) != 0;
                         worldUpStorage =
-                            (rotationOnly ? up.GetOrthonormalized(false)
-                                          : up)
+                            (rotationOnly ? up.GetOrthonormalized(false) : up)
                                 .ExtractRotation()
                                 .TransformDir(authoredWorldUp);
                         haveWorldUp = true;
@@ -2641,8 +2596,7 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
                 params.worldUpDirection = &worldUpStorage;
             }
             if (candidateReady) {
-                candidate =
-                    _RrApplyAimConstraint(input, target, params);
+                candidate = _RrApplyAimConstraint(input, target, params);
             }
         }
     }
@@ -2653,19 +2607,15 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
             size_t(deltaBase) >= store.deltaPresent.size() ||
             size_t(deltaBase) >= store.deltaBaseMatrix.size() ||
             size_t(deltaBase) >= store.deltaBaseOk.size() ||
-            size_t(deltaBase) >=
-                program->geometry->deltaBasePaths.size()) {
+            size_t(deltaBase) >= program->geometry->deltaBasePaths.size()) {
             if (error) {
-                *error = _RrStepHead(program, step) +
-                         " names no delta path";
+                *error = _RrStepHead(program, step) + " names no delta path";
             }
             return false;
         }
-        const RrMat4d &baseMatrix =
-            store.deltaBaseMatrix[size_t(deltaBase)];
+        const RrMat4d &baseMatrix = store.deltaBaseMatrix[size_t(deltaBase)];
         RrMat4d solvedMatrix = _RrIdentity();
-        if (RrFrameUsable(candidate) &&
-            store.deltaBaseOk[size_t(deltaBase)] &&
+        if (RrFrameUsable(candidate) && store.deltaBaseOk[size_t(deltaBase)] &&
             std::isfinite(baseMatrix.GetDeterminant()) &&
             baseMatrix.GetDeterminant() != 0.0 &&
             RrPointsToMatrix(RrIdentityLandmarks(), candidate.points,
@@ -2688,8 +2638,8 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
             if (c.target < 0 ||
                 size_t(c.target) >= program->slotMeta->paths.size()) {
                 if (error) {
-                    *error = _RrStepHead(program, step) +
-                             " names no target slot";
+                    *error =
+                        _RrStepHead(program, step) + " names no target slot";
                 }
                 return false;
             }
@@ -2701,8 +2651,8 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
         } else {
             if (commit.frames.empty() || commit.present.empty()) {
                 if (error) {
-                    *error = _RrStepHead(program, step) +
-                             " names no candidate slot";
+                    *error =
+                        _RrStepHead(program, step) + " names no candidate slot";
                 }
                 return false;
             }

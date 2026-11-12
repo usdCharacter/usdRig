@@ -1,5 +1,6 @@
 // Property-chain binding and evaluation.
 
+#include "rigExecSchema/schemaNames.h"
 #include "rigEvaluatorInternal.h"
 #include "rigEvaluatorDependencies.h"
 #include "rigEvaluatorPropertyBindings.h"
@@ -28,9 +29,9 @@ TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
     ((rigExecReadPhase, RigExecReadPhaseMetadataName))
     ((rigExecInputElement, RigExecInputElementMetadataName))
-    ((rigExecPoseInterpolator, "RigExecPoseInterpolator"))
-    ((rigExecPose, "RigExecPose"))
-    ((posedSpace, "posed:space"))
+    ((rigExecPoseInterpolator, SchemaTypeName::RigExecPoseInterpolator))
+    ((rigExecPose, SchemaTypeName::RigExecPose))
+    ((posedSpace, SchemaAttrText::posedSpace))
 );
 
 using namespace evaluatorDetail;
@@ -197,8 +198,7 @@ _ReadPinnedPropertyMathParams(
     if (!RigExecParsePropertyOp(operation, &params->op)) {
         return false;
     }
-    params->value =
-        _PinnedRead(resolved, bound.value, params->value, time);
+    params->value = _PinnedRead(resolved, bound.value, params->value, time);
     params->min = _PinnedRead(resolved, bound.minimum, params->min, time);
     params->max = _PinnedRead(resolved, bound.maximum, params->max, time);
     return true;
@@ -234,7 +234,8 @@ RigExecRigEvaluator::_CompilePropertyChains(
 
     // Descriptor discovery order never schedules a domain in isolation.
     // Cross-domain producer references are linked by the common compiler.
-    for(const auto &entry:newPropertyChains) newPropertyChainOrder.push_back(entry.first);
+    for (const auto &entry : newPropertyChains)
+        newPropertyChainOrder.push_back(entry.first);
 
     // Read phases on connections. Every connected operator input
     // (_ForEachConnectedInput) whose single-source walk -- the walk
@@ -269,8 +270,8 @@ RigExecRigEvaluator::_CompilePropertyChains(
     // relay -- fails the rig when its declaration is bad. Worked out only
     // when asked: an operation set aside, an inert mover, or a refusal.
     struct _Readers {
-        SdfPath compiled;       // the first compiled operation reading it
-        bool notCompiled = false;  // an operation set aside or inert reads it
+        SdfPath compiled;         // the first compiled operation reading it
+        bool notCompiled = false; // an operation set aside or inert reads it
     };
     std::unordered_map<SdfPath, _Readers, SdfPath::Hash> readersOf;
     bool readersKnown = false;
@@ -304,8 +305,7 @@ RigExecRigEvaluator::_CompilePropertyChains(
                     for (const TfToken *rel :
                          {&_inputWeightsRel, &_baseWeightRel}) {
                         const SdfPathVector next = targetsOf(weight, *rel);
-                        pending.insert(pending.end(), next.begin(),
-                                       next.end());
+                        pending.insert(pending.end(), next.begin(), next.end());
                     }
                 }
             }
@@ -413,7 +413,7 @@ RigExecRigEvaluator::_CompilePropertyChains(
             return path.GetString() + ": rigExecReadPhase";
         };
         const bool declared = input.HasAuthoredMetadata(phaseField);
-        RigExecReadPhase phase;  // base
+        RigExecReadPhase phase; // base
         if (declared) {
             std::string phaseError;
             if (!RigExecResolveReadPhase(input, &phase, &phaseError)) {
@@ -423,14 +423,14 @@ RigExecRigEvaluator::_CompilePropertyChains(
                 !input.HasAuthoredMetadata(_tokens->rigExecInputElement) &&
                 input.GetTypeName() != SdfValueTypeNames->Matrix4d) {
                 return refuse(who() + " 'preceding' names no position for a "
-                                    "connection; use base, final or a prim "
-                                    "path");
+                                      "connection; use base, final or a prim "
+                                      "path");
             }
         }
         if (newPropertyChains.count(path)) {
             if (declared) {
                 refuse(who() + " on an input math movers also revise is "
-                             "ambiguous");
+                               "ambiguous");
             }
             return;
         }
@@ -449,7 +449,8 @@ RigExecRigEvaluator::_CompilePropertyChains(
             if (!next) {
                 break;
             }
-            crossDomain = crossDomain ||
+            crossDomain =
+                crossDomain ||
                 (input.HasAuthoredMetadata(_tokens->rigExecInputElement) &&
                  next.GetTypeName().GetType() ==
                      SdfValueTypeNames->Float3Array.GetType()) ||
@@ -461,8 +462,9 @@ RigExecRigEvaluator::_CompilePropertyChains(
         }
         if (target.IsEmpty()) {
             if (phase.kind == RigExecReadPhaseKind::Preceding && !crossDomain) {
-                return refuse(who() + " 'preceding' names no position for a "
-                                    "connection; use base, final or a prim path");
+                return refuse(who() +
+                              " 'preceding' names no position for a "
+                              "connection; use base, final or a prim path");
             }
             // No math mover writes what the connection reads: base and
             // final are the same value there, and a checkpoint names a
@@ -477,7 +479,7 @@ RigExecRigEvaluator::_CompilePropertyChains(
         const UsdAttribute targetAttr = _stage->GetAttributeAtPath(target);
         if (phase.kind == RigExecReadPhaseKind::Preceding) {
             return refuse(who() + " 'preceding' names no position for a "
-                                "connection; use base, final or a prim path");
+                                  "connection; use base, final or a prim path");
         }
         const SdfValueTypeName consumerType = input.GetTypeName();
         const SdfValueTypeName targetType =
@@ -564,8 +566,7 @@ RigExecRigEvaluator::_CompilePropertyChains(
     }
     for (size_t i = 0; i < candidates.size(); ++i) {
         if (keep[i]) {
-            newPhasedConnections.push_back(
-                std::move(candidates[i].connection));
+            newPhasedConnections.push_back(std::move(candidates[i].connection));
         }
     }
 

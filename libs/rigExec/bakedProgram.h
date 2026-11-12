@@ -132,8 +132,8 @@ class RigExecRigEvaluator;
 /// override of an attribute it reads per element. The exporter lists exactly these as array input
 /// slots. Owning thread: it reads the stage. Independent of
 /// RigExecUpstreamArrayAdmission.
-std::vector<RigExecUpstreamArrayRow> RigExecBakedUpstreamAdmissibleArrays(
-    const RigExecRigEvaluator &evaluator);
+std::vector<RigExecUpstreamArrayRow>
+RigExecBakedUpstreamAdmissibleArrays(const RigExecRigEvaluator &evaluator);
 
 struct RigExecRigPose;
 /// The program's whole state, declared in bakedProgramImpl.h so that the
@@ -163,7 +163,8 @@ void RigExecComparePoses(const RigExecRigPose &reference,
 struct RigExecRequiredStageFramesAdmission {
     bool admitted = true;
     int32_t firstBadTarget = -1; // index into immutable xformSlots, not a path
-    bool operator==(const RigExecRequiredStageFramesAdmission &o) const {
+    bool operator==(const RigExecRequiredStageFramesAdmission &o) const
+    {
         return admitted == o.admitted && firstBadTarget == o.firstBadTarget;
     }
 };
@@ -188,14 +189,17 @@ struct RigExecStageFrameSeeds {
     std::vector<GfMatrix4d> intervening;
     std::vector<char> interveningReset;
 
-    bool operator==(const RigExecStageFrameSeeds &o) const {
+    bool operator==(const RigExecStageFrameSeeds &o) const
+    {
         return requiredStageFramesAdmission == o.requiredStageFramesAdmission &&
                xformBase == o.xformBase && xformFrames == o.xformFrames &&
                nativeOk == o.nativeOk && nativeFrames == o.nativeFrames &&
                deltaOk == o.deltaOk && deltaBase == o.deltaBase &&
-               intervening == o.intervening && interveningReset == o.interveningReset;
+               intervening == o.intervening &&
+               interveningReset == o.interveningReset;
     }
-    bool operator!=(const RigExecStageFrameSeeds &o) const {
+    bool operator!=(const RigExecStageFrameSeeds &o) const
+    {
         return !(*this == o);
     }
 };
@@ -235,8 +239,8 @@ public:
     ///
     /// \p evaluator must outlive the program; the evaluator owns it and drops
     /// it whenever the compiled rig or the scene changes underneath.
-    static std::unique_ptr<RigExecBakedProgram> Build(
-        RigExecRigEvaluator *evaluator, std::vector<std::string> *reasons);
+    static std::unique_ptr<RigExecBakedProgram>
+    Build(RigExecRigEvaluator *evaluator, std::vector<std::string> *reasons);
 
     /// Bake-time facts for a port of the evaluator's weight oracle, the
     /// envelope objects no WeightPacket step bakes, and the property
@@ -248,18 +252,18 @@ public:
     static void DescribeWeightOracle(const RigExecRigEvaluator &evaluator,
                                      const SdfPath &path, UsdTimeCode time,
                                      RigExecWeightOracleFacts *facts);
-    static bool ComposeEnvelopeObjects(
-        const RigExecRigEvaluator &evaluator,
-        const RigExecBakedProgramImpl &program,
-        std::vector<RigExecBakedEnvelopeObject> *objects,
-        std::map<SdfPath, int> *index, std::string *error);
-    static bool DescribePropertyChains(
-        const RigExecRigEvaluator &evaluator,
-        std::vector<RigExecBakedPropertyChainDesc> *chains,
-        std::string *error);
+    static bool
+    ComposeEnvelopeObjects(const RigExecRigEvaluator &evaluator,
+                           const RigExecBakedProgramImpl &program,
+                           std::vector<RigExecBakedEnvelopeObject> *objects,
+                           std::map<SdfPath, int> *index, std::string *error);
+    static bool
+    DescribePropertyChains(const RigExecRigEvaluator &evaluator,
+                           std::vector<RigExecBakedPropertyChainDesc> *chains,
+                           std::string *error);
     /// RigExecBakedUpstreamAdmissibleArrays.
-    static std::vector<RigExecUpstreamArrayRow> DescribeUpstreamArrays(
-        const RigExecRigEvaluator &evaluator);
+    static std::vector<RigExecUpstreamArrayRow>
+    DescribeUpstreamArrays(const RigExecRigEvaluator &evaluator);
 
     /// Runs the whole program at \p time and publishes into \p pose.
     ///
@@ -272,9 +276,15 @@ public:
     /// what changes is that every step's reads happen in that run, which a
     /// bake capturing them needs. Const because the evaluator hands its
     /// program out const; the flag is the only thing it touches.
-    RigExecBakedBail GetLastBail() const { return _lastBail; }
+    RigExecBakedBail GetLastBail() const
+    {
+        return _lastBail;
+    }
 
-    void RequestFullRun() const { _fullRunRequested = true; }
+    void RequestFullRun() const
+    {
+        _fullRunRequested = true;
+    }
 
     /// One windowed operation (rigExecGraph/windowHistory.h): a step whose
     /// solve reads the inputs it captured over the `frames` earlier ticks.
@@ -308,8 +318,7 @@ public:
     /// ordered prefix. The worker runs independent preparation and refuses
     /// publication at the same boundary as live. Native and delta sampling
     /// occurs only for admitted frames. False reports malformed arguments.
-    bool SampleStageFrameSeeds(UsdTimeCode time,
-                               RigExecStageFrameSeeds *seeds,
+    bool SampleStageFrameSeeds(UsdTimeCode time, RigExecStageFrameSeeds *seeds,
                                std::string *error = nullptr) const;
 
     /// Whether \p notice can have moved anything the bake captured.
@@ -530,8 +539,8 @@ private:
     friend class RigExecRigEvaluator;
     /// Project the common compiler's exact SCC members to authored operation
     /// owners for the evaluator's public compile report. Neutral Build is unchanged.
-    std::map<SdfPath, std::string> _GetCycleSkips(
-        const std::map<SdfPath, SdfPath> &switchOwners) const;
+    std::map<SdfPath, std::string>
+    _GetCycleSkips(const std::map<SdfPath, SdfPath> &switchOwners) const;
     /// Only the synchronous compile caller can offer its local capture.
     static std::unique_ptr<RigExecBakedProgram> _BuildWithSceneCapture(
         RigExecRigEvaluator *evaluator, std::vector<std::string> *reasons,
@@ -550,6 +559,19 @@ private:
     static void _BindPropertyChains(const RigExecRigEvaluator &evaluator,
                                     RigExecBakedProgramImpl *program);
 
+    /// Factory-only construction: this passkey is private and not
+    /// default-constructible, so {} cannot build one outside this class.
+    struct _FactoryTag {
+        explicit _FactoryTag(int)
+        {
+        }
+    };
+
+public:
+    RigExecBakedProgram(_FactoryTag,
+                        std::unique_ptr<RigExecBakedProgramImpl> impl);
+
+private:
     explicit RigExecBakedProgram(std::unique_ptr<RigExecBakedProgramImpl> impl);
     std::unique_ptr<RigExecBakedProgramImpl> _impl;
     /// RequestFullRun's one-shot flag, consumed by the next Run.
@@ -557,6 +579,6 @@ private:
     RigExecBakedBail _lastBail = RigExecBakedBail::None;
 };
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_BAKED_PROGRAM_H
+#endif // RIGEXEC_BAKED_PROGRAM_H

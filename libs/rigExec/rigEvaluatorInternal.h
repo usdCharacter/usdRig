@@ -2,6 +2,7 @@
 #ifndef RIGEXEC_RIG_EVALUATOR_INTERNAL_H
 #define RIGEXEC_RIG_EVALUATOR_INTERNAL_H
 
+#include "rigExecSchema/schemaNames.h"
 #include "rigEvaluator.h"
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/base/tf/stringUtils.h"
@@ -19,8 +20,7 @@ namespace rigExec {
 
 namespace evaluatorDetail {
 
-SdfPathVector
-_AuthoredConnections(const UsdAttribute &attribute);
+SdfPathVector _AuthoredConnections(const UsdAttribute &attribute);
 
 // The attributes the movers segment of the structure digest hashes as
 // bindings -- connection walk and declared read phase -- on every mover, on
@@ -28,33 +28,60 @@ _AuthoredConnections(const UsdAttribute &attribute);
 // names. The read phase of a connection is resolved on every connected
 // operator input instead (_ForEachConnectedInput).
 inline constexpr const char *kDigestMoverInputs[] = {
-    "inputs:defaultWeight", "inputs:enabled", "inputs:value", "inputs:min",
-    "inputs:max", "inputs:keys", "inputs:tangents"};
+    SchemaAttrText::inputsDefaultWeight, SchemaAttrText::inputsEnabled,
+    SchemaAttrText::inputsValue,         SchemaAttrText::inputsMin,
+    SchemaAttrText::inputsMax,           SchemaAttrText::inputsKeys,
+    SchemaAttrText::inputsTangents};
 inline constexpr const char *kDigestWeightObjectFields[] = {
-    "rigExec:values", "rigExec:indices", "rigExec:defaultWeight",
-    "rigExec:representation", "rigExec:rangePolicy", "rigExec:operation",
-    "inputs:driver", "inputs:scale", "inputs:bias", "inputs:falloffMin",
-    "inputs:falloffMax", "inputs:falloffSamples", "inputs:invert", "inputs:strength", "inputs:scaleX",
-    "inputs:scaleXPos", "inputs:scaleYPos", "inputs:scaleZPos",
-    "inputs:scaleXNeg", "inputs:scaleYNeg", "inputs:scaleZNeg",
-    "inputs:scaleY", "inputs:scaleZ", "inputs:extentU", "inputs:extentV",
-    "inputs:weights", "rigExec:autoSmooth", "rigExec:basis",
-    "rigExec:samplesPerSpline", "rigExec:unreachedValue"};
-inline constexpr const char *kDigestBlendInputFields[] = {"inputs:weight"};
+    SchemaAttrText::rigExecValues,
+    SchemaAttrText::rigExecIndices,
+    SchemaAttrText::rigExecDefaultWeight,
+    SchemaAttrText::rigExecRepresentation,
+    SchemaAttrText::rigExecRangePolicy,
+    SchemaAttrText::rigExecOperation,
+    SchemaAttrText::inputsDriver,
+    SchemaAttrText::inputsScale,
+    SchemaAttrText::inputsBias,
+    SchemaAttrText::inputsFalloffMin,
+    SchemaAttrText::inputsFalloffMax,
+    SchemaAttrText::inputsFalloffSamples,
+    SchemaAttrText::inputsInvert,
+    SchemaAttrText::inputsStrength,
+    SchemaAttrText::inputsScaleX,
+    SchemaAttrText::inputsScaleXPos,
+    SchemaAttrText::inputsScaleYPos,
+    SchemaAttrText::inputsScaleZPos,
+    SchemaAttrText::inputsScaleXNeg,
+    SchemaAttrText::inputsScaleYNeg,
+    SchemaAttrText::inputsScaleZNeg,
+    SchemaAttrText::inputsScaleY,
+    SchemaAttrText::inputsScaleZ,
+    SchemaAttrText::inputsExtentU,
+    SchemaAttrText::inputsExtentV,
+    SchemaAttrText::inputsWeights,
+    SchemaAttrText::rigExecAutoSmooth,
+    SchemaAttrText::rigExecBasis,
+    SchemaAttrText::rigExecSamplesPerSpline,
+    SchemaAttrText::rigExecUnreachedValue};
+inline constexpr const char *kDigestBlendInputFields[] = {
+    SchemaAttrText::inputsWeight};
 
 // The relationships through which an operator names a prim whose inputs
 // it reads: a weight object (and, transitively, the weights it composes)
 // and a blend input.
-inline const TfToken _weightObjectRel("rigExec:weightObject");
-inline const TfToken _inputWeightsRel("rigExec:inputWeights");
-inline const TfToken _baseWeightRel("rigExec:baseWeight");
-inline const TfToken _blendInputsRel("rigExec:blendInputs");
+inline const TfToken _weightObjectRel(SchemaAttrText::rigExecWeightObject);
+inline const TfToken _inputWeightsRel(SchemaAttrText::rigExecInputWeights);
+inline const TfToken _baseWeightRel(SchemaAttrText::rigExecBaseWeight);
+inline const TfToken _blendInputsRel(SchemaAttrText::rigExecBlendInputs);
 // The relationships through which an operator names one attribute it
 // reads: a pose interpolator's numeric driver, a surface projector's
 // shader dials, a space switch's active-space channel.
-inline const TfToken _driverAttributesRel("rigExec:driverAttributes");
-inline const TfToken _shaderDialSourcesRel("rigExec:shaderDialSources");
-inline const TfToken _activeSpaceAttributeRel("rigExec:activeSpaceAttribute");
+inline const TfToken
+    _driverAttributesRel(SchemaAttrText::rigExecDriverAttributes);
+inline const TfToken
+    _shaderDialSourcesRel(SchemaAttrText::rigExecShaderDialSources);
+inline const TfToken
+    _activeSpaceAttributeRel(SchemaAttrText::rigExecActiveSpaceAttribute);
 
 // Every connected operator input: each attribute with authored connections
 // on a prim under \p rig (UsdPrimRange order, the rig prim first), then on
@@ -114,8 +141,7 @@ _ForEachConnectedInput(const UsdPrim &rig, const Visit &visit,
                                     relationship
                                         ? SdfFieldKeys->TargetPaths
                                         : SdfFieldKeys->ConnectionPaths)) {
-                    (relationship ? relationships : connected)
-                        .push_back(name);
+                    (relationship ? relationships : connected).push_back(name);
                 }
             }
         }
@@ -208,19 +234,22 @@ _ReadAttribute(const UsdPrim &prim, const TfToken &name, T fallback)
     return value;
 }
 
-inline const TfToken _computePointFrame("computePointFrame");
-inline const TfToken _computePointFrameArray("computePointFrameArray");
+inline const TfToken
+    _computePointFrame(SchemaComputationText::computePointFrame);
+inline const TfToken
+    _computePointFrameArray(SchemaComputationText::computePointFrameArray);
 
 // The joint rest a solver measures from. Overridden per solver batch when an
 // earlier pose step wrote the joint ("the incoming frame is the
 // solver's rest reference").
-inline const TfToken _computeRestFrame("computeRestFrame");
-inline const TfToken _movesRel("rigExec:moves");
-inline const TfToken _enabledAttr("inputs:enabled");
-inline const TfToken _computeFalloffLut("computeFalloffLut");
-inline const TfToken _falloffProfileAttr("rigExec:falloffProfile");
-inline const TfToken _falloffCurveAttr("rigExec:falloffCurve");
-inline const TfToken _weightTargetRel("rigExec:weightTarget");
+inline const TfToken _computeRestFrame(SchemaComputationText::computeRestFrame);
+inline const TfToken _movesRel(SchemaAttrText::rigExecMoves);
+inline const TfToken _enabledAttr(SchemaAttrText::inputsEnabled);
+inline const TfToken
+    _computeFalloffLut(SchemaComputationText::computeFalloffLut);
+inline const TfToken _falloffProfileAttr(SchemaAttrText::rigExecFalloffProfile);
+inline const TfToken _falloffCurveAttr(SchemaAttrText::rigExecFalloffCurve);
+inline const TfToken _weightTargetRel(SchemaAttrText::rigExecWeightTarget);
 
 /// Whether a volume weight measures its distance against the points as
 /// they stand at the consuming operator's position (`preceding` declared
@@ -230,45 +259,37 @@ inline const TfToken _weightTargetRel("rigExec:weightTarget");
 bool _VolumeWeightSamplesInFlight(const UsdPrim &weight, bool *inFlight,
                                   std::string *error);
 
-std::vector<UsdPrim>
-_GetPoseStackOrder(const UsdPrim &root);
+std::vector<UsdPrim> _GetPoseStackOrder(const UsdPrim &root);
 
-std::vector<UsdPrim>
-_GetMoverExecutionOrder(const UsdPrim &rig);
+std::vector<UsdPrim> _GetMoverExecutionOrder(const UsdPrim &rig);
 
-bool
-_IsVolumeWeightType(const TfToken &typeName);
+bool _IsVolumeWeightType(const TfToken &typeName);
 
-bool
-_IsFrameProviderType(const TfToken &type);
+bool _IsFrameProviderType(const TfToken &type);
 
-bool
-_IsFrameProvider(const UsdPrim &prim);
+bool _IsFrameProvider(const UsdPrim &prim);
 
 // Own roots only: explicitly named connection sources are never filtered.
-bool
-_IsPoseInputSeed(const UsdAttribute &attribute);
+bool _IsPoseInputSeed(const UsdAttribute &attribute);
 
-bool
-_IsWeightObjectType(const TfToken &typeName);
+bool _IsWeightObjectType(const TfToken &typeName);
 
-std::vector<float>
-_BakeFalloffLut(const UsdPrim &prim);
+std::vector<float> _BakeFalloffLut(const UsdPrim &prim);
 
-SdfPath
-_ResolveGeometryInput(const UsdStageRefPtr &stage, const SdfPath &target);
+SdfPath _ResolveGeometryInput(const UsdStageRefPtr &stage,
+                              const SdfPath &target);
 
-bool
-_ValidateScalarConnection(
-    const UsdStageRefPtr &stage, const UsdAttribute &attribute,
-    const SdfValueTypeName &expectedType, std::set<SdfPath> *visiting,
-    std::string *error);
+bool _ValidateScalarConnection(const UsdStageRefPtr &stage,
+                               const UsdAttribute &attribute,
+                               const SdfValueTypeName &expectedType,
+                               std::set<SdfPath> *visiting, std::string *error);
 
-bool
-_ValidateWeightObjectDomain(
-    const UsdStageRefPtr &stage, const SdfPath &weightPath,
-    const SdfPath &moverTarget, bool pointDomain, bool operationDomain,
-    size_t logicalCount, std::set<SdfPath> *visiting, std::string *error);
+bool _ValidateWeightObjectDomain(const UsdStageRefPtr &stage,
+                                 const SdfPath &weightPath,
+                                 const SdfPath &moverTarget, bool pointDomain,
+                                 bool operationDomain, size_t logicalCount,
+                                 std::set<SdfPath> *visiting,
+                                 std::string *error);
 
 // Every authored input computeRestFrame reads: exactly the seven
 // AttributeValue inputs of the computation (computations.cpp,
@@ -281,17 +302,14 @@ _ValidateWeightObjectDomain(
 // constructor (RigExecRigEvaluator::_restInputNames), because the
 // constancy test runs on a parallel compile and a function-local static or
 // a token built from text there takes a lock.
-std::vector<TfToken>
-_MakeRestInputNames();
+std::vector<TfToken> _MakeRestInputNames();
 
-bool
-_IsRestInputName(const std::vector<TfToken> &names, const TfToken &name);
+bool _IsRestInputName(const std::vector<TfToken> &names, const TfToken &name);
 
-bool
-_ProviderRestMightVary(const UsdStageRefPtr &stage,
-                       const std::vector<TfToken> &restInputNames,
-                       const SdfPath &provider,
-                       const std::set<SdfPath> &chainTargets);
+bool _ProviderRestMightVary(const UsdStageRefPtr &stage,
+                            const std::vector<TfToken> &restInputNames,
+                            const SdfPath &provider,
+                            const std::set<SdfPath> &chainTargets);
 
 // Counters used by RIGEXEC_VERIFY_CERTAIN_STRUCTURAL.
 struct _CertainStructuralCounts {
@@ -300,17 +318,14 @@ struct _CertainStructuralCounts {
     std::atomic<size_t> digestFound{0};
 };
 
-_CertainStructuralCounts *
-_CertainStructuralVerifyCounts();
+_CertainStructuralCounts *_CertainStructuralVerifyCounts();
 
-bool
-_DigestSplitVerifyRequested();
+bool _DigestSplitVerifyRequested();
 
 void
-_ApplyInteractiveOverrides(
-    const std::vector<RigExecValueOverride> &interactive,
-    std::vector<RigExecValueOverride> *overrides,
-    RigExecResolvedInputs *resolved);
+_ApplyInteractiveOverrides(const std::vector<RigExecValueOverride> &interactive,
+                           std::vector<RigExecValueOverride> *overrides,
+                           RigExecResolvedInputs *resolved);
 
 } // namespace evaluatorDetail
 

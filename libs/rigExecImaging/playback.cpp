@@ -1,4 +1,5 @@
 // RigExec baked playback for Hydra (M2b). See playback.h for the contract.
+#include "rigExecSchema/schemaNames.h"
 #include "playback.h"
 #include "rigExecRuntime/runtime.h"
 #include "rigExecSampler/inputSampler.h"
@@ -28,7 +29,7 @@ namespace {
 
 TF_DEFINE_PRIVATE_TOKENS(
     _playbackTokens,
-    ((asset, "rigExec:asset"))
+    ((asset, SchemaAttrText::rigExecAsset))
     ((generated, "__RigExecGenerated"))
     (points)
     (normals)
@@ -56,7 +57,7 @@ _PlaybackPathOk(const std::string &path)
            SdfPath(path).IsAbsolutePath();
 }
 
-}  // namespace
+} // namespace
 
 bool
 RigExecPlaybackAssetFor(const UsdPrim &rig, std::string *resolvedPath)
@@ -88,10 +89,8 @@ RigExecPlaybackAssetFor(const UsdPrim &rig, std::string *resolvedPath)
 RigExecBakedPlayback::RigExecBakedPlayback(
     const UsdStageRefPtr &stage, const SdfPath &rigPath,
     std::shared_ptr<RigExecSnapshotStore> store)
-    : _stage(stage)
-    , _rigPath(rigPath)
-    , _assetRoot(rigPath.GetParentPath())
-    , _store(std::move(store))
+    : _stage(stage), _rigPath(rigPath), _assetRoot(rigPath.GetParentPath()),
+      _store(std::move(store))
 {
 }
 
@@ -100,7 +99,8 @@ RigExecBakedPlayback::~RigExecBakedPlayback() = default;
 void
 RigExecBakedPlayback::NoteStageChanged()
 {
-    if (_sampler) _sampler->NoteStageChanged();
+    if (_sampler)
+        _sampler->NoteStageChanged();
     _historyHave = false;
     // An edit may author or clear resetXformStack under a driven root.
     _xformResetsValid = false;
@@ -142,7 +142,8 @@ RigExecBakedPlayback::_PrepareHistory(UsdTimeCode time, std::string *error)
         _historyHave = false;
         return true;
     }
-    if (_historyHave && _historyTime == time) return true;
+    if (_historyHave && _historyTime == time)
+        return true;
     if (_historyHave && !_historyTime.IsDefault() &&
         _historyTime.GetValue() + 1.0 == time.GetValue()) {
         _reader->PushHistory();
@@ -153,17 +154,19 @@ RigExecBakedPlayback::_PrepareHistory(UsdTimeCode time, std::string *error)
     const size_t depth = _reader->GetHistoryDepth();
     for (size_t k = depth; k >= 1; --k) {
         const UsdTimeCode tick(time.GetValue() - double(k));
-        if (!_sampler->Apply(tick, _reader.get(), error)) return false;
+        if (!_sampler->Apply(tick, _reader.get(), error))
+            return false;
         _AdmitUpstream(tick);
-        if (!_ApplyUpstream(tick, error)) return false;
-        if (!_reader->ExecuteHistory(error)) return false;
+        if (!_ApplyUpstream(tick, error))
+            return false;
+        if (!_reader->ExecuteHistory(error))
+            return false;
     }
     return true;
 }
 
 bool
-RigExecBakedPlayback::Open(const std::string &resolvedPath,
-                           std::string *error)
+RigExecBakedPlayback::Open(const std::string &resolvedPath, std::string *error)
 {
     std::ifstream stream(resolvedPath, std::ios::binary);
     const std::vector<char> raw((std::istreambuf_iterator<char>(stream)),
@@ -233,11 +236,10 @@ RigExecBakedPlayback::Open(const std::string &resolvedPath,
     // In-tree playback runs the reader's clusters in parallel by default
     // (RIGEXEC_RUNTIME_DISPATCH=0 opts out); the serial schedule knob and
     // the library's parallel switch keep meaning serial.
-    _dispatchExecute =
-        TfGetenvBool("RIGEXEC_RUNTIME_DISPATCH", true) &&
-        RigExecParallelEvaluationEnabled() &&
-        RigExecBakedScheduleModeFromEnvironment() ==
-            RigExecBakedScheduleMode::Parallel;
+    _dispatchExecute = TfGetenvBool("RIGEXEC_RUNTIME_DISPATCH", true) &&
+                       RigExecParallelEvaluationEnabled() &&
+                       RigExecBakedScheduleModeFromEnvironment() ==
+                           RigExecBakedScheduleMode::Parallel;
     _assetPath = resolvedPath;
     _outputPaths.clear();
     _providerOutputs.clear();
@@ -264,7 +266,8 @@ void
 RigExecBakedPlayback::SetUpstreamInputs(
     std::vector<RigExecUpstreamValue> values)
 {
-    if (values != _upstreamRequested) _historyHave = false;
+    if (values != _upstreamRequested)
+        _historyHave = false;
     _upstreamRequested = std::move(values);
     _AdmitUpstream(_upstreamTime);
 }
@@ -337,8 +340,7 @@ RigExecBakedPlayback::_AdmitUpstream(UsdTimeCode time)
 }
 
 bool
-RigExecBakedPlayback::_LiftUpstream(const _UpstreamKey &key,
-                                    UsdTimeCode time,
+RigExecBakedPlayback::_LiftUpstream(const _UpstreamKey &key, UsdTimeCode time,
                                     std::string *error)
 {
     // Restore the bound stage source, including a static SourceBacked input.
@@ -348,12 +350,11 @@ RigExecBakedPlayback::_LiftUpstream(const _UpstreamKey &key,
     }
     return _sampler->DidSampleInput(key.index) ||
            RigExecSampleInputAt(key.attribute, key.index, key.name, key.tag,
-                                 time, _reader.get(), error);
+                                time, _reader.get(), error);
 }
 
 bool
-RigExecBakedPlayback::_ApplyUpstream(UsdTimeCode time,
-                                     std::string *error)
+RigExecBakedPlayback::_ApplyUpstream(UsdTimeCode time, std::string *error)
 {
     for (const auto &[path, key] : _upstreamApplied) {
         if (!_upstreamAdmitted.count(path) &&
@@ -379,11 +380,10 @@ RigExecBakedPlayback::_ApplyUpstream(UsdTimeCode time,
                 RrInputTagIsArray(key.tag)
                     ? RigExecInputArrayFrom(key.value, key.tag, &array) &&
                           _reader->SetInputArrayAt(key.index, array, &why)
-                    : key.tag == RrInputTag::Token
+                : key.tag == RrInputTag::Token
                     ? _reader->SetInputToken(
                           key.name,
-                          key.value.UncheckedGet<TfToken>().GetString(),
-                          &why)
+                          key.value.UncheckedGet<TfToken>().GetString(), &why)
                     : RigExecInputValueFrom(key.value, key.tag, &value) &&
                           _reader->SetSampledInputAt(key.index, value, &why);
             if (!set) {
@@ -391,8 +391,7 @@ RigExecBakedPlayback::_ApplyUpstream(UsdTimeCode time,
                 // dropped one.
                 _upstreamDropLines.push_back(
                     "upstream input " + path.GetString() + ": " +
-                    (why.empty() ? std::string("the input refused it")
-                                 : why) +
+                    (why.empty() ? std::string("the input refused it") : why) +
                     "; ignored");
                 refused.push_back(path);
                 if (!_LiftUpstream(key, time, error)) {
@@ -497,8 +496,8 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
             if (output.pointsSource != source) {
                 VtVec3fArray points(moved.points.size());
                 for (size_t i = 0; i < moved.points.size(); ++i) {
-                    points[i] = GfVec3f(moved.points[i][0],
-                        moved.points[i][1], moved.points[i][2]);
+                    points[i] = GfVec3f(moved.points[i][0], moved.points[i][1],
+                                        moved.points[i][2]);
                 }
                 output.points = std::move(points);
                 output.pointsSource = source;
@@ -536,9 +535,12 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
     if (!_providerOutputsValid) {
         const auto providers = _reader->GetProviderFramePublications();
         for (size_t slot = 0; slot < providers.size(); ++slot) {
-            if (!(providers[slot].publicationRole & 3)) continue;
-            const _OutputPath &output = _ResolveOutputPath(providers[slot].path);
-            if (!output.ok || !output.isPrim) continue;
+            if (!(providers[slot].publicationRole & 3))
+                continue;
+            const _OutputPath &output =
+                _ResolveOutputPath(providers[slot].path);
+            if (!output.ok || !output.isPrim)
+                continue;
             _providerOutputs.push_back({slot, output.path});
         }
         _providerOutputsValid = true;
@@ -548,13 +550,15 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
         uint8_t role = 0;
         RrPointFrame final;
         if (!_reader->GetProviderFinalFrame(provider.slot, &role, &final) ||
-            !final.IsValid() || final.IsDegenerate()) continue;
+            !final.IsValid() || final.IsDegenerate())
+            continue;
         std::array<GfVec3d, 4> points;
         for (size_t i = 0; i < points.size(); ++i)
             points[i] = GfVec3d(final.points[i][0], final.points[i][1],
                                 final.points[i][2]);
         GfMatrix4d matrix(1.0);
-        if (!RigExecPointsToMatrix(identityFrame.points, points, &matrix)) continue;
+        if (!RigExecPointsToMatrix(identityFrame.points, points, &matrix))
+            continue;
         auto &published = snapshot->prims[provider.path];
         published.assetRoot = _assetRoot;
         published.hasControlFrame = true;
@@ -575,23 +579,19 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
         RigExecPublishedPrim &published = snapshot->prims[providerPath];
         published.assetRoot = _assetRoot;
         published.xform = GfMatrix4d(
-            provider.matrix[0][0], provider.matrix[0][1],
-            provider.matrix[0][2], provider.matrix[0][3],
-            provider.matrix[1][0], provider.matrix[1][1],
-            provider.matrix[1][2], provider.matrix[1][3],
-            provider.matrix[2][0], provider.matrix[2][1],
-            provider.matrix[2][2], provider.matrix[2][3],
-            provider.matrix[3][0], provider.matrix[3][1],
-            provider.matrix[3][2], provider.matrix[3][3]);
+            provider.matrix[0][0], provider.matrix[0][1], provider.matrix[0][2],
+            provider.matrix[0][3], provider.matrix[1][0], provider.matrix[1][1],
+            provider.matrix[1][2], provider.matrix[1][3], provider.matrix[2][0],
+            provider.matrix[2][1], provider.matrix[2][2], provider.matrix[2][3],
+            provider.matrix[3][0], provider.matrix[3][1], provider.matrix[3][2],
+            provider.matrix[3][3]);
         published.xformBase = GfMatrix4d(
-            provider.base[0][0], provider.base[0][1],
-            provider.base[0][2], provider.base[0][3],
-            provider.base[1][0], provider.base[1][1],
-            provider.base[1][2], provider.base[1][3],
-            provider.base[2][0], provider.base[2][1],
-            provider.base[2][2], provider.base[2][3],
-            provider.base[3][0], provider.base[3][1],
-            provider.base[3][2], provider.base[3][3]);
+            provider.base[0][0], provider.base[0][1], provider.base[0][2],
+            provider.base[0][3], provider.base[1][0], provider.base[1][1],
+            provider.base[1][2], provider.base[1][3], provider.base[2][0],
+            provider.base[2][1], provider.base[2][2], provider.base[2][3],
+            provider.base[3][0], provider.base[3][1], provider.base[3][2],
+            provider.base[3][3]);
         published.hasXform = true;
         snapshot->hasDrivenXforms = true;
         providerRoots.push_back(providerPath);
@@ -652,7 +652,8 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
             published.hasWeightOverlay = true;
             const auto source = field.weights.Share();
             if (weight.weightsSource != source) {
-                weight.weights = VtFloatArray(field.weights.begin(), field.weights.end());
+                weight.weights =
+                    VtFloatArray(field.weights.begin(), field.weights.end());
                 weight.weightsSource = source;
             }
             published.weightOverlay = weight.weights;
@@ -678,4 +679,4 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
     return result;
 }
 
-}  // namespace rigExec
+} // namespace rigExec

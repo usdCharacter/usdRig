@@ -6,6 +6,7 @@
 // application calls. This TU owns its revision binder, its compile
 // validator, and its parity-oracle branch, and registers the row that
 // points at them.
+#include "rigExecSchema/schemaNames.h"
 #include "moverRegistry.h"
 
 #include "rigExecMath/dualQuat.h"
@@ -21,28 +22,27 @@ PXR_NAMESPACE_USING_DIRECTIVE
 // Relationship names the binders and validators read, interned once:
 // building a token from text takes the registry lock.
 TF_DEFINE_PRIVATE_TOKENS(_relTokens,
-    ((influences, "rigExec:influences")));
+    ((influences, rigExec::SchemaAttrText::rigExecInfluences)));
 
 // Interned once: callbacks, binders and validators run on parallel
 // lanes, and building a token from text takes the registry lock.
 TF_DEFINE_PRIVATE_TOKENS(_skinTokens,
-    ((influences, "rigExec:influences"))
+    ((influences, rigExec::SchemaAttrText::rigExecInfluences))
     (RigExecControl)
     (RigExecJoint)
-    ((skinningMethod, "rigExec:skinningMethod"))
-    ((elementSize, "rigExec:elementSize"))
-    ((jointIndices, "rigExec:jointIndices"))
-    ((jointWeights, "rigExec:jointWeights"))
+    ((skinningMethod, rigExec::SchemaAttrText::rigExecSkinningMethod))
+    ((elementSize, rigExec::SchemaAttrText::rigExecElementSize))
+    ((jointIndices, rigExec::SchemaAttrText::rigExecJointIndices))
+    ((jointWeights, rigExec::SchemaAttrText::rigExecJointWeights))
     (classicLinear));
 
 namespace {
-const TfToken _oracleToken0("rigExec:influences");
-const TfToken _oracleToken1("rigExec:jointIndices");
-const TfToken _oracleToken2("rigExec:jointWeights");
-const TfToken _oracleToken3("rigExec:elementSize");
-const TfToken _oracleToken4("rigExec:skinningMethod");
+const TfToken _oracleToken0(rigExec::SchemaAttrText::rigExecInfluences);
+const TfToken _oracleToken1(rigExec::SchemaAttrText::rigExecJointIndices);
+const TfToken _oracleToken2(rigExec::SchemaAttrText::rigExecJointWeights);
+const TfToken _oracleToken3(rigExec::SchemaAttrText::rigExecElementSize);
+const TfToken _oracleToken4(rigExec::SchemaAttrText::rigExecSkinningMethod);
 const TfToken _oracleToken5("classicLinear");
-
 
 void
 _BindSkinMover(const rigExec::RigExecMoverBindContext &ctx)
@@ -53,8 +53,8 @@ _BindSkinMover(const rigExec::RigExecMoverBindContext &ctx)
     // Every influence shares the one phase declared on rigExec:influences,
     // and "final" binds each provider's frame-chain head exactly as the
     // matrix mover does for its one.
-    binding.influences = rigExec::RigExecRelationshipTargets(
-        moverPrim, _relTokens->influences);
+    binding.influences =
+        rigExec::RigExecRelationshipTargets(moverPrim, _relTokens->influences);
     binding.transformPhase =
         rigExec::RigExecPhaseForInput(moverPrim, _relTokens->influences);
     if (binding.transformPhase.kind == rigExec::RigExecReadPhaseKind::Final) {
@@ -68,8 +68,8 @@ _BindSkinMover(const rigExec::RigExecMoverBindContext &ctx)
 }
 
 bool
-_ValidateSkinMover(
-    const rigExec::RigExecMoverValidateContext &ctx, std::string *error)
+_ValidateSkinMover(const rigExec::RigExecMoverValidateContext &ctx,
+                   std::string *error)
 {
     const UsdStageRefPtr &stage = ctx.stage;
     const UsdPrim &prim = ctx.prim;
@@ -78,24 +78,22 @@ _ValidateSkinMover(
     // The target rules are the matrix mover's: one native points property,
     // because the jointIndices/jointWeights layout is written against one
     // point count and a fan-out would alias it across targets.
-    if (targets.size() != 1 ||
-        !targets[0].IsPropertyPath() ||
+    if (targets.size() != 1 || !targets[0].IsPropertyPath() ||
         targets[0].GetNameToken() != "points") {
-        *error = who() + ": moves must resolve to exactly one native "
-                       "PointBased points property" +
+        *error = who() +
+                 ": moves must resolve to exactly one native "
+                 "PointBased points property" +
                  (targets.size() == 1
                       ? rigExec::RigExecPointsTargetHint(stage, targets[0])
                       : std::string());
         return false;
     }
-    const UsdPrim owner =
-        stage->GetPrimAtPath(targets[0].GetPrimPath());
+    const UsdPrim owner = stage->GetPrimAtPath(targets[0].GetPrimPath());
     if (!owner || !owner.IsA<UsdGeomPointBased>()) {
         *error = who() + ": move target owner is not a stock PointBased prim";
         return false;
     }
-    const UsdAttribute targetAttr =
-        stage->GetAttributeAtPath(targets[0]);
+    const UsdAttribute targetAttr = stage->GetAttributeAtPath(targets[0]);
     if (!targetAttr ||
         targetAttr.GetTypeName() != SdfValueTypeNames->Point3fArray) {
         *error = who() + ": move target is not an exact point3f[] property";
@@ -103,13 +101,12 @@ _ValidateSkinMover(
     }
 
     SdfPathVector influences;
-    if (UsdRelationship rel =
-            prim.GetRelationship(_skinTokens->influences)) {
+    if (UsdRelationship rel = prim.GetRelationship(_skinTokens->influences)) {
         rel.GetTargets(&influences);
     }
     if (influences.empty()) {
         *error = who() + ": rigExec:influences must name at least one matrix "
-                       "provider";
+                         "provider";
         return false;
     }
     const auto isFrameProvider = [](const TfToken &type) {
@@ -177,9 +174,8 @@ _ValidateSkinMover(
     for (size_t i = 0; i < indices.size(); ++i) {
         if (indices[i] < 0 || size_t(indices[i]) >= influences.size()) {
             *error = who() + ": rigExec:jointIndices[" + std::to_string(i) +
-                     "] = " + std::to_string(indices[i]) +
-                     " is outside the " + std::to_string(influences.size()) +
-                     " influences";
+                     "] = " + std::to_string(indices[i]) + " is outside the " +
+                     std::to_string(influences.size()) + " influences";
             return false;
         }
         if (!std::isfinite(weights[i]) || weights[i] < 0.0f) {
@@ -213,21 +209,25 @@ _OracleSkinMover(const rigExec::RigExecMoverOracleContext &ctx)
     const bool final =
         rigExec::RigExecPhaseForInput(prim, _relTokens->influences).kind ==
         rigExec::RigExecReadPhaseKind::Final;
-    const auto phase = rigExec::RigExecPhaseForInput(prim,_relTokens->influences);
-    std::unordered_map<SdfPath,GfMatrix4d,SdfPath::Hash> matrices;
+    const auto phase =
+        rigExec::RigExecPhaseForInput(prim, _relTokens->influences);
+    std::unordered_map<SdfPath, GfMatrix4d, SdfPath::Hash> matrices;
     for (const auto &provider : influences) {
-        const auto *value = ctx.phasedMatrix ? ctx.phasedMatrix(provider,phase,moverPath) : nullptr;
-        if (value) matrices[provider] = *value;
+        const auto *value = ctx.phasedMatrix
+                                ? ctx.phasedMatrix(provider, phase, moverPath)
+                                : nullptr;
+        if (value)
+            matrices[provider] = *value;
     }
     std::vector<GfMatrix4d> transforms;
     bool failed = false;
     for (const SdfPath &provider : influences) {
         const auto matrixIt = matrices.find(provider);
         if (matrixIt == matrices.end()) {
-            diagnostics->push_back(
-                "MoverFailed " + moverPath.GetString() +
-                ": no " + (final ? "final" : "base") +
-                " matrix provider at " + provider.GetString());
+            diagnostics->push_back("MoverFailed " + moverPath.GetString() +
+                                   ": no " + (final ? "final" : "base") +
+                                   " matrix provider at " +
+                                   provider.GetString());
             failed = true;
             break;
         }
@@ -240,31 +240,30 @@ _OracleSkinMover(const rigExec::RigExecMoverOracleContext &ctx)
     VtFloatArray weights;
     int elementSize = 1;
     TfToken method = _oracleToken5;
-    if (const rigExec::RigExecOracleAttribute a = prim.GetAttribute(
-            _oracleToken1)) {
+    if (const rigExec::RigExecOracleAttribute a =
+            prim.GetAttribute(_oracleToken1)) {
         if (!resolved.Get(a.GetPath(), &indices)) {
             a.Get(&indices, time);
         }
     }
-    if (const rigExec::RigExecOracleAttribute a = prim.GetAttribute(
-            _oracleToken2)) {
+    if (const rigExec::RigExecOracleAttribute a =
+            prim.GetAttribute(_oracleToken2)) {
         if (!resolved.Get(a.GetPath(), &weights)) {
             a.Get(&weights, time);
         }
     }
-    if (const rigExec::RigExecOracleAttribute a = prim.GetAttribute(
-            _oracleToken3)) {
+    if (const rigExec::RigExecOracleAttribute a =
+            prim.GetAttribute(_oracleToken3)) {
         a.Get(&elementSize, time);
     }
-    if (const rigExec::RigExecOracleAttribute a = prim.GetAttribute(
-            _oracleToken4)) {
+    if (const rigExec::RigExecOracleAttribute a =
+            prim.GetAttribute(_oracleToken4)) {
         a.Get(&method, time);
     }
     if (method != "classicLinear" && method != "dualQuaternion") {
-        diagnostics->push_back(
-            "MoverFailed " + moverPath.GetString() +
-            ": skinning method '" + method.GetString() +
-            "' has no scalar reference kernel");
+        diagnostics->push_back("MoverFailed " + moverPath.GetString() +
+                               ": skinning method '" + method.GetString() +
+                               "' has no scalar reference kernel");
         return RigExecOracleResult::PassThrough;
     }
     if (elementSize < 1 || transforms.empty() ||
@@ -304,8 +303,7 @@ _OracleSkinMover(const rigExec::RigExecMoverOracleContext &ctx)
             int pivot = -1;
             float pivotWeight = -1.0f;
             for (int k = 0; k < elementSize; ++k) {
-                const size_t slot =
-                    i * size_t(elementSize) + size_t(k);
+                const size_t slot = i * size_t(elementSize) + size_t(k);
                 const int j = indices[slot];
                 const float w = weights[slot];
                 if (j < 0 || size_t(j) >= transforms.size() ||
@@ -326,28 +324,24 @@ _OracleSkinMover(const rigExec::RigExecMoverOracleContext &ctx)
             GfMatrix3d s(0.0);
             double total = 0.0;
             for (int k = 0; k < elementSize; ++k) {
-                const size_t slot =
-                    i * size_t(elementSize) + size_t(k);
+                const size_t slot = i * size_t(elementSize) + size_t(k);
                 const int j = indices[slot];
                 const double w = weights[slot];
                 if (w == 0.0) {
                     continue;
                 }
                 const double signedW =
-                    GfDot(rigid[j].GetReal(), pivotReal) < 0.0 ? -w
-                                                               : w;
+                    GfDot(rigid[j].GetReal(), pivotReal) < 0.0 ? -w : w;
                 sum += rigid[j] * signedW;
                 s += stretch[j] * w;
                 total += w;
             }
             const double complement = 1.0 - total;
             if (complement != 0.0) {
-                const GfDualQuatd identity =
-                    GfDualQuatd::GetIdentity();
+                const GfDualQuatd identity = GfDualQuatd::GetIdentity();
                 const double signedW =
-                    GfDot(identity.GetReal(), pivotReal) < 0.0
-                        ? -complement
-                        : complement;
+                    GfDot(identity.GetReal(), pivotReal) < 0.0 ? -complement
+                                                               : complement;
                 sum += identity * signedW;
                 s += GfMatrix3d(1.0) * complement;
             }
@@ -363,8 +357,7 @@ _OracleSkinMover(const rigExec::RigExecMoverOracleContext &ctx)
             GfVec3d sum(0.0);
             double total = 0.0;
             for (int k = 0; k < elementSize; ++k) {
-                const size_t slot =
-                    i * size_t(elementSize) + size_t(k);
+                const size_t slot = i * size_t(elementSize) + size_t(k);
                 const int j = indices[slot];
                 const float w = weights[slot];
                 if (j < 0 || size_t(j) >= transforms.size() ||
@@ -403,12 +396,12 @@ rigExec::RigExecMoverHandler
 _MakeHandler()
 {
     rigExec::RigExecMoverHandler handler(
-        "RigExecSkinMover",
+        rigExec::SchemaTypeName::RigExecSkinMover,
         &rigExec::RigExecFixedMoverOp<rigExec::RigExecRevisionOp::Skin>,
         rigExec::RigExecMoverDomain::Points);
     handler.customTargetValidation = true;
-    handler.frameRelationships = {"rigExec:influences"};
-    handler.transformRelationship = "rigExec:influences";
+    handler.frameRelationships = {rigExec::SchemaAttrText::rigExecInfluences};
+    handler.transformRelationship = rigExec::SchemaAttrText::rigExecInfluences;
     // The four the layout is assembled from: the two arrays and the
     // element size RigExecResolveSkinTopology reads, and the method
     // RigExecAssembleSkinParameters reads beside them. inputs:enabled
@@ -424,6 +417,6 @@ _MakeHandler()
     return handler;
 }
 
-}  // namespace
+} // namespace
 
 RIGEXEC_REGISTER_MOVER(_MakeHandler());

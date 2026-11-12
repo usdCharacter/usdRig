@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <memory>
 #include <set>
 #include <string>
 
@@ -47,12 +48,10 @@ RrGeoGetenvBool(const char *name, bool fallback)
             c = char(c - 'A' + 'a');
         }
     }
-    if (lower == "0" || lower == "false" || lower == "no" ||
-        lower == "off") {
+    if (lower == "0" || lower == "false" || lower == "no" || lower == "off") {
         return false;
     }
-    if (lower == "1" || lower == "true" || lower == "yes" ||
-        lower == "on") {
+    if (lower == "1" || lower == "true" || lower == "yes" || lower == "on") {
         return true;
     }
     return fallback;
@@ -67,12 +66,17 @@ RrGeoSettingsFromEnvironment()
     return settings;
 }
 
-}  // namespace
+} // namespace
 
-RigExecRuntimeReader::RigExecRuntimeReader() : _program(new RrProgram())
+RigExecRuntimeReader::RigExecRuntimeReader()
+    : _program(std::make_unique<RrProgram>())
 {
     _noValue.matrix.SetDiagonal(0.0);
     _noInput.defaultValue = _noValue;
+}
+
+RigExecRuntimeReader::RigExecRuntimeReader(_OpenTag) : RigExecRuntimeReader()
+{
 }
 
 RigExecRuntimeReader::~RigExecRuntimeReader() = default;
@@ -87,7 +91,8 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
         }
         return std::unique_ptr<RigExecRuntimeReader>();
     };
-    std::unique_ptr<RigExecRuntimeReader> self(new RigExecRuntimeReader());
+    std::unique_ptr<RigExecRuntimeReader> self =
+        std::make_unique<RigExecRuntimeReader>(_OpenTag(0));
     RrProgram &program = *self->_program;
     {
         std::string why;
@@ -102,7 +107,8 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
     program.slotMeta = file.slotMeta.get();
     program.constants = file.constants.get();
     program.poses = file.pose.get();
-    program.requiredStageFramesAdmission = *file.pose->requiredStageFramesAdmission;
+    program.requiredStageFramesAdmission =
+        *file.pose->requiredStageFramesAdmission;
     program.geometry = file.geometry.get();
     program.statics.file = &file;
     program.geoSettings = RrGeoSettingsFromEnvironment();
@@ -121,9 +127,9 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
     program.verifyPacketVersions =
         RrGeoGetenvBool("RIGEXEC_VERIFY_PACKET_VERSIONS", false);
     program.compileDiagnostics = file.compileDiagnostics;
-    while (program.stepWeightObjects < file.geometry->weightObjects.size() &&
-           !file.geometry->weightObjects[program.stepWeightObjects]
-                .envelopeOnly) {
+    while (
+        program.stepWeightObjects < file.geometry->weightObjects.size() &&
+        !file.geometry->weightObjects[program.stepWeightObjects].envelopeOnly) {
         ++program.stepWeightObjects;
     }
 
@@ -225,8 +231,7 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
         };
         program.spaceSwitchBySlot.assign(slots, -1);
         for (size_t i = 0; i < poses.spaceSwitches.size(); ++i) {
-            const RigExecWireSpaceSwitch &sw =
-                poses.spaceSwitches[i];
+            const RigExecWireSpaceSwitch &sw = poses.spaceSwitches[i];
             if (sw.slot < 0 || size_t(sw.slot) >= slots) {
                 return fail("space switch names no slot");
             }
@@ -285,16 +290,17 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
     uint32_t finMax = 0, baseMax = 0;
     bool haveFinReference = false, haveBaseReference = false;
     auto noteFin = [&](uint32_t v) {
-        haveFinReference = true; finMax = std::max(finMax, v);
+        haveFinReference = true;
+        finMax = std::max(finMax, v);
     };
     auto noteBase = [&](uint32_t v) {
-        haveBaseReference = true; baseMax = std::max(baseMax, v);
+        haveBaseReference = true;
+        baseMax = std::max(baseMax, v);
     };
     for (const RigExecWireCommit &commit : poses.commits) {
         for (size_t p = 0; p < commit.slots.size(); ++p) {
             const size_t slot = size_t(commit.slots[p]);
-            if (slot >= slots ||
-                p >= commit.slotWrites.size()) {
+            if (slot >= slots || p >= commit.slotWrites.size()) {
                 return fail("a commit write names no slot");
             }
             ++finWriteCount[slot];
@@ -315,8 +321,7 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
         }
         for (size_t k = 0; k < commit.propagate.size(); ++k) {
             const size_t slot = size_t(commit.propagate[k].first);
-            if (slot >= slots ||
-                k >= commit.descendantWrites.size()) {
+            if (slot >= slots || k >= commit.descendantWrites.size()) {
                 return fail("a propagation write names no slot");
             }
             ++finWriteCount[slot];
@@ -330,13 +335,11 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
             if (k < commit.descendantCarry.size()) {
                 noteFin(commit.descendantCarry[k]);
             }
-            if (commit.solverOutput &&
-                k < commit.descendantBaseWrites.size()) {
+            if (commit.solverOutput && k < commit.descendantBaseWrites.size()) {
                 ++baseWriteCount[slot];
                 noteBase(commit.descendantBaseWrites[k]);
             }
-            if (commit.solverOutput &&
-                k < commit.descendantBaseCarry.size()) {
+            if (commit.solverOutput && k < commit.descendantBaseCarry.size()) {
                 noteBase(commit.descendantBaseCarry[k]);
             }
         }
@@ -352,8 +355,7 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
         for (uint32_t v : commit.poleReads) {
             noteFin(v);
         }
-        for (const RigExecWireAncestorRead &read :
-             commit.effectorAncestors) {
+        for (const RigExecWireAncestorRead &read : commit.effectorAncestors) {
             noteFin(read.fin);
             noteBase(read.base);
         }
@@ -369,8 +371,7 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
                 noteBase(read.base);
             }
         }
-        for (const RigExecWireAncestorRead &read :
-             commit.worldUpAncestors) {
+        for (const RigExecWireAncestorRead &read : commit.worldUpAncestors) {
             noteFin(read.fin);
             noteBase(read.base);
         }
@@ -399,11 +400,14 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
     const auto refreshFrames = [&](int32_t slot, uint32_t baseRead,
                                    uint32_t finRead, uint32_t baseWrite,
                                    uint32_t finWrite) {
-        if (slot < 0 || size_t(slot) >= slots) return false;
+        if (slot < 0 || size_t(slot) >= slots)
+            return false;
         ++baseWriteCount[size_t(slot)];
         ++finWriteCount[size_t(slot)];
-        noteBase(baseRead); noteBase(baseWrite);
-        noteFin(finRead); noteFin(finWrite);
+        noteBase(baseRead);
+        noteBase(baseWrite);
+        noteFin(finRead);
+        noteFin(finWrite);
         return true;
     };
     for (const auto &refresh : poses.providerRefreshes) {
@@ -419,8 +423,10 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
         }
     }
     for (const auto &frame : poses.providerFrameInputs) {
-        if (frame.base) noteBase(frame.version);
-        else noteFin(frame.version);
+        if (frame.base)
+            noteBase(frame.version);
+        else
+            noteFin(frame.version);
     }
     size_t finArena = 0, baseArena = 0;
     for (size_t i = 0; i < slots; ++i) {
@@ -482,7 +488,8 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
     program.revisionStaticStep.assign(geometry.revisionIndex.size(), -1);
     for (size_t i = 0; i < file.steps.size(); ++i) {
         const auto &step = file.steps[i];
-        if (step.isHead) continue;
+        if (step.isHead)
+            continue;
         if (step.kind == RigExecWireStepKind::ComposeSubtree) {
             const auto &group = poses.composeGroups[size_t(step.object)];
             for (int slot = group.begin; slot < group.end; ++slot)
@@ -492,9 +499,12 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
             if (step.kind == RigExecWireStepKind::ComposeSubtree &&
                 read.domain() == RigExecWireSlotDomain::Avars) {
                 for (uint32_t slot = read.begin() / 11;
-                     slot < (uint64_t(read.end()) + 10) / 11 && slot < slots; ++slot)
-                    if (int(slot) < poses.composeGroups[size_t(step.object)].begin ||
-                        int(slot) >= poses.composeGroups[size_t(step.object)].end)
+                     slot < (uint64_t(read.end()) + 10) / 11 && slot < slots;
+                     ++slot)
+                    if (int(slot) <
+                            poses.composeGroups[size_t(step.object)].begin ||
+                        int(slot) >=
+                            poses.composeGroups[size_t(step.object)].end)
                         program.avarReaderSteps[slot].push_back(int32_t(i));
             }
             if (read.domain() == RigExecWireSlotDomain::ChainBase) {
@@ -511,19 +521,28 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
         case RigExecWireStepKind::RevisionFuse:
             program.revisionSteps[size_t(step.object)].push_back(int32_t(i));
             break;
-        default: break;
+        default:
+            break;
         }
     }
-    for(size_t revision=0;revision<program.revisionStaticStep.size();++revision) {
-        if(program.revisionStaticStep[revision]>=0) continue;
-        bool excluded=false;
-        if(file.commonGraph) for(uint64_t id:file.commonGraph->excludedValues) {
-            if(id>=file.commonGraph->valueSpecs.size()) continue;
-            const auto &spec=file.commonGraph->valueSpecs[size_t(id)];
-            if(spec.domain==uint32_t(RigExecWireSlotDomain::RevisionPacket) && spec.slot==revision)
-                excluded=true;
-        }
-        if(!excluded) return fail("a revision has no RevisionStatic step or explicit excluded packet");
+    for (size_t revision = 0; revision < program.revisionStaticStep.size();
+         ++revision) {
+        if (program.revisionStaticStep[revision] >= 0)
+            continue;
+        bool excluded = false;
+        if (file.commonGraph)
+            for (uint64_t id : file.commonGraph->excludedValues) {
+                if (id >= file.commonGraph->valueSpecs.size())
+                    continue;
+                const auto &spec = file.commonGraph->valueSpecs[size_t(id)];
+                if (spec.domain ==
+                        uint32_t(RigExecWireSlotDomain::RevisionPacket) &&
+                    spec.slot == revision)
+                    excluded = true;
+            }
+        if (!excluded)
+            return fail("a revision has no RevisionStatic step or explicit "
+                        "excluded packet");
     }
     for (int index : cones.varyingSteps) {
         if (index < 0 || size_t(index) >= file.steps.size()) {
@@ -542,12 +561,10 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
     store.posedM.assign(slots, identity);
     store.finalMatrix.assign(slots, identity);
     store.baseMatrix.assign(slots, identity);
-    store.aggregates.assign(poses.solvers.size(),
-                            RrPointFrameArray());
+    store.aggregates.assign(poses.solvers.size(), RrPointFrameArray());
     store.ladders.assign(slots, RrLadderLive());
     // Seeded with the reads' folded constants until a prologue composes.
-    for (size_t i = 0;
-         i < std::min(slots, poses.ladders.size()); ++i) {
+    for (size_t i = 0; i < std::min(slots, poses.ladders.size()); ++i) {
         RrLadderLive &live = store.ladders[i];
         const auto constant = [&](int field) {
             return program.RegisteredConstant(
@@ -565,10 +582,9 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
     store.solverOutFrames.assign(poses.solvers.size(), {});
     store.solverOutPresent.assign(poses.solvers.size(), {});
     for (size_t i = 0; i < poses.solvers.size(); ++i) {
-        store.solverOutFrames[i].assign(
-            poses.solvers[i].outputs.size(), RrPointFrame());
-        store.solverOutPresent[i].assign(
-            poses.solvers[i].outputs.size(), 0);
+        store.solverOutFrames[i].assign(poses.solvers[i].outputs.size(),
+                                        RrPointFrame());
+        store.solverOutPresent[i].assign(poses.solvers[i].outputs.size(), 0);
     }
     // A ribbon's driver points: the ones the bake read, constant from
     // here on.
@@ -578,8 +594,7 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
             poses.solvers[i].ribbonConstantPoints;
         store.ribbonConstant[i].reserve(driver.size());
         for (const RigExecWireVec3f &p : driver) {
-            store.ribbonConstant[i].push_back(
-                RrVec3f(p[0], p[1], p[2]));
+            store.ribbonConstant[i].push_back(RrVec3f(p[0], p[1], p[2]));
         }
     }
     store.commits.assign(poses.commits.size(), RrCommitScratch());
@@ -592,8 +607,7 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
         scratch.deltaOk.assign(commit.slots.size(), 0);
         scratch.staged.assign(commit.propagate.size(), RrPointFrame());
         scratch.outcome.assign(commit.propagate.size(), 0);
-        scratch.sources.assign(commit.sources.size(),
-                               RrConstraintSource());
+        scratch.sources.assign(commit.sources.size(), RrConstraintSource());
     }
     store.arrays.assign(poses.constraintArrays.size(),
                         RrConstraintArraysLive());
@@ -606,7 +620,8 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
     store.matchRiders.assign(poses.constraints.size(), {});
     for (size_t i = 0; i < poses.constraints.size(); ++i) {
         const RigExecWireConstraint &c = poses.constraints[i];
-        if (!c.ikFkMatch || c.sources.size() != 10) continue;
+        if (!c.ikFkMatch || c.sources.size() != 10)
+            continue;
         const RigExecWireSlotMeta &meta = *program.slotMeta;
         // Each slot rides the nearest of the five controls above it; the
         // five themselves ride none.
@@ -615,48 +630,44 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
                 continue;
             int32_t rides = -1;
             bool own = false;
-            for (size_t k = 5; k < 10; ++k) own = own || c.sources[k] == int32_t(slot);
+            for (size_t k = 5; k < 10; ++k)
+                own = own || c.sources[k] == int32_t(slot);
             for (int32_t at = meta.parent[slot]; !own && at >= 0 && rides < 0;
                  at = meta.parent[size_t(at)]) {
                 for (size_t k = 5; k < 10; ++k)
-                    if (c.sources[k] == at) rides = int32_t(k - 5);
+                    if (c.sources[k] == at)
+                        rides = int32_t(k - 5);
             }
-            if (rides >= 0) store.matchRiders[i].emplace_back(int32_t(slot), rides);
+            if (rides >= 0)
+                store.matchRiders[i].emplace_back(int32_t(slot), rides);
         }
     }
     for (size_t i = 0; i < poses.constraintArrays.size(); ++i) {
-        store.arrays[i].readPole =
-            poses.constraintArrays[i].readPole;
+        store.arrays[i].readPole = poses.constraintArrays[i].readPole;
     }
     store.chainHaveBase.assign(geometry.chains.size(), 0);
     store.chainBaseDirty.assign(geometry.chains.size(), 0);
     store.lastHaveBase.assign(geometry.chains.size(), 0);
     store.derivedHaveBase.assign(geometry.derivedIndex.size(), 0);
-    store.nativeFrames.assign(poses.nativeSources.size(),
-                              RrPointFrame());
+    store.nativeFrames.assign(poses.nativeSources.size(), RrPointFrame());
     store.nativeFrameOk.assign(poses.nativeSources.size(), 0);
     store.switchFrames.assign(poses.spaceCheckpoints.size(), identity);
     store.xformBase.assign(file.slotMeta->xformSlots.size(), identity);
-    store.lastXformBase.assign(file.slotMeta->xformSlots.size(),
-                               identity);
-    store.deltaBaseMatrix.assign(geometry.deltaBasePaths.size(),
-                                 identity);
+    store.lastXformBase.assign(file.slotMeta->xformSlots.size(), identity);
+    store.deltaBaseMatrix.assign(geometry.deltaBasePaths.size(), identity);
     store.deltaBaseOk.assign(geometry.deltaBasePaths.size(), 0);
-    store.deltaValues.assign(geometry.deltaBasePaths.size(),
-                             identity);
+    store.deltaValues.assign(geometry.deltaBasePaths.size(), identity);
     store.deltaPresent.assign(geometry.deltaBasePaths.size(), 0);
     store.revisionRan.assign(revisions, 0);
     store.revisionStaticDirty.assign(revisions, 0);
     store.revisionPublish.assign(revisions, RrRevisionPublish());
     for (size_t r = 0; r < revisions; ++r) {
         const auto &entry = geometry.revisionIndex[r];
-        store.revisionPublish[r].target =
-            geometry.chains[size_t(entry.first)]
-                .revisions[size_t(entry.second)]
-                .target;
+        store.revisionPublish[r].target = geometry.chains[size_t(entry.first)]
+                                              .revisions[size_t(entry.second)]
+                                              .target;
     }
-    store.chainPublish.assign(geometry.chains.size(),
-                              RrChainPublish());
+    store.chainPublish.assign(geometry.chains.size(), RrChainPublish());
     for (size_t c = 0; c < geometry.chains.size(); ++c) {
         store.chainPublish[c].target = geometry.chains[c].target;
     }
@@ -664,10 +675,9 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
                                 RrDerivedPublish());
     for (size_t d = 0; d < geometry.derivedIndex.size(); ++d) {
         const auto &entry = geometry.derivedIndex[d];
-        store.derivedPublish[d].target =
-            geometry.chains[size_t(entry.first)]
-                .derived[size_t(entry.second)]
-                .target;
+        store.derivedPublish[d].target = geometry.chains[size_t(entry.first)]
+                                             .derived[size_t(entry.second)]
+                                             .target;
     }
     store.weightPackets.assign(program.stepWeightObjects, RrWeightPacket());
     store.volumePlacement.assign(slots, identity);
@@ -701,8 +711,7 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
         return fail(error ? *error : std::string("pose sizing failed"));
     }
     if (!RrGeometrySizeScratch(&program, error)) {
-        return fail(error ? *error
-                          : std::string("geometry sizing failed"));
+        return fail(error ? *error : std::string("geometry sizing failed"));
     }
     // The layout defaults exist once the geometry family expanded them.
     if (!RrInputsFinishArrays(&program, error)) {
@@ -710,8 +719,7 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
                           : std::string("an array input has no default"));
     }
     if (!RrWeightSizeScratch(&program, error)) {
-        return fail(error ? *error
-                          : std::string("weight sizing failed"));
+        return fail(error ? *error : std::string("weight sizing failed"));
     }
     if (!RrPropertySizeScratch(&program, error)) {
         return fail(error ? *error
@@ -719,7 +727,8 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
     }
     if (!RrOpenProviderProgram(&program, error) ||
         !RrCompileOpGraph(&program, error)) {
-        return fail(error ? *error : std::string("common graph initialization failed"));
+        return fail(error ? *error
+                          : std::string("common graph initialization failed"));
     }
     // Unavailable compiled data retains the existing missing-kernel behavior.
     // Module declarations generate this catalog; the engine names no mover.
@@ -727,9 +736,11 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
     const auto *factories = RrBuiltinMovers(&moverCount);
     std::vector<RigExecMoverDefinition> movers;
     movers.reserve(moverCount);
-    for (size_t i = 0; i < moverCount; ++i) movers.push_back(factories[i]());
+    for (size_t i = 0; i < moverCount; ++i)
+        movers.push_back(factories[i]());
     std::string registrationError;
-    self->InstallMoverDefinitions(movers.data(), movers.size(), &registrationError);
+    self->InstallMoverDefinitions(movers.data(), movers.size(),
+                                  &registrationError);
     // History ticks open their own program from these (ExecuteHistory).
     if (!program.windowedOps.empty()) {
         self->_historyBytes =
@@ -740,7 +751,8 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
 
 std::unique_ptr<RigExecRuntimeReader>
 RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
-    const RigExecMoverDefinition *movers, size_t moverCount, std::string *error)
+                           const RigExecMoverDefinition *movers,
+                           size_t moverCount, std::string *error)
 {
     auto reader = Open(bytes, size, error);
     if (reader && !reader->InstallMoverDefinitions(movers, moverCount, error))
@@ -749,31 +761,37 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
 }
 
 bool
-RigExecRuntimeReader::InstallMoverDefinitions(const RigExecMoverDefinition *movers,
-    size_t count, std::string *error)
+RigExecRuntimeReader::InstallMoverDefinitions(
+    const RigExecMoverDefinition *movers, size_t count, std::string *error)
 {
     const auto fail = [error](const std::string &why) {
-        if (error) *error = why;
+        if (error)
+            *error = why;
         return false;
     };
-    if (count && !movers) return fail("missing mover definitions");
+    if (count && !movers)
+        return fail("missing mover definitions");
     std::set<std::string> names;
     for (size_t i = 0; i < count; ++i) {
         const auto &mover = movers[i];
         if (!mover.schemaType || !*mover.schemaType || !mover.kernel.IsSet() ||
-            ((mover.kernel.captureWindow != nullptr) != (mover.kernel.applyWindow != nullptr)))
+            ((mover.kernel.captureWindow != nullptr) !=
+             (mover.kernel.applyWindow != nullptr)))
             return fail("incomplete mover definition");
         if (!names.insert(mover.schemaType).second)
-            return fail(std::string("duplicate mover definition: ") + mover.schemaType);
+            return fail(std::string("duplicate mover definition: ") +
+                        mover.schemaType);
     }
     const auto required = GetExternalMoverTypes();
     bool ok = true;
     for (size_t i = 0; i < count; ++i) {
-        if (std::find(required.begin(), required.end(), movers[i].schemaType) == required.end())
+        if (std::find(required.begin(), required.end(), movers[i].schemaType) ==
+            required.end())
             continue;
         std::string why;
         if (!SetExternalKernel(movers[i].schemaType, movers[i].kernel, &why)) {
-            if (ok && error) *error = std::move(why);
+            if (ok && error)
+                *error = std::move(why);
             ok = false;
         }
     }
@@ -858,22 +876,26 @@ std::vector<RigExecRuntimeProviderFrames>
 RigExecRuntimeReader::GetProviderFramePublications() const
 {
     std::vector<RigExecRuntimeProviderFrames> result;
-    if(!_program || !_program->slotMeta) return result;
-    const auto &meta=*_program->slotMeta;
-    const auto &store=_program->store;
+    if (!_program || !_program->slotMeta)
+        return result;
+    const auto &meta = *_program->slotMeta;
+    const auto &store = _program->store;
     result.reserve(meta.paths.size());
-    for(size_t slot=0;slot<meta.paths.size();++slot) {
+    for (size_t slot = 0; slot < meta.paths.size(); ++slot) {
         RigExecRuntimeProviderFrames value;
-        value.path=_program->TextOrEmpty(meta.paths[slot]);
-        value.kind=uint8_t(meta.slotKind[slot]);
-        value.publicationRole=meta.publicationRoles[slot];
-        value.baseVersion=store.baseLast[slot]; value.finalVersion=store.finLast[slot];
-        value.base=store.base[value.baseVersion]; value.final=store.fin[value.finalVersion];
+        value.path = _program->TextOrEmpty(meta.paths[slot]);
+        value.kind = uint8_t(meta.slotKind[slot]);
+        value.publicationRole = meta.publicationRoles[slot];
+        value.baseVersion = store.baseLast[slot];
+        value.finalVersion = store.finLast[slot];
+        value.base = store.base[value.baseVersion];
+        value.final = store.fin[value.finalVersion];
         // A control publishes the frame the last run published for it, which
         // an IK/FK match may present elsewhere than its final version.
-        if(value.publicationRole&2) {
-            const auto published=store.controlFrames.find(meta.paths[slot]);
-            if(published!=store.controlFrames.end()) value.final=published->second;
+        if (value.publicationRole & 2) {
+            const auto published = store.controlFrames.find(meta.paths[slot]);
+            if (published != store.controlFrames.end())
+                value.final = published->second;
         }
         result.push_back(std::move(value));
     }
@@ -881,19 +903,23 @@ RigExecRuntimeReader::GetProviderFramePublications() const
 }
 
 bool
-RigExecRuntimeReader::GetProviderFinalFrame(
-    size_t slot, uint8_t *publicationRole, RrPointFrame *final) const
+RigExecRuntimeReader::GetProviderFinalFrame(size_t slot,
+                                            uint8_t *publicationRole,
+                                            RrPointFrame *final) const
 {
-    if (!_program || !_program->slotMeta) return false;
+    if (!_program || !_program->slotMeta)
+        return false;
     const auto &meta = *_program->slotMeta;
-    if (slot >= meta.paths.size()) return false;
+    if (slot >= meta.paths.size())
+        return false;
     const auto &store = _program->store;
     *publicationRole = meta.publicationRoles[slot];
     *final = store.fin[store.finLast[slot]];
     // The same control override GetProviderFramePublications applies.
     if (*publicationRole & 2) {
         const auto published = store.controlFrames.find(meta.paths[slot]);
-        if (published != store.controlFrames.end()) *final = published->second;
+        if (published != store.controlFrames.end())
+            *final = published->second;
     }
     return true;
 }
@@ -902,16 +928,20 @@ std::vector<RigExecRuntimeSolverFrames>
 RigExecRuntimeReader::GetSolverFramePublications() const
 {
     std::vector<RigExecRuntimeSolverFrames> result;
-    if (!_program || !_program->slotMeta || !_program->slotMeta->solverGuidesEnabled) return result;
+    if (!_program || !_program->slotMeta ||
+        !_program->slotMeta->solverGuidesEnabled)
+        return result;
     const auto &meta = *_program->slotMeta;
     std::vector<char> aliveSolver(_program->poses->solvers.size(), 0);
     for (const RigExecWireStep &step : *_program->steps)
         if (step.kind == RigExecWireStepKind::Solve)
             aliveSolver[size_t(step.object)] = 1;
     for (int index : meta.solverPublishOrder) {
-        if (!aliveSolver[size_t(meta.solverArrayElements[size_t(index)])]) continue;
+        if (!aliveSolver[size_t(meta.solverArrayElements[size_t(index)])])
+            continue;
         RigExecRuntimeSolverFrames value;
-        value.path = _program->TextOrEmpty(meta.solverArrayPaths[size_t(index)]);
+        value.path =
+            _program->TextOrEmpty(meta.solverArrayPaths[size_t(index)]);
         value.aggregate = uint32_t(meta.solverArrayElements[size_t(index)]);
         value.frames = _program->store.aggregates[value.aggregate].frames;
         result.push_back(std::move(value));
@@ -919,4 +949,4 @@ RigExecRuntimeReader::GetSolverFramePublications() const
     return result;
 }
 
-}  // namespace rigExec
+} // namespace rigExec

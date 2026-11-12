@@ -1,3 +1,4 @@
+#include "rigExecSchema/schemaNames.h"
 #include "rigExec/weightField.h"
 #include "rigExec/bakedProgramImpl.h"
 #include "rigExec/crossDomainInputs.h"
@@ -23,32 +24,32 @@ TF_DEFINE_PRIVATE_TOKENS(_weightFieldTokens,
     (dense)
     (sparse)
     (clamp)
-    ((planeAxis, "rigExec:planeAxis"))
-    ((planeBounds, "rigExec:planeBounds"))
-    ((sampleSource, "rigExec:sampleSource"))
-    ((weightTarget, "rigExec:weightTarget"))
-    ((curve, "rigExec:curve"))
-    ((falloffSamples, "inputs:falloffSamples"))
-    ((weightObject, "rigExec:weightObject"))
-    ((rigExecDefaultWeight, "rigExec:defaultWeight"))
-    ((inputsDriver, "inputs:driver"))
-    ((inputsScale, "inputs:scale"))
-    ((inputsBias, "inputs:bias"))
-    ((inputsStrength, "inputs:strength"))
-    ((inputsInvert, "inputs:invert"))
-    ((inputsFalloffMin, "inputs:falloffMin"))
-    ((inputsFalloffMax, "inputs:falloffMax"))
-    ((inputsScaleX, "inputs:scaleX"))
-    ((inputsScaleY, "inputs:scaleY"))
-    ((inputsScaleZ, "inputs:scaleZ"))
-    ((inputsScaleXPos, "inputs:scaleXPos"))
-    ((inputsScaleYPos, "inputs:scaleYPos"))
-    ((inputsScaleZPos, "inputs:scaleZPos"))
-    ((inputsScaleXNeg, "inputs:scaleXNeg"))
-    ((inputsScaleYNeg, "inputs:scaleYNeg"))
-    ((inputsScaleZNeg, "inputs:scaleZNeg"))
-    ((inputsExtentU, "inputs:extentU"))
-    ((inputsExtentV, "inputs:extentV"))
+    ((planeAxis, rigExec::SchemaAttrText::rigExecPlaneAxis))
+    ((planeBounds, rigExec::SchemaAttrText::rigExecPlaneBounds))
+    ((sampleSource, rigExec::SchemaAttrText::rigExecSampleSource))
+    ((weightTarget, rigExec::SchemaAttrText::rigExecWeightTarget))
+    ((curve, rigExec::SchemaAttrText::rigExecCurve))
+    ((falloffSamples, rigExec::SchemaAttrText::inputsFalloffSamples))
+    ((weightObject, rigExec::SchemaAttrText::rigExecWeightObject))
+    ((rigExecDefaultWeight, rigExec::SchemaAttrText::rigExecDefaultWeight))
+    ((inputsDriver, rigExec::SchemaAttrText::inputsDriver))
+    ((inputsScale, rigExec::SchemaAttrText::inputsScale))
+    ((inputsBias, rigExec::SchemaAttrText::inputsBias))
+    ((inputsStrength, rigExec::SchemaAttrText::inputsStrength))
+    ((inputsInvert, rigExec::SchemaAttrText::inputsInvert))
+    ((inputsFalloffMin, rigExec::SchemaAttrText::inputsFalloffMin))
+    ((inputsFalloffMax, rigExec::SchemaAttrText::inputsFalloffMax))
+    ((inputsScaleX, rigExec::SchemaAttrText::inputsScaleX))
+    ((inputsScaleY, rigExec::SchemaAttrText::inputsScaleY))
+    ((inputsScaleZ, rigExec::SchemaAttrText::inputsScaleZ))
+    ((inputsScaleXPos, rigExec::SchemaAttrText::inputsScaleXPos))
+    ((inputsScaleYPos, rigExec::SchemaAttrText::inputsScaleYPos))
+    ((inputsScaleZPos, rigExec::SchemaAttrText::inputsScaleZPos))
+    ((inputsScaleXNeg, rigExec::SchemaAttrText::inputsScaleXNeg))
+    ((inputsScaleYNeg, rigExec::SchemaAttrText::inputsScaleYNeg))
+    ((inputsScaleZNeg, rigExec::SchemaAttrText::inputsScaleZNeg))
+    ((inputsExtentU, rigExec::SchemaAttrText::inputsExtentU))
+    ((inputsExtentV, rigExec::SchemaAttrText::inputsExtentV))
     ((rigExecFrozenOracleLeaf0, "rigExecFrozen:oracle:leaf0"))
     ((rigExecFrozenOracleLeaf1, "rigExecFrozen:oracle:leaf1"))
     ((rigExecFrozenOracleLeaf2, "rigExecFrozen:oracle:leaf2"))
@@ -60,54 +61,77 @@ namespace rigExec {
 namespace {
 using Baked = RigExecBakedProgramImpl;
 using Field = Baked::WeightField;
-const TfToken ScalarNames[] = {
-    _weightFieldTokens->rigExecDefaultWeight, _weightFieldTokens->inputsDriver,
-    _weightFieldTokens->inputsScale, _weightFieldTokens->inputsBias,
-    _weightFieldTokens->inputsStrength, _weightFieldTokens->inputsInvert,
-    _weightFieldTokens->inputsFalloffMin, _weightFieldTokens->inputsFalloffMax,
-    _weightFieldTokens->inputsScaleX, _weightFieldTokens->inputsScaleY,
-    _weightFieldTokens->inputsScaleZ, _weightFieldTokens->inputsScaleXPos,
-    _weightFieldTokens->inputsScaleYPos, _weightFieldTokens->inputsScaleZPos,
-    _weightFieldTokens->inputsScaleXNeg, _weightFieldTokens->inputsScaleYNeg,
-    _weightFieldTokens->inputsScaleZNeg, _weightFieldTokens->inputsExtentU,
-    _weightFieldTokens->inputsExtentV
-};
-SdfPath PointsPath(const UsdStageRefPtr &stage, const UsdPrim &prim, const TfToken &name)
+const TfToken ScalarNames[] = {_weightFieldTokens->rigExecDefaultWeight,
+                               _weightFieldTokens->inputsDriver,
+                               _weightFieldTokens->inputsScale,
+                               _weightFieldTokens->inputsBias,
+                               _weightFieldTokens->inputsStrength,
+                               _weightFieldTokens->inputsInvert,
+                               _weightFieldTokens->inputsFalloffMin,
+                               _weightFieldTokens->inputsFalloffMax,
+                               _weightFieldTokens->inputsScaleX,
+                               _weightFieldTokens->inputsScaleY,
+                               _weightFieldTokens->inputsScaleZ,
+                               _weightFieldTokens->inputsScaleXPos,
+                               _weightFieldTokens->inputsScaleYPos,
+                               _weightFieldTokens->inputsScaleZPos,
+                               _weightFieldTokens->inputsScaleXNeg,
+                               _weightFieldTokens->inputsScaleYNeg,
+                               _weightFieldTokens->inputsScaleZNeg,
+                               _weightFieldTokens->inputsExtentU,
+                               _weightFieldTokens->inputsExtentV};
+SdfPath
+PointsPath(const UsdStageRefPtr &stage, const UsdPrim &prim,
+           const TfToken &name)
 {
     SdfPathVector paths;
     const auto rel = prim.GetRelationship(name);
-    if (!rel || !rel.GetTargets(&paths) || paths.size() != 1) return SdfPath();
+    if (!rel || !rel.GetTargets(&paths) || paths.size() != 1)
+        return SdfPath();
     if (paths[0].IsPrimPath()) {
         const auto target = stage->GetPrimAtPath(paths[0]);
-        return UsdGeomPointBased(target) ? paths[0].AppendProperty(_weightFieldTokens->points) : SdfPath();
+        return UsdGeomPointBased(target)
+                   ? paths[0].AppendProperty(_weightFieldTokens->points)
+                   : SdfPath();
     }
     return paths[0];
 }
 // The frozen run's per-leaf sample keys, interned once at load. A weight
 // Volumes also declare the sampled falloff input beside the point sets and tokens.
 const std::array<TfToken, 6> _oracleLeafKeys = {
-    _weightFieldTokens->rigExecFrozenOracleLeaf0, _weightFieldTokens->rigExecFrozenOracleLeaf1,
-    _weightFieldTokens->rigExecFrozenOracleLeaf2, _weightFieldTokens->rigExecFrozenOracleLeaf3,
-    _weightFieldTokens->rigExecFrozenOracleLeaf4, _weightFieldTokens->rigExecFrozenOracleLeaf5};
-TfToken OracleLeafKey(size_t k)
+    _weightFieldTokens->rigExecFrozenOracleLeaf0,
+    _weightFieldTokens->rigExecFrozenOracleLeaf1,
+    _weightFieldTokens->rigExecFrozenOracleLeaf2,
+    _weightFieldTokens->rigExecFrozenOracleLeaf3,
+    _weightFieldTokens->rigExecFrozenOracleLeaf4,
+    _weightFieldTokens->rigExecFrozenOracleLeaf5};
+TfToken
+OracleLeafKey(size_t k)
 {
     return k < _oracleLeafKeys.size()
-        ? _oracleLeafKeys[k]
-        : TfToken("rigExecFrozen:oracle:leaf" + std::to_string(k));
+               ? _oracleLeafKeys[k]
+               : TfToken("rigExecFrozen:oracle:leaf" + std::to_string(k));
 }
-float Scalar(const Baked &B, const Field &field, int object, int member, float fallback)
+float
+Scalar(const Baked &B, const Field &field, int object, int member,
+       float fallback)
 {
     const size_t key = size_t(object) * 19 + size_t(member);
-    if (object >= 0 && member >= 0 && member < 19 && key < field.scalarReadIndex.size()) {
+    if (object >= 0 && member >= 0 && member < 19 &&
+        key < field.scalarReadIndex.size()) {
         const int read = field.scalarReadIndex[key];
-        if (read >= 0) return RigExecBakedReadOracleScalar(B,field.scalarReads[size_t(read)],
-                                                       field.availableChains,fallback);
+        if (read >= 0)
+            return RigExecBakedReadOracleScalar(
+                B, field.scalarReads[size_t(read)], field.availableChains,
+                fallback);
     }
     return fallback;
 }
 
-}
-bool RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator, Baked *program, std::string *error)
+} // namespace
+bool
+RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator,
+                              Baked *program, std::string *error)
 {
     auto &B = *program;
     B.weightFields.clear();
@@ -115,208 +139,302 @@ bool RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator, Baked *
     // GetString() interns a path and reads a static on an empty token.
     RigExecPathText pathText;
     for (auto &object : B.weightObjects) {
-        RigExecBakedDescribeWeightOracle(evaluator,object.path,RigExecBakedProbeTime(B.stage),&object.oracleFacts);
+        RigExecBakedDescribeWeightOracle(evaluator, object.path,
+                                         RigExecBakedProbeTime(B.stage),
+                                         &object.oracleFacts);
         object.oracleName = pathText(object.path);
         const std::string type = object.type.GetText();
-        object.oracleKind = type == "RigExecStaticWeight" ? 0 : type == "RigExecDynamicWeight" ? 1 :
-            type == "RigExecCombineWeight" ? 2 : type == "RigExecSphereWeight" ? 3 :
-            type == "RigExecPlaneWeight" ? 4 : type == "RigExecCurveWeight" ? 5 : -1;
-        object.oracleRepresentation = object.representation == _weightFieldTokens->constant ? 0 :
-            object.representation == _weightFieldTokens->dense ? 1 :
-            object.representation == _weightFieldTokens->sparse ? 2 : -1;
+        object.oracleKind = type == SchemaTypeName::RigExecStaticWeight    ? 0
+                            : type == SchemaTypeName::RigExecDynamicWeight ? 1
+                            : type == SchemaTypeName::RigExecCombineWeight ? 2
+                            : type == SchemaTypeName::RigExecSphereWeight  ? 3
+                            : type == SchemaTypeName::RigExecPlaneWeight   ? 4
+                            : type == SchemaTypeName::RigExecCurveWeight   ? 5
+                                                                           : -1;
+        object.oracleRepresentation =
+            object.representation == _weightFieldTokens->constant ? 0
+            : object.representation == _weightFieldTokens->dense  ? 1
+            : object.representation == _weightFieldTokens->sparse ? 2
+                                                                  : -1;
         object.oracleClamp = object.rangePolicy == _weightFieldTokens->clamp;
-        const std::string modes[] = {"multiply","add","subtract","max","min","average","overlay"};
+        const std::string modes[] = {
+            SchemaValueText::multiply, SchemaValueText::add,
+            SchemaValueText::subtract, SchemaValueText::max,
+            SchemaValueText::min,      SchemaValueText::average,
+            SchemaValueText::overlay};
         const std::string combine = object.combineMode.GetText();
-        for (int i=0;i<7;++i) if (combine == modes[i]) object.oracleCombineMode = i;
+        for (int i = 0; i < 7; ++i)
+            if (combine == modes[i])
+                object.oracleCombineMode = i;
         object.oracleAxisName = object.oracleFacts.planeAxis.GetText();
         object.oracleBoundsName = object.oracleFacts.planeBounds.GetText();
-        object.oracleAxis = object.oracleAxisName == "x" ? 0 : object.oracleAxisName == "y" ? 1 :
-            object.oracleAxisName == "z" ? 2 : -1;
-        object.oracleBounded = object.oracleBoundsName == "bounded";
-        object.oracleUnbounded = object.oracleBoundsName == "unbounded";
+        object.oracleAxis = object.oracleAxisName == SchemaValueText::x   ? 0
+                            : object.oracleAxisName == SchemaValueText::y ? 1
+                            : object.oracleAxisName == SchemaValueText::z ? 2
+                                                                          : -1;
+        object.oracleBounded =
+            object.oracleBoundsName == SchemaValueText::bounded;
+        object.oracleUnbounded =
+            object.oracleBoundsName == SchemaValueText::unbounded;
         const auto prim = B.stage->GetPrimAtPath(object.path);
-        object.oracleAxisAttribute = bool(prim.GetAttribute(_weightFieldTokens->planeAxis));
-        object.oracleBoundsAttribute = bool(prim.GetAttribute(_weightFieldTokens->planeBounds));
+        object.oracleAxisAttribute =
+            bool(prim.GetAttribute(_weightFieldTokens->planeAxis));
+        object.oracleBoundsAttribute =
+            bool(prim.GetAttribute(_weightFieldTokens->planeBounds));
         object.oracleLeaves.decl.keys.clear();
-        for (const TfToken *name : {&_weightFieldTokens->sampleSource,
-                                    &_weightFieldTokens->weightTarget,
-                                    &_weightFieldTokens->curve}) {
-            object.oracleLeaves.decl.Add({PointsPath(B.stage,prim,*name),
-                RigExecRevisionLeafType::Vec3fArray,RigExecRevisionLeafTime::AtTime,
-                RigExecRevisionLeafFlavour::Raw,VtValue()});
+        for (const TfToken *name :
+             {&_weightFieldTokens->sampleSource,
+              &_weightFieldTokens->weightTarget, &_weightFieldTokens->curve}) {
+            object.oracleLeaves.decl.Add({PointsPath(B.stage, prim, *name),
+                                          RigExecRevisionLeafType::Vec3fArray,
+                                          RigExecRevisionLeafTime::AtTime,
+                                          RigExecRevisionLeafFlavour::Raw,
+                                          VtValue()});
         }
         for (const TfToken *name : {&_weightFieldTokens->planeAxis,
                                     &_weightFieldTokens->planeBounds}) {
             object.oracleLeaves.decl.Add({object.path.AppendProperty(*name),
-                RigExecRevisionLeafType::Token,RigExecRevisionLeafTime::AtTime,
-                RigExecRevisionLeafFlavour::Raw,VtValue()});
+                                          RigExecRevisionLeafType::Token,
+                                          RigExecRevisionLeafTime::AtTime,
+                                          RigExecRevisionLeafFlavour::Raw,
+                                          VtValue()});
         }
         object.oracleFalloffSamplesLeaf = -1;
         if (object.oracleKind >= 3 && object.oracleKind <= 5) {
-            object.oracleFalloffSamplesLeaf = int(object.oracleLeaves.decl.keys.size());
-            object.oracleLeaves.decl.Add({object.path.AppendProperty(_weightFieldTokens->falloffSamples),
-                RigExecRevisionLeafType::FloatArray, RigExecRevisionLeafTime::AtTime,
-                RigExecRevisionLeafFlavour::ResolvedOnly, VtValue(VtFloatArray())});
+            object.oracleFalloffSamplesLeaf =
+                int(object.oracleLeaves.decl.keys.size());
+            object.oracleLeaves.decl.Add(
+                {object.path.AppendProperty(_weightFieldTokens->falloffSamples),
+                 RigExecRevisionLeafType::FloatArray,
+                 RigExecRevisionLeafTime::AtTime,
+                 RigExecRevisionLeafFlavour::ResolvedOnly,
+                 VtValue(VtFloatArray())});
         }
         object.oracleFrozenKeys.clear();
         for (size_t k = 0; k < object.oracleLeaves.decl.keys.size(); ++k)
-            object.oracleFrozenKeys.push_back(object.path.AppendProperty(
-                OracleLeafKey(k)));
-        RigExecBakedBindPathLeaves(B.stage,&object.oracleLeaves);
+            object.oracleFrozenKeys.push_back(
+                object.path.AppendProperty(OracleLeafKey(k)));
+        RigExecBakedBindPathLeaves(B.stage, &object.oracleLeaves);
         RigExecWeightRecord record;
-        record.name=object.oracleName;record.kind=object.oracleKind;
-        record.representation=object.oracleRepresentation;record.combineMode=object.oracleCombineMode;
-        record.type=object.type;record.representationToken=object.representation;
-        record.rangePolicy=object.rangePolicy;record.combineToken=object.combineMode;
-        record.planeAxis=object.planeAxis;record.planeBounds=object.planeBounds;
-        record.clamp=object.oracleClamp;record.base=object.base;record.inputs=object.inputs;
-        record.values=object.values;record.indices=object.indices;record.falloffCurve=object.falloffCurve;
-        record.staticError=object.oracleFacts.staticError;record.phaseError=object.oracleFacts.phaseError;
-        record.samplesInFlight=object.oracleFacts.samplesInFlight;
+        record.name = object.oracleName;
+        record.kind = object.oracleKind;
+        record.representation = object.oracleRepresentation;
+        record.combineMode = object.oracleCombineMode;
+        record.type = object.type;
+        record.representationToken = object.representation;
+        record.rangePolicy = object.rangePolicy;
+        record.combineToken = object.combineMode;
+        record.planeAxis = object.planeAxis;
+        record.planeBounds = object.planeBounds;
+        record.clamp = object.oracleClamp;
+        record.base = object.base;
+        record.inputs = object.inputs;
+        record.values = object.values;
+        record.indices = object.indices;
+        record.falloffCurve = object.falloffCurve;
+        record.staticError = object.oracleFacts.staticError;
+        record.phaseError = object.oracleFacts.phaseError;
+        record.samplesInFlight = object.oracleFacts.samplesInFlight;
         B.weightProgram.push_back(std::move(record));
     }
     std::string placementError;
     RigExecBakedOracleReadIndex oracleIndex;
-    const auto add = [&](const SdfPath &path, Field::Form form, int consumer, int part) {
+    const auto add = [&](const SdfPath &path, Field::Form form, int consumer,
+                         int part) {
         const auto found = B.weightIndex.find(path);
-        if (found == B.weightIndex.end() || found->second < 0) return -1;
-        Field field; field.object = found->second; field.form = form;
+        if (found == B.weightIndex.end() || found->second < 0)
+            return -1;
+        Field field;
+        field.object = found->second;
+        field.form = form;
         field.currentInputs.resize(B.weightObjects.size());
-        field.scalarReadIndex.assign(B.weightObjects.size() * 19,-1);
-        field.consumer = consumer; field.part = part;
+        field.scalarReadIndex.assign(B.weightObjects.size() * 19, -1);
+        field.consumer = consumer;
+        field.part = part;
         SdfPath reader;
-        if(form==Field::Form::Revision) {
-            const auto [chain,revision]=B.revisionIndex[size_t(consumer)];
-            reader=B.chains[size_t(chain)].revisions[size_t(revision)].moverPath;
-        } else if(form==Field::Form::EnvelopeProperty)
-            reader=B.propertyChains[size_t(consumer)].revisions[size_t(part-1)].mover;
-        else reader=B.constraints[size_t(B.walkSteps[size_t(consumer)].index)].path;
-        RigExecReadPhase placement;std::string why;
-        const auto relation=B.stage->GetPrimAtPath(reader).GetRelationship(_weightFieldTokens->weightObject);
-        if(!RigExecResolveReadPhase(relation,&placement,&why) ||
-            (placement.kind!=RigExecReadPhaseKind::Base && placement.kind!=RigExecReadPhaseKind::Final)) {
-            placementError=pathText(reader)+": weight placement must read base or final"+
-                (why.empty()?std::string():": "+why);return -1;
+        if (form == Field::Form::Revision) {
+            const auto [chain, revision] = B.revisionIndex[size_t(consumer)];
+            reader =
+                B.chains[size_t(chain)].revisions[size_t(revision)].moverPath;
+        } else if (form == Field::Form::EnvelopeProperty)
+            reader = B.propertyChains[size_t(consumer)]
+                         .revisions[size_t(part - 1)]
+                         .mover;
+        else
+            reader =
+                B.constraints[size_t(B.walkSteps[size_t(consumer)].index)].path;
+        RigExecReadPhase placement;
+        std::string why;
+        const auto relation = B.stage->GetPrimAtPath(reader).GetRelationship(
+            _weightFieldTokens->weightObject);
+        if (!RigExecResolveReadPhase(relation, &placement, &why) ||
+            (placement.kind != RigExecReadPhaseKind::Base &&
+             placement.kind != RigExecReadPhaseKind::Final)) {
+            placementError = pathText(reader) +
+                             ": weight placement must read base or final" +
+                             (why.empty() ? std::string() : ": " + why);
+            return -1;
         }
-        field.placementPhase=placement.kind==RigExecReadPhaseKind::Final?
-            Field::PlacementPhase::Final:Field::PlacementPhase::Base;
+        field.placementPhase = placement.kind == RigExecReadPhaseKind::Final
+                                   ? Field::PlacementPhase::Final
+                                   : Field::PlacementPhase::Base;
         // Oracle reads observe the original generation publication boundary,
         // not every retained final in the canonical graph. Property envelopes
         // run before their own chain finishes; only earlier semantic chains
         // have published. Rest-tier consumers observe the completed head tier.
         const size_t publishedEnd = form == Field::Form::EnvelopeProperty
-            ? size_t(consumer) : B.propertyChains.size();
-        for (size_t c=0;c<publishedEnd;++c)
+                                        ? size_t(consumer)
+                                        : B.propertyChains.size();
+        for (size_t c = 0; c < publishedEnd; ++c)
             field.availableChains.push_back(int(c));
         std::set<int> objects;
-        const auto visit = [&](const auto &self,int object) -> void {
-            if (object < 0 || !objects.insert(object).second) return;
+        const auto visit = [&](const auto &self, int object) -> void {
+            if (object < 0 || !objects.insert(object).second)
+                return;
             const auto &weight = B.weightObjects[size_t(object)];
-            self(self,weight.base);
-            for (int input : weight.inputs) self(self,input);
-            if (weight.providerSlot >= 0) field.volumes.push_back(weight.providerSlot);
+            self(self, weight.base);
+            for (int input : weight.inputs)
+                self(self, input);
+            if (weight.providerSlot >= 0)
+                field.volumes.push_back(weight.providerSlot);
             const auto prim = B.stage->GetPrimAtPath(weight.path);
-            for (int member=0;member<19;++member) {
-                const bool used = member == 0 ||
+            for (int member = 0; member < 19; ++member) {
+                const bool used =
+                    member == 0 ||
                     (weight.oracleKind == 1 && member >= 1 && member <= 3) ||
                     (weight.oracleKind == 2 && (member == 4 || member == 5)) ||
                     (weight.oracleKind == 3 && member >= 4 && member <= 16) ||
-                    (weight.oracleKind == 4 && ((member >= 4 && member <= 7) || member >= 17)) ||
+                    (weight.oracleKind == 4 &&
+                     ((member >= 4 && member <= 7) || member >= 17)) ||
                     (weight.oracleKind == 5 && member >= 4 && member <= 10);
-                if (!used) continue;
-                field.scalarReadIndex[size_t(object) * 19 + size_t(member)] = int(field.scalarReads.size());
-                field.scalarObjects.push_back(object); field.scalarMembers.push_back(member);
-                field.scalarReads.push_back(RigExecBakedBuildOracleRead(&B,
-                    prim.GetAttribute(ScalarNames[member]),field.availableChains,
-                    &oracleIndex));
+                if (!used)
+                    continue;
+                field.scalarReadIndex[size_t(object) * 19 + size_t(member)] =
+                    int(field.scalarReads.size());
+                field.scalarObjects.push_back(object);
+                field.scalarMembers.push_back(member);
+                field.scalarReads.push_back(RigExecBakedBuildOracleRead(
+                    &B, prim.GetAttribute(ScalarNames[member]),
+                    field.availableChains, &oracleIndex));
             }
         };
-        visit(visit,field.object);
-        field.objects.assign(objects.begin(),objects.end());
+        visit(visit, field.object);
+        field.objects.assign(objects.begin(), objects.end());
         for (auto &read : field.scalarReads)
             for (auto &hop : read.walk.hops) {
                 const auto pose = B.poseWeightIndex.find(hop.path);
-                if (pose != B.poseWeightIndex.end()) hop.poseWeight = pose->second;
+                if (pose != B.poseWeightIndex.end())
+                    hop.poseWeight = pose->second;
             }
-        std::sort(field.volumes.begin(),field.volumes.end());
-        field.volumes.erase(std::unique(field.volumes.begin(),field.volumes.end()),field.volumes.end());
+        std::sort(field.volumes.begin(), field.volumes.end());
+        field.volumes.erase(
+            std::unique(field.volumes.begin(), field.volumes.end()),
+            field.volumes.end());
         B.weightFields.push_back(std::move(field));
-        return int(B.weightFields.size())-1;
+        return int(B.weightFields.size()) - 1;
     };
-    for (size_t c=0;c<B.propertyChains.size();++c)
-        for (size_t k=0;k<B.propertyChains[c].revisions.size();++k) {
+    for (size_t c = 0; c < B.propertyChains.size(); ++c)
+        for (size_t k = 0; k < B.propertyChains[c].revisions.size(); ++k) {
             auto &revision = B.propertyChains[c].revisions[k];
             if (!revision.weightObject.IsEmpty())
-                revision.weightField = add(revision.weightObject,Field::Form::EnvelopeProperty,int(c),int(k+1));
+                revision.weightField =
+                    add(revision.weightObject, Field::Form::EnvelopeProperty,
+                        int(c), int(k + 1));
         }
-    for (size_t w=0;w<B.walkSteps.size();++w) {
+    for (size_t w = 0; w < B.walkSteps.size(); ++w) {
         const auto &walk = B.walkSteps[w];
-        if (walk.solverBatch || walk.index < 0) continue;
+        if (walk.solverBatch || walk.index < 0)
+            continue;
         auto &constraint = B.constraints[size_t(walk.index)];
-        if (!constraint.weightObject.IsEmpty() && constraint.pointsTarget.IsEmpty())
-            constraint.weightField = add(constraint.weightObject,Field::Form::EnvelopeConstraint,int(w),0);
+        if (!constraint.weightObject.IsEmpty() &&
+            constraint.pointsTarget.IsEmpty())
+            constraint.weightField =
+                add(constraint.weightObject, Field::Form::EnvelopeConstraint,
+                    int(w), 0);
     }
-    for (size_t r=0;r<B.revisionIndex.size();++r) {
-        const auto [c,k] = B.revisionIndex[r];
+    for (size_t r = 0; r < B.revisionIndex.size(); ++r) {
+        const auto [c, k] = B.revisionIndex[r];
         auto &revision = B.chains[size_t(c)].revisions[size_t(k)];
         if (revision.weightObject >= 0 && revision.weightCurrentPhase) {
-            revision.weightField = add(B.weightObjects[size_t(revision.weightObject)].path,
-                                       Field::Form::Revision,int(r),0);
-
+            revision.weightField =
+                add(B.weightObjects[size_t(revision.weightObject)].path,
+                    Field::Form::Revision, int(r), 0);
         }
     }
-    if(!placementError.empty()){if(error)*error=placementError;return false;}
+    if (!placementError.empty()) {
+        if (error)
+            *error = placementError;
+        return false;
+    }
     for (const auto &field : B.weightFields) {
         if (field.scalarReads.size() != field.scalarObjects.size() ||
             field.scalarReads.size() != field.scalarMembers.size()) {
-            if (error) *error = "weight field scalar provenance is incomplete";
+            if (error)
+                *error = "weight field scalar provenance is incomplete";
             return false;
         }
     }
     B.headOverrides.resize(B.headOverrideSlots.size());
     B.lastHeadOverrides.resize(B.headOverrideSlots.size());
-    B.headOverrideMoved.resize(B.headOverrideSlots.size(),0);
-    B.volumePlacementBase.assign(B.paths.size(),GfMatrix4d(1.0));
-    for (size_t f=0;f<B.weightFields.size();++f) {
+    B.headOverrideMoved.resize(B.headOverrideSlots.size(), 0);
+    B.volumePlacementBase.assign(B.paths.size(), GfMatrix4d(1.0));
+    for (size_t f = 0; f < B.weightFields.size(); ++f) {
         const auto &field = B.weightFields[f];
-        if (field.form == Field::Form::Revision) continue;
+        if (field.form == Field::Form::Revision)
+            continue;
         RigExecBakedStep step;
-        step.kind = RigExecBakedStepKind::WeightField; step.object = int(f);
-        step.isHead = true; step.alwaysRuns = false; step.maxDiagnostics = 0;
-        RigExecBakedDeclareWeightField(&B,&step);
+        step.kind = RigExecBakedStepKind::WeightField;
+        step.object = int(f);
+        step.isHead = true;
+        step.alwaysRuns = false;
+        step.maxDiagnostics = 0;
+        RigExecBakedDeclareWeightField(&B, &step);
         B.steps.push_back(std::move(step));
     }
     for (auto &step : B.steps) {
-        if (step.kind != RigExecBakedStepKind::PropertyRevision || step.part <= 0) continue;
-        auto &revision = B.propertyChains[size_t(step.object)].revisions[size_t(step.part-1)];
+        if (step.kind != RigExecBakedStepKind::PropertyRevision ||
+            step.part <= 0)
+            continue;
+        auto &revision = B.propertyChains[size_t(step.object)]
+                             .revisions[size_t(step.part - 1)];
         if (revision.weightField >= 0) {
-            step.reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::WeightField,revision.weightField));
+            step.reads.push_back(RigExecBakedOne(
+                RigExecBakedSlotDomain::WeightField, revision.weightField));
             step.alwaysRuns = false;
         }
     }
     return true;
 }
-void RigExecBakedDeclareWeightField(Baked *program, RigExecBakedStep *step)
+void
+RigExecBakedDeclareWeightField(Baked *program, RigExecBakedStep *step)
 {
     const auto &field = program->weightFields[size_t(step->object)];
-    step->writes.push_back(RigExecBakedOne(RigExecBakedSlotDomain::WeightField,step->object));
+    step->writes.push_back(
+        RigExecBakedOne(RigExecBakedSlotDomain::WeightField, step->object));
     for (const auto &read : field.scalarReads) {
         for (uint32_t version : read.versions)
-            step->reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::PropertyResult,int(version)));
-        step->leaves.insert(step->leaves.end(),read.leaves.begin(),read.leaves.end());
-        step->overrideSlots.insert(step->overrideSlots.end(),read.slots.begin(),read.slots.end());
+            step->reads.push_back(RigExecBakedOne(
+                RigExecBakedSlotDomain::PropertyResult, int(version)));
+        step->leaves.insert(step->leaves.end(), read.leaves.begin(),
+                            read.leaves.end());
+        step->overrideSlots.insert(step->overrideSlots.end(),
+                                   read.slots.begin(), read.slots.end());
         for (const auto &hop : read.walk.hops)
             if (hop.poseWeight >= 0)
-                step->reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::PoseWeight,hop.poseWeight));
-        for (uint32_t leaf : read.leaves) if (program->headLeaves[leaf].varying) step->varyingInputs = true;
+                step->reads.push_back(RigExecBakedOne(
+                    RigExecBakedSlotDomain::PoseWeight, hop.poseWeight));
+        for (uint32_t leaf : read.leaves)
+            if (program->headLeaves[leaf].varying)
+                step->varyingInputs = true;
     }
     // Raw oracle arrays participate in the same numbered leaf census as
     // revision inputs, including private sampled arrays and failed reads.
     for (size_t i = 0; i < program->pathLeafRefs.size(); ++i) {
         const auto &ref = program->pathLeafRefs[i];
         if (ref.owner != RigExecBakedPathLeafOwner::WeightOracle ||
-            std::find(field.scalarObjects.begin(),field.scalarObjects.end(),
-                      int(ref.a)) == field.scalarObjects.end()) continue;
+            std::find(field.scalarObjects.begin(), field.scalarObjects.end(),
+                      int(ref.a)) == field.scalarObjects.end())
+            continue;
         const auto &leaves = program->weightObjects[ref.a].oracleLeaves;
         step->bindingLeaves.push_back(uint32_t(program->leafRefs.size() + i));
         if (ref.key < leaves.varying.size() && leaves.varying[ref.key]) {
@@ -324,45 +442,66 @@ void RigExecBakedDeclareWeightField(Baked *program, RigExecBakedStep *step)
             step->varyingLeaves = true;
         }
     }
-    std::sort(step->bindingLeaves.begin(),step->bindingLeaves.end());
-    step->bindingLeaves.erase(std::unique(step->bindingLeaves.begin(),step->bindingLeaves.end()),step->bindingLeaves.end());
+    std::sort(step->bindingLeaves.begin(), step->bindingLeaves.end());
+    step->bindingLeaves.erase(
+        std::unique(step->bindingLeaves.begin(), step->bindingLeaves.end()),
+        step->bindingLeaves.end());
     if (field.form == Field::Form::Revision) {
-        const auto [c,k] = program->revisionIndex[size_t(field.consumer)];
+        const auto [c, k] = program->revisionIndex[size_t(field.consumer)];
         if (k > 0) {
             const int previous = field.consumer - 1;
-            step->reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::RevisionDone,previous));
-            step->reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::ChainDirty,previous));
+            step->reads.push_back(RigExecBakedOne(
+                RigExecBakedSlotDomain::RevisionDone, previous));
+            step->reads.push_back(
+                RigExecBakedOne(RigExecBakedSlotDomain::ChainDirty, previous));
             for (int earlier = 0; earlier < k; ++earlier) {
-                const int revision = program->chainRevisionBegin[size_t(c)] + earlier;
+                const int revision =
+                    program->chainRevisionBegin[size_t(c)] + earlier;
                 step->reads.push_back(RigExecBakedOne(
                     RigExecBakedSlotDomain::RevisionDone, revision));
             }
-            step->reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::ChainBase,int(c)));
-        } else step->reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::ChainBase,int(c)));
+            step->reads.push_back(
+                RigExecBakedOne(RigExecBakedSlotDomain::ChainBase, int(c)));
+        } else
+            step->reads.push_back(
+                RigExecBakedOne(RigExecBakedSlotDomain::ChainBase, int(c)));
     }
     // Every field form consumes the selected analytic-volume placement.
     for (int slot : field.volumes)
-        step->reads.push_back(RigExecBakedOne(field.placementPhase == Field::PlacementPhase::Base
-            ? RigExecBakedSlotDomain::WeightFramesBase : RigExecBakedSlotDomain::WeightFrames,slot));
+        step->reads.push_back(
+            RigExecBakedOne(field.placementPhase == Field::PlacementPhase::Base
+                                ? RigExecBakedSlotDomain::WeightFramesBase
+                                : RigExecBakedSlotDomain::WeightFrames,
+                            slot));
     // Declaration is repeated after input numbering; keep producer ranges unique.
-    std::sort(step->reads.begin(),step->reads.end());
-    step->reads.erase(std::unique(step->reads.begin(),step->reads.end()),step->reads.end());
-    std::sort(step->writes.begin(),step->writes.end());
-    step->writes.erase(std::unique(step->writes.begin(),step->writes.end()),step->writes.end());
-    std::sort(step->leaves.begin(),step->leaves.end());
-    step->leaves.erase(std::unique(step->leaves.begin(),step->leaves.end()),step->leaves.end());
-    std::sort(step->overrideSlots.begin(),step->overrideSlots.end());
-    step->overrideSlots.erase(std::unique(step->overrideSlots.begin(),step->overrideSlots.end()),step->overrideSlots.end());
+    std::sort(step->reads.begin(), step->reads.end());
+    step->reads.erase(std::unique(step->reads.begin(), step->reads.end()),
+                      step->reads.end());
+    std::sort(step->writes.begin(), step->writes.end());
+    step->writes.erase(std::unique(step->writes.begin(), step->writes.end()),
+                       step->writes.end());
+    std::sort(step->leaves.begin(), step->leaves.end());
+    step->leaves.erase(std::unique(step->leaves.begin(), step->leaves.end()),
+                       step->leaves.end());
+    std::sort(step->overrideSlots.begin(), step->overrideSlots.end());
+    step->overrideSlots.erase(
+        std::unique(step->overrideSlots.begin(), step->overrideSlots.end()),
+        step->overrideSlots.end());
 }
-bool RigExecBakedCaptureWeightFieldInputs(const Baked &B,int index,
-    std::vector<RigExecWeightFieldInputs> *inputs,RigExecWeightPointView *entering,size_t *count)
+bool
+RigExecBakedCaptureWeightFieldInputs(
+    const Baked &B, int index, std::vector<RigExecWeightFieldInputs> *inputs,
+    RigExecWeightPointView *entering, size_t *count)
 {
-    if(!inputs || !entering || !count || index<0 || size_t(index)>=B.weightFields.size())return false;
-    const auto &field=B.weightFields[size_t(index)];
-    *entering={};*count=1;
+    if (!inputs || !entering || !count || index < 0 ||
+        size_t(index) >= B.weightFields.size())
+        return false;
+    const auto &field = B.weightFields[size_t(index)];
+    *entering = {};
+    *count = 1;
     bool haveContext = true;
     if (field.form == Field::Form::Revision) {
-        const auto [c,k] = B.revisionIndex[size_t(field.consumer)];
+        const auto [c, k] = B.revisionIndex[size_t(field.consumer)];
         const auto &chain = B.chains[size_t(c)];
         haveContext = chain.haveBase;
         if (haveContext) {
@@ -371,90 +510,125 @@ bool RigExecBakedCaptureWeightFieldInputs(const Baked &B,int index,
             // that step's key read, one after the other.
             const GfVec3f *points = nullptr;
             size_t pointCount = 0;
-            RigExecBakedVersionPoints(chain, size_t(k),
-                                      &const_cast<Field &>(field).enteringGather,
-                                      &points, &pointCount);
+            RigExecBakedVersionPoints(
+                chain, size_t(k), &const_cast<Field &>(field).enteringGather,
+                &points, &pointCount);
             *entering = {points, pointCount};
         }
         *count = entering->count;
     }
     inputs->resize(B.weightObjects.size());
     // All borrowed views are from this generation's leaves or selected graph versions.
-    for (int objectIndex:field.objects) {
-        const size_t id=size_t(objectIndex);
-        const auto &object=B.weightObjects[id];auto &input=(*inputs)[id];
-        input=RigExecWeightFieldInputs{};
-        input.blocked=id<B.weightCycleBlocked.size() && B.weightCycleBlocked[id];
+    for (int objectIndex : field.objects) {
+        const size_t id = size_t(objectIndex);
+        const auto &object = B.weightObjects[id];
+        auto &input = (*inputs)[id];
+        input = RigExecWeightFieldInputs{};
+        input.blocked =
+            id < B.weightCycleBlocked.size() && B.weightCycleBlocked[id];
         const int samplesLeaf = object.oracleFalloffSamplesLeaf;
-        if (samplesLeaf >= 0 && size_t(samplesLeaf) < object.oracleLeaves.values.size() &&
-            object.oracleLeaves.values[size_t(samplesLeaf)].IsHolding<VtFloatArray>()) {
+        if (samplesLeaf >= 0 &&
+            size_t(samplesLeaf) < object.oracleLeaves.values.size() &&
+            object.oracleLeaves.values[size_t(samplesLeaf)]
+                .IsHolding<VtFloatArray>()) {
             const auto &samples =
-                object.oracleLeaves.values[size_t(samplesLeaf)].UncheckedGet<VtFloatArray>();
+                object.oracleLeaves.values[size_t(samplesLeaf)]
+                    .UncheckedGet<VtFloatArray>();
             input.falloffSamples = samples.cdata();
             input.falloffSampleCount = samples.size();
         }
-        for (int member=0;member<19;++member)
-            input.scalars[size_t(member)]=Scalar(B,field,int(id),member,input.scalars[size_t(member)]);
-        for (int key=0;key<3;++key) {
-            const auto chosen=RigExecBakedReadWeightPointInput(B,index,int(id),key);
-            input.phasedPoints[size_t(key)]={chosen.declared,chosen.available,chosen.data,chosen.count};
-            if (size_t(key)<object.oracleLeaves.values.size() &&
-                object.oracleLeaves.values[size_t(key)].IsHolding<VtVec3fArray>()) {
-                const auto &points=object.oracleLeaves.values[size_t(key)].UncheckedGet<VtVec3fArray>();
-                input.rawPoints[size_t(key)]={false,true,points.data(),points.size()};
+        for (int member = 0; member < 19; ++member)
+            input.scalars[size_t(member)] = Scalar(
+                B, field, int(id), member, input.scalars[size_t(member)]);
+        for (int key = 0; key < 3; ++key) {
+            const auto chosen =
+                RigExecBakedReadWeightPointInput(B, index, int(id), key);
+            input.phasedPoints[size_t(key)] = {
+                chosen.declared, chosen.available, chosen.data, chosen.count};
+            if (size_t(key) < object.oracleLeaves.values.size() &&
+                object.oracleLeaves.values[size_t(key)]
+                    .IsHolding<VtVec3fArray>()) {
+                const auto &points = object.oracleLeaves.values[size_t(key)]
+                                         .UncheckedGet<VtVec3fArray>();
+                input.rawPoints[size_t(key)] = {false, true, points.data(),
+                                                points.size()};
             }
         }
         // GetString() on an empty token reads a function-local static.
-        const auto token=[&](size_t key,bool exists,const char *fallback) {
-            const auto &values=object.oracleLeaves.values;
-            if (key<values.size() && values[key].IsHolding<TfToken>()) {
-                const TfToken &value=values[key].UncheckedGet<TfToken>();
-                return value.IsEmpty()?std::string():value.GetString();
+        const auto token = [&](size_t key, bool exists, const char *fallback) {
+            const auto &values = object.oracleLeaves.values;
+            if (key < values.size() && values[key].IsHolding<TfToken>()) {
+                const TfToken &value = values[key].UncheckedGet<TfToken>();
+                return value.IsEmpty() ? std::string() : value.GetString();
             }
-            return exists?std::string():std::string(fallback);
+            return exists ? std::string() : std::string(fallback);
         };
-        input.axis=token(3,object.oracleAxisAttribute,"x");
-        input.bounds=token(4,object.oracleBoundsAttribute,"unbounded");
-        const auto &placements=field.placementPhase==Field::PlacementPhase::Base
-            ? B.volumePlacementBase:B.volumePlacement;
-        const int slot=object.providerSlot;
-        input.hasPlacement=slot>=0 && size_t(slot)<B.placedVolumes.size() &&
-            B.placedVolumes[size_t(slot)] && size_t(slot)<placements.size();
-        if(input.hasPlacement)input.placement=placements[size_t(slot)];
+        input.axis = token(3, object.oracleAxisAttribute, SchemaValueText::x);
+        input.bounds =
+            token(4, object.oracleBoundsAttribute, SchemaValueText::unbounded);
+        const auto &placements =
+            field.placementPhase == Field::PlacementPhase::Base
+                ? B.volumePlacementBase
+                : B.volumePlacement;
+        const int slot = object.providerSlot;
+        input.hasPlacement =
+            slot >= 0 && size_t(slot) < B.placedVolumes.size() &&
+            B.placedVolumes[size_t(slot)] && size_t(slot) < placements.size();
+        if (input.hasPlacement)
+            input.placement = placements[size_t(slot)];
     }
     return haveContext;
 }
-void RigExecBakedWeightFieldCoveredVersions(const Baked &B,int index,std::vector<uint32_t> *versions)
+void
+RigExecBakedWeightFieldCoveredVersions(const Baked &B, int index,
+                                       std::vector<uint32_t> *versions)
 {
-    if(!versions || index<0 || size_t(index)>=B.weightFields.size())return;
-    for(const auto &read:B.weightFields[size_t(index)].scalarReads)
-        versions->insert(versions->end(),read.versions.begin(),read.versions.end());
+    if (!versions || index < 0 || size_t(index) >= B.weightFields.size())
+        return;
+    for (const auto &read : B.weightFields[size_t(index)].scalarReads)
+        versions->insert(versions->end(), read.versions.begin(),
+                         read.versions.end());
 }
-void RigExecBakedRunWeightField(Baked *program, RigExecBakedStep *step)
+void
+RigExecBakedRunWeightField(Baked *program, RigExecBakedStep *step)
 {
-    auto &B = *program; auto &field = B.weightFields[size_t(step->object)];
-    const auto &before = field.values; const bool beforeOk = field.ok; const auto beforeError = field.error;
+    auto &B = *program;
+    auto &field = B.weightFields[size_t(step->object)];
+    const auto &before = field.values;
+    const bool beforeOk = field.ok;
+    const auto beforeError = field.error;
     const size_t beforeCount = field.count;
-    RigExecWeightPointView entering;size_t count=1;
-    auto &inputs=field.currentInputs;
-    const bool haveContext=RigExecBakedCaptureWeightFieldInputs(B,step->object,&inputs,&entering,&count);
-    const auto *current=field.form==Field::Form::Revision?&entering:nullptr;
-    field.count=count;field.error.clear();
-    field.workspace.ranges=RigExecGeometryRanges();
-    field.ok = haveContext && RigExecRunWeightField(B.weightProgram,field.object,inputs,
-        count,current,&field.workspace,&field.nextValues,&field.error);
+    RigExecWeightPointView entering;
+    size_t count = 1;
+    auto &inputs = field.currentInputs;
+    const bool haveContext = RigExecBakedCaptureWeightFieldInputs(
+        B, step->object, &inputs, &entering, &count);
+    const auto *current =
+        field.form == Field::Form::Revision ? &entering : nullptr;
+    field.count = count;
+    field.error.clear();
+    field.workspace.ranges = RigExecGeometryRanges();
+    field.ok = haveContext &&
+               RigExecRunWeightField(B.weightProgram, field.object, inputs,
+                                     count, current, &field.workspace,
+                                     &field.nextValues, &field.error);
     // Failed fields publish no partial values. Equality preserves signed-zero bits.
-    if (!field.ok) field.nextValues.clear();
-    const bool sameValues = before.size() == field.nextValues.size() &&
-        (before.empty() || std::memcmp(before.data(),field.nextValues.data(),
-                                     before.size() * sizeof(float)) == 0);
-    field.changed = beforeCount != field.count || beforeOk != field.ok || beforeError != field.error || !sameValues;
+    if (!field.ok)
+        field.nextValues.clear();
+    const bool sameValues =
+        before.size() == field.nextValues.size() &&
+        (before.empty() || std::memcmp(before.data(), field.nextValues.data(),
+                                       before.size() * sizeof(float)) == 0);
+    field.changed = beforeCount != field.count || beforeOk != field.ok ||
+                    beforeError != field.error || !sameValues;
     field.values.swap(field.nextValues);
 }
 
-void RigExecBakedResetWeightField(Baked *program, int index)
+void
+RigExecBakedResetWeightField(Baked *program, int index)
 {
-    if (index < 0 || size_t(index) >= program->weightFields.size()) return;
+    if (index < 0 || size_t(index) >= program->weightFields.size())
+        return;
     auto &field = program->weightFields[size_t(index)];
     field.values.clear();
     field.nextValues.clear();
@@ -463,14 +637,18 @@ void RigExecBakedResetWeightField(Baked *program, int index)
     field.error = "operation cycle";
     field.changed = true;
 }
-void RigExecBakedBindWeightCycleState(Baked *program)
+void
+RigExecBakedBindWeightCycleState(Baked *program)
 {
-    auto &B=*program;B.weightCycleBlocked.assign(B.weightObjects.size(),0);
-    for(auto id:B.opAdapter.excludedValues) {
-        if(id>=B.opAdapter.values.size())continue;
-        const auto &value=B.opAdapter.values[size_t(id)];
-        if(value.domain==uint32_t(RigExecBakedSlotDomain::WeightPacket) &&
-            value.slot<B.weightCycleBlocked.size())B.weightCycleBlocked[value.slot]=1;
+    auto &B = *program;
+    B.weightCycleBlocked.assign(B.weightObjects.size(), 0);
+    for (auto id : B.opAdapter.excludedValues) {
+        if (id >= B.opAdapter.values.size())
+            continue;
+        const auto &value = B.opAdapter.values[size_t(id)];
+        if (value.domain == uint32_t(RigExecBakedSlotDomain::WeightPacket) &&
+            value.slot < B.weightCycleBlocked.size())
+            B.weightCycleBlocked[value.slot] = 1;
     }
 }
-}
+} // namespace rigExec
