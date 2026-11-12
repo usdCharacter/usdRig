@@ -88,7 +88,9 @@ inline constexpr const char *const RigExecClothBinding = "RigExecClothBinding";
 inline constexpr const char *const RigExecClothConstraintSet =
     "RigExecClothConstraintSet";
 inline constexpr const char *const RigExecClothMap = "RigExecClothMap";
-inline constexpr const char *const RigExecClothMover = "RigExecClothMover";
+// Held as an array: clothPlayback.h re-exports this spelling as an array, and
+// installed consumers take its extent with sizeof or std::size.
+inline constexpr char RigExecClothMover[] = "RigExecClothMover";
 inline constexpr const char *const RigExecCombineWeight =
     "RigExecCombineWeight";
 inline constexpr const char *const RigExecConstraintFrame =

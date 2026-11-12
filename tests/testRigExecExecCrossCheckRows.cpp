@@ -169,6 +169,99 @@ main(int argc, char **argv)
     CHECK(report.Passed());
     for (const auto kind : eligibleKinds)
         CHECK(report.checkedByKind[kind] > 0);
+    // Completeness: a row the oracle mirrors names a real computation or
+    // attribute, and every captured override names one too. A name missing
+    // from the interned table would leave an empty token here.
+    for (const auto &descriptor : descriptors) {
+        if (descriptor.skipOnly)
+            continue;
+        const bool named =
+            descriptor.address.target.IsPropertyPath()
+                ? !descriptor.address.target.GetNameToken().IsEmpty()
+                : !descriptor.address.publicComputation.IsEmpty();
+        CHECK(named);
+    }
+    for (const auto &input : clean)
+        for (const auto &override : input.overrides)
+            CHECK(!override.attribute.IsEmpty() ||
+                  !override.computation.IsEmpty());
+    // Row names come from one interned table. Capture reads it; it never
+    // interns text, and Build resolves its names through the error channel.
+    {
+        TfToken token;
+        std::string error;
+        CHECK(RigExecExecCheckToken(SchemaComputationText::computePointFrame) !=
+              nullptr);
+        CHECK(RigExecExecCheckToken("noSuchExecCheckName") == nullptr);
+        CHECK(!RigExecExecCheckResolve("noSuchExecCheckName", token, &error));
+        CHECK(token.IsEmpty());
+        CHECK(error.find("noSuchExecCheckName") != std::string::npos);
+        CHECK(RigExecExecCheckResolve(SchemaComputationText::computePointFrame,
+                                      token, nullptr));
+        CHECK(!token.IsEmpty());
+    }
+    // A capture that cannot intern its name marks the row fatal. Every later
+    // classification runs through RigExecExecCheckSetSkip, which is the single
+    // place a row's skip may change, so an ordinary reason cannot erase it.
+    {
+        TfToken token;
+        RigExecExecCheckInput fatal;
+        CHECK(
+            !RigExecExecCheckCaptureName("noSuchExecCheckName", fatal, token));
+        CHECK(fatal.skip == RigExecExecCheckSkip::MissingName);
+        CHECK(token.IsEmpty());
+        // The two AfterStep reasons, an invalid frame matrix and a solve that
+        // produced no frames, both leave the fatal row fatal.
+        RigExecExecCheckApplyAfterStep(fatal, true, false);
+        RigExecExecCheckApplyAfterStep(fatal, false, true);
+        CHECK(fatal.skip == RigExecExecCheckSkip::MissingName);
+        RigExecExecCheckSetSkip(fatal, RigExecExecCheckSkip::NoEquivalent);
+        RigExecExecCheckSetSkip(fatal, RigExecExecCheckSkip::ArrayInput);
+        RigExecExecCheckSetSkip(fatal, RigExecExecCheckSkip::Unusable);
+        CHECK(fatal.skip == RigExecExecCheckSkip::MissingName);
+        // A miss recorded after an ordinary reason still decides the row.
+        RigExecExecCheckInput ordinary;
+        RigExecExecCheckSetSkip(ordinary, RigExecExecCheckSkip::ArrayInput);
+        CHECK(!RigExecExecCheckCaptureName("noSuchExecCheckName", ordinary,
+                                           token));
+        CHECK(ordinary.skip == RigExecExecCheckSkip::MissingName);
+        // An already-skipped row keeps its own reason when the post-step
+        // classification finds nothing to report.
+        RigExecExecCheckInput skipped;
+        RigExecExecCheckSetSkip(skipped, RigExecExecCheckSkip::ArrayInput);
+        RigExecExecCheckApplyAfterStep(skipped, false, true);
+        RigExecExecCheckApplyAfterStep(skipped, false, false);
+        CHECK(skipped.skip == RigExecExecCheckSkip::ArrayInput);
+        // A clean row still takes the ordinary reasons it earns.
+        RigExecExecCheckInput cleanRow;
+        RigExecExecCheckApplyAfterStep(cleanRow, true, false);
+        CHECK(cleanRow.skip == RigExecExecCheckSkip::Unusable);
+        CHECK(rows->Evaluate(time).Passed());
+    }
+    // Error path: the report on the owning thread counts a row whose capture
+    // could not intern its name as a failure, never as a skip.
+    size_t judgedRow = clean.size();
+    for (size_t i = 0; i < clean.size(); ++i)
+        if (clean[i].skip == RigExecExecCheckSkip::None) {
+            judgedRow = i;
+            break;
+        }
+    CHECK(judgedRow < clean.size());
+    TfToken token;
+    CHECK(!RigExecExecCheckCaptureName(
+        "noSuchExecCheckName", rows->TestingInputs()[judgedRow], token));
+    RigExecExecCheckApplyAfterStep(rows->TestingInputs()[judgedRow], true,
+                                   true);
+    report = rows->Evaluate(time);
+    CHECK(!report.Passed() && report.failed == 1);
+    CHECK(report.diagnostics.size() == 1 &&
+          report.diagnostics[0].find("interned name missing") !=
+              std::string::npos &&
+          report.diagnostics[0].find(descriptors[judgedRow].key) == 0);
+    CHECK(report.skipped.find(RigExecExecCheckSkip::MissingName) ==
+          report.skipped.end());
+    rows->TestingInputs()[judgedRow] = clean[judgedRow];
+    CHECK(rows->Evaluate(time).Passed());
     // A clean rerun retains each skipped operation's matching input witness.
     CHECK(evaluator.Evaluate(time).valid);
     CHECK(rows->Evaluate(time).Passed());

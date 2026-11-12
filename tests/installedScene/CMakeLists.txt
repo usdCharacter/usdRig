@@ -23,6 +23,14 @@ add_executable(testRigExecInstalledSceneMissing ../testRigExecSceneDependency.cp
 target_compile_features(testRigExecInstalledSceneMissing PRIVATE cxx_std_17)
 target_link_libraries(testRigExecInstalledSceneMissing PRIVATE rigExec::rigExec)
 
+# A USD-free consumer of the installed binary headers: the cloth mover type
+# name keeps the array contract the runtime installer and its hosts expect.
+add_executable(testRigExecInstalledBinaryHeaders ../testRigExecInstalledBinaryHeaders.cpp)
+target_compile_features(testRigExecInstalledBinaryHeaders PRIVATE cxx_std_17)
+target_link_libraries(testRigExecInstalledBinaryHeaders PRIVATE rigExec::rigExecBinary)
+add_test(NAME testRigExecInstalledBinaryHeaders
+    COMMAND testRigExecInstalledBinaryHeaders)
+
 add_executable(testRigExecInstalledOracle ../testRigExecOracleDependency.cpp)
 target_compile_features(testRigExecInstalledOracle PRIVATE cxx_std_17)
 target_compile_definitions(testRigExecInstalledOracle PRIVATE

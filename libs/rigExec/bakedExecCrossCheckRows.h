@@ -14,6 +14,23 @@ struct RigExecExecArrayWitness {
     bool atDefault = false;
 };
 
+/// Row names resolve through one interned table built at load, declared with
+/// the row tables so the row test can drive the failure path on real capture
+/// code instead of fabricating row state.
+const TfToken *RigExecExecCheckToken(const char *name);
+/// Build runs on the owning thread with an error channel: an uninterned name
+/// fails the build there instead of spelling an empty property.
+bool RigExecExecCheckResolve(const char *name, TfToken &out,
+                             std::string *error);
+/// Capture-lane lookup. A miss marks the row fatal and returns false; it never
+/// interns text or posts a diagnostic.
+bool RigExecExecCheckCaptureName(const char *name, RigExecExecCheckInput &input,
+                                 TfToken &out);
+/// The classification a mirrored row receives after its step runs.
+void RigExecExecCheckApplyAfterStep(RigExecExecCheckInput &input,
+                                    bool frameMatrixInvalid,
+                                    bool emptySolveFrames);
+
 /// Optional live-program instrumentation. Preparation and evaluation belong
 /// to the owning thread; capture copies only program values and each operation
 /// writes its own rows. Frozen programs do not carry this state.

@@ -147,19 +147,12 @@ const std::map<std::string, TfToken, std::less<>> _tokens = [] {
         result.emplace(name, TfToken(name));
     return result;
 }();
-TfToken
-Token(const char *name)
-{
-    const auto found = _tokens.find(name);
-    if (found == _tokens.end()) {
-        // A name absent from the table is a bug: an empty computation or
-        // attribute name makes the row silently fail.
-        TF_CODING_ERROR("bakedExecCrossCheckRows: interned name '%s' missing",
-                        name);
-        return TfToken(name);
-    }
-    return found->second;
-}
+// Row capture runs on the compile lanes, so a name lookup must not intern text
+// from a name or post a diagnostic: the table above is the only source of row
+// names. Build resolves every address name up front through the error channel;
+// a capture-time miss marks the row so the report on the owning thread counts
+// it as a failure. The lookup and classification functions are declared in
+// bakedExecCrossCheckRows.h and defined after the row helpers below.
 // Step kinds that have a row-level witness here are keyed by the schedule's
 // shared kind name; the rest are keyed as having no equivalent.
 const char *
@@ -191,9 +184,12 @@ Address(const RigExecValueOverride &v)
 void
 Put(Input &in, const SdfPath &path, const char *computation, VtValue value)
 {
+    TfToken name;
+    if (!RigExecExecCheckCaptureName(computation, in, name))
+        return;
     RigExecValueOverride v;
     v.prim = path;
-    v.computation = Token(computation);
+    v.computation = name;
     v.value = std::move(value);
     const auto found = std::find_if(
         in.overrides.begin(), in.overrides.end(), [&](const auto &old) {
@@ -203,7 +199,7 @@ Put(Input &in, const SdfPath &path, const char *computation, VtValue value)
     if (found == in.overrides.end())
         in.overrides.push_back(std::move(v));
     else if (found->value != v.value)
-        in.skip = RigExecExecCheckSkip::NoEquivalent;
+        RigExecExecCheckSetSkip(in, RigExecExecCheckSkip::NoEquivalent);
 }
 void
 Attr(Input &in, const SdfPath &path, const TfToken &name, VtValue value)
@@ -219,12 +215,25 @@ Attr(Input &in, const SdfPath &path, const TfToken &name, VtValue value)
     if (found == in.overrides.end())
         in.overrides.push_back(std::move(v));
     else if (found->value != v.value)
-        in.skip = RigExecExecCheckSkip::NoEquivalent;
+        RigExecExecCheckSetSkip(in, RigExecExecCheckSkip::NoEquivalent);
 }
 void
 Attr(Input &in, const SdfPath &path, const char *name, VtValue value)
 {
-    Attr(in, path, Token(name), std::move(value));
+    TfToken attribute;
+    if (!RigExecExecCheckCaptureName(name, in, attribute))
+        return;
+    Attr(in, path, attribute, std::move(value));
+}
+// An attribute whose value is one of the schema's interned value tokens.
+void
+TokenAttr(Input &in, const SdfPath &path, const char *name, const char *value)
+{
+    TfToken attribute, val;
+    if (!RigExecExecCheckCaptureName(name, in, attribute) ||
+        !RigExecExecCheckCaptureName(value, in, val))
+        return;
+    Attr(in, path, attribute, VtValue(val));
 }
 template <class T>
 void
@@ -251,7 +260,7 @@ ComposeInputs(const B &b, int slot)
     const auto &path = b.paths[s];
     if ((!b.spaceSwitchBySlot.empty() && b.spaceSwitchBySlot[s] >= 0) ||
         b.slotKind[s] != RigExecBakedSlotKind::FirstFramePose) {
-        in.skip = RigExecExecCheckSkip::NoEquivalent;
+        RigExecExecCheckSetSkip(in, RigExecExecCheckSkip::NoEquivalent);
         return in;
     }
     // These are the effective bound inputs of the point-frame computation.
@@ -296,12 +305,15 @@ ComposeInputs(const B &b, int slot)
     // The bound walk's source paths must receive the copied effective value as
     // well, including an authoritative connected identity.
     if (b.ladders[s].posedSpaceConnected) {
+        TfToken posedSpace;
+        if (!RigExecExecCheckCaptureName(SchemaAttrText::posedSpace, in,
+                                         posedSpace))
+            return in;
         bool source = false;
         const int binding = b.ladders[s].posedSpace.overrideIndex;
         for (const auto &[property, bindings] : b.overridableInputs) {
             if ((property.GetPrimPath() == path &&
-                 property.GetNameToken() ==
-                     Token(SchemaAttrText::posedSpace)) ||
+                 property.GetNameToken() == posedSpace) ||
                 std::find(bindings.begin(), bindings.end(), binding) ==
                     bindings.end())
                 continue;
@@ -310,7 +322,7 @@ ComposeInputs(const B &b, int slot)
             source = true;
         }
         if (!source)
-            in.skip = RigExecExecCheckSkip::NoEquivalent;
+            RigExecExecCheckSetSkip(in, RigExecExecCheckSkip::NoEquivalent);
     }
     return in;
 }
@@ -345,7 +357,7 @@ LadderInputs(const B &b, int slot)
     // An authored/connected default is instead a SpaceExpression operation.
     if (Authoritative(b, l.defaultSpace, l.defaultSpaceConnected) ||
         RigExecBakedLeafRead(b, l.defaultSpace) != GfMatrix4d(1.0))
-        in.skip = RigExecExecCheckSkip::NoEquivalent;
+        RigExecExecCheckSetSkip(in, RigExecExecCheckSkip::NoEquivalent);
     Put(in, path, SchemaComputationText::computeRestFrame,
         VtValue(b.restFrames[s]));
     const int parent = b.parent[s];
@@ -382,9 +394,9 @@ MatrixInputs(const B &b, int slot, uint32_t version, bool base)
     const size_t s = size_t(slot);
     const auto &frame = base ? b.base[version] : b.fin[version];
     if (b.slotKind[s] != RigExecBakedSlotKind::FirstFramePose)
-        in.skip = RigExecExecCheckSkip::NoEquivalent;
+        RigExecExecCheckSetSkip(in, RigExecExecCheckSkip::NoEquivalent);
     else if (!RigExecBakedUsable(frame) || !RigExecBakedUsable(b.restFrames[s]))
-        in.skip = RigExecExecCheckSkip::Unusable;
+        RigExecExecCheckSetSkip(in, RigExecExecCheckSkip::Unusable);
     Put(in, b.paths[s], SchemaComputationText::computePointFrame,
         VtValue(frame));
     Put(in, b.paths[s], SchemaComputationText::computeRestFrame,
@@ -421,15 +433,15 @@ SolveInputs(const B &b, int index)
         for (size_t i = 0; i < s.controls.size(); ++i)
             SolverFrame(in, b, s.controls[i], s.controlReads[i]);
         SolverFrame(in, b, s.start, s.startRead);
-        Attr(in, path, SchemaAttrText::rigExecSegmentScale,
-             VtValue(Token(s.scaleSegments ? SchemaValueText::toChild
-                                           : SchemaValueText::none)));
-        Attr(in, path, SchemaAttrText::rigExecControlSpace,
-             VtValue(Token(s.parentRelative ? SchemaValueText::parentRelative
-                                            : SchemaValueText::world)));
+        TokenAttr(in, path, SchemaAttrText::rigExecSegmentScale,
+                  s.scaleSegments ? SchemaValueText::toChild
+                                  : SchemaValueText::none);
+        TokenAttr(in, path, SchemaAttrText::rigExecControlSpace,
+                  s.parentRelative ? SchemaValueText::parentRelative
+                                   : SchemaValueText::world);
         // The exec FK computation reads no joint groups.
         if (!s.jointGroups.empty())
-            in.skip = RigExecExecCheckSkip::NoEquivalent;
+            RigExecExecCheckSetSkip(in, RigExecExecCheckSkip::NoEquivalent);
     } else if (s.type == SchemaTypeName::RigExecTwoBoneIk) {
         SolverFrame(in, b, s.root, s.rootRead);
         SolverFrame(in, b, s.end, s.endRead);
@@ -449,13 +461,13 @@ SolveInputs(const B &b, int index)
         Leaf(in, b, path, SchemaAttrText::inputsLowerScale, s.lowerScale);
         Leaf(in, b, path, SchemaAttrText::inputsSoftDistance, s.softDistance);
         Leaf(in, b, path, SchemaAttrText::inputsTwist, s.limbTwist);
-        Attr(in, path, SchemaAttrText::rigExecStretchPolicy,
-             VtValue(Token(s.ikParams.softDistancePolicy
-                               ? SchemaValueText::softDistance
-                               : SchemaValueText::uniformSegments)));
-        Attr(in, path, SchemaAttrText::rigExecSegmentScale,
-             VtValue(Token(s.ikParams.scaleSegments ? SchemaValueText::toChild
-                                                    : SchemaValueText::none)));
+        TokenAttr(in, path, SchemaAttrText::rigExecStretchPolicy,
+                  s.ikParams.softDistancePolicy
+                      ? SchemaValueText::softDistance
+                      : SchemaValueText::uniformSegments);
+        TokenAttr(in, path, SchemaAttrText::rigExecSegmentScale,
+                  s.ikParams.scaleSegments ? SchemaValueText::toChild
+                                           : SchemaValueText::none);
         Attr(in, path, SchemaAttrText::rigExecScaleCalibration,
              VtValue(s.ikParams.limb.scaleCalibration));
     } else if (s.type == SchemaTypeName::RigExecBlendPointFrames) {
@@ -468,15 +480,15 @@ SolveInputs(const B &b, int index)
                 SchemaComputationText::computePointFrameArray,
                 VtValue(b.aggregates[size_t(s.inB)]));
         Leaf(in, b, path, SchemaAttrText::inputsWeight, s.blendWeight);
-        Attr(in, path, SchemaAttrText::rigExecScaleBlend,
-             VtValue(Token(s.scaleMode == RigExecScaleBlend::Log
-                               ? SchemaValueText::log
-                               : SchemaValueText::linear)));
+        TokenAttr(in, path, SchemaAttrText::rigExecScaleBlend,
+                  s.scaleMode == RigExecScaleBlend::Log
+                      ? SchemaValueText::log
+                      : SchemaValueText::linear);
         if (s.blendRotationRejected)
-            in.skip = RigExecExecCheckSkip::Unusable;
+            RigExecExecCheckSetSkip(in, RigExecExecCheckSkip::Unusable);
         else
-            Attr(in, path, SchemaAttrText::rigExecRotationBlend,
-                 VtValue(Token(SchemaValueText::shortestArc)));
+            TokenAttr(in, path, SchemaAttrText::rigExecRotationBlend,
+                      SchemaValueText::shortestArc);
     } else if (s.type == SchemaTypeName::RigExecTwistDistribution) {
         SolverFrame(in, b, s.root, s.rootRead);
         SolverFrame(in, b, s.end, s.endRead);
@@ -485,7 +497,7 @@ SolveInputs(const B &b, int index)
     } else if (s.type == SchemaTypeName::RigExecRibbon) {
         // The rest/live curve packets lack an equivalent bound base array
         // protocol in this row. They are never reconstructed from the result.
-        in.skip = RigExecExecCheckSkip::ArrayInput;
+        RigExecExecCheckSetSkip(in, RigExecExecCheckSkip::ArrayInput);
     } else if (s.type == SchemaTypeName::RigExecSplineIk) {
         SolverFrame(in, b, s.root, s.rootRead);
         SolverFrame(in, b, s.mid, s.midRead);
@@ -500,29 +512,31 @@ SolveInputs(const B &b, int index)
         Leaf(in, b, path, SchemaAttrText::inputsTwist, s.twist);
         Leaf(in, b, path, SchemaAttrText::inputsMinLengthRatio,
              s.minLengthRatio);
-        Attr(in, path, SchemaAttrText::rigExecRootTangent,
-             VtValue(Token(s.splineParams.aimRootTangent
-                               ? SchemaValueText::aim
-                               : SchemaValueText::rigid)));
-        Attr(in, path, SchemaAttrText::rigExecRestLength,
-             VtValue(Token(s.splineRestMode == RigExecSplineIkRestLength::Curve
-                               ? SchemaValueText::curve
-                               : SchemaValueText::chain)));
+        TokenAttr(in, path, SchemaAttrText::rigExecRootTangent,
+                  s.splineParams.aimRootTangent ? SchemaValueText::aim
+                                                : SchemaValueText::rigid);
+        TokenAttr(in, path, SchemaAttrText::rigExecRestLength,
+                  s.splineRestMode == RigExecSplineIkRestLength::Curve
+                      ? SchemaValueText::curve
+                      : SchemaValueText::chain);
     } else
-        in.skip = RigExecExecCheckSkip::NoEquivalent;
+        RigExecExecCheckSetSkip(in, RigExecExecCheckSkip::NoEquivalent);
     const auto arrayIsReplaced = [&](const char *name) {
-        return b.upstream.count(path.AppendProperty(Token(name))) != 0;
+        TfToken attribute;
+        if (!RigExecExecCheckCaptureName(name, in, attribute))
+            return false;
+        return b.upstream.count(path.AppendProperty(attribute)) != 0;
     };
     if ((s.type == SchemaTypeName::RigExecTwoBoneIk ||
          s.type == SchemaTypeName::RigExecSplineIk) &&
         arrayIsReplaced(SchemaAttrText::rigExecJointElements))
-        in.skip = RigExecExecCheckSkip::ArrayInput;
+        RigExecExecCheckSetSkip(in, RigExecExecCheckSkip::ArrayInput);
     if (s.type == SchemaTypeName::RigExecSplineIk &&
         arrayIsReplaced(SchemaAttrText::rigExecVolumeWeights))
-        in.skip = RigExecExecCheckSkip::ArrayInput;
+        RigExecExecCheckSetSkip(in, RigExecExecCheckSkip::ArrayInput);
     if (s.type == SchemaTypeName::RigExecTwistDistribution &&
         arrayIsReplaced(SchemaAttrText::rigExecWeights))
-        in.skip = RigExecExecCheckSkip::ArrayInput;
+        RigExecExecCheckSetSkip(in, RigExecExecCheckSkip::ArrayInput);
     return in;
 }
 std::vector<RigExecExecArrayWitness>
@@ -726,7 +740,7 @@ WeightInputs(const B &b, int index)
             }
         }
     } else
-        in.skip = RigExecExecCheckSkip::NoEquivalent;
+        RigExecExecCheckSetSkip(in, RigExecExecCheckSkip::NoEquivalent);
     // Only the sampled path-leaf copies are passed to exec. A chain-routed or
     // upstream replacement array is an explicitly unjudged array-input row.
     const auto arrays = [&](const std::vector<UsdAttribute> &attrs,
@@ -734,13 +748,13 @@ WeightInputs(const B &b, int index)
         for (size_t i = 0; i < attrs.size(); ++i) {
             const size_t k = begin + i;
             if (k >= w.pointLeaves.values.size()) {
-                in.skip = RigExecExecCheckSkip::ArrayInput;
+                RigExecExecCheckSetSkip(in, RigExecExecCheckSkip::ArrayInput);
                 continue;
             }
             if ((k < w.pointLeaves.walks.size() &&
                  w.pointLeaves.walks[k] >= 0) ||
                 b.upstream.count(w.pointLeaves.decl.keys[k].path))
-                in.skip = RigExecExecCheckSkip::ArrayInput;
+                RigExecExecCheckSetSkip(in, RigExecExecCheckSkip::ArrayInput);
         }
     };
     arrays(w.targetPoints, w.targetLeaves);
@@ -781,6 +795,55 @@ WeightArrays(const B &b, int index, const SdfPath &valuesPath,
     return result;
 }
 } // namespace
+
+const TfToken *
+RigExecExecCheckToken(const char *name)
+{
+    const auto found = _tokens.find(name);
+    return found == _tokens.end() ? nullptr : &found->second;
+}
+
+// Build runs on the owning thread with an error channel. An uninterned name
+// fails the build there instead of spelling an empty property.
+bool
+RigExecExecCheckResolve(const char *name, TfToken &out, std::string *error)
+{
+    const TfToken *token = RigExecExecCheckToken(name);
+    if (!token) {
+        if (error)
+            *error = std::string("exec check name not interned: ") + name;
+        return false;
+    }
+    out = *token;
+    return true;
+}
+
+// Capture lanes only read the interned table. A miss marks the row fatal and
+// returns false; it never interns text or posts a diagnostic.
+bool
+RigExecExecCheckCaptureName(const char *name, RigExecExecCheckInput &input,
+                            TfToken &out)
+{
+    const TfToken *token = RigExecExecCheckToken(name);
+    if (!token) {
+        RigExecExecCheckSetSkip(input, RigExecExecCheckSkip::MissingName);
+        return false;
+    }
+    out = *token;
+    return true;
+}
+
+// The classification a mirrored row receives after its step runs: a frame
+// matrix the mover cannot supply, or a solve that produced no frames.
+void
+RigExecExecCheckApplyAfterStep(RigExecExecCheckInput &input,
+                               bool frameMatrixInvalid, bool emptySolveFrames)
+{
+    if (frameMatrixInvalid)
+        RigExecExecCheckSetSkip(input, RigExecExecCheckSkip::Unusable);
+    if (emptySolveFrames && input.skip == RigExecExecCheckSkip::None)
+        RigExecExecCheckSetSkip(input, RigExecExecCheckSkip::Unusable);
+}
 
 bool
 RigExecBakedExecCheckRows::Add(RigExecExecCheckDescriptor d, Binding binding,
@@ -840,7 +903,10 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error)
                         " after " +
                         b.frameRecords[size_t(step.object)].mover.GetString();
                 d.kind = uint32_t(step.kind);
-                d.address = RigExecValueAddress::Prim(path, Token(key));
+                TfToken computation;
+                if (!RigExecExecCheckResolve(key, computation, error))
+                    return false;
+                d.address = RigExecValueAddress::Prim(path, computation);
                 d.project = std::move(project);
                 if (slot >= 0 && b.slotKind[size_t(slot)] !=
                                      RigExecBakedSlotKind::FirstFramePose) {
@@ -849,7 +915,8 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error)
                     d.project = {};
                     capture = [](const B &) {
                         Input input;
-                        input.skip = RigExecExecCheckSkip::NoEquivalent;
+                        RigExecExecCheckSetSkip(
+                            input, RigExecExecCheckSkip::NoEquivalent);
                         return input;
                     };
                 }
@@ -926,13 +993,20 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error)
                 return {};
         } else if (step.kind == Kind::Solve) {
             const int s = step.object;
-            const auto elementsPath = b.solvers[size_t(s)].path.AppendProperty(
-                Token(SchemaAttrText::rigExecJointElements));
-            const auto weightsPath = b.solvers[size_t(s)].path.AppendProperty(
-                Token(SchemaAttrText::rigExecWeights));
+            TfToken elements, weights, volumeWeights;
+            if (!RigExecExecCheckResolve(SchemaAttrText::rigExecJointElements,
+                                         elements, error) ||
+                !RigExecExecCheckResolve(SchemaAttrText::rigExecWeights,
+                                         weights, error) ||
+                !RigExecExecCheckResolve(SchemaAttrText::rigExecVolumeWeights,
+                                         volumeWeights, error))
+                return {};
+            const auto elementsPath =
+                b.solvers[size_t(s)].path.AppendProperty(elements);
+            const auto weightsPath =
+                b.solvers[size_t(s)].path.AppendProperty(weights);
             const auto volumeWeightsPath =
-                b.solvers[size_t(s)].path.AppendProperty(
-                    Token(SchemaAttrText::rigExecVolumeWeights));
+                b.solvers[size_t(s)].path.AppendProperty(volumeWeights);
             // A policy-derived start frame has no OpenExec equivalent: exec
             // binds rigExec:startFrame only from authored targets. Decided
             // here, once, by the rule every evaluator shares.
@@ -950,7 +1024,8 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error)
                     [s, startDerived](const B &p) {
                         Input in = SolveInputs(p, s);
                         if (startDerived)
-                            in.skip = RigExecExecCheckSkip::NoEquivalent;
+                            RigExecExecCheckSetSkip(
+                                in, RigExecExecCheckSkip::NoEquivalent);
                         return in;
                     },
                     [s](const B &p) {
@@ -1035,12 +1110,16 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error)
             }
         } else if (step.kind == Kind::WeightPacket) {
             const int w = step.object;
+            TfToken values, indices;
+            if (!RigExecExecCheckResolve(SchemaAttrText::rigExecValues, values,
+                                         error) ||
+                !RigExecExecCheckResolve(SchemaAttrText::rigExecIndices,
+                                         indices, error))
+                return {};
             const auto valuesPath =
-                b.weightObjects[size_t(w)].path.AppendProperty(
-                    Token(SchemaAttrText::rigExecValues));
+                b.weightObjects[size_t(w)].path.AppendProperty(values);
             const auto indicesPath =
-                b.weightObjects[size_t(w)].path.AppendProperty(
-                    Token(SchemaAttrText::rigExecIndices));
+                b.weightObjects[size_t(w)].path.AppendProperty(indices);
             if (!add(
                     b.weightObjects[size_t(w)].path,
                     SchemaComputationText::computeWeightPacket, -1, false,
@@ -1071,12 +1150,14 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error)
                         if (composeRow < owner->_inputs.size())
                             input = owner->_inputs[composeRow];
                         else
-                            input.skip = RigExecExecCheckSkip::NoEquivalent;
+                            RigExecExecCheckSetSkip(
+                                input, RigExecExecCheckSkip::NoEquivalent);
                         input.expected = VtValue();
                         const auto version =
                             base ? p.baseLast[size_t(s)] : p.finLast[size_t(s)];
                         if (version != uint32_t(s))
-                            input.skip = RigExecExecCheckSkip::NoEquivalent;
+                            RigExecExecCheckSetSkip(
+                                input, RigExecExecCheckSkip::NoEquivalent);
                         return input;
                     },
                     [s, base](const B &p) {
@@ -1121,7 +1202,8 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error)
                            {i, -1, false,
                             [](const B &) {
                                 Input input;
-                                input.skip = RigExecExecCheckSkip::NoEquivalent;
+                                RigExecExecCheckSetSkip(
+                                    input, RigExecExecCheckSkip::NoEquivalent);
                                 return input;
                             },
                             [](const B &) { return VtValue(); }},
@@ -1148,7 +1230,8 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error)
                         {0, -1, false,
                          [](const B &) {
                              Input input;
-                             input.skip = RigExecExecCheckSkip::NoEquivalent;
+                             RigExecExecCheckSetSkip(
+                                 input, RigExecExecCheckSkip::NoEquivalent);
                              return input;
                          },
                          [](const B &) { return VtValue(); }},
@@ -1208,13 +1291,12 @@ RigExecBakedExecCheckRows::AfterStep(const B &b, size_t step)
 {
     for (const size_t row : _byStep.at(step)) {
         _inputs[row].expected = _bindings[row].result(b);
-        if (b.steps[step].kind == Kind::FrameMatrix &&
-            !b.frameMatrixValid[size_t(b.steps[step].object)])
-            _inputs[row].skip = RigExecExecCheckSkip::Unusable;
-        if (b.steps[step].kind == Kind::Solve &&
-            b.aggregates[size_t(b.steps[step].object)].frames.empty() &&
-            _inputs[row].skip == RigExecExecCheckSkip::None)
-            _inputs[row].skip = RigExecExecCheckSkip::Unusable;
+        RigExecExecCheckApplyAfterStep(
+            _inputs[row],
+            b.steps[step].kind == Kind::FrameMatrix &&
+                !b.frameMatrixValid[size_t(b.steps[step].object)],
+            b.steps[step].kind == Kind::Solve &&
+                b.aggregates[size_t(b.steps[step].object)].frames.empty());
     }
 }
 RigExecExecCrossCheckReport
@@ -1237,7 +1319,8 @@ RigExecBakedExecCheckRows::Evaluate(UsdTimeCode time)
             if (!RigExecEncodeGoldenValue(expected, &expectedBits) ||
                 !RigExecEncodeGoldenValue(actual, &actualBits) ||
                 expectedBits != actualBits) {
-                verified[row].skip = RigExecExecCheckSkip::ArrayInput;
+                RigExecExecCheckSetSkip(verified[row],
+                                        RigExecExecCheckSkip::ArrayInput);
                 break;
             }
             if (witness.atDefault && !time.IsDefault()) {
@@ -1246,7 +1329,8 @@ RigExecBakedExecCheckRows::Evaluate(UsdTimeCode time)
                     attribute.Get(&actual, time);
                 if (!RigExecEncodeGoldenValue(actual, &actualBits) ||
                     expectedBits != actualBits) {
-                    verified[row].skip = RigExecExecCheckSkip::ArrayInput;
+                    RigExecExecCheckSetSkip(verified[row],
+                                            RigExecExecCheckSkip::ArrayInput);
                     break;
                 }
             }

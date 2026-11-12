@@ -27,8 +27,12 @@
 
 namespace rigExec {
 
-/// The schema type a runtime installs RigExecClothPlaybackKernel for.
-constexpr const char *const RigExecClothMoverType =
+/// The schema type a runtime installs RigExecClothPlaybackKernel for. An array
+/// reference, so the spelling's extent stays part of its type: sizeof, array
+/// reference deduction and std::size all report it.
+inline constexpr std::size_t kClothMoverTypeExtent =
+    sizeof(SchemaTypeName::RigExecClothMover);
+inline constexpr const char (&RigExecClothMoverType)[kClothMoverTypeExtent] =
     SchemaTypeName::RigExecClothMover;
 
 /// The declared inputs, in declaration order. The compiled rig's come first and
