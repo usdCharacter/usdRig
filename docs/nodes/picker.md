@@ -128,4 +128,4 @@ bin\launch_usdview.bat docs\examples\picker.usda
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

@@ -193,4 +193,4 @@ bin\launch_usdview.bat docs\examples\delta_mush_mover.usda
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

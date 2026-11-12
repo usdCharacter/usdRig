@@ -574,4 +574,4 @@ python docs/render_media.py --page plane_weight
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

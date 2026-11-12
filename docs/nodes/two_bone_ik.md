@@ -299,4 +299,4 @@ python docs/render_media.py --page two_bone_ik
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

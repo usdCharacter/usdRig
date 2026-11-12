@@ -346,4 +346,4 @@ python docs/render_media.py --page space_switch
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

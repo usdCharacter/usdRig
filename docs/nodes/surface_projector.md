@@ -267,4 +267,4 @@ ball while the ball itself stays still.
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

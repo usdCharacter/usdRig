@@ -406,4 +406,4 @@ the aim revises the ankle. The picker's IK/FK buttons and the right-click
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

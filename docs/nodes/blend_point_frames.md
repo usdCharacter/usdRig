@@ -175,4 +175,4 @@ python docs/render_media.py --page blend_point_frames
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

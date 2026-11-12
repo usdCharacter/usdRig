@@ -247,4 +247,4 @@ python docs/render_media.py --page position_constraint
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

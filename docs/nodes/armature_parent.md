@@ -148,4 +148,4 @@ An incoming owner at (0,3,0), identity inverseBind/sourceObject and a source at 
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

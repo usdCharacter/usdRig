@@ -502,4 +502,4 @@ python docs/render_media.py --page pose
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

@@ -319,4 +319,4 @@ python docs/render_media.py --page aim_constraint
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

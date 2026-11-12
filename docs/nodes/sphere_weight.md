@@ -563,4 +563,4 @@ python docs/render_media.py --page sphere_weight
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

@@ -191,4 +191,4 @@ bin\launch_usdview.bat docs\examples\skeleton_2d.usda
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

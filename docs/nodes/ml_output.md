@@ -73,4 +73,4 @@ bin\launch_usdview.bat docs\examples\ml_mover.usda
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

@@ -4,9 +4,9 @@ title: Getting started
 
 # Getting started
 
-RigExec builds against an **unmodified OpenUSD 26.08 installation with
-OpenExec** and loads into `usdview` as a set of plugins. This page takes you
-from a checkout to a character playing in the viewport.
+usdRig builds against an **unmodified OpenUSD 26.08 installation with
+OpenExec**, and its RigExec engine loads into `usdview` as a set of plugins.
+This page takes you from a checkout to a character playing in the viewport.
 
 ## What you need
 

@@ -133,4 +133,4 @@ python docs/render_media.py --page blendshape_mover
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

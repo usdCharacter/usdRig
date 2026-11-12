@@ -310,4 +310,4 @@ the dial's turn.
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

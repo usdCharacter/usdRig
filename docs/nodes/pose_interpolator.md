@@ -543,4 +543,4 @@ python docs/render_media.py --page pose_interpolator
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

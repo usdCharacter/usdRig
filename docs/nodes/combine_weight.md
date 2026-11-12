@@ -189,4 +189,4 @@ python docs/render_media.py --page combine_weight
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

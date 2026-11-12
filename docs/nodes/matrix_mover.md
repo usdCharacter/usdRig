@@ -277,4 +277,4 @@ python docs/render_media.py --page matrix_mover
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

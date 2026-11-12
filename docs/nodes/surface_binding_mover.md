@@ -197,4 +197,4 @@ Apply `RigExecMoverAPI`.
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

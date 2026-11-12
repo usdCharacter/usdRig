@@ -130,4 +130,4 @@ bin\launch_usdview.bat docs\examples\joint_group.usda
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

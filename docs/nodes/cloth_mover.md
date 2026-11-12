@@ -348,4 +348,4 @@ python docs/render_media.py --page cloth_mover
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

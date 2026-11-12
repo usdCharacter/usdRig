@@ -136,4 +136,4 @@ python docs/render_media.py --page smooth_mover
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

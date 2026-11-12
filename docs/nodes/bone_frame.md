@@ -157,4 +157,4 @@ Set local translation to (0,1,0), tx to 2, and sourceObject to an object transla
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

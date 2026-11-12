@@ -253,4 +253,4 @@ python docs/render_media.py --page scale_constraint
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

@@ -347,4 +347,4 @@ python docs/render_media.py --page joint
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

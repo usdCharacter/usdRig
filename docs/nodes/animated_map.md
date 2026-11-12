@@ -122,4 +122,4 @@ bin\launch_usdview.bat docs\examples\animated_maps.usda
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

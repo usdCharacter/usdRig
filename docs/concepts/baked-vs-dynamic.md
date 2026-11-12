@@ -4,7 +4,7 @@ summary: One production operation graph for native, frozen and runtime evaluatio
 order: 20
 ---
 
-UsdRig compiles a rig into one operation graph. Native evaluation reads scene
+RigExec compiles a rig into one operation graph. Native evaluation reads scene
 inputs at the owning-thread sampling boundary, then executes operations over
 typed values. Frozen evaluation samples those inputs first and runs detached
 state through the same graph. A `.rigexec` binary supplies compiled declarations
@@ -190,7 +190,7 @@ control and revised-provider frames written as plain local
 metadata survive the flattened copy; joint and control prims become `Xform`,
 other execution prims become inert `Scope`s, and the runtime schemas, their
 properties and connections into them are removed. The result renders anywhere,
-with no UsdRig plugin.
+with no RigExec plugin.
 
 ```python
 import rigexec

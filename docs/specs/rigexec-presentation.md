@@ -13,7 +13,7 @@ The presentation is its own FlatBuffer, defined by
 `libs/rigExecRuntime` never interprets it: a display consumer reads it and
 sets the runtime inputs its controls name.
 
-usdRig does not author presentations. An exporter builds the REXP buffer, and
+RigExec does not author presentations. An exporter builds the REXP buffer, and
 `rigExecBake --presentation <file.rexp>` (`RigExecBakeOpts::presentation` in
 `libs/rigExecBake/bake.h`) embeds it unchanged. The bake refuses a buffer
 that does not verify as REXP, or a control whose input the file does not

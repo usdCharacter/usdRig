@@ -1,4 +1,4 @@
-"""RigExec Python API -- programmatic rig authoring and evaluation.
+"""usdRig Python API -- programmatic rig authoring and RigExec evaluation.
 
 This package wraps the native ``_rigexec`` module (built from
 libs/rigExecAuthoring and libs/rigExec) so a Python tool can create and wire an

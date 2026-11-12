@@ -166,4 +166,4 @@ python docs/render_media.py --page twist_distribution
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

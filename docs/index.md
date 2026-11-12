@@ -11,7 +11,7 @@ Storm viewport with the rig guides on.
 
 | | Page | About |
 |---|---|---|
-| ![How operators fire](../icons/concept.png) | [How operators fire](concepts/how-operators-fire.md) | The mental model and the evaluation order behind every UsdRig rig — who reads what, who writes what, and when. |
+| ![How operators fire](../icons/concept.png) | [How operators fire](concepts/how-operators-fire.md) | The mental model and the evaluation order behind every rig in usdRig — who reads what, who writes what, and when. |
 | ![Evaluation and independent checks](../icons/concept.png) | [Evaluation and independent checks](concepts/baked-vs-dynamic.md) | One production operation graph for native, frozen and runtime evaluation, with optional independent judges. |
 | ![What warming does](../icons/concept.png) | [What warming does](concepts/frame-cache-warming.md) | The per-frame cache in one page: what warms, what you see, what it costs, and the switches. |
 | ![Tutorial: a rolling ball rig](../icons/concept.png) | [Tutorial: a rolling ball rig](concepts/tutorial-rolling-ball.md) | Hand-build a rolling ball in usdview and Noodles, with a complete video and a screenshot for every step. |

@@ -21,7 +21,7 @@ repo_url: https://github.com/usdCharacter/usdRig
 repo_name: usdCharacter/usdRig
 edit_uri: edit/main/docs/
 copyright: >-
-  usdRig is MIT licensed. Third-party material keeps its own terms.
+  RigExec is MIT licensed. Third-party material keeps its own terms.
 
 docs_dir: docs
 site_dir: site

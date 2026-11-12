@@ -215,4 +215,4 @@ python docs/render_media.py --page surface_mover
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

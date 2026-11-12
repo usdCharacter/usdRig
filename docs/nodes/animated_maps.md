@@ -153,4 +153,4 @@ python docs/render_media.py --page animated_maps
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

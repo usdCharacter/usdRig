@@ -212,4 +212,4 @@ python docs/render_media.py --page lattice_mover
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

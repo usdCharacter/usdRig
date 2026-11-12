@@ -320,4 +320,4 @@ python docs/render_media.py --page harmonics_constraint
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

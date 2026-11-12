@@ -208,4 +208,4 @@ python docs/render_media.py --page ribbon
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

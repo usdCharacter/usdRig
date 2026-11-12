@@ -292,4 +292,4 @@ python docs/render_media.py --page fk_chain
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

@@ -450,7 +450,7 @@ def render_page(key, note, classes):
     lines.append("")
     lines.append("---")
     lines.append("")
-    lines.append("[UsdRig](../index.md)")
+    lines.append("[usdRig](../index.md)")
     lines.append("")
     return "\n".join(lines)
 

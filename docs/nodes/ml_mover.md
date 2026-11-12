@@ -257,4 +257,4 @@ python docs/render_media.py --page ml_mover
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

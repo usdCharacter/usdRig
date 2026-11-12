@@ -343,4 +343,4 @@ TRANSFORM_LOCATION maps source X rotation from 0 to pi/3 radians onto output Z f
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

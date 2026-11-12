@@ -1,8 +1,8 @@
 # usdRig
 
-> **Warning: work in progress.** RigExec is an early AI-generated prototype
-> under active development. APIs, behavior, and file formats may change without
-> notice. See [layer readiness](STATUS.md) for per-layer status.
+> **Warning: work in progress.** usdRig is an early AI-generated prototype
+> under active development. Its APIs, behavior, and file formats may change
+> without notice. See [layer readiness](STATUS.md) for per-layer status.
 
 usdRig is an OpenUSD-based character-rigging project. Its engine, **RigExec**,
 is an experimental character-rig evaluator for OpenUSD 26.08. RigExec evaluates

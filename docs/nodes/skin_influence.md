@@ -109,4 +109,4 @@ With identity owner/rest matrices and a source translated two units in X, the ou
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

@@ -197,4 +197,4 @@ bin\launch_usdview.bat docs\examples\touch_regions.usda
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)

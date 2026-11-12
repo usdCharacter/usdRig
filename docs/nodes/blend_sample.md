@@ -115,4 +115,4 @@ python docs/render_media.py --page blend_sample
 
 ---
 
-[UsdRig](../index.md)
+[usdRig](../index.md)
