@@ -525,6 +525,12 @@ RigExecImagingRegistry::_OnObjectsChanged(
     std::set<SdfPath> guideRoots;
     {
         std::lock_guard<std::mutex> lock(_mutex);
+        // Undo, redo, or any other stage opinion on a path the preview
+        // description declares: the description no longer describes what the
+        // stage holds, so the preview identity retires with it.
+        if (sender == UsdStageWeakPtr(_stage)) {
+            _RetirePreviewIdentityForNoticeLocked(notice);
+        }
         authoredOnly = _sessions.empty() && !_authoredGuides.empty() &&
                        sender == UsdStageWeakPtr(_stage);
         if (authoredOnly) {

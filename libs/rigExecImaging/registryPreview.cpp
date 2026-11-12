@@ -16,6 +16,7 @@
 #include "pxr/base/vt/array.h"
 #include "pxr/base/vt/value.h"
 #include "pxr/usd/sdf/path.h"
+#include "pxr/usd/sdf/schema.h"
 #include "pxr/usd/sdf/valueTypeName.h"
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/prim.h"
@@ -101,6 +102,10 @@ RigExecImagingRegistry::SetWeightOverlay(const std::string &weightPrimPath)
         if (_weightOverlay == resolved)
             return true;
         _weightOverlay = resolved;
+        // The overlay changes what every frame evaluates, so a preview's
+        // identity retires with it: nothing keyed to the previous overlay
+        // can be matched to a destination under this one.
+        _RetirePreviewIdentityLocked();
         if (_sessions.empty()) {
             // Remembered for whenever a rig is activated. Not a failure:
             // a host that sets its viewer mode before opening a stage has
@@ -351,6 +356,24 @@ _SplitLines(const std::string &packed)
     return out;
 }
 
+// Does \p layer author anything for \p path? A default counts only for a
+// layer above the edit target: within the layer that authors them, time
+// samples or a spline answer every time, so a default in that same layer
+// never reaches the composed value.
+bool
+_LayerAuthorsAt(const SdfLayerHandle &layer, const SdfPath &path,
+                bool defaultCounts)
+{
+    if (!layer || path.IsEmpty()) {
+        return false;
+    }
+    if (defaultCounts && layer->HasField(path, SdfFieldKeys->Default)) {
+        return true;
+    }
+    return layer->HasField(path, SdfFieldKeys->TimeSamples) ||
+           layer->HasField(path, SdfFieldKeys->Spline);
+}
+
 } // namespace
 
 int
@@ -427,6 +450,9 @@ RigExecImagingRegistry::BeginPreview(const std::string &packedAttributePaths)
     _previewSlots = std::move(slots);
     _previewStage = stage;
     _previewActive = true;
+    // A new session of the identity: the revision counts ticks within it.
+    _RetirePreviewIdentityLocked();
+    _previewIdentity.active = true;
     return int(total);
 }
 
@@ -434,6 +460,246 @@ bool
 RigExecImagingRegistry::IsPreviewActive() const
 {
     return _previewActive;
+}
+
+RigExecPreviewIdentity
+RigExecImagingRegistry::GetPreviewIdentity() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _previewIdentity;
+}
+
+bool
+RigExecImagingRegistry::DeclarePreviewEdit(
+    const std::string &packedAttributePaths, RigExecPreviewEditPolicy policy,
+    const double *values, size_t count)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (!_previewActive) {
+        return false;
+    }
+    const UsdStageRefPtr stage = _PreviewStageLocked();
+    if (!stage) {
+        return false;
+    }
+    const std::vector<std::string> lines = _SplitLines(packedAttributePaths);
+    if (lines.empty()) {
+        return false;
+    }
+    // Resolve every line before touching the description: a declaration
+    // naming one bad path declares nothing.
+    std::vector<PreviewEdit> parsed;
+    parsed.reserve(lines.size());
+    for (const std::string &line : lines) {
+        // `<path>`, or `<path>\t<elementCount>` for an array slot -- the
+        // spelling BeginPreview already takes.
+        const size_t tab = line.find('\t');
+        const bool hasElementCount = tab != std::string::npos;
+        size_t elementCount = 0;
+        if (hasElementCount &&
+            !_ParsePreviewElementCount(line.substr(tab + 1), &elementCount)) {
+            return false;
+        }
+        const std::string text = line.substr(0, tab);
+        if (!SdfPath::IsValidPathString(text)) {
+            return false;
+        }
+        const SdfPath path(text);
+        if (!path.IsAbsolutePath() || !path.IsPropertyPath()) {
+            return false;
+        }
+        const UsdAttribute attribute = stage->GetAttributeAtPath(path);
+        if (!attribute) {
+            return false;
+        }
+        size_t arity = 0;
+        if (_PreviewValueKind(attribute.GetTypeName(), hasElementCount,
+                              elementCount, &arity) == TfToken() ||
+            arity == 0) {
+            return false;
+        }
+        PreviewEdit edit;
+        edit.attributePath = path;
+        edit.policy = policy;
+        edit.pending.assign(arity, 0.0);
+        parsed.push_back(std::move(edit));
+    }
+    size_t total = 0;
+    for (const PreviewEdit &edit : parsed) {
+        total += edit.pending.size();
+    }
+    if (!values || count != total) {
+        return false;
+    }
+    size_t offset = 0;
+    for (PreviewEdit &edit : parsed) {
+        for (double &pending : edit.pending) {
+            pending = values[offset++];
+        }
+    }
+    for (PreviewEdit &edit : parsed) {
+        // A path already in the description keeps its place and takes the
+        // new pending values: the description is a set of paths, not a log.
+        const auto held = std::find_if(
+            _previewEdits.begin(), _previewEdits.end(),
+            [&edit](const PreviewEdit &existing) {
+                return existing.attributePath == edit.attributePath;
+            });
+        if (held != _previewEdits.end()) {
+            held->policy = edit.policy;
+            held->pending = std::move(edit.pending);
+        } else {
+            _previewEdits.push_back(std::move(edit));
+        }
+    }
+    return true;
+}
+
+RigExecPreviewEditStats
+RigExecImagingRegistry::GetPreviewEditStats() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    RigExecPreviewEditStats stats;
+    stats.identity = _previewIdentity;
+    stats.editCount = _previewEdits.size();
+    for (const PreviewEdit &edit : _previewEdits) {
+        stats.valueCount += edit.pending.size();
+    }
+    stats.policy = _previewEdits.empty()
+                       ? RigExecPreviewEditPolicy::AttributeDefault
+                       : _previewEdits.front().policy;
+    return stats;
+}
+
+bool
+RigExecImagingRegistry::PreviewValueIsIndependent(
+    const std::string &attributePathText, UsdTimeCode time,
+    std::string *reason) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (!SdfPath::IsValidPathString(attributePathText)) {
+        if (reason) {
+            *reason = "the path is not a valid Sdf path";
+        }
+        return false;
+    }
+    return _PreviewValueIsIndependentLocked(SdfPath(attributePathText), time,
+                                            reason);
+}
+
+void
+RigExecImagingRegistry::_RetirePreviewIdentityLocked()
+{
+    // A retired session never comes back: the next BeginPreview opens the
+    // next one, and nothing can key a frame to a closed session.
+    ++_previewIdentity.session;
+    _previewIdentity.revision = 0;
+    _previewIdentity.active = false;
+    _previewEdits.clear();
+}
+
+void
+RigExecImagingRegistry::_RetirePreviewIdentityForNoticeLocked(
+    const UsdNotice::ObjectsChanged &notice)
+{
+    for (const PreviewEdit &edit : _previewEdits) {
+        const SdfPath primPath = edit.attributePath.GetPrimPath();
+        // Undo, redo, and any other stage opinion on a declared path: the
+        // description no longer describes what the stage will hold.
+        for (const SdfPath &path : notice.GetChangedInfoOnlyPaths()) {
+            if (path == edit.attributePath || path == primPath) {
+                _RetirePreviewIdentityLocked();
+                return;
+            }
+        }
+        for (const SdfPath &path : notice.GetResyncedPaths()) {
+            if (path == edit.attributePath || path == primPath) {
+                _RetirePreviewIdentityLocked();
+                return;
+            }
+        }
+    }
+}
+
+bool
+RigExecImagingRegistry::_PreviewValueIsIndependentLocked(
+    const SdfPath &attributePath, UsdTimeCode time, std::string *reason) const
+{
+    auto refuse = [reason](const std::string &why) {
+        if (reason) {
+            *reason = why;
+        }
+        return false;
+    };
+    auto accept = [reason](const std::string &why) {
+        if (reason) {
+            *reason = why;
+        }
+        return true;
+    };
+    // The same stage the declaration was made against: a preview can stand
+    // on a context that has not compiled a rig yet.
+    const UsdStageRefPtr stage = _PreviewStageLocked();
+    if (!stage) {
+        return refuse("this context holds no stage");
+    }
+    if (!attributePath.IsAbsolutePath() || !attributePath.IsPropertyPath()) {
+        return refuse("the path is not an absolute attribute path");
+    }
+    const auto declared =
+        std::find_if(_previewEdits.begin(), _previewEdits.end(),
+                     [&attributePath](const PreviewEdit &edit) {
+                         return edit.attributePath == attributePath;
+                     });
+    if (declared == _previewEdits.end()) {
+        return refuse("the edit description declares no pending value here");
+    }
+    if (declared->policy != RigExecPreviewEditPolicy::AttributeDefault) {
+        // A pending key or connection is not a default opinion; every rule
+        // below is about a default that cannot reach the composed value.
+        return refuse("the pending value is not a default opinion");
+    }
+    if (time.IsDefault()) {
+        return refuse("the candidate time is the default time, where the "
+                      "pending default is the value");
+    }
+    const UsdAttribute attribute = stage->GetAttributeAtPath(attributePath);
+    if (!attribute) {
+        return refuse("the stage has no attribute at this path");
+    }
+    if (attribute.HasAuthoredConnections()) {
+        return refuse("the attribute has authored connections, so its "
+                      "composed value is not reasoned about here");
+    }
+    for (const RigSession &session : _sessions) {
+        if (session.bridge &&
+            session.bridge->GetEvaluator().IsPropertyChainTarget(
+                attributePath)) {
+            return refuse("a compiled property chain revises this attribute");
+        }
+    }
+    const SdfLayerHandle target = stage->GetEditTarget().GetLayer();
+    const std::vector<SdfLayerHandle> stack = stage->GetLayerStack();
+    size_t targetIndex = stack.size();
+    for (size_t i = 0; i < stack.size(); ++i) {
+        if (stack[i] == target) {
+            targetIndex = i;
+            break;
+        }
+    }
+    // Anything authored above the edit target decides the composed answer
+    // at every time, and a pending value in the target can never reach it.
+    for (size_t i = 0; i < targetIndex; ++i) {
+        if (_LayerAuthorsAt(stack[i], attributePath, true)) {
+            return accept("a layer stronger than the edit target authors this "
+                          "attribute, so the pending default never applies");
+        }
+    }
+    if (_LayerAuthorsAt(target, attributePath, false)) {
+        return accept("authored time samples in the edit target layer answer "
+                      "every time, and a same-layer default never hides them");
+    }
+    return refuse("nothing but the pending default answers this time");
 }
 
 bool
@@ -567,6 +833,7 @@ RigExecImagingRegistry::UpdatePreview(const double *values, size_t count)
         if (!_ResolvePreviewSample(values, count, &byRig, &xformDeltas)) {
             return false;
         }
+        ++_previewIdentity.revision;
         // The xform lane needs no evaluation at all: the delta goes straight
         // into the chains and the dirty notice it sends is the whole update.
         _SetChainXformDeltas(xformDeltas);
@@ -612,6 +879,7 @@ RigExecImagingRegistry::EndPreview(bool publish)
         _previewSlots.clear();
         _previewActive = false;
         _previewStage = UsdStageWeakPtr();
+        _RetirePreviewIdentityLocked();
         _SetChainXformDeltas({});
         for (RigSession &session : _sessions) {
             session.settleOverrides.clear();

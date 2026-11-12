@@ -213,6 +213,11 @@ Every name below carries the `RigExecImaging_` prefix.
 | `int UpdatePreviewForStage(long long id, const double *values, int count)` | |
 | `int EndPreviewForStage(long long id)` | |
 | `int EndPreviewWithoutPublishForStage(long long id)` | |
+| `int GetPreviewIdentityForStage(long long id, unsigned long long *session, unsigned long long *revision, int *active)` | the monotonic preview session/revision a snapshot is keyed against |
+| `int DeclarePreviewEditForStage(long long id, const char *paths, int policy, const double *values, int count)` | adds to the preview's edit description (0 default value, 1 time sample, 2 connection) |
+| `int GetPreviewEditStatsForStage(long long id, unsigned long long *session, unsigned long long *revision, int *edits, int *values, int *policy)` | |
+| `int PreviewValueIsIndependentForStage(long long id, const char *attribute, double frame, char *reason, int capacity)` | 1 when the composed value at that frame provably does not come from the pending default |
+| `int AdmitWarmRouteForStage(long long id, int route, const char *rig, double frame, unsigned long long session, char *reason, int capacity)` | 1 admitted, 0 refused with a reason |
 | `int GetPublishedPointsForStage(long long id, const char *prim, float *xyz, int capacity)` | the point count, -1 when the prim publishes no points, -2 with no context |
 | `int GetPublishedScalarPrimvarForStage(long long id, const char *prim, const char *primvarName, float *out)` | 1 published, 0 not published, -2 with no context |
 | `int GetPublishedXformRevisionForStage(long long id, const char *prim, double out[16])` | 1 with the revised * base^-1 map, 0 when the rig drives no transform there, -2 with no context |
@@ -267,6 +272,23 @@ its published generation, including the first opinion in an empty session
 layer. A drag on a property that movers revise previews its base, so its
 exact commit settles the same way. Empty-field ancestor overs are inert; real
 metadata, structural edits and connections still require evaluation.
+
+**Preview snapshots.** Each preview carries a session id and a revision that
+increase monotonically: `BeginPreviewForStage` mints the session, every
+`UpdatePreviewForStage` bumps the revision, and `EndPreviewForStage`,
+`EndPreviewWithoutPublishForStage`, an undo or redo of a declared path, a
+weight-overlay change, a recompile, deactivation or a replaced stage retire it
+— the session moves forward, the revision returns to zero. A host that declares
+what an edit would write (`DeclarePreviewEditForStage`, additive: a repeated
+path updates rather than appends) can ask whether a candidate frame is
+independent of that pending value (`PreviewValueIsIndependentForStage`). The
+answer is yes only when an authored time sample or a stronger layer opinion
+provably answers that attribute; an attribute a compiled property chain revises,
+one with authored connections, or one the stage authors nowhere is refused. Warm
+work carries a route: the frame the preview stands on is refused as pending, a
+frame already backed by a prepared burst is admitted as committed, and a frame
+built ahead of its destination is admitted only when every declared edit is
+provably independent of it.
 
 ## usdview plugins
 

@@ -346,6 +346,25 @@ RigExecImagingRegistry::BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
     if (!_scheduler || !_scheduler->IsGenerationCurrent(rig, generation)) {
         return RigExecWarmFactoryResult();
     }
+    // Warm-route admission. Interactive overrides are already on the bridge
+    // (a preview authors nothing), so the frame the preview stands on has no
+    // committed consumer yet and is refused outright. Every other frame keeps
+    // its route; work with no prepared burst behind it is built ahead of its
+    // destination and must be provably stable against the declared edits.
+    RigExecWarmRouteDescriptor route;
+    route.rigPath = rig;
+    route.time = time;
+    route.previewSession = _previewIdentity.session;
+    route.previewRevision = _previewIdentity.revision;
+    if (_previewActive && time == _lastTime) {
+        route.route = RigExecWarmRoute::PendingPreview;
+    } else {
+        route.route = burst ? RigExecWarmRoute::Committed
+                            : RigExecWarmRoute::CommittedSpeculative;
+    }
+    if (!_AdmitWarmRouteLocked(route, nullptr)) {
+        return RigExecWarmFactoryResult();
+    }
     const RigExecRigEvaluator &evaluator = session->bridge->GetEvaluator();
     // The cached route, when the burst prepared one for this rig's
     // program: prepared pins, visit sets, and compiled rig signature, with static

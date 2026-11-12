@@ -130,6 +130,71 @@ RigExecImagingRegistry::GetWarmSamplingMaxMs()
     return _warmSamplingMaxMs;
 }
 
+bool
+RigExecImagingRegistry::AdmitWarmRoute(const RigExecWarmRouteDescriptor &route,
+                                       std::string *reason) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _AdmitWarmRouteLocked(route, reason);
+}
+
+bool
+RigExecImagingRegistry::_AdmitWarmRouteLocked(
+    const RigExecWarmRouteDescriptor &route, std::string *reason) const
+{
+    const auto refuse = [reason](const std::string &why) {
+        if (reason) {
+            *reason = why;
+        }
+        return false;
+    };
+    const auto accept = [reason](const std::string &why) {
+        if (reason) {
+            *reason = why;
+        }
+        return true;
+    };
+    switch (route.route) {
+    case RigExecWarmRoute::Committed:
+        return accept("the frame has its destination: the committed cache "
+                      "and its index");
+    case RigExecWarmRoute::PendingPreview:
+        // A preview authors nothing, so the pose this frame would carry
+        // has no committed consumer to read it: the work is refused here
+        // rather than run and thrown away.
+        return refuse("the frame's value is still a pending preview: no "
+                      "committed consumer can reach it");
+    case RigExecWarmRoute::CommittedSpeculative:
+        break;
+    }
+    // Speculative work is built before its destination exists. It is worth
+    // building only when a later edit cannot change it.
+    if (route.previewSession &&
+        route.previewSession != _previewIdentity.session) {
+        return refuse("the request was captured under preview session " +
+                      std::to_string(route.previewSession) +
+                      ", which has retired");
+    }
+    if (_previewEdits.empty()) {
+        return accept("no edit is declared against this candidate, so nothing "
+                      "pending can change it");
+    }
+    for (const PreviewEdit &edit : _previewEdits) {
+        std::string why;
+        if (!_PreviewValueIsIndependentLocked(edit.attributePath, route.time,
+                                              reason ? &why : nullptr)) {
+            if (reason) {
+                *reason = "the candidate time is not provably independent of "
+                          "the declared edit " +
+                          edit.attributePath.GetAsString() + ": " + why;
+            }
+            return false;
+        }
+    }
+    return accept("every declared edit is provably independent of this "
+                  "candidate time");
+}
+
 std::vector<UsdTimeCode>
 RigExecImagingRegistry::_CursorSweepTimes(const RigSession &session,
                                           UsdTimeCode playhead)

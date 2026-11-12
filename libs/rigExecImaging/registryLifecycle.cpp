@@ -585,6 +585,11 @@ RigExecImagingRegistry::_Deactivate(bool byHost)
     }
     TfNotice::Revoke(_changeKey);
     _changeKey = TfNotice::Key();
+    _RetirePreviewIdentityLocked();
+    _previewSlots.clear();
+    _previewXformDeltas.clear();
+    _previewActive = false;
+    _previewStage = UsdStageWeakPtr();
     _assetRoots.clear();
     _readRoots.clear();
     _readRootsDirty = false;
