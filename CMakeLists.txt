@@ -694,6 +694,19 @@ add_test(NAME testRigExecAllocationChecker
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/testRigExecAllocationChecker.py")
 set_tests_properties(testRigExecAllocationChecker PROPERTIES LABELS "fast")
 
+# The legal packaging layer is stdlib-only. The manifest must partition the
+# tree exactly once, name every shipped legal text by its canonical file name,
+# and agree with the install prefix and the shipped archives member by member.
+add_test(NAME testRigExecLegalPackaging
+    COMMAND ${Python3_EXECUTABLE}
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/testRigExecLegalPackaging.py")
+set_tests_properties(testRigExecLegalPackaging PROPERTIES LABELS "fast")
+
+add_test(NAME testRigExecLicenseManifest
+    COMMAND ${Python3_EXECUTABLE}
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_licenses.py")
+set_tests_properties(testRigExecLicenseManifest PROPERTIES LABELS "fast")
+
 add_executable(testRigExecMath tests/testRigExecMath.cpp)
 add_executable(testRigExecWrinkleMath tests/testRigExecWrinkleMath.cpp)
 target_link_libraries(testRigExecWrinkleMath PRIVATE rigExecMath)
@@ -3053,3 +3066,11 @@ install(FILES plugin/usdNoodles/LICENSE.txt
          plugin/usdNoodles/NOODLES_LICENSE.txt
          plugin/usdNoodles/THIRD_PARTY_LICENSES.txt
     DESTINATION "share/rigExec/plugin/usdNoodles")
+
+# The manifest ships with the prefix so a consumer can trace every installed
+# legal text back to its source, and the checker that keeps that record honest
+# ships beside it. docs/references.md and docs/concepts/riglogic.md are
+# documentation prose, not legal texts, and are deliberately not installed.
+install(FILES tools/license_manifest.json
+         tools/check_licenses.py
+    DESTINATION "share/rigExec/tools")

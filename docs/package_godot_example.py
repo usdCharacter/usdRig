@@ -30,10 +30,12 @@ No Godot cache, editor state, credentials, or platform binaries other than
 the tested Windows x86-64 pair are included. Source is included; other
 platforms need their own native builds and exporter toolchain setup.
 
-Licenses: LICENSE (godot_rigExec, MIT); the LICENSE-*, NOTICE-usdRig and
-THIRD_PARTY_NOTICES-usdRig.md files here; addons/rigexec/THIRD_PARTY_NOTICES.md
-and its license texts; tools/thirdparty/flatbuffers/LICENSE for the vendored
-FlatBuffers Python runtime.
+Licenses: LICENSE, NOTICE and THIRD_PARTY_NOTICES.md at the root of this
+archive (the canonical usdRig texts, copied from the source checkout); the
+LICENSE-*, NOTICE-usdRig and THIRD_PARTY_NOTICES-usdRig.md copies kept for the
+tutorial layout; addons/rigexec/THIRD_PARTY_NOTICES.md and its license texts;
+tools/thirdparty/flatbuffers/LICENSE for the vendored FlatBuffers Python
+runtime. tools/license_manifest.json records which text covers which member.
 """
 
 
@@ -81,7 +83,7 @@ def main():
         "README.md")]
     payload = sorted(set(files))
 
-    legal = legal_members("godot_zip", checkout=PLUGIN, prefix=f"{SOURCE}/")
+    legal = legal_members("godot_zip", addon_root=PLUGIN)
     members = {name: path for name, path, _ in legal}
     members.update({_member(path.relative_to(PLUGIN).as_posix()): path for path in payload})
     # The demo folder ships the add-on again so the demo opens standalone;

@@ -107,10 +107,28 @@ schema resources under `plugin/rigExecSchema/resources` and the node pages in
 `docs/nodes` — is machine output. Its origin class is the fact the manifest
 records; the grant comes from the generator and its inputs.
 
+The install prefix ships that record at
+`share/rigExec/tools/license_manifest.json` next to the canonical texts and the
+copies of every third-party license it installs. [tools/check_licenses.py](tools/check_licenses.py)
+re-derives the partition from the checkout and checks the mapping against the
+install map and the shipped archives member by member; it runs in the test
+suite as `testRigExecLicenseManifest`, and `testRigExecLegalPackaging` covers
+the packaging helpers in docs/legal_members.py. Two
+files are prose references only, never legal texts to ship:
+[docs/references.md](docs/references.md) and
+[docs/concepts/riglogic.md](docs/concepts/riglogic.md).
+
 ## Published methods
 
 Dual-quaternion skinning and Delta Mush have public research references listed in
 [Method references](docs/references.md). Those references identify techniques,
 not a claim that RigExec invented them or an endorsement by their authors.
 A citation alone does not establish rights to source code or assets.
+
+`docs/references.md` and `docs/concepts/riglogic.md` are source-only prose
+references: they cite and explain upstream work, they are not license texts, and
+they are not installed or archived as legal material. Every other relative link
+in this file names a legal text that travels with the distribution at the same
+source-relative path, under `share/rigExec` in the install prefix and in the
+tutorial archives.
 

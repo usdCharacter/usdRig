@@ -34,42 +34,63 @@ def archive_member_name(name: str) -> str:
     return name
 
 
-def _is_checkout_path(source: str) -> bool:
-    return bool(source) and " " not in source and not source.startswith("/") and ":" not in source
+def resolve_legal_source(member: str, source, addon_root: Path | None = None) -> Path:
+    """Resolve one manifest source to a file, or refuse to guess it.
 
-
-def legal_members(section: str, checkout: Path | None = None,
-                  prefix: str = "") -> list[tuple[str, Path, dict]]:
-    """Return [(member name, file to pack, manifest entry)] for one channel.
-
-    A source naming a file in this checkout resolves here. A source naming the
-    sibling checkout ('../name/...') resolves there. A prose source means the
-    member is a copy inside that checkout at the member path: the add-on
-    carries the repository LICENSE wherever it names a LICENSE, and its demo
-    folder mirrors the add-on folder.
+    A source is either a path inside this checkout, or a path inside the
+    add-on checkout supplied explicitly as addon_root, written as
+    '../<add-on-name>/...'. Anything else is prose: the manifest then names
+    no file, and no bytes may be invented for it. No segment may be '.' or
+    '..', and an add-on source may never leave the root that was passed in.
     """
-    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    if not isinstance(source, str) or not source.strip():
+        raise ValueError(f"{member}: the manifest names no source file; "
+                         f"refusing to invent a legal text")
+    source = source.strip()
+    if source.startswith(("http://", "https://")):
+        raise ValueError(f"{member}: source {source!r} is a URL, not a file to pack")
+    if "\\" in source or ":" in source or " " in source:
+        raise ValueError(f"{member}: source {source!r} is prose provenance, not a path")
+    parts = source.split("/")
+    if parts[0] == "..":
+        if addon_root is None:
+            raise ValueError(f"{member}: source {source!r} needs an explicit add-on root")
+        root = Path(addon_root).resolve()
+        if len(parts) < 2 or parts[1] != root.name:
+            raise ValueError(f"{member}: source {source!r} is not inside the "
+                            f"authorized add-on root {root}")
+        if len(parts) < 3:
+            raise ValueError(f"{member}: source {source!r} names the add-on root, "
+                            "not a legal text")
+        if any(part in ("", ".", "..") for part in parts[2:]):
+            raise ValueError(f"{member}: unsafe add-on source path {source!r}")
+        path = root.joinpath(*parts[2:])
+        if not path.is_relative_to(root):
+            raise ValueError(f"{member}: source {source!r} escapes the add-on root {root}")
+        return path
+    if any(part in ("", ".", "..") for part in parts):
+        raise ValueError(f"{member}: unsafe source path {source!r}")
+    path = (ROOT / source).resolve()
+    if not path.is_relative_to(ROOT):
+        raise ValueError(f"{member}: source {source!r} escapes this checkout")
+    return path
+
+
+def legal_members(section: str, manifest: dict | None = None,
+                  addon_root: Path | None = None) -> list[tuple[str, Path, dict]]:
+    """Return [(member name, file to pack, manifest entry)] for one channel."""
+    if manifest is None:
+        manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     entries = manifest["distribution"][section]["legal_members"]
-    members = []
-    for entry in entries:
-        name = archive_member_name(entry["member"])
-        source = (entry.get("source") or "").strip()
-        if source.startswith("../"):
-            if checkout is None:
-                raise ValueError(f"{name}: source {source!r} needs the sibling checkout")
-            # '..' plus the checkout directory name; the rest is under it.
-            path = checkout.joinpath(*Path(source).parts[2:])
-        elif _is_checkout_path(source):
-            path = ROOT / source
-        else:
-            if checkout is None:
-                raise ValueError(f"{name}: source {source!r} needs the checkout it came from")
-            relative = name[len(prefix):] if name.startswith(prefix) else name
-            if relative.startswith("demo/"):
-                relative = relative[len("demo/"):]
-            path = checkout / "LICENSE" if Path(relative).name == "LICENSE" else checkout / relative
-        members.append((name, path, entry))
-    return members
+    return [(archive_member_name(entry.get("member")),
+            resolve_legal_source(entry.get("member", ""), entry.get("source"), addon_root),
+            entry)
+            for entry in entries]
+
+
+def missing_sources(members: list[tuple[str, Path, dict]]) -> list[tuple[str, Path]]:
+    """Legal members whose mapped source text is not on disk."""
+    return [(name, path) for name, path, _ in members if not path.is_file()]
 
 
 def member_bytes(previous: bytes | None, source: Path) -> bytes:
@@ -81,8 +102,9 @@ def member_bytes(previous: bytes | None, source: Path) -> bytes:
     A member whose content really changed is written from its source.
     """
     raw = source.read_bytes()
-    if previous is not None and normalize_line_endings(previous) == normalize_line_endings(raw):
-        return previous
+    if previous is not None:
+        if normalize_line_endings(previous) == normalize_line_endings(raw):
+            return previous
     return raw
 
 

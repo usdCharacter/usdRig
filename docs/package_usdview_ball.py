@@ -10,7 +10,8 @@ import hashlib
 import json
 import re
 
-from legal_members import (legal_member_status, legal_members, member_bytes)
+from legal_members import (legal_member_status, legal_members, member_bytes,
+                          missing_sources)
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
@@ -29,6 +30,9 @@ if ARCHIVE.is_file():
         previous = {name: archive.read(name) for name in archive.namelist()}
 
 legal = legal_members("usdview_zip")
+missing = missing_sources(legal)
+if missing:
+    raise SystemExit("missing legal source: " + ", ".join(str(path) for _, path in missing))
 status = {name: legal_member_status(previous.get(name), path)
           for name, path, _ in legal}
 for name, state in status.items():
@@ -60,6 +64,10 @@ USD variants through face-varying UVs and a UsdPreviewSurface material.
 The stage's rig, controllers and material remain editable.
 
 Legal texts in this archive: {legal}.
+The links inside THIRD_PARTY_NOTICES.md use the same source-relative paths as
+the repository and the installed usdRig prefix, so they resolve here.
+docs/references.md and docs/concepts/riglogic.md are documentation prose, not
+legal texts, and ship only in the source checkout.
 
 Live rig evaluation requires the usdRig schema and imaging plugins.
 """.format(legal=", ".join(member for member, _, _ in legal))

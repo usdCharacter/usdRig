@@ -4,57 +4,63 @@
   "status": "inventory baseline; unresolved families need owner confirmation before any automatic blessing",
   "resolved_by": "license inventory task (issue 44), sequenced on parent PR #46",
   "inventory_boundary": {
-    "base_commit": "e52aabb9fba5de1f8671fd921ca78c05bccdc9e4",
-    "base_description": "PR #46 head (docs/project-engine-ontology), draft, mergeable, rebased onto main 46dc02fe61a9a3322e20f4d34324e427404cc7d1; origin/main..head is the three naming commits 9dd2ba7, 7c76b93, e52aabb",
+    "base_commit": "99b250f22f1eb8e3c18a6e761232e9894ff2ef08",
+    "base_description": "main head selected for the distribution-links task: it carries the merged PR #46 naming work (that PR landed from a rebased head, e52aabb is not an ancestor of this commit, so every count was recomputed here) plus the four license-inventory commits 7299439, 1a95733, e8fcabb and 23a0ea5",
     "parent_pr": 46,
-    "parent_pr_head": "e52aabb9fba5de1f8671fd921ca78c05bccdc9e4",
+    "parent_pr_state": "merged",
     "parent_pr_base": "main",
-    "main_head_at_boundary": "46dc02fe61a9a3322e20f4d34324e427404cc7d1",
-    "open_prs_at_boundary": [
-      {
-        "number": 46,
-        "head": "e52aabb9fba5de1f8671fd921ca78c05bccdc9e4",
-        "state": "open",
-        "draft": true,
-        "mergeable": "MERGEABLE",
-        "checks": "pass (OpenUSD v26.08, clang-format, configure, no new bare new, no new hidden locks, runtime compiles without OpenUSD, usdRig build (Release), usdRig install layout + plugInfo, ctest full suite); pending (Release C++ macos-15, Release C++ windows-2022)"
-      }
-    ],
-    "rebase_rule": "If PR #46's head moves, recompute every count in this manifest against the new head before use. The archive blobs below were verified unchanged between 66b24f2 and this head.",
-    "tracked_files_total": 1785,
+    "main_head_at_boundary": "99b250f22f1eb8e3c18a6e761232e9894ff2ef08",
+    "open_prs_at_boundary": [],
+    "open_pr_note": "No pull request was open at this boundary; the inventory and this task land as their own PRs on main.",
+    "rebase_rule": "If main moves, recompute every count in this manifest against the new head before use. The archive blobs below were verified unchanged between 66b24f2 and this head.",
+    "tracked_files_total": 1789,
+    "tracked_files_at_base_commit": 1785,
     "inventory_scope_excludes": [
       "thirdparty/**",
       "plugin/usdNoodles/**"
     ],
-    "tracked_files_in_scope": 1580,
-    "license_marker_files_in_scope": 26,
+    "tracked_files_in_scope": 1584,
+    "license_marker_files_in_scope": 25,
+    "marker_scan_definition": "Plain-text files (no NUL byte) whose content contains 'copyright', 'license' or 'spdx' case-insensitively, measured over every file of the inventory result tree outside the scope exclusions. The earlier count of 26 used an unqualified scan that also matched binary payloads; see totals.false_positive_note.",
     "archive_members_inventory": [
       {
         "archive": "docs/examples/usdview_rolling_ball.zip",
-        "blob": "dee62fa0668fe2821aa5161219179a31294dea8d",
-        "members": 15,
-        "legal_members": 4
+        "members": 25,
+        "legal_members": 14,
+        "refresh_note": "repacked on this boundary: the nine payload members keep their bytes, and the legal members gained the root LICENSE, NOTICE and THIRD_PARTY_NOTICES.md, the source-relative copies and tools/license_manifest.json",
+        "blob_before_repack": "0b6b85d3c383fab0c7524c24027ffddb92a0ffad",
+        "payload_members": 9,
+        "payload_digest": "d1078b784f090d4ca81815f397cc3f8e81fd869e3a78f8b880a73e49a0bd6c80",
+        "self_reference_note": "the repacked archive carries tools/license_manifest.json, so the manifest cannot record a blob of an archive that contains it; the payload digest is the stable record and it is unchanged on this boundary",
+        "legal_members_mapped": 14
       },
       {
         "archive": "docs/examples/godot_rolling_ball.zip",
         "blob": "4c8123a225f030028be9ffbb1ca855ee7b79289e",
         "members": 85,
-        "legal_members": 24
+        "legal_members": 18,
+        "refresh_note": "18 legal texts are packed; 7 mapped members (godot_rigExec/NOTICE, godot_rigExec/THIRD_PARTY_NOTICES.md, godot_rigExec/thirdparty/flatbuffers/LICENSE, godot_rigExec/thirdparty/lzma/NOTICE.md, godot_rigExec/thirdparty/lzma/DOC/lzma-sdk.txt, godot_rigExec/plugin/usdNoodles/LICENSE.txt, godot_rigExec/tools/license_manifest.json) come from the add-on checkout or the install prefix and are shipped only when that tree is rebuilt",
+        "legal_members_mapped": 25
       },
       {
         "archive": "examples/biped/Biped.usdz",
         "blob": "2a4542c30dffffd7af5c33307fcbba4fb23a0b49",
         "members": 31,
-        "legal_members": 0
+        "legal_members": 0,
+        "refresh_note": "unchanged on this boundary",
+        "legal_members_mapped": 6
       },
       {
         "archive": "examples/2d/rubberhose/rubberhose.usdz",
         "blob": "360d068b64efe73bc364c777571d7d8aa9fc72f6",
         "members": 3,
-        "legal_members": 0
+        "legal_members": 0,
+        "refresh_note": "unchanged on this boundary",
+        "legal_members_mapped": 3
       }
     ],
-    "count_scope": "Every count below is measured against the tracked-file list of base_commit. This manifest is added by the inventory result commit, so a partition run on that result tree assigns 1786 paths: the 1785 here plus tools/license_manifest.json itself, which falls in original-build-and-tooling."
+    "count_scope": "Every count is measured on the inventory result tree: the 1785 tracked files of base_commit plus tools/license_manifest.json (original-build-and-tooling), docs/legal_members.py (original-documentation) and tests/testRigExecLegalPackaging.py (original-test-suites). Each family's matched_files is measured on that same tree.",
+    "partition_method": "tools/check_licenses.py re-derives the partition from git ls-files plus untracked, non-ignored files and re-runs the marker scan; the counts above are what that check expects on this tree"
   },
   "categories": {
     "original": "authored by the project; root MIT license applies",
@@ -65,7 +71,7 @@
   },
   "precedence": {
     "rule": "A path belongs to the family with the lowest precedence number whose globs match it, after that family's carve_outs are applied. Ties are impossible because each family's glob set is disjoint by carve-out. A path matching nothing falls to the precedence-6 fallback.",
-    "verification": "The 29 families below partition all 1785 tracked files exactly once: 1785 assigned, 0 unassigned, 0 double-assigned, 0 in fallback-unclassified. Regenerate with tools/check_license_manifest.py (not yet written; the rule is stated here so the checker can implement it).",
+    "verification": "The 29 families below partition the 1789 files of the inventory result tree exactly once: 1789 assigned, 0 unassigned, 0 double-assigned, 0 in fallback-unclassified. Verify with tools/check_licenses.py, which re-derives the partition from the checkout.",
     "byte_identity_note": "Legal texts shipped inside the checked-in archives are CRLF-normalized copies of their repository sources. They match the source after CRLF -> LF normalization, except the two THIRD_PARTY_NOTICES copies, which are content-stale (see distribution.gaps)."
   },
   "families": [
@@ -554,7 +560,7 @@
           "path": "LICENSE"
         },
         {
-          "path": "docs/references.md"
+          "prose": "docs/references.md"
         }
       ],
       "generator": null,
@@ -664,7 +670,7 @@
       ],
       "generator": null,
       "exception_scope": "Fixture data is separated from test code because fixtures include reference values produced by upstream solvers.",
-      "matched_files": 290
+      "matched_files": 291
     },
     {
       "id": "original-build-and-tooling",
@@ -692,7 +698,8 @@
       "holder_status": "stated by the root license",
       "provenance": [
         "CMakeLists pins the FlatBuffers and LZMA install notices and comments on the vendored Apache-2.0 headers",
-        "the root .clang-format is adapted from OpenUSD's conventions per AGENTS.md; that is a derivation of style rules, not of licensed code, and clang-format 18.1.8 is an external tool"
+        "the root .clang-format is adapted from OpenUSD's conventions per AGENTS.md; that is a derivation of style rules, not of licensed code, and clang-format 18.1.8 is an external tool",
+        "tools/license_manifest.json and tools/check_licenses.py are project-authored records and checks, not third-party material"
       ],
       "required_texts": [
         {
@@ -701,7 +708,7 @@
       ],
       "generator": null,
       "exception_scope": "External tools invoked by these scripts (flatc, usdGenSchema, clang-format, MkDocs, Qt/PySide) are not relicensed by the root MIT; only their checked-in scripts are project work.",
-      "matched_files": 110
+      "matched_files": 112
     },
     {
       "id": "original-example-generators",
@@ -762,6 +769,7 @@
       "provenance": [
         "docs/references.md cites public algorithm sources and states that a citation identifies a technique, not rights to source code or assets",
         "docs/concepts/riglogic.md carries the OpenRigLogic provenance section for the ported algorithms",
+        "docs/legal_members.py and the two tutorial packers read the manifest's distribution mapping; they ship no legal text of their own",
         "docs/specs/biped-rig.md records the Squarebit Eye EULA boundary for the shipped shader"
       ],
       "required_texts": [
@@ -769,12 +777,15 @@
           "path": "LICENSE"
         },
         {
-          "path": "docs/references.md"
+          "prose": "docs/references.md"
+        },
+        {
+          "prose": "docs/concepts/riglogic.md"
         }
       ],
       "generator": null,
       "exception_scope": "Documentation prose quoting upstream license text (the Epic MIT block in THIRD_PARTY_NOTICES.md) reproduces that text under its own terms; quoting does not transfer ownership.",
-      "matched_files": 65
+      "matched_files": 66
     },
     {
       "id": "unresolved-icons-atlas",
@@ -951,22 +962,22 @@
     }
   ],
   "totals": {
-    "assigned_files": 1785,
+    "assigned_files": 1789,
     "unassigned_files": 0,
     "double_assigned_files": 0,
     "by_category": {
-      "original": 1045,
-      "derived": 166,
-      "bundled": 45,
+      "original": 1049,
+      "unresolved": 459,
       "generated": 70,
-      "unresolved": 459
+      "bundled": 45,
+      "derived": 166
     },
-    "files_with_license_or_copyright_markers_in_scope": 26,
+    "files_with_license_or_copyright_markers_in_scope": 25,
     "false_positive_note": "examples/2d/bust_dd_b/textures/MouthLine.png matches a marker scan only because compressed PNG bytes happen to contain the substring 'spdx'; a checker must scan text files only or decode binary payloads before matching."
   },
   "distribution": {
     "cmake_install": {
-      "source": "the install(FILES ...) calls in CMakeLists.txt whose DESTINATION is share/rigExec or share/rigExec/licenses, with the RENAME target naming the installed file; the contract is the source -> destination map below, not a line range (line anchors moved twice: 2889-3009 at the previous boundary, 3005-3015 at this one)",
+      "source": "the install(FILES ...) calls in CMakeLists.txt whose DESTINATION is share/rigExec, share/rigExec/licenses, share/rigExec/tools or a source-relative subdirectory of share/rigExec; the contract is the source -> destination map below, not a line range",
       "legal_files": [
         {
           "source": "LICENSE",
@@ -984,42 +995,155 @@
           "family": "original-legal-records"
         },
         {
+          "source": "tools/license_manifest.json",
+          "destination": "share/rigExec/tools/license_manifest.json",
+          "family": "original-build-and-tooling",
+          "note": "the manifest ships with the prefix so an installed consumer can trace every legal text to its source"
+        },
+        {
           "source": "plugin/usdNoodles/LICENSE.txt",
           "destination": "share/rigExec/licenses/OpenUSD-LICENSE.txt",
-          "family": "noodles-license-texts"
+          "family": "noodles-license-texts",
+          "note": "renamed alias of the same text"
         },
         {
           "source": "thirdparty/flatbuffers/LICENSE",
           "destination": "share/rigExec/licenses/FlatBuffers-LICENSE.txt",
-          "family": "flatbuffers-runtime"
+          "family": "flatbuffers-runtime",
+          "note": "renamed alias of the same text"
         },
         {
           "source": "thirdparty/lzma/NOTICE.md",
           "destination": "share/rigExec/licenses/LZMA-SDK-NOTICE.md",
-          "family": "lzma-sdk"
+          "family": "lzma-sdk",
+          "note": "renamed alias of the same text"
         },
         {
           "source": "thirdparty/lzma/DOC/lzma-sdk.txt",
           "destination": "share/rigExec/licenses/LZMA-SDK-LICENSE.txt",
-          "family": "lzma-sdk"
+          "family": "lzma-sdk",
+          "note": "renamed alias of the same text"
+        },
+        {
+          "source": "thirdparty/lzma/NOTICE.md",
+          "destination": "share/rigExec/thirdparty/lzma/NOTICE.md",
+          "family": "lzma-sdk",
+          "note": "source-relative copy so the link in THIRD_PARTY_NOTICES.md resolves in the prefix"
+        },
+        {
+          "source": "thirdparty/lzma/DOC/lzma-sdk.txt",
+          "destination": "share/rigExec/thirdparty/lzma/DOC/lzma-sdk.txt",
+          "family": "lzma-sdk",
+          "note": "source-relative copy so the link in THIRD_PARTY_NOTICES.md resolves in the prefix"
+        },
+        {
+          "source": "thirdparty/flatbuffers/LICENSE",
+          "destination": "share/rigExec/thirdparty/flatbuffers/LICENSE",
+          "family": "flatbuffers-runtime",
+          "note": "source-relative copy so the link in THIRD_PARTY_NOTICES.md resolves in the prefix"
+        },
+        {
+          "source": "plugin/usdNoodles/LICENSE.txt",
+          "destination": "share/rigExec/plugin/usdNoodles/LICENSE.txt",
+          "family": "noodles-license-texts",
+          "note": "source-relative copy; ships whether or not RIGEXEC_BUILD_USDNOODLES built the editor"
+        },
+        {
+          "source": "plugin/usdNoodles/NOODLES_LICENSE.txt",
+          "destination": "share/rigExec/plugin/usdNoodles/NOODLES_LICENSE.txt",
+          "family": "noodles-license-texts",
+          "note": "the Meta MIT text for the pinned noodles shaders"
+        },
+        {
+          "source": "plugin/usdNoodles/THIRD_PARTY_LICENSES.txt",
+          "destination": "share/rigExec/plugin/usdNoodles/THIRD_PARTY_LICENSES.txt",
+          "family": "noodles-license-texts",
+          "note": "the SIL Open Font License 1.1 text for the Poppins atlases"
+        },
+        {
+          "source": "tools/check_licenses.py",
+          "destination": "share/rigExec/tools/check_licenses.py",
+          "family": "original-build-and-tooling",
+          "note": "the verifier ships beside the manifest; it is a tool, not a legal text, and it travels so the links in THIRD_PARTY_NOTICES.md resolve in the prefix"
         }
       ],
       "uncovered_by_install": [
-        "the Poppins OFL text (plugin/usdNoodles/THIRD_PARTY_LICENSES.txt) is not installed",
         "the Epic OpenRigLogic MIT text has no installed file; it exists only inline in THIRD_PARTY_NOTICES.md",
         "the Squarebit Eye EULA is not installed and not checked in as text",
-        "icons/ and plugin/rigExecUsdview/icons/ images ship in installed resources with no provenance notice"
+        "icons/ and plugin/rigExecUsdview/icons/ images ship in installed resources with no provenance notice",
+        "docs/references.md and docs/concepts/riglogic.md are deliberately not installed; they are prose references, not legal texts (see prose_references)"
       ]
     },
     "usdview_zip": {
       "archive": "docs/examples/usdview_rolling_ball.zip",
       "generator": "docs/package_usdview_ball.py",
+      "member_contract": "docs/legal_members.py reads this list and the packer writes exactly those members. The archive's own manifest.json hashes payload members only; legal members are compared with the files they came from, and the manifest is never hashed into a digest that contains itself.",
       "legal_members": [
+        {
+          "member": "LICENSE",
+          "source": "LICENSE",
+          "spdx": "MIT",
+          "status": "byte-identical to source after CRLF normalization"
+        },
+        {
+          "member": "NOTICE",
+          "source": "NOTICE",
+          "spdx": "MIT",
+          "status": "byte-identical to source after CRLF normalization"
+        },
+        {
+          "member": "THIRD_PARTY_NOTICES.md",
+          "source": "THIRD_PARTY_NOTICES.md",
+          "spdx": null,
+          "status": "canonical root name; byte-identical to source so the notice and its links travel together"
+        },
+        {
+          "member": "thirdparty/flatbuffers/LICENSE",
+          "source": "thirdparty/flatbuffers/LICENSE",
+          "spdx": "Apache-2.0",
+          "status": "source-relative copy; byte-identical to source"
+        },
+        {
+          "member": "thirdparty/lzma/NOTICE.md",
+          "source": "thirdparty/lzma/NOTICE.md",
+          "spdx": null,
+          "status": "source-relative copy; byte-identical to source"
+        },
+        {
+          "member": "thirdparty/lzma/DOC/lzma-sdk.txt",
+          "source": "thirdparty/lzma/DOC/lzma-sdk.txt",
+          "spdx": null,
+          "status": "source-relative copy; byte-identical to source"
+        },
+        {
+          "member": "plugin/usdNoodles/LICENSE.txt",
+          "source": "plugin/usdNoodles/LICENSE.txt",
+          "spdx": "TOST-1.0",
+          "status": "source-relative copy; byte-identical to source"
+        },
+        {
+          "member": "plugin/usdNoodles/NOODLES_LICENSE.txt",
+          "source": "plugin/usdNoodles/NOODLES_LICENSE.txt",
+          "spdx": "MIT",
+          "status": "source-relative copy; byte-identical to source"
+        },
+        {
+          "member": "plugin/usdNoodles/THIRD_PARTY_LICENSES.txt",
+          "source": "plugin/usdNoodles/THIRD_PARTY_LICENSES.txt",
+          "spdx": "OFL-1.1",
+          "status": "source-relative copy; byte-identical to source"
+        },
+        {
+          "member": "tools/license_manifest.json",
+          "source": "tools/license_manifest.json",
+          "spdx": null,
+          "status": "byte-identical to source after CRLF normalization"
+        },
         {
           "member": "LICENSE-usdRig",
           "source": "LICENSE",
           "spdx": "MIT",
-          "status": "byte-identical to source after CRLF normalization"
+          "status": "historical alias of LICENSE, archived with CRLF endings"
         },
         {
           "member": "NOTICE-usdRig",
@@ -1031,13 +1155,25 @@
           "member": "LICENSE-OpenUSD",
           "source": "plugin/usdNoodles/LICENSE.txt",
           "spdx": "TOST-1.0",
-          "status": "byte-identical to source after CRLF normalization"
+          "status": "historical alias of plugin/usdNoodles/LICENSE.txt, archived with CRLF endings"
         },
         {
           "member": "THIRD_PARTY_NOTICES-usdRig.md",
           "source": "THIRD_PARTY_NOTICES.md",
           "spdx": null,
-          "status": "STALE: missing the Epic OpenRigLogic section and still using the old third_party/lzma paths"
+          "status": "byte-identical to source after CRLF normalization"
+        }
+      ],
+      "prose_members": [
+        {
+          "path": "docs/references.md",
+          "kind": "source-only prose reference",
+          "note": "cited by THIRD_PARTY_NOTICES.md and named in README.txt; not a legal text, so it is not packed"
+        },
+        {
+          "path": "docs/concepts/riglogic.md",
+          "kind": "source-only prose reference",
+          "note": "cited by THIRD_PARTY_NOTICES.md; not a legal text, so it is not packed"
         }
       ],
       "other_members": "docs/examples/tutorial_rolling_ball.usda, docs/examples/tutorial_rolling_ball_free.usda, docs/examples/textures/basketball.png, icons/control.png, icons/fk_chain.png, icons/float_math_mover.png, icons/joint.png, icons/matrix_mover.png, icons/static_weight.png, manifest.json, README.txt",
@@ -1046,22 +1182,26 @@
     "godot_zip": {
       "archive": "docs/examples/godot_rolling_ball.zip",
       "generator": "docs/package_godot_example.py",
-      "source_root": "a sibling checkout at ../godot_rigExec that is not tracked in this repository",
+      "source_root": "a sibling checkout at ../godot_rigExec that is not tracked in this repository; the packer resolves every add-on-bound source inside it and rejects one that leaves that root",
+      "canonical_contract": "the root legal texts and the vendored texts named by THIRD_PARTY_NOTICES.md travel with the add-on under their source-relative paths. The packer writes exactly the legal_members list below; entries marked 'mapping recorded on this boundary' are absent from the checked-in archive, which predates them and was not repacked because no authorized add-on checkout or build inputs are available.",
       "legal_members": [
         {
           "member": "godot_rigExec/LICENSE",
-          "source": "the addon checkout's own LICENSE (MIT, Copyright (c) 2026 Nick Burkard)",
-          "spdx": "MIT"
+          "source": "../godot_rigExec/LICENSE",
+          "spdx": "MIT",
+          "status": "add-on checkout text; the packer reads it from the supplied root, it is not checked in here"
         },
         {
           "member": "godot_rigExec/addons/rigexec/LICENSE",
-          "source": "duplicate of the repository LICENSE",
-          "spdx": "MIT"
+          "source": "../godot_rigExec/addons/rigexec/LICENSE",
+          "spdx": "MIT",
+          "status": "add-on copy of the same MIT terms"
         },
         {
           "member": "godot_rigExec/demo/addons/rigexec/LICENSE",
-          "source": "duplicate of the repository LICENSE",
-          "spdx": "MIT"
+          "source": "../godot_rigExec/addons/rigexec/LICENSE",
+          "spdx": "MIT",
+          "status": "the demo subtree is a duplicate of the addon tree written from the same source"
         },
         {
           "member": "godot_rigExec/LICENSE-usdRig",
@@ -1073,7 +1213,7 @@
           "member": "godot_rigExec/NOTICE-usdRig",
           "source": "NOTICE",
           "spdx": "MIT",
-          "status": "byte-identical after CRLF normalization"
+          "status": "STALE: the archived copy predates the current NOTICE (3892 B against 5714 B); refreshed only when the archive is repacked"
         },
         {
           "member": "godot_rigExec/LICENSE-OpenUSD",
@@ -1114,8 +1254,9 @@
         },
         {
           "member": "godot_rigExec/addons/rigexec/LICENSE-OpenUSD.txt",
-          "source": "addon checkout copy",
-          "spdx": "TOST-1.0"
+          "source": "../godot_rigExec/addons/rigexec/LICENSE-OpenUSD.txt",
+          "spdx": "TOST-1.0",
+          "status": "add-on copy of the godot-cpp OpenUSD terms; no repository source exists for it"
         },
         {
           "member": "godot_rigExec/addons/rigexec/LICENSE-flatbuffers.txt",
@@ -1125,8 +1266,9 @@
         },
         {
           "member": "godot_rigExec/addons/rigexec/LICENSE-godot-cpp.md",
-          "source": "addon checkout copy",
-          "spdx": "MIT"
+          "source": "../godot_rigExec/addons/rigexec/LICENSE-godot-cpp.md",
+          "spdx": "MIT",
+          "status": "add-on copy of the godot-cpp MIT text"
         },
         {
           "member": "godot_rigExec/addons/rigexec/LICENSE-LZMA-SDK.txt",
@@ -1142,15 +1284,69 @@
         },
         {
           "member": "godot_rigExec/addons/rigexec/THIRD_PARTY_NOTICES.md",
-          "source": "addon checkout copy",
+          "source": "../godot_rigExec/addons/rigexec/THIRD_PARTY_NOTICES.md",
           "spdx": null,
-          "status": "covers OpenUSD Gf math, FlatBuffers, godot-cpp and LZMA for the shipped DLLs"
+          "status": "add-on notice covering OpenUSD Gf math, FlatBuffers, godot-cpp and LZMA for the shipped DLLs"
         },
         {
           "member": "godot_rigExec/tools/thirdparty/flatbuffers/LICENSE",
           "source": "thirdparty/flatbuffers/LICENSE",
           "spdx": "Apache-2.0",
           "status": "accompanies the vendored FlatBuffers Python runtime in the archive"
+        },
+        {
+          "member": "godot_rigExec/NOTICE",
+          "source": "NOTICE",
+          "spdx": "MIT",
+          "status": "canonical root name; mapping recorded on this boundary, absent from the checked-in archive"
+        },
+        {
+          "member": "godot_rigExec/THIRD_PARTY_NOTICES.md",
+          "source": "THIRD_PARTY_NOTICES.md",
+          "spdx": null,
+          "status": "canonical root name; mapping recorded on this boundary, absent from the checked-in archive"
+        },
+        {
+          "member": "godot_rigExec/thirdparty/flatbuffers/LICENSE",
+          "source": "thirdparty/flatbuffers/LICENSE",
+          "spdx": "Apache-2.0",
+          "status": "add-on checkout text, absent from the checked-in archive; the packer ships it when the add-on checkout is available"
+        },
+        {
+          "member": "godot_rigExec/thirdparty/lzma/NOTICE.md",
+          "source": "thirdparty/lzma/NOTICE.md",
+          "spdx": null,
+          "status": "add-on checkout text, absent from the checked-in archive; the packer ships it when the add-on checkout is available"
+        },
+        {
+          "member": "godot_rigExec/thirdparty/lzma/DOC/lzma-sdk.txt",
+          "source": "thirdparty/lzma/DOC/lzma-sdk.txt",
+          "spdx": null,
+          "status": "add-on checkout text, absent from the checked-in archive; the packer ships it when the add-on checkout is available"
+        },
+        {
+          "member": "godot_rigExec/plugin/usdNoodles/LICENSE.txt",
+          "source": "plugin/usdNoodles/LICENSE.txt",
+          "spdx": "TOST-1.0",
+          "status": "add-on checkout text, absent from the checked-in archive; the packer ships it when the add-on checkout is available"
+        },
+        {
+          "member": "godot_rigExec/tools/license_manifest.json",
+          "source": "tools/license_manifest.json",
+          "spdx": null,
+          "status": "installed by CMake, absent from the checked-in archive; the packer ships it when the checkout is available"
+        }
+      ],
+      "prose_members": [
+        {
+          "path": "docs/references.md",
+          "kind": "source-only prose reference",
+          "note": "cited by THIRD_PARTY_NOTICES.md; not a legal text, so it is not packed"
+        },
+        {
+          "path": "docs/concepts/riglogic.md",
+          "kind": "source-only prose reference",
+          "note": "cited by THIRD_PARTY_NOTICES.md; not a legal text, so it is not packed"
         }
       ],
       "gaps": [
@@ -1165,22 +1361,94 @@
       "archives": [
         {
           "archive": "examples/biped/Biped.usdz",
-          "members": 31,
-          "legal_members": 0,
-          "gap": "member shaders/sbe_eye.glslfx is under the Squarebit Eye EULA and ships with no license or notice member"
+          "generator": "hand-authored stage archive; no packer script exists",
+          "legal_members": [
+            {
+              "member": "LICENSE-usdRig",
+              "source": "LICENSE",
+              "spdx": "MIT",
+              "packed": false,
+              "status": "absent from the checked-in archive; USDZ members are payload only today"
+            },
+            {
+              "member": "NOTICE-usdRig",
+              "source": "NOTICE",
+              "spdx": "MIT",
+              "packed": false,
+              "status": "absent from the checked-in archive; USDZ members are payload only today"
+            },
+            {
+              "member": "THIRD_PARTY_NOTICES-usdRig.md",
+              "source": "THIRD_PARTY_NOTICES.md",
+              "spdx": "MIT",
+              "packed": false,
+              "status": "absent from the checked-in archive; USDZ members are payload only today"
+            },
+            {
+              "member": "thirdparty/flatbuffers/LICENSE",
+              "source": "thirdparty/flatbuffers/LICENSE",
+              "spdx": "Apache-2.0",
+              "packed": false,
+              "status": "absent from the checked-in archive; USDZ members are payload only today"
+            },
+            {
+              "member": "thirdparty/lzma/DOC/lzma-sdk.txt",
+              "source": "thirdparty/lzma/DOC/lzma-sdk.txt",
+              "spdx": null,
+              "packed": false,
+              "status": "absent from the checked-in archive; USDZ members are payload only today"
+            },
+            {
+              "member": "thirdparty/lzma/NOTICE.md",
+              "source": "thirdparty/lzma/NOTICE.md",
+              "spdx": null,
+              "packed": false,
+              "status": "absent from the checked-in archive; USDZ members are payload only today"
+            }
+          ],
+          "prose_members": [
+            {
+              "member": "shaders/sbe_eye.glslfx",
+              "prose": "the Squarebit Eye EULA is a link in THIRD_PARTY_NOTICES.md; no EULA text is packed in the archive or the checkout",
+              "url": "https://www.squarebitstudios.com/squarebit-eye/eula"
+            }
+          ],
+          "gap": "the archive carries no legal member at all: neither the project notice nor the third-party texts travel with it"
         },
         {
           "archive": "examples/2d/rubberhose/rubberhose.usdz",
-          "members": 3,
-          "legal_members": 0,
-          "gap": "stages only; provenance unresolved like the rest of examples/"
+          "generator": "hand-authored stage archive; no packer script exists",
+          "legal_members": [
+            {
+              "member": "LICENSE-usdRig",
+              "source": "LICENSE",
+              "spdx": "MIT",
+              "packed": false,
+              "status": "absent from the checked-in archive; USDZ members are payload only today"
+            },
+            {
+              "member": "NOTICE-usdRig",
+              "source": "NOTICE",
+              "spdx": "MIT",
+              "packed": false,
+              "status": "absent from the checked-in archive; USDZ members are payload only today"
+            },
+            {
+              "member": "THIRD_PARTY_NOTICES-usdRig.md",
+              "source": "THIRD_PARTY_NOTICES.md",
+              "spdx": "MIT",
+              "packed": false,
+              "status": "absent from the checked-in archive; USDZ members are payload only today"
+            }
+          ],
+          "gap": "stages only; the archive carries no legal member and its provenance is unresolved like the rest of examples/"
         }
       ]
     }
   },
   "gaps": [
     "Biped.usdz embeds the Squarebit Eye shader with no accompanying notice member.",
-    "Both checked-in archives carry a THIRD_PARTY_NOTICES copy that is older than the repository file: it uses third_party/lzma paths and omits the Epic OpenRigLogic section. A byte-identity checker would fail on these members today.",
+    "docs/examples/godot_rolling_ball.zip still carries a THIRD_PARTY_NOTICES copy older than the repository file: it uses third_party/lzma paths and omits the Epic OpenRigLogic section. The usdview archive's copy was refreshed on this boundary; the Godot one cannot be, because its add-on source checkout is not in this repository.",
     "Archive legal texts are CRLF-encoded while the repository sources are LF; comparison must normalize line endings.",
     "The Epic OpenRigLogic MIT text is only inline in THIRD_PARTY_NOTICES.md; the three port files carry no attribution header and no license text is installed.",
     "The Poppins OFL text is reachable only inside plugin/usdNoodles/THIRD_PARTY_LICENSES.txt and is not installed with the binaries.",
@@ -1240,14 +1508,37 @@
       "blocks": "distribution.usdview_zip, distribution.godot_zip"
     }
   ],
+  "prose_references": [
+    {
+      "path": "docs/references.md",
+      "kind": "source-only prose reference",
+      "why": "Cites public method references. A citation identifies a technique; it is not a license text and is never checked against a vendored file.",
+      "shipped_in": [
+        "source checkout"
+      ]
+    },
+    {
+      "path": "docs/concepts/riglogic.md",
+      "kind": "source-only prose reference",
+      "why": "Narrates the OpenRigLogic port provenance and points at the pinned commit. The MIT text it explains is quoted in THIRD_PARTY_NOTICES.md, not in this file.",
+      "shipped_in": [
+        "source checkout"
+      ]
+    }
+  ],
   "checker_rules": {
-    "path_form": "Every path in this manifest is repository-relative, has no leading slash, and contains no '..' segment.",
-    "existence": "Each required_texts path entry, every path in inventory_boundary.archive_members_inventory and every source path in distribution legal_files must exist at the recorded base commit; zero matches for any non-fallback family glob or glob in a family's carve_outs is a manifest error.",
+    "path_form": "Every path in this manifest is repository-relative, has no leading slash, and contains no '..' segment. An add-on source is the exception: it starts with '../' and names the add-on checkout passed explicitly to the packer.",
+    "source-form": "A distribution legal_members source is either a repository-relative path or '../<add-on-name>/...'. A source that is prose, such as 'addon checkout copy', is a manifest error: the packer refuses to write bytes for it rather than guessing a file.",
+    "addon-binding": "An add-on source resolves only inside the add-on root supplied at run time (docs/package_godot_example.py --addon-root). A source that leaves that root is rejected before any file is read.",
+    "link-resolution": "Every relative link in THIRD_PARTY_NOTICES.md must name a file that exists in the checkout, and must reach a member of the install prefix or of the archive that carries that notice, unless the link target is listed in prose_references.",
+    "self-reference": "tools/license_manifest.json is a provenance record, not a licensed text. A checker may read it, but it never hashes it as part of a legal-text digest and never compares a copy of itself inside an archive against the manifest: the manifest's own bytes change whenever the inventory is refreshed.",
+    "existence": "Each required_texts path entry, every path in inventory_boundary.archive_members_inventory and every source path in distribution legal_files and distribution legal_members must exist at the recorded boundary; zero matches for any non-fallback family glob or glob in a family's carve_outs is a manifest error. Add-on-bound sources are checked only when the add-on checkout is supplied.",
     "partition": "Families must be disjoint. For each tracked file, take the lowest-precedence family whose globs match and whose carve_outs do not exclude it; the result must cover all tracked files exactly once.",
     "no-auto-bless": "A family with category unresolved must never be reported as licensed, and its SPDX must stay null until an owner answer is recorded here.",
     "binary-scan": "Marker scanning must not run on binary payloads without decoding, or it reports false positives (see totals.false_positive_note).",
     "generated-origin": "Generated families are audited through their generator and inputs; the absence of a license header in a generated file is not a violation.",
     "archive-identity": "Compare archive legal members after normalizing CRLF to LF, and flag content-stale members rather than treating line endings as drift.",
-    "required-text-form": "Every required_texts entry is an object with exactly one of path or url. A bare string is a manifest error: a path entry is checked for existence in the tree, a url entry is an upstream text that is deliberately not vendored and is never checked against the filesystem."
-  }
+    "required-text-form": "Every required_texts entry is an object with exactly one of path, url or prose. A bare string is a manifest error: a path entry is checked for existence in the tree, a url entry is an upstream text that is deliberately not vendored and is never checked against the filesystem, and a prose entry names documentation that is explicitly a source-only reference and is never expected in an install prefix or an archive."
+  },
+  "count_scope": "Every count is measured on the inventory result tree: the 1785 tracked files of base_commit plus tools/license_manifest.json and tools/check_licenses.py (original-build-and-tooling), docs/legal_members.py (original-documentation) and tests/testRigExecLegalPackaging.py (original-test-suites). Each family's matched_files is measured on that same tree."
 }
