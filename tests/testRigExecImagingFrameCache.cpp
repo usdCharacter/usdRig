@@ -6580,6 +6580,149 @@ TestPreviewProofRefusesMappedEditTarget()
     registry->Deactivate();
 }
 
+// THE VERDICT BELONGS TO THE DECLARATION. Every rule but the default-time
+// check reads the stage, its layers, and its edit target, never a time code,
+// so the candidate frames of a burst share one derivation. The edit target is
+// the input a host can move under a standing preview without a stage notice,
+// so the held verdict follows it rather than outliving it.
+void
+TestPreviewProofFollowsTheEditTarget()
+{
+    std::printf("progress: TestPreviewProofFollowsTheEditTarget\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "off");
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    const SdfPath rig("/Asset/Rig");
+    // root over its sublayer lane, with the session layer above both.
+    const SdfLayerRefPtr root = SdfLayer::CreateAnonymous(".usda");
+    const SdfLayerRefPtr lane = SdfLayer::CreateAnonymous(".usda");
+    root->SetSubLayerPaths({lane->GetIdentifier()});
+    UsdStageRefPtr stage = UsdStage::Open(root);
+    stage->SetEditTarget(root);
+    MakeTinyRig(/*staticY=*/true, stage);
+    const UsdPrim alongX = stage->GetPrimAtPath(SdfPath("/Asset/Rig/AlongX"));
+    stage->SetEditTarget(lane);
+    // The lane samples the attribute, and its own default never hides the
+    // sample it authors.
+    CHECK(alongX.CreateAttribute(TfToken("avars:tz"), SdfValueTypeNames->Double)
+              .Set(9.0, UsdTimeCode(2.0)));
+    CHECK(alongX.GetAttribute(TfToken("avars:tz"))
+              .Set(42.0, UsdTimeCode::Default()));
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
+    std::vector<std::string> errors;
+    CHECK(registry->Activate(stage, rig, UsdTimeCode(2.0), &errors));
+    const double pendingValue = 11.0;
+    CHECK(registry->BeginPreview("/Asset/Rig/AlongX.avars:tz") == 1);
+    CHECK(registry->DeclarePreviewEdit(
+        "/Asset/Rig/AlongX.avars:tz",
+        RigExecPreviewEditPolicy::AttributeDefault, &pendingValue, 1));
+    std::string reason;
+    // With the lane as target its samples answer every numeric frame, so the
+    // same verdict stands for each of them.
+    CHECK(registry->PreviewValueIsIndependent("/Asset/Rig/AlongX.avars:tz",
+                                              UsdTimeCode(4.0), &reason));
+    CHECK(registry->PreviewValueIsIndependent("/Asset/Rig/AlongX.avars:tz",
+                                              UsdTimeCode(9.0), &reason));
+    // Moving the target under the standing preview puts the pending default
+    // in a layer stronger than those samples: the frame is no longer
+    // independent, and a verdict held for the lane must not answer for it.
+    stage->SetEditTarget(root);
+    CHECK(registry->IsPreviewActive());
+    CHECK(registry->GetPreviewEditStats().editCount == 1);
+    CHECK(!registry->PreviewValueIsIndependent("/Asset/Rig/AlongX.avars:tz",
+                                               UsdTimeCode(4.0), &reason));
+    CHECK(!reason.empty());
+    // Back to the lane and the verdict returns.
+    stage->SetEditTarget(lane);
+    CHECK(registry->PreviewValueIsIndependent("/Asset/Rig/AlongX.avars:tz",
+                                              UsdTimeCode(4.0), &reason));
+    // Warm-route admission carries the same flip.
+    RigExecWarmRouteDescriptor route;
+    route.route = RigExecWarmRoute::CommittedSpeculative;
+    route.rigPath = rig;
+    route.time = UsdTimeCode(4.0);
+    route.previewSession = registry->GetPreviewIdentity().session;
+    stage->SetEditTarget(root);
+    CHECK(!registry->AdmitWarmRoute(route, &reason));
+    stage->SetEditTarget(lane);
+    CHECK(registry->AdmitWarmRoute(route, &reason));
+    CHECK(registry->EndPreview(/* publish = */ false));
+    registry->Deactivate();
+}
+
+// NOTICE COVERAGE DECIDES WHETHER A VERDICT CAN BE HELD. The stage-notice
+// listener that retires a preview description stands with activation, so a
+// bound context that never activated hears nothing: there the proof re-reads
+// the layer every time, and removing the sole sample flips both the proof
+// and the speculative route behind it.
+void
+TestUnactivatedStageProofTracksSampleRemoval()
+{
+    std::printf("progress: TestUnactivatedStageProofTracksSampleRemoval\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "off");
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    // A plain Xform with one sampled op: no rig, no activation, no scheduler.
+    const UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    const UsdPrim xform = stage->DefinePrim(SdfPath("/X"), TfToken("Xform"));
+    const std::string opPath = "/X.xformOp:translateX";
+    CHECK(xform
+              .CreateAttribute(TfToken("xformOp:translateX"),
+                               SdfValueTypeNames->Double)
+              .Set(9.0, UsdTimeCode(2.0)));
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
+    const double pendingValue = 11.0;
+    // The xform lane previews an op on a stage with no rig and no activation.
+    CHECK(registry->BeginPreview(opPath) == 1);
+    CHECK(registry->IsPreviewActive());
+    CHECK(registry->DeclarePreviewEdit(
+        opPath, RigExecPreviewEditPolicy::AttributeDefault, &pendingValue, 1));
+    std::string reason;
+    // The edit-target layer samples the op: every numeric frame is answered
+    // there, never by the pending default.
+    CHECK(
+        registry->PreviewValueIsIndependent(opPath, UsdTimeCode(4.0), &reason));
+    RigExecWarmRouteDescriptor route;
+    route.route = RigExecWarmRoute::CommittedSpeculative;
+    route.rigPath = SdfPath("/X");
+    route.time = UsdTimeCode(4.0);
+    route.previewSession = registry->GetPreviewIdentity().session;
+    CHECK(registry->AdmitWarmRoute(route, &reason));
+    // Remove the sole sample. No notice reaches this context, so the answer
+    // must come from the layer as it now stands, not from what an earlier
+    // frame saw.
+    CHECK(stage->GetAttributeAtPath(SdfPath(opPath))
+              .ClearAtTime(UsdTimeCode(2.0)));
+    std::vector<double> samples;
+    CHECK(stage->GetAttributeAtPath(SdfPath(opPath)).GetTimeSamples(&samples));
+    CHECK(samples.empty());
+    CHECK(!registry->PreviewValueIsIndependent(opPath, UsdTimeCode(4.0),
+                                               &reason));
+    CHECK(!reason.empty());
+    CHECK(!registry->AdmitWarmRoute(route, &reason));
+    CHECK(!reason.empty());
+    // Nothing retired the description -- nothing hears the edit -- so the
+    // declaration stands and only the verdict moved.
+    CHECK(registry->GetPreviewEditStats().editCount == 1);
+    CHECK(registry->IsPreviewActive());
+    // Author the sample again and the frame is answered there once more.
+    CHECK(
+        stage->GetAttributeAtPath(SdfPath(opPath)).Set(9.0, UsdTimeCode(2.0)));
+    CHECK(
+        registry->PreviewValueIsIndependent(opPath, UsdTimeCode(4.0), &reason));
+    CHECK(registry->EndPreview(/* publish = */ false));
+}
+
 int
 main(int argc, char **argv)
 {
@@ -6642,6 +6785,8 @@ main(int argc, char **argv)
     TestWarmRouteAdmission();
     TestPreviewIdentityRetiresOnAncestorResync();
     TestPreviewProofRefusesMappedEditTarget();
+    TestPreviewProofFollowsTheEditTarget();
+    TestUnactivatedStageProofTracksSampleRemoval();
     TestCommitOfAChainTargetSettles();
     TestProductionTriggerPathEnqueuesAndFences();
     TestWarmedCompletionServesWithoutEvaluating();

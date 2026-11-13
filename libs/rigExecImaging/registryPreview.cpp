@@ -15,7 +15,6 @@
 #include "pxr/base/tf/type.h"
 #include "pxr/base/vt/array.h"
 #include "pxr/base/vt/value.h"
-#include "pxr/usd/pcp/mapFunction.h"
 #include "pxr/usd/sdf/path.h"
 #include "pxr/usd/sdf/schema.h"
 #include "pxr/usd/sdf/valueTypeName.h"
@@ -461,6 +460,7 @@ RigExecImagingRegistry::BeginPreview(const std::string &packedAttributePaths)
 bool
 RigExecImagingRegistry::IsPreviewActive() const
 {
+    std::lock_guard<std::mutex> lock(_mutex);
     return _previewActive;
 }
 
@@ -550,6 +550,9 @@ RigExecImagingRegistry::DeclarePreviewEdit(
         if (held != _previewEdits.end()) {
             held->policy = edit.policy;
             held->pending = std::move(edit.pending);
+            // A re-declaration can move the policy, so the held verdict no
+            // longer answers for this entry.
+            held->proof = PreviewProof();
         } else {
             _previewEdits.push_back(std::move(edit));
         }
@@ -669,6 +672,67 @@ RigExecImagingRegistry::_PreviewValueIsIndependentLocked(
         return refuse("the candidate time is the default time, where the "
                       "pending default is the value");
     }
+    const UsdEditTarget target = stage->GetEditTarget();
+    const SdfLayerHandle targetLayer = target.GetLayer();
+    const bool identityMap = target.GetMapFunction().IsIdentity();
+    const SdfPath mappedSpecPath =
+        identityMap ? attributePath : target.MapToSpecPath(attributePath);
+    // The rules that produce the verdict read the stage, its layers, its
+    // compiled chains and its edit target; none of them reads a time code,
+    // and a warm burst asks the question once per candidate frame with _mutex
+    // held. The answer can be held only where an edit of a declared path
+    // retires the description along with it; without that notice the layer
+    // stack can change under a held verdict, so the answer is re-derived.
+    const bool holdable = _PreviewNoticeCoversLocked(stage);
+    const PreviewProof &held = declared->proof;
+    if (holdable && held.derived && held.stage == stage &&
+        held.targetLayer == targetLayer && held.identityMap == identityMap &&
+        held.mappedSpecPath == mappedSpecPath) {
+        return held.independent ? accept(held.reason) : refuse(held.reason);
+    }
+    std::string why;
+    const bool independent = _DerivePreviewIndependenceLocked(
+        stage, attributePath, targetLayer, identityMap, mappedSpecPath, &why);
+    declared->proof = PreviewProof();
+    if (holdable) {
+        PreviewProof proof;
+        proof.stage = stage;
+        proof.targetLayer = targetLayer;
+        proof.mappedSpecPath = mappedSpecPath;
+        proof.identityMap = identityMap;
+        proof.derived = true;
+        proof.independent = independent;
+        proof.reason = why;
+        declared->proof = std::move(proof);
+    }
+    return independent ? accept(why) : refuse(why);
+}
+
+bool
+RigExecImagingRegistry::_PreviewNoticeCoversLocked(
+    const UsdStageRefPtr &stage) const
+{
+    return _changeKey && stage == _stage;
+}
+
+bool
+RigExecImagingRegistry::_DerivePreviewIndependenceLocked(
+    const UsdStageRefPtr &stage, const SdfPath &attributePath,
+    const SdfLayerHandle &targetLayer, bool identityMap,
+    const SdfPath &mappedSpecPath, std::string *why) const
+{
+    auto refuse = [why](const std::string &text) {
+        if (why) {
+            *why = text;
+        }
+        return false;
+    };
+    auto accept = [why](const std::string &text) {
+        if (why) {
+            *why = text;
+        }
+        return true;
+    };
     const UsdAttribute attribute = stage->GetAttributeAtPath(attributePath);
     if (!attribute) {
         return refuse("the stage has no attribute at this path");
@@ -684,8 +748,6 @@ RigExecImagingRegistry::_PreviewValueIsIndependentLocked(
             return refuse("a compiled property chain revises this attribute");
         }
     }
-    const UsdEditTarget target = stage->GetEditTarget();
-    const SdfLayerHandle targetLayer = target.GetLayer();
     if (!targetLayer) {
         return refuse("this stage has no edit-target layer");
     }
@@ -694,8 +756,7 @@ RigExecImagingRegistry::_PreviewValueIsIndependentLocked(
     // mapped target (a reference or a variant) writes another spec path, and
     // a same-spelled spec in that other layer composes nowhere here: the
     // fields read below are not the ones the pending value would reach.
-    if (!target.GetMapFunction().IsIdentity() ||
-        target.MapToSpecPath(attributePath) != attributePath) {
+    if (!identityMap || mappedSpecPath != attributePath) {
         return refuse("the edit target maps this composed path to another "
                       "spec path, so the pending value would be authored "
                       "somewhere this proof cannot read");

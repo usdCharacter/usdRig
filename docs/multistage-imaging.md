@@ -289,9 +289,14 @@ stage's own layer stack; an attribute a compiled property chain revises, one
 with authored connections, one the stage authors nowhere, or a mapped or
 non-local edit target (a reference or variant target authors a different spec
 path, so a same-spelled sample there decides nothing about the composed value)
-is refused. Warm work carries a route: the frame the preview stands on is
-refused as pending, a frame already backed by a prepared burst is admitted as
-committed, and a frame built ahead of its destination is admitted only when
+is refused. Every rule but the default-time check reads the stage and its
+layers rather than the candidate frame, so an activated context holds the
+answer per declared path across a burst of warm frames and drops it when a
+stage notice retires the declaration; a context with no rig activated hears no
+stage notices and re-runs the rules each time. Warm work carries a route:
+the frame the preview stands on is refused as pending, a frame already
+backed by a prepared burst is admitted as committed, and a frame built ahead
+of its destination is admitted only when
 every declared edit is provably independent of it.
 
 ## usdview plugins

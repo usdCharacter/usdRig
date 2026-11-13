@@ -66,6 +66,7 @@
 
 #include "pxr/base/tf/notice.h"
 #include "pxr/base/tf/weakBase.h"
+#include "pxr/usd/sdf/layer.h"
 #include "pxr/usd/usd/notice.h"
 #include "pxr/usd/usdGeom/xformCache.h"
 
@@ -530,6 +531,11 @@ public:
     /// from the notice with the overrides still standing, once here.
     bool EndPreview(bool publish = true);
 
+    /// Whether a manipulation stands on this context: true from BeginPreview
+    /// until EndPreview or a deactivation. A retirement (a recompile, a
+    /// weight-overlay change, a stage notice on a declared path) moves the
+    /// preview identity without ending the manipulation, so this is not
+    /// GetPreviewIdentity().active.
     bool IsPreviewActive() const;
 
     /// The identity of the manipulation standing on this context: which
@@ -567,6 +573,12 @@ public:
     /// target (which authors a different spec path, or one whose strength in
     /// this stage's layer stack is unknown), no stage. The reason goes to
     /// \p reason when it is not null. Authors nothing.
+    ///
+    /// Every rule but the default-time check reads the stage and its edit
+    /// target, never a time, so the verdict is derived once per declared path
+    /// and served to every candidate frame -- the warm trigger asks once per
+    /// frame under _mutex. It is held only while a stage notice can retire
+    /// the declaration it belongs to; elsewhere the rules re-run per frame.
     bool PreviewValueIsIndependent(const std::string &attributePathText,
                                    UsdTimeCode time, std::string *reason) const;
 
@@ -1007,6 +1019,24 @@ private:
     bool _NoticeSettlesPreview(const RigSession &session,
                                const UsdNotice::ObjectsChanged &notice) const;
 
+    /// The independence verdict for one declared edit, plus the inputs it
+    /// was derived under. Every rule that produces it reads the stage, its
+    /// layers, its compiled chains and the edit target -- none reads a time
+    /// code -- so the verdict belongs to the declaration, not to a candidate
+    /// frame. It is held only where a stage notice retires the declaration
+    /// along with it; see _PreviewNoticeCoversLocked.
+    struct PreviewProof {
+        UsdStageWeakPtr stage;
+        SdfLayerHandle targetLayer;
+        /// The declared path as the standing edit target's map function sees
+        /// it, and whether that map is the identity.
+        SdfPath mappedSpecPath;
+        bool identityMap = false;
+        bool derived = false;
+        bool independent = false;
+        std::string reason;
+    };
+
     /// One attribute the manipulation in progress says it will author, with
     /// the values held pending for it.
     struct PreviewEdit {
@@ -1014,6 +1044,10 @@ private:
         RigExecPreviewEditPolicy policy =
             RigExecPreviewEditPolicy::AttributeDefault;
         std::vector<double> pending;
+        /// This path's cached verdict, reset by a re-declaration and by the
+        /// retirement that drops the description, and never held where no
+        /// stage notice reaches this context.
+        PreviewProof proof;
     };
 
     /// Opens the next preview session: bumps the session, resets the
@@ -1024,6 +1058,24 @@ private:
     bool _PreviewValueIsIndependentLocked(const SdfPath &attributePath,
                                           UsdTimeCode time,
                                           std::string *reason) const;
+
+    /// The rules behind a verdict: the authored opinions in the layer stack,
+    /// the connections and compiled property chains on the path, and where
+    /// the standing edit target would author the value. None of them reads a
+    /// time code. _mutex held.
+    bool _DerivePreviewIndependenceLocked(const UsdStageRefPtr &stage,
+                                          const SdfPath &attributePath,
+                                          const SdfLayerHandle &targetLayer,
+                                          bool identityMap,
+                                          const SdfPath &mappedSpecPath,
+                                          std::string *why) const;
+
+    /// Whether an edit of \p stage reaches this context through UsdStage's
+    /// ObjectsChanged. Only there does an edit of a declared path retire the
+    /// description, and with it any verdict held on it: the stage-notice
+    /// listener stands with activation alone, so a bound context that never
+    /// activated hears nothing. _mutex held.
+    bool _PreviewNoticeCoversLocked(const UsdStageRefPtr &stage) const;
 
     /// The route check behind AdmitWarmRoute. _mutex held.
     bool _AdmitWarmRouteLocked(const RigExecWarmRouteDescriptor &route,
@@ -1200,9 +1252,10 @@ private:
     std::map<SdfPath, GfMatrix4d> _previewXformDeltas;
     bool _previewActive = false;
     /// The monotonic identity of the manipulation in progress, and the edit
-    /// description declared for it. _mutex held.
+    /// description declared for it. _mutex held. The vector is mutable only
+    /// for each entry's cached verdict: the proof reads through it.
     RigExecPreviewIdentity _previewIdentity;
-    std::vector<PreviewEdit> _previewEdits;
+    mutable std::vector<PreviewEdit> _previewEdits;
     /// The influence-overlay selection, held HERE rather than only on the
     /// bridge because it outlives one: a host may select before
     /// activation, and Deactivate/Activate must not silently drop it.
@@ -1465,8 +1518,11 @@ RigExecImaging_EndPreviewWithoutPublishForStage(long long stageCacheId);
 /// BeginPreviewForStage, its revision bumps on every UpdatePreviewForStage,
 /// and the session advances -- it never returns to an older value -- when
 /// the preview retires, with the revision back to zero. Returns 0 on
-/// success, 1 with no context or a null out pointer; `active` is 1 while the
-/// preview stands.
+/// success, 1 with no context or a null out pointer. `active` is 1 while a
+/// session stands: a retirement inside a standing manipulation (a recompile,
+/// a weight-overlay change, a stage notice on a declared path) clears it
+/// until the next BeginPreviewForStage, while the preview itself continues
+/// (see RigExecImagingRegistry::IsPreviewActive).
 RIGEXEC_IMAGING_C_API int RigExecImaging_GetPreviewIdentityForStage(
     long long stageCacheId, unsigned long long *session,
     unsigned long long *revision, int *active);
