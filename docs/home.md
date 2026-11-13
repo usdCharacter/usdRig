@@ -13,10 +13,10 @@ hide:
 
 # Character rigs that evaluate inside USD
 
-<p class="rx-hero__lede">RigExec evaluates controls, solvers, constraints
-and deformers in memory, without changing the stage, and publishes the
-posed character through Hydra for live playback in <code>usdview</code>
-and other viewers.</p>
+<p class="rx-hero__lede">usdRig is a character-rigging project for OpenUSD.
+Its RigExec engine evaluates controls, solvers, constraints and deformers
+in memory, without changing the stage, and publishes the posed character
+through Hydra for live playback in <code>usdview</code> and other viewers.</p>
 
 [Get started](guide/getting-started.md){ .md-button .md-button--primary }
 [Browse the nodes](index.md){ .md-button }
@@ -107,7 +107,8 @@ These are rendered straight from them.
 
 ## Status
 
-RigExec is an early, end-to-end vertical under active development: APIs,
-behaviour and file formats may change without notice. It builds against an
-unmodified OpenUSD 26.08 with OpenExec. Original project code is MIT
-licensed; third-party material keeps its own terms.
+usdRig is an early, end-to-end vertical under active development: its APIs,
+behaviour and file formats may change without notice. Its RigExec engine builds
+against an unmodified OpenUSD 26.08 with OpenExec. Original project code is MIT
+licensed; third-party material keeps its own terms. See the
+[domain glossary](../CONTEXT.md) for project and engine terminology.
