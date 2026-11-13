@@ -311,6 +311,60 @@ class ManifestContract(unittest.TestCase):
             [name], temp, None, ROOT)
         self.assertTrue(any("differs from its source" in error for error in errors))
 
+    def test_a_corrupted_alias_copy_in_a_shipped_archive_is_an_error(self):
+        """A mapped member is compared whatever its status prose records: the
+        usdview archive's historical aliases name repository sources."""
+        archive = ROOT / "docs/examples/usdview_rolling_ball.zip"
+        with zipfile.ZipFile(archive) as handle:
+            texts = {name: handle.read(name) for name in handle.namelist()}
+        aliases = [entry["member"] for entry
+                   in MANIFEST["distribution"]["usdview_zip"]["legal_members"]
+                   if "alias" in entry.get("status", "").lower()]
+        self.assertTrue(aliases, "the usdview archive records historical aliases")
+        for member in aliases:
+            with tempfile.TemporaryDirectory() as tmp:
+                temp = Path(tmp) / archive.name
+                with zipfile.ZipFile(temp, "w") as handle:
+                    for name, data in texts.items():
+                        handle.writestr(name, b"CORRUPTED LICENSE TEXT\n"
+                                        if name == member else data)
+                errors, _stats, _notes = check_licenses.check_archive(MANIFEST, temp,
+                                                                      ROOT, None)
+                self.assertIn(member, " ".join(errors),
+                              f"{member} escaped the byte comparison")
+
+    def test_a_recorded_stale_member_is_a_recorded_difference(self):
+        """The stale members of a shipped archive are checked to still differ
+        from their sources, so the exception stays a record instead of hiding
+        drift or turning a refreshed archive into a false error."""
+        stale = [entry for entry
+                 in MANIFEST["distribution"]["godot_zip"]["legal_members"]
+                 if "stale" in entry.get("status", "").lower()]
+        self.assertTrue(stale, "the godot archive records stale members")
+        with zipfile.ZipFile(ROOT / "docs/examples/godot_rolling_ball.zip") as handle:
+            texts = {name: handle.read(name) for name in handle.namelist()}
+        for entry in stale:
+            source = resolve_legal_source(entry["member"], entry["source"], None, ROOT)
+            self.assertTrue(source.is_file(), entry["source"])
+            self.assertNotEqual(
+                check_licenses.normalize_line_endings(texts[entry["member"]]),
+                check_licenses.normalize_line_endings(source.read_bytes()),
+                f"{entry['member']} matches its source: refresh the record")
+
+    def test_the_recorded_legal_counts_of_a_shipped_archive_are_enforced(self):
+        """Production inventory records use a repository-relative archive path,
+        so both recorded legal counts must be checked against that form."""
+        for field in ("legal_members", "legal_members_mapped"):
+            broken = json.loads(json.dumps(MANIFEST))
+            record = next(r for r in
+                          broken["inventory_boundary"]["archive_members_inventory"]
+                          if r["archive"] == "docs/examples/usdview_rolling_ball.zip")
+            self.assertNotEqual(record[field], 999)
+            record[field] = 999
+            errors, _notes = check_licenses.check_archives(broken, ROOT, None)
+            self.assertTrue(any("records 999" in error for error in errors),
+                            f"{field} is not checked for a repository-relative record")
+
 
 class Partition(unittest.TestCase):
     def test_families_partition_the_tree_exactly_once(self):
@@ -320,27 +374,26 @@ class Partition(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(unverifiable, [])
 
-    def test_a_dependency_staged_in_the_checkout_stays_outside_the_inventory(self):
-        """CI builds OpenUSD inside the checkout; that tree is not this
-        repository's file set, while a new file in a tracked directory is.
+    def test_a_dependency_staged_in_the_checkout_stays_outside_the_audit(self):
+        """CI builds OpenUSD inside the checkout and downloads its build
+        archives into the checkout root; neither is part of the audited tree,
+        while a file staged with git add is.
 
         The staged layout is built here rather than read from this checkout, so
         the boundary is proven with dependency output actually present instead
         of depending on how the host happens to have arranged its own tree.
         """
-        tree = check_licenses.inventory_result_tree(
+        audited, extras = check_licenses.inventory_parts(
             ["LICENSE", "libs/rigExec/evaluator.cpp", "docs/home.md"],
-            ["usd-install/lib/libusd.so", "usd-install/include/pxr/usd/usd/stage.h",
+            ["usd-install.tar", "usd-install/lib/libusd.so",
              "OpenUSD/pxr/base/tf/tf.h", "build/CMakeCache.txt",
-             "build/CMakeFiles/rules.ninja", "libs/rigExec/newKernel.h",
-             "notes.md"])
-        self.assertEqual(tree, ["LICENSE", "docs/home.md", "libs/rigExec/evaluator.cpp",
-                                "libs/rigExec/newKernel.h", "notes.md"])
+             "libs/rigExec/newKernel.h"])
+        self.assertEqual(audited, ["LICENSE", "docs/home.md",
+                                   "libs/rigExec/evaluator.cpp"])
+        self.assertEqual(extras, ["libs/rigExec/newKernel.h", "usd-install.tar"])
         dependency_output = ("usd-install/lib/libusd.so",
-                             "usd-install/include/pxr/usd/usd/stage.h",
                              "OpenUSD/pxr/base/tf/tf.h",
-                             "build/CMakeCache.txt",
-                             "build/CMakeFiles/rules.ninja")
+                             "build/CMakeCache.txt")
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
             for name in ("LICENSE", "docs/home.md", "libs/rigExec/evaluator.cpp"):
@@ -355,20 +408,26 @@ class Partition(unittest.TestCase):
                            cwd=repo, check=True, capture_output=True)
             subprocess.run(["git", "add", "-A"], cwd=repo, check=True,
                            capture_output=True)
-            for name in dependency_output:
+            for name in (*dependency_output, "usd-install.tar"):
                 (repo / name).parent.mkdir(parents=True, exist_ok=True)
                 (repo / name).write_text("staged dependency\n", encoding="utf-8")
             new_header = repo / "libs" / "rigExec" / "newKernel.h"
             new_header.write_text("new\n", encoding="utf-8")
-            files, outside = check_licenses.inventory(repo)
+            files, reported = check_licenses.inventory(repo)
             self.assertIsNotNone(files, "the fixture must be a git checkout")
             self.assertEqual(files, ["LICENSE", "docs/home.md",
-                                     "libs/rigExec/evaluator.cpp",
-                                     "libs/rigExec/newKernel.h"])
-            self.assertEqual(outside, sorted(dependency_output))
+                                     "libs/rigExec/evaluator.cpp"])
+            self.assertEqual(reported, ["libs/rigExec/newKernel.h",
+                                        "usd-install.tar"])
             for name in files:
-                self.assertFalse(name.startswith(("usd-install/", "OpenUSD/",
+                self.assertFalse(name.startswith(("usd-install", "OpenUSD/",
                                                   "build/")), name)
+            # The guarantee the boundary keeps: once a new file is staged it is
+            # audited, so it cannot reach a commit without a family.
+            subprocess.run(["git", "add", "libs/rigExec/newKernel.h"], cwd=repo,
+                           check=True, capture_output=True)
+            staged, _ = check_licenses.inventory(repo)
+            self.assertIn("libs/rigExec/newKernel.h", staged)
 
 
 def _legal_root_installs() -> set[tuple[str, str]]:

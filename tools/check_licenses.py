@@ -128,24 +128,26 @@ def marker_scan(root: Path, files: list[str], manifest: dict) -> int:
     return count
 
 
-def inventory_result_tree(tracked: list[str], untracked: list[str]) -> list[str]:
-    """The repository's inventory result tree.
+def inventory_parts(tracked: list[str], untracked: list[str]) -> tuple[list[str], list[str]]:
+    """(the audited inventory, untracked files sitting among it).
 
-    Tracked files, plus new files in a directory this repository already
-    tracks. A whole untracked directory is outside the inventory even when
-    nothing ignores it: a dependency a CI job stages or builds under the
-    checkout root, or a nested checkout, is not this repository's file set.
+    The audit certifies the repository as it can be committed, so its tree is
+    what git tracks: a file staged with git add is tracked, which is what
+    forces a new file to be classified before it lands. Everything else in the
+    checkout - a dependency or build archive a CI job stages, a nested
+    checkout, an uncommitted scratch file - is outside the audited tree and is
+    reported instead of counted.
     """
-    tracked_dirs = {str(PurePosixPath(name).parent) for name in tracked}
-    kept = set(tracked)
-    kept.update(name for name in untracked
-                if str(PurePosixPath(name).parent) in tracked_dirs)
-    return sorted(kept)
+    audited = sorted(set(tracked))
+    tracked_dirs = {str(PurePosixPath(name).parent) for name in audited}
+    extras = sorted(name for name in untracked
+                    if str(PurePosixPath(name).parent) in tracked_dirs)
+    return audited, extras
 
 
 def inventory(root: Path) -> tuple[list[str] | None, list[str]]:
-    """(result tree, untracked paths left outside it), or (None, []) without
-    git."""
+    """(audited inventory, untracked files reported beside it), or (None, [])
+    without git."""
     try:
         tracked = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True,
                                  text=True, check=True).stdout.split()
@@ -154,13 +156,12 @@ def inventory(root: Path) -> tuple[list[str] | None, list[str]]:
                                check=True).stdout.split()
     except Exception:
         return None, []
-    files = inventory_result_tree(tracked, added)
-    outside = sorted(set(added) - set(files))
-    return (files or None), outside
+    files, extras = inventory_parts(tracked, added)
+    return (files or None), extras
 
 
 def tracked_files(root: Path) -> list[str] | None:
-    """Every file of the repository's inventory result tree."""
+    """Every file of the repository's audited inventory."""
     return inventory(root)[0]
 
 
@@ -564,11 +565,15 @@ def check_links(manifest: dict, root: Path) -> list[str]:
 def compare_legal_members(manifest: dict, archive_name: str, entries: list[dict],
                           members: list[str], path: Path,
                           addon_root: Path | None, root: Path = ROOT) -> list[str]:
-    """Stale legal text is an error; a line-ending difference is not.
+    """Every present mapped member with a source that resolves here is compared
+    byte for byte; a line-ending difference alone is not stale text.
 
-    The manifest copy inside an archive is a snapshot, not a legal text: the
-    manifest's own bytes change whenever the inventory is refreshed, so it is
-    never compared byte for byte. It is checked for presence and shape."""
+    Two boundaries are recorded, not guessed: the manifest copy shipped inside
+    an archive is a provenance snapshot checked for presence and shape only,
+    and a member whose manifest entry records a stale exception is checked to
+    still differ from its source. A source that does not resolve here - an
+    add-on text with no root supplied, or prose provenance - cannot vouch for
+    the archived bytes and is reported by check_sources_exist."""
     errors = []
     with zipfile.ZipFile(path) as handle:
         available = set(handle.namelist())
@@ -613,14 +618,18 @@ def compare_legal_members(manifest: dict, archive_name: str, entries: list[dict]
             continue
         normalized = normalize_line_endings(texts[member])
         source_normalized = normalize_line_endings(source.read_bytes())
-        if "byte-identical" in status or status == "current":
-            if normalized != source_normalized:
-                errors.append(f"{archive_name}: {member} differs from its source "
-                             f"{source.name}")
-        elif "stale" in status:
+        if "stale" in status.lower():
+            # A recorded stale exception: the difference is the record, so the
+            # comparison is inverted. If the archived copy now matches, the
+            # record is what went out of date.
             if normalized == source_normalized:
                 errors.append(f"{archive_name}: {member} is recorded stale but now "
-                             "matches its source; refresh the mapping")
+                              "matches its source; refresh the mapping")
+            continue
+        if normalized != source_normalized:
+            errors.append(f"{archive_name}: {member} differs from its source "
+                          f"{source.name}; a deliberate difference must be recorded "
+                          "as stale")
     return errors
 
 
@@ -660,12 +669,12 @@ def check_archives(manifest: dict, root: Path, addon_root: Path | None):
         if record.get("members") != len(members):
             errors.append(f"{record['archive']}: {len(members)} members, "
                           f"the manifest records {record.get('members')}")
-        entries = archive_member_lists(manifest).get(record["archive"])
         archive_errors, stats, archive_notes = check_archive(manifest, path, root,
                                                             addon_root)
         errors += archive_errors
         notes += archive_notes
-        if stats.get("mapped_legal") is None or entries is None:
+        if stats.get("mapped_legal") is None:
+            # check_archive already reported the missing mapping.
             continue
         if record.get("legal_members_mapped") != stats["mapped_legal"]:
             errors.append(f"{record['archive']}: {stats['mapped_legal']} members are "
@@ -687,9 +696,10 @@ def check_partition(manifest: dict, root: Path, files: list[str]):
                       f"{len(files)} tracked files")
     unassigned = [f for f in files if assignment[f] == "fallback-unclassified"]
     if len(unassigned) != manifest["totals"]["unassigned_files"]:
+        named = ", ".join(unassigned[:10]) + (", ..." if len(unassigned) > 10 else "")
         errors.append(f"totals.unassigned_files is "
                       f"{manifest['totals']['unassigned_files']}, {len(unassigned)} "
-                      "paths match no family")
+                      f"paths match no family: {named}")
     for family in manifest["families"]:
         actual = sum(1 for f in files if assignment[f] == family["id"])
         if actual != family["matched_files"]:
@@ -1249,6 +1259,74 @@ def _cases() -> list[tuple[str, bool | None, str]]:
         any("schema_version" in error or "families" in error for error in errors),
         f"{stats} / {errors}")
 
+    # Comparison is not opt-in through status prose: a present member with a
+    # source that resolves here is compared whatever its status records.
+    alias_archive = _zip(Path(tempfile.mktemp(suffix="alias.zip")),
+                         {"LICENSE-OpenUSD": "CORRUPTED LICENSE\n"})
+    alias_entries = [{"member": "LICENSE-OpenUSD", "source": "LICENSE",
+                      "status": "historical alias of LICENSE, archived with CRLF endings"}]
+    errors = compare_legal_members(fixture_manifest, alias_archive.name, alias_entries,
+                                   ["LICENSE-OpenUSD"], alias_archive, None, sources)
+    add("an alias-status member is compared against its source",
+        any("differs from its source" in error for error in errors), errors or "none")
+
+    # An add-on copy is compared once its root is supplied.
+    terms_addon = Path(tempfile.mkdtemp(prefix="license-check-terms-")) / "addon"
+    terms_addon.mkdir(parents=True)
+    (terms_addon / "LICENSE").write_text(MIT_TEXT, encoding="utf-8")
+    terms_archive = _zip(Path(tempfile.mktemp(suffix="terms.zip")), {"LICENSE": MIT_TEXT})
+    terms_manifest = _manifest([ORIGINAL], {"addon": {
+        "archive": str(terms_archive),
+        "legal_members": [{"member": "LICENSE", "source": "../addon/LICENSE",
+                           "status": "add-on copy of the same MIT terms"}]}})
+    terms_entries = terms_manifest["distribution"]["addon"]["legal_members"]
+    clean = compare_legal_members(terms_manifest, terms_archive.name, terms_entries,
+                                  ["LICENSE"], terms_archive, terms_addon, sources)
+    (terms_addon / "LICENSE").write_text("MIT but edited\n", encoding="utf-8")
+    edited = compare_legal_members(terms_manifest, terms_archive.name, terms_entries,
+                                   ["LICENSE"], terms_archive, terms_addon, sources)
+    add("an add-on copy is compared against the supplied root",
+        not clean and any("differs from its source" in error for error in edited),
+        f"{clean} / {edited}")
+
+    # A recorded stale exception is checked the other way: the difference is
+    # the record, and the status spelling must not decide that.
+    stale_entries = [{"member": "NOTICE", "source": "NOTICE",
+                      "status": "STALE: the archived copy predates the current NOTICE"}]
+    older_notice = _zip(Path(tempfile.mktemp(suffix="older-notice.zip")),
+                        {"NOTICE": "an older notice\n"})
+    stale_errors = compare_legal_members(fixture_manifest, older_notice.name,
+                                         stale_entries, ["NOTICE"], older_notice,
+                                         None, sources)
+    current_archive = _zip(Path(tempfile.mktemp(suffix="refreshed.zip")),
+                           {"NOTICE": NOTICE_TEXT})
+    refreshed = compare_legal_members(fixture_manifest, current_archive.name,
+                                      stale_entries, ["NOTICE"], current_archive,
+                                      None, sources)
+    add("a recorded stale exception stays a recorded boundary",
+        not stale_errors and any("recorded stale but now matches" in error
+                                 for error in refreshed),
+        f"{stale_errors} / {refreshed}")
+
+    # The inventory record's legal counts are enforced for a repository-relative
+    # archive path, the form every production record uses.
+    counts_archive = _zip(Path(tempfile.mktemp(suffix="counts.zip")),
+                          {"LICENSE": MIT_TEXT, "demo/LICENSE": MIT_TEXT})
+    counts_manifest = _manifest(
+        [ORIGINAL],
+        {"tutorial": {"archive": str(counts_archive),
+                      "legal_members": [{"member": "LICENSE", "source": "LICENSE",
+                                         "status": "current"}]}},
+        [{"archive": str(counts_archive), "members": 2, "legal_members": 999,
+          "legal_members_mapped": 999}])
+    counts_errors, _ = check_archives(counts_manifest, sources, None)
+    add("the recorded legal counts of an archive are enforced",
+        any("members are mapped, the manifest records 999" in error
+            for error in counts_errors)
+        and any("legal members present, the manifest records 999" in error
+                for error in counts_errors),
+        counts_errors or "no errors")
+
     # Without git, partition completeness is reported unverifiable, not passed.
     notes = validate(_manifest([ORIGINAL]), _tree(ORIGINAL_TREE), partition=True)[1]
     add("without git the partition is reported unverifiable",
@@ -1281,18 +1359,29 @@ def _cases() -> list[tuple[str, bool | None, str]]:
         and any("add-on bound" in note for note in source_notes),
         f"{errors or source_errors} / {source_notes}")
 
-    # The inventory boundary: staged dependency and build output under the
-    # checkout root stay out; a new file in a tracked directory stays in.
-    boundary = inventory_result_tree(
+    # The inventory boundary: the audit covers what git tracks. A dependency
+    # tree, a build archive staged in the checkout root, and an uncommitted
+    # file stay out, and the ones sitting in a tracked directory are named.
+    audited, extras = inventory_parts(
         ["LICENSE", "src/engine.cpp", "docs/guide.md"],
         ["build/CMakeCache.txt", "build/CMakeFiles/rules.ninja",
          "OpenUSD/pxr/base/tf/tf.h", "OpenUSD/pxr/usd/usd/stage.h",
-         "usd-install/lib/libusd.so", "usd-install/include/pxr/base/tf.h",
+         "usd-install.tar", "usd-install/lib/libusd.so",
          "docs/new_guide.md", "scratch.md"])
-    add("the inventory keeps project files and refuses staged dependency output",
-        boundary == ["LICENSE", "docs/guide.md", "docs/new_guide.md",
-                     "scratch.md", "src/engine.cpp"],
-        str(boundary))
+    add("the audit covers tracked files and refuses staged build output",
+        audited == ["LICENSE", "docs/guide.md", "src/engine.cpp"]
+        and extras == ["docs/new_guide.md", "scratch.md", "usd-install.tar"],
+        f"{audited} / {extras}")
+
+    # A tracked file no family covers is named, so the owner sees which path
+    # needs a family instead of a count alone.
+    stray_manifest = _manifest([ORIGINAL])
+    stray_tree = _tree(ORIGINAL_TREE | {"stray.tar": "an archive, not a legal text\n"})
+    stray_errors, _ = check_partition(stray_manifest, stray_tree,
+                                      [*ORIGINAL_TREE, "stray.tar"])
+    add("a tracked file no family covers is named",
+        any("stray.tar" in error for error in stray_errors),
+        stray_errors[0] if stray_errors else "none")
 
     # A source tree reached through a path the platform rewrites on resolve,
     # which is how a Windows temp tree can be spelled, must still be compared.
@@ -1424,17 +1513,17 @@ def main(argv: list[str] | None = None) -> int:
     else:
         errors, notes = validate(manifest, ROOT, args.addon_root)
         if not args.quiet:
-            files, outside = inventory(ROOT)
+            files, extras = inventory(ROOT)
             if files is None:
                 notes.append("partition completeness is unverifiable: this tree has "
                             "no git, so the family counts were not re-derived")
             else:
                 print(f"partition re-derived over {len(files)} files")
-                if outside:
+                if extras:
+                    named = ", ".join(extras[:10]) + (", ..." if len(extras) > 10 else "")
                     notes.append(
-                        f"{len(outside)} untracked paths under untracked directories "
-                        "are outside the inventory (a staged dependency, a build "
-                        "tree or a nested checkout in this checkout)")
+                        f"{len(extras)} untracked files sit among the tracked tree "
+                        f"and are outside the audit until they are added: {named}")
     if not args.quiet:
         for note in notes:
             print(f"note: {note}")

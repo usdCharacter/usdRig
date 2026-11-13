@@ -45,11 +45,12 @@ nothing unassigned and nothing double-assigned. A path belongs to the family
 with the lowest precedence number whose globs match it, after that family's
 carve-outs; a path matching nothing falls to the precedence-6 fallback, which
 the current partition reaches for zero files. The checker re-derives that
-partition from the checkout rather than trusting the recorded counts, and the
-tree it re-derives over is the tracked files plus new files in a directory the
-repository tracks: a whole untracked directory, such as an OpenUSD build a CI
-job stages inside the checkout, is outside the inventory and is reported as
-excluded rather than counted.
+partition from the files git tracks rather than trusting the recorded counts:
+a file staged with `git add` is in that tree, so a new file must be classified
+before it can reach a commit, while a dependency tree such as an OpenUSD
+build a CI job stages inside the checkout, a build archive it downloads into
+the checkout root, a nested checkout or an uncommitted scratch file sit
+outside it and are reported as excluded rather than counted.
 
 ## Generated is an origin class, not a grant
 
@@ -159,8 +160,15 @@ the FlatBuffers, LZMA and usdNoodles texts, `tools/license_manifest.json`,
 plus the historical aliases `LICENSE-usdRig`, `NOTICE-usdRig`,
 `LICENSE-OpenUSD` and `THIRD_PARTY_NOTICES-usdRig.md` left in place for
 existing consumers. Archive members are stored with CRLF endings, so a
-comparison normalizes CRLF to LF before flagging anything; a stale member is
-an error, a line-ending difference is not. A notice is validated where it
+comparison normalizes CRLF to LF before flagging anything; drift from the
+source is an error and a line-ending difference is not. Every mapped member
+whose source resolves here is compared, whatever its status prose records.
+Two boundaries are recorded rather than inferred: the shipped
+`tools/license_manifest.json` copy is a provenance snapshot checked for
+presence and shape only, and a member whose entry records a stale exception is
+checked to still differ from its source, so a refreshed archive sends the
+record back for a refresh. Add-on-bound members are compared once
+`--addon-root` supplies their tree. A notice is validated where it
 sits: the links in a copy that travels under an archive root, such as
 `godot_rigExec/THIRD_PARTY_NOTICES.md`, must each reach a member of that
 directory.
