@@ -1,4 +1,4 @@
-# Working in RigExec
+# Working in usdRig
 
 ## Git
 
@@ -6,6 +6,12 @@ Commits should be atomic: include only one coherent change or fix, and do not mi
 Commit messages should be succinct and describe the change being made.
 
 ## Project
+
+The project is **usdRig**; its evaluation engine is **RigExec**. Read and follow
+the [domain glossary](CONTEXT.md) when writing documentation, UI text, or code
+descriptions. Use usdRig for the overall project and RigExec for the engine.
+Preserve established technical identifiers such as `rigExec*`, `RigExec*`,
+`rigexec`, and `.rigexec`; terminology alignment is not a symbol rename.
 
 RigExec evaluates USD character rigs without changing their source stages.
 `RigExecRoot` marks a rig. Controls and solvers produce transforms; movers
@@ -457,6 +463,10 @@ Linking rules:
 
 ### Windows and Git Bash
 
+- USD layer identifiers use forward slashes on Windows, while
+  `std::filesystem::path::string()` can contain backslashes. When checking a
+  diagnostic that names a layer, compare against `SdfLayer::GetIdentifier()`
+  rather than the native filesystem spelling.
 - Git Bash and PowerShell have no MSVC environment, so `cmake --build` fails
   as soon as anything compiles. `bin/test_changed.sh --run` stops at its
   build step, and the `usdview` helpers rebuild first and then report

@@ -1,10 +1,10 @@
 ---
 title: How operators fire
-summary: The mental model and the evaluation order behind every UsdRig rig — who reads what, who writes what, and when.
+summary: The mental model and the evaluation order behind every rig in usdRig — who reads what, who writes what, and when.
 order: 10
 ---
 
-A UsdRig rig is not a pile of nodes with hidden wires. It is a piece of USD
+A rig in usdRig is not a pile of nodes with hidden wires. It is a piece of USD
 namespace, and where a prim sits in that namespace is what decides when it
 runs. Once you can read the hierarchy, you can predict the frame.
 

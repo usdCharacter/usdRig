@@ -1421,7 +1421,7 @@ settles with its segment lengths unchanged.""",
         "title": "Single-Chain IK Constraint",
         "schema": "RigExecSingleChainIkConstraint",
         "summary": "Re-poses an existing joint chain of any length onto an effector goal.",
-        "description": """FBX-style single-chain IK, and the only IK in UsdRig that is a
+        "description": """FBX-style single-chain IK, and the only IK in RigExec that is a
 **constraint** rather than a solver: it does not publish a frame array that
 joints extract from, it revises the joint frames that are already there —
 whatever the steps below it in each joint's stack left.

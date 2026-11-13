@@ -1,4 +1,4 @@
-"""MkDocs hooks for the RigExec documentation site (see mkdocs.yml).
+"""MkDocs hooks for the usdRig documentation site (see mkdocs.yml).
 
 The Markdown under docs/ is written to read well on GitHub and is partly
 generated (docs/build_pages.py), so the site adapts to it rather than the

@@ -1,6 +1,6 @@
 # Layer readiness
 
-RigExec is work in progress. Every layer below is usable but unfinished and could be volatile:
+usdRig is work in progress. Every layer below is usable but unfinished and could be volatile:
 APIs, behavior, and file formats may change without notice.
 
 Readiness levels used here:
