@@ -463,6 +463,10 @@ Linking rules:
 
 ### Windows and Git Bash
 
+- USD layer identifiers use forward slashes on Windows, while
+  `std::filesystem::path::string()` can contain backslashes. When checking a
+  diagnostic that names a layer, compare against `SdfLayer::GetIdentifier()`
+  rather than the native filesystem spelling.
 - Git Bash and PowerShell have no MSVC environment, so `cmake --build` fails
   as soon as anything compiles. `bin/test_changed.sh --run` stops at its
   build step, and the `usdview` helpers rebuild first and then report

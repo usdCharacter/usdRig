@@ -641,9 +641,12 @@ CaptureRefusesADelegateThatMustStayInstalled()
     ++groups;
     std::string output;
     CHECK(RunChild("pinned", &output) != 0);
-    CHECK(output.find("input replay capture refused: source layer state "
+    const auto root = SdfLayer::FindOrOpen(rootPath.string());
+    CHECK(root);
+    CHECK(root &&
+          output.find("input replay capture refused: source layer state "
                       "delegate must stay installed: " +
-                      rootPath.string()) != std::string::npos);
+                      root->GetIdentifier()) != std::string::npos);
     CHECK(output.find("pinned delegate replaced") == std::string::npos);
     if (failures)
         std::printf("pinned child:\n%s", output.c_str());
