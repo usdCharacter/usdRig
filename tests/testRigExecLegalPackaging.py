@@ -10,11 +10,13 @@ and tools/check_licenses.py.
 from __future__ import annotations
 
 import json
+import re
+import subprocess
 import sys
 import tempfile
 import unittest
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "docs"))
@@ -27,6 +29,28 @@ import check_licenses  # noqa: E402
 
 MANIFEST = json.loads((ROOT / "tools" / "license_manifest.json").read_text(encoding="utf-8"))
 ADDON_NAME = "godot_rigExec"
+
+
+def _link(link: Path, target: Path, *, directory: bool = False) -> None:
+    """Create a link, or skip the test: an unprivileged Windows runner has no
+    symlink privilege, so that host leaves the rule unverified."""
+    try:
+        link.symlink_to(target, target_is_directory=directory)
+    except (OSError, NotImplementedError):
+        raise unittest.SkipTest("this host cannot create links")
+
+
+def _guarded_checkout(base: Path) -> Path:
+    """A checkout with a file, a link that leaves it, and a link that stays."""
+    (base / "licenses").mkdir(parents=True)
+    (base / "licenses" / "LICENSE").write_text("MIT\n", encoding="utf-8")
+    elsewhere = base.parent / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "LICENSE").write_text("not ours\n", encoding="utf-8")
+    _link(base / "ESCAPE", elsewhere / "LICENSE")
+    _link(base / "out", elsewhere, directory=True)
+    _link(base / "licenses" / "INNER", base / "licenses" / "LICENSE")
+    return base
 
 
 class MemberNameRules(unittest.TestCase):
@@ -80,6 +104,56 @@ class SourceBinding(unittest.TestCase):
         self.assertEqual(missing_sources(members), [])
         self.assertEqual(missing_sources([("ghost", ROOT / "no" / "such" / "text", {})]),
                          [("ghost", ROOT / "no" / "such" / "text")])
+
+
+class Containment(unittest.TestCase):
+    """Containment is checked after resolving both the authorized root and the
+    joined source, so a link cannot carry a packed file outside the tree while
+    a root the platform spells through a link stays authorized."""
+
+    def test_a_link_may_not_carry_a_repository_source_outside_the_checkout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = _guarded_checkout(Path(tmp) / "checkout")
+            for source in ("ESCAPE", "out/LICENSE"):
+                with self.assertRaises(ValueError, msg=source):
+                    resolve_legal_source("member", source, None, base)
+            self.assertEqual(resolve_legal_source("member", "licenses/LICENSE", None, base),
+                             (base / "licenses" / "LICENSE").resolve())
+
+    def test_a_linked_root_and_an_internal_link_are_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = _guarded_checkout(Path(tmp) / "checkout")
+            linked_root = Path(tmp) / "linked-checkout"
+            _link(linked_root, base, directory=True)
+            for root in (base, linked_root):
+                self.assertEqual(resolve_legal_source("member", "licenses/INNER", None, root),
+                                 (base / "licenses" / "LICENSE").resolve())
+                self.assertEqual(resolve_legal_source("member", "licenses/LICENSE", None, root),
+                                 (base / "licenses" / "LICENSE").resolve())
+                with self.assertRaises(ValueError, msg=str(root)):
+                    resolve_legal_source("member", "out/LICENSE", None, root)
+
+    def test_a_link_may_not_carry_an_addon_source_outside_the_addon_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _guarded_checkout(Path(tmp) / ADDON_NAME)
+            _link(root / "licenses" / "ESCAPED", root.parent / "elsewhere" / "LICENSE")
+            for source in (f"../{ADDON_NAME}/ESCAPE", f"../{ADDON_NAME}/out/LICENSE",
+                           f"../{ADDON_NAME}/licenses/ESCAPED"):
+                with self.assertRaises(ValueError, msg=source):
+                    resolve_legal_source("member", source, root)
+            self.assertEqual(
+                resolve_legal_source("member", f"../{ADDON_NAME}/licenses/INNER", root),
+                (root / "licenses" / "LICENSE").resolve())
+
+    def test_a_linked_addon_root_keeps_the_name_it_was_supplied_with(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            real = Path(tmp) / "actual-addon-checkout"
+            real.mkdir()
+            (real / "LICENSE").write_text("MIT\n", encoding="utf-8")
+            link = Path(tmp) / ADDON_NAME
+            _link(link, real, directory=True)
+            self.assertEqual(resolve_legal_source("member", f"../{ADDON_NAME}/LICENSE", link),
+                             (real / "LICENSE").resolve())
 
 
 class BytePreservation(unittest.TestCase):
@@ -176,6 +250,24 @@ class ManifestContract(unittest.TestCase):
         self.assertEqual(check_licenses.installed_path(source, *paths[source][0]),
                          "share/rigExec/licenses/FlatBuffers-LICENSE.txt")
 
+    def test_every_notice_link_maps_to_a_shipped_legal_text(self):
+        prose = {ref["path"] for ref in MANIFEST["prose_references"]}
+        godot = {entry["member"] for entry in
+                 MANIFEST["distribution"]["godot_zip"]["legal_members"]}
+        install = {entry["destination"] for entry in
+                   MANIFEST["distribution"]["cmake_install"]["legal_files"]}
+        notice = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+        links = [target.partition("#")[0]
+                 for target in re.findall(r"\]\(([^)]+)\)", notice)
+                 if not target.startswith(("http://", "https://"))]
+        self.assertTrue(links)
+        self.assertEqual([target for target in links
+                          if target not in prose and f"godot_rigExec/{target}" not in godot],
+                         [], "a notice link with no mapped member in the godot archive")
+        for target in links:
+            if target not in prose:
+                self.assertIn(f"share/rigExec/{target}", install, msg=target)
+
     def test_archives_hold_the_mapped_members_and_bytes(self):
         errors, notes = check_licenses.check_archives(MANIFEST, ROOT, None)
         self.assertEqual(errors, [])
@@ -227,6 +319,157 @@ class Partition(unittest.TestCase):
         errors, unverifiable = check_licenses.check_partition(MANIFEST, ROOT, files)
         self.assertEqual(errors, [])
         self.assertEqual(unverifiable, [])
+
+    def test_a_dependency_staged_in_the_checkout_stays_outside_the_inventory(self):
+        """CI builds OpenUSD inside the checkout; that tree is not this
+        repository's file set, while a new file in a tracked directory is.
+
+        The staged layout is built here rather than read from this checkout, so
+        the boundary is proven with dependency output actually present instead
+        of depending on how the host happens to have arranged its own tree.
+        """
+        tree = check_licenses.inventory_result_tree(
+            ["LICENSE", "libs/rigExec/evaluator.cpp", "docs/home.md"],
+            ["usd-install/lib/libusd.so", "usd-install/include/pxr/usd/usd/stage.h",
+             "OpenUSD/pxr/base/tf/tf.h", "build/CMakeCache.txt",
+             "build/CMakeFiles/rules.ninja", "libs/rigExec/newKernel.h",
+             "notes.md"])
+        self.assertEqual(tree, ["LICENSE", "docs/home.md", "libs/rigExec/evaluator.cpp",
+                                "libs/rigExec/newKernel.h", "notes.md"])
+        dependency_output = ("usd-install/lib/libusd.so",
+                             "usd-install/include/pxr/usd/usd/stage.h",
+                             "OpenUSD/pxr/base/tf/tf.h",
+                             "build/CMakeCache.txt",
+                             "build/CMakeFiles/rules.ninja")
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            for name in ("LICENSE", "docs/home.md", "libs/rigExec/evaluator.cpp"):
+                (repo / name).parent.mkdir(parents=True, exist_ok=True)
+                (repo / name).write_text("project\n", encoding="utf-8")
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True,
+                           capture_output=True)
+            # A personal ignore file on the host must not decide which side of
+            # the boundary the fixture's dependency output lands on.
+            (repo / ".git" / "no-excludes").write_text("", encoding="utf-8")
+            subprocess.run(["git", "config", "core.excludesFile", ".git/no-excludes"],
+                           cwd=repo, check=True, capture_output=True)
+            subprocess.run(["git", "add", "-A"], cwd=repo, check=True,
+                           capture_output=True)
+            for name in dependency_output:
+                (repo / name).parent.mkdir(parents=True, exist_ok=True)
+                (repo / name).write_text("staged dependency\n", encoding="utf-8")
+            new_header = repo / "libs" / "rigExec" / "newKernel.h"
+            new_header.write_text("new\n", encoding="utf-8")
+            files, outside = check_licenses.inventory(repo)
+            self.assertIsNotNone(files, "the fixture must be a git checkout")
+            self.assertEqual(files, ["LICENSE", "docs/home.md",
+                                     "libs/rigExec/evaluator.cpp",
+                                     "libs/rigExec/newKernel.h"])
+            self.assertEqual(outside, sorted(dependency_output))
+            for name in files:
+                self.assertFalse(name.startswith(("usd-install/", "OpenUSD/",
+                                                  "build/")), name)
+
+
+def _legal_root_installs() -> set[tuple[str, str]]:
+    """(source, destination) for every CMake install into the legal root."""
+    cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    landed = set()
+    for source, targets in check_licenses.install_paths(cmake).items():
+        for destination, rename in targets:
+            if destination.startswith(check_licenses.LEGAL_PREFIX):
+                landed.add((source, check_licenses.installed_path(source, destination,
+                                                                  rename)))
+    return landed
+
+
+class InstalledConsumer(unittest.TestCase):
+    def test_the_manifest_names_every_install_into_the_legal_root(self):
+        recorded = {(entry["source"], entry["destination"])
+                    for entry in MANIFEST["distribution"]["cmake_install"]["legal_files"]}
+        self.assertEqual(recorded, _legal_root_installs())
+
+    def test_the_installed_checker_runs_without_a_checkout(self):
+        """Stage the prefix from CMake's own install calls, then run the
+        installed checker from outside the checkout: it needs its helper
+        library beside it, not this tree on PYTHONPATH."""
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = Path(tmp) / "prefix"
+            for source, destination in _legal_root_installs():
+                target = prefix / destination
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((ROOT / source).read_bytes())
+            checker = prefix / check_licenses.LEGAL_PREFIX / "tools" / "check_licenses.py"
+            self.assertTrue(checker.is_file())
+            self.assertTrue((checker.parent / "legal_members.py").is_file(),
+                            "the checker's helper must ship beside it")
+            result = subprocess.run([sys.executable, str(checker), "--install",
+                                     str(prefix), "--quiet"], cwd=tmp,
+                                    capture_output=True, text=True)
+            self.assertNotIn("ModuleNotFoundError", result.stderr)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_rename_is_a_destination_not_an_installed_source(self):
+        paths = check_licenses.install_paths(
+            'install(FILES docs/legal_members.py RENAME legal_members.py\n'
+            '        DESTINATION "share/rigExec/tools")\n'
+            'install(FILES docs/examples/godot_rolling_ball.zip\n'
+            '        DESTINATION "share/rigExec/docs")')
+        self.assertEqual(sorted(paths), ["docs/examples/godot_rolling_ball.zip",
+                                        "docs/legal_members.py"])
+        self.assertEqual(
+            check_licenses.installed_path("docs/legal_members.py",
+                                         *paths["docs/legal_members.py"][0]),
+            "share/rigExec/tools/legal_members.py")
+
+
+class Composition(unittest.TestCase):
+    """The godot packer reads its add-on-bound texts through the add-on root it
+    is given, so every bound source must resolve inside that root and a link
+    that leaves it must be refused."""
+
+    def test_godot_addon_sources_resolve_in_the_authorized_root(self):
+        bound = [entry for entry in MANIFEST["distribution"]["godot_zip"]["legal_members"]
+                 if entry["source"].startswith("../")]
+        self.assertTrue(bound)
+        with tempfile.TemporaryDirectory() as tmp:
+            addon = Path(tmp) / ADDON_NAME
+            inside = {}
+            for entry in bound:
+                relative = PurePosixPath(entry["source"].split("/", 2)[2])
+                inside[entry["member"]] = relative
+                target = addon / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("MIT\n", encoding="utf-8")
+            for entry in bound:
+                self.assertEqual(resolve_legal_source(entry["member"], entry["source"], addon),
+                                 (addon / inside[entry["member"]]).resolve())
+            outside = Path(tmp) / "elsewhere"
+            outside.mkdir()
+            (outside / "LICENSE.md").write_text("not ours\n", encoding="utf-8")
+            _link(addon / "leaky", outside, directory=True)
+            with self.assertRaises(ValueError):
+                resolve_legal_source("member", f"../{ADDON_NAME}/leaky/LICENSE.md", addon)
+
+
+class ProductionAudit(unittest.TestCase):
+    def test_the_default_audit_catches_a_header_that_contradicts_its_family(self):
+        """The checkout audit, not only the synthetic fixtures, must compare a
+        recorded SPDX id and holder against the headers in the tree."""
+        broken = json.loads(json.dumps(MANIFEST))
+        stated = [family for family in broken["families"]
+                  if family["id"] == "stated-mit-headers"]
+        self.assertTrue(stated and stated[0]["spdx"] == "MIT")
+        stated[0]["spdx"] = "GPL-3.0"
+        errors, _ = check_licenses.validate(broken, ROOT, None, partition=False)
+        self.assertTrue(any("contradicts" in error and "GPL-3.0" in error
+                            for error in errors), errors)
+        broken = json.loads(json.dumps(MANIFEST))
+        for family in broken["families"]:
+            if family.get("holder"):
+                family["holder"] = "Squiggle Labs"
+        errors, _ = check_licenses.validate(broken, ROOT, None, partition=False)
+        self.assertTrue(any("holder replacement" in error for error in errors), errors)
 
 
 if __name__ == "__main__":

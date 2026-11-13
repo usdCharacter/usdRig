@@ -29,14 +29,22 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from pathlib import Path
+from pathlib import PurePosixPath, Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = ROOT / "tools" / "license_manifest.json"
 NOTICE_PATH = ROOT / "THIRD_PARTY_NOTICES.md"
 LEGAL_PREFIX = "share/rigExec"
 
-sys.path.insert(0, str(ROOT / "docs"))
+# legal_members.py travels beside this checker in the install prefix and lives
+# in docs/ in the checkout, so an installed consumer needs no checkout.
+for _helper_dir in (Path(__file__).resolve().parent, ROOT / "docs"):
+    if (_helper_dir / "legal_members.py").is_file():
+        sys.path.insert(0, str(_helper_dir))
+        break
+else:
+    raise SystemExit("legal_members.py is missing: install it beside this "
+                     "checker or run from a checkout")
 from legal_members import (archive_member_name, normalize_line_endings,  # noqa: E402
                            resolve_legal_source)
 
@@ -120,8 +128,24 @@ def marker_scan(root: Path, files: list[str], manifest: dict) -> int:
     return count
 
 
-def tracked_files(root: Path) -> list[str] | None:
-    """Every file of the result tree: tracked, plus untracked and not ignored."""
+def inventory_result_tree(tracked: list[str], untracked: list[str]) -> list[str]:
+    """The repository's inventory result tree.
+
+    Tracked files, plus new files in a directory this repository already
+    tracks. A whole untracked directory is outside the inventory even when
+    nothing ignores it: a dependency a CI job stages or builds under the
+    checkout root, or a nested checkout, is not this repository's file set.
+    """
+    tracked_dirs = {str(PurePosixPath(name).parent) for name in tracked}
+    kept = set(tracked)
+    kept.update(name for name in untracked
+                if str(PurePosixPath(name).parent) in tracked_dirs)
+    return sorted(kept)
+
+
+def inventory(root: Path) -> tuple[list[str] | None, list[str]]:
+    """(result tree, untracked paths left outside it), or (None, []) without
+    git."""
     try:
         tracked = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True,
                                  text=True, check=True).stdout.split()
@@ -129,9 +153,15 @@ def tracked_files(root: Path) -> list[str] | None:
                                cwd=root, capture_output=True, text=True,
                                check=True).stdout.split()
     except Exception:
-        return None
-    files = sorted(set(tracked) | set(added))
-    return files or None
+        return None, []
+    files = inventory_result_tree(tracked, added)
+    outside = sorted(set(added) - set(files))
+    return (files or None), outside
+
+
+def tracked_files(root: Path) -> list[str] | None:
+    """Every file of the repository's inventory result tree."""
+    return inventory(root)[0]
 
 
 def git_blob_sha1(path: Path) -> str:
@@ -152,8 +182,14 @@ def install_paths(cmake_text: str) -> dict[str, list[tuple[str, str | None]]]:
         rename = re.search(r"RENAME\s+([^\s)]+)", body)
         if not dest:
             continue
-        for token in body.split():
-            if token in ("DESTINATION", "RENAME") or token.startswith("\""):
+        tokens = body.split()
+        for index, token in enumerate(tokens):
+            if token.startswith("\""):
+                continue
+            # A keyword's own value is not a source: RENAME names the write.
+            if index and tokens[index - 1] in ("RENAME", "DESTINATION"):
+                continue
+            if token in ("DESTINATION", "RENAME"):
                 continue
             paths.setdefault(token, []).append(
                 (dest.group(1), rename.group(1) if rename else None))
@@ -565,9 +601,15 @@ def compare_legal_members(manifest: dict, archive_name: str, entries: list[dict]
             continue
         try:
             source = resolve_legal_source(member, entry["source"], addon_root, root)
-        except ValueError:
+        except ValueError as exc:
+            if (addon_root is None
+                    and str(entry.get("source", "")).strip().startswith("../")):
+                # Add-on bound without a root: reported unverifiable elsewhere.
+                continue
+            errors.append(f"{archive_name}: legal member {member}: {exc}")
             continue
         if not source.is_file():
+            # A missing mapped source is reported by check_sources_exist.
             continue
         normalized = normalize_line_endings(texts[member])
         source_normalized = normalize_line_endings(source.read_bytes())
@@ -781,6 +823,7 @@ def check_archive(manifest: dict, archive: Path, root: Path = ROOT,
     notes: list[str] = []
     with zipfile.ZipFile(archive) as handle:
         texts = {name: handle.read(name) for name in members}
+    prose = {ref["path"] for ref in manifest.get("prose_references", [])}
     for name in members:
         if name in legal:
             continue
@@ -796,22 +839,27 @@ def check_archive(manifest: dict, archive: Path, root: Path = ROOT,
         else:
             errors.append(f"{archive.name}: member {name} carries a license text the "
                          "manifest does not map")
-    notice_text = ""
-    if "THIRD_PARTY_NOTICES.md" in members:
-        notice_text = texts["THIRD_PARTY_NOTICES.md"].decode("utf-8", "replace")
-    prose = {ref["path"] for ref in manifest.get("prose_references", [])}
-    for link in notice_links(notice_text):
-        target = link.lstrip("/").split("#")[0]
-        if not target:
-            continue
-        if target in members:
-            continue
-        if target in prose:
-            notes.append(f"{archive.name}: the shipped notice links {target}, which "
-                        f"the manifest records as a {prose_note(manifest, target)}")
-        else:
-            errors.append(f"{archive.name}: the shipped notice links {link}, which "
-                         "is not a member of the archive")
+    for notice in sorted(name for name in members
+                         if PurePosixPath(name).name == NOTICE_PATH.name):
+        # Every copy of the canonical notice is checked against the members of
+        # the directory it sits in, which for the Godot archive is nested under
+        # godot_rigExec/. The historical aliases are not notices a consumer reads.
+        text = texts[notice].decode("utf-8", "replace")
+        folder = PurePosixPath(notice).parent
+        base = "" if str(folder) == "." else f"{folder}/"
+        for link in notice_links(text):
+            target = link.lstrip("/").split("#")[0]
+            if not target:
+                continue
+            if base + target in members:
+                continue
+            if target in prose:
+                notes.append(f"{archive.name}: the shipped notice {notice} links "
+                             f"{target}, which the manifest records as a "
+                             f"{prose_note(manifest, target)}")
+            else:
+                errors.append(f"{archive.name}: the shipped notice {notice} links "
+                              f"{link}, which is not a member of the archive")
     stats = {"members": len(members), "mapped_legal": len(entries),
              "legal_present": len(legal),
              "mirrored_legal": sum(1 for note in notes if "mirror" in note),
@@ -838,12 +886,14 @@ def validate(manifest: dict, root: Path = ROOT, addon_root: Path | None = None,
     archive_errors, archive_notes = check_archives(manifest, root, addon_root)
     errors += archive_errors
     notes += archive_notes
-    if partition:
-        files = tracked_files(root)
-        if files is None:
-            notes.append("partition completeness is unverifiable: this tree has no "
-                         "git, so the family counts were not re-derived")
-        else:
+    files = tracked_files(root)
+    if files is None:
+        notes.append("partition completeness and source-header agreement are "
+                     "unverifiable: this tree has no git, so neither the family "
+                     "counts nor the headers were re-derived")
+    else:
+        errors += check_source_headers(manifest, root, files)
+        if partition:
             partition_errors, unverifiable = check_partition(manifest, root, files)
             errors += partition_errors
             notes.extend(unverifiable)
@@ -896,6 +946,39 @@ def _tree(files: dict[str, bytes | str]) -> Path:
     return root
 
 
+def _linked_tree(files: dict[str, str]) -> Path:
+    """The same tree reached through a path the platform rewrites on resolve.
+
+    A symlink where links may be created: macOS already spells a temp tree
+    through its /var link, and an unprivileged Windows runner cannot link, so
+    there the plain path is used.
+    """
+    real = _tree(files)
+    holder = Path(tempfile.mkdtemp(prefix="license-check-link-"))
+    try:
+        (holder / "checkout").symlink_to(real, target_is_directory=True)
+    except OSError:
+        return real
+    return holder / "checkout"
+
+
+def _guarded_tree(tmp: Path) -> Path:
+    """A tree whose ESCAPE link leaves it and whose INNER link stays inside it.
+
+    Raises OSError on a host without link privilege, where containment cannot
+    be probed.
+    """
+    root = tmp / "guarded"
+    (root / "licenses").mkdir(parents=True)
+    (root / "licenses" / "LICENSE").write_text("MIT\n", encoding="utf-8")
+    outside = tmp / "elsewhere"
+    outside.mkdir()
+    (outside / "LICENSE").write_text("not ours\n", encoding="utf-8")
+    (root / "ESCAPE").symlink_to(outside / "LICENSE")
+    (root / "licenses" / "INNER").symlink_to(root / "licenses" / "LICENSE")
+    return root
+
+
 def _zip(path: Path, members: dict[str, str | bytes]) -> Path:
     with zipfile.ZipFile(path, "w") as handle:
         for name, data in members.items():
@@ -912,7 +995,7 @@ ORIGINAL_TREE = {"LICENSE": MIT_TEXT, "NOTICE": NOTICE_TEXT,
                  "src/engine.cpp": "// engine entry point, no header\n"}
 
 
-def _cases() -> list[tuple[str, bool, str]]:
+def _cases() -> list[tuple[str, bool | None, str]]:
     cases = []
 
     def add(name, expected, detail):
@@ -1094,6 +1177,15 @@ def _cases() -> list[tuple[str, bool, str]]:
     add("a staged install prefix is audited", not errors and stats["present"] == 2,
         f"{stats} / {errors}")
 
+    # A RENAME names the file the install writes; it is not itself a source.
+    renamed = install_paths('install(FILES thirdparty/flatbuffers/LICENSE\n'
+                            '    DESTINATION "share/rigExec/licenses"\n'
+                            '    RENAME FlatBuffers-LICENSE.txt)\n')
+    add("a rename is a destination, not an installed source",
+        renamed == {"thirdparty/flatbuffers/LICENSE": [("share/rigExec/licenses",
+                                                       "FlatBuffers-LICENSE.txt")]},
+        str(renamed))
+
     # A notice link in the shipped archive that reaches nothing: caught.
     archive_path = Path(tempfile.mktemp(suffix="tutorial.zip"))
     notice = ("see [the licence](LICENSE) and "
@@ -1189,18 +1281,108 @@ def _cases() -> list[tuple[str, bool, str]]:
         and any("add-on bound" in note for note in source_notes),
         f"{errors or source_errors} / {source_notes}")
 
+    # The inventory boundary: staged dependency and build output under the
+    # checkout root stay out; a new file in a tracked directory stays in.
+    boundary = inventory_result_tree(
+        ["LICENSE", "src/engine.cpp", "docs/guide.md"],
+        ["build/CMakeCache.txt", "build/CMakeFiles/rules.ninja",
+         "OpenUSD/pxr/base/tf/tf.h", "OpenUSD/pxr/usd/usd/stage.h",
+         "usd-install/lib/libusd.so", "usd-install/include/pxr/base/tf.h",
+         "docs/new_guide.md", "scratch.md"])
+    add("the inventory keeps project files and refuses staged dependency output",
+        boundary == ["LICENSE", "docs/guide.md", "docs/new_guide.md",
+                     "scratch.md", "src/engine.cpp"],
+        str(boundary))
+
+    # A source tree reached through a path the platform rewrites on resolve,
+    # which is how a Windows temp tree can be spelled, must still be compared.
+    linked = _linked_tree(ORIGINAL_TREE)
+    stale_errors = compare_legal_members(fixture_manifest, stale_archive.name,
+                                         entries, ["LICENSE"], stale_archive, None,
+                                         linked)
+    add("a stale member is caught when the source tree is reached by a link",
+        any("differs from its source" in error for error in stale_errors),
+        stale_errors or "none")
+
+    # Containment is checked after resolving both the authorized root and the
+    # joined source: a link must not carry a mapped source outside the tree.
+    try:
+        guarded = _guarded_tree(Path(tempfile.mkdtemp(prefix="license-check-guard-")))
+    except OSError as exc:
+        add("a link may not carry a source out of its authorized root", None,
+            f"this host cannot create links: {exc}")
+    else:
+        guard_archive = _zip(Path(tempfile.mktemp(suffix="guard.zip")),
+                             {"LICENSE": "MIT but edited\n"})
+        escaping = compare_legal_members(
+            fixture_manifest, guard_archive.name,
+            [{"member": "LICENSE", "source": "ESCAPE", "status": "current"}],
+            ["LICENSE"], guard_archive, None, guarded)
+        add("a link may not carry a source out of its authorized root",
+            any("escapes this checkout" in error for error in escaping),
+            escaping or "none")
+        linked_target = compare_legal_members(
+            fixture_manifest, guard_archive.name,
+            [{"member": "LICENSE", "source": "licenses/INNER", "status": "current"}],
+            ["LICENSE"], guard_archive, None, guarded)
+        add("a link that stays inside the root is read as its target",
+            any("differs from its source" in error for error in linked_target),
+            linked_target or "none")
+
+    # A mapped source that cannot be resolved cannot vouch for archived bytes.
+    prose_archive = _zip(Path(tempfile.mktemp(suffix="prose.zip")),
+                         {"LICENSE": "MIT but edited\n"})
+    errors = compare_legal_members(fixture_manifest, prose_archive.name,
+                                   [{"member": "LICENSE", "source": "addon copy",
+                                     "status": "current"}],
+                                   ["LICENSE"], prose_archive, None, sources)
+    add("a legal member whose source will not resolve is reported",
+        any("LICENSE" in error for error in errors), errors or "none")
+
+    # A notice that travels under an archive root has its links checked there.
+    nested_path = Path(tempfile.mktemp(suffix="nested.zip"))
+    nested_notice = "see [the licence](LICENSE) and [methods](docs/references.md)\n"
+    _zip(nested_path, {"godot_rigExec/THIRD_PARTY_NOTICES.md": nested_notice,
+                       "godot_rigExec/LICENSE": MIT_TEXT})
+    nested_entries = [{"member": "godot_rigExec/LICENSE", "source": "LICENSE",
+                       "status": "current"},
+                      {"member": "godot_rigExec/THIRD_PARTY_NOTICES.md",
+                       "source": "THIRD_PARTY_NOTICES.md", "status": "current"}]
+    nested_manifest = _manifest([ORIGINAL], {"addon": {
+        "archive": str(nested_path), "legal_members": nested_entries}})
+    nested_manifest["prose_references"] = [{"path": "docs/references.md",
+                                            "kind": "source-only prose reference"}]
+    nested_sources = _tree(ORIGINAL_TREE | {"THIRD_PARTY_NOTICES.md": nested_notice})
+    errors, stats, notes = check_archive(nested_manifest, nested_path, nested_sources)
+    add("a nested archive notice resolves its links under its own directory",
+        not errors and any("prose" in note for note in notes),
+        f"{stats} / {errors or notes}")
+    broken_notice = "see [the licence](LICENSE) and [upstream](thirdparty/x/LICENSE)\n"
+    broken_sources = _tree(ORIGINAL_TREE | {"THIRD_PARTY_NOTICES.md": broken_notice})
+    _zip(nested_path, {"godot_rigExec/THIRD_PARTY_NOTICES.md": broken_notice,
+                       "godot_rigExec/LICENSE": MIT_TEXT})
+    errors, stats, notes = check_archive(nested_manifest, nested_path, broken_sources)
+    add("a broken link inside a nested archive notice is caught",
+        any("thirdparty/x/LICENSE" in error for error in errors),
+        f"{stats} / {errors or notes}")
+
     return cases
 
 
 def run_self_test() -> int:
     cases = _cases()
-    failures = [(name, detail) for name, passed, detail in cases if not passed]
+    failures = [(name, detail) for name, passed, detail in cases if passed is False]
+    skipped = [name for name, passed, _ in cases if passed is None]
     for name, passed, detail in cases:
+        if passed is None:
+            print(f"  skip  {name}\n        {detail}")
+            continue
         print(f"  {'ok   ' if passed else 'FAIL'}  {name}")
         if not passed:
             print(f"        got: {detail}")
-    print(f"self-test: {len(cases) - len(failures)}/{len(cases)} cases behaved "
-          "as expected")
+    ran = len(cases) - len(skipped)
+    print(f"self-test: {ran - len(failures)}/{ran} cases behaved "
+          "as expected" + (f", {len(skipped)} skipped" if skipped else ""))
     return 1 if failures else 0
 
 
@@ -1242,12 +1424,17 @@ def main(argv: list[str] | None = None) -> int:
     else:
         errors, notes = validate(manifest, ROOT, args.addon_root)
         if not args.quiet:
-            files = tracked_files(ROOT)
+            files, outside = inventory(ROOT)
             if files is None:
                 notes.append("partition completeness is unverifiable: this tree has "
                             "no git, so the family counts were not re-derived")
             else:
                 print(f"partition re-derived over {len(files)} files")
+                if outside:
+                    notes.append(
+                        f"{len(outside)} untracked paths under untracked directories "
+                        "are outside the inventory (a staged dependency, a build "
+                        "tree or a nested checkout in this checkout)")
     if not args.quiet:
         for note in notes:
             print(f"note: {note}")

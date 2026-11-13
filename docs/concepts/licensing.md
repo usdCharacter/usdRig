@@ -39,13 +39,17 @@ repository.
 | **generated** | machine output of a checked-in generator or an external tool | origin only: the grant comes from the generator and its inputs |
 | **unresolved** | no provenance evidence in the repository | no grant at all until an owner answers |
 
-At the manifest's inventory boundary the partition covers 1790 files: 1050
+At the manifest's inventory boundary the partition covers 1791 files: 1051
 original, 166 derived, 45 bundled, 70 generated and 459 unresolved, with
 nothing unassigned and nothing double-assigned. A path belongs to the family
 with the lowest precedence number whose globs match it, after that family's
 carve-outs; a path matching nothing falls to the precedence-6 fallback, which
 the current partition reaches for zero files. The checker re-derives that
-partition from the checkout rather than trusting the recorded counts.
+partition from the checkout rather than trusting the recorded counts, and the
+tree it re-derives over is the tracked files plus new files in a directory the
+repository tracks: a whole untracked directory, such as an OpenUSD build a CI
+job stages inside the checkout, is outside the inventory and is reported as
+excluded rather than counted.
 
 ## Generated is an origin class, not a grant
 
@@ -96,10 +100,10 @@ confirming more than that.
 | OpenUSD | Pixar | TOST-1.0 | upstream, [openusd.org/license](https://openusd.org/license); a copy ships as `plugin/usdNoodles/LICENSE.txt` | 26.08 |
 | `plugin/usdNoodles` editor | Meta Platforms (Pixar for `moduleDeps.cpp`) | TOST-1.0 | `plugin/usdNoodles/LICENSE.txt` | OpenUSD PR 4156 at `4b753359d308d7d0416dcee464e1c7d130bc39dc` |
 | noodles GLSL shaders | Meta Platforms | MIT | `plugin/usdNoodles/NOODLES_LICENSE.txt` | `ff5d473f10e8c37ceaf0da11ea7cb80805bc8314` |
-| Poppins font atlases | The Poppins Project Authors | OFL-1.1 | `plugin/usdNoodles/THIRD_PARTY_LICENSES.txt` | same pin |
+| Poppins font atlases | The Poppins Project Authors | OFL-1.1 | `plugin/usdNoodles/THIRD_PARTY_LICENSES.txt`, installed under `share/rigExec/plugin/usdNoodles/` | same pin |
 | `thirdparty/flatbuffers` | Google LLC | Apache-2.0 | `thirdparty/flatbuffers/LICENSE` | tag `v25.12.19`, commit `7e163021e59cca4f8e1e35a7c828b5c6b7915953` |
 | `thirdparty/lzma` | Igor Pavlov | public domain — no SPDX id | `thirdparty/lzma/DOC/lzma-sdk.txt`, provenance in `thirdparty/lzma/NOTICE.md` | 26.04 |
-| OpenRigLogic ports | Epic Games, Inc. | MIT | quoted inline in `THIRD_PARTY_NOTICES.md`; no installed text file, no header in the three port files | `9ca65ac08b64a1ea5f0d79466e64706b3ac524ba` |
+| OpenRigLogic ports | Epic Games, Inc. | MIT | quoted in the installed `THIRD_PARTY_NOTICES.md`; no separate text file, no header in the three port files | `9ca65ac08b64a1ea5f0d79466e64706b3ac524ba` |
 | Squarebit Eye shader | Squarebit LLC (Squarebit Studios) | Squarebit Eye EULA | URL only, [squarebitstudios.com/squarebit-eye/eula](https://www.squarebitstudios.com/squarebit-eye/eula) | — |
 | `libs/rigExecRuntime/runtimeMath.h` | Pixar | TOST-1.0 | header notice, upstream license link | — |
 | `plugin/rigExecUsdview/volumeWeightUI.py` | Pixar | OpenUSD terms | existing header notice | — |
@@ -133,16 +137,19 @@ concrete gap in the distribution.
 ## How the legal texts travel
 
 **Install prefix.** The legal root is `share/rigExec`. It carries the three
-root records, the manifest and the checker under `share/rigExec/tools`,
-renamed aliases under `share/rigExec/licenses` (`OpenUSD-LICENSE.txt`,
-`FlatBuffers-LICENSE.txt`, `LZMA-SDK-NOTICE.md`, `LZMA-SDK-LICENSE.txt`), and
+root records, the manifest and the checker beside it under
+`share/rigExec/tools`, together with `legal_members.py`, the member reader the
+checker imports so an installed consumer runs it without a checkout; renamed
+aliases under `share/rigExec/licenses` (`OpenUSD-LICENSE.txt`,
+`FlatBuffers-LICENSE.txt`, `LZMA-SDK-NOTICE.md`, `LZMA-SDK-LICENSE.txt`); and
 source-relative copies under `share/rigExec/thirdparty/...` and
 `share/rigExec/plugin/usdNoodles/...` so that the links written in
 `THIRD_PARTY_NOTICES.md` resolve in the installed tree. The usdview texts
 ship whether or not `RIGEXEC_BUILD_USDNOODLES` built the editor.
 
-Not installed: the Epic MIT text (inline in the notice only), the Squarebit
-EULA, and the two prose references below.
+No separate installed file exists for the Epic MIT text: it travels inside the
+installed notice. The Squarebit EULA is not installed and not checked in, and
+the two prose references below are deliberately left out.
 
 **Tutorial archives.** Legal text sits at the archive root and under the
 source-relative paths the notice links to.
@@ -153,7 +160,10 @@ plus the historical aliases `LICENSE-usdRig`, `NOTICE-usdRig`,
 `LICENSE-OpenUSD` and `THIRD_PARTY_NOTICES-usdRig.md` left in place for
 existing consumers. Archive members are stored with CRLF endings, so a
 comparison normalizes CRLF to LF before flagging anything; a stale member is
-an error, a line-ending difference is not.
+an error, a line-ending difference is not. A notice is validated where it
+sits: the links in a copy that travels under an archive root, such as
+`godot_rigExec/THIRD_PARTY_NOTICES.md`, must each reach a member of that
+directory.
 
 **USDZ examples.** `examples/biped/Biped.usdz` and
 `examples/2d/rubberhose/rubberhose.usdz` carry no legal member at all today:
@@ -203,15 +213,20 @@ archive it is checked for presence, schema version and family-count shape
 only.
 
 One limit is stated rather than papered over: the partition is re-derived
-from `git ls-files`. In a tree with no git — an extracted archive, a vendored
-copy — the checker reports the family counts as unverifiable instead of
-passing.
+from the checkout's git file list. In a tree with no git — an extracted
+archive, a vendored copy — the checker reports the family counts as
+unverifiable instead of passing. Source headers are compared the same way:
+a header whose SPDX id or holder contradicts its family is an error for an
+owner to resolve, and the checker never edits a header or a family to make
+one agree.
 
 ## What is still unverified here
 
 - The Godot tutorial archive is packaged from a sibling checkout at
-  `../godot_rigExec` that this repository does not track. Of its 25 mapped
-  legal members, 18 are packed and 7 come from that add-on tree; its copies of
+  `../godot_rigExec` that this repository does not track. Of its 27 mapped
+  legal members, 18 are packed and 9 are recorded only: seven come from that
+  add-on tree and two are texts this checkout supplies, so none of them can
+  be written until the archive is rebuilt. Its copies of
   `NOTICE` and `THIRD_PARTY_NOTICES.md` predate the current files. Without an
   authorized add-on checkout there is no way to rebuild or validate that
   archive in this checkout, so those members stay recorded as stale or

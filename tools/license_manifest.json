@@ -4,22 +4,22 @@
   "status": "inventory baseline; unresolved families need owner confirmation before any automatic blessing",
   "resolved_by": "license inventory task (issue 44), sequenced on parent PR #46",
   "inventory_boundary": {
-    "base_commit": "99b250f22f1eb8e3c18a6e761232e9894ff2ef08",
-    "base_description": "main head selected for the distribution-links task: it carries the merged PR #46 naming work (that PR landed from a rebased head, e52aabb is not an ancestor of this commit, so every count was recomputed here) plus the four license-inventory commits 7299439, 1a95733, e8fcabb and 23a0ea5",
+    "base_commit": "0fea7734f9edcc723e62ace3dff123a1b2a798c0",
+    "base_description": "main head this branch was rebased onto: it carries the merged PR #46 naming work and the Claude workflow that PR #50 added at .github/workflows/claude.yml. The first boundary was 99b250f, main when the inventory was taken; that workflow is the one file the tree gained since.",
     "parent_pr": 46,
     "parent_pr_state": "merged",
     "parent_pr_base": "main",
-    "main_head_at_boundary": "99b250f22f1eb8e3c18a6e761232e9894ff2ef08",
+    "main_head_at_boundary": "0fea7734f9edcc723e62ace3dff123a1b2a798c0",
     "open_prs_at_boundary": [],
-    "open_pr_note": "No pull request was open at this boundary; the inventory and this task land as their own PRs on main.",
-    "rebase_rule": "If main moves, recompute every count in this manifest against the new head before use. The archive blobs below were verified unchanged between 66b24f2 and this head.",
-    "tracked_files_total": 1790,
-    "tracked_files_at_base_commit": 1785,
+    "open_pr_note": "No pull request was open at the first boundary; the inventory and this task land as their own PRs on main.",
+    "rebase_rule": "If main moves, recompute every count in this manifest against the new head before use. The archive blobs below were verified unchanged between 66b24f2 and 99b250f, and again on this rebase.",
+    "tracked_files_total": 1791,
+    "tracked_files_at_base_commit": 1786,
     "inventory_scope_excludes": [
       "thirdparty/**",
       "plugin/usdNoodles/**"
     ],
-    "tracked_files_in_scope": 1585,
+    "tracked_files_in_scope": 1586,
     "license_marker_files_in_scope": 28,
     "marker_scan_definition": "Plain-text files (no NUL byte) whose content contains 'copyright', 'license' or 'spdx' case-insensitively, measured over every file of the inventory result tree outside the scope exclusions. An earlier unqualified scan counted 26 by matching binary payloads too; see totals.false_positive_note. The scan matches the word wherever it appears, grant or mere reference, so prose that names the checker moves the count: .github/workflows/usdrig.yml joined the set when CI started invoking tools/check_licenses.py, and docs/concepts/licensing.md joined it with its summary line in the generated docs/index.md catalog.",
     "archive_members_inventory": [
@@ -39,8 +39,8 @@
         "blob": "4c8123a225f030028be9ffbb1ca855ee7b79289e",
         "members": 85,
         "legal_members": 18,
-        "refresh_note": "18 legal texts are packed; 7 mapped members (godot_rigExec/NOTICE, godot_rigExec/THIRD_PARTY_NOTICES.md, godot_rigExec/thirdparty/flatbuffers/LICENSE, godot_rigExec/thirdparty/lzma/NOTICE.md, godot_rigExec/thirdparty/lzma/DOC/lzma-sdk.txt, godot_rigExec/plugin/usdNoodles/LICENSE.txt, godot_rigExec/tools/license_manifest.json) come from the add-on checkout or the install prefix and are shipped only when that tree is rebuilt",
-        "legal_members_mapped": 25
+        "refresh_note": "18 legal texts are packed; 9 mapped members (godot_rigExec/NOTICE, godot_rigExec/THIRD_PARTY_NOTICES.md, godot_rigExec/thirdparty/flatbuffers/LICENSE, godot_rigExec/thirdparty/lzma/NOTICE.md, godot_rigExec/thirdparty/lzma/DOC/lzma-sdk.txt, godot_rigExec/plugin/usdNoodles/LICENSE.txt, godot_rigExec/plugin/usdNoodles/NOODLES_LICENSE.txt, godot_rigExec/plugin/usdNoodles/THIRD_PARTY_LICENSES.txt, godot_rigExec/tools/license_manifest.json) come from the add-on checkout or the install prefix and are shipped only when that tree is rebuilt",
+        "legal_members_mapped": 27
       },
       {
         "archive": "examples/biped/Biped.usdz",
@@ -59,8 +59,8 @@
         "legal_members_mapped": 3
       }
     ],
-    "count_scope": "Every count is measured on the inventory result tree: the 1785 tracked files of base_commit plus tools/license_manifest.json (original-build-and-tooling), docs/legal_members.py and docs/concepts/licensing.md (original-documentation) and tests/testRigExecLegalPackaging.py (original-test-suites). Each family's matched_files is measured on that same tree.",
-    "partition_method": "tools/check_licenses.py re-derives the partition from git ls-files plus untracked, non-ignored files and re-runs the marker scan; the counts above are what that check expects on this tree"
+    "count_scope": "Every count is measured on the inventory result tree: the 1786 tracked files of base_commit plus tools/license_manifest.json and tools/check_licenses.py (original-build-and-tooling), docs/legal_members.py and docs/concepts/licensing.md (original-documentation) and tests/testRigExecLegalPackaging.py (original-test-suites). Each family's matched_files is measured on that same tree.",
+    "partition_method": "tools/check_licenses.py re-derives the partition over the inventory result tree - tracked files plus new files in a directory this repository tracks - and re-runs the marker scan; a whole untracked directory, such as a dependency staged or built inside the checkout, is outside the inventory and is reported as excluded rather than counted. The counts above are what that check expects on this tree."
   },
   "categories": {
     "original": "authored by the project; root MIT license applies",
@@ -71,7 +71,7 @@
   },
   "precedence": {
     "rule": "A path belongs to the family with the lowest precedence number whose globs match it, after that family's carve_outs are applied. Ties are impossible because each family's glob set is disjoint by carve-out. A path matching nothing falls to the precedence-6 fallback.",
-    "verification": "The 29 families below partition the 1790 files of the inventory result tree exactly once: 1790 assigned, 0 unassigned, 0 double-assigned, 0 in fallback-unclassified. Verify with tools/check_licenses.py, which re-derives the partition from the checkout.",
+    "verification": "The 29 families below partition the 1791 files of the inventory result tree exactly once: 1791 assigned, 0 unassigned, 0 double-assigned, 0 in fallback-unclassified. Verify with tools/check_licenses.py, which re-derives the partition from the checkout.",
     "byte_identity_note": "Legal texts shipped inside the checked-in archives are CRLF-normalized copies of their repository sources. They match the source after CRLF -> LF normalization, except the two THIRD_PARTY_NOTICES copies, which are content-stale (see distribution.gaps)."
   },
   "families": [
@@ -265,7 +265,7 @@
         }
       ],
       "generator": null,
-      "exception_scope": "Font terms differ from both the root MIT and the editor's TOST terms; the OFL text is only reachable through the usdNoodles tree, which is outside the inventory scope and is not installed by CMake.",
+      "exception_scope": "Font terms differ from both the root MIT and the editor's TOST terms; the OFL text lives in the usdNoodles tree, which is outside the inventory scope, and CMake installs it at share/rigExec/plugin/usdNoodles/THIRD_PARTY_LICENSES.txt.",
       "matched_files": 6
     },
     {
@@ -708,7 +708,7 @@
       ],
       "generator": null,
       "exception_scope": "External tools invoked by these scripts (flatc, usdGenSchema, clang-format, MkDocs, Qt/PySide) are not relicensed by the root MIT; only their checked-in scripts are project work.",
-      "matched_files": 112
+      "matched_files": 113
     },
     {
       "id": "original-example-generators",
@@ -962,11 +962,11 @@
     }
   ],
   "totals": {
-    "assigned_files": 1790,
+    "assigned_files": 1791,
     "unassigned_files": 0,
     "double_assigned_files": 0,
     "by_category": {
-      "original": 1050,
+      "original": 1051,
       "unresolved": 459,
       "generated": 70,
       "bundled": 45,
@@ -1065,10 +1065,16 @@
           "destination": "share/rigExec/tools/check_licenses.py",
           "family": "original-build-and-tooling",
           "note": "the verifier ships beside the manifest; it is a tool, not a legal text, and it travels so the links in THIRD_PARTY_NOTICES.md resolve in the prefix"
+        },
+        {
+          "source": "docs/legal_members.py",
+          "destination": "share/rigExec/tools/legal_members.py",
+          "family": "original-documentation",
+          "note": "the shared legal-member reader the verifier imports; without it the installed checker cannot start, so it ships beside the checker instead of under docs/"
         }
       ],
       "uncovered_by_install": [
-        "the Epic OpenRigLogic MIT text has no installed file; it exists only inline in THIRD_PARTY_NOTICES.md",
+        "the Epic OpenRigLogic MIT text has no separate installed file: its quoted terms travel inside the installed THIRD_PARTY_NOTICES.md, and the three port files carry no header",
         "the Squarebit Eye EULA is not installed and not checked in as text",
         "icons/ and plugin/rigExecUsdview/icons/ images ship in installed resources with no provenance notice",
         "docs/references.md and docs/concepts/riglogic.md are deliberately not installed; they are prose references, not legal texts (see prose_references)"
@@ -1331,6 +1337,18 @@
           "status": "add-on checkout text, absent from the checked-in archive; the packer ships it when the add-on checkout is available"
         },
         {
+          "member": "godot_rigExec/plugin/usdNoodles/NOODLES_LICENSE.txt",
+          "source": "plugin/usdNoodles/NOODLES_LICENSE.txt",
+          "spdx": "MIT",
+          "status": "source-relative copy so the link in the canonical notice resolves; mapping recorded on this boundary, absent from the checked-in archive"
+        },
+        {
+          "member": "godot_rigExec/plugin/usdNoodles/THIRD_PARTY_LICENSES.txt",
+          "source": "plugin/usdNoodles/THIRD_PARTY_LICENSES.txt",
+          "spdx": "OFL-1.1",
+          "status": "source-relative copy so the link in the canonical notice resolves; mapping recorded on this boundary, absent from the checked-in archive"
+        },
+        {
           "member": "godot_rigExec/tools/license_manifest.json",
           "source": "tools/license_manifest.json",
           "spdx": null,
@@ -1450,8 +1468,8 @@
     "Biped.usdz embeds the Squarebit Eye shader with no accompanying notice member.",
     "docs/examples/godot_rolling_ball.zip still carries a THIRD_PARTY_NOTICES copy older than the repository file: it uses third_party/lzma paths and omits the Epic OpenRigLogic section. The usdview archive's copy was refreshed on this boundary; the Godot one cannot be, because its add-on source checkout is not in this repository.",
     "Archive legal texts are CRLF-encoded while the repository sources are LF; comparison must normalize line endings.",
-    "The Epic OpenRigLogic MIT text is only inline in THIRD_PARTY_NOTICES.md; the three port files carry no attribution header and no license text is installed.",
-    "The Poppins OFL text is reachable only inside plugin/usdNoodles/THIRD_PARTY_LICENSES.txt and is not installed with the binaries.",
+    "The Epic OpenRigLogic MIT text has no separate file: it is quoted in THIRD_PARTY_NOTICES.md, which CMake installs, while the three port files carry no attribution header and no license text of their own.",
+    "The Poppins OFL text lives only in plugin/usdNoodles/THIRD_PARTY_LICENSES.txt; CMake installs that file under share/rigExec/plugin/usdNoodles/ so the notice link resolves, but it has no renamed alias under share/rigExec/licenses.",
     "45 icons/ images and 28 plugin/rigExecUsdview/icons/ images are installed into schema and usdview resources with no provenance record.",
     "docs/examples/godot_rolling_ball.zip is generated from an untracked sibling checkout, so a fresh clone cannot reproduce it or verify its contents against the manifest.",
     "tests/fixtures/rigLogicReference.inc contains reference values produced by upstream Epic code, with no per-file attribution."
@@ -1537,17 +1555,18 @@
   ],
   "checker_rules": {
     "path_form": "Every path in this manifest is repository-relative, has no leading slash, and contains no '..' segment. An add-on source is the exception: it starts with '../' and names the add-on checkout passed explicitly to the packer.",
-    "source-form": "A distribution legal_members source is either a repository-relative path or '../<add-on-name>/...'. A source that is prose, such as 'addon checkout copy', is a manifest error: the packer refuses to write bytes for it rather than guessing a file.",
-    "addon-binding": "An add-on source resolves only inside the add-on root supplied at run time (docs/package_godot_example.py --addon-root). A source that leaves that root is rejected before any file is read.",
-    "link-resolution": "Every relative link in THIRD_PARTY_NOTICES.md must name a file that exists in the checkout, and must reach a member of the install prefix or of the archive that carries that notice, unless the link target is listed in prose_references.",
+    "source-form": "A distribution legal_members source is either a repository-relative path or '../<add-on-name>/...'. A source that is prose, such as 'addon checkout copy', is a manifest error: the packer refuses to write bytes for it rather than guessing a file. The authorized root and the joined source are both resolved before containment is checked, so a root the platform spells through a link stays authorized and a link that leaves it is refused.",
+    "addon-binding": "An add-on source resolves only inside the add-on root supplied at run time (docs/package_godot_example.py --addon-root). A source that leaves that root, directly or through a link inside it, is rejected before any file is read.",
+    "link-resolution": "Every relative link in THIRD_PARTY_NOTICES.md must name a file that exists in the checkout, and must reach a member of the install prefix or of the archive that carries that notice, unless the link target is listed in prose_references. In an archive a copy of the notice is checked where it sits: a notice under an archive root (godot_rigExec/THIRD_PARTY_NOTICES.md) resolves its links against that directory, so every text the notice links must be mapped as a member under it.",
     "self-reference": "tools/license_manifest.json is a provenance record, not a licensed text. A checker may read it, but it never hashes it as part of a legal-text digest and never compares a copy of itself inside an archive against the manifest: the manifest's own bytes change whenever the inventory is refreshed.",
     "existence": "Each required_texts path entry, every path in inventory_boundary.archive_members_inventory and every source path in distribution legal_files and distribution legal_members must exist at the recorded boundary; zero matches for any non-fallback family glob or glob in a family's carve_outs is a manifest error. Add-on-bound sources are checked only when the add-on checkout is supplied.",
-    "partition": "Families must be disjoint. For each tracked file, take the lowest-precedence family whose globs match and whose carve_outs do not exclude it; the result must cover all tracked files exactly once.",
+    "partition": "Families must be disjoint. For each file of the inventory result tree, take the lowest-precedence family whose globs match and whose carve_outs do not exclude it; the result must cover that tree exactly once. The result tree is the tracked files plus new files in a directory this repository tracks; a whole untracked directory, such as a dependency a CI job stages or builds inside the checkout, is outside the inventory and the checker reports how many paths it left out.",
+    "source-header": "A license header that contradicts the family the manifest put the file in - a different SPDX id, a different holder, a holder inside an unresolved family or inside generated output - is an error for an owner to resolve, never something the checker repairs. A missing header is not a violation.",
     "no-auto-bless": "A family with category unresolved must never be reported as licensed, and its SPDX must stay null until an owner answer is recorded here.",
     "binary-scan": "Marker scanning must not run on binary payloads without decoding, or it reports false positives (see totals.false_positive_note).",
     "generated-origin": "Generated families are audited through their generator and inputs; the absence of a license header in a generated file is not a violation.",
     "archive-identity": "Compare archive legal members after normalizing CRLF to LF, and flag content-stale members rather than treating line endings as drift.",
     "required-text-form": "Every required_texts entry is an object with exactly one of path, url or prose. A bare string is a manifest error: a path entry is checked for existence in the tree, a url entry is an upstream text that is deliberately not vendored and is never checked against the filesystem, and a prose entry names documentation that is explicitly a source-only reference and is never expected in an install prefix or an archive."
   },
-  "count_scope": "Every count is measured on the inventory result tree: the 1785 tracked files of base_commit plus tools/license_manifest.json and tools/check_licenses.py (original-build-and-tooling), docs/legal_members.py and docs/concepts/licensing.md (original-documentation) and tests/testRigExecLegalPackaging.py (original-test-suites). Each family's matched_files is measured on that same tree."
+  "count_scope": "Every count is measured on the inventory result tree: the 1786 tracked files of base_commit plus tools/license_manifest.json and tools/check_licenses.py (original-build-and-tooling), docs/legal_members.py and docs/concepts/licensing.md (original-documentation) and tests/testRigExecLegalPackaging.py (original-test-suites). Each family's matched_files is measured on that same tree."
 }

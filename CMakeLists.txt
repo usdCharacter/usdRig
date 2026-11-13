@@ -3076,8 +3076,10 @@ install(FILES plugin/usdNoodles/LICENSE.txt
 
 # The manifest ships with the prefix so a consumer can trace every installed
 # legal text back to its source, and the checker that keeps that record honest
-# ships beside it. docs/references.md and docs/concepts/riglogic.md are
-# documentation prose, not legal texts, and are deliberately not installed.
+# ships beside it with the member reader it imports, so an installed consumer
+# runs it without a checkout. docs/references.md and docs/concepts/riglogic.md
+# are documentation prose, not legal texts, and are deliberately not installed.
 install(FILES tools/license_manifest.json
          tools/check_licenses.py
+         docs/legal_members.py
     DESTINATION "share/rigExec/tools")

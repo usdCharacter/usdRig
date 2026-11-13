@@ -46,6 +46,9 @@ def resolve_legal_source(member: str, source, addon_root: Path | None = None,
     '../<add-on-name>/...'. Anything else is prose: the manifest then names
     no file, and no bytes may be invented for it. No segment may be '.' or
     '..', and an add-on source may never leave the root that was passed in.
+    The authorized root and the joined source are both resolved before
+    containment is checked: a root reached through a link is authorized, and a
+    link that leaves that root is refused.
     """
     if not isinstance(source, str) or not source.strip():
         raise ValueError(f"{member}: the manifest names no source file; "
@@ -59,8 +62,9 @@ def resolve_legal_source(member: str, source, addon_root: Path | None = None,
     if parts[0] == "..":
         if addon_root is None:
             raise ValueError(f"{member}: source {source!r} needs an explicit add-on root")
-        root = Path(addon_root).resolve()
-        if len(parts) < 2 or parts[1] != root.name:
+        requested = Path(addon_root)
+        root = requested.resolve()
+        if len(parts) < 2 or parts[1] not in (requested.name, root.name):
             raise ValueError(f"{member}: source {source!r} is not inside the "
                             f"authorized add-on root {root}")
         if len(parts) < 3:
@@ -68,13 +72,13 @@ def resolve_legal_source(member: str, source, addon_root: Path | None = None,
                             "not a legal text")
         if any(part in ("", ".", "..") for part in parts[2:]):
             raise ValueError(f"{member}: unsafe add-on source path {source!r}")
-        path = root.joinpath(*parts[2:])
+        path = root.joinpath(*parts[2:]).resolve()
         if not path.is_relative_to(root):
             raise ValueError(f"{member}: source {source!r} escapes the add-on root {root}")
         return path
     if any(part in ("", ".", "..") for part in parts):
         raise ValueError(f"{member}: unsafe source path {source!r}")
-    base = ROOT if root is None else Path(root)
+    base = (ROOT if root is None else Path(root)).resolve()
     path = (base / source).resolve()
     if not path.is_relative_to(base):
         raise ValueError(f"{member}: source {source!r} escapes this checkout")
