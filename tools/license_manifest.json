@@ -20,8 +20,8 @@
       "plugin/usdNoodles/**"
     ],
     "tracked_files_in_scope": 1584,
-    "license_marker_files_in_scope": 25,
-    "marker_scan_definition": "Plain-text files (no NUL byte) whose content contains 'copyright', 'license' or 'spdx' case-insensitively, measured over every file of the inventory result tree outside the scope exclusions. The earlier count of 26 used an unqualified scan that also matched binary payloads; see totals.false_positive_note.",
+    "license_marker_files_in_scope": 26,
+    "marker_scan_definition": "Plain-text files (no NUL byte) whose content contains 'copyright', 'license' or 'spdx' case-insensitively, measured over every file of the inventory result tree outside the scope exclusions. An earlier unqualified scan counted 26 by matching binary payloads too; see totals.false_positive_note. The scan matches the word wherever it appears, grant or mere reference, so prose that names the checker moves the count: .github/workflows/usdrig.yml joined the set when CI started invoking tools/check_licenses.py.",
     "archive_members_inventory": [
       {
         "archive": "docs/examples/usdview_rolling_ball.zip",
@@ -972,7 +972,7 @@
       "bundled": 45,
       "derived": 166
     },
-    "files_with_license_or_copyright_markers_in_scope": 25,
+    "files_with_license_or_copyright_markers_in_scope": 26,
     "false_positive_note": "examples/2d/bust_dd_b/textures/MouthLine.png matches a marker scan only because compressed PNG bytes happen to contain the substring 'spdx'; a checker must scan text files only or decode binary payloads before matching."
   },
   "distribution": {

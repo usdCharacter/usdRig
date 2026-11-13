@@ -37,6 +37,27 @@ jobs:
       - name: Scan owned sources for bare allocation
         run: python3 tools/check_allocations.py
 
+  # --------------------------------------------------------------------------
+  # Offline audit of the checkout's legal layer: the manifest must partition
+  # the tracked tree exactly once, every legal text it names must exist and be
+  # current, the install map must match CMake's legal install entries, and both
+  # shipped tutorial archives must carry their mapped members. Stdlib-only and
+  # offline (git ls-files plus the checked-in archives), so it needs no OpenUSD
+  # prefix and no build tree. Add-on-bound sources are notes until an
+  # --addon-root is supplied; a tree with no git reports the partition as
+  # unverifiable rather than passing.
+  # --------------------------------------------------------------------------
+  licenses:
+    name: license manifest and legal texts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout usdRig
+        uses: actions/checkout@v4
+
+      - name: Audit the checkout manifest, texts and archives
+        run: python3 tools/check_licenses.py
+
   runtime-usd-free:
     name: runtime compiles without OpenUSD
     runs-on: ubuntu-24.04
@@ -371,6 +392,14 @@ jobs:
 
       - name: Install into scratch prefix
         run: cmake --install build --prefix "${GITHUB_WORKSPACE}/usdrig-install"
+
+      # Runs only after the real install: every mapped legal text must have
+      # landed under share/rigExec current against its source, and the shipped
+      # notice's links must reach members of this prefix. The usdNoodles texts
+      # are installed whether or not the editor was built, so the noodles-off
+      # prefix still carries them.
+      - name: Check legal texts in the installed prefix
+        run: python3 tools/check_licenses.py --install "${GITHUB_WORKSPACE}/usdrig-install"
 
       - name: Verify installed layout
         run: |
