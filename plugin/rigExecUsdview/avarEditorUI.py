@@ -39,11 +39,6 @@ except ImportError:                    # loader that did not add our dir
     import sessionRegistry
 
 
-# Slider resolution: a full-width drag is this many steps. A thousand
-# gives 0.36 degrees or 2 mm per step on the default ranges, which is
-# what a slider is for; the spin box beside it is for exact numbers.
-SLIDER_STEPS = 1000
-
 _WRITE_MODES = (
     (model.WRITE_ANIMATION, "Animation (key at current frame)"),
     (model.WRITE_DEFAULT, "Default (the rest value)"),
@@ -63,7 +58,7 @@ class ChannelRow(QtCore.QObject):
     """
     One channel's widgets: a name, an editor, a key badge and a reset.
 
-    The editor depends on the value family: a spin box AND a slider for
+    The editor depends on the value family: a scrubbable field for
     numbers, a combo for a token with allowed values, a check box for a
     bool, a line edit for a string. All of them feed the same
     `_Write` so a test can drive any one and hit the panel's real path.
@@ -75,10 +70,14 @@ class ChannelRow(QtCore.QObject):
         self.channel = channel
         self.name = channel.name
         self._updating = False
-        self._scope = None
         self._dragging = False
         self._dragValue = None
         self._previewing = False
+        # A released scrub whose commit waits for the next event-loop
+        # turn, and the stage and edit target captured when it began.
+        self._queued = False
+        self._dragStage = None
+        self._dragTarget = None
         # True while the field shows a manipulator's uncommitted value
         # rather than the stage's; the panel refreshes exactly these rows
         # when the drag ends (ShowPending / EndPending).
@@ -93,8 +92,6 @@ class ChannelRow(QtCore.QObject):
             self.label.setFont(font)
             self.label.setToolTip(self.label.toolTip() + "\ncustom avar")
 
-        self.spin = None
-        self.slider = None
         self.field = None
         self.combo = None
         self.check = None
@@ -148,6 +145,7 @@ class ChannelRow(QtCore.QObject):
         self.field.committed.connect(self._OnFieldCommitted)
         self.field.scrubbed.connect(self._OnScrubbed)
         self.field.scrubFinished.connect(self._OnScrubFinished)
+        self.field.scrubCancelled.connect(self._OnScrubCancelled)
         # What one pixel of drag is worth. The channel's own spin step,
         # which the model already derives per kind -- a rotation moves in
         # degrees and a 0..1 dial in hundredths, and a single constant
@@ -169,42 +167,34 @@ class ChannelRow(QtCore.QObject):
         return text or "0"
 
     def _OnScrubbed(self, value, first):
-        """One sample of a drag across the field.
+        """One sample of a drag across the field: previewed, never authored.
 
-        The whole drag is ONE undo entry: the first sample opens the
-        scope, every later one writes inside it, and the release closes
-        it. That is the slider's old contract, kept -- a drag must not
-        leave a hundred entries on the stack.
-
-        The preview channel is used where the gizmo has one, so a drag
-        goes to Hydra rather than to the stage and the rig is not
-        recompiled per mouse sample.
+        The release queues one commit (one undo entry) for the next
+        event-loop turn; see FlushPendingCommit.
         """
         if self._updating:
             return
         if self.channel.family == model.VALUE_INT:
             value = int(round(value))
-        self._dragging = True
+        if not self._dragging:
+            self.panel.FlushPendingCommit()
+            self._BeginDrag()
         self._dragValue = value
+        self._ShowValue(value)
         if self._Preview(value):
             self._previewing = True
-            self._ShowValue(value)
-            return
-        if first and self._scope is None:
-            self._scope = self.panel.EditScope(
-                [self.channel], "Drag %s" % self.channel.shortName)
-            self._scope.__enter__()
-        # Show it WHILE dragging, not on release. The preview path above
-        # already does; this one wrote the value and left the field
-        # reading whatever it said before the drag began, so a scrub with
-        # no gizmo preview -- which is most channels, and every one of the
-        # eye's shape dials -- gave no number until the mouse came up.
-        self._ShowValue(value)
-        self._Write(value, bracket=False)
 
     def _OnScrubFinished(self):
-        """Release: commit once, close the scope, drop the preview."""
-        self._OnSliderReleased()
+        """Release: queue the commit; the preview stays up until it runs."""
+        dragging, self._dragging = self._dragging, False
+        if not dragging or self._queued:
+            return
+        self._queued = True
+        QtCore.QTimer.singleShot(0, self.FlushPendingCommit)
+
+    def _OnScrubCancelled(self):
+        self.AbortDrag()
+        self.Refresh(self.panel.Frame())
 
     def _OnFieldCommitted(self, text):
         if self._updating:
@@ -227,20 +217,6 @@ class ChannelRow(QtCore.QObject):
         self._Write(value)
 
     # -- value mapping ---------------------------------------------------
-
-    def _SliderToValue(self, position):
-        low, high = self._sliderLow, self._sliderHigh
-        value = low + (high - low) * (float(position) / SLIDER_STEPS)
-        if self.channel.family == model.VALUE_INT:
-            return int(round(value))
-        return value
-
-    def _ValueToSlider(self, value):
-        low, high = self._sliderLow, self._sliderHigh
-        if high <= low:
-            return 0
-        t = (float(value) - low) / (high - low)
-        return int(round(max(0.0, min(1.0, t)) * SLIDER_STEPS))
 
     def SliderRange(self):
         return (self._sliderLow, self._sliderHigh)
@@ -309,20 +285,15 @@ class ChannelRow(QtCore.QObject):
 
     # -- writing ---------------------------------------------------------
 
-    def _Write(self, value, bracket=True, verb="Set"):
+    def _Write(self, value, verb="Set"):
         """
-        The one path every widget goes through. `bracket` False means a
-        slider drag already opened the undo scope; `verb` names the undo
-        entry ("Drag" for a slider drag committed on release).
+        The one path every widget goes through. `verb` names the undo
+        entry ("Drag" for a scrub committed after release).
         """
         if self._updating:
             return
-        if bracket:
-            with self.panel.EditScope([self.channel],
-                                      "%s %s" % (verb,
-                                                 self.channel.shortName)):
-                warning = self.panel.WriteChannel(self.channel, value)
-        else:
+        with self.panel.EditScope([self.channel],
+                                  "%s %s" % (verb, self.channel.shortName)):
             warning = self.panel.WriteChannel(self.channel, value)
         self.panel.ReportWarning(warning)
         self.Refresh(self.panel.Frame())
@@ -340,68 +311,49 @@ class ChannelRow(QtCore.QObject):
         self.panel.ReportWarning(warning)
         self.Refresh(self.panel.Frame())
 
-    def _OnSpin(self, value):
-        if self._updating:
-            return
-        self._Write(value, bracket=self._scope is None)
-
-    # -- slider drags: Hydra while dragging, the stage once on release -----
+    # -- scrub drags: Hydra while dragging, the stage once after release ---
     #
-    # Authoring to the stage is the expensive half of an edit: a layer spec
-    # write, a change notice every observer processes, and a rig that has to
-    # hear about it. None of that belongs in a drag. While the slider is held
-    # the value goes to the viewport through the same preview channel the
-    # viewport manipulators use (gizmoPreview: uncommitted values placed on
-    # the evaluator and published to Hydra, nothing authored), and the stage
-    # is written exactly once, when the slider is let go, as one undo entry.
-    # A session with no preview channel (headless, or RigExec inactive) falls
-    # back to authoring each value, which is what it always did.
+    # The viewport tools' rule (docs/specs/viewport-gizmos.md, "Preview and
+    # commit"): samples go through gizmoPreview, the release queues one
+    # commit for the next event-loop turn in the edit target captured at
+    # the press, and anything that needs committed state flushes it first.
 
-    def _OnSliderPressed(self):
-        if self._updating or self._dragging:
-            return
+    def _BeginDrag(self):
         self._dragging = True
         self._dragValue = None
         self._previewing = False
+        stage = self._PreviewStage()
+        self._dragStage = stage
+        self._dragTarget = stage.GetEditTarget() if stage else None
 
-    def _OnSlider(self, position):
-        if self._updating:
-            return
-        value = self._SliderToValue(position)
-        if not self._dragging:
-            # A keyboard or wheel change on an undragged slider is its own
-            # edit.
-            self._Write(value, bracket=self._scope is None)
-            return
-        self._dragValue = value
-        if self._Preview(value):
-            self._previewing = True
-            self._ShowValue(value)
-            return
-        # No preview channel: author the value as before, inside one scope
-        # for the whole drag.
-        if self._scope is None:
-            self._scope = self.panel.EditScope(
-                [self.channel], "Drag %s" % self.channel.shortName)
-            self._scope.__enter__()
-        self._Write(value, bracket=False)
+    def HasPendingCommit(self):
+        return self._queued
 
-    def _OnSliderReleased(self):
-        dragging, self._dragging = self._dragging, False
-        scope = self._scope
-        self._scope = None
-        if scope is not None:
-            scope.__exit__(None, None, None)
-            return
-        if not dragging or not self._previewing:
-            return
-        self._previewing = False
-        value = self._dragValue
-        # Commit, THEN drop the preview, as the manipulators do: the other
-        # order shows the pre-drag pose for a frame before the authored one.
-        if value is not None:
-            self._Write(value, verb="Drag")
-        _EndPreview(self._Api(), self._PreviewStage())
+    def FlushPendingCommit(self):
+        """Author a released scrub now. True if one was waiting."""
+        if not self._queued:
+            return False
+        self._queued = False
+        value, self._dragValue = self._dragValue, None
+        stage, self._dragStage = self._dragStage, None
+        target, self._dragTarget = self._dragTarget, None
+        previewing, self._previewing = self._previewing, False
+        authored = False
+        try:
+            # A replaced stage is not the one the drag previewed.
+            if (value is not None and stage is not None
+                    and stage == self.panel.Stage()):
+                with Usd.EditContext(stage, target):
+                    self._Write(value, verb="Drag")
+                authored = True
+        finally:
+            # Commit, THEN drop the preview: the other order shows the
+            # pre-drag pose for a frame before the authored one.
+            if previewing:
+                _EndPreview(self._Api(), stage)
+            if not authored:
+                self.Refresh(self.panel.Frame())
+        return True
 
     def _Api(self):
         """The usdview api of the session this row's panel belongs to."""
@@ -522,9 +474,6 @@ class ChannelRow(QtCore.QObject):
         100 ms per selection on the biped.
         """
         self.AbortDrag()
-        if self._scope is not None:
-            scope, self._scope = self._scope, None
-            scope.__exit__(None, None, None)
         self.channel = channel
         self.name = channel.name
         tip = "%s  (%s)" % (channel.attr.GetPath(), channel.attr.GetTypeName())
@@ -532,17 +481,20 @@ class ChannelRow(QtCore.QObject):
             tip += "\ncustom avar"
         self.label.setToolTip(tip)
         self.unit.setText(channel.unit)
-        if self.spin is not None:
+        if self.field is not None:
             self._sliderLow, self._sliderHigh = channel.SliderRange(
                 self.panel.Stage(), None)
 
     def AbortDrag(self):
-        """Drop an uncommitted slider drag without authoring it."""
+        """Drop a live or queued scrub without authoring it."""
         if self._previewing:
             self._previewing = False
-            _EndPreview(self._Api(), self._PreviewStage())
+            _EndPreview(self._Api(), self._dragStage or self._PreviewStage())
         self._dragging = False
         self._dragValue = None
+        self._queued = False
+        self._dragStage = None
+        self._dragTarget = None
 
     def _OnCombo(self, index):
         if self._updating:
@@ -632,6 +584,7 @@ class AvarEditorPanel(QtWidgets.QDialog,
             panel._api = usdviewApi
             if undoStack is not None:
                 panel._undo = undoStack
+                panel._FlushBeforeUndo(undoStack)
         return panel
 
     def __init__(self, usdviewApi, undoStack, parent=None):
@@ -753,9 +706,37 @@ class AvarEditorPanel(QtWidgets.QDialog,
 
         self._Connect()
         self._ListenToPreview()
+        self._flushedStacks = []
+        self._FlushBeforeUndo(undoStack)
+        application = QtWidgets.QApplication.instance()
+        if application is not None:
+            application.aboutToQuit.connect(self.FlushPendingCommit)
         self.Rebuild()
 
     # -- wiring ------------------------------------------------------
+
+    def _FlushBeforeUndo(self, undoStack):
+        # A host's stack may not offer AddFlusher.
+        addFlusher = getattr(undoStack, "AddFlusher", None)
+        if addFlusher is None or any(
+                stack is undoStack for stack in self._flushedStacks):
+            return
+        self._flushedStacks.append(undoStack)
+        addFlusher(self.FlushPendingCommit)
+
+    def FlushPendingCommit(self):
+        """Author a released scrub that is still queued. True if one was."""
+        flushed = False
+        for row in list(self._rows):
+            try:
+                flushed = row.FlushPendingCommit() or flushed
+            except Exception as error:
+                Tf.Warn("rigExecUsdview: queued avar edit failed: %s"
+                        % error)
+        return flushed
+
+    def HasPendingCommit(self):
+        return any(row.HasPendingCommit() for row in self._rows)
 
     def _ListenToPreview(self):
         """Hear every sample of a manipulator drag, and its end.
@@ -839,16 +820,20 @@ class AvarEditorPanel(QtWidgets.QDialog,
     def _OnFrameChanged(self, frame):
         # The SIGNAL's frame, never dataModel.currentFrame: the setter
         # emits before it assigns (rigExecUsdview._FrameValue).
+        self.FlushPendingCommit()
         self._frame = _FrameOf(frame)
         self.RefreshValues()
 
     def _OnStageReplaced(self):
+        for row in self._rows:
+            row.AbortDrag()
         self._ObserveStage(self.Stage())
         self._frame = _FrameOf(getattr(self._api, "frame",
                                        Usd.TimeCode.Default()))
         self.Rebuild()
 
     def closeEvent(self, event):
+        self.FlushPendingCommit()
         if self._noticeKey is not None:
             self._noticeKey.Revoke()
             self._noticeKey = None
@@ -883,6 +868,7 @@ class AvarEditorPanel(QtWidgets.QDialog,
         raise ValueError("unknown write mode %r" % mode)
 
     def _OnModeChanged(self, index):
+        self.FlushPendingCommit()
         self._mode = self._modeBox.itemData(index) or model.WRITE_ANIMATION
         self.RefreshValues()
 
@@ -920,6 +906,7 @@ class AvarEditorPanel(QtWidgets.QDialog,
                  c.custom) for c in channels]
 
     def Rebuild(self, *args):
+        self.FlushPendingCommit()
         stage = self.Stage()
         prim, others = (None, 0)
         if stage:
@@ -1104,6 +1091,8 @@ class AvarEditorPanel(QtWidgets.QDialog,
 
     def EditScope(self, channels, label):
         """One undo entry covering the edit AND the prims it reaches."""
+        # Every edit opens one; a queued scrub lands first.
+        self.FlushPendingCommit()
         channels = list(channels)
         for channel in list(channels):
             channels.extend(self.Peers(channel))

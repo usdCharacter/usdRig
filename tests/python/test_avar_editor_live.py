@@ -239,6 +239,102 @@ def TestClosedPanelStopsListening():
            "a closed panel does not")
 
 
+def _Scrub(row, values):
+    """A drag across the field, through the field's own signals."""
+    for i, value in enumerate(values):
+        row.field.scrubbed.emit(float(value), i == 0)
+
+
+def TestScrubPreviewsAndQueuesOneCommit():
+    """The field's scrub follows the viewport tools' rule: no write while
+    dragging or in the release itself, one write on the next event-loop
+    turn, into the edit target captured at the press."""
+    stage, prim = _Stage()
+    undo = rigExecUndo.UndoStack()
+    panel = avarEditorUI.AvarEditorPanel(_Api(stage, prim), undo)
+    try:
+        tx = panel.Row("tx")
+        txAttr = tx.channel.attr
+        frame = Usd.TimeCode.Default()
+        rootLayer = stage.GetRootLayer()
+        stage.SetEditTarget(Usd.EditTarget(rootLayer))
+        before = rootLayer.GetAttributeAtPath(txAttr.GetPath()).default
+        _Scrub(tx, (1.0, 2.0, 4.0))
+        _Check(tx.field.text() == "4", "the field follows the scrub, got %r"
+               % tx.field.text())
+        _Check(rootLayer.GetAttributeAtPath(txAttr.GetPath()).default
+               == before and _SessionSpec(stage, txAttr) is None,
+               "nothing authored mid-scrub")
+        # Retargeted between press and commit: the press's target wins.
+        stage.SetEditTarget(Usd.EditTarget(stage.GetSessionLayer()))
+        tx.field.scrubFinished.emit()
+        _Check(tx.HasPendingCommit() and panel.HasPendingCommit(),
+               "the release queued the commit")
+        _Check(_SessionSpec(stage, txAttr) is None
+               and txAttr.Get(frame) == 0.0,
+               "and authored nothing itself")
+        QtWidgets.QApplication.processEvents()
+        _Check(not panel.HasPendingCommit(), "the queued commit ran")
+        _Check(rootLayer.GetAttributeAtPath(txAttr.GetPath()).default
+               == 4.0 and _SessionSpec(stage, txAttr) is None,
+               "the commit landed in the press's edit target")
+        _Check(txAttr.Get(frame) == 4.0, "with the last scrubbed value")
+        _Check(tx.channel.PendingValue() is None,
+               "and the preview is over")
+        _Check(len(undo._undo) == 1, "as one undo entry: %d"
+               % len(undo._undo))
+    finally:
+        panel.close()
+
+
+def TestQueuedScrubFlushesBeforeUndoAndEdits():
+    stage, prim = _Stage()
+    undo = rigExecUndo.UndoStack()
+    panel = avarEditorUI.AvarEditorPanel(_Api(stage, prim), undo)
+    try:
+        tx = panel.Row("tx")
+        ty = panel.Row("ty")
+        frame = Usd.TimeCode.Default()
+        _Scrub(tx, (3.0,))
+        tx.field.scrubFinished.emit()
+        # Another edit before the event loop turns: the scrub lands first.
+        ty.SetValue(5.0)
+        _Check(tx.channel.attr.Get(frame) == 3.0
+               and ty.channel.attr.Get(frame) == 5.0,
+               "a new edit flushed the queued scrub first")
+        _Check(len(undo._undo) == 2, "two entries, scrub first: %d"
+               % len(undo._undo))
+        _Scrub(tx, (8.0,))
+        tx.field.scrubFinished.emit()
+        if hasattr(undo, "AddFlusher"):
+            undo.Undo()
+            _Check(tx.channel.attr.Get(frame) == 3.0,
+                   "Undo committed the queued scrub, then undid it: %s"
+                   % tx.channel.attr.Get(frame))
+        QtWidgets.QApplication.processEvents()
+    finally:
+        panel.close()
+
+
+def TestEscapeCancelsScrub():
+    stage, prim = _Stage()
+    undo = rigExecUndo.UndoStack()
+    panel = avarEditorUI.AvarEditorPanel(_Api(stage, prim), undo)
+    try:
+        rz = panel.Row("rz")
+        rzAttr = rz.channel.attr
+        _Scrub(rz, (10.0, 20.0))
+        rz.field.scrubCancelled.emit()
+        _Check(rz.field.text() == "0", "Escape restores the field, got %r"
+               % rz.field.text())
+        _Check(rz.channel.PendingValue() is None, "and ends the preview")
+        QtWidgets.QApplication.processEvents()
+        _Check(_SessionSpec(stage, rzAttr) is None and not undo._undo,
+               "and nothing is authored")
+    finally:
+        panel.close()
+
+
 def main():
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     _ = app
@@ -247,6 +343,9 @@ def main():
     TestAbortFallsBackToTheStage()
     TestStageNoticeMidDragKeepsThePendingValue()
     TestClosedPanelStopsListening()
+    TestScrubPreviewsAndQueuesOneCommit()
+    TestQueuedScrubFlushesBeforeUndoAndEdits()
+    TestEscapeCancelsScrub()
     print("test_avar_editor_live OK")
 
 

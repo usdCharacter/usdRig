@@ -114,10 +114,11 @@ class ValueField(QtWidgets.QLineEdit):
     """
 
     committed = QtCore.Signal(str)
-    # A scrub: (value, isFirstSample). The panel brackets the whole drag
-    # into one undo entry on the first sample and closes it on release.
+    # A scrub: (value, isFirstSample) per sample, then scrubFinished on
+    # release or scrubCancelled on Escape.
     scrubbed = QtCore.Signal(float, bool)
     scrubFinished = QtCore.Signal()
+    scrubCancelled = QtCore.Signal()
 
     def __init__(self, parent=None):
         super(ValueField, self).__init__(parent)
@@ -274,6 +275,12 @@ class ValueField(QtWidgets.QLineEdit):
         QtCore.QTimer.singleShot(0, self.selectAll)
 
     def keyPressEvent(self, event):
+        if event.key() == QtCore.Qt.Key_Escape and self._scrubbing:
+            self._scrubbing = False
+            self._scrubOrigin = None
+            self.scrubCancelled.emit()
+            event.accept()
+            return
         if event.key() == QtCore.Qt.Key_Escape:
             # Put the committed value back and hand focus away, so Escape
             # in a field cannot leave a half-typed number looking live.
