@@ -721,6 +721,10 @@ RigExecImagingRegistry::_DerivePreviewIndependenceLocked(
     const SdfLayerHandle &targetLayer, bool identityMap,
     const SdfPath &mappedSpecPath, std::string *why) const
 {
+    // _mutex held. OpenUSD delivers change notices after the layer locks it
+    // took for the edit are released, and this registry never authors, so a
+    // thread holding _mutex is never inside a layer lock: stage reads under
+    // _mutex can never invert with _OnObjectsChanged.
     auto refuse = [why](const std::string &text) {
         if (why) {
             *why = text;

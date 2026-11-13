@@ -774,7 +774,7 @@ private:
     mutable std::mutex _fenceMutex;
     std::condition_variable _cv;
     // Fixed at construction: workers and triggers read it without a lock.
-    RigExecSchedulerClock _clock;
+    const RigExecSchedulerClock _clock;
     std::map<SdfPath, RigExecFrameGeneration> _generations;
     std::map<_QueueKey, _QueuedJob> _queue;
     // Coalescing index: (rig, time value) -> queue key. Queued jobs only;

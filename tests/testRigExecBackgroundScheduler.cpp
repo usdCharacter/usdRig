@@ -1632,7 +1632,8 @@ TestSamplingBudgetBoundsFactoryInvocations()
 
 // A clock that advances a fixed step on every reading. The queue stamps and
 // the millisecond budget stop read it, so a test can assert exact waits and
-// stops without touching wall time.
+// stops without touching wall time. It takes no locks, and the tests that
+// inject it run with no workers, so only the calling thread stamps.
 class SteppingClock {
 public:
     explicit SteppingClock(uint64_t step = 1000) : _step(step)
