@@ -72,6 +72,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -592,6 +593,13 @@ public:
     bool AdmitWarmRoute(const RigExecWarmRouteDescriptor &route,
                         std::string *reason) const;
 
+    /// Run \p probe with _mutex released inside an independence proof's read
+    /// window, so a regression can land a retirement or a re-declaration
+    /// between the scene reads and the revalidation instead of racing for one.
+    /// The probe runs on the calling thread; it must not re-enter the proof.
+    /// Null in every host that is not running that regression.
+    void SetProofWindowProbe(std::function<void()> probe);
+
     /// Drops the bridge and stops the warming scheduler (a context without
     /// an active rig owns no threads); bound chains remain and read the
     /// (cleared) store. Other contexts are untouched. A HOST deactivation:
@@ -1027,6 +1035,13 @@ private:
     /// along with it; see _PreviewNoticeCoversLocked.
     struct PreviewProof {
         UsdStageWeakPtr stage;
+        /// The preview session the verdict was derived under. A retirement
+        /// clears the description with it, so a held verdict is only ever read
+        /// back while the session that produced it still stands.
+        uint64_t session = 0;
+        /// The declaration tick this path was declared under, so a
+        /// re-declaration of the same path cannot reuse an older verdict.
+        uint64_t declaration = 0;
         SdfLayerHandle targetLayer;
         /// The declared path as the standing edit target's map function sees
         /// it, and whether that map is the identity.
@@ -1054,21 +1069,28 @@ private:
     /// revision, drops the edit description. _mutex held.
     void _RetirePreviewIdentityLocked();
 
-    /// The proof behind PreviewValueIsIndependent. _mutex held.
-    bool _PreviewValueIsIndependentLocked(const SdfPath &attributePath,
-                                          UsdTimeCode time,
-                                          std::string *reason) const;
+    /// The proof behind PreviewValueIsIndependent. Call with _mutex held;
+    /// \p lock is the held lock, released for the scene reads the verdict
+    /// needs and retaken before the verdict is stored. The verdict carries the
+    /// preview session and declaration tick it was derived under, and is
+    /// returned or stored only while both still stand.
+    bool
+    _PreviewValueIsIndependentLocked(const SdfPath &attributePath,
+                                     UsdTimeCode time, std::string *reason,
+                                     std::unique_lock<std::mutex> &lock) const;
 
     /// The rules behind a verdict: the authored opinions in the layer stack,
     /// the connections and compiled property chains on the path, and where
     /// the standing edit target would author the value. None of them reads a
-    /// time code. _mutex held.
-    bool _DerivePreviewIndependenceLocked(const UsdStageRefPtr &stage,
-                                          const SdfPath &attributePath,
-                                          const SdfLayerHandle &targetLayer,
-                                          bool identityMap,
-                                          const SdfPath &mappedSpecPath,
-                                          std::string *why) const;
+    /// time code. Runs with _mutex released: every call here is an OpenUSD
+    /// read that takes composition locks, and the stage-notice handler takes
+    /// _mutex.
+    bool _DerivePreviewIndependence(const UsdStageRefPtr &stage,
+                                    const SdfPath &attributePath,
+                                    const SdfLayerHandle &targetLayer,
+                                    bool identityMap,
+                                    const SdfPath &mappedSpecPath,
+                                    bool chainRevised, std::string *why) const;
 
     /// Whether an edit of \p stage reaches this context through UsdStage's
     /// ObjectsChanged. Only there does an edit of a declared path retire the
@@ -1077,9 +1099,11 @@ private:
     /// activated hears nothing. _mutex held.
     bool _PreviewNoticeCoversLocked(const UsdStageRefPtr &stage) const;
 
-    /// The route check behind AdmitWarmRoute. _mutex held.
+    /// The route check behind AdmitWarmRoute. Call with _mutex held; \p lock
+    /// is that lock, which an independence proof may release and retake.
     bool _AdmitWarmRouteLocked(const RigExecWarmRouteDescriptor &route,
-                               std::string *reason) const;
+                               std::string *reason,
+                               std::unique_lock<std::mutex> &lock) const;
 
     /// Whether a stage notice touches a path the preview description
     /// declares -- an undo, a redo, or any other edit of a declared
@@ -1256,6 +1280,13 @@ private:
     /// for each entry's cached verdict: the proof reads through it.
     RigExecPreviewIdentity _previewIdentity;
     mutable std::vector<PreviewEdit> _previewEdits;
+    /// Ticks of the edit description itself: a retirement or a declaration of
+    /// a path advances it, while a pending-value update does not. A verdict is
+    /// held only for the description that produced it, so a re-declaration of
+    /// a held path can never inherit a verdict read under the old one.
+    uint64_t _previewDeclaration = 0;
+    /// The proof-window seam (see SetProofWindowProbe); empty in production.
+    std::function<void()> _proofWindowProbe;
     /// The influence-overlay selection, held HERE rather than only on the
     /// bridge because it outlives one: a host may select before
     /// activation, and Deactivate/Activate must not silently drop it.

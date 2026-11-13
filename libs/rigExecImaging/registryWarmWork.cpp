@@ -307,7 +307,7 @@ RigExecImagingRegistry::BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
                                       RigExecFrozenStepRunner runner,
                                       RigExecBurstSampleCache *burst)
 {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::unique_lock<std::mutex> lock(_mutex);
     // Production-ness is read BEFORE the runner resolves: a null runner
     // means "warm for real", and real execution needs the session's
     // snapshot, while an injected test runner brings its own answers and
@@ -315,6 +315,28 @@ RigExecImagingRegistry::BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
     const bool production = !runner;
     runner = _ProductionRunner(runner);
     if (!runner || time.IsDefault() || !std::isfinite(time.GetValue())) {
+        return RigExecWarmFactoryResult();
+    }
+    // Warm-route admission runs before any session or burst pointer is
+    // captured: the preview proof reads the stage and releases _mutex for
+    // those reads, and a context can activate or deactivate across that
+    // window. Interactive overrides are already on the bridge (a preview
+    // authors nothing), so the frame the preview stands on has no committed
+    // consumer yet and is refused outright. Every other frame keeps its route;
+    // work with no prepared burst behind it is built ahead of its destination
+    // and must be provably stable against the declared edits.
+    RigExecWarmRouteDescriptor route;
+    route.rigPath = rig;
+    route.time = time;
+    route.previewSession = _previewIdentity.session;
+    route.previewRevision = _previewIdentity.revision;
+    if (_previewActive && time == _lastTime) {
+        route.route = RigExecWarmRoute::PendingPreview;
+    } else {
+        route.route = burst ? RigExecWarmRoute::Committed
+                            : RigExecWarmRoute::CommittedSpeculative;
+    }
+    if (!_AdmitWarmRouteLocked(route, nullptr, lock)) {
         return RigExecWarmFactoryResult();
     }
     // Non-const: a built job records its freshness proof on the bridge.
@@ -330,6 +352,11 @@ RigExecImagingRegistry::BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
     if (!session || session->playback || !session->bridge) {
         return RigExecWarmFactoryResult();
     }
+    // The burst the trigger handed over names this session's storage; the
+    // admission window may have retired it, so it is re-resolved here.
+    if (burst) {
+        burst = &session->standingBurst;
+    }
     // A reasoned skip: records the session's last skip (the named cause a
     // test or the strip reads back) and returns it with the empty work.
     const auto skip = [&](RigExecWarmSkipReason reason,
@@ -344,25 +371,6 @@ RigExecImagingRegistry::BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
         return result;
     };
     if (!_scheduler || !_scheduler->IsGenerationCurrent(rig, generation)) {
-        return RigExecWarmFactoryResult();
-    }
-    // Warm-route admission. Interactive overrides are already on the bridge
-    // (a preview authors nothing), so the frame the preview stands on has no
-    // committed consumer yet and is refused outright. Every other frame keeps
-    // its route; work with no prepared burst behind it is built ahead of its
-    // destination and must be provably stable against the declared edits.
-    RigExecWarmRouteDescriptor route;
-    route.rigPath = rig;
-    route.time = time;
-    route.previewSession = _previewIdentity.session;
-    route.previewRevision = _previewIdentity.revision;
-    if (_previewActive && time == _lastTime) {
-        route.route = RigExecWarmRoute::PendingPreview;
-    } else {
-        route.route = burst ? RigExecWarmRoute::Committed
-                            : RigExecWarmRoute::CommittedSpeculative;
-    }
-    if (!_AdmitWarmRouteLocked(route, nullptr)) {
         return RigExecWarmFactoryResult();
     }
     const RigExecRigEvaluator &evaluator = session->bridge->GetEvaluator();

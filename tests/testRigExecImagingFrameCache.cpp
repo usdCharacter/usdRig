@@ -6655,6 +6655,216 @@ TestPreviewProofFollowsTheEditTarget()
     registry->Deactivate();
 }
 
+// A NOTICE CAN LAND WHILE THE PROOF READS THE STAGE. The proof's layer and
+// edit-target reads take OpenUSD's own locks, and the stage-notice handler
+// takes _mutex: holding both at once nests them, so the derivation releases
+// the registry lock for those reads. The proof seam runs a retirement and a
+// same-path redeclaration inside that window on the calling thread -- no
+// stage opinion is authored from a second thread -- so the verdict that
+// crossed the window is forced stale rather than raced for, and every verdict
+// returned or stored must belong to the description standing now.
+void
+TestRetirementInsideTheProofWindowRefuses()
+{
+    std::printf("progress: TestRetirementInsideTheProofWindowRefuses\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "off");
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    const SdfPath rig("/Asset/Rig");
+    const SdfLayerRefPtr root = SdfLayer::CreateAnonymous(".usda");
+    const SdfLayerRefPtr lane = SdfLayer::CreateAnonymous(".usda");
+    root->SetSubLayerPaths({lane->GetIdentifier()});
+    UsdStageRefPtr stage = UsdStage::Open(root);
+    MakeTinyRig(/*staticY=*/true, stage);
+    const SdfPath tsPath("/Asset/Rig/AlongX.avars:ts");
+    stage->SetEditTarget(lane);
+    const UsdAttribute tsAttr =
+        stage->GetPrimAtPath(SdfPath("/Asset/Rig/AlongX"))
+            .CreateAttribute(TfToken("avars:ts"), SdfValueTypeNames->Double);
+    CHECK(tsAttr);
+    // Samples in the edit-target layer answer every candidate time, so the
+    // pending default cannot reach this frame: the route is admitted.
+    CHECK(tsAttr.Set(1.0, UsdTimeCode(1.0)));
+    CHECK(tsAttr.Set(2.0, UsdTimeCode(4.0)));
+    const double pendingValue = 11.0;
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
+    std::vector<std::string> errors;
+    CHECK(registry->Activate(stage, rig, UsdTimeCode(2.0), &errors));
+    CHECK(registry->BeginPreview(tsPath.GetAsString()) == 1);
+    CHECK(registry->DeclarePreviewEdit(
+        tsPath.GetAsString(), RigExecPreviewEditPolicy::AttributeDefault,
+        &pendingValue, 1));
+    std::string reason;
+    CHECK(registry->PreviewValueIsIndependent(tsPath.GetAsString(),
+                                              UsdTimeCode(7.0), &reason));
+    RigExecWarmRouteDescriptor route;
+    route.route = RigExecWarmRoute::CommittedSpeculative;
+    route.rigPath = rig;
+    route.time = UsdTimeCode(7.0);
+    route.previewSession = registry->GetPreviewIdentity().session;
+    CHECK(registry->AdmitWarmRoute(route, &reason));
+
+    // The window: clearing the samples authors an opinion on the declared
+    // path, which retires the description, and the same path is re-declared
+    // under the next session. Only the pending default answers time 7.0 now,
+    // so the replacement description's verdict is the opposite of the stale
+    // one -- a held verdict could not hide the difference.
+    registry->SetProofWindowProbe([&]() {
+        CHECK(tsAttr.Clear());
+        CHECK(registry->BeginPreview(tsPath.GetAsString()) == 1);
+        CHECK(registry->DeclarePreviewEdit(
+            tsPath.GetAsString(), RigExecPreviewEditPolicy::AttributeDefault,
+            &pendingValue, 1));
+    });
+    // A request whose provenance stood when it entered: the verdict read under
+    // the description that retired inside the proof window refuses, on both
+    // surfaces, and nothing from it is kept.
+    CHECK(!registry->PreviewValueIsIndependent(tsPath.GetAsString(),
+                                               UsdTimeCode(7.0), &reason));
+    CHECK(reason.find("retired while") != std::string::npos);
+    RigExecWarmRouteDescriptor standingRoute = route;
+    standingRoute.previewSession = registry->GetPreviewIdentity().session;
+    CHECK(!registry->AdmitWarmRoute(standingRoute, &reason));
+    CHECK(reason.find("retired while") != std::string::npos);
+    // A request keyed to the session that has already gone is refused before
+    // any proof is read.
+    CHECK(!registry->AdmitWarmRoute(route, &reason));
+    CHECK(reason.find("has retired") != std::string::npos);
+    CHECK(registry->GetPreviewEditStats().editCount == 1);
+    registry->SetProofWindowProbe(nullptr);
+
+    // The stale verdict never landed on the replacement declaration: the
+    // re-declared path answers with its own, and a request under the standing
+    // session is refused by that verdict, not by provenance.
+    const uint64_t standingSession = registry->GetPreviewIdentity().session;
+    CHECK(!registry->PreviewValueIsIndependent(tsPath.GetAsString(),
+                                               UsdTimeCode(7.0), &reason));
+    CHECK(reason.find("pending default") != std::string::npos);
+    RigExecWarmRouteDescriptor freshRoute = route;
+    freshRoute.previewSession = standingSession;
+    CHECK(!registry->AdmitWarmRoute(freshRoute, &reason));
+    CHECK(reason.find("has retired") == std::string::npos);
+    // Re-authored samples make the new description independent again, and the
+    // verdict held for it carries the session it was derived under.
+    CHECK(tsAttr.Set(3.0, UsdTimeCode(5.0)));
+    CHECK(!registry->GetPreviewIdentity().active);
+    CHECK(registry->BeginPreview(tsPath.GetAsString()) == 1);
+    CHECK(registry->DeclarePreviewEdit(
+        tsPath.GetAsString(), RigExecPreviewEditPolicy::AttributeDefault,
+        &pendingValue, 1));
+    CHECK(registry->PreviewValueIsIndependent(tsPath.GetAsString(),
+                                              UsdTimeCode(7.0), &reason));
+    freshRoute.previewSession = registry->GetPreviewIdentity().session;
+    CHECK(registry->AdmitWarmRoute(freshRoute, &reason));
+    CHECK(registry->GetPreviewIdentity().session == freshRoute.previewSession);
+
+    // A re-declaration of the same path inside the window changes the
+    // description without retiring the session, so the session alone cannot
+    // fence it: the declaration tick does. The held verdict is refused on both
+    // surfaces rather than served to the entry that replaced it.
+    const double redeclaredValue = 13.0;
+    registry->SetProofWindowProbe([&]() {
+        CHECK(registry->DeclarePreviewEdit(
+            tsPath.GetAsString(), RigExecPreviewEditPolicy::AttributeDefault,
+            &redeclaredValue, 1));
+    });
+    CHECK(!registry->AdmitWarmRoute(freshRoute, &reason));
+    CHECK(reason.find("re-declared while") != std::string::npos);
+    CHECK(!registry->PreviewValueIsIndependent(tsPath.GetAsString(),
+                                               UsdTimeCode(7.0), &reason));
+    CHECK(reason.find("re-declared while") != std::string::npos);
+    registry->SetProofWindowProbe(nullptr);
+    // A re-declaration outside the window clears the held verdict as well: the
+    // entry answers from its own description, not the cached one.
+    CHECK(registry->DeclarePreviewEdit(
+        tsPath.GetAsString(), RigExecPreviewEditPolicy::AttributeTimeSample,
+        &redeclaredValue, 1));
+    CHECK(!registry->PreviewValueIsIndependent(tsPath.GetAsString(),
+                                               UsdTimeCode(7.0), &reason));
+    CHECK(reason.find("not a default opinion") != std::string::npos);
+    CHECK(registry->EndPreview(/* publish = */ false));
+    registry->Deactivate();
+}
+
+// A VERDICT BELONGS TO THE DESCRIPTION THAT DECLARED IT. A retirement moves the
+// session, so a warm request captured under the old description is refused on
+// provenance, and the re-declared path answers with its own verdict: the edit
+// target decides, not whatever the previous description held.
+void
+TestRedeclaredPathAnswersWithItsOwnVerdict()
+{
+    std::printf("progress: TestRedeclaredPathAnswersWithItsOwnVerdict\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "off");
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    const SdfPath rig("/Asset/Rig");
+    const SdfLayerRefPtr root = SdfLayer::CreateAnonymous(".usda");
+    const SdfLayerRefPtr lane = SdfLayer::CreateAnonymous(".usda");
+    root->SetSubLayerPaths({lane->GetIdentifier()});
+    UsdStageRefPtr stage = UsdStage::Open(root);
+    MakeTinyRig(/*staticY=*/true, stage);
+    const SdfPath tsPath("/Asset/Rig/AlongX.avars:ts");
+    stage->SetEditTarget(lane);
+    const UsdAttribute tsAttr =
+        stage->GetPrimAtPath(SdfPath("/Asset/Rig/AlongX"))
+            .CreateAttribute(TfToken("avars:ts"), SdfValueTypeNames->Double);
+    CHECK(tsAttr);
+    // Samples in the edit target answer every candidate time, so the pending
+    // default cannot reach this frame and the route stands on its own.
+    CHECK(tsAttr.Set(1.0, UsdTimeCode(3.0)));
+    CHECK(tsAttr.Set(7.5));
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
+    std::vector<std::string> errors;
+    CHECK(registry->Activate(stage, rig, UsdTimeCode(2.0), &errors));
+    const double pendingValue = 11.0;
+    CHECK(registry->BeginPreview(tsPath.GetAsString()) == 1);
+    CHECK(registry->DeclarePreviewEdit(
+        tsPath.GetAsString(), RigExecPreviewEditPolicy::AttributeDefault,
+        &pendingValue, 1));
+    std::string reason;
+    RigExecWarmRouteDescriptor route;
+    route.route = RigExecWarmRoute::CommittedSpeculative;
+    route.rigPath = rig;
+    route.time = UsdTimeCode(7.0);
+    route.previewSession = registry->GetPreviewIdentity().session;
+    CHECK(registry->PreviewValueIsIndependent(tsPath.GetAsString(),
+                                              UsdTimeCode(7.0), &reason));
+    CHECK(registry->AdmitWarmRoute(route, &reason));
+
+    // A notice on the declared path retires the description.
+    CHECK(tsAttr.Set(8.5));
+    CHECK(!registry->GetPreviewIdentity().active);
+    CHECK(registry->GetPreviewEditStats().editCount == 0);
+    // The request captured under the retired description is refused outright.
+    CHECK(!registry->AdmitWarmRoute(route, &reason));
+    CHECK(reason.find("has retired") != std::string::npos);
+    // Re-declared under a new description, and under a different edit target,
+    // the same path gets its own verdict: the root authors nothing here, so
+    // nothing but the pending default answers this time.
+    stage->SetEditTarget(root);
+    CHECK(registry->BeginPreview(tsPath.GetAsString()) == 1);
+    CHECK(registry->DeclarePreviewEdit(
+        tsPath.GetAsString(), RigExecPreviewEditPolicy::AttributeDefault,
+        &pendingValue, 1));
+    CHECK(!registry->PreviewValueIsIndependent(tsPath.GetAsString(),
+                                               UsdTimeCode(7.0), &reason));
+    RigExecWarmRouteDescriptor freshRoute = route;
+    freshRoute.previewSession = registry->GetPreviewIdentity().session;
+    CHECK(!registry->AdmitWarmRoute(freshRoute, &reason));
+    registry->EndPreview(/* publish = */ false);
+    registry->Deactivate();
+}
+
 // NOTICE COVERAGE DECIDES WHETHER A VERDICT CAN BE HELD. The stage-notice
 // listener that retires a preview description stands with activation, so a
 // bound context that never activated hears nothing: there the proof re-reads
@@ -6786,6 +6996,8 @@ main(int argc, char **argv)
     TestPreviewIdentityRetiresOnAncestorResync();
     TestPreviewProofRefusesMappedEditTarget();
     TestPreviewProofFollowsTheEditTarget();
+    TestRedeclaredPathAnswersWithItsOwnVerdict();
+    TestRetirementInsideTheProofWindowRefuses();
     TestUnactivatedStageProofTracksSampleRemoval();
     TestCommitOfAChainTargetSettles();
     TestProductionTriggerPathEnqueuesAndFences();

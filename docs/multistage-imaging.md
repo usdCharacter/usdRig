@@ -293,7 +293,12 @@ is refused. Every rule but the default-time check reads the stage and its
 layers rather than the candidate frame, so an activated context holds the
 answer per declared path across a burst of warm frames and drops it when a
 stage notice retires the declaration; a context with no rig activated hears no
-stage notices and re-runs the rules each time. Warm work carries a route:
+stage notices and re-runs the rules each time. The proof's stage and layer
+reads run with the registry's lock released, so a notice authored on another
+thread can retire the declaration while a verdict is being derived: a verdict
+read under a description that retired or was re-declared inside that window is
+refused, and a warm request whose preview provenance has moved on is refused
+outright. Warm work carries a route:
 the frame the preview stands on is refused as pending, a frame already
 backed by a prepared burst is admitted as committed, and a frame built ahead
 of its destination is admitted only when
