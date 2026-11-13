@@ -277,18 +277,22 @@ metadata, structural edits and connections still require evaluation.
 increase monotonically: `BeginPreviewForStage` mints the session, every
 `UpdatePreviewForStage` bumps the revision, and `EndPreviewForStage`,
 `EndPreviewWithoutPublishForStage`, an undo or redo of a declared path, a
-weight-overlay change, a recompile, deactivation or a replaced stage retire it
-— the session moves forward, the revision returns to zero. A host that declares
-what an edit would write (`DeclarePreviewEditForStage`, additive: a repeated
-path updates rather than appends) can ask whether a candidate frame is
-independent of that pending value (`PreviewValueIsIndependentForStage`). The
-answer is yes only when an authored time sample or a stronger layer opinion
-provably answers that attribute; an attribute a compiled property chain revises,
-one with authored connections, or one the stage authors nowhere is refused. Warm
-work carries a route: the frame the preview stands on is refused as pending, a
-frame already backed by a prepared burst is admitted as committed, and a frame
-built ahead of its destination is admitted only when every declared edit is
-provably independent of it.
+resync at or above a declared path (a resync covers its descendants, and the
+stage notice only names the ancestor), a weight-overlay change, a recompile,
+deactivation or a replaced stage retire it — the session moves forward, the
+revision returns to zero. A host that declares what an edit would write
+(`DeclarePreviewEditForStage`, additive: a repeated path updates rather than
+appends) can ask whether a candidate frame is independent of that pending value
+(`PreviewValueIsIndependentForStage`). The answer is yes only when an authored
+time sample or a stronger layer opinion provably answers that attribute in the
+stage's own layer stack; an attribute a compiled property chain revises, one
+with authored connections, one the stage authors nowhere, or a mapped or
+non-local edit target (a reference or variant target authors a different spec
+path, so a same-spelled sample there decides nothing about the composed value)
+is refused. Warm work carries a route: the frame the preview stands on is
+refused as pending, a frame already backed by a prepared burst is admitted as
+committed, and a frame built ahead of its destination is admitted only when
+every declared edit is provably independent of it.
 
 ## usdview plugins
 

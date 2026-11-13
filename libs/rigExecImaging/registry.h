@@ -536,9 +536,10 @@ public:
     /// session this preview is, and how many accepted UpdatePreview samples
     /// it has taken. Both move monotonically -- BeginPreview opens a session
     /// and every retirement (EndPreview, EndPreviewWithoutPublish, a stage
-    /// notice touching a declared path, a recompile, a weight-overlay change,
-    /// deactivation) opens the next one and resets the revision -- so an
-    /// identity captured before a retirement can never match a later one.
+    /// notice touching a declared path or resyncing one of its ancestors, a
+    /// recompile, a weight-overlay change, deactivation) opens the next one
+    /// and resets the revision -- so an identity captured before a retirement
+    /// can never match a later one.
     /// A zero session means no preview has ever stood here.
     RigExecPreviewIdentity GetPreviewIdentity() const;
 
@@ -562,7 +563,9 @@ public:
     /// time sample in the edit target layer, or an authored opinion in a layer
     /// above it. Everything unproven is refused: a static default only, a
     /// connected attribute, an attribute a compiled property chain revises, a
-    /// path the description does not declare, no stage. The reason goes to
+    /// path the description does not declare, a mapped or non-local edit
+    /// target (which authors a different spec path, or one whose strength in
+    /// this stage's layer stack is unknown), no stage. The reason goes to
     /// \p reason when it is not null. Authors nothing.
     bool PreviewValueIsIndependent(const std::string &attributePathText,
                                    UsdTimeCode time, std::string *reason) const;

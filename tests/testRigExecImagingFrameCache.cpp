@@ -117,11 +117,16 @@
 #include "pxr/base/tf/getenv.h"
 #include "pxr/base/tf/notice.h"
 #include "pxr/base/tf/weakBase.h"
+#include "pxr/usd/pcp/node.h"
+#include "pxr/usd/pcp/primIndex.h"
+#include "pxr/usd/pcp/types.h"
 #include "pxr/usd/sdf/types.h"
 #include "pxr/usd/sdf/changeBlock.h"
 #include "pxr/usd/sdf/primSpec.h"
 #include "pxr/usd/usd/notice.h"
 #include "pxr/usd/usd/attribute.h"
+#include "pxr/usd/usd/editTarget.h"
+#include "pxr/usd/usd/references.h"
 #include "pxr/usd/usd/relationship.h"
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usd/usd/primRange.h"
@@ -6414,6 +6419,167 @@ TestWarmRouteAdmission()
     registry->Deactivate();
 }
 
+// ANCESTOR RESYNCS. A resync re-specifies its path and everything below it,
+// and the notice names the ancestor, never the descendants. A declared
+// attribute outside the compiled rig has no recompile to retire it, so the
+// notice hook must: the identity retires with the notice, and the edit
+// description goes with it.
+void
+TestPreviewIdentityRetiresOnAncestorResync()
+{
+    std::printf("progress: TestPreviewIdentityRetiresOnAncestorResync\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "on");
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    UsdStageRefPtr stage = MakeTinyRig();
+    // Declared outside the rig and outside its inputs: the change below
+    // compiles nothing, so only the notice can retire the identity.
+    const std::string outsidePath = "/Asset/Outside/Deep.xformOp:translate";
+    stage->DefinePrim(SdfPath("/Asset/Outside"), TfToken("Scope"));
+    const UsdPrim deep =
+        stage->DefinePrim(SdfPath("/Asset/Outside/Deep"), TfToken("Xform"));
+    CHECK(deep.CreateAttribute(TfToken("xformOp:translate"),
+                               SdfValueTypeNames->Vector3d)
+              .Set(GfVec3d(1.0, 2.0, 3.0), UsdTimeCode(3.0)));
+    // A second authored layer whose only prim sits above the declared
+    // attribute: inserting it as a sublayer resyncs that ancestor.
+    const UsdStageRefPtr above = UsdStage::CreateInMemory();
+    above->DefinePrim(SdfPath("/Asset/Outside"), TfToken("Scope"));
+
+    const SdfPath rig("/Asset/Rig");
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
+    std::vector<std::string> errors;
+    CHECK(registry->Activate(stage, rig, UsdTimeCode(2.0), &errors));
+    // BeginPreview returns the declared slot's double count: a vector3d op
+    // previews as three doubles.
+    CHECK(registry->BeginPreview(outsidePath) == 3);
+    const double pendingValue[3] = {11.0, 12.0, 13.0};
+    CHECK(registry->DeclarePreviewEdit(
+        outsidePath, RigExecPreviewEditPolicy::AttributeDefault, pendingValue,
+        3));
+    const RigExecPreviewIdentity standing = registry->GetPreviewIdentity();
+    CHECK(standing.active);
+    CHECK(registry->GetPreviewEditStats().editCount == 1);
+    std::string reason;
+    // An authored time sample answers frame 3: the pending default cannot
+    // reach it, so the frame stands on the standing identity.
+    CHECK(registry->PreviewValueIsIndependent(outsidePath, UsdTimeCode(3.0),
+                                              &reason));
+
+    {
+        SdfChangeBlock changes;
+        stage->GetRootLayer()->SetSubLayerPaths(
+            {above->GetRootLayer()->GetIdentifier()});
+    }
+
+    const RigExecPreviewIdentity afterResync = registry->GetPreviewIdentity();
+    CHECK(!afterResync.active);
+    CHECK(afterResync.session > standing.session);
+    CHECK(afterResync.revision == 0);
+    CHECK(registry->GetPreviewEditStats().editCount == 0);
+    CHECK(!registry->PreviewValueIsIndependent(outsidePath, UsdTimeCode(3.0),
+                                               &reason));
+    CHECK(!reason.empty());
+    CHECK(registry->EndPreview(/* publish = */ false));
+    registry->Deactivate();
+}
+
+// MAPPED EDIT TARGETS. A target that maps the composed path to a different
+// spec path authors the pending value where this proof cannot see it, and a
+// same-spelled sampled property in that other layer is not the composed
+// value. Refused, and the speculative warm route behind it refused too.
+void
+TestPreviewProofRefusesMappedEditTarget()
+{
+    std::printf("progress: TestPreviewProofRefusesMappedEditTarget\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "off");
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    UsdStageRefPtr stage = MakeTinyRig();
+    // An authored source layer: the composed value arrives through a
+    // reference, and the same layer holds a sampled property spelled exactly
+    // like the composed path that composes nowhere.
+    const UsdStageRefPtr source = UsdStage::CreateInMemory();
+    source->DefinePrim(SdfPath("/Source"), TfToken("Scope"));
+    CHECK(bool(
+        source->GetPrimAtPath(SdfPath("/Source"))
+            .CreateAttribute(TfToken("avars:tv"), SdfValueTypeNames->Double)));
+    CHECK(source->GetAttributeAtPath(SdfPath("/Source.avars:tv"))
+              .Set(5.0, UsdTimeCode(3.0)));
+    source->DefinePrim(SdfPath("/Asset/Rig/Holder"), TfToken("Scope"));
+    CHECK(bool(
+        source->GetPrimAtPath(SdfPath("/Asset/Rig/Holder"))
+            .CreateAttribute(TfToken("avars:tv"), SdfValueTypeNames->Double)));
+    CHECK(source->GetAttributeAtPath(SdfPath("/Asset/Rig/Holder.avars:tv"))
+              .Set(7.0, UsdTimeCode(3.0)));
+
+    const std::string heldPath = "/Asset/Rig/Holder.avars:tv";
+    const UsdPrim holder =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Holder"), TfToken("Scope"));
+    CHECK(holder.GetReferences().AddReference(
+        source->GetRootLayer()->GetIdentifier(), SdfPath("/Source")));
+    double composed = 0.0;
+    CHECK(stage->GetAttributeAtPath(SdfPath(heldPath))
+              .Get(&composed, UsdTimeCode(3.0)));
+    CHECK(composed == 5.0);
+    // The same-spelled sample sits in the referenced layer and decides
+    // nothing: the composed value at this time is the referenced one.
+    CHECK(source->GetRootLayer()->HasField(SdfPath(heldPath),
+                                           SdfFieldKeys->TimeSamples));
+
+    const SdfPath rig("/Asset/Rig");
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
+    std::vector<std::string> errors;
+    CHECK(registry->Activate(stage, rig, UsdTimeCode(2.0), &errors));
+    const double pendingValue = 11.0;
+    CHECK(registry->BeginPreview(heldPath) == 1);
+    CHECK(registry->DeclarePreviewEdit(
+        heldPath, RigExecPreviewEditPolicy::AttributeDefault, &pendingValue,
+        1));
+    std::string reason;
+    // The stage's own target: the pending default would land on this path in
+    // a layer of this stage's stack, where nothing answers frame 3.
+    CHECK(!registry->PreviewValueIsIndependent(heldPath, UsdTimeCode(3.0),
+                                               &reason));
+    // The reference's target: the pending default would be authored at the
+    // mapped spec path in the source layer, so the same-spelled sample there
+    // must not stand in for the composed value.
+    PcpNodeRef referenceNode;
+    for (PcpNodeRef node : stage->GetPrimAtPath(SdfPath("/Asset/Rig/Holder"))
+                               .GetPrimIndex()
+                               .GetNodeRange()) {
+        if (node.GetArcType() == PcpArcTypeReference) {
+            referenceNode = node;
+        }
+    }
+    CHECK(bool(referenceNode));
+    stage->SetEditTarget(UsdEditTarget(source->GetRootLayer(), referenceNode));
+    CHECK(!registry->PreviewValueIsIndependent(heldPath, UsdTimeCode(3.0),
+                                               &reason));
+    CHECK(!reason.empty());
+    // Warm-route admission carries the same refusal.
+    RigExecWarmRouteDescriptor route;
+    route.route = RigExecWarmRoute::CommittedSpeculative;
+    route.rigPath = rig;
+    route.time = UsdTimeCode(3.0);
+    route.previewSession = registry->GetPreviewIdentity().session;
+    route.previewRevision = registry->GetPreviewIdentity().revision;
+    CHECK(!registry->AdmitWarmRoute(route, &reason));
+    stage->SetEditTarget(stage->GetRootLayer());
+    CHECK(registry->EndPreview(/* publish = */ false));
+    registry->Deactivate();
+}
+
 int
 main(int argc, char **argv)
 {
@@ -6474,6 +6640,8 @@ main(int argc, char **argv)
     TestPreviewEditDescriptionAndProof();
     TestPreviewProofRefusesPropertyChainTarget();
     TestWarmRouteAdmission();
+    TestPreviewIdentityRetiresOnAncestorResync();
+    TestPreviewProofRefusesMappedEditTarget();
     TestCommitOfAChainTargetSettles();
     TestProductionTriggerPathEnqueuesAndFences();
     TestWarmedCompletionServesWithoutEvaluating();

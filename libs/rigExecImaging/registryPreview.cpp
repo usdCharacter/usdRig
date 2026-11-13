@@ -15,10 +15,12 @@
 #include "pxr/base/tf/type.h"
 #include "pxr/base/vt/array.h"
 #include "pxr/base/vt/value.h"
+#include "pxr/usd/pcp/mapFunction.h"
 #include "pxr/usd/sdf/path.h"
 #include "pxr/usd/sdf/schema.h"
 #include "pxr/usd/sdf/valueTypeName.h"
 #include "pxr/usd/usd/attribute.h"
+#include "pxr/usd/usd/editTarget.h"
 #include "pxr/usd/usd/prim.h"
 #include "pxr/usd/usd/notice.h"
 #include "pxr/usd/usd/stage.h"
@@ -613,7 +615,11 @@ RigExecImagingRegistry::_RetirePreviewIdentityForNoticeLocked(
             }
         }
         for (const SdfPath &path : notice.GetResyncedPaths()) {
-            if (path == edit.attributePath || path == primPath) {
+            // A resync re-specifies its path and everything below it, and
+            // the notice lists the ancestor, not the respecified descendants,
+            // so a declared attribute is covered by a resync at or above it.
+            if (path == edit.attributePath ||
+                edit.attributePath.HasPrefix(path)) {
                 _RetirePreviewIdentityLocked();
                 return;
             }
@@ -678,14 +684,35 @@ RigExecImagingRegistry::_PreviewValueIsIndependentLocked(
             return refuse("a compiled property chain revises this attribute");
         }
     }
-    const SdfLayerHandle target = stage->GetEditTarget().GetLayer();
+    const UsdEditTarget target = stage->GetEditTarget();
+    const SdfLayerHandle targetLayer = target.GetLayer();
+    if (!targetLayer) {
+        return refuse("this stage has no edit-target layer");
+    }
+    // Every layer rule below reads the composed path in a layer of this
+    // stage's own stack, which is where a local edit target authors it. A
+    // mapped target (a reference or a variant) writes another spec path, and
+    // a same-spelled spec in that other layer composes nowhere here: the
+    // fields read below are not the ones the pending value would reach.
+    if (!target.GetMapFunction().IsIdentity() ||
+        target.MapToSpecPath(attributePath) != attributePath) {
+        return refuse("the edit target maps this composed path to another "
+                      "spec path, so the pending value would be authored "
+                      "somewhere this proof cannot read");
+    }
     const std::vector<SdfLayerHandle> stack = stage->GetLayerStack();
     size_t targetIndex = stack.size();
     for (size_t i = 0; i < stack.size(); ++i) {
-        if (stack[i] == target) {
+        if (stack[i] == targetLayer) {
             targetIndex = i;
             break;
         }
+    }
+    if (targetIndex == stack.size()) {
+        // Not one of the stage's own layers: a non-local target, whose
+        // strength against this stack is not something a flat read settles.
+        return refuse("the edit-target layer is not in this stage's layer "
+                      "stack, so its composition strength is unknown here");
     }
     // Anything authored above the edit target decides the composed answer
     // at every time, and a pending value in the target can never reach it.
@@ -695,7 +722,7 @@ RigExecImagingRegistry::_PreviewValueIsIndependentLocked(
                           "attribute, so the pending default never applies");
         }
     }
-    if (_LayerAuthorsAt(target, attributePath, false)) {
+    if (_LayerAuthorsAt(targetLayer, attributePath, false)) {
         return accept("authored time samples in the edit target layer answer "
                       "every time, and a same-layer default never hides them");
     }
