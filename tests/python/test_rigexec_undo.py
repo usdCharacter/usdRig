@@ -150,6 +150,33 @@ def TestUndoStack():
     _Check(not stack.CanUndo() and not stack.CanRedo(), "cleared")
 
 
+def TestUndoFlushers():
+    stage = _Stage()
+    layer = stage.GetRootLayer()
+    path = Sdf.Path("/Rig/Ctl.avars:tx")
+    attr = stage.GetAttributeAtPath(path)
+    stack = rigExecUndo.UndoStack()
+    queued = []
+
+    def Flush():
+        # A queued commit: authored and pushed only when asked.
+        if not queued:
+            return
+        queued.pop()
+        before = rigExecUndo.AttributeSnapshot.Capture(layer, path)
+        attr.Set(7.0)
+        after = rigExecUndo.AttributeSnapshot.Capture(layer, path)
+        stack.Push(rigExecUndo.Edit(
+            "Queued", [rigExecUndo.EditEntry(layer, path, before, after)]))
+
+    stack.AddFlusher(Flush)
+    queued.append(1)
+    _Check(stack.Undo(), "Undo ran the flusher, then undid its edit")
+    _Check(not attr.HasAuthoredValue() and stack.RedoText() == "Queued",
+           "the queued edit was committed and is what was undone")
+    _Check(stack.Redo() and attr.Get() == 7.0, "and it redoes")
+
+
 def TestUndoFailures():
     stage = _Stage()
     attr = stage.GetAttributeAtPath("/Rig/Ctl.avars:tx")
@@ -489,6 +516,7 @@ def main():
         ("default + time samples", TestSnapshotDefaultAndTimeSamples),
         ("spline", TestSnapshotSpline),
         ("undo stack", TestUndoStack),
+        ("undo flushers", TestUndoFlushers),
         ("undo failures", TestUndoFailures),
         ("edit recorder", TestEditRecorder),
         ("one notice per edit", TestSingleNoticePerEdit),

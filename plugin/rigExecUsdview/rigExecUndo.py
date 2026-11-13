@@ -355,10 +355,20 @@ class UndoStack(object):
         self._undo = []
         self._redo = []
         self._listeners = []
+        self._flushers = []
         self._replaying = False
 
     def AddListener(self, fn):
         self._listeners.append(fn)
+
+    def AddFlusher(self, fn):
+        """`fn()` runs before every Undo and Redo, so an editor holding
+        a queued commit authors (and pushes) it first."""
+        self._flushers.append(fn)
+
+    def _Flush(self):
+        for fn in list(self._flushers):
+            fn()
 
     def _Notify(self):
         for fn in list(self._listeners):
@@ -385,9 +395,11 @@ class UndoStack(object):
         return self._redo[-1].label if self._redo else ""
 
     def Undo(self):
+        self._Flush()
         return self._Replay(self._undo, self._redo, "Undo")
 
     def Redo(self):
+        self._Flush()
         return self._Replay(self._redo, self._undo, "Redo")
 
     def _Replay(self, source, destination, method):
