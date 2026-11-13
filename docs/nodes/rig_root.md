@@ -123,4 +123,4 @@ bin\launch_usdview.bat docs\examples\two_bone_ik.usda
 
 ---
 
-[usdRig](../index.md)
+[UsdRig](../index.md)

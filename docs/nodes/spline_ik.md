@@ -294,4 +294,4 @@ python docs/render_media.py --page spline_ik
 
 ---
 
-[usdRig](../index.md)
+[UsdRig](../index.md)

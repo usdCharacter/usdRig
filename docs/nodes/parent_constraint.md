@@ -288,4 +288,4 @@ python docs/render_media.py --page parent_constraint
 
 ---
 
-[usdRig](../index.md)
+[UsdRig](../index.md)

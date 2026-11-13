@@ -85,4 +85,4 @@ Wire a source at (2,0,0). An incoming matrix at (0,3,0) with preserveLocation en
 
 ---
 
-[usdRig](../index.md)
+[UsdRig](../index.md)

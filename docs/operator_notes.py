@@ -1,4 +1,4 @@
-"""Hand-written prose for the usdRig node pages (see build_pages.py).
+"""Hand-written prose for the UsdRig node pages (see build_pages.py).
 
 Each entry supplies the user-facing description, wiring table, example
 story, tips, and cross-links for one operator. Parameter reference comes

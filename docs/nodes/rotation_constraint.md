@@ -247,4 +247,4 @@ python docs/render_media.py --page rotation_constraint
 
 ---
 
-[usdRig](../index.md)
+[UsdRig](../index.md)

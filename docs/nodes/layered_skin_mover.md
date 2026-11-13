@@ -139,4 +139,4 @@ Two points with a single translation influence of two units in X and masks [0.25
 
 ---
 
-[usdRig](../index.md)
+[UsdRig](../index.md)

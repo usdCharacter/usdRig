@@ -224,4 +224,4 @@ that translation; intermediate values reduce it.
 
 ---
 
-[usdRig](../index.md)
+[UsdRig](../index.md)

@@ -218,4 +218,4 @@ python docs/render_media.py --page skin_mover
 
 ---
 
-[usdRig](../index.md)
+[UsdRig](../index.md)

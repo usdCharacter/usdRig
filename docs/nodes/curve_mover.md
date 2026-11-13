@@ -321,4 +321,4 @@ python docs/render_media.py --page curve_mover
 
 ---
 
-[usdRig](../index.md)
+[UsdRig](../index.md)

@@ -118,4 +118,4 @@ python docs/render_media.py --page volume_correct_mover
 
 ---
 
-[usdRig](../index.md)
+[UsdRig](../index.md)

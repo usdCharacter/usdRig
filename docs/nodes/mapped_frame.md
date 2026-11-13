@@ -85,4 +85,4 @@ An identity sourceRest, a targetRest translated one unit in Y, and a live source
 
 ---
 
-[usdRig](../index.md)
+[UsdRig](../index.md)

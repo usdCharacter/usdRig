@@ -520,4 +520,4 @@ python docs/render_media.py --page curve_weight
 
 ---
 
-[usdRig](../index.md)
+[UsdRig](../index.md)

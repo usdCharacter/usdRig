@@ -89,4 +89,4 @@ python docs/render_media.py --page blend_input
 
 ---
 
-[usdRig](../index.md)
+[UsdRig](../index.md)

@@ -313,4 +313,4 @@ python docs/render_media.py --page single_chain_ik_constraint
 
 ---
 
-[usdRig](../index.md)
+[UsdRig](../index.md)

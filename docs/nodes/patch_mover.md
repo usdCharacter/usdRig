@@ -181,4 +181,4 @@ cross.
 
 ---
 
-[usdRig](../index.md)
+[UsdRig](../index.md)

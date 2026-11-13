@@ -139,4 +139,4 @@ python docs/render_media.py --page static_weight
 
 ---
 
-[usdRig](../index.md)
+[UsdRig](../index.md)

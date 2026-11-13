@@ -232,4 +232,4 @@ bin\launch_usdview.bat docs\examples\wrinkle_mover.usda
 
 ---
 
-[usdRig](../index.md)
+[UsdRig](../index.md)

@@ -511,4 +511,4 @@ python docs/render_media.py --page control
 
 ---
 
-[usdRig](../index.md)
+[UsdRig](../index.md)
