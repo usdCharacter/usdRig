@@ -13,15 +13,15 @@
     "open_prs_at_boundary": [],
     "open_pr_note": "No pull request was open at this boundary; the inventory and this task land as their own PRs on main.",
     "rebase_rule": "If main moves, recompute every count in this manifest against the new head before use. The archive blobs below were verified unchanged between 66b24f2 and this head.",
-    "tracked_files_total": 1789,
+    "tracked_files_total": 1790,
     "tracked_files_at_base_commit": 1785,
     "inventory_scope_excludes": [
       "thirdparty/**",
       "plugin/usdNoodles/**"
     ],
-    "tracked_files_in_scope": 1584,
-    "license_marker_files_in_scope": 26,
-    "marker_scan_definition": "Plain-text files (no NUL byte) whose content contains 'copyright', 'license' or 'spdx' case-insensitively, measured over every file of the inventory result tree outside the scope exclusions. An earlier unqualified scan counted 26 by matching binary payloads too; see totals.false_positive_note. The scan matches the word wherever it appears, grant or mere reference, so prose that names the checker moves the count: .github/workflows/usdrig.yml joined the set when CI started invoking tools/check_licenses.py.",
+    "tracked_files_in_scope": 1585,
+    "license_marker_files_in_scope": 28,
+    "marker_scan_definition": "Plain-text files (no NUL byte) whose content contains 'copyright', 'license' or 'spdx' case-insensitively, measured over every file of the inventory result tree outside the scope exclusions. An earlier unqualified scan counted 26 by matching binary payloads too; see totals.false_positive_note. The scan matches the word wherever it appears, grant or mere reference, so prose that names the checker moves the count: .github/workflows/usdrig.yml joined the set when CI started invoking tools/check_licenses.py, and docs/concepts/licensing.md joined it with its summary line in the generated docs/index.md catalog.",
     "archive_members_inventory": [
       {
         "archive": "docs/examples/usdview_rolling_ball.zip",
@@ -59,7 +59,7 @@
         "legal_members_mapped": 3
       }
     ],
-    "count_scope": "Every count is measured on the inventory result tree: the 1785 tracked files of base_commit plus tools/license_manifest.json (original-build-and-tooling), docs/legal_members.py (original-documentation) and tests/testRigExecLegalPackaging.py (original-test-suites). Each family's matched_files is measured on that same tree.",
+    "count_scope": "Every count is measured on the inventory result tree: the 1785 tracked files of base_commit plus tools/license_manifest.json (original-build-and-tooling), docs/legal_members.py and docs/concepts/licensing.md (original-documentation) and tests/testRigExecLegalPackaging.py (original-test-suites). Each family's matched_files is measured on that same tree.",
     "partition_method": "tools/check_licenses.py re-derives the partition from git ls-files plus untracked, non-ignored files and re-runs the marker scan; the counts above are what that check expects on this tree"
   },
   "categories": {
@@ -71,7 +71,7 @@
   },
   "precedence": {
     "rule": "A path belongs to the family with the lowest precedence number whose globs match it, after that family's carve_outs are applied. Ties are impossible because each family's glob set is disjoint by carve-out. A path matching nothing falls to the precedence-6 fallback.",
-    "verification": "The 29 families below partition the 1789 files of the inventory result tree exactly once: 1789 assigned, 0 unassigned, 0 double-assigned, 0 in fallback-unclassified. Verify with tools/check_licenses.py, which re-derives the partition from the checkout.",
+    "verification": "The 29 families below partition the 1790 files of the inventory result tree exactly once: 1790 assigned, 0 unassigned, 0 double-assigned, 0 in fallback-unclassified. Verify with tools/check_licenses.py, which re-derives the partition from the checkout.",
     "byte_identity_note": "Legal texts shipped inside the checked-in archives are CRLF-normalized copies of their repository sources. They match the source after CRLF -> LF normalization, except the two THIRD_PARTY_NOTICES copies, which are content-stale (see distribution.gaps)."
   },
   "families": [
@@ -785,7 +785,7 @@
       ],
       "generator": null,
       "exception_scope": "Documentation prose quoting upstream license text (the Epic MIT block in THIRD_PARTY_NOTICES.md) reproduces that text under its own terms; quoting does not transfer ownership.",
-      "matched_files": 66
+      "matched_files": 67
     },
     {
       "id": "unresolved-icons-atlas",
@@ -962,17 +962,17 @@
     }
   ],
   "totals": {
-    "assigned_files": 1789,
+    "assigned_files": 1790,
     "unassigned_files": 0,
     "double_assigned_files": 0,
     "by_category": {
-      "original": 1049,
+      "original": 1050,
       "unresolved": 459,
       "generated": 70,
       "bundled": 45,
       "derived": 166
     },
-    "files_with_license_or_copyright_markers_in_scope": 26,
+    "files_with_license_or_copyright_markers_in_scope": 28,
     "false_positive_note": "examples/2d/bust_dd_b/textures/MouthLine.png matches a marker scan only because compressed PNG bytes happen to contain the substring 'spdx'; a checker must scan text files only or decode binary payloads before matching."
   },
   "distribution": {
@@ -1549,5 +1549,5 @@
     "archive-identity": "Compare archive legal members after normalizing CRLF to LF, and flag content-stale members rather than treating line endings as drift.",
     "required-text-form": "Every required_texts entry is an object with exactly one of path, url or prose. A bare string is a manifest error: a path entry is checked for existence in the tree, a url entry is an upstream text that is deliberately not vendored and is never checked against the filesystem, and a prose entry names documentation that is explicitly a source-only reference and is never expected in an install prefix or an archive."
   },
-  "count_scope": "Every count is measured on the inventory result tree: the 1785 tracked files of base_commit plus tools/license_manifest.json and tools/check_licenses.py (original-build-and-tooling), docs/legal_members.py (original-documentation) and tests/testRigExecLegalPackaging.py (original-test-suites). Each family's matched_files is measured on that same tree."
+  "count_scope": "Every count is measured on the inventory result tree: the 1785 tracked files of base_commit plus tools/license_manifest.json and tools/check_licenses.py (original-build-and-tooling), docs/legal_members.py and docs/concepts/licensing.md (original-documentation) and tests/testRigExecLegalPackaging.py (original-test-suites). Each family's matched_files is measured on that same tree."
 }

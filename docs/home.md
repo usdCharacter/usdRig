@@ -109,6 +109,9 @@ These are rendered straight from them.
 
 usdRig is an early, end-to-end vertical under active development: its APIs,
 behaviour and file formats may change without notice. Its RigExec engine builds
-against an unmodified OpenUSD 26.08 with OpenExec. Original project code is MIT
-licensed; third-party material keeps its own terms. See the
+against an unmodified OpenUSD 26.08 with OpenExec. Project-authored code and
+documentation are MIT licensed; bundled and derived third-party material keeps
+its own terms, and the icon atlases, component library, example artwork,
+documentation images and test fixtures carry no grant yet. See
+[licensing and provenance](../concepts/licensing.md) and the
 [domain glossary](../CONTEXT.md) for project and engine terminology.

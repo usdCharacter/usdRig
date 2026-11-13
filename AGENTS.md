@@ -499,6 +499,12 @@ with `python docs/build_pages.py`. It rewrites `docs/nodes/*.md` and
 `.github/workflows/docs.yml` with `--strict`; its `site/` output is ignored.
 Keep Markdown links relative and verify their targets after moving files.
 
+When a legal text, a vendored dependency, or the manifest itself changes, add
+it to `tools/license_manifest.json` and run `python3 tools/check_licenses.py`,
+with `--install <prefix>` for an installed tree and `--archive <path>` for a
+tutorial archive. The manifest is the only exception source: never assign a
+license to a file it records as unresolved.
+
 Keep code comments to the critical minimum. Add one only when a reader would
 otherwise misread or break the code: a contract or invariant, a numerical or
 coordinate convention, ownership or threading rules, a non-obvious

@@ -21,7 +21,10 @@ repo_url: https://github.com/usdCharacter/usdRig
 repo_name: usdCharacter/usdRig
 edit_uri: edit/main/docs/
 copyright: >-
-  RigExec is MIT licensed. Third-party material keeps its own terms.
+  Project-authored usdRig code and documentation are MIT licensed. Bundled and
+  derived third-party material keeps its own terms, and the icon atlases,
+  component library, example artwork, documentation images and test fixtures
+  carry no grant until their provenance is confirmed.
 
 docs_dir: docs
 site_dir: site
@@ -139,6 +142,7 @@ nav:
       - concepts/live-evaluator-inspection.md
       - concepts/paths.md
       - Multi-stage imaging: multistage-imaging.md
+      - Licensing and provenance: concepts/licensing.md
   # The node reference's sections are filled in by docs/_mkdocs/hooks.py
   # from docs/operator_notes.py, so they follow the generator.
   - Node reference:
