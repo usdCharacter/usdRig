@@ -1,5 +1,10 @@
 # Working in RigExec
 
+## Git
+
+Commits should be atomic: include only one coherent change or fix, and do not mix unrelated work.
+Commit messages should be succinct and describe the change being made.
+
 ## Project
 
 RigExec evaluates USD character rigs without changing their source stages.
