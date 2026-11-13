@@ -13,6 +13,7 @@ import json
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -115,15 +116,20 @@ class ManifestContract(unittest.TestCase):
 
     def test_prose_references_are_never_shipped_as_legal_texts(self):
         paths = [ref["path"] for ref in MANIFEST["prose_references"]]
-        self.assertEqual(paths, ["docs/references.md", "docs/concepts/riglogic.md"])
-        shipped = []
-        for entries in MANIFEST["distribution"].values():
-            shipped.extend(entry.get("member") or entry.get("destination")
-                           for entry in entries.get("legal_files", []))
-            shipped.extend(entry.get("member") for entry in entries.get("legal_members", []))
-        for path in paths:
-            self.assertNotIn(path, shipped)
-            self.assertFalse(any(name.endswith(path) for name in shipped))
+        self.assertEqual(paths, ["docs/references.md", "docs/concepts/riglogic.md",
+                                 "tools/check_licenses.py"])
+        for content in MANIFEST["distribution"].values():
+            for entry in content.get("legal_members", []):
+                self.assertNotIn(entry["member"], paths)
+                self.assertFalse(any(entry["member"].endswith(p) for p in paths))
+        # The one prose reference that travels is the verifier, and it ships as
+        # a tool under share/rigExec/tools, never as a legal text in the legal
+        # root that the notice links resolve against.
+        for entry in MANIFEST["distribution"]["cmake_install"]["legal_files"]:
+            if any(entry["destination"].endswith(p) for p in paths):
+                self.assertTrue(entry["destination"].startswith("share/rigExec/tools/"),
+                                f"{entry['destination']} ships a prose reference "
+                                "as a legal text")
 
     def test_the_manifest_is_never_hashed_against_itself(self):
         inventories = MANIFEST["inventory_boundary"]["archive_members_inventory"]
@@ -175,10 +181,52 @@ class ManifestContract(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertTrue(notes)  # add-on-bound texts are recorded but not packed
 
+    def test_a_shipped_mirror_of_a_legal_text_is_a_note_not_an_error(self):
+        archive = ROOT / "docs/examples/godot_rolling_ball.zip"
+        errors, stats, notes = check_licenses.check_archive(MANIFEST, archive, ROOT,
+                                                           None)
+        self.assertEqual(errors, [])
+        with zipfile.ZipFile(archive) as handle:
+            members = handle.namelist()
+            texts = {name: handle.read(name) for name in members}
+        mapped = {entry["member"] for entry in
+                  MANIFEST["distribution"]["godot_zip"]["legal_members"]
+                  if entry["member"] in members}
+        mirrors = [name for name in members
+                   if name not in mapped and check_licenses.mirror_of(name, mapped)]
+        self.assertTrue(mirrors)
+        self.assertEqual(stats["mirrored_legal"], len(mirrors))
+        for name in mirrors:
+            original = check_licenses.mirror_of(name, mapped)
+            self.assertEqual(check_licenses.normalize_line_endings(texts[name]),
+                            check_licenses.normalize_line_endings(texts[original]))
+            self.assertTrue(any(name in note for note in notes if "mirror" in note))
+
+    def test_a_differing_copy_of_a_legal_text_is_an_error(self):
+        with zipfile.ZipFile(ROOT / "docs/examples/godot_rolling_ball.zip") as handle:
+            members = handle.namelist()
+            texts = {name: handle.read(name) for name in members}
+        name = next(n for n in members
+                    if n.endswith("THIRD_PARTY_NOTICES.md") and "demo" in n)
+        broken = json.loads(json.dumps(MANIFEST))
+        broken["distribution"]["godot_zip"]["legal_members"].append(
+            {"member": name, "source": "THIRD_PARTY_NOTICES.md", "status": "current"})
+        temp = Path(tempfile.mktemp(suffix="demo.zip"))
+        with zipfile.ZipFile(temp, "w") as handle:
+            handle.writestr(name, texts[name] + b"\nand a line the source lacks\n")
+        errors = check_licenses.compare_legal_members(broken, temp.name, [{
+            "member": name, "source": "THIRD_PARTY_NOTICES.md", "status": "current"}],
+            [name], temp, None, ROOT)
+        self.assertTrue(any("differs from its source" in error for error in errors))
+
 
 class Partition(unittest.TestCase):
     def test_families_partition_the_tree_exactly_once(self):
-        self.assertEqual(check_licenses.check_partition(MANIFEST, ROOT), [])
+        files = check_licenses.tracked_files(ROOT)
+        self.assertIsNotNone(files, "the test tree must be a git checkout")
+        errors, unverifiable = check_licenses.check_partition(MANIFEST, ROOT, files)
+        self.assertEqual(errors, [])
+        self.assertEqual(unverifiable, [])
 
 
 if __name__ == "__main__":

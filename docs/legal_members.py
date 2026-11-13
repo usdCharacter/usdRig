@@ -34,8 +34,12 @@ def archive_member_name(name: str) -> str:
     return name
 
 
-def resolve_legal_source(member: str, source, addon_root: Path | None = None) -> Path:
+def resolve_legal_source(member: str, source, addon_root: Path | None = None,
+                         root: Path | None = None) -> Path:
     """Resolve one manifest source to a file, or refuse to guess it.
+
+    ``root`` is the checkout the source is read from; it defaults to this
+    repository. The license checker passes the tree it is auditing.
 
     A source is either a path inside this checkout, or a path inside the
     add-on checkout supplied explicitly as addon_root, written as
@@ -70,8 +74,9 @@ def resolve_legal_source(member: str, source, addon_root: Path | None = None) ->
         return path
     if any(part in ("", ".", "..") for part in parts):
         raise ValueError(f"{member}: unsafe source path {source!r}")
-    path = (ROOT / source).resolve()
-    if not path.is_relative_to(ROOT):
+    base = ROOT if root is None else Path(root)
+    path = (base / source).resolve()
+    if not path.is_relative_to(base):
         raise ValueError(f"{member}: source {source!r} escapes this checkout")
     return path
 

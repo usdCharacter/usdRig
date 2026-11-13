@@ -113,10 +113,15 @@ copies of every third-party license it installs. [tools/check_licenses.py](tools
 re-derives the partition from the checkout and checks the mapping against the
 install map and the shipped archives member by member; it runs in the test
 suite as `testRigExecLicenseManifest`, and `testRigExecLegalPackaging` covers
-the packaging helpers in docs/legal_members.py. Two
-files are prose references only, never legal texts to ship:
-[docs/references.md](docs/references.md) and
-[docs/concepts/riglogic.md](docs/concepts/riglogic.md).
+the packaging helpers in docs/legal_members.py. Run it against the checkout, an
+install prefix with `--install <prefix>`, or one archive with `--archive
+<path>`; `--self-test` exercises its synthetic fixtures, and `--addon-root`
+points at the add-on checkout that owns add-on-bound legal texts. Three link
+targets in this file resolve only in a checkout or an install prefix: the two
+prose references [docs/references.md](docs/references.md) and
+[docs/concepts/riglogic.md](docs/concepts/riglogic.md), and the checker itself,
+which is a tool rather than a legal text and is not packed into the tutorial
+archives.
 
 ## Published methods
 

@@ -707,6 +707,13 @@ add_test(NAME testRigExecLicenseManifest
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_licenses.py")
 set_tests_properties(testRigExecLicenseManifest PROPERTIES LABELS "fast")
 
+# The checker's own rules are proven on synthetic trees and archives, so a
+# broken rule cannot pass against a manifest that agrees with itself.
+add_test(NAME testRigExecLicenseChecker
+    COMMAND ${Python3_EXECUTABLE}
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_licenses.py" --self-test)
+set_tests_properties(testRigExecLicenseChecker PROPERTIES LABELS "fast")
+
 add_executable(testRigExecMath tests/testRigExecMath.cpp)
 add_executable(testRigExecWrinkleMath tests/testRigExecWrinkleMath.cpp)
 target_link_libraries(testRigExecWrinkleMath PRIVATE rigExecMath)

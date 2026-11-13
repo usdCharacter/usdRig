@@ -1524,6 +1524,15 @@
       "shipped_in": [
         "source checkout"
       ]
+    },
+    {
+      "path": "tools/check_licenses.py",
+      "kind": "source-only tool reference",
+      "why": "The notice names the checker that produced this manifest. It is installed with the binaries but is not a member of the tutorial archives, so the link resolves only in the source checkout or an install prefix.",
+      "shipped_in": [
+        "source checkout",
+        "install prefix"
+      ]
     }
   ],
   "checker_rules": {
