@@ -3039,3 +3039,17 @@ install(FILES thirdparty/lzma/NOTICE.md
     DESTINATION "share/rigExec/licenses" RENAME LZMA-SDK-NOTICE.md)
 install(FILES thirdparty/lzma/DOC/lzma-sdk.txt
     DESTINATION "share/rigExec/licenses" RENAME LZMA-SDK-LICENSE.txt)
+
+# Source-relative copies of every legal text THIRD_PARTY_NOTICES.md links, so
+# those links resolve inside the install prefix. The usdNoodles texts ship
+# whether or not RIGEXEC_BUILD_USDNOODLES built the editor; they are checked in.
+install(FILES thirdparty/lzma/NOTICE.md
+    DESTINATION "share/rigExec/thirdparty/lzma")
+install(FILES thirdparty/lzma/DOC/lzma-sdk.txt
+    DESTINATION "share/rigExec/thirdparty/lzma/DOC")
+install(FILES thirdparty/flatbuffers/LICENSE
+    DESTINATION "share/rigExec/thirdparty/flatbuffers")
+install(FILES plugin/usdNoodles/LICENSE.txt
+         plugin/usdNoodles/NOODLES_LICENSE.txt
+         plugin/usdNoodles/THIRD_PARTY_LICENSES.txt
+    DESTINATION "share/rigExec/plugin/usdNoodles")
