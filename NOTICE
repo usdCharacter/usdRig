@@ -34,6 +34,17 @@ Release commit: 7e163021e59cca4f8e1e35a7c828b5c6b7915953
 thirdparty/flatbuffers/include holds unmodified FlatBuffers C++ runtime headers
 from that commit; the license text is thirdparty/flatbuffers/LICENSE.
 
+LZMA SDK
+--------
+License: public domain (the LZMA SDK itself has no SPDX identifier)
+Author: Igor Pavlov
+Version: 26.04
+thirdparty/lzma holds the SDK the runtime codec is built from. The
+component's own notice, thirdparty/lzma/NOTICE.md, records the official
+source, the archive hash and the local scalar-dispatch patch. The original
+license text is thirdparty/lzma/DOC/lzma-sdk.txt and is installed beside the
+binaries.
+
 facebookexperimental/noodles
 ----------------------------
 License: MIT
@@ -76,7 +87,34 @@ The noodles shader sources keep the Meta MIT header. The Poppins atlases
 stay under the SIL Open Font License. None of that third-party code is
 relicensed under the project MIT license.
 
+Epic Games OpenRigLogic
+-----------------------
+License: MIT
+Repository: https://github.com/EpicGames/OpenRigLogic
+Commit: 9ca65ac08b64a1ea5f0d79466e64706b3ac524ba (RigLogic 13.5.0)
+libs/rigExecMath/rbfMethodKernel.h, libs/rigExecMath/mlpKernel.h and
+libs/rigExecMath/conditionalTableKernel.h port OpenRigLogic's radial-basis
+solvers, its dense layers and activations, and the conditional table behind
+animated maps. No OpenRigLogic source file, DNA file or MetaHuman asset is
+included. The MIT text is quoted in THIRD_PARTY_NOTICES.md; the port files
+carry no upstream header. tests/fixtures/rigLogicReference.inc holds values
+OpenRigLogic's own solver and table produced at that commit.
+
 The adapted attribute widgets in plugin/rigExecUsdview/volumeWeightUI.py
 retain their existing Copyright 2026 Pixar and OpenUSD license notice.
 The Squarebit Eye shader in examples/biped/shaders keeps its own EULA;
 see THIRD_PARTY_NOTICES.md.
+
+Project assets and generated material
+-------------------------------------
+tools/license_manifest.json is the machine-readable provenance record for this
+distribution. It partitions every tracked file into a license family, pins the
+upstream commits the derived files came from, and maps how each legal text
+travels through the install prefix and the tutorial archives. Non-text assets
+are inventoried there rather than spelled out here.
+
+The icon atlas (icons/), the usdview icons
+(plugin/rigExecUsdview/icons/), the asset_lib component library, the example
+artwork, the documentation assets and the test fixtures are recorded there as
+families carrying no license grant yet. Their terms await owner confirmation;
+until an answer is recorded, the project MIT license does not cover them.

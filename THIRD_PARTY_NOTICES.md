@@ -1,7 +1,8 @@
 # Third-party notices and provenance
 
-The root [MIT license](LICENSE) covers original RigExec code and documentation.
-It does not replace licenses or grant rights in material owned by others.
+The root [MIT license](LICENSE) covers usdRig's original code, documentation
+and project-owned assets. It does not replace licenses or grant rights in
+material owned by others.
 
 ## Bundled code
 
@@ -85,6 +86,26 @@ distributed under the MIT License:
 > LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 > SOFTWARE.
+
+## Assets and generated material
+
+[tools/license_manifest.json](tools/license_manifest.json) is the
+machine-readable provenance record for this distribution. It partitions every
+tracked file into a license family, pins the upstream commits the derived files
+came from, and maps how each legal text travels through the install prefix and
+the tutorial archives. Non-text assets are inventoried there rather than
+described file by file.
+
+The icon atlas (`icons/`), the usdview icons (`plugin/rigExecUsdview/icons/`),
+the `asset_lib` component library, the example artwork, the documentation
+assets and the test fixtures are recorded there as families carrying no license
+grant yet. Their provenance awaits owner confirmation, so the root MIT license
+does not cover them and no tool may treat them as licensed.
+
+Generated output — the `flatc` headers in `libs/rigExecBinary/generated`, the
+schema resources under `plugin/rigExecSchema/resources` and the node pages in
+`docs/nodes` — is machine output. Its origin class is the fact the manifest
+records; the grant comes from the generator and its inputs.
 
 ## Published methods
 
