@@ -503,6 +503,17 @@ def TestKeyDrag():
            "the longer pixel leg picks the axis")
     _Check(gscr.DominantAxis(press, (110.0, 0.0)) == gscr.AXIS_VALUE,
            "a mostly vertical drag constrains to value")
+    _Check(gscr.ConstrainDelta(7.0, -3.0, gscr.AXIS_TIME) == (7.0, 0.0)
+           and gscr.ConstrainDelta(7.0, -3.0, gscr.AXIS_VALUE) == (0.0, -3.0)
+           and gscr.ConstrainDelta(7.0, -3.0, None) == (7.0, -3.0),
+           "a held axis zeroes the other leg of the travel")
+    ruled = gscr.ViewTransform(800, 600, gscr.RULER_MARGINS)
+    _Check(ruled.PlotRect() == (48.0, 26.0, 728.0, 566.0),
+           "the editor's plot leaves the ruler above it: %s"
+           % (ruled.PlotRect(),))
+    _Check(gscr.OnTimeRuler(ruled, 25.0)
+           and not gscr.OnTimeRuler(ruled, 26.0),
+           "the frame ruler is the strip above the plot")
 
 
 def TestTangentDrag():

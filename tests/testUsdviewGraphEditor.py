@@ -70,6 +70,13 @@ class _Driver(object):
 
     def Pump(self):
         self.app._processEvents()
+        # A released drag commits on a later event-loop turn, and a
+        # zero-delay timer is not certain to fire within one pump.
+        for _ in range(200):
+            if not self.panel.HasPendingCommit():
+                break
+            self.QtCore.QThread.msleep(1)
+            self.app._processEvents()
 
     def Send(self, kind, x, y, **kw):
         self.QtWidgets.QApplication.sendEvent(
@@ -156,10 +163,27 @@ class _Driver(object):
         return (hit[0][0], hit[0][1])
 
     def RulerPoint(self, frame):
-        """A point on the bottom frame ruler under `frame`."""
+        """A point on the top frame ruler under `frame`."""
         plot = self.canvas.PlotRectF()
         return (self.canvas.transform.TimeToX(float(frame)),
-                plot.bottom() + 6.0)
+                plot.top() - 6.0)
+
+    def PlotPoint(self, frame):
+        """A point in the middle of the plot under `frame`."""
+        plot = self.canvas.PlotRectF()
+        return (self.canvas.transform.TimeToX(float(frame)),
+                plot.center().y())
+
+    def HoldKey(self, key, down):
+        try:
+            from PySide6 import QtTest
+        except ImportError:
+            from PySide2 import QtTest
+        if down:
+            QtTest.QTest.keyPress(self.canvas, key)
+        else:
+            QtTest.QTest.keyRelease(self.canvas, key)
+        self.Pump()
 
     def Rewind(self, stack):
         """Undo back to a clean stack, for sections that follow."""
@@ -318,6 +342,105 @@ def testUsdviewInputFunction(appController):
            "so the attribute is back to %s at frame 1024" % (beforeAt1024,))
     d.Rewind(stack)
 
+    # --- 4b. A drag previews through Hydra; the release queues a commit --
+    import gizmoPreview
+
+    class _Sink(object):
+        def __init__(self):
+            self.calls = []
+
+        def Begin(self, packed):
+            self.calls.append(("begin", packed))
+            return len(packed.split("\n"))
+
+        def Update(self, values):
+            self.calls.append(("update", list(values)))
+            return True
+
+        def End(self, publish=True):
+            self.calls.append(("end", publish))
+            return True
+
+    realSink = gizmoPreview.Channel(api, create=True)._sink
+    sink = _Sink()
+    gizmoPreview.SetSink(sink, session=api)
+    try:
+        before = Ts.Spline(d.Spline("avars:ty"))
+        panel.SelectKeys([(TY, 1024.0)])
+        d.Pump()
+        press = d.KeyPixel(TY, 1024.0)
+        end = (press[0] + perFrame * 4.0, press[1] - 60.0)
+        left = d.QtCore.Qt.LeftButton
+        d.Press(press)
+        for t in (0.5, 1.0):
+            d.Move((press[0] + (end[0] - press[0]) * t,
+                    press[1] + (end[1] - press[1]) * t),
+                   button=d.QtCore.Qt.NoButton, buttons=left)
+        _Check(d.SessionSpec("avars:ty") is None,
+               "a drag in flight authors nothing")
+        begins = [c for c in sink.calls if c[0] == "begin"]
+        updates = [c for c in sink.calls if c[0] == "update"]
+        _Check(begins and begins[-1][1] == CONTROL + ".avars:ty",
+               "the drag declared its curve to the preview sink: %s"
+               % (begins,))
+        _Check(updates and len(updates[-1][1]) == 1,
+               "and sent its current-frame value: %s" % (updates[-1:],))
+        d.QtWidgets.QApplication.sendEvent(
+            d.canvas, _Mouse(d.QtCore, d.QtGui, d.canvas,
+                             d.QtCore.QEvent.Type.MouseButtonRelease,
+                             end[0], end[1], button=left,
+                             buttons=d.QtCore.Qt.NoButton))
+        _Check(panel.HasPendingCommit(),
+               "the release queued the commit rather than authoring")
+        _Check(d.SessionSpec("avars:ty") is None and not stack.CanUndo(),
+               "so nothing is authored or undoable until the next turn")
+        d.Pump()
+        _Check(not panel.HasPendingCommit(), "the queued commit ran")
+        spec = d.SessionSpec("avars:ty")
+        _Check(spec is not None and spec.HasSpline() and stack.CanUndo(),
+               "and authored the drag as one undoable edit")
+        _Check(sink.calls[-1] == ("end", False),
+               "the preview ended without a republish, the commit's "
+               "notice publishing instead: %s" % (sink.calls[-1],))
+        d.Rewind(stack)
+
+        # Undo right behind the release commits the drag first.
+        panel.SelectKeys([(TY, 1024.0)])
+        d.Pump()
+        press = d.KeyPixel(TY, 1024.0)
+        d.Press(press)
+        d.Move((press[0], press[1] - 40.0),
+               button=d.QtCore.Qt.NoButton, buttons=left)
+        d.QtWidgets.QApplication.sendEvent(
+            d.canvas, _Mouse(d.QtCore, d.QtGui, d.canvas,
+                             d.QtCore.QEvent.Type.MouseButtonRelease,
+                             press[0], press[1] - 40.0, button=left,
+                             buttons=d.QtCore.Qt.NoButton))
+        _Check(panel.HasPendingCommit(), "a second release is queued")
+        _Check(panel.Undo(), "Undo ran behind the release")
+        _Check(not panel.HasPendingCommit()
+               and d.Spline("avars:ty") == before,
+               "it committed the queued drag, then undid exactly that")
+        d.Rewind(stack)
+
+        # Escape mid-drag drops the preview and authors nothing.
+        panel.SelectKeys([(TY, 1024.0)])
+        d.Pump()
+        press = d.KeyPixel(TY, 1024.0)
+        d.Press(press)
+        d.Move((press[0], press[1] - 40.0),
+               button=d.QtCore.Qt.NoButton, buttons=left)
+        d.Key(d.QtCore.Qt.Key_Escape)
+        _Check(d.SessionSpec("avars:ty") is None and not stack.CanUndo(),
+               "Escape cancelled the drag with nothing authored")
+        _Check(sink.calls[-1] == ("end", True),
+               "and the preview ended with a republish: %s"
+               % (sink.calls[-1],))
+        d.Release((press[0], press[1] - 40.0))
+    finally:
+        gizmoPreview.SetSink(realSink, session=api)
+    d.Rewind(stack)
+
     # --- 5. Insert Key holds the value the curve already had ------------
     appController.setFrame(1030)
     d.Pump()
@@ -422,20 +545,38 @@ def testUsdviewInputFunction(appController):
            "and the key itself did not move while its handle did")
     d.Rewind(stack)
 
-    # Weighted: the same gesture now changes the handle's LENGTH too.
+    # Weighted is the default: the handle end follows the cursor, so the
+    # same gesture changes the handle's LENGTH too.
     panel.SelectKeys([(TX, 1024.0)])
     panel.SetTangentType("auto")
     d.Pump()
-    panel.SetWeighted(True)
-    _Check(panel.Weighted(), "Weighted is on")
+    _Check(panel.Weighted(), "Weighted is on by default")
     widthBefore = d.Knot("avars:tx", 1024).GetPostTanWidth()
     handle = d.TangentPixel(TX, 1024.0, "out")
     d.Drag(handle, (handle[0] + 70.0, handle[1] - 10.0))
     widthAfter = d.Knot("avars:tx", 1024).GetPostTanWidth()
     _Check(widthAfter - widthBefore > 1e-6,
-           "dragging the handle outward with Weighted on lengthened it: "
-           "%s -> %s" % (widthBefore, widthAfter))
+           "dragging the handle outward lengthened it: %s -> %s"
+           % (widthBefore, widthAfter))
+    d.Rewind(stack)
+
+    # Weighted off locks the length: the drag only rotates.
+    panel.SelectKeys([(TX, 1024.0)])
+    panel.SetTangentType("auto")
+    d.Pump()
     panel.SetWeighted(False)
+    widthBefore = d.Knot("avars:tx", 1024).GetPostTanWidth()
+    slopeBefore = d.Knot("avars:tx", 1024).GetPostTanSlope()
+    handle = d.TangentPixel(TX, 1024.0, "out")
+    d.Drag(handle, (handle[0] + 70.0, handle[1] - 40.0))
+    knot = d.Knot("avars:tx", 1024)
+    _Check(abs(knot.GetPostTanWidth() - widthBefore) < 1e-9,
+           "with Weighted off the drag kept the handle's length: "
+           "%s -> %s" % (widthBefore, knot.GetPostTanWidth()))
+    _Check(abs(knot.GetPostTanSlope() - slopeBefore) > 1e-6,
+           "and still turned it: %s -> %s"
+           % (slopeBefore, knot.GetPostTanSlope()))
+    panel.SetWeighted(True)
     d.Rewind(stack)
 
     # --- 9. Break, then Unify -------------------------------------------
@@ -545,12 +686,65 @@ def testUsdviewInputFunction(appController):
            "the playhead starts at 1010: %s" % (api.dataModel.currentFrame,))
     d.Drag(d.RulerPoint(1012), d.RulerPoint(1036))
     _Check(api.dataModel.currentFrame.GetValue() == 1036,
-           "dragging along the bottom ruler scrubbed usdview itself to "
+           "dragging along the top ruler scrubbed usdview itself to "
            "1036: %s" % (api.dataModel.currentFrame,))
     _Check(panel.CurrentFrame() == 1036,
            "and the editor's playhead followed: %s" % (panel.CurrentFrame(),))
     _Check(not stack.CanUndo(),
            "scrubbing is not an edit, so it pushed nothing onto the stack")
+    tab = d.canvas.PlayheadTab()
+    _Check(tab is not None and tab[1] == "1036"
+           and tab[0].bottom() <= d.canvas.PlotRectF().top()
+           and abs(tab[0].center().x()
+                   - d.canvas.transform.TimeToX(1036.0)) < 1.0,
+           "the current-time tab sits in the ruler over frame 1036: %s"
+           % (tab,))
+
+    # K + left drag scrubs from anywhere in the plot.
+    d.HoldKey(d.QtCore.Qt.Key_K, True)
+    _Check(d.canvas.ScrubHeld(), "K is held")
+    selectedBefore = panel.SelectedKeys()
+    d.Drag(d.PlotPoint(1030), d.PlotPoint(1018))
+    _Check(api.dataModel.currentFrame.GetValue() == 1018,
+           "K + drag in the plot scrubbed to 1018: %s"
+           % (api.dataModel.currentFrame,))
+    _Check(panel.SelectedKeys() == selectedBefore and not stack.CanUndo(),
+           "and neither selected nor edited anything")
+
+    # K + middle drag moves the playhead alone until the release.
+    middle = d.QtCore.Qt.MiddleButton
+    d.Press(d.PlotPoint(1018), button=middle)
+    d.Move(d.PlotPoint(1026), button=d.QtCore.Qt.NoButton, buttons=middle)
+    _Check(panel.CurrentFrame() == 1026
+           and api.dataModel.currentFrame.GetValue() == 1018,
+           "K + middle drag moved the editor's playhead to %s and left "
+           "usdview on %s" % (panel.CurrentFrame(),
+                              api.dataModel.currentFrame))
+    d.Release(d.PlotPoint(1026), button=middle)
+    _Check(api.dataModel.currentFrame.GetValue() == 1026,
+           "the release applied the frame: %s"
+           % (api.dataModel.currentFrame,))
+    d.HoldKey(d.QtCore.Qt.Key_K, False)
+    _Check(not d.canvas.ScrubHeld(), "releasing K ends scrub mode")
+
+    # Shift + Alt holds a pan to the axis it first moves along.
+    timeBefore = d.canvas.transform.timeRange
+    valueBefore = d.canvas.transform.valueRange
+    start = d.PlotPoint(1020)
+    held = d.QtCore.Qt.AltModifier | d.QtCore.Qt.ShiftModifier
+    d.Drag(start, (start[0] + 80.0, start[1] + 30.0), button=middle,
+           modifiers=held)
+    _Check(d.canvas.transform.valueRange == valueBefore
+           and d.canvas.transform.timeRange != timeBefore,
+           "a mostly horizontal Shift+Alt pan moved time only: %s %s"
+           % (d.canvas.transform.timeRange, d.canvas.transform.valueRange))
+    timeBefore = d.canvas.transform.timeRange
+    d.Drag(start, (start[0] + 20.0, start[1] - 90.0),
+           button=d.QtCore.Qt.RightButton, modifiers=held)
+    _Check(d.canvas.transform.timeRange == timeBefore
+           and d.canvas.transform.valueRange != valueBefore,
+           "a mostly vertical Shift+Alt zoom scaled value only: %s %s"
+           % (d.canvas.transform.timeRange, d.canvas.transform.valueRange))
 
     # --- 12. Marquee selection ------------------------------------------
     panel.SetSelection([])

@@ -142,9 +142,14 @@ Constructed with `installFilters=False` when input is yielded.
 
 When input is yielded the panel installs no hotkey filter and no Undo/Redo
 window shortcuts. The host routes the window's keys to
-`GraphEditorPanel.HandleKey(key, modifiers=None)`. Also public: `HOTKEYS`,
+`GraphEditorPanel.HandleKey(key, modifiers=None)` and the release of a held
+key (`K`) to `HandleKeyRelease(key)`. Also public: `HOTKEYS`,
 `OwnsEvent`, `GetInstance`, and the embedding surface `SetEditHook`,
 `EditHook`, `IsPreviewing`, `KeySplines`, `AuthoredSpline`, `DrawSplines`.
+A drag released on the canvas commits on the next event-loop turn, so the
+hook's `FinishEdit` follows the release by one turn. `HasPendingCommit()`
+reports a queued commit and `FlushPendingCommit()` runs it at once;
+`EndGesture()` commits a live drag synchronously.
 See the [graph editor](graph-editor.md). `ShowEditor(api, GRAPH_EDITOR)`
 lets the host present the editor in its own container.
 
@@ -172,14 +177,17 @@ implementation is `rigExecUndo.UndoStack`. The protocol:
 - `UndoText()`, `RedoText()`
 - `Clear()`
 - `AddListener(fn)`: `fn` takes no arguments.
+- `AddFlusher(fn)` (optional): `fn` takes no arguments and runs before every
+  `Undo()` and `Redo()`. The graph editor registers its queued commit here.
 - `LIMIT`
 
 With an input owner, RigExec registers no Undo/Redo shortcuts (gizmo toolbar,
 gizmo window shortcuts, graph editor window). Its Undo and Redo buttons still
 act on the stack.
 
-`DocumentEdit(api)` wraps only the gizmo's deferred commit, the one RigExec
-authoring step that happens outside the host's own event dispatch. Return a
+`DocumentEdit(api)` wraps only the deferred commits of the gizmo and the
+graph editor, the RigExec authoring steps that happen outside the host's own
+event dispatch. Return a
 context manager that selects the edit target layer for its duration.
 
 ## Node-graph history backend

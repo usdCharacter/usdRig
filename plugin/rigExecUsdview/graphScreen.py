@@ -23,6 +23,9 @@ from pxr import Gf, Ts
 # frame ruler (spec section 2.1).
 DEFAULT_MARGINS = (48, 24, 24, 28)
 
+# The editor canvas: the frame ruler runs along the TOP margin.
+RULER_MARGINS = (48, 26, 24, 8)
+
 # Glyph sizes, in logical pixels (spec section 2.2): keys are 6 px filled
 # squares, tangent handle ends 5 px.
 KEY_PIXELS = 6.0
@@ -560,6 +563,20 @@ def DominantAxis(press, current):
     if abs(current[0] - press[0]) >= abs(current[1] - press[1]):
         return AXIS_TIME
     return AXIS_VALUE
+
+
+def OnTimeRuler(transform, y):
+    """Whether pixel row `y` lies in the frame ruler above the plot."""
+    return y < transform.PlotRect()[1]
+
+
+def ConstrainDelta(dx, dy, axis):
+    """A pixel travel held to `axis` (None leaves it free)."""
+    if axis == AXIS_TIME:
+        return (dx, 0.0)
+    if axis == AXIS_VALUE:
+        return (0.0, dy)
+    return (dx, dy)
 
 
 def ResolveKeyDrag(transform, press, current, constrainAxis=None):
