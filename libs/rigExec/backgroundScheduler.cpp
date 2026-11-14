@@ -54,7 +54,7 @@ _WarnSwitchOnce(const char *message)
     }
 }
 
-}  // namespace
+} // namespace
 
 RigExecFrameCacheMode
 RigExecParseFrameCacheMode(const std::string &value)
@@ -78,7 +78,7 @@ RigExecFrameCacheModeFromEnvironment()
     const RigExecFrameCacheMode mode = RigExecParseFrameCacheMode(value);
     if (mode == RigExecFrameCacheMode::On && value != "on") {
         _WarnSwitchOnce("RIGEXEC_FRAME_CACHE has an unrecognized value; "
-                  "using on (want one of: on, off, warm-off)");
+                        "using on (want one of: on, off, warm-off)");
     }
     return mode;
 }
@@ -105,8 +105,7 @@ RigExecSetBackgroundThreadPriority()
     // Below-normal, not background mode: the workers should run hot when the
     // UI is idle and yield when it is not, which is THREAD_PRIORITY_-
     // BELOW_NORMAL -- not the I/O-throttled background mode -- for CPU work.
-    if (SetThreadPriority(GetCurrentThread(),
-                          THREAD_PRIORITY_BELOW_NORMAL)) {
+    if (SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL)) {
         return true;
     }
     _WarnPriorityOnce("background workers run at normal thread priority: "
@@ -157,7 +156,9 @@ RigExecBackgroundPriorityBackend()
 #endif
 }
 
-RigExecBackgroundScheduler::RigExecBackgroundScheduler(int workerCount)
+RigExecBackgroundScheduler::RigExecBackgroundScheduler(
+    int workerCount, RigExecSchedulerClock clock)
+    : _clock(std::move(clock))
 {
     if (workerCount < 0) {
         workerCount = 0;
@@ -167,8 +168,8 @@ RigExecBackgroundScheduler::RigExecBackgroundScheduler(int workerCount)
     }
     for (int i = 0; i < workerCount; ++i) {
         try {
-            _workers.emplace_back(
-                &RigExecBackgroundScheduler::_WorkerMain, this);
+            _workers.emplace_back(&RigExecBackgroundScheduler::_WorkerMain,
+                                  this);
         } catch (const std::exception &) {
             // A pool that cannot spawn is a smaller pool, not a failed
             // scheduler: the queued jobs wait for the workers that did start
@@ -205,7 +206,7 @@ RigExecBackgroundScheduler::~RigExecBackgroundScheduler()
             }
         }
         _ReportTransitionLocked(entry.second.request,
-                                  RigExecWarmTransitionKind::DroppedAtShutdown);
+                                RigExecWarmTransitionKind::DroppedAtShutdown);
         ++_droppedAtShutdown;
     }
     if (!_queue.empty()) {
@@ -215,9 +216,75 @@ RigExecBackgroundScheduler::~RigExecBackgroundScheduler()
     _queuedByRigAndTime.clear();
 }
 
+uint64_t
+RigExecBackgroundScheduler::ClockNowUs() const
+{
+    return _NowUs();
+}
+
+// The queue's shape after every mutation: the maxima cannot miss a change,
+// and the profiler call keeps its existing leaf-lock contract.
 void
-RigExecBackgroundScheduler::SetTransitionHook(
-    RigExecWarmTransitionHook hook)
+RigExecBackgroundScheduler::_RecordQueueStateLocked()
+{
+    if (_queue.size() > _maxQueuedDepth) {
+        _maxQueuedDepth = _queue.size();
+    }
+    if (_running > _maxRunning) {
+        _maxRunning = _running;
+    }
+    const size_t queued = _queue.size();
+    _profiler.RecordSchedulerQueue(queued, _running, _canceled);
+}
+
+void
+RigExecBackgroundScheduler::_NoteDeclineLocked(RigExecWarmDeclineReason reason)
+{
+    ++_declined;
+    switch (reason) {
+    case RigExecWarmDeclineReason::FillGateClosed:
+        ++_declinedFillGate;
+        break;
+    case RigExecWarmDeclineReason::StaleGeneration:
+        ++_declinedStaleGeneration;
+        break;
+    case RigExecWarmDeclineReason::UnusableTime:
+        ++_declinedUnusableTime;
+        break;
+    case RigExecWarmDeclineReason::EmptyWork:
+        ++_declinedEmptyWork;
+        break;
+    case RigExecWarmDeclineReason::PerRigCap:
+        ++_declinedPerRigCap;
+        break;
+    case RigExecWarmDeclineReason::Stopping:
+        ++_declinedStopping;
+        break;
+    }
+}
+
+// A trigger burst ended before its whole wave reached the queue. The gate is
+// read once per burst, so a mid-burst flip never stops one: the causes here
+// are staleness (or shutdown), the sampling budget, and the per-rig cap.
+void
+RigExecBackgroundScheduler::_NoteTriggerStopLocked(_StopCause cause)
+{
+    ++_triggerStops;
+    switch (cause) {
+    case _StopCause::Stale:
+        ++_triggerStopsStale;
+        break;
+    case _StopCause::Budget:
+        ++_triggerStopsBudget;
+        break;
+    case _StopCause::Cap:
+        ++_triggerStopsCap;
+        break;
+    }
+}
+
+void
+RigExecBackgroundScheduler::SetTransitionHook(RigExecWarmTransitionHook hook)
 {
     std::lock_guard<std::mutex> lock(_mutex);
     _transitionHook = std::move(hook);
@@ -278,10 +345,10 @@ RigExecBackgroundScheduler::CancelGeneration(const SdfPath &rig)
             ++it;
             continue;
         }
-        _queuedByRigAndTime.erase(std::make_pair(
-            rig, it->second.request.time.GetValue()));
+        _queuedByRigAndTime.erase(
+            std::make_pair(rig, it->second.request.time.GetValue()));
         _ReportTransitionLocked(it->second.request,
-                                  RigExecWarmTransitionKind::Canceled);
+                                RigExecWarmTransitionKind::Canceled);
         retired.push_back(std::move(it->second.work));
         it = _queue.erase(it);
         const auto inFlight = _inFlight.find(rig);
@@ -295,7 +362,7 @@ RigExecBackgroundScheduler::CancelGeneration(const SdfPath &rig)
     if (!retired.empty()) {
         _profiler.RecordSchedulerCancel(retired.size(), "edit");
     }
-    _profiler.RecordSchedulerQueue(_queue.size(), _running, _canceled);
+    _RecordQueueStateLocked();
     lock.unlock();
     _cv.notify_all();
     // retired dies here, outside the lock.
@@ -323,10 +390,10 @@ RigExecBackgroundScheduler::ResetRig(const SdfPath &rig)
             ++it;
             continue;
         }
-        _queuedByRigAndTime.erase(std::make_pair(
-            rig, it->second.request.time.GetValue()));
+        _queuedByRigAndTime.erase(
+            std::make_pair(rig, it->second.request.time.GetValue()));
         _ReportTransitionLocked(it->second.request,
-                                  RigExecWarmTransitionKind::Canceled);
+                                RigExecWarmTransitionKind::Canceled);
         retired.push_back(std::move(it->second.work));
         it = _queue.erase(it);
         const auto inFlight = _inFlight.find(rig);
@@ -341,17 +408,16 @@ RigExecBackgroundScheduler::ResetRig(const SdfPath &rig)
     if (!retired.empty()) {
         _profiler.RecordSchedulerCancel(retired.size(), "reset");
     }
-    _profiler.RecordSchedulerQueue(_queue.size(), _running, _canceled);
+    _RecordQueueStateLocked();
     lock.unlock();
     _cv.notify_all();
 }
 
 RigExecWarmFenceToken
-RigExecBackgroundScheduler::_CurrentFenceTokenLocked(
-    const SdfPath &rig, double timeValue) const
+RigExecBackgroundScheduler::_CurrentFenceTokenLocked(const SdfPath &rig,
+                                                     double timeValue) const
 {
-    const auto found =
-        _fenceTokens.find(std::make_pair(rig, timeValue));
+    const auto found = _fenceTokens.find(std::make_pair(rig, timeValue));
     return found == _fenceTokens.end() ? 0 : found->second;
 }
 
@@ -372,8 +438,7 @@ RigExecBackgroundScheduler::CancelGenerationTimes(
         }
     }
     for (const auto &entry : affected) {
-        _fenceTokens[std::make_pair(rig, entry.first)] =
-            ++_fenceCounters[rig];
+        _fenceTokens[std::make_pair(rig, entry.first)] = ++_fenceCounters[rig];
     }
     // Purge the rig's queued jobs at those times, same loop shape as
     // CancelGeneration: the purged closures free AFTER the lock closes.
@@ -385,8 +450,8 @@ RigExecBackgroundScheduler::CancelGenerationTimes(
             ++it;
             continue;
         }
-        _queuedByRigAndTime.erase(std::make_pair(
-            rig, it->second.request.time.GetValue()));
+        _queuedByRigAndTime.erase(
+            std::make_pair(rig, it->second.request.time.GetValue()));
         _ReportTransitionLocked(it->second.request,
                                 RigExecWarmTransitionKind::Canceled);
         retired.push_back(std::move(it->second.work));
@@ -402,7 +467,7 @@ RigExecBackgroundScheduler::CancelGenerationTimes(
     if (!retired.empty()) {
         _profiler.RecordSchedulerCancel(retired.size(), "edit-times");
     }
-    _profiler.RecordSchedulerQueue(_queue.size(), _running, _canceled);
+    _RecordQueueStateLocked();
     lock.unlock();
     _cv.notify_all();
     // retired dies here, outside the lock.
@@ -410,8 +475,8 @@ RigExecBackgroundScheduler::CancelGenerationTimes(
 }
 
 RigExecWarmFenceToken
-RigExecBackgroundScheduler::CurrentFenceToken(
-    const SdfPath &rig, UsdTimeCode time) const
+RigExecBackgroundScheduler::CurrentFenceToken(const SdfPath &rig,
+                                              UsdTimeCode time) const
 {
     if (!time.IsNumeric() || !std::isfinite(time.GetValue())) {
         return 0;
@@ -493,12 +558,14 @@ RigExecBackgroundScheduler::Enqueue(const SdfPath &rig, UsdTimeCode time,
     // compares equivalent to everything -- so it declines like a default.)
     if (!RigExecBackgroundWarmingEnabled()) {
         std::lock_guard<std::mutex> lock(_mutex);
-        ++_declined;
+        _NoteDeclineLocked(RigExecWarmDeclineReason::FillGateClosed);
         return false;
     }
     if (!time.IsNumeric() || !std::isfinite(time.GetValue()) || !work) {
         std::lock_guard<std::mutex> lock(_mutex);
-        ++_declined;
+        _NoteDeclineLocked(time.IsNumeric() && std::isfinite(time.GetValue())
+                               ? RigExecWarmDeclineReason::EmptyWork
+                               : RigExecWarmDeclineReason::UnusableTime);
         return false;
     }
     const double timeValue = time.GetValue();
@@ -506,7 +573,7 @@ RigExecBackgroundScheduler::Enqueue(const SdfPath &rig, UsdTimeCode time,
         std::make_pair(rig, timeValue);
     std::unique_lock<std::mutex> lock(_mutex);
     if (_stopping) {
-        ++_declined;
+        _NoteDeclineLocked(RigExecWarmDeclineReason::Stopping);
         return false;
     }
     // Inline, not via IsGenerationCurrent: the lock is already held and
@@ -515,7 +582,7 @@ RigExecBackgroundScheduler::Enqueue(const SdfPath &rig, UsdTimeCode time,
     const RigExecFrameGeneration currentGeneration =
         current == _generations.end() ? 0 : current->second;
     if (currentGeneration != generation) {
-        ++_declined;
+        _NoteDeclineLocked(RigExecWarmDeclineReason::StaleGeneration);
         return false;
     }
     // Coalesce: warming for this frame is already coming. First-wins on the
@@ -525,10 +592,9 @@ RigExecBackgroundScheduler::Enqueue(const SdfPath &rig, UsdTimeCode time,
         return true;
     }
     const auto inFlight = _inFlight.find(rig);
-    const size_t flying =
-        inFlight == _inFlight.end() ? 0 : inFlight->second;
+    const size_t flying = inFlight == _inFlight.end() ? 0 : inFlight->second;
     if (flying >= _perRigCap) {
-        ++_declined;
+        _NoteDeclineLocked(RigExecWarmDeclineReason::PerRigCap);
         return false;
     }
     RigExecWarmRequest request;
@@ -537,6 +603,7 @@ RigExecBackgroundScheduler::Enqueue(const SdfPath &rig, UsdTimeCode time,
     request.priority = priority;
     request.generation = generation;
     request.fenceToken = _CurrentFenceTokenLocked(rig, timeValue);
+    request.enqueuedUs = _NowUs();
     const _QueueKey key{int(priority), _sequence++};
     _QueuedJob queuedJob;
     queuedJob.request = request;
@@ -544,8 +611,13 @@ RigExecBackgroundScheduler::Enqueue(const SdfPath &rig, UsdTimeCode time,
     _queue.emplace(key, std::move(queuedJob));
     _queuedByRigAndTime.emplace(coalesceKey, key);
     _inFlight[rig] = flying + 1;
+    if (priority == RigExecWarmPriority::Neighbor) {
+        ++_enqueuedNeighbor;
+    } else {
+        ++_enqueuedSweep;
+    }
     _ReportTransitionLocked(request, RigExecWarmTransitionKind::Queued);
-    _profiler.RecordSchedulerQueue(_queue.size(), _running, _canceled);
+    _RecordQueueStateLocked();
     lock.unlock();
     _cv.notify_all();
     return true;
@@ -553,11 +625,9 @@ RigExecBackgroundScheduler::Enqueue(const SdfPath &rig, UsdTimeCode time,
 
 size_t
 RigExecBackgroundScheduler::OnEditCommitted(
-    const SdfPath &rig, UsdTimeCode playhead,
-    RigExecFrameGeneration generation,
-    const std::vector<UsdTimeCode> &sweepTimes,
-    RigExecWarmJobFactory factory, int neighborRadius,
-    RigExecWarmSamplingBudget budget)
+    const SdfPath &rig, UsdTimeCode playhead, RigExecFrameGeneration generation,
+    const std::vector<UsdTimeCode> &sweepTimes, RigExecWarmJobFactory factory,
+    int neighborRadius, RigExecWarmSamplingBudget budget)
 {
     // Nothing to sample from without a playhead: no neighborhood to compute
     // and no playhead frame to protect. Fail-closed, before any factory call.
@@ -574,8 +644,7 @@ RigExecBackgroundScheduler::OnEditCommitted(
     }
     _BudgetLedger ledger;
     ledger.budget = &budget;
-    ledger.startUs =
-        budget.startUs != 0 ? budget.startUs : RigExecProfiler::NowUs();
+    ledger.startUs = budget.startUs != 0 ? budget.startUs : _NowUs();
     size_t enqueued = 0;
     if (neighborRadius > 0 && factory) {
         // Closest first: the +-1 pair, then +-2, so FIFO within Neighbor
@@ -583,8 +652,7 @@ RigExecBackgroundScheduler::OnEditCommitted(
         const double center = playhead.GetValue();
         for (int step = 1; step <= neighborRadius; ++step) {
             for (int side = 0; side < 2; ++side) {
-                const double offset =
-                    side == 0 ? -double(step) : double(step);
+                const double offset = side == 0 ? -double(step) : double(step);
                 const UsdTimeCode time(center + offset);
                 // Center +- step can round back to center at extreme
                 // magnitudes; the playhead is never queued, however it
@@ -610,11 +678,11 @@ RigExecBackgroundScheduler::OnEditCommitted(
 }
 
 size_t
-RigExecBackgroundScheduler::OnIdle(
-    const SdfPath &rig, UsdTimeCode playhead,
-    RigExecFrameGeneration generation,
-    const std::vector<UsdTimeCode> &sweepTimes,
-    RigExecWarmJobFactory factory, RigExecWarmSamplingBudget budget)
+RigExecBackgroundScheduler::OnIdle(const SdfPath &rig, UsdTimeCode playhead,
+                                   RigExecFrameGeneration generation,
+                                   const std::vector<UsdTimeCode> &sweepTimes,
+                                   RigExecWarmJobFactory factory,
+                                   RigExecWarmSamplingBudget budget)
 {
     if (!playhead.IsNumeric() || !std::isfinite(playhead.GetValue())) {
         return 0;
@@ -625,8 +693,7 @@ RigExecBackgroundScheduler::OnIdle(
     }
     _BudgetLedger ledger;
     ledger.budget = &budget;
-    ledger.startUs =
-        budget.startUs != 0 ? budget.startUs : RigExecProfiler::NowUs();
+    ledger.startUs = budget.startUs != 0 ? budget.startUs : _NowUs();
     return _EnqueueSweepTimes(rig, playhead, generation, sweepTimes, factory,
                               &ledger);
 }
@@ -655,8 +722,7 @@ RigExecBackgroundScheduler::NotePlaybackAdvanced(const SdfPath &rig,
         // frame now, so warming it is pointless. Neighbors stand -- the
         // frames ahead still warm the imminent scrub path -- and the standing
         // neighbor-before-sweep order deprioritizes the sweep that remains.
-        _queuedByRigAndTime.erase(
-            std::make_pair(rig, request.time.GetValue()));
+        _queuedByRigAndTime.erase(std::make_pair(rig, request.time.GetValue()));
         _ReportTransitionLocked(request, RigExecWarmTransitionKind::Shed);
         it = _queue.erase(it);
         const auto inFlight = _inFlight.find(rig);
@@ -672,7 +738,7 @@ RigExecBackgroundScheduler::NotePlaybackAdvanced(const SdfPath &rig,
         _profiler.RecordSchedulerCancel(shed, "playback");
         _cv.notify_all();
     }
-    _profiler.RecordSchedulerQueue(_queue.size(), _running, _canceled);
+    _RecordQueueStateLocked();
     return shed;
 }
 
@@ -712,6 +778,31 @@ RigExecBackgroundScheduler::Stats() const
     stats.declinedD7Exempt = _declinedD7Exempt;
     stats.droppedAtShutdown = _droppedAtShutdown;
     stats.factoryInvocations = _factoryInvocations;
+    stats.declinedFillGate = _declinedFillGate;
+    stats.declinedStaleGeneration = _declinedStaleGeneration;
+    stats.declinedUnusableTime = _declinedUnusableTime;
+    stats.declinedEmptyWork = _declinedEmptyWork;
+    stats.declinedPerRigCap = _declinedPerRigCap;
+    stats.declinedStopping = _declinedStopping;
+    stats.triggerStops = _triggerStops;
+    stats.triggerStopsStale = _triggerStopsStale;
+    stats.triggerStopsBudget = _triggerStopsBudget;
+    stats.triggerStopsCap = _triggerStopsCap;
+    stats.maxQueuedDepth = _maxQueuedDepth;
+    stats.maxRunning = _maxRunning;
+    stats.enqueuedNeighbor = _enqueuedNeighbor;
+    stats.enqueuedSweep = _enqueuedSweep;
+    for (const auto &entry : _queue) {
+        if (entry.second.request.priority == RigExecWarmPriority::Neighbor) {
+            ++stats.queuedNeighbor;
+        } else {
+            ++stats.queuedSweep;
+        }
+    }
+    stats.totalQueueWaitUs = _totalQueueWaitUs;
+    stats.maxQueueWaitUs = _maxQueueWaitUs;
+    stats.totalRunUs = _totalRunUs;
+    stats.maxRunUs = _maxRunUs;
     return stats;
 }
 
@@ -721,9 +812,8 @@ RigExecBackgroundScheduler::WaitUntilIdle()
     std::unique_lock<std::mutex> lock(_mutex);
     // A stopping pool never drains its queue, so waiting on emptiness alone
     // would hang against a concurrent shutdown (or a zero-worker pool).
-    _cv.wait(lock, [this] {
-        return _stopping || (_queue.empty() && _running == 0);
-    });
+    _cv.wait(lock,
+             [this] { return _stopping || (_queue.empty() && _running == 0); });
 }
 
 bool
@@ -765,8 +855,7 @@ RigExecBackgroundScheduler::_PopJob(_QueuedJob *job, bool wait)
 {
     std::unique_lock<std::mutex> lock(_mutex);
     if (wait) {
-        _cv.wait(lock,
-                 [this] { return _stopping || !_queue.empty(); });
+        _cv.wait(lock, [this] { return _stopping || !_queue.empty(); });
         if (_stopping) {
             return false;
         }
@@ -775,16 +864,17 @@ RigExecBackgroundScheduler::_PopJob(_QueuedJob *job, bool wait)
     }
     auto next = _queue.begin();
     *job = std::move(next->second);
-    _queuedByRigAndTime.erase(std::make_pair(job->request.rig,
-                                             job->request.time.GetValue()));
+    job->request.poppedUs = _NowUs();
+    _queuedByRigAndTime.erase(
+        std::make_pair(job->request.rig, job->request.time.GetValue()));
     _queue.erase(next);
     // Still in-flight -- the cap counts popped-and-executing -- until
     // _FinishJob lands.
     ++_running;
     ++_runningByRigAndTime[std::make_pair(job->request.rig,
-                                         job->request.time.GetValue())];
-    _ReportTransitionLocked(job->request,
-                            RigExecWarmTransitionKind::Running);
+                                          job->request.time.GetValue())];
+    _RecordQueueStateLocked();
+    _ReportTransitionLocked(job->request, RigExecWarmTransitionKind::Running);
     return true;
 }
 
@@ -797,8 +887,7 @@ RigExecBackgroundScheduler::_ExecutePoppedJob(_QueuedJob *job)
     const RigExecWarmRequest request = job->request;
     if (!IsGenerationCurrent(request.rig, request.generation)) {
         *job = _QueuedJob();
-        _FinishJob(request, /*ran=*/false,
-                   RigExecWarmOutcome::DeclinedInvalid);
+        _FinishJob(request, /*ran=*/false, RigExecWarmOutcome::DeclinedInvalid);
         return false;
     }
     // The serial-variant boundary: the serial scope forces every kernel variant this run
@@ -831,8 +920,7 @@ RigExecBackgroundScheduler::_ExecutePoppedJob(_QueuedJob *job)
 
 void
 RigExecBackgroundScheduler::_FinishJob(const RigExecWarmRequest &request,
-                                       bool ran,
-                                       RigExecWarmOutcome outcome,
+                                       bool ran, RigExecWarmOutcome outcome,
                                        const RigExecWarmPhaseTimings *timings)
 {
     // One event per job, spanning its marks, with each phase's duration as
@@ -880,22 +968,38 @@ RigExecBackgroundScheduler::_FinishJob(const RigExecWarmRequest &request,
             ++_declinedInvalid;
             break;
         }
-        _ReportTransitionLocked(request,
-                                RigExecWarmTransitionKind::Finished, outcome);
+        _ReportTransitionLocked(request, RigExecWarmTransitionKind::Finished,
+                                outcome);
     } else {
         ++_droppedStale;
         _ReportTransitionLocked(request,
                                 RigExecWarmTransitionKind::DroppedStale);
     }
-    _profiler.RecordSchedulerQueue(_queue.size(), _running, _canceled);
+    if (request.poppedUs >= request.enqueuedUs) {
+        const uint64_t waitUs = request.poppedUs - request.enqueuedUs;
+        _totalQueueWaitUs += waitUs;
+        if (waitUs > _maxQueueWaitUs) {
+            _maxQueueWaitUs = waitUs;
+        }
+    }
+    if (ran) {
+        const uint64_t nowUs = _NowUs();
+        if (nowUs > request.poppedUs) {
+            const uint64_t runUs = nowUs - request.poppedUs;
+            _totalRunUs += runUs;
+            if (runUs > _maxRunUs) {
+                _maxRunUs = runUs;
+            }
+        }
+    }
+    _RecordQueueStateLocked();
     lock.unlock();
     _cv.notify_all();
 }
 
 bool
 RigExecBackgroundScheduler::_MergeIfQueuedLocked(
-    const std::pair<SdfPath, double> &coalesceKey,
-    RigExecWarmPriority priority)
+    const std::pair<SdfPath, double> &coalesceKey, RigExecWarmPriority priority)
 {
     const auto queued = _queuedByRigAndTime.find(coalesceKey);
     if (queued == _queuedByRigAndTime.end()) {
@@ -906,8 +1010,7 @@ RigExecBackgroundScheduler::_MergeIfQueuedLocked(
     // neighbor still serves the earliest-sampled frame next.
     const _QueueKey oldKey = queued->second;
     const auto job = _queue.find(oldKey);
-    if (job != _queue.end() &&
-        priority == RigExecWarmPriority::Neighbor &&
+    if (job != _queue.end() && priority == RigExecWarmPriority::Neighbor &&
         job->second.request.priority == RigExecWarmPriority::Sweep) {
         _QueuedJob promoted = std::move(job->second);
         promoted.request.priority = RigExecWarmPriority::Neighbor;
@@ -944,6 +1047,7 @@ RigExecBackgroundScheduler::_EnqueueTriggerTime(
         const RigExecFrameGeneration currentGeneration =
             current == _generations.end() ? 0 : current->second;
         if (_stopping || currentGeneration != generation) {
+            _NoteTriggerStopLocked(_StopCause::Stale);
             return _TriggerOutcome::Stop;
         }
         // Already queued: merge without sampling, since the queued closure
@@ -955,19 +1059,22 @@ RigExecBackgroundScheduler::_EnqueueTriggerTime(
         const size_t flying =
             inFlight == _inFlight.end() ? 0 : inFlight->second;
         if (flying >= _perRigCap) {
+            _NoteTriggerStopLocked(_StopCause::Cap);
             return _TriggerOutcome::Stop;
         }
-    }
-    // The sampling budget: already-queued merges above consumed none (no
-    // factory call); this frame would sample, so it counts. The stop ends
-    // the trigger (Stop), not the frame: the budget is per-trigger.
-    if (ledger->invocations >= ledger->budget->maxFactoryInvocations) {
-        return _TriggerOutcome::Stop;
-    }
-    if (ledger->budget->maxMs < std::numeric_limits<double>::infinity() &&
-        double(RigExecProfiler::NowUs() - ledger->startUs) / 1000.0 >=
-            ledger->budget->maxMs) {
-        return _TriggerOutcome::Stop;
+        // The sampling budget: the merge above consumed none (no factory
+        // call); this frame would sample, so it counts. The stop ends the
+        // trigger (Stop), not the frame: the budget is per-trigger.
+        if (ledger->invocations >= ledger->budget->maxFactoryInvocations) {
+            _NoteTriggerStopLocked(_StopCause::Budget);
+            return _TriggerOutcome::Stop;
+        }
+        if (ledger->budget->maxMs < std::numeric_limits<double>::infinity() &&
+            double(_NowUs() - ledger->startUs) / 1000.0 >=
+                ledger->budget->maxMs) {
+            _NoteTriggerStopLocked(_StopCause::Budget);
+            return _TriggerOutcome::Stop;
+        }
     }
     // Sampling runs on the calling (UI) thread, outside the lock: it reads
     // attribute queries and resolved inputs, and the lock never spans it.
@@ -1016,15 +1123,16 @@ RigExecBackgroundScheduler::_EnqueueTriggerTime(
     const RigExecFrameGeneration currentGeneration =
         current == _generations.end() ? 0 : current->second;
     if (_stopping || currentGeneration != generation) {
+        _NoteTriggerStopLocked(_StopCause::Stale);
         return _TriggerOutcome::Stop;
     }
     if (_MergeIfQueuedLocked(coalesceKey, priority)) {
         return _TriggerOutcome::Skipped;
     }
     const auto inFlight = _inFlight.find(rig);
-    const size_t flying =
-        inFlight == _inFlight.end() ? 0 : inFlight->second;
+    const size_t flying = inFlight == _inFlight.end() ? 0 : inFlight->second;
     if (flying >= _perRigCap) {
+        _NoteTriggerStopLocked(_StopCause::Cap);
         return _TriggerOutcome::Stop;
     }
     RigExecWarmRequest request;
@@ -1033,6 +1141,7 @@ RigExecBackgroundScheduler::_EnqueueTriggerTime(
     request.priority = priority;
     request.generation = generation;
     request.fenceToken = _CurrentFenceTokenLocked(rig, timeValue);
+    request.enqueuedUs = _NowUs();
     const _QueueKey key{int(priority), _sequence++};
     _QueuedJob queuedJob;
     queuedJob.request = request;
@@ -1040,8 +1149,13 @@ RigExecBackgroundScheduler::_EnqueueTriggerTime(
     _queue.emplace(key, std::move(queuedJob));
     _queuedByRigAndTime.emplace(coalesceKey, key);
     _inFlight[rig] = flying + 1;
+    if (priority == RigExecWarmPriority::Neighbor) {
+        ++_enqueuedNeighbor;
+    } else {
+        ++_enqueuedSweep;
+    }
     _ReportTransitionLocked(request, RigExecWarmTransitionKind::Queued);
-    _profiler.RecordSchedulerQueue(_queue.size(), _running, _canceled);
+    _RecordQueueStateLocked();
     lock.unlock();
     _cv.notify_all();
     return _TriggerOutcome::Enqueued;
@@ -1049,8 +1163,7 @@ RigExecBackgroundScheduler::_EnqueueTriggerTime(
 
 size_t
 RigExecBackgroundScheduler::_EnqueueSweepTimes(
-    const SdfPath &rig, UsdTimeCode playhead,
-    RigExecFrameGeneration generation,
+    const SdfPath &rig, UsdTimeCode playhead, RigExecFrameGeneration generation,
     const std::vector<UsdTimeCode> &sweepTimes,
     const RigExecWarmJobFactory &factory, _BudgetLedger *ledger)
 {
@@ -1064,8 +1177,7 @@ RigExecBackgroundScheduler::_EnqueueSweepTimes(
             continue;
         }
         const _TriggerOutcome outcome = _EnqueueTriggerTime(
-            rig, time, RigExecWarmPriority::Sweep, generation, factory,
-            ledger);
+            rig, time, RigExecWarmPriority::Sweep, generation, factory, ledger);
         if (outcome == _TriggerOutcome::Stop) {
             return enqueued;
         }
@@ -1076,4 +1188,4 @@ RigExecBackgroundScheduler::_EnqueueSweepTimes(
     return enqueued;
 }
 
-}  // namespace rigExec
+} // namespace rigExec

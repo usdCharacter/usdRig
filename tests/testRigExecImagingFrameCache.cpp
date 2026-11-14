@@ -117,11 +117,16 @@
 #include "pxr/base/tf/getenv.h"
 #include "pxr/base/tf/notice.h"
 #include "pxr/base/tf/weakBase.h"
+#include "pxr/usd/pcp/node.h"
+#include "pxr/usd/pcp/primIndex.h"
+#include "pxr/usd/pcp/types.h"
 #include "pxr/usd/sdf/types.h"
 #include "pxr/usd/sdf/changeBlock.h"
 #include "pxr/usd/sdf/primSpec.h"
 #include "pxr/usd/usd/notice.h"
 #include "pxr/usd/usd/attribute.h"
+#include "pxr/usd/usd/editTarget.h"
+#include "pxr/usd/usd/references.h"
 #include "pxr/usd/usd/relationship.h"
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usd/usd/primRange.h"
@@ -177,9 +182,9 @@ constexpr size_t kTinyPointCount = 8;
 // \p staticY authors AlongY's ty as a default value only (no time samples),
 // so the bake treats it as a compiled rig constant rather than a varying input.
 UsdStageRefPtr
-MakeTinyRig(bool staticY = false)
+MakeTinyRig(bool staticY = false, const UsdStageRefPtr &into = UsdStageRefPtr())
 {
-    UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    UsdStageRefPtr stage = into ? into : UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
     const UsdPrim alongX = stage->DefinePrim(SdfPath("/Asset/Rig/AlongX"),
@@ -6054,6 +6059,880 @@ TestGpuDeformStaticEvictionKeepsPublicationTables()
     SetEnv("RIGEXEC_GPU_DEFORM", priorGpu.c_str());
 }
 
+// MONOTONIC IDENTITY. BeginPreview mints a session, every accepted tick
+// bumps the revision, and every retirement moves the session forward so an
+// identity taken earlier can never match a later one.
+void
+TestPreviewIdentityIsMonotonic()
+{
+    std::printf("progress: TestPreviewIdentityIsMonotonic\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "on");
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    UsdStageRefPtr stage = MakeTinyRig();
+    const SdfPath rig("/Asset/Rig");
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
+    std::vector<std::string> errors;
+    CHECK(registry->Activate(stage, rig, UsdTimeCode(2.0), &errors));
+    const double sample = 11.0;
+
+    CHECK(!registry->GetPreviewIdentity().active);
+    const uint64_t closed = registry->GetPreviewIdentity().session;
+    CHECK(registry->BeginPreview("/Asset/Rig/AlongX.avars:tx") == 1);
+    const RigExecPreviewIdentity opened = registry->GetPreviewIdentity();
+    CHECK(opened.active && opened.session > closed && opened.revision == 0);
+
+    for (uint64_t tick = 1; tick <= 3; ++tick) {
+        CHECK(registry->UpdatePreview(&sample, 1));
+        const RigExecPreviewIdentity now = registry->GetPreviewIdentity();
+        CHECK(now.session == opened.session && now.revision == tick);
+    }
+    // A rejected tick moves nothing.
+    CHECK(!registry->UpdatePreview(&sample, 2));
+    CHECK(registry->GetPreviewIdentity().revision == 3);
+
+    CHECK(registry->EndPreview());
+    const RigExecPreviewIdentity retired = registry->GetPreviewIdentity();
+    CHECK(!retired.active && retired.session > opened.session &&
+          retired.revision == 0);
+
+    CHECK(registry->BeginPreview("/Asset/Rig/AlongX.avars:tx") == 1);
+    CHECK(registry->GetPreviewIdentity().session > retired.session);
+    CHECK(registry->UpdatePreview(&sample, 1));
+    CHECK(registry->EndPreview(/* publish = */ false));
+    CHECK(!registry->GetPreviewIdentity().active);
+
+    // A weight-overlay change retires the standing identity.
+    CHECK(registry->BeginPreview("/Asset/Rig/AlongX.avars:tx") == 1);
+    const RigExecPreviewIdentity beforeOverlay = registry->GetPreviewIdentity();
+    CHECK(registry->UpdatePreview(&sample, 1));
+    CHECK(registry->SetWeightOverlay("/Asset/Rig/Movers/Skin_0"));
+    const RigExecPreviewIdentity afterOverlay = registry->GetPreviewIdentity();
+    CHECK(!afterOverlay.active &&
+          afterOverlay.session > beforeOverlay.session &&
+          afterOverlay.revision == 0);
+    CHECK(registry->SetWeightOverlay(""));
+
+    // A recompile retires it: the rig gains a property mover and the next
+    // publish carries a different compiled rig.
+    CHECK(registry->BeginPreview("/Asset/Rig/AlongX.avars:tx") == 1);
+    const RigExecPreviewIdentity beforeCompile = registry->GetPreviewIdentity();
+    const UsdPrim gain = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/TxGain"),
+                                           TfToken("RigExecFloatMathMover"));
+    gain.ApplyAPI(TfToken("RigExecMoverAPI"));
+    gain.GetRelationship(TfToken("rigExec:moves"))
+        .SetTargets({SdfPath("/Asset/Rig/AlongX.avars:tx")});
+    gain.CreateAttribute(TfToken("rigExec:operation"), SdfValueTypeNames->Token)
+        .Set(TfToken("multiply"));
+    CHECK(registry->SetTime(UsdTimeCode(3.0)));
+    const RigExecPreviewIdentity afterCompile = registry->GetPreviewIdentity();
+    CHECK(!afterCompile.active && afterCompile.session > beforeCompile.session);
+
+    // Deactivation retires whatever is standing.
+    CHECK(registry->BeginPreview("/Asset/Rig/AlongX.avars:tx") == 1);
+    const RigExecPreviewIdentity beforeDeactivate =
+        registry->GetPreviewIdentity();
+    CHECK(registry->UpdatePreview(&sample, 1));
+    registry->Deactivate();
+    const RigExecPreviewIdentity afterDeactivate =
+        registry->GetPreviewIdentity();
+    CHECK(!afterDeactivate.active &&
+          afterDeactivate.session > beforeDeactivate.session);
+}
+
+// THE EDIT DESCRIPTION AND THE PROOF. A declaration is additive and
+// all-or-nothing, never authored to the stage; the proof says whether a
+// candidate frame is already answered by the stage rather than by the
+// pending value.
+void
+TestPreviewEditDescriptionAndProof()
+{
+    std::printf("progress: TestPreviewEditDescriptionAndProof\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "off");
+    const SdfPath rig("/Asset/Rig");
+    // Two authored layers: the root, and a weaker sublayer a preview parks its
+    // pending values in. The stage's session layer sits above both.
+    const SdfLayerRefPtr root = SdfLayer::CreateAnonymous(".usda");
+    const SdfLayerRefPtr lane = SdfLayer::CreateAnonymous(".usda");
+    root->SetSubLayerPaths({lane->GetIdentifier()});
+    UsdStageRefPtr stage = UsdStage::Open(root);
+    CHECK(stage->GetLayerStack().size() == 3);
+    CHECK(stage->GetLayerStack()[1] == root);
+    CHECK(stage->GetLayerStack()[2] == lane);
+    stage->SetEditTarget(root);
+    MakeTinyRig(/*staticY=*/true, stage);
+    const UsdPrim alongX = stage->GetPrimAtPath(SdfPath("/Asset/Rig/AlongX"));
+    // Opinions in the root outrank whatever the preview lane says.
+    CHECK(alongX.CreateAttribute(TfToken("avars:ts"), SdfValueTypeNames->Double)
+              .Set(7.5, UsdTimeCode(2.0)));
+    CHECK(alongX.CreateAttribute(TfToken("avars:tu"), SdfValueTypeNames->Double)
+              .Set(4.5));
+    stage->SetEditTarget(lane);
+    CHECK(stage->GetEditTarget().GetLayer() == lane);
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
+    std::vector<std::string> errors;
+    CHECK(registry->Activate(stage, rig, UsdTimeCode(2.0), &errors));
+
+    // Sampled in the edit-target layer: the frame is answered there.
+    CHECK(alongX.CreateAttribute(TfToken("avars:tz"), SdfValueTypeNames->Double)
+              .Set(9.0, UsdTimeCode(2.0)));
+    // A same-layer default never hides that layer's own samples: the frame
+    // still reads 9.0 out of the sample, not the authored default.
+    CHECK(alongX.GetAttribute(TfToken("avars:tz"))
+              .Set(42.0, UsdTimeCode::Default()));
+    double composed = 0.0;
+    CHECK(alongX.GetAttribute(TfToken("avars:tz"))
+              .Get(&composed, UsdTimeCode(7.0)) &&
+          composed == 9.0);
+    // Authored nowhere: only the pending value would answer.
+    alongX.CreateAttribute(TfToken("avars:tw"), SdfValueTypeNames->Double);
+    // A connected input answers through the connection, not the default.
+    CHECK(alongX.CreateAttribute(TfToken("avars:tk"), SdfValueTypeNames->Double)
+              .AddConnection(SdfPath("/Asset/Rig/AlongX.avars:tx")));
+
+    const double pendingValue = 11.0;
+    CHECK(registry->GetPreviewEditStats().editCount == 0);
+    CHECK(registry->BeginPreview(
+              "/Asset/Rig/AlongX.avars:tz\n/Asset/Rig/AlongX.avars:tw\n"
+              "/Asset/Rig/AlongX.avars:ts") == 3);
+    CHECK(registry->DeclarePreviewEdit(
+        "/Asset/Rig/AlongX.avars:ts",
+        RigExecPreviewEditPolicy::AttributeDefault, &pendingValue, 1));
+    CHECK(registry->DeclarePreviewEdit(
+        "/Asset/Rig/AlongX.avars:tz",
+        RigExecPreviewEditPolicy::AttributeDefault, &pendingValue, 1));
+    CHECK(registry->DeclarePreviewEdit(
+        "/Asset/Rig/AlongX.avars:tw",
+        RigExecPreviewEditPolicy::AttributeDefault, &pendingValue, 1));
+    RigExecPreviewEditStats stats = registry->GetPreviewEditStats();
+    CHECK(stats.editCount == 3 && stats.valueCount == 3);
+    CHECK(stats.policy == RigExecPreviewEditPolicy::AttributeDefault);
+    CHECK(stats.identity.session == registry->GetPreviewIdentity().session);
+
+    // Re-declaring a path updates it rather than appending.
+    CHECK(registry->DeclarePreviewEdit(
+        "/Asset/Rig/AlongX.avars:tz",
+        RigExecPreviewEditPolicy::AttributeDefault, &pendingValue, 1));
+    CHECK(registry->GetPreviewEditStats().editCount == 3);
+    // A path that does not resolve declares nothing at all.
+    CHECK(!registry->DeclarePreviewEdit(
+        "/Asset/Rig/AlongX.avars:tz\n/Bogus/Nope",
+        RigExecPreviewEditPolicy::AttributeDefault, nullptr, 0));
+    CHECK(registry->GetPreviewEditStats().editCount == 3);
+    CHECK(!registry->DeclarePreviewEdit(
+        "/Asset/Rig/AlongX.avars:tz",
+        RigExecPreviewEditPolicy::AttributeDefault, nullptr, 0));
+    CHECK(!registry->DeclarePreviewEdit(
+        "/Asset/Rig/AlongX.avars:tz",
+        RigExecPreviewEditPolicy::AttributeDefault, nullptr, 1));
+
+    std::string reason;
+    // The edit-target layer samples this attribute: its samples answer every
+    // time, so the pending default cannot reach any of them.
+    CHECK(registry->PreviewValueIsIndependent("/Asset/Rig/AlongX.avars:tz",
+                                              UsdTimeCode(2.0), &reason));
+    CHECK(registry->PreviewValueIsIndependent("/Asset/Rig/AlongX.avars:tz",
+                                              UsdTimeCode(4.0), &reason));
+    CHECK(registry->PreviewValueIsIndependent("/Asset/Rig/AlongX.avars:tz",
+                                              UsdTimeCode(7.0), &reason));
+    // A stronger layer's authored sample answers the frame too.
+    CHECK(registry->PreviewValueIsIndependent("/Asset/Rig/AlongX.avars:ts",
+                                              UsdTimeCode(2.0), &reason));
+    CHECK(registry->PreviewValueIsIndependent("/Asset/Rig/AlongX.avars:ts",
+                                              UsdTimeCode(7.0), &reason));
+    CHECK(registry->DeclarePreviewEdit(
+        "/Asset/Rig/AlongX.avars:tu",
+        RigExecPreviewEditPolicy::AttributeDefault, &pendingValue, 1));
+    CHECK(registry->PreviewValueIsIndependent("/Asset/Rig/AlongX.avars:tu",
+                                              UsdTimeCode(3.0), &reason));
+    CHECK(!registry->PreviewValueIsIndependent("/Asset/Rig/AlongX.avars:tw",
+                                               UsdTimeCode(2.0), &reason));
+    // The default time is where the pending default *is* the value.
+    CHECK(!registry->PreviewValueIsIndependent(
+        "/Asset/Rig/AlongX.avars:tz", UsdTimeCode::Default(), &reason));
+    // An undeclared path is unproven.
+    CHECK(!registry->PreviewValueIsIndependent("/Asset/Rig/AlongY.avars:ty",
+                                               UsdTimeCode(2.0), &reason));
+    // A pending time sample is not a default to prove independence from.
+    CHECK(registry->DeclarePreviewEdit(
+        "/Asset/Rig/AlongX.avars:tz",
+        RigExecPreviewEditPolicy::AttributeTimeSample, &pendingValue, 1));
+    CHECK(!registry->PreviewValueIsIndependent("/Asset/Rig/AlongX.avars:tz",
+                                               UsdTimeCode(2.0), &reason));
+    CHECK(registry->DeclarePreviewEdit(
+        "/Asset/Rig/AlongX.avars:tz",
+        RigExecPreviewEditPolicy::AttributeDefault, &pendingValue, 1));
+
+    // A connection makes the composed value somebody else's.
+    CHECK(registry->DeclarePreviewEdit(
+        "/Asset/Rig/AlongX.avars:tk",
+        RigExecPreviewEditPolicy::AttributeDefault, &pendingValue, 1));
+    CHECK(!registry->PreviewValueIsIndependent("/Asset/Rig/AlongX.avars:tk",
+                                               UsdTimeCode(2.0), &reason));
+
+    // A stage opinion on a declared path retires the identity.
+    const uint64_t beforeEdit = registry->GetPreviewIdentity().session;
+    CHECK(stage->GetAttributeAtPath(SdfPath("/Asset/Rig/AlongX.avars:tz"))
+              .Set(13.0, UsdTimeCode(2.0)));
+    const RigExecPreviewIdentity afterStageEdit =
+        registry->GetPreviewIdentity();
+    CHECK(!afterStageEdit.active && afterStageEdit.session > beforeEdit);
+    CHECK(registry->GetPreviewEditStats().editCount == 0);
+    registry->ClearFrameCache(rig);
+    registry->Deactivate();
+}
+
+// A property-chain target is refused: the chain revises the attribute, so a
+// pending default cannot be proven irrelevant.
+void
+TestPreviewProofRefusesPropertyChainTarget()
+{
+    std::printf("progress: TestPreviewProofRefusesPropertyChainTarget\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "off");
+    const SdfPath rig("/Asset/Rig");
+    const UsdStageRefPtr stage = MakePropertyChainRig();
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
+    std::vector<std::string> errors;
+    CHECK(registry->Activate(stage, rig, UsdTimeCode(2.0), &errors));
+    const double pendingValue = 11.0;
+    CHECK(registry->BeginPreview("/Asset/Rig/AlongX.avars:tx") == 1);
+    CHECK(registry->DeclarePreviewEdit(
+        "/Asset/Rig/AlongX.avars:tx",
+        RigExecPreviewEditPolicy::AttributeDefault, &pendingValue, 1));
+    std::string reason;
+    CHECK(!registry->PreviewValueIsIndependent("/Asset/Rig/AlongX.avars:tx",
+                                               UsdTimeCode(2.0), &reason));
+    CHECK(!reason.empty());
+    CHECK(registry->EndPreview(/* publish = */ false));
+    registry->Deactivate();
+}
+
+// WARM ROUTES. Committed frames are admitted, a pending preview is refused
+// with a reason, and a speculative frame is admitted only while every
+// declared edit is provably irrelevant to it.
+void
+TestWarmRouteAdmission()
+{
+    std::printf("progress: TestWarmRouteAdmission\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "on");
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    const SdfPath rig("/Asset/Rig");
+    UsdStageRefPtr stage = MakeTinyRig();
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
+    std::vector<std::string> errors;
+    CHECK(registry->Activate(stage, rig, UsdTimeCode(2.0), &errors));
+
+    std::string reason;
+    RigExecWarmRouteDescriptor route;
+    route.rigPath = rig;
+    route.time = UsdTimeCode(3.0);
+    CHECK(registry->AdmitWarmRoute(route, &reason));
+    route.route = RigExecWarmRoute::PendingPreview;
+    CHECK(!registry->AdmitWarmRoute(route, &reason));
+    CHECK(!reason.empty());
+    route.route = RigExecWarmRoute::CommittedSpeculative;
+    CHECK(registry->AdmitWarmRoute(route, &reason));
+
+    const UsdPrim alongX = stage->GetPrimAtPath(SdfPath("/Asset/Rig/AlongX"));
+    // Nothing is authored for this one: the pending default is the only
+    // answer, so speculative work cannot be proven stable.
+    alongX.CreateAttribute(TfToken("avars:tv"), SdfValueTypeNames->Double);
+    const double pendingValue = 11.0;
+    CHECK(registry->BeginPreview("/Asset/Rig/AlongX.avars:tv") == 1);
+    CHECK(registry->DeclarePreviewEdit(
+        "/Asset/Rig/AlongX.avars:tv",
+        RigExecPreviewEditPolicy::AttributeDefault, &pendingValue, 1));
+    route.previewSession = registry->GetPreviewIdentity().session;
+    route.previewRevision = registry->GetPreviewIdentity().revision;
+    route.time = UsdTimeCode(3.0);
+    CHECK(!registry->AdmitWarmRoute(route, &reason));
+    CHECK(!reason.empty());
+    // The factory routes the frame the preview stands on as pending, and the
+    // frame beside it as speculative: no work for the former, work for the
+    // latter once every declared edit is proven irrelevant.
+    CHECK(!registry
+               ->BuildWarmWork(rig, UsdTimeCode(2.0),
+                               registry->CurrentFrameGeneration(rig),
+                               RigExecFrozenStepRunner())
+               .work);
+    CHECK(registry->EndPreview(/* publish = */ false));
+    // Against a control whose value is authored by time samples, the same
+    // speculative frame is admitted.
+    CHECK(registry->BeginPreview("/Asset/Rig/AlongX.avars:tx") == 1);
+    CHECK(registry->DeclarePreviewEdit(
+        "/Asset/Rig/AlongX.avars:tx",
+        RigExecPreviewEditPolicy::AttributeDefault, &pendingValue, 1));
+    route.route = RigExecWarmRoute::CommittedSpeculative;
+    route.previewSession = registry->GetPreviewIdentity().session;
+    route.previewRevision = registry->GetPreviewIdentity().revision;
+    CHECK(registry->AdmitWarmRoute(route, &reason));
+    CHECK(!registry
+               ->BuildWarmWork(rig, UsdTimeCode(2.0),
+                               registry->CurrentFrameGeneration(rig),
+                               RigExecFrozenStepRunner())
+               .work);
+    CHECK(registry
+              ->BuildWarmWork(rig, UsdTimeCode(3.0),
+                              registry->CurrentFrameGeneration(rig),
+                              RigExecFrozenStepRunner())
+              .work);
+    // A request captured under a retired session does not match.
+    route.previewSession = registry->GetPreviewIdentity().session + 1;
+    CHECK(!registry->AdmitWarmRoute(route, &reason));
+    // A route with no session stamp has nothing pending guarding it.
+    route.previewSession = 0;
+    CHECK(registry->AdmitWarmRoute(route, &reason));
+    // A committed route already has its destination: the stamp is inert.
+    route.route = RigExecWarmRoute::Committed;
+    route.previewSession = registry->GetPreviewIdentity().session + 1;
+    CHECK(registry->AdmitWarmRoute(route, &reason));
+    CHECK(registry->EndPreview(/* publish = */ false));
+    CHECK(registry
+              ->BuildWarmWork(rig, UsdTimeCode(2.0),
+                              registry->CurrentFrameGeneration(rig),
+                              RigExecFrozenStepRunner())
+              .work);
+    registry->ClearFrameCache(rig);
+    registry->Deactivate();
+}
+
+// ANCESTOR RESYNCS. A resync re-specifies its path and everything below it,
+// and the notice names the ancestor, never the descendants. A declared
+// attribute outside the compiled rig has no recompile to retire it, so the
+// notice hook must: the identity retires with the notice, and the edit
+// description goes with it.
+void
+TestPreviewIdentityRetiresOnAncestorResync()
+{
+    std::printf("progress: TestPreviewIdentityRetiresOnAncestorResync\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "on");
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    UsdStageRefPtr stage = MakeTinyRig();
+    // Declared outside the rig and outside its inputs: the change below
+    // compiles nothing, so only the notice can retire the identity.
+    const std::string outsidePath = "/Asset/Outside/Deep.xformOp:translate";
+    stage->DefinePrim(SdfPath("/Asset/Outside"), TfToken("Scope"));
+    const UsdPrim deep =
+        stage->DefinePrim(SdfPath("/Asset/Outside/Deep"), TfToken("Xform"));
+    CHECK(deep.CreateAttribute(TfToken("xformOp:translate"),
+                               SdfValueTypeNames->Vector3d)
+              .Set(GfVec3d(1.0, 2.0, 3.0), UsdTimeCode(3.0)));
+    // A second authored layer whose only prim sits above the declared
+    // attribute: inserting it as a sublayer resyncs that ancestor.
+    const UsdStageRefPtr above = UsdStage::CreateInMemory();
+    above->DefinePrim(SdfPath("/Asset/Outside"), TfToken("Scope"));
+
+    const SdfPath rig("/Asset/Rig");
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
+    std::vector<std::string> errors;
+    CHECK(registry->Activate(stage, rig, UsdTimeCode(2.0), &errors));
+    // BeginPreview returns the declared slot's double count: a vector3d op
+    // previews as three doubles.
+    CHECK(registry->BeginPreview(outsidePath) == 3);
+    const double pendingValue[3] = {11.0, 12.0, 13.0};
+    CHECK(registry->DeclarePreviewEdit(
+        outsidePath, RigExecPreviewEditPolicy::AttributeDefault, pendingValue,
+        3));
+    const RigExecPreviewIdentity standing = registry->GetPreviewIdentity();
+    CHECK(standing.active);
+    CHECK(registry->GetPreviewEditStats().editCount == 1);
+    std::string reason;
+    // An authored time sample answers frame 3: the pending default cannot
+    // reach it, so the frame stands on the standing identity.
+    CHECK(registry->PreviewValueIsIndependent(outsidePath, UsdTimeCode(3.0),
+                                              &reason));
+
+    {
+        SdfChangeBlock changes;
+        stage->GetRootLayer()->SetSubLayerPaths(
+            {above->GetRootLayer()->GetIdentifier()});
+    }
+
+    const RigExecPreviewIdentity afterResync = registry->GetPreviewIdentity();
+    CHECK(!afterResync.active);
+    CHECK(afterResync.session > standing.session);
+    CHECK(afterResync.revision == 0);
+    CHECK(registry->GetPreviewEditStats().editCount == 0);
+    CHECK(!registry->PreviewValueIsIndependent(outsidePath, UsdTimeCode(3.0),
+                                               &reason));
+    CHECK(!reason.empty());
+    CHECK(registry->EndPreview(/* publish = */ false));
+    registry->Deactivate();
+}
+
+// MAPPED EDIT TARGETS. A target that maps the composed path to a different
+// spec path authors the pending value where this proof cannot see it, and a
+// same-spelled sampled property in that other layer is not the composed
+// value. Refused, and the speculative warm route behind it refused too.
+void
+TestPreviewProofRefusesMappedEditTarget()
+{
+    std::printf("progress: TestPreviewProofRefusesMappedEditTarget\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "off");
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    UsdStageRefPtr stage = MakeTinyRig();
+    // An authored source layer: the composed value arrives through a
+    // reference, and the same layer holds a sampled property spelled exactly
+    // like the composed path that composes nowhere.
+    const UsdStageRefPtr source = UsdStage::CreateInMemory();
+    source->DefinePrim(SdfPath("/Source"), TfToken("Scope"));
+    CHECK(bool(
+        source->GetPrimAtPath(SdfPath("/Source"))
+            .CreateAttribute(TfToken("avars:tv"), SdfValueTypeNames->Double)));
+    CHECK(source->GetAttributeAtPath(SdfPath("/Source.avars:tv"))
+              .Set(5.0, UsdTimeCode(3.0)));
+    source->DefinePrim(SdfPath("/Asset/Rig/Holder"), TfToken("Scope"));
+    CHECK(bool(
+        source->GetPrimAtPath(SdfPath("/Asset/Rig/Holder"))
+            .CreateAttribute(TfToken("avars:tv"), SdfValueTypeNames->Double)));
+    CHECK(source->GetAttributeAtPath(SdfPath("/Asset/Rig/Holder.avars:tv"))
+              .Set(7.0, UsdTimeCode(3.0)));
+
+    const std::string heldPath = "/Asset/Rig/Holder.avars:tv";
+    const UsdPrim holder =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Holder"), TfToken("Scope"));
+    CHECK(holder.GetReferences().AddReference(
+        source->GetRootLayer()->GetIdentifier(), SdfPath("/Source")));
+    double composed = 0.0;
+    CHECK(stage->GetAttributeAtPath(SdfPath(heldPath))
+              .Get(&composed, UsdTimeCode(3.0)));
+    CHECK(composed == 5.0);
+    // The same-spelled sample sits in the referenced layer and decides
+    // nothing: the composed value at this time is the referenced one.
+    CHECK(source->GetRootLayer()->HasField(SdfPath(heldPath),
+                                           SdfFieldKeys->TimeSamples));
+
+    const SdfPath rig("/Asset/Rig");
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
+    std::vector<std::string> errors;
+    CHECK(registry->Activate(stage, rig, UsdTimeCode(2.0), &errors));
+    const double pendingValue = 11.0;
+    CHECK(registry->BeginPreview(heldPath) == 1);
+    CHECK(registry->DeclarePreviewEdit(
+        heldPath, RigExecPreviewEditPolicy::AttributeDefault, &pendingValue,
+        1));
+    std::string reason;
+    // The stage's own target: the pending default would land on this path in
+    // a layer of this stage's stack, where nothing answers frame 3.
+    CHECK(!registry->PreviewValueIsIndependent(heldPath, UsdTimeCode(3.0),
+                                               &reason));
+    // The reference's target: the pending default would be authored at the
+    // mapped spec path in the source layer, so the same-spelled sample there
+    // must not stand in for the composed value.
+    PcpNodeRef referenceNode;
+    for (PcpNodeRef node : stage->GetPrimAtPath(SdfPath("/Asset/Rig/Holder"))
+                               .GetPrimIndex()
+                               .GetNodeRange()) {
+        if (node.GetArcType() == PcpArcTypeReference) {
+            referenceNode = node;
+        }
+    }
+    CHECK(bool(referenceNode));
+    stage->SetEditTarget(UsdEditTarget(source->GetRootLayer(), referenceNode));
+    CHECK(!registry->PreviewValueIsIndependent(heldPath, UsdTimeCode(3.0),
+                                               &reason));
+    CHECK(!reason.empty());
+    // Warm-route admission carries the same refusal.
+    RigExecWarmRouteDescriptor route;
+    route.route = RigExecWarmRoute::CommittedSpeculative;
+    route.rigPath = rig;
+    route.time = UsdTimeCode(3.0);
+    route.previewSession = registry->GetPreviewIdentity().session;
+    route.previewRevision = registry->GetPreviewIdentity().revision;
+    CHECK(!registry->AdmitWarmRoute(route, &reason));
+    stage->SetEditTarget(stage->GetRootLayer());
+    CHECK(registry->EndPreview(/* publish = */ false));
+    registry->Deactivate();
+}
+
+// THE VERDICT BELONGS TO THE DECLARATION. Every rule but the default-time
+// check reads the stage, its layers, and its edit target, never a time code,
+// so the candidate frames of a burst share one derivation. The edit target is
+// the input a host can move under a standing preview without a stage notice,
+// so the held verdict follows it rather than outliving it.
+void
+TestPreviewProofFollowsTheEditTarget()
+{
+    std::printf("progress: TestPreviewProofFollowsTheEditTarget\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "off");
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    const SdfPath rig("/Asset/Rig");
+    // root over its sublayer lane, with the session layer above both.
+    const SdfLayerRefPtr root = SdfLayer::CreateAnonymous(".usda");
+    const SdfLayerRefPtr lane = SdfLayer::CreateAnonymous(".usda");
+    root->SetSubLayerPaths({lane->GetIdentifier()});
+    UsdStageRefPtr stage = UsdStage::Open(root);
+    stage->SetEditTarget(root);
+    MakeTinyRig(/*staticY=*/true, stage);
+    const UsdPrim alongX = stage->GetPrimAtPath(SdfPath("/Asset/Rig/AlongX"));
+    stage->SetEditTarget(lane);
+    // The lane samples the attribute, and its own default never hides the
+    // sample it authors.
+    CHECK(alongX.CreateAttribute(TfToken("avars:tz"), SdfValueTypeNames->Double)
+              .Set(9.0, UsdTimeCode(2.0)));
+    CHECK(alongX.GetAttribute(TfToken("avars:tz"))
+              .Set(42.0, UsdTimeCode::Default()));
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
+    std::vector<std::string> errors;
+    CHECK(registry->Activate(stage, rig, UsdTimeCode(2.0), &errors));
+    const double pendingValue = 11.0;
+    CHECK(registry->BeginPreview("/Asset/Rig/AlongX.avars:tz") == 1);
+    CHECK(registry->DeclarePreviewEdit(
+        "/Asset/Rig/AlongX.avars:tz",
+        RigExecPreviewEditPolicy::AttributeDefault, &pendingValue, 1));
+    std::string reason;
+    // With the lane as target its samples answer every numeric frame, so the
+    // same verdict stands for each of them.
+    CHECK(registry->PreviewValueIsIndependent("/Asset/Rig/AlongX.avars:tz",
+                                              UsdTimeCode(4.0), &reason));
+    CHECK(registry->PreviewValueIsIndependent("/Asset/Rig/AlongX.avars:tz",
+                                              UsdTimeCode(9.0), &reason));
+    // Moving the target under the standing preview puts the pending default
+    // in a layer stronger than those samples: the frame is no longer
+    // independent, and a verdict held for the lane must not answer for it.
+    stage->SetEditTarget(root);
+    CHECK(registry->IsPreviewActive());
+    CHECK(registry->GetPreviewEditStats().editCount == 1);
+    CHECK(!registry->PreviewValueIsIndependent("/Asset/Rig/AlongX.avars:tz",
+                                               UsdTimeCode(4.0), &reason));
+    CHECK(!reason.empty());
+    // Back to the lane and the verdict returns.
+    stage->SetEditTarget(lane);
+    CHECK(registry->PreviewValueIsIndependent("/Asset/Rig/AlongX.avars:tz",
+                                              UsdTimeCode(4.0), &reason));
+    // Warm-route admission carries the same flip.
+    RigExecWarmRouteDescriptor route;
+    route.route = RigExecWarmRoute::CommittedSpeculative;
+    route.rigPath = rig;
+    route.time = UsdTimeCode(4.0);
+    route.previewSession = registry->GetPreviewIdentity().session;
+    stage->SetEditTarget(root);
+    CHECK(!registry->AdmitWarmRoute(route, &reason));
+    stage->SetEditTarget(lane);
+    CHECK(registry->AdmitWarmRoute(route, &reason));
+    CHECK(registry->EndPreview(/* publish = */ false));
+    registry->Deactivate();
+}
+
+// A NOTICE CAN LAND WHILE THE PROOF READS THE STAGE. The proof's layer and
+// edit-target reads take OpenUSD's own locks, and the stage-notice handler
+// takes _mutex: holding both at once nests them, so the derivation releases
+// the registry lock for those reads. The proof seam runs a retirement and a
+// same-path redeclaration inside that window on the calling thread -- no
+// stage opinion is authored from a second thread -- so the verdict that
+// crossed the window is forced stale rather than raced for, and every verdict
+// returned or stored must belong to the description standing now.
+void
+TestRetirementInsideTheProofWindowRefuses()
+{
+    std::printf("progress: TestRetirementInsideTheProofWindowRefuses\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "off");
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    const SdfPath rig("/Asset/Rig");
+    const SdfLayerRefPtr root = SdfLayer::CreateAnonymous(".usda");
+    const SdfLayerRefPtr lane = SdfLayer::CreateAnonymous(".usda");
+    root->SetSubLayerPaths({lane->GetIdentifier()});
+    UsdStageRefPtr stage = UsdStage::Open(root);
+    MakeTinyRig(/*staticY=*/true, stage);
+    const SdfPath tsPath("/Asset/Rig/AlongX.avars:ts");
+    stage->SetEditTarget(lane);
+    const UsdAttribute tsAttr =
+        stage->GetPrimAtPath(SdfPath("/Asset/Rig/AlongX"))
+            .CreateAttribute(TfToken("avars:ts"), SdfValueTypeNames->Double);
+    CHECK(tsAttr);
+    // Samples in the edit-target layer answer every candidate time, so the
+    // pending default cannot reach this frame: the route is admitted.
+    CHECK(tsAttr.Set(1.0, UsdTimeCode(1.0)));
+    CHECK(tsAttr.Set(2.0, UsdTimeCode(4.0)));
+    const double pendingValue = 11.0;
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
+    std::vector<std::string> errors;
+    CHECK(registry->Activate(stage, rig, UsdTimeCode(2.0), &errors));
+    CHECK(registry->BeginPreview(tsPath.GetAsString()) == 1);
+    CHECK(registry->DeclarePreviewEdit(
+        tsPath.GetAsString(), RigExecPreviewEditPolicy::AttributeDefault,
+        &pendingValue, 1));
+    std::string reason;
+    CHECK(registry->PreviewValueIsIndependent(tsPath.GetAsString(),
+                                              UsdTimeCode(7.0), &reason));
+    RigExecWarmRouteDescriptor route;
+    route.route = RigExecWarmRoute::CommittedSpeculative;
+    route.rigPath = rig;
+    route.time = UsdTimeCode(7.0);
+    route.previewSession = registry->GetPreviewIdentity().session;
+    CHECK(registry->AdmitWarmRoute(route, &reason));
+
+    // The window: clearing the samples authors an opinion on the declared
+    // path, which retires the description, and the same path is re-declared
+    // under the next session. Only the pending default answers time 7.0 now,
+    // so the replacement description's verdict is the opposite of the stale
+    // one -- a held verdict could not hide the difference.
+    registry->SetProofWindowProbe([&]() {
+        CHECK(tsAttr.Clear());
+        CHECK(registry->BeginPreview(tsPath.GetAsString()) == 1);
+        CHECK(registry->DeclarePreviewEdit(
+            tsPath.GetAsString(), RigExecPreviewEditPolicy::AttributeDefault,
+            &pendingValue, 1));
+    });
+    // A request whose provenance stood when it entered: the verdict read under
+    // the description that retired inside the proof window refuses, on both
+    // surfaces, and nothing from it is kept.
+    CHECK(!registry->PreviewValueIsIndependent(tsPath.GetAsString(),
+                                               UsdTimeCode(7.0), &reason));
+    CHECK(reason.find("retired while") != std::string::npos);
+    RigExecWarmRouteDescriptor standingRoute = route;
+    standingRoute.previewSession = registry->GetPreviewIdentity().session;
+    CHECK(!registry->AdmitWarmRoute(standingRoute, &reason));
+    CHECK(reason.find("retired while") != std::string::npos);
+    // A request keyed to the session that has already gone is refused before
+    // any proof is read.
+    CHECK(!registry->AdmitWarmRoute(route, &reason));
+    CHECK(reason.find("has retired") != std::string::npos);
+    CHECK(registry->GetPreviewEditStats().editCount == 1);
+    registry->SetProofWindowProbe(nullptr);
+
+    // The stale verdict never landed on the replacement declaration: the
+    // re-declared path answers with its own, and a request under the standing
+    // session is refused by that verdict, not by provenance.
+    const uint64_t standingSession = registry->GetPreviewIdentity().session;
+    CHECK(!registry->PreviewValueIsIndependent(tsPath.GetAsString(),
+                                               UsdTimeCode(7.0), &reason));
+    CHECK(reason.find("pending default") != std::string::npos);
+    RigExecWarmRouteDescriptor freshRoute = route;
+    freshRoute.previewSession = standingSession;
+    CHECK(!registry->AdmitWarmRoute(freshRoute, &reason));
+    CHECK(reason.find("has retired") == std::string::npos);
+    // Re-authored samples make the new description independent again, and the
+    // verdict held for it carries the session it was derived under.
+    CHECK(tsAttr.Set(3.0, UsdTimeCode(5.0)));
+    CHECK(!registry->GetPreviewIdentity().active);
+    CHECK(registry->BeginPreview(tsPath.GetAsString()) == 1);
+    CHECK(registry->DeclarePreviewEdit(
+        tsPath.GetAsString(), RigExecPreviewEditPolicy::AttributeDefault,
+        &pendingValue, 1));
+    CHECK(registry->PreviewValueIsIndependent(tsPath.GetAsString(),
+                                              UsdTimeCode(7.0), &reason));
+    freshRoute.previewSession = registry->GetPreviewIdentity().session;
+    CHECK(registry->AdmitWarmRoute(freshRoute, &reason));
+    CHECK(registry->GetPreviewIdentity().session == freshRoute.previewSession);
+
+    // A re-declaration of the same path inside the window changes the
+    // description without retiring the session, so the session alone cannot
+    // fence it: the declaration tick does. The held verdict is refused on both
+    // surfaces rather than served to the entry that replaced it.
+    const double redeclaredValue = 13.0;
+    registry->SetProofWindowProbe([&]() {
+        CHECK(registry->DeclarePreviewEdit(
+            tsPath.GetAsString(), RigExecPreviewEditPolicy::AttributeDefault,
+            &redeclaredValue, 1));
+    });
+    CHECK(!registry->AdmitWarmRoute(freshRoute, &reason));
+    CHECK(reason.find("re-declared while") != std::string::npos);
+    CHECK(!registry->PreviewValueIsIndependent(tsPath.GetAsString(),
+                                               UsdTimeCode(7.0), &reason));
+    CHECK(reason.find("re-declared while") != std::string::npos);
+    registry->SetProofWindowProbe(nullptr);
+    // A re-declaration outside the window clears the held verdict as well: the
+    // entry answers from its own description, not the cached one.
+    CHECK(registry->DeclarePreviewEdit(
+        tsPath.GetAsString(), RigExecPreviewEditPolicy::AttributeTimeSample,
+        &redeclaredValue, 1));
+    CHECK(!registry->PreviewValueIsIndependent(tsPath.GetAsString(),
+                                               UsdTimeCode(7.0), &reason));
+    CHECK(reason.find("not a default opinion") != std::string::npos);
+    CHECK(registry->EndPreview(/* publish = */ false));
+    registry->Deactivate();
+}
+
+// A VERDICT BELONGS TO THE DESCRIPTION THAT DECLARED IT. A retirement moves the
+// session, so a warm request captured under the old description is refused on
+// provenance, and the re-declared path answers with its own verdict: the edit
+// target decides, not whatever the previous description held.
+void
+TestRedeclaredPathAnswersWithItsOwnVerdict()
+{
+    std::printf("progress: TestRedeclaredPathAnswersWithItsOwnVerdict\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "off");
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    const SdfPath rig("/Asset/Rig");
+    const SdfLayerRefPtr root = SdfLayer::CreateAnonymous(".usda");
+    const SdfLayerRefPtr lane = SdfLayer::CreateAnonymous(".usda");
+    root->SetSubLayerPaths({lane->GetIdentifier()});
+    UsdStageRefPtr stage = UsdStage::Open(root);
+    MakeTinyRig(/*staticY=*/true, stage);
+    const SdfPath tsPath("/Asset/Rig/AlongX.avars:ts");
+    stage->SetEditTarget(lane);
+    const UsdAttribute tsAttr =
+        stage->GetPrimAtPath(SdfPath("/Asset/Rig/AlongX"))
+            .CreateAttribute(TfToken("avars:ts"), SdfValueTypeNames->Double);
+    CHECK(tsAttr);
+    // Samples in the edit target answer every candidate time, so the pending
+    // default cannot reach this frame and the route stands on its own.
+    CHECK(tsAttr.Set(1.0, UsdTimeCode(3.0)));
+    CHECK(tsAttr.Set(7.5));
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
+    std::vector<std::string> errors;
+    CHECK(registry->Activate(stage, rig, UsdTimeCode(2.0), &errors));
+    const double pendingValue = 11.0;
+    CHECK(registry->BeginPreview(tsPath.GetAsString()) == 1);
+    CHECK(registry->DeclarePreviewEdit(
+        tsPath.GetAsString(), RigExecPreviewEditPolicy::AttributeDefault,
+        &pendingValue, 1));
+    std::string reason;
+    RigExecWarmRouteDescriptor route;
+    route.route = RigExecWarmRoute::CommittedSpeculative;
+    route.rigPath = rig;
+    route.time = UsdTimeCode(7.0);
+    route.previewSession = registry->GetPreviewIdentity().session;
+    CHECK(registry->PreviewValueIsIndependent(tsPath.GetAsString(),
+                                              UsdTimeCode(7.0), &reason));
+    CHECK(registry->AdmitWarmRoute(route, &reason));
+
+    // A notice on the declared path retires the description.
+    CHECK(tsAttr.Set(8.5));
+    CHECK(!registry->GetPreviewIdentity().active);
+    CHECK(registry->GetPreviewEditStats().editCount == 0);
+    // The request captured under the retired description is refused outright.
+    CHECK(!registry->AdmitWarmRoute(route, &reason));
+    CHECK(reason.find("has retired") != std::string::npos);
+    // Re-declared under a new description, and under a different edit target,
+    // the same path gets its own verdict: the root authors nothing here, so
+    // nothing but the pending default answers this time.
+    stage->SetEditTarget(root);
+    CHECK(registry->BeginPreview(tsPath.GetAsString()) == 1);
+    CHECK(registry->DeclarePreviewEdit(
+        tsPath.GetAsString(), RigExecPreviewEditPolicy::AttributeDefault,
+        &pendingValue, 1));
+    CHECK(!registry->PreviewValueIsIndependent(tsPath.GetAsString(),
+                                               UsdTimeCode(7.0), &reason));
+    RigExecWarmRouteDescriptor freshRoute = route;
+    freshRoute.previewSession = registry->GetPreviewIdentity().session;
+    CHECK(!registry->AdmitWarmRoute(freshRoute, &reason));
+    registry->EndPreview(/* publish = */ false);
+    registry->Deactivate();
+}
+
+// NOTICE COVERAGE DECIDES WHETHER A VERDICT CAN BE HELD. The stage-notice
+// listener that retires a preview description stands with activation, so a
+// bound context that never activated hears nothing: there the proof re-reads
+// the layer every time, and removing the sole sample flips both the proof
+// and the speculative route behind it.
+void
+TestUnactivatedStageProofTracksSampleRemoval()
+{
+    std::printf("progress: TestUnactivatedStageProofTracksSampleRemoval\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "off");
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    // A plain Xform with one sampled op: no rig, no activation, no scheduler.
+    const UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    const UsdPrim xform = stage->DefinePrim(SdfPath("/X"), TfToken("Xform"));
+    const std::string opPath = "/X.xformOp:translateX";
+    CHECK(xform
+              .CreateAttribute(TfToken("xformOp:translateX"),
+                               SdfValueTypeNames->Double)
+              .Set(9.0, UsdTimeCode(2.0)));
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
+    const double pendingValue = 11.0;
+    // The xform lane previews an op on a stage with no rig and no activation.
+    CHECK(registry->BeginPreview(opPath) == 1);
+    CHECK(registry->IsPreviewActive());
+    CHECK(registry->DeclarePreviewEdit(
+        opPath, RigExecPreviewEditPolicy::AttributeDefault, &pendingValue, 1));
+    std::string reason;
+    // The edit-target layer samples the op: every numeric frame is answered
+    // there, never by the pending default.
+    CHECK(
+        registry->PreviewValueIsIndependent(opPath, UsdTimeCode(4.0), &reason));
+    RigExecWarmRouteDescriptor route;
+    route.route = RigExecWarmRoute::CommittedSpeculative;
+    route.rigPath = SdfPath("/X");
+    route.time = UsdTimeCode(4.0);
+    route.previewSession = registry->GetPreviewIdentity().session;
+    CHECK(registry->AdmitWarmRoute(route, &reason));
+    // Remove the sole sample. No notice reaches this context, so the answer
+    // must come from the layer as it now stands, not from what an earlier
+    // frame saw.
+    CHECK(stage->GetAttributeAtPath(SdfPath(opPath))
+              .ClearAtTime(UsdTimeCode(2.0)));
+    std::vector<double> samples;
+    CHECK(stage->GetAttributeAtPath(SdfPath(opPath)).GetTimeSamples(&samples));
+    CHECK(samples.empty());
+    CHECK(!registry->PreviewValueIsIndependent(opPath, UsdTimeCode(4.0),
+                                               &reason));
+    CHECK(!reason.empty());
+    CHECK(!registry->AdmitWarmRoute(route, &reason));
+    CHECK(!reason.empty());
+    // Nothing retired the description -- nothing hears the edit -- so the
+    // declaration stands and only the verdict moved.
+    CHECK(registry->GetPreviewEditStats().editCount == 1);
+    CHECK(registry->IsPreviewActive());
+    // Author the sample again and the frame is answered there once more.
+    CHECK(
+        stage->GetAttributeAtPath(SdfPath(opPath)).Set(9.0, UsdTimeCode(2.0)));
+    CHECK(
+        registry->PreviewValueIsIndependent(opPath, UsdTimeCode(4.0), &reason));
+    CHECK(registry->EndPreview(/* publish = */ false));
+}
+
 int
 main(int argc, char **argv)
 {
@@ -6110,6 +6989,16 @@ main(int argc, char **argv)
     TestCommitDuringPreviewExcludesPlayhead();
     TestCommitOfPreviewedPoseSkipsEvaluation();
     TestFirstSessionCommitOfPreviewedPose();
+    TestPreviewIdentityIsMonotonic();
+    TestPreviewEditDescriptionAndProof();
+    TestPreviewProofRefusesPropertyChainTarget();
+    TestWarmRouteAdmission();
+    TestPreviewIdentityRetiresOnAncestorResync();
+    TestPreviewProofRefusesMappedEditTarget();
+    TestPreviewProofFollowsTheEditTarget();
+    TestRedeclaredPathAnswersWithItsOwnVerdict();
+    TestRetirementInsideTheProofWindowRefuses();
+    TestUnactivatedStageProofTracksSampleRemoval();
     TestCommitOfAChainTargetSettles();
     TestProductionTriggerPathEnqueuesAndFences();
     TestWarmedCompletionServesWithoutEvaluating();

@@ -213,6 +213,11 @@ Every name below carries the `RigExecImaging_` prefix.
 | `int UpdatePreviewForStage(long long id, const double *values, int count)` | |
 | `int EndPreviewForStage(long long id)` | |
 | `int EndPreviewWithoutPublishForStage(long long id)` | |
+| `int GetPreviewIdentityForStage(long long id, unsigned long long *session, unsigned long long *revision, int *active)` | the monotonic preview session/revision a snapshot is keyed against |
+| `int DeclarePreviewEditForStage(long long id, const char *paths, int policy, const double *values, int count)` | adds to the preview's edit description (0 default value, 1 time sample, 2 connection) |
+| `int GetPreviewEditStatsForStage(long long id, unsigned long long *session, unsigned long long *revision, int *edits, int *values, int *policy)` | |
+| `int PreviewValueIsIndependentForStage(long long id, const char *attribute, double frame, char *reason, int capacity)` | 1 when the composed value at that frame provably does not come from the pending default |
+| `int AdmitWarmRouteForStage(long long id, int route, const char *rig, double frame, unsigned long long session, char *reason, int capacity)` | 1 admitted, 0 refused with a reason |
 | `int GetPublishedPointsForStage(long long id, const char *prim, float *xyz, int capacity)` | the point count, -1 when the prim publishes no points, -2 with no context |
 | `int GetPublishedScalarPrimvarForStage(long long id, const char *prim, const char *primvarName, float *out)` | 1 published, 0 not published, -2 with no context |
 | `int GetPublishedXformRevisionForStage(long long id, const char *prim, double out[16])` | 1 with the revised * base^-1 map, 0 when the rig drives no transform there, -2 with no context |
@@ -267,6 +272,37 @@ its published generation, including the first opinion in an empty session
 layer. A drag on a property that movers revise previews its base, so its
 exact commit settles the same way. Empty-field ancestor overs are inert; real
 metadata, structural edits and connections still require evaluation.
+
+**Preview snapshots.** Each preview carries a session id and a revision that
+increase monotonically: `BeginPreviewForStage` mints the session, every
+`UpdatePreviewForStage` bumps the revision, and `EndPreviewForStage`,
+`EndPreviewWithoutPublishForStage`, an undo or redo of a declared path, a
+resync at or above a declared path (a resync covers its descendants, and the
+stage notice only names the ancestor), a weight-overlay change, a recompile,
+deactivation or a replaced stage retire it — the session moves forward, the
+revision returns to zero. A host that declares what an edit would write
+(`DeclarePreviewEditForStage`, additive: a repeated path updates rather than
+appends) can ask whether a candidate frame is independent of that pending value
+(`PreviewValueIsIndependentForStage`). The answer is yes only when an authored
+time sample or a stronger layer opinion provably answers that attribute in the
+stage's own layer stack; an attribute a compiled property chain revises, one
+with authored connections, one the stage authors nowhere, or a mapped or
+non-local edit target (a reference or variant target authors a different spec
+path, so a same-spelled sample there decides nothing about the composed value)
+is refused. Every rule but the default-time check reads the stage and its
+layers rather than the candidate frame, so an activated context holds the
+answer per declared path across a burst of warm frames and drops it when a
+stage notice retires the declaration; a context with no rig activated hears no
+stage notices and re-runs the rules each time. The proof's stage and layer
+reads run with the registry's lock released, so a notice authored on another
+thread can retire the declaration while a verdict is being derived: a verdict
+read under a description that retired or was re-declared inside that window is
+refused, and a warm request whose preview provenance has moved on is refused
+outright. Warm work carries a route:
+the frame the preview stands on is refused as pending, a frame already
+backed by a prepared burst is admitted as committed, and a frame built ahead
+of its destination is admitted only when
+every declared edit is provably independent of it.
 
 ## usdview plugins
 

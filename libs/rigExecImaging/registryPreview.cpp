@@ -16,8 +16,10 @@
 #include "pxr/base/vt/array.h"
 #include "pxr/base/vt/value.h"
 #include "pxr/usd/sdf/path.h"
+#include "pxr/usd/sdf/schema.h"
 #include "pxr/usd/sdf/valueTypeName.h"
 #include "pxr/usd/usd/attribute.h"
+#include "pxr/usd/usd/editTarget.h"
 #include "pxr/usd/usd/prim.h"
 #include "pxr/usd/usd/notice.h"
 #include "pxr/usd/usd/stage.h"
@@ -27,6 +29,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <functional>
 #include <limits>
 #include <map>
 #include <memory>
@@ -101,6 +104,10 @@ RigExecImagingRegistry::SetWeightOverlay(const std::string &weightPrimPath)
         if (_weightOverlay == resolved)
             return true;
         _weightOverlay = resolved;
+        // The overlay changes what every frame evaluates, so a preview's
+        // identity retires with it: nothing keyed to the previous overlay
+        // can be matched to a destination under this one.
+        _RetirePreviewIdentityLocked();
         if (_sessions.empty()) {
             // Remembered for whenever a rig is activated. Not a failure:
             // a host that sets its viewer mode before opening a stage has
@@ -351,6 +358,24 @@ _SplitLines(const std::string &packed)
     return out;
 }
 
+// Does \p layer author anything for \p path? A default counts only for a
+// layer above the edit target: within the layer that authors them, time
+// samples or a spline answer every time, so a default in that same layer
+// never reaches the composed value.
+bool
+_LayerAuthorsAt(const SdfLayerHandle &layer, const SdfPath &path,
+                bool defaultCounts)
+{
+    if (!layer || path.IsEmpty()) {
+        return false;
+    }
+    if (defaultCounts && layer->HasField(path, SdfFieldKeys->Default)) {
+        return true;
+    }
+    return layer->HasField(path, SdfFieldKeys->TimeSamples) ||
+           layer->HasField(path, SdfFieldKeys->Spline);
+}
+
 } // namespace
 
 int
@@ -427,13 +452,411 @@ RigExecImagingRegistry::BeginPreview(const std::string &packedAttributePaths)
     _previewSlots = std::move(slots);
     _previewStage = stage;
     _previewActive = true;
+    // A new session of the identity: the revision counts ticks within it.
+    _RetirePreviewIdentityLocked();
+    _previewIdentity.active = true;
     return int(total);
 }
 
 bool
 RigExecImagingRegistry::IsPreviewActive() const
 {
+    std::lock_guard<std::mutex> lock(_mutex);
     return _previewActive;
+}
+
+RigExecPreviewIdentity
+RigExecImagingRegistry::GetPreviewIdentity() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _previewIdentity;
+}
+
+bool
+RigExecImagingRegistry::DeclarePreviewEdit(
+    const std::string &packedAttributePaths, RigExecPreviewEditPolicy policy,
+    const double *values, size_t count)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (!_previewActive) {
+        return false;
+    }
+    const UsdStageRefPtr stage = _PreviewStageLocked();
+    if (!stage) {
+        return false;
+    }
+    const std::vector<std::string> lines = _SplitLines(packedAttributePaths);
+    if (lines.empty()) {
+        return false;
+    }
+    // Resolve every line before touching the description: a declaration
+    // naming one bad path declares nothing.
+    std::vector<PreviewEdit> parsed;
+    parsed.reserve(lines.size());
+    for (const std::string &line : lines) {
+        // `<path>`, or `<path>\t<elementCount>` for an array slot -- the
+        // spelling BeginPreview already takes.
+        const size_t tab = line.find('\t');
+        const bool hasElementCount = tab != std::string::npos;
+        size_t elementCount = 0;
+        if (hasElementCount &&
+            !_ParsePreviewElementCount(line.substr(tab + 1), &elementCount)) {
+            return false;
+        }
+        const std::string text = line.substr(0, tab);
+        if (!SdfPath::IsValidPathString(text)) {
+            return false;
+        }
+        const SdfPath path(text);
+        if (!path.IsAbsolutePath() || !path.IsPropertyPath()) {
+            return false;
+        }
+        const UsdAttribute attribute = stage->GetAttributeAtPath(path);
+        if (!attribute) {
+            return false;
+        }
+        size_t arity = 0;
+        if (_PreviewValueKind(attribute.GetTypeName(), hasElementCount,
+                              elementCount, &arity) == TfToken() ||
+            arity == 0) {
+            return false;
+        }
+        PreviewEdit edit;
+        edit.attributePath = path;
+        edit.policy = policy;
+        edit.pending.assign(arity, 0.0);
+        parsed.push_back(std::move(edit));
+    }
+    size_t total = 0;
+    for (const PreviewEdit &edit : parsed) {
+        total += edit.pending.size();
+    }
+    if (!values || count != total) {
+        return false;
+    }
+    size_t offset = 0;
+    for (PreviewEdit &edit : parsed) {
+        for (double &pending : edit.pending) {
+            pending = values[offset++];
+        }
+    }
+    for (PreviewEdit &edit : parsed) {
+        // A path already in the description keeps its place and takes the
+        // new pending values: the description is a set of paths, not a log.
+        const auto held = std::find_if(
+            _previewEdits.begin(), _previewEdits.end(),
+            [&edit](const PreviewEdit &existing) {
+                return existing.attributePath == edit.attributePath;
+            });
+        if (held != _previewEdits.end()) {
+            held->policy = edit.policy;
+            held->pending = std::move(edit.pending);
+            // A re-declaration can move the policy, so the held verdict no
+            // longer answers for this entry.
+            held->proof = PreviewProof();
+        } else {
+            _previewEdits.push_back(std::move(edit));
+        }
+    }
+    // The description itself moved: every accepted declaration advances its
+    // tick, so a verdict held for the previous one is no longer this path's.
+    ++_previewDeclaration;
+    return true;
+}
+
+RigExecPreviewEditStats
+RigExecImagingRegistry::GetPreviewEditStats() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    RigExecPreviewEditStats stats;
+    stats.identity = _previewIdentity;
+    stats.editCount = _previewEdits.size();
+    for (const PreviewEdit &edit : _previewEdits) {
+        stats.valueCount += edit.pending.size();
+    }
+    stats.policy = _previewEdits.empty()
+                       ? RigExecPreviewEditPolicy::AttributeDefault
+                       : _previewEdits.front().policy;
+    return stats;
+}
+
+void
+RigExecImagingRegistry::SetProofWindowProbe(std::function<void()> probe)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _proofWindowProbe = std::move(probe);
+}
+
+bool
+RigExecImagingRegistry::PreviewValueIsIndependent(
+    const std::string &attributePathText, UsdTimeCode time,
+    std::string *reason) const
+{
+    std::unique_lock<std::mutex> lock(_mutex);
+    if (!SdfPath::IsValidPathString(attributePathText)) {
+        if (reason) {
+            *reason = "the path is not a valid Sdf path";
+        }
+        return false;
+    }
+    return _PreviewValueIsIndependentLocked(SdfPath(attributePathText), time,
+                                            reason, lock);
+}
+
+void
+RigExecImagingRegistry::_RetirePreviewIdentityLocked()
+{
+    // A retired session never comes back: the next BeginPreview opens the
+    // next one, and nothing can key a frame to a closed session.
+    ++_previewIdentity.session;
+    _previewIdentity.revision = 0;
+    _previewIdentity.active = false;
+    ++_previewDeclaration;
+    _previewEdits.clear();
+}
+
+void
+RigExecImagingRegistry::_RetirePreviewIdentityForNoticeLocked(
+    const UsdNotice::ObjectsChanged &notice)
+{
+    if (_previewEdits.empty()) {
+        return;
+    }
+    for (const PreviewEdit &edit : _previewEdits) {
+        const SdfPath primPath = edit.attributePath.GetPrimPath();
+        // Undo, redo, and any other stage opinion on a declared path: the
+        // description no longer describes what the stage will hold.
+        for (const SdfPath &path : notice.GetChangedInfoOnlyPaths()) {
+            if (path == edit.attributePath || path == primPath) {
+                _RetirePreviewIdentityLocked();
+                return;
+            }
+        }
+        for (const SdfPath &path : notice.GetResyncedPaths()) {
+            // A resync re-specifies its path and everything below it, and
+            // the notice lists the ancestor, not the respecified descendants,
+            // so a declared attribute is covered by a resync at or above it.
+            if (path == edit.attributePath ||
+                edit.attributePath.HasPrefix(path)) {
+                _RetirePreviewIdentityLocked();
+                return;
+            }
+        }
+    }
+}
+
+bool
+RigExecImagingRegistry::_PreviewValueIsIndependentLocked(
+    const SdfPath &attributePath, UsdTimeCode time, std::string *reason,
+    std::unique_lock<std::mutex> &lock) const
+{
+    auto refuse = [reason](const std::string &why) {
+        if (reason) {
+            *reason = why;
+        }
+        return false;
+    };
+    auto accept = [reason](const std::string &why) {
+        if (reason) {
+            *reason = why;
+        }
+        return true;
+    };
+    // The same stage the declaration was made against: a preview can stand
+    // on a context that has not compiled a rig yet.
+    const UsdStageRefPtr stage = _PreviewStageLocked();
+    if (!stage) {
+        return refuse("this context holds no stage");
+    }
+    if (!attributePath.IsAbsolutePath() || !attributePath.IsPropertyPath()) {
+        return refuse("the path is not an absolute attribute path");
+    }
+    const auto declared =
+        std::find_if(_previewEdits.begin(), _previewEdits.end(),
+                     [&attributePath](const PreviewEdit &edit) {
+                         return edit.attributePath == attributePath;
+                     });
+    if (declared == _previewEdits.end()) {
+        return refuse("the edit description declares no pending value here");
+    }
+    if (declared->policy != RigExecPreviewEditPolicy::AttributeDefault) {
+        // A pending key or connection is not a default opinion; every rule
+        // below is about a default that cannot reach the composed value.
+        return refuse("the pending value is not a default opinion");
+    }
+    if (time.IsDefault()) {
+        return refuse("the candidate time is the default time, where the "
+                      "pending default is the value");
+    }
+    // A compiled chain revising the path is evaluator state, not scene
+    // description, so it is read before the lock comes off.
+    bool chainRevised = false;
+    for (const RigSession &session : _sessions) {
+        if (session.bridge &&
+            session.bridge->GetEvaluator().IsPropertyChainTarget(
+                attributePath)) {
+            chainRevised = true;
+            break;
+        }
+    }
+    // Every input of the verdict is a stage or layer read: OpenUSD takes its
+    // own composition locks for those, and the stage-notice handler takes
+    // _mutex, so the reads run with the registry lock released and the two
+    // never nest. Only stage and layer handles cross the window.
+    const bool holdable = _PreviewNoticeCoversLocked(stage);
+    // The provenance this verdict is being derived for. A retirement or a
+    // re-declaration inside the window replaces the description, so an answer
+    // read under the old one can neither be returned nor stored on whatever
+    // takes its place.
+    const uint64_t session = _previewIdentity.session;
+    const uint64_t declaration = _previewDeclaration;
+    const PreviewProof held = declared->proof;
+    // Copied while the lock is held so the seam itself cannot race.
+    const std::function<void()> probe = _proofWindowProbe;
+    lock.unlock();
+    if (probe) {
+        probe();
+    }
+    const UsdEditTarget target = stage->GetEditTarget();
+    const SdfLayerHandle targetLayer = target.GetLayer();
+    const bool identityMap = target.GetMapFunction().IsIdentity();
+    const SdfPath mappedSpecPath =
+        identityMap ? attributePath : target.MapToSpecPath(attributePath);
+    // The answer can be held only where an edit of a declared path retires the
+    // description along with it; without that notice the layer stack can change
+    // under a held verdict, so the answer is re-derived. No rule producing it
+    // reads a time code, and a warm burst asks once per candidate frame.
+    std::string why;
+    bool independent;
+    if (holdable && held.derived && held.session == session &&
+        held.declaration == declaration && held.stage == stage &&
+        held.targetLayer == targetLayer && held.identityMap == identityMap &&
+        held.mappedSpecPath == mappedSpecPath) {
+        independent = held.independent;
+        why = held.reason;
+    } else {
+        independent = _DerivePreviewIndependence(
+            stage, attributePath, targetLayer, identityMap, mappedSpecPath,
+            chainRevised, &why);
+    }
+    lock.lock();
+    if (_previewIdentity.session != session) {
+        return refuse("the edit description retired while this verdict was "
+                      "being read; ask again under the current description");
+    }
+    if (_previewDeclaration != declaration) {
+        return refuse(
+            "the edit description was re-declared while this verdict "
+            "was being read; ask again under the current description");
+    }
+    // A notice in the window may have retired the description, so only a path
+    // still declared under this session can hold a verdict.
+    const auto current =
+        std::find_if(_previewEdits.begin(), _previewEdits.end(),
+                     [&attributePath](const PreviewEdit &edit) {
+                         return edit.attributePath == attributePath;
+                     });
+    if (current == _previewEdits.end()) {
+        return independent ? accept(why) : refuse(why);
+    }
+    current->proof = PreviewProof();
+    // Deactivation in the window takes the notice key with it: without a
+    // stage notice reaching this context, no verdict may be held.
+    if (holdable && _PreviewNoticeCoversLocked(stage)) {
+        PreviewProof proof;
+        proof.stage = stage;
+        proof.session = session;
+        proof.declaration = declaration;
+        proof.targetLayer = targetLayer;
+        proof.mappedSpecPath = mappedSpecPath;
+        proof.identityMap = identityMap;
+        proof.derived = true;
+        proof.independent = independent;
+        proof.reason = why;
+        current->proof = std::move(proof);
+    }
+    return independent ? accept(why) : refuse(why);
+}
+
+bool
+RigExecImagingRegistry::_PreviewNoticeCoversLocked(
+    const UsdStageRefPtr &stage) const
+{
+    return _changeKey && stage == _stage;
+}
+
+bool
+RigExecImagingRegistry::_DerivePreviewIndependence(
+    const UsdStageRefPtr &stage, const SdfPath &attributePath,
+    const SdfLayerHandle &targetLayer, bool identityMap,
+    const SdfPath &mappedSpecPath, bool chainRevised, std::string *why) const
+{
+    // Runs with _mutex released: this is where the verdict reads the stage,
+    // its layers and its edit target, and the stage-notice handler takes
+    // _mutex.
+    auto refuse = [why](const std::string &text) {
+        if (why) {
+            *why = text;
+        }
+        return false;
+    };
+    auto accept = [why](const std::string &text) {
+        if (why) {
+            *why = text;
+        }
+        return true;
+    };
+    const UsdAttribute attribute = stage->GetAttributeAtPath(attributePath);
+    if (!attribute) {
+        return refuse("the stage has no attribute at this path");
+    }
+    if (attribute.HasAuthoredConnections()) {
+        return refuse("the attribute has authored connections, so its "
+                      "composed value is not reasoned about here");
+    }
+    if (chainRevised) {
+        return refuse("a compiled property chain revises this attribute");
+    }
+    if (!targetLayer) {
+        return refuse("this stage has no edit-target layer");
+    }
+    // Every layer rule below reads the composed path in a layer of this
+    // stage's own stack, which is where a local edit target authors it. A
+    // mapped target (a reference or a variant) writes another spec path, and
+    // a same-spelled spec in that other layer composes nowhere here: the
+    // fields read below are not the ones the pending value would reach.
+    if (!identityMap || mappedSpecPath != attributePath) {
+        return refuse("the edit target maps this composed path to another "
+                      "spec path, so the pending value would be authored "
+                      "somewhere this proof cannot read");
+    }
+    const std::vector<SdfLayerHandle> stack = stage->GetLayerStack();
+    size_t targetIndex = stack.size();
+    for (size_t i = 0; i < stack.size(); ++i) {
+        if (stack[i] == targetLayer) {
+            targetIndex = i;
+            break;
+        }
+    }
+    if (targetIndex == stack.size()) {
+        // Not one of the stage's own layers: a non-local target, whose
+        // strength against this stack is not something a flat read settles.
+        return refuse("the edit-target layer is not in this stage's layer "
+                      "stack, so its composition strength is unknown here");
+    }
+    // Anything authored above the edit target decides the composed answer
+    // at every time, and a pending value in the target can never reach it.
+    for (size_t i = 0; i < targetIndex; ++i) {
+        if (_LayerAuthorsAt(stack[i], attributePath, true)) {
+            return accept("a layer stronger than the edit target authors this "
+                          "attribute, so the pending default never applies");
+        }
+    }
+    if (_LayerAuthorsAt(targetLayer, attributePath, false)) {
+        return accept("authored time samples in the edit target layer answer "
+                      "every time, and a same-layer default never hides them");
+    }
+    return refuse("nothing but the pending default answers this time");
 }
 
 bool
@@ -567,6 +990,7 @@ RigExecImagingRegistry::UpdatePreview(const double *values, size_t count)
         if (!_ResolvePreviewSample(values, count, &byRig, &xformDeltas)) {
             return false;
         }
+        ++_previewIdentity.revision;
         // The xform lane needs no evaluation at all: the delta goes straight
         // into the chains and the dirty notice it sends is the whole update.
         _SetChainXformDeltas(xformDeltas);
@@ -612,6 +1036,7 @@ RigExecImagingRegistry::EndPreview(bool publish)
         _previewSlots.clear();
         _previewActive = false;
         _previewStage = UsdStageWeakPtr();
+        _RetirePreviewIdentityLocked();
         _SetChainXformDeltas({});
         for (RigSession &session : _sessions) {
             session.settleOverrides.clear();

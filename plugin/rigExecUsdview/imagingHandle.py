@@ -55,9 +55,12 @@ _ll = ctypes.c_longlong
 _i = ctypes.c_int
 _d = ctypes.c_double
 _s = ctypes.c_char_p
+_u = ctypes.c_ulonglong
 _dp = ctypes.POINTER(ctypes.c_double)
 _ip = ctypes.POINTER(ctypes.c_int)
 _fp = ctypes.POINTER(ctypes.c_float)
+_up = ctypes.POINTER(ctypes.c_ulonglong)
+_cp = ctypes.POINTER(ctypes.c_char)
 
 # name -> (restype, argtypes) of RigExecImaging_<Name>ForStage AFTER its
 # leading stage cache id (long long). Only per-stage names appear here;
@@ -83,6 +86,11 @@ _PER_STAGE = {
     "UpdatePreview": (_i, [_dp, _i]),
     "EndPreview": (_i, []),
     "EndPreviewWithoutPublish": (_i, []),
+    "GetPreviewIdentity": (_i, [_up, _up, _ip]),
+    "DeclarePreviewEdit": (_i, [_s, _i, _dp, _i]),
+    "GetPreviewEditStats": (_i, [_up, _up, _ip, _ip, _ip]),
+    "PreviewValueIsIndependent": (_i, [_s, _d, _cp, _i]),
+    "AdmitWarmRoute": (_i, [_i, _s, _d, _u, _cp, _i]),
     "GetGuideBoundsAssetSpace": (_i, [_s, _dp]),
     "GetAllGuideBoundsAssetSpace": (_i, [_dp]),
 }
@@ -340,6 +348,63 @@ class ImagingHandle(object):
 
     def EndPreview(self):
         return self._Entry("EndPreview")()
+
+    def PreviewIdentity(self):
+        """(session, revision, active) for the manipulation standing on this
+        stage. The session advances on every retirement and never returns to
+        an older value; a zero session means no preview has stood here."""
+        session = ctypes.c_ulonglong()
+        revision = ctypes.c_ulonglong()
+        active = ctypes.c_int()
+        if self._Entry("GetPreviewIdentity")(session, revision, active):
+            return None
+        return (session.value, revision.value, bool(active.value))
+
+    def DeclarePreviewEdit(self, packedPaths, policy, values, count):
+        """Records what the manipulation says it will author. Additive: a
+        repeated path updates the entry rather than appending one. Policy is
+        0 for a default value, 1 for a time sample, 2 for a connection."""
+        if isinstance(packedPaths, str):
+            packedPaths = packedPaths.encode("utf-8")
+        return self._Entry("DeclarePreviewEdit")(packedPaths, int(policy),
+                                                 values, int(count)) == 0
+
+    def PreviewEditStats(self):
+        """(session, revision, edit count, pending value count, policy)."""
+        session = ctypes.c_ulonglong()
+        revision = ctypes.c_ulonglong()
+        edits = ctypes.c_int()
+        values = ctypes.c_int()
+        policy = ctypes.c_int()
+        if self._Entry("GetPreviewEditStats")(session, revision, edits,
+                                             values, policy):
+            return None
+        return (session.value, revision.value, edits.value, values.value,
+                policy.value)
+
+    def PreviewValueIsIndependent(self, attributePath, frame,
+                                  reasonCapacity=256):
+        """(True, '') when the composed value at `frame` provably does not
+        come from the pending default, else (False, reason)."""
+        if isinstance(attributePath, str):
+            attributePath = attributePath.encode("utf-8")
+        reason = ctypes.create_string_buffer(reasonCapacity)
+        proven = self._Entry("PreviewValueIsIndependent")(
+            attributePath, float(frame), reason, reasonCapacity)
+        return bool(proven), reason.value.decode("utf-8", "replace")
+
+    def AdmitWarmRoute(self, route, rigPath, frame, previewSession=0,
+                       reasonCapacity=256):
+        """(admitted, reason) for a warm request: route 0 committed, 1
+        committed-speculative, 2 pending-preview."""
+        if isinstance(rigPath, str):
+            rigPath = rigPath.encode("utf-8")
+        reason = ctypes.create_string_buffer(reasonCapacity)
+        admitted = self._Entry("AdmitWarmRoute")(int(route), rigPath,
+                                                 float(frame),
+                                                 int(previewSession), reason,
+                                                 reasonCapacity)
+        return bool(admitted), reason.value.decode("utf-8", "replace")
 
     def GetGuideBoundsAssetSpace(self, primPath, outMinMax):
         if isinstance(primPath, str):

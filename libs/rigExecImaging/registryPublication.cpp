@@ -191,6 +191,10 @@ RigExecImagingRegistry::_Publish(
         result.compiledRig = compiledRig;
         _publishedCompiledRigId = compiledRig->id;
         _publishedCompiledRig = compiledRig;
+        // A recompiled rig changes what every frame evaluates: the preview
+        // identity retires so nothing keyed to the previous compile can
+        // match a later one.
+        _RetirePreviewIdentityLocked();
     }
     result.ok = true;
     return result;

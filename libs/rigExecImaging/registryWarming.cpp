@@ -130,6 +130,94 @@ RigExecImagingRegistry::GetWarmSamplingMaxMs()
     return _warmSamplingMaxMs;
 }
 
+bool
+RigExecImagingRegistry::AdmitWarmRoute(const RigExecWarmRouteDescriptor &route,
+                                       std::string *reason) const
+{
+    std::unique_lock<std::mutex> lock(_mutex);
+    return _AdmitWarmRouteLocked(route, reason, lock);
+}
+
+bool
+RigExecImagingRegistry::_AdmitWarmRouteLocked(
+    const RigExecWarmRouteDescriptor &route, std::string *reason,
+    std::unique_lock<std::mutex> &lock) const
+{
+    const auto refuse = [reason](const std::string &why) {
+        if (reason) {
+            *reason = why;
+        }
+        return false;
+    };
+    const auto accept = [reason](const std::string &why) {
+        if (reason) {
+            *reason = why;
+        }
+        return true;
+    };
+    switch (route.route) {
+    case RigExecWarmRoute::Committed:
+        return accept("the frame has its destination: the committed cache "
+                      "and its index");
+    case RigExecWarmRoute::PendingPreview:
+        // A preview authors nothing, so the pose this frame would carry
+        // has no committed consumer to read it: the work is refused here
+        // rather than run and thrown away.
+        return refuse("the frame's value is still a pending preview: no "
+                      "committed consumer can reach it");
+    case RigExecWarmRoute::CommittedSpeculative:
+        break;
+    }
+    // Speculative work is built before its destination exists. It is worth
+    // building only when a later edit cannot change it.
+    if (route.previewSession &&
+        route.previewSession != _previewIdentity.session) {
+        return refuse("the request was captured under preview session " +
+                      std::to_string(route.previewSession) +
+                      ", which has retired");
+    }
+    if (_previewEdits.empty()) {
+        return accept("no edit is declared against this candidate, so nothing "
+                      "pending can change it");
+    }
+    // The provenance this request is admitted under: the proofs below
+    // release _mutex for their stage reads, and a retirement or a
+    // re-declaration can land in that window.
+    const uint64_t admittedSession = _previewIdentity.session;
+    const uint64_t admittedDeclaration = _previewDeclaration;
+    // Each proof releases _mutex for its stage reads, and a notice in that
+    // window can clear the description, so the declared paths are copied
+    // before the proofs run.
+    std::vector<SdfPath> declaredPaths;
+    declaredPaths.reserve(_previewEdits.size());
+    for (const PreviewEdit &edit : _previewEdits) {
+        declaredPaths.push_back(edit.attributePath);
+    }
+    for (const SdfPath &editPath : declaredPaths) {
+        std::string why;
+        if (!_PreviewValueIsIndependentLocked(editPath, route.time,
+                                              reason ? &why : nullptr, lock)) {
+            if (reason) {
+                *reason = "the candidate time is not provably independent of "
+                          "the declared edit " +
+                          editPath.GetAsString() + ": " + why;
+            }
+            return false;
+        }
+    }
+    if (_previewIdentity.session != admittedSession) {
+        return refuse("the edit description retired while the candidate frame "
+                      "was being proved; the request is stale");
+    }
+    if (_previewDeclaration != admittedDeclaration) {
+        return refuse("the edit description was re-declared while the "
+                      "candidate frame was being proved; the request is "
+                      "stale");
+    }
+    return accept("every declared edit is provably independent of this "
+                  "candidate time");
+}
+
 std::vector<UsdTimeCode>
 RigExecImagingRegistry::_CursorSweepTimes(const RigSession &session,
                                           UsdTimeCode playhead)

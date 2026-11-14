@@ -161,6 +161,16 @@ struct RigExecWarmPhaseTimings {
     }
 };
 
+/// Microsecond clock a scheduler stamps its queue events with: the sampling
+/// budget's millisecond stop, the queue-wait stamps and the run stamps all
+/// read through it. An empty clock means the profiler's steady clock. A test
+/// injects a deterministic clock so those stops and waits come from supplied
+/// readings instead of wall time. The clock is fixed at construction, so no
+/// thread can swap it out while a job runs, so an injected clock must be safe
+/// to read from any worker, and it is a leaf: it must not call back into the
+/// scheduler, since some stamps are taken under the scheduler mutex.
+using RigExecSchedulerClock = std::function<uint64_t()>;
+
 /// One warming request: evaluate \p time for \p rig, publishing into the
 /// frame cache behind the generation fence.
 struct RigExecWarmRequest {
@@ -176,6 +186,11 @@ struct RigExecWarmRequest {
     /// while its profiler records; null otherwise and on every queued copy.
     /// A job that times its phases marks here and never calls the profiler.
     RigExecWarmPhaseTimings *timings = nullptr;
+    /// Scheduler-clock stamps the scheduler owns: the moment the job entered
+    /// the queue, and the moment a worker popped it. Queue wait is poppedUs -
+    /// enqueuedUs; run time is the terminal stamp minus poppedUs.
+    uint64_t enqueuedUs = 0;
+    uint64_t poppedUs = 0;
 };
 
 /// One ran job's publish disposition, reported by the work instead of void
@@ -231,8 +246,7 @@ struct RigExecWarmFactoryResult {
     RigExecWarmSkipReason skip = RigExecWarmSkipReason::None;
     std::string detail;
     RigExecWarmFactoryResult() = default;
-    RigExecWarmFactoryResult(RigExecWarmWork built)
-        : work(std::move(built))
+    RigExecWarmFactoryResult(RigExecWarmWork built) : work(std::move(built))
     {
     }
 };
@@ -313,6 +327,23 @@ bool RigExecSetBackgroundThreadPriority();
 /// assert OS priority values.
 const char *RigExecBackgroundPriorityBackend();
 
+/// Why an Enqueue was refused. Every declined Enqueue lands in exactly one
+/// of these; a factory skip that carried a reason keeps its own breakout.
+enum class RigExecWarmDeclineReason {
+    /// The cache mode is off, or parallel evaluation is disabled.
+    FillGateClosed,
+    /// A newer edit generation exists for the rig.
+    StaleGeneration,
+    /// Default, NaN or infinite frame time.
+    UnusableTime,
+    /// No work closure was handed over.
+    EmptyWork,
+    /// The rig already holds its share of the queue.
+    PerRigCap,
+    /// The scheduler is shutting down.
+    Stopping,
+};
+
 /// Lifetime counters. Every counter only moves forward except across
 /// destruction. Jobs that enter the queue balance exactly: queued-ever ==
 /// published + declinedInvalid + declinedGeneration + droppedStale +
@@ -321,6 +352,8 @@ const char *RigExecBackgroundPriorityBackend();
 /// accept without queueing -- and declined counts every Enqueue refusal.
 /// completed ("ran", kept for compat) == published + declinedInvalid +
 /// declinedGeneration; a throwing job warns and lands declinedInvalid.
+/// declined == the six Enqueue reasons plus the three reasoned factory
+/// skips, and queuedDepth == queuedNeighbor + queuedSweep.
 struct RigExecBackgroundSchedulerStats {
     /// Jobs queued and waiting for a worker.
     size_t queuedDepth = 0;
@@ -361,6 +394,22 @@ struct RigExecBackgroundSchedulerStats {
     size_t declinedFreezeRefused = 0;
     size_t declinedUnsampleable = 0;
     size_t declinedD7Exempt = 0;
+    /// Enqueue refusals broken out by reason; with the three factory-skip
+    /// counts above, these add up to declined exactly.
+    size_t declinedFillGate = 0;
+    size_t declinedStaleGeneration = 0;
+    size_t declinedUnusableTime = 0;
+    size_t declinedEmptyWork = 0;
+    size_t declinedPerRigCap = 0;
+    size_t declinedStopping = 0;
+    /// Trigger-path stops: a burst ended before its whole wave reached the
+    /// queue. A closed fill gate is an Enqueue decline per frame instead, so
+    /// it never appears here; these stops are not Enqueue refusals and stay
+    /// out of the balance.
+    size_t triggerStops = 0;       // sum of the three causes below
+    size_t triggerStopsStale = 0;  // generation moved, or the pool stopped
+    size_t triggerStopsBudget = 0; // invocation or millisecond budget hit
+    size_t triggerStopsCap = 0;    // the per-rig cap closed the burst
     /// Queued jobs dropped by the destructor. Running jobs finish; pending
     /// jobs are dropped and their frames evaluate live when asked.
     size_t droppedAtShutdown = 0;
@@ -369,6 +418,23 @@ struct RigExecBackgroundSchedulerStats {
     /// trigger work, not queue jobs -- but the per-trigger delta proves a
     /// trigger held its sampling budget.
     size_t factoryInvocations = 0;
+    /// Highest queue depth and running count the scheduler has ever held.
+    size_t maxQueuedDepth = 0;
+    size_t maxRunning = 0;
+    /// The queue split by priority right now: queuedDepth == queuedNeighbor
+    /// + queuedSweep. An upgrade moves a job from one bucket to the other.
+    size_t queuedNeighbor = 0;
+    size_t queuedSweep = 0;
+    /// Jobs accepted into the queue, by the priority they were accepted at.
+    size_t enqueuedNeighbor = 0;
+    size_t enqueuedSweep = 0;
+    /// Queue wait (enqueue to pop) for every job a worker popped, and run
+    /// time (pop to the terminal stamp) for the jobs that ran, in
+    /// microseconds on the scheduler's clock.
+    uint64_t totalQueueWaitUs = 0;
+    uint64_t maxQueueWaitUs = 0;
+    uint64_t totalRunUs = 0;
+    uint64_t maxRunUs = 0;
 };
 
 /// The frame-job queue. Thread-safe; the lock is held only across token and
@@ -388,13 +454,17 @@ public:
     /// the manual mode, where queued jobs wait for RunNextQueuedForTesting /
     /// DrainQueueForTesting on the calling thread. Production uses the
     /// default.
+    /// \p clock stamps the queue events (queue waits, run times, and the
+    /// sampling budget's millisecond stop). An empty clock reads the profiler
+    /// steady clock.
     explicit RigExecBackgroundScheduler(
-        int workerCount = kRigExecBackgroundSchedulerDefaultWorkers);
+        int workerCount = kRigExecBackgroundSchedulerDefaultWorkers,
+        RigExecSchedulerClock clock = nullptr);
     ~RigExecBackgroundScheduler();
 
     RigExecBackgroundScheduler(const RigExecBackgroundScheduler &) = delete;
-    RigExecBackgroundScheduler &operator=(
-        const RigExecBackgroundScheduler &) = delete;
+    RigExecBackgroundScheduler &
+    operator=(const RigExecBackgroundScheduler &) = delete;
 
     /// The rig's current generation: the token its next job is enqueued
     /// under. Zero for a rig the scheduler has never seen.
@@ -471,12 +541,15 @@ public:
     /// outermost, then the scheduler mutex, then cache shards, then the
     /// warm index -- never inverted. Acquire it holding neither the
     /// scheduler mutex nor the registry mutex.
-    std::mutex &FenceMutex() const { return _fenceMutex; }
+    std::mutex &FenceMutex() const
+    {
+        return _fenceMutex;
+    }
 
     /// Whether \p generation is still the rig's current one. A worker asks
     /// before it runs and the frozen entry point asks again before publish.
-    bool IsGenerationCurrent(
-        const SdfPath &rig, RigExecFrameGeneration generation) const;
+    bool IsGenerationCurrent(const SdfPath &rig,
+                             RigExecFrameGeneration generation) const;
 
     /// Enqueues \p time for warming at \p priority, running \p work on a
     /// worker. Returns false -- without enqueueing, counting declined -- when
@@ -513,26 +586,25 @@ public:
     /// nothing and never calls the factory. The gate is read once per
     /// burst: a flip mid-burst lands on the next trigger. \p neighborRadius
     /// <= 0 enqueues no neighbors.
-    size_t OnEditCommitted(const SdfPath &rig, UsdTimeCode playhead,
-                           RigExecFrameGeneration generation,
-                           const std::vector<UsdTimeCode> &sweepTimes,
-                           RigExecWarmJobFactory factory,
-                           int neighborRadius =
-                               kRigExecFrameCacheDefaultNeighborRadius,
-                           RigExecWarmSamplingBudget budget =
-                               RigExecWarmSamplingBudget());
+    size_t OnEditCommitted(
+        const SdfPath &rig, UsdTimeCode playhead,
+        RigExecFrameGeneration generation,
+        const std::vector<UsdTimeCode> &sweepTimes,
+        RigExecWarmJobFactory factory,
+        int neighborRadius = kRigExecFrameCacheDefaultNeighborRadius,
+        RigExecWarmSamplingBudget budget = RigExecWarmSamplingBudget());
 
     /// The secondary warming trigger: call from the frame loop when the UI is
     /// idle. Enqueues \p sweepTimes in order as Sweep -- neighbors belong to
     /// the commit trigger -- with the same skipping, factory, cap, staleness,
     /// budget, and gate rules as OnEditCommitted. Returns how many jobs were
     /// enqueued.
-    size_t OnIdle(const SdfPath &rig, UsdTimeCode playhead,
-                  RigExecFrameGeneration generation,
-                  const std::vector<UsdTimeCode> &sweepTimes,
-                  RigExecWarmJobFactory factory,
-                  RigExecWarmSamplingBudget budget =
-                      RigExecWarmSamplingBudget());
+    size_t
+    OnIdle(const SdfPath &rig, UsdTimeCode playhead,
+           RigExecFrameGeneration generation,
+           const std::vector<UsdTimeCode> &sweepTimes,
+           RigExecWarmJobFactory factory,
+           RigExecWarmSamplingBudget budget = RigExecWarmSamplingBudget());
 
     /// Sheds queued sweep work the playhead already passed during active
     /// (forward) playback: purges the rig's queued Sweep jobs at or before \p
@@ -556,14 +628,27 @@ public:
 
     /// The worker count this scheduler runs (after clamping). Zero is the
     /// manual mode.
-    int GetWorkerCount() const { return _workerCount; }
+    int GetWorkerCount() const
+    {
+        return _workerCount;
+    }
 
     RigExecBackgroundSchedulerStats Stats() const;
 
     /// The scheduler's profiler: queue-depth samples and purge points record
     /// here. Off by default; when off, each sample site costs one branch.
-    const RigExecProfiler &GetProfiler() const { return _profiler; }
-    RigExecProfiler *MutableProfiler() { return &_profiler; }
+    const RigExecProfiler &GetProfiler() const
+    {
+        return _profiler;
+    }
+    RigExecProfiler *MutableProfiler()
+    {
+        return &_profiler;
+    }
+
+    /// The scheduler clock's current reading, in microseconds. A scheduler
+    /// built without a clock reads the profiler steady clock.
+    uint64_t ClockNowUs() const;
 
     /// Blocks until no job is queued or running. Event-driven, not timed:
     /// returns when the last completion, drop, purge, or shed lands.
@@ -603,6 +688,22 @@ private:
         }
     };
 
+    /// Stamps for queue insert, pop and the terminal state.
+    uint64_t _NowUs() const
+    {
+        return _clock ? _clock() : RigExecProfiler::NowUs();
+    }
+    // Notes the queue's shape after every mutation, so the depth and running
+    // maxima cannot miss a change. Call with _mutex held.
+    void _RecordQueueStateLocked();
+    // Records one Enqueue refusal in the total and its reason split. Call
+    // with _mutex held.
+    void _NoteDeclineLocked(RigExecWarmDeclineReason reason);
+    // Why a trigger burst ended before its whole wave reached the queue.
+    enum _StopCause { Stale, Budget, Cap };
+    // Records a burst stop in the trigger-stop split. Call with _mutex held.
+    void _NoteTriggerStopLocked(_StopCause cause);
+
     void _WorkerMain();
     // Pops the next queued job under the lock; the caller runs it outside the
     // lock. When \p wait, blocks until a job arrives or the pool stops,
@@ -617,10 +718,9 @@ private:
     bool _ExecutePoppedJob(_QueuedJob *job);
     // Reports one transition to the hook, if any. Call with _mutex held:
     // the hook runs inside the scheduler lock, so it must be leaf-only.
-    void _ReportTransitionLocked(const RigExecWarmRequest &request,
-                                 RigExecWarmTransitionKind kind,
-                                 RigExecWarmOutcome outcome =
-                                     RigExecWarmOutcome::Published);
+    void _ReportTransitionLocked(
+        const RigExecWarmRequest &request, RigExecWarmTransitionKind kind,
+        RigExecWarmOutcome outcome = RigExecWarmOutcome::Published);
     // Records a popped job's terminal state under the lock: \p ran true
     // counts a completion (the work already ran, outside the lock) and
     // splits it on \p outcome; false counts a stale drop (the work never
@@ -633,8 +733,8 @@ private:
                     const RigExecWarmPhaseTimings *timings = nullptr);
     // The time's current fence token: the sidecar's entry, or zero when the
     // time was never scoped-purged. Call with _mutex held.
-    RigExecWarmFenceToken _CurrentFenceTokenLocked(
-        const SdfPath &rig, double timeValue) const;
+    RigExecWarmFenceToken _CurrentFenceTokenLocked(const SdfPath &rig,
+                                                   double timeValue) const;
     // Merges a request for an already-queued (rig, time): coalesces, or
     // promotes a queued sweep to neighbor keeping its sequence. Answers
     // whether the time was queued (and merged). Call with _mutex held.
@@ -655,10 +755,11 @@ private:
     // \p factory outside the lock (sampling is slow; the lock never spans
     // it) and deciding staleness, coalescing, and cap under it. \p ledger
     // counts the invocation against the trigger's budget.
-    _TriggerOutcome _EnqueueTriggerTime(
-        const SdfPath &rig, UsdTimeCode time, RigExecWarmPriority priority,
-        RigExecFrameGeneration generation,
-        const RigExecWarmJobFactory &factory, _BudgetLedger *ledger);
+    _TriggerOutcome _EnqueueTriggerTime(const SdfPath &rig, UsdTimeCode time,
+                                        RigExecWarmPriority priority,
+                                        RigExecFrameGeneration generation,
+                                        const RigExecWarmJobFactory &factory,
+                                        _BudgetLedger *ledger);
     // The sweep core shared by OnEditCommitted and OnIdle: \p sweepTimes in
     // order as Sweep, skipping the playhead and default entries.
     size_t _EnqueueSweepTimes(const SdfPath &rig, UsdTimeCode playhead,
@@ -672,6 +773,8 @@ private:
     // order, ahead of _mutex.
     mutable std::mutex _fenceMutex;
     std::condition_variable _cv;
+    // Fixed at construction: workers and triggers read it without a lock.
+    const RigExecSchedulerClock _clock;
     std::map<SdfPath, RigExecFrameGeneration> _generations;
     std::map<_QueueKey, _QueuedJob> _queue;
     // Coalescing index: (rig, time value) -> queue key. Queued jobs only;
@@ -704,11 +807,29 @@ private:
     size_t _coalesced = 0;
     size_t _upgraded = 0;
     size_t _declined = 0;
+    size_t _declinedFillGate = 0;
+    size_t _declinedStaleGeneration = 0;
+    size_t _declinedUnusableTime = 0;
+    size_t _declinedEmptyWork = 0;
+    size_t _declinedPerRigCap = 0;
+    size_t _declinedStopping = 0;
+    size_t _triggerStops = 0;
+    size_t _triggerStopsStale = 0;
+    size_t _triggerStopsBudget = 0;
+    size_t _triggerStopsCap = 0;
     size_t _declinedFreezeRefused = 0;
     size_t _declinedUnsampleable = 0;
     size_t _declinedD7Exempt = 0;
     size_t _factoryInvocations = 0;
     size_t _droppedAtShutdown = 0;
+    size_t _maxQueuedDepth = 0;
+    size_t _maxRunning = 0;
+    size_t _enqueuedNeighbor = 0;
+    size_t _enqueuedSweep = 0;
+    uint64_t _totalQueueWaitUs = 0;
+    uint64_t _maxQueueWaitUs = 0;
+    uint64_t _totalRunUs = 0;
+    uint64_t _maxRunUs = 0;
     RigExecWarmTransitionHook _transitionHook;
     size_t _perRigCap = kRigExecBackgroundSchedulerDefaultPerRigJobs;
     int _workerCount = 0;
@@ -718,6 +839,6 @@ private:
     RigExecProfiler _profiler;
 };
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_BACKGROUND_SCHEDULER_H
+#endif // RIGEXEC_BACKGROUND_SCHEDULER_H

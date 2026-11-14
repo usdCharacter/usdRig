@@ -66,11 +66,13 @@
 
 #include "pxr/base/tf/notice.h"
 #include "pxr/base/tf/weakBase.h"
+#include "pxr/usd/sdf/layer.h"
 #include "pxr/usd/usd/notice.h"
 #include "pxr/usd/usdGeom/xformCache.h"
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -95,6 +97,61 @@ struct RigExecUpstreamPullWindow {
     /// chain has read any trigger.
     bool haveTime = false;
     double time = 0.0;
+};
+
+/// How the tool behind a declared preview edit means to author it. The proof
+/// helper reasons about a pending value only for a default: a key or a
+/// connection has no default for a candidate time to be independent of.
+enum class RigExecPreviewEditPolicy {
+    AttributeDefault = 0,
+    AttributeTimeSample = 1,
+    Connection = 2,
+};
+
+/// Identity of the preview standing on this context. \p session numbers the
+/// session, \p revision counts the accepted UpdatePreview samples inside it.
+/// Both move monotonically: BeginPreview opens a session, and every
+/// retirement (EndPreview, EndPreviewWithoutPublish, a stage notice editing
+/// a declared path, a recompile, a weight-overlay change, deactivation) moves
+/// the session forward and resets the revision, so an identity taken before a
+/// retirement can never match a later one.
+struct RigExecPreviewIdentity {
+    uint64_t session = 0;
+    uint64_t revision = 0;
+    bool active = false;
+};
+
+/// The edit description declared for the preview in progress: the attribute
+/// paths the tool says it will author, the pending values it names for each,
+/// and the policy kind. Never written to the stage.
+struct RigExecPreviewEditStats {
+    RigExecPreviewIdentity identity;
+    size_t editCount = 0;
+    size_t valueCount = 0;
+    RigExecPreviewEditPolicy policy =
+        RigExecPreviewEditPolicy::AttributeDefault;
+};
+
+/// Where a warm request is headed. Later tasks thread this through the warm
+/// path; here only AdmitWarmRoute consults it.
+enum class RigExecWarmRoute {
+    /// The frame has a destination: the committed cache and its index.
+    Committed = 0,
+    /// The frame is built ahead of a destination that does not exist yet.
+    CommittedSpeculative = 1,
+    /// The frame's value is still a pending preview: no committed consumer
+    /// can reach it, so AdmitWarmRoute refuses it.
+    PendingPreview = 2,
+};
+
+struct RigExecWarmRouteDescriptor {
+    RigExecWarmRoute route = RigExecWarmRoute::Committed;
+    /// The preview identity the request was captured under; zero for a
+    /// committed request.
+    uint64_t previewSession = 0;
+    uint64_t previewRevision = 0;
+    SdfPath rigPath;
+    UsdTimeCode time = UsdTimeCode::Default();
 };
 
 class RigExecImagingRegistry : public TfWeakBase {
@@ -475,7 +532,73 @@ public:
     /// from the notice with the overrides still standing, once here.
     bool EndPreview(bool publish = true);
 
+    /// Whether a manipulation stands on this context: true from BeginPreview
+    /// until EndPreview or a deactivation. A retirement (a recompile, a
+    /// weight-overlay change, a stage notice on a declared path) moves the
+    /// preview identity without ending the manipulation, so this is not
+    /// GetPreviewIdentity().active.
     bool IsPreviewActive() const;
+
+    /// The identity of the manipulation standing on this context: which
+    /// session this preview is, and how many accepted UpdatePreview samples
+    /// it has taken. Both move monotonically -- BeginPreview opens a session
+    /// and every retirement (EndPreview, EndPreviewWithoutPublish, a stage
+    /// notice touching a declared path or resyncing one of its ancestors, a
+    /// recompile, a weight-overlay change, deactivation) opens the next one
+    /// and resets the revision -- so an identity captured before a retirement
+    /// can never match a later one.
+    /// A zero session means no preview has ever stood here.
+    RigExecPreviewIdentity GetPreviewIdentity() const;
+
+    /// Records what the tool behind a manipulation says it will author:
+    /// the same newline-packed attribute paths BeginPreview takes, the values
+    /// it holds pending for each in that flattened order, and the policy
+    /// kind. Additive -- the preview lanes are unchanged, and nothing is
+    /// authored. Returns false when a path is malformed, unknown, or the
+    /// pending count does not fill the declared slots.
+    bool DeclarePreviewEdit(const std::string &packedAttributePaths,
+                            RigExecPreviewEditPolicy policy,
+                            const double *values, size_t count);
+
+    /// The declared edit description with its identity: how many attribute
+    /// paths are named, how many doubles are pending, and the policy kind.
+    RigExecPreviewEditStats GetPreviewEditStats() const;
+
+    /// Owner-thread proof for one candidate time and one declared attribute
+    /// path: true when the effective composed value at \p time is provably
+    /// independent of the pending default the description names -- an authored
+    /// time sample in the edit target layer, or an authored opinion in a layer
+    /// above it. Everything unproven is refused: a static default only, a
+    /// connected attribute, an attribute a compiled property chain revises, a
+    /// path the description does not declare, a mapped or non-local edit
+    /// target (which authors a different spec path, or one whose strength in
+    /// this stage's layer stack is unknown), no stage. The reason goes to
+    /// \p reason when it is not null. Authors nothing.
+    ///
+    /// Every rule but the default-time check reads the stage and its edit
+    /// target, never a time, so the verdict is derived once per declared path
+    /// and served to every candidate frame -- the warm trigger asks once per
+    /// frame under _mutex. It is held only while a stage notice can retire
+    /// the declaration it belongs to; elsewhere the rules re-run per frame.
+    bool PreviewValueIsIndependent(const std::string &attributePathText,
+                                   UsdTimeCode time, std::string *reason) const;
+
+    /// Whether a warm request described by \p route may run. Committed work
+    /// is admitted. CommittedSpeculative work is admitted only when its
+    /// candidate time is provably independent of the pending edit it waits on
+    /// (PreviewValueIsIndependent): a frame built ahead of its destination is
+    /// only worth building if a later edit cannot change it. PendingPreview is
+    /// refused outright -- a preview authors nothing, so its values have no
+    /// committed consumer to reach. The reason goes to \p reason.
+    bool AdmitWarmRoute(const RigExecWarmRouteDescriptor &route,
+                        std::string *reason) const;
+
+    /// Run \p probe with _mutex released inside an independence proof's read
+    /// window, so a regression can land a retirement or a re-declaration
+    /// between the scene reads and the revalidation instead of racing for one.
+    /// The probe runs on the calling thread; it must not re-enter the proof.
+    /// Null in every host that is not running that regression.
+    void SetProofWindowProbe(std::function<void()> probe);
 
     /// Drops the bridge and stops the warming scheduler (a context without
     /// an active rig owns no threads); bound chains remain and read the
@@ -904,6 +1027,90 @@ private:
     bool _NoticeSettlesPreview(const RigSession &session,
                                const UsdNotice::ObjectsChanged &notice) const;
 
+    /// The independence verdict for one declared edit, plus the inputs it
+    /// was derived under. Every rule that produces it reads the stage, its
+    /// layers, its compiled chains and the edit target -- none reads a time
+    /// code -- so the verdict belongs to the declaration, not to a candidate
+    /// frame. It is held only where a stage notice retires the declaration
+    /// along with it; see _PreviewNoticeCoversLocked.
+    struct PreviewProof {
+        UsdStageWeakPtr stage;
+        /// The preview session the verdict was derived under. A retirement
+        /// clears the description with it, so a held verdict is only ever read
+        /// back while the session that produced it still stands.
+        uint64_t session = 0;
+        /// The declaration tick this path was declared under, so a
+        /// re-declaration of the same path cannot reuse an older verdict.
+        uint64_t declaration = 0;
+        SdfLayerHandle targetLayer;
+        /// The declared path as the standing edit target's map function sees
+        /// it, and whether that map is the identity.
+        SdfPath mappedSpecPath;
+        bool identityMap = false;
+        bool derived = false;
+        bool independent = false;
+        std::string reason;
+    };
+
+    /// One attribute the manipulation in progress says it will author, with
+    /// the values held pending for it.
+    struct PreviewEdit {
+        SdfPath attributePath;
+        RigExecPreviewEditPolicy policy =
+            RigExecPreviewEditPolicy::AttributeDefault;
+        std::vector<double> pending;
+        /// This path's cached verdict, reset by a re-declaration and by the
+        /// retirement that drops the description, and never held where no
+        /// stage notice reaches this context.
+        PreviewProof proof;
+    };
+
+    /// Opens the next preview session: bumps the session, resets the
+    /// revision, drops the edit description. _mutex held.
+    void _RetirePreviewIdentityLocked();
+
+    /// The proof behind PreviewValueIsIndependent. Call with _mutex held;
+    /// \p lock is the held lock, released for the scene reads the verdict
+    /// needs and retaken before the verdict is stored. The verdict carries the
+    /// preview session and declaration tick it was derived under, and is
+    /// returned or stored only while both still stand.
+    bool
+    _PreviewValueIsIndependentLocked(const SdfPath &attributePath,
+                                     UsdTimeCode time, std::string *reason,
+                                     std::unique_lock<std::mutex> &lock) const;
+
+    /// The rules behind a verdict: the authored opinions in the layer stack,
+    /// the connections and compiled property chains on the path, and where
+    /// the standing edit target would author the value. None of them reads a
+    /// time code. Runs with _mutex released: every call here is an OpenUSD
+    /// read that takes composition locks, and the stage-notice handler takes
+    /// _mutex.
+    bool _DerivePreviewIndependence(const UsdStageRefPtr &stage,
+                                    const SdfPath &attributePath,
+                                    const SdfLayerHandle &targetLayer,
+                                    bool identityMap,
+                                    const SdfPath &mappedSpecPath,
+                                    bool chainRevised, std::string *why) const;
+
+    /// Whether an edit of \p stage reaches this context through UsdStage's
+    /// ObjectsChanged. Only there does an edit of a declared path retire the
+    /// description, and with it any verdict held on it: the stage-notice
+    /// listener stands with activation alone, so a bound context that never
+    /// activated hears nothing. _mutex held.
+    bool _PreviewNoticeCoversLocked(const UsdStageRefPtr &stage) const;
+
+    /// The route check behind AdmitWarmRoute. Call with _mutex held; \p lock
+    /// is that lock, which an independence proof may release and retake.
+    bool _AdmitWarmRouteLocked(const RigExecWarmRouteDescriptor &route,
+                               std::string *reason,
+                               std::unique_lock<std::mutex> &lock) const;
+
+    /// Whether a stage notice touches a path the preview description
+    /// declares -- an undo, a redo, or any other edit of a declared
+    /// attribute -- which is why the identity retires with it. _mutex held.
+    void _RetirePreviewIdentityForNoticeLocked(
+        const UsdNotice::ObjectsChanged &notice);
+
     // Fills at most one missing range frame without publishing to Hydra.
     // Only the idle trigger calls this, on the stage-owning thread.
     bool _WarmOneFallbackFrame(RigSession *session, UsdTimeCode playhead);
@@ -1068,6 +1275,18 @@ private:
     std::vector<PreviewSlot> _previewSlots;
     std::map<SdfPath, GfMatrix4d> _previewXformDeltas;
     bool _previewActive = false;
+    /// The monotonic identity of the manipulation in progress, and the edit
+    /// description declared for it. _mutex held. The vector is mutable only
+    /// for each entry's cached verdict: the proof reads through it.
+    RigExecPreviewIdentity _previewIdentity;
+    mutable std::vector<PreviewEdit> _previewEdits;
+    /// Ticks of the edit description itself: a retirement or a declaration of
+    /// a path advances it, while a pending-value update does not. A verdict is
+    /// held only for the description that produced it, so a re-declaration of
+    /// a held path can never inherit a verdict read under the old one.
+    uint64_t _previewDeclaration = 0;
+    /// The proof-window seam (see SetProofWindowProbe); empty in production.
+    std::function<void()> _proofWindowProbe;
     /// The influence-overlay selection, held HERE rather than only on the
     /// bridge because it outlives one: a host may select before
     /// activation, and Deactivate/Activate must not silently drop it.
@@ -1325,6 +1544,45 @@ RigExecImaging_EndPreviewForStage(long long stageCacheId);
 /// (see RigExecImagingRegistry::EndPreview).
 RIGEXEC_IMAGING_C_API int
 RigExecImaging_EndPreviewWithoutPublishForStage(long long stageCacheId);
+/// The preview session/revision the host keys snapshots against (see
+/// RigExecImagingRegistry::GetPreviewIdentity): a session is minted by
+/// BeginPreviewForStage, its revision bumps on every UpdatePreviewForStage,
+/// and the session advances -- it never returns to an older value -- when
+/// the preview retires, with the revision back to zero. Returns 0 on
+/// success, 1 with no context or a null out pointer. `active` is 1 while a
+/// session stands: a retirement inside a standing manipulation (a recompile,
+/// a weight-overlay change, a stage notice on a declared path) clears it
+/// until the next BeginPreviewForStage, while the preview itself continues
+/// (see RigExecImagingRegistry::IsPreviewActive).
+RIGEXEC_IMAGING_C_API int RigExecImaging_GetPreviewIdentityForStage(
+    long long stageCacheId, unsigned long long *session,
+    unsigned long long *revision, int *active);
+/// The additive edit description a preview declares (see
+/// RigExecImagingRegistry::DeclarePreviewEdit and ::GetPreviewEditStats).
+/// DeclarePreviewEditForStage returns 0 when every packed path resolves, 1
+/// otherwise (nothing is declared when any path fails). Policy is 0 default
+/// value, 1 time sample, 2 connection. Stats return 0 on success, 1 with no
+/// context or a null out pointer.
+RIGEXEC_IMAGING_C_API int RigExecImaging_DeclarePreviewEditForStage(
+    long long stageCacheId, const char *packedAttributePaths, int policy,
+    const double *values, int count);
+RIGEXEC_IMAGING_C_API int RigExecImaging_GetPreviewEditStatsForStage(
+    long long stageCacheId, unsigned long long *session,
+    unsigned long long *revision, int *editCount, int *valueCount, int *policy);
+/// 1 when the effective composed value at \p time provably does not come
+/// from the pending default of a declared edit, 0 when it cannot be proven;
+/// the refusal reason is copied into \p reasonOut when a buffer is given.
+/// See RigExecImagingRegistry::PreviewValueIsIndependent.
+RIGEXEC_IMAGING_C_API int RigExecImaging_PreviewValueIsIndependentForStage(
+    long long stageCacheId, const char *attributePath, double time,
+    char *reasonOut, int reasonCapacity);
+/// 1 when a warm request for \p route (0 committed, 1 committed-speculative,
+/// 2 pending-preview) can reach a consumer, 0 when it is refused; the reason
+/// is copied into \p reasonOut when a buffer is given. See
+/// RigExecImagingRegistry::AdmitWarmRoute.
+RIGEXEC_IMAGING_C_API int RigExecImaging_AdmitWarmRouteForStage(
+    long long stageCacheId, int route, const char *rigPath, double time,
+    unsigned long long previewSession, char *reasonOut, int reasonCapacity);
 
 /// 1 when the stage's context has an active rig, 0 otherwise (including an
 /// unknown id).

@@ -8,6 +8,7 @@
 #include "pxr/usd/sdf/path.h"
 #include "pxr/base/tf/token.h"
 #include "pxr/usd/usd/stage.h"
+#include "pxr/usd/usd/timeCode.h"
 #include "pxr/usd/usdUtils/stageCache.h"
 
 #include <cmath>
@@ -36,6 +37,23 @@ _Generation(const RigExecImagingRegistry &registry)
     const rigExec::RigExecImagingSnapshotConstPtr snapshot =
         registry.GetStore()->Get();
     return snapshot ? static_cast<long long>(snapshot->generation) : 0;
+}
+
+// Writes \p text into a caller-supplied fixed buffer, truncating to fit and
+// always NUL-terminating; does nothing when no buffer was given.
+void
+_CopyReason(const std::string &text, char *out, int capacity)
+{
+    if (!out || capacity <= 0) {
+        return;
+    }
+    const size_t keep = text.size() < static_cast<size_t>(capacity - 1)
+                            ? text.size()
+                            : static_cast<size_t>(capacity - 1);
+    if (keep > 0) {
+        std::memcpy(out, text.data(), keep);
+    }
+    out[keep] = '\0';
 }
 
 // Reads the current generation's published scalar mover outputs
@@ -680,6 +698,127 @@ RigExecImaging_EndPreviewWithoutPublishForStage(long long stageCacheId)
 {
     const RegistryPtr context = _ForStage(stageCacheId);
     return !context || context->EndPreview(/* publish = */ false) ? 0 : 1;
+}
+
+int
+RigExecImaging_GetPreviewIdentityForStage(long long stageCacheId,
+                                          unsigned long long *session,
+                                          unsigned long long *revision,
+                                          int *active)
+{
+    const RegistryPtr context = _ForStage(stageCacheId);
+    if (!context || !session || !revision || !active) {
+        return 1;
+    }
+    const rigExec::RigExecPreviewIdentity identity =
+        context->GetPreviewIdentity();
+    *session = identity.session;
+    *revision = identity.revision;
+    *active = identity.active ? 1 : 0;
+    return 0;
+}
+
+int
+RigExecImaging_DeclarePreviewEditForStage(long long stageCacheId,
+                                          const char *packedAttributePaths,
+                                          int policy, const double *values,
+                                          int count)
+{
+    const RegistryPtr context = _ForStage(stageCacheId, /* create = */ true);
+    if (!context) {
+        return 1;
+    }
+    rigExec::RigExecPreviewEditPolicy editPolicy;
+    switch (policy) {
+    case 1:
+        editPolicy = rigExec::RigExecPreviewEditPolicy::AttributeTimeSample;
+        break;
+    case 2:
+        editPolicy = rigExec::RigExecPreviewEditPolicy::Connection;
+        break;
+    default:
+        editPolicy = rigExec::RigExecPreviewEditPolicy::AttributeDefault;
+        break;
+    }
+    return context->DeclarePreviewEdit(
+               packedAttributePaths ? std::string(packedAttributePaths)
+                                    : std::string(),
+               editPolicy, values,
+               count > 0 ? static_cast<size_t>(count) : size_t(0))
+               ? 0
+               : 1;
+}
+
+int
+RigExecImaging_GetPreviewEditStatsForStage(long long stageCacheId,
+                                           unsigned long long *session,
+                                           unsigned long long *revision,
+                                           int *editCount, int *valueCount,
+                                           int *policy)
+{
+    const RegistryPtr context = _ForStage(stageCacheId);
+    if (!context || !session || !revision || !editCount || !valueCount ||
+        !policy) {
+        return 1;
+    }
+    const rigExec::RigExecPreviewEditStats stats =
+        context->GetPreviewEditStats();
+    *session = stats.identity.session;
+    *revision = stats.identity.revision;
+    *editCount = static_cast<int>(stats.editCount);
+    *valueCount = static_cast<int>(stats.valueCount);
+    *policy = static_cast<int>(stats.policy);
+    return 0;
+}
+
+int
+RigExecImaging_PreviewValueIsIndependentForStage(long long stageCacheId,
+                                                 const char *attributePath,
+                                                 double time, char *reasonOut,
+                                                 int reasonCapacity)
+{
+    const RegistryPtr context = _ForStage(stageCacheId);
+    if (!context || !attributePath) {
+        return 0;
+    }
+    std::string reason;
+    const bool proven = context->PreviewValueIsIndependent(
+        attributePath, UsdTimeCode(time), &reason);
+    _CopyReason(reason, reasonOut, reasonCapacity);
+    return proven ? 1 : 0;
+}
+
+int
+RigExecImaging_AdmitWarmRouteForStage(long long stageCacheId, int route,
+                                      const char *rigPath, double time,
+                                      unsigned long long previewSession,
+                                      char *reasonOut, int reasonCapacity)
+{
+    const RegistryPtr context = _ForStage(stageCacheId);
+    if (!context) {
+        return 0;
+    }
+    rigExec::RigExecWarmRouteDescriptor descriptor;
+    switch (route) {
+    case 1:
+        descriptor.route = rigExec::RigExecWarmRoute::CommittedSpeculative;
+        break;
+    case 2:
+        descriptor.route = rigExec::RigExecWarmRoute::PendingPreview;
+        break;
+    default:
+        descriptor.route = rigExec::RigExecWarmRoute::Committed;
+        break;
+    }
+    if (rigPath && SdfPath::IsValidPathString(rigPath)) {
+        descriptor.rigPath = SdfPath(rigPath);
+    }
+    descriptor.time = UsdTimeCode(time);
+    descriptor.previewSession = previewSession;
+    std::string reason;
+    const bool admitted = context->AdmitWarmRoute(descriptor, &reason);
+    _CopyReason(reason, reasonOut, reasonCapacity);
+    return admitted ? 1 : 0;
 }
 
 int
