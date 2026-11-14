@@ -60,6 +60,7 @@ stage when the gesture ends, as one undoable edit.
 | Tool | Where | What it is for |
 |---|---|---|
 | [Frame range](timeline.md#frame-range) | The outer fields of the timeline | Set the stage's start and end frames; usdview's slider follows. |
+| [Playblast](timeline.md#playblast) | **Playblast** beside **Play** | Render the viewport to an image sequence or a movie, with Maya's playblast options. |
 
 ## Inspecting
 

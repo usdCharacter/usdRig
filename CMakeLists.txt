@@ -2606,6 +2606,9 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
     add_test(NAME testTimelineModel
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_timeline_model.py")
+    add_test(NAME testPlayblastModel
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_playblast_model.py")
     add_test(NAME testCacheStripPanel
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_cache_strip_panel.py")
@@ -2654,6 +2657,7 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
                          testViewCubeMath testRigExecStageEdits
                          testGraphModel testPathCurveModel testGraphScreen
                          testCacheStripModel testTimelineModel
+                         testPlayblastModel
                          testCacheStripPanel testUsdviewFrameCacheDriver
                          testImagingHandle
                          testSessionState testRigExecProfilerModel

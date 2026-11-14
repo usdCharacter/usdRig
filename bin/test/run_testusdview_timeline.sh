@@ -1,13 +1,15 @@
 #!/bin/bash
 # bin/test/run_testusdview_timeline.sh -- headless end-to-end test of the
-# timeline's frame range fields (tests/testUsdviewTimeline.py) on
-# examples/ArmShotAnim.usda.
+# timeline's frame range fields and the playblast
+# (tests/testUsdviewTimeline.py) on examples/ArmShotAnim.usda.
 #
 # Types into the start and end fields and checks usdview's slider, range
-# fields and current frame through undo and outside edits. Prints
+# fields and current frame through undo and outside edits; playblasts
+# offscreen, on screen and (with ffmpeg) to movies. Prints
 # RIGEXEC_TIMELINE_OK.
 #
 # Usage: bin/test/run_testusdview_timeline.sh [rendererDisplayName]
+# Set RIGEXEC_PLAYBLAST_KEEP=1 to keep the written frames.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]:-$0}")/../_env.sh"
 

@@ -411,7 +411,7 @@ class RigExecUsdviewContainer(PluginContainer):
 
     def _InstallTimeline(self):
         """
-        Frame range fields on usdview's timeline.
+        Frame range fields and the Playblast button on usdview's timeline.
         Best effort: a usdview whose timeline this cannot find keeps it as
         it was.
         """

@@ -30,7 +30,7 @@ if [ ${#TESTS[@]} -eq 0 ]; then
            test_touchpose_model test_gizmo_marquee
            test_picker_scene test_picker_hover_model test_marking_menu_model test_marking_menu_ui test_pip_picker test_picker_layout
            test_imaging_handle test_session_state test_env_build_dir
-           test_editor_extension test_timeline_model)
+           test_editor_extension test_timeline_model test_playblast_model)
 fi
 
 # Only the tests listed here read argv[1], to Plug-register the generated

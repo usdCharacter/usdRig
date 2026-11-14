@@ -1,8 +1,9 @@
 #
 # RigExec usdview timeline row: editable start and end fields for the
-# stage's frame range in place of usdview's read-only stage range labels.
-# Any change to the stage's time metadata, from the fields or elsewhere,
-# is re-applied to usdview through timelineModel.SyncController.
+# stage's frame range in place of usdview's read-only stage range labels,
+# and a Playblast button with its option box beside Play. Any change to
+# the stage's time metadata, from the fields or elsewhere, is re-applied
+# to usdview through timelineModel.SyncController.
 #
 import os
 import sys
@@ -22,10 +23,25 @@ _START_TIP = ("Start of the stage's frame range (startTimeCode). Usdview's "
               "playback range follows it.")
 _END_TIP = ("End of the stage's frame range (endTimeCode). Usdview's "
             "playback range follows it.")
+_PLAYBLAST_TIP = ("Playblast the viewport with the saved playblast options. "
+                  "Shift-click for the options.")
+
+
+def _OptionBoxIcon(color):
+    """Maya's option box: a small square with a drop edge."""
+    pixmap = QtGui.QPixmap(16, 16)
+    pixmap.fill(QtCore.Qt.transparent)
+    painter = QtGui.QPainter(pixmap)
+    painter.setPen(QtGui.QPen(color, 1))
+    painter.drawRect(3, 3, 8, 8)
+    painter.drawLine(5, 13, 13, 13)
+    painter.drawLine(13, 5, 13, 13)
+    painter.end()
+    return QtGui.QIcon(pixmap)
 
 
 class TimelineExtras(QtCore.QObject):
-    """The frame range fields of one session."""
+    """The frame range fields and playblast buttons of one session."""
 
     def __init__(self, usdviewApi, controller, undoStack):
         super(TimelineExtras, self).__init__(usdviewApi.qMainWindow)
@@ -46,6 +62,7 @@ class TimelineExtras(QtCore.QObject):
             lambda: self._Commit(self.startField, True))
         self.endField.editingFinished.connect(
             lambda: self._Commit(self.endField, False))
+        self._AddPlayblastButtons(ui)
 
         self._refreshTimer = QtCore.QTimer(self)
         self._refreshTimer.setSingleShot(True)
@@ -69,6 +86,49 @@ class TimelineExtras(QtCore.QObject):
                             0, QtCore.Qt.AlignVCenter)
         label.hide()
         return field
+
+    def _AddPlayblastButtons(self, ui):
+        container = ui.playButtonContainer
+        parent = ui.playButton.parentWidget()
+        self.playblastButton = QtWidgets.QPushButton("Playblast", parent)
+        self.playblastButton.setObjectName("rigExecPlayblastButton")
+        self.playblastButton.setFocusPolicy(QtCore.Qt.NoFocus)
+        self.playblastButton.setSizePolicy(ui.playButton.sizePolicy())
+        self.playblastButton.setToolTip(_PLAYBLAST_TIP)
+        self.playblastButton.clicked.connect(self._OnPlayblast)
+        self.optionBox = QtWidgets.QToolButton(parent)
+        self.optionBox.setObjectName("rigExecPlayblastOptionBox")
+        self.optionBox.setFocusPolicy(QtCore.Qt.NoFocus)
+        self.optionBox.setAutoRaise(True)
+        self.optionBox.setIcon(_OptionBoxIcon(
+            parent.palette().color(QtGui.QPalette.WindowText)))
+        self.optionBox.setToolTip("Playblast Options")
+        self.optionBox.clicked.connect(self.ShowPlayblastOptions)
+        index = container.indexOf(ui.playButton)
+        index = index + 1 if index >= 0 else container.count()
+        container.insertWidget(index, self.playblastButton, 0,
+                               QtCore.Qt.AlignHCenter)
+        container.insertWidget(index + 1, self.optionBox, 0,
+                               QtCore.Qt.AlignHCenter)
+
+    @staticmethod
+    def _Playblast():
+        try:
+            import playblastUI
+        except ImportError:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import playblastUI
+        return playblastUI
+
+    def _OnPlayblast(self):
+        modifiers = QtWidgets.QApplication.keyboardModifiers()
+        if modifiers & QtCore.Qt.ShiftModifier:
+            self.ShowPlayblastOptions()
+            return
+        self._Playblast().RunPlayblast(self._api)
+
+    def ShowPlayblastOptions(self):
+        return self._Playblast().ShowOptions(self._api)
 
     def _RevokeNotice(self):
         if self._noticeKey is not None:
@@ -177,7 +237,7 @@ def Install(usdviewApi, undoStack=None):
     controller = getattr(usdviewApi, "_UsdviewApi__appController", None)
     ui = getattr(controller, "_ui", None)
     needed = ("sliderTopContainer", "stageBegin", "stageEnd", "rangeBegin",
-              "rangeEnd")
+              "rangeEnd", "playButtonContainer", "playButton")
     if ui is None or not all(hasattr(ui, name) for name in needed):
         return None
     extras = TimelineExtras(usdviewApi, controller, undoStack)

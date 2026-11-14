@@ -1,10 +1,11 @@
 @echo off
-rem Headless end-to-end test of the timeline's frame range fields
-rem (tests\testUsdviewTimeline.py) on examples\ArmShotAnim.usda.
+rem Headless end-to-end test of the timeline's frame range fields and the
+rem playblast (tests\testUsdviewTimeline.py) on examples\ArmShotAnim.usda.
 rem The Windows twin of run_testusdview_timeline.sh. Prints
 rem RIGEXEC_TIMELINE_OK.
 rem
 rem Usage: run_testusdview_timeline.bat [rendererDisplayName]
+rem Set RIGEXEC_PLAYBLAST_KEEP=1 to keep the written frames.
 call "%~dp0..\_vcvars.bat"
 call "%~dp0..\_env.bat"
 call "%~dp0..\_require_python.bat"
