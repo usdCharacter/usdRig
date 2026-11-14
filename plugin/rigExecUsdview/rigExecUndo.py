@@ -454,30 +454,38 @@ class EditRecorder(object):
     Brackets one drag: Begin() snapshots the named attributes in the
     current edit target's layer, Commit() returns the Edit (None when
     nothing changed), Abort() restores the snapshots.
+
+    Track() adds the current edit target's layer when a later write may be
+    routed elsewhere (an editor extension's DocumentEdit); call it before
+    that write. One Edit may then hold entries in several layers.
     """
 
     def __init__(self, stage, attrPaths):
         self._stage = stage
         self._paths = [Sdf.Path(p) for p in attrPaths]
-        self._layer = None
         self._before = {}
 
     def Begin(self):
-        target = self._stage.GetEditTarget()
-        self._layer = target.GetLayer()
         self._before = {}
+        self.Track()
+
+    def Track(self):
+        target = self._stage.GetEditTarget()
+        layer = target.GetLayer()
         for path in self._paths:
             specPath = target.MapToSpecPath(path)
-            self._before[path] = AttributeSnapshot.Capture(
-                self._layer, specPath)
+            key = (layer.identifier, specPath)
+            if key not in self._before:
+                self._before[key] = AttributeSnapshot.Capture(
+                    layer, specPath)
 
     def Commit(self, label):
         entries = []
-        for path, before in self._before.items():
-            after = AttributeSnapshot.Capture(self._layer, before.specPath)
+        for before in self._before.values():
+            after = AttributeSnapshot.Capture(before.layer, before.specPath)
             if after != before:
                 entries.append(
-                    EditEntry(self._layer, before.specPath, before, after))
+                    EditEntry(before.layer, before.specPath, before, after))
         self._before = {}
         if not entries:
             return None

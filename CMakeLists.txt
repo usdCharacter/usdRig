@@ -2564,6 +2564,10 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_gizmo_own_commit.py")
     set_tests_properties(testGizmoOwnCommit PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME testGizmoDocumentEdit
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_gizmo_document_edit.py")
+    set_tests_properties(testGizmoDocumentEdit PROPERTIES SKIP_RETURN_CODE 77)
     add_test(NAME testGizmoScreen
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_gizmo_screen.py")

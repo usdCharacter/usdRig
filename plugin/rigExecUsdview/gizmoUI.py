@@ -66,6 +66,7 @@
 # HOVER uses Qt.WA_Hover on the stage view rather than mouse tracking:
 # see GizmoController.__init__.
 #
+import contextlib
 import math
 import os
 import sys
@@ -4207,14 +4208,20 @@ class GizmoController(QtCore.QObject):
         # pivot from it, and the handles were laid out on it.
         self._PrimeGroupPivot()
         try:
-            recorder = rigExecUndo.EditRecorder(self.usdviewApi.stage,
+            stage = self.usdviewApi.stage
+            recorder = rigExecUndo.EditRecorder(stage,
                                                 target.AttributePaths())
-            recorder.Begin()
-            # A path curve moves the one control point pressed on.
-            grab = getattr(target, "Grab", None)
-            if grab is not None:
-                grab(handle)
-            target.BeginDrag()
+            # The drag creates xformOps as it goes; they must land in the
+            # layer the extension routes the commit's values to.
+            with editorExtension.DocumentEdit(self.usdviewApi):
+                editTarget = stage.GetEditTarget()
+                recorder.Begin()
+            with Usd.EditContext(stage, editTarget):
+                # A path curve moves the one control point pressed on.
+                grab = getattr(target, "Grab", None)
+                if grab is not None:
+                    grab(handle)
+                target.BeginDrag()
         except Exception as error:
             Tf.Warn("rigExecUsdview: could not start the gizmo drag: %s"
                     % error)
@@ -4224,6 +4231,7 @@ class GizmoController(QtCore.QObject):
             origin2d=handle.center,
             gimbal=self._gimbalAxes is not None, recorder=recorder)
         drag.ctrl = self._ctrl
+        drag.editTarget = editTarget
         written, byTarget, allWritten, allByTarget = \
             self._RigWrittenSets(
                 self.usdviewApi.stage, self._RigRoot(target))
@@ -4299,11 +4307,12 @@ class GizmoController(QtCore.QObject):
                 settings, drag.tool, self._holdGrid,
                 self._holdPoint, self._holdEdge)
             self._snapMode, self._snapReason = mode, reason
-            gizmoDrag.ApplyDrag(
-                drag, point, settings,
-                holdSnap=self._holdSnap, holdGrid=self._holdGrid,
-                ctrl=drag.ctrl, snapMode=mode,
-                gridSize=self.settings.gridSize)
+            with _DragEditContext(drag):
+                gizmoDrag.ApplyDrag(
+                    drag, point, settings,
+                    holdSnap=self._holdSnap, holdGrid=self._holdGrid,
+                    ctrl=drag.ctrl, snapMode=mode,
+                    gridSize=self.settings.gridSize)
             # The sample goes to Hydra, not to the stage. BEFORE Refresh():
             # Refresh re-reads the target's frames, and what it has to read is
             # the previewed values, or the handles would be drawn at the
@@ -4395,8 +4404,10 @@ class GizmoController(QtCore.QObject):
             self._committing = (drag.target, drag.target.writer.Pending())
             try:
                 # An editor extension may route this deferred commit (it
-                # runs on a later turn) to its document layer.
+                # runs on a later turn) to its document layer; Track()
+                # records that layer too when it is not the press-time one.
                 with editorExtension.DocumentEdit(self.usdviewApi):
+                    drag.recorder.Track()
                     authored = drag.target.writer.CommitToStage()
             finally:
                 self._committing = None
@@ -4453,6 +4464,14 @@ class GizmoController(QtCore.QObject):
 
 
 # Installation
+
+def _DragEditContext(drag):
+    """The edit target a drag authors its structure in, chosen at press."""
+    editTarget = getattr(drag, "editTarget", None)
+    if editTarget is None:
+        return contextlib.nullcontext()
+    return Usd.EditContext(_WriterStage(drag), editTarget)
+
 
 def _WriterStage(drag):
     """The stage a drag's writer collects for, or None."""
