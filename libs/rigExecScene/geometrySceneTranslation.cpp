@@ -21,6 +21,10 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
     (knots)
     (normals)
     (offsets)
+    (orientation)
+    (interpolation)
+    ((primvarsNormals, "primvars:normals"))
+    ((primvarsNormalsIndices, "primvars:normals:indices"))
     (order)
     (pointIndices)
     (points)
@@ -914,13 +918,25 @@ RigExecTranslateSceneDerivedGeometry(
     const auto *node = source.Node(owner);
     if (!node)
         return Fail(error, "missing derived geometry owner");
+    const auto authored = [&](const SdfPath &path) {
+        const auto *attribute = source.Attribute(path);
+        return attribute && attribute->fact.hasAuthoredValue ? attribute
+                                                             : nullptr;
+    };
+    const bool mesh = node->fact.type == "Mesh";
     for (bool normals : {true, false}) {
-        const auto target =
+        auto target =
             owner.AppendProperty(normals ? _tokens->normals : _tokens->extent);
-        const auto *attribute = source.Attribute(target);
-        if (!attribute || !attribute->fact.hasAuthoredValue)
+        // On a mesh, primvars:normals, when authored, wins over normals.
+        if (normals && mesh) {
+            const auto primvar = owner.AppendProperty(_tokens->primvarsNormals);
+            if (authored(primvar))
+                target = primvar;
+        }
+        const auto *attribute = authored(target);
+        if (!attribute)
             continue;
-        if (normals && node->fact.type != "Mesh")
+        if (normals && !mesh)
             return Fail(error, "authored normals on non-mesh points target");
         RigExecGeometryRecord record;
         record.op = normals ? RigExecRevisionOp::RecomputeNormals
@@ -936,6 +952,28 @@ RigExecTranslateSceneDerivedGeometry(
             if (const auto *value = source.Attribute(widths))
                 if (value->fact.hasAuthoredValue)
                     record.binding.widths = widths;
+        if (normals) {
+            TfToken interpolation, orientation;
+            const auto found = attribute->fact.metadata.find(
+                _tokens->interpolation.GetString());
+            if (found != attribute->fact.metadata.end() &&
+                found->second.IsHolding<TfToken>())
+                interpolation = found->second.UncheckedGet<TfToken>();
+            if (const auto *value = source.Attribute(
+                    owner.AppendProperty(_tokens->orientation)))
+                if (!value->inputs.empty() &&
+                    value->inputs.front().raw.IsHolding<TfToken>())
+                    orientation =
+                        value->inputs.front().raw.UncheckedGet<TfToken>();
+            const bool indexed =
+                target.GetNameToken() == _tokens->primvarsNormals &&
+                authored(owner.AppendProperty(_tokens->primvarsNormalsIndices));
+            std::string why;
+            if (!RigExecResolveNormalsLayout(target, interpolation, indexed,
+                                             orientation, &record.binding,
+                                             &why))
+                return Fail(error, why);
+        }
         RigExecSceneGeometryDescriptor descriptor;
         if (!RigExecTranslateSceneGeometry(scene, owner, target, &descriptor,
                                            error, &record))

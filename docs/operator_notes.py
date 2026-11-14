@@ -1532,7 +1532,10 @@ incoming points as `p' = q + w (T q - q)` (schema.usda:2557-2558), where
 itself, `final` binds the head of its frame chain
 (matrixMover.cpp:105-118). The result is passed down the point chain,
 and the compiler synthesizes the recompute revisions that keep authored
-`normals` and `extent` on that gprim current (rigEvaluatorCompile.cpp:2275-2335).""",
+`normals` and `extent` on that gprim current. On a mesh, `primvars:normals`
+wins over `normals`; vertex, varying and faceVarying normals keep their
+layout, a leftHanded mesh's normals are negated, and indexed or other
+interpolations refuse the compile.""",
         "wiring": [
             # movers/matrixMover.cpp:223-226 rejects anything but exactly one
             # target, and :273-279 rejects a target that is not a

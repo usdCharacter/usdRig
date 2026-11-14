@@ -14445,6 +14445,8 @@ struct RigExecWireRevisionBinding : public ::flatbuffers::NativeTable {
   std::vector<uint32_t> phaseInputs{};
   std::vector<::rigExec::RigExecWireReadPhase> phases{};
   ::rigExec::RigExecWireReadPhase transformPhase{};
+  bool normalsPerCorner = false;
+  bool normalsLeftHanded = false;
 };
 
 /// A revision's epoch-static binding: every provider path, in the roles the
@@ -14482,7 +14484,9 @@ struct RevisionBinding FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_BLENDSAMPLES = 48,
     VT_PHASEINPUTS = 50,
     VT_PHASES = 52,
-    VT_TRANSFORMPHASE = 54
+    VT_TRANSFORMPHASE = 54,
+    VT_NORMALSPERCORNER = 56,
+    VT_NORMALSLEFTHANDED = 58
   };
   uint32_t moverPath() const {
     return GetField<uint32_t>(VT_MOVERPATH, 0);
@@ -14562,6 +14566,15 @@ struct RevisionBinding FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const rigExec::fb::ReadPhase *transformPhase() const {
     return GetStruct<const rigExec::fb::ReadPhase *>(VT_TRANSFORMPHASE);
   }
+  /// Format 32: a RecomputeNormals target holds one normal per face corner
+  /// (faceVarying), and a leftHanded mesh's normals are negated. False on
+  /// every other op and in older files.
+  bool normalsPerCorner() const {
+    return GetField<uint8_t>(VT_NORMALSPERCORNER, 0) != 0;
+  }
+  bool normalsLeftHanded() const {
+    return GetField<uint8_t>(VT_NORMALSLEFTHANDED, 0) != 0;
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -14598,6 +14611,8 @@ struct RevisionBinding FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyOffset(verifier, VT_PHASES) &&
            verifier.VerifyVector(phases()) &&
            VerifyField<rigExec::fb::ReadPhase>(verifier, VT_TRANSFORMPHASE, 4) &&
+           VerifyField<uint8_t>(verifier, VT_NORMALSPERCORNER, 1) &&
+           VerifyField<uint8_t>(verifier, VT_NORMALSLEFTHANDED, 1) &&
            verifier.EndTable();
   }
   RigExecWireRevisionBinding *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -14687,6 +14702,12 @@ struct RevisionBindingBuilder {
   void add_transformPhase(const rigExec::fb::ReadPhase *transformPhase) {
     fbb_.AddStruct(RevisionBinding::VT_TRANSFORMPHASE, transformPhase);
   }
+  void add_normalsPerCorner(bool normalsPerCorner) {
+    fbb_.AddElement<uint8_t>(RevisionBinding::VT_NORMALSPERCORNER, static_cast<uint8_t>(normalsPerCorner), 0);
+  }
+  void add_normalsLeftHanded(bool normalsLeftHanded) {
+    fbb_.AddElement<uint8_t>(RevisionBinding::VT_NORMALSLEFTHANDED, static_cast<uint8_t>(normalsLeftHanded), 0);
+  }
   explicit RevisionBindingBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -14725,7 +14746,9 @@ inline ::flatbuffers::Offset<RevisionBinding> CreateRevisionBinding(
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::BlendSampleBindingList>>> blendSamples = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> phaseInputs = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::ReadPhase *>> phases = 0,
-    const rigExec::fb::ReadPhase *transformPhase = nullptr) {
+    const rigExec::fb::ReadPhase *transformPhase = nullptr,
+    bool normalsPerCorner = false,
+    bool normalsLeftHanded = false) {
   RevisionBindingBuilder builder_(_fbb);
   builder_.add_transformPhase(transformPhase);
   builder_.add_phases(phases);
@@ -14753,6 +14776,8 @@ inline ::flatbuffers::Offset<RevisionBinding> CreateRevisionBinding(
   builder_.add_transform(transform);
   builder_.add_target(target);
   builder_.add_moverPath(moverPath);
+  builder_.add_normalsLeftHanded(normalsLeftHanded);
+  builder_.add_normalsPerCorner(normalsPerCorner);
   return builder_.Finish();
 }
 
@@ -14788,7 +14813,9 @@ inline ::flatbuffers::Offset<RevisionBinding> CreateRevisionBindingDirect(
     const std::vector<::flatbuffers::Offset<rigExec::fb::BlendSampleBindingList>> *blendSamples = nullptr,
     const std::vector<uint32_t> *phaseInputs = nullptr,
     const std::vector<rigExec::fb::ReadPhase> *phases = nullptr,
-    const rigExec::fb::ReadPhase *transformPhase = nullptr) {
+    const rigExec::fb::ReadPhase *transformPhase = nullptr,
+    bool normalsPerCorner = false,
+    bool normalsLeftHanded = false) {
   auto influences__ = influences ? _fbb.CreateVector<uint32_t>(*influences) : 0;
   auto blendInputs__ = blendInputs ? _fbb.CreateVector<uint32_t>(*blendInputs) : 0;
   auto blendSampleInputs__ = blendSampleInputs ? _fbb.CreateVector<uint32_t>(*blendSampleInputs) : 0;
@@ -14822,7 +14849,9 @@ inline ::flatbuffers::Offset<RevisionBinding> CreateRevisionBindingDirect(
       blendSamples__,
       phaseInputs__,
       phases__,
-      transformPhase);
+      transformPhase,
+      normalsPerCorner,
+      normalsLeftHanded);
 }
 
 ::flatbuffers::Offset<RevisionBinding> CreateRevisionBinding(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireRevisionBinding *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -25641,6 +25670,8 @@ inline void RevisionBinding::UnPackTo(RigExecWireRevisionBinding *_o, const ::fl
   { auto _e = phaseInputs(); if (_e) { _o->phaseInputs.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->phaseInputs[_i] = _e->Get(_i); } } else { _o->phaseInputs.resize(0); } }
   { auto _e = phases(); if (_e) { _o->phases.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->phases[_i] = ::flatbuffers::UnPackReadPhase(*_e->Get(_i)); } } else { _o->phases.resize(0); } }
   { auto _e = transformPhase(); if (_e) _o->transformPhase = ::flatbuffers::UnPackReadPhase(*_e); }
+  { auto _e = normalsPerCorner(); _o->normalsPerCorner = _e; }
+  { auto _e = normalsLeftHanded(); _o->normalsLeftHanded = _e; }
 }
 
 inline ::flatbuffers::Offset<RevisionBinding> CreateRevisionBinding(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireRevisionBinding *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -25677,6 +25708,8 @@ inline ::flatbuffers::Offset<RevisionBinding> RevisionBinding::Pack(::flatbuffer
   auto _phaseInputs = _o->phaseInputs.size() ? _fbb.CreateVector(_o->phaseInputs) : 0;
   auto _phases = _o->phases.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::ReadPhase, ::rigExec::RigExecWireReadPhase>(_o->phases, ::flatbuffers::PackReadPhase) : 0;
   auto _transformPhase = ::flatbuffers::PackReadPhase(_o->transformPhase);
+  auto _normalsPerCorner = _o->normalsPerCorner;
+  auto _normalsLeftHanded = _o->normalsLeftHanded;
   return rigExec::fb::CreateRevisionBinding(
       _fbb,
       _moverPath,
@@ -25704,7 +25737,9 @@ inline ::flatbuffers::Offset<RevisionBinding> RevisionBinding::Pack(::flatbuffer
       _blendSamples,
       _phaseInputs,
       _phases,
-      &_transformPhase);
+      &_transformPhase,
+      _normalsPerCorner,
+      _normalsLeftHanded);
 }
 
 inline RigExecWireBlendSample::RigExecWireBlendSample(const RigExecWireBlendSample &o)
@@ -30410,14 +30445,16 @@ inline const ::flatbuffers::TypeTable *RevisionBindingTypeTable() {
     { ::flatbuffers::ET_SEQUENCE, 1, 0 },
     { ::flatbuffers::ET_UINT, 1, -1 },
     { ::flatbuffers::ET_SEQUENCE, 1, 1 },
-    { ::flatbuffers::ET_SEQUENCE, 0, 1 }
+    { ::flatbuffers::ET_SEQUENCE, 0, 1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::BlendSampleBindingListTypeTable,
     rigExec::fb::ReadPhaseTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 26, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 28, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }

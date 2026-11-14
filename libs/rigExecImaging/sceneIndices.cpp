@@ -2185,13 +2185,21 @@ _BuildStrongRoot(const RigExecPublishedPrim &published,
         values.push_back(_BuildGpuDeformPrimvars(primPath));
     }
     if (published.hasNormals) {
+        // The recomputation keeps the authored layout (vertex, varying or
+        // faceVarying), which the upstream primvar already states.
+        HdTokenDataSourceHandle interpolation =
+            HdPrimvarsSchema::GetFromParent(resolvedTarget)
+                .GetPrimvar(HdTokens->normals)
+                .GetInterpolation();
+        if (!interpolation)
+            interpolation = _Token(HdPrimvarSchemaTokens->vertex);
         primvarNames.push_back(HdTokens->normals);
         primvarValues.push_back(
             HdPrimvarSchema::Builder()
                 .SetPrimvarValue(_FrameValue(
                     published.normals, published.sampleOffsets,
                     published.normalsSamples, frames, &_PublishedNormals))
-                .SetInterpolation(_Token(HdPrimvarSchemaTokens->vertex))
+                .SetInterpolation(interpolation)
                 .SetRole(_Token(HdPrimvarSchemaTokens->normal))
                 .Build());
     }

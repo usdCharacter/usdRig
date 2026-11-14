@@ -229,6 +229,42 @@ std::vector<GfVec3f> RigExecComputeVertexNormals(
     size_t faceVertexCountsSize, const int *faceVertexIndices,
     size_t faceVertexIndicesSize, const RigExecRangeRunner *ranges = nullptr);
 
+/// The vertex-normal walk of one topology, built once per compiled rig:
+/// the usable faces before the first malformed one, and per point its
+/// (face, corner) incidences in face order then corner order, which is the
+/// order the serial sum adds them in.
+struct RigExecVertexNormalsTopology {
+    size_t pointCount = 0;
+    size_t faceVertexCountsSize = 0;
+    size_t faceVertexIndicesSize = 0;
+    bool malformed = false;
+    std::vector<size_t> faceOffsets;
+    /// pointCount + 1 offsets into incidenceFaces / incidenceCorners.
+    std::vector<size_t> pointIncidences;
+    std::vector<size_t> incidenceFaces;
+    std::vector<size_t> incidenceCorners;
+
+    /// Whether this walk was built for arrays of these sizes. The contents
+    /// are trusted: a topology that can change is never given a walk.
+    bool Fits(size_t points, size_t counts, size_t indices) const
+    {
+        return pointCount == points && faceVertexCountsSize == counts &&
+               faceVertexIndicesSize == indices;
+    }
+};
+
+RigExecVertexNormalsTopology RigExecBuildVertexNormalsTopology(
+    size_t pointsSize, const int *faceVertexCounts, size_t faceVertexCountsSize,
+    const int *faceVertexIndices, size_t faceVertexIndicesSize);
+
+/// The span form over a \p topology built from these arrays; zero normals
+/// unless it Fits their sizes. Bitwise the same as the form above.
+std::vector<GfVec3f> RigExecComputeVertexNormals(
+    const GfVec3f *points, size_t pointsSize, const int *faceVertexCounts,
+    size_t faceVertexCountsSize, const int *faceVertexIndices,
+    size_t faceVertexIndicesSize, const RigExecVertexNormalsTopology &topology,
+    const RigExecRangeRunner *ranges = nullptr);
+
 /// Rotate target-local offsets through corresponding rest/posed surface frames.
 /// Area-weighted polygon normals supply each vertex normal. The longest
 /// projected incident REST edge supplies its tangent (lowest neighbor index

@@ -20,6 +20,7 @@
 #include "rigExecMath/deltaMushKernel.h"
 #include "rigExecMath/deltaMushSettings.h"
 #include "rigExecMath/latticeKernel.h"
+#include "rigExecMath/normalsLayoutKernel.h"
 #include "rigExecMath/pointBlocks.h"
 #include "rigExecMath/skinAcceptance.h"
 #include "rigExecMath/pointRanges.h"
@@ -698,6 +699,8 @@ struct RrGeoMoverParameters {
     std::vector<double> curveKnots;
     double dropoffDistance = 0.0;
     std::vector<float> widths;
+    bool normalsPerCorner = false;
+    bool normalsLeftHanded = false;
     std::vector<RrMat4d> skinTransforms;
     int skinElementSize = 0;
     RrGeoSkinMethod skinMethod = RrGeoSkinMethod::Unknown;
@@ -764,6 +767,8 @@ struct RrGeoMoverParameters {
                wireBindCoords == o.wireBindCoords &&
                curveOrder == o.curveOrder && curveKnots == o.curveKnots &&
                dropoffDistance == o.dropoffDistance && widths == o.widths &&
+               normalsPerCorner == o.normalsPerCorner &&
+               normalsLeftHanded == o.normalsLeftHanded &&
                skinTransforms == o.skinTransforms &&
                skinTopology == o.skinTopology &&
                skinLayoutRead == o.skinLayoutRead &&
@@ -2955,6 +2960,12 @@ RrGeoApplyDerivedKernel(int op, const RrGeoMoverParameters &p,
                : RrGeoComputeVertexNormals(p.auxPoints, p.topologyCounts,
                                            p.topologyIndices);
     if (values.empty() || (extent && values.size() != 2)) {
+        return false;
+    }
+    if (!extent &&
+        !RigExecLayoutNormals(&values, p.topologyIndices.data(),
+                              p.topologyIndices.size(), p.normalsPerCorner,
+                              p.normalsLeftHanded)) {
         return false;
     }
 
@@ -6768,6 +6779,9 @@ RrGeoAssembleDerived(const RrGeoAssembleInputs &in, std::vector<RrVec3f> &&base,
         RrGeoReadFloatArray(in.program, in.scratch,
                             RrGeoBindingRead(in, RrGeoBindWidths),
                             &params->widths);
+    } else {
+        params->normalsPerCorner = in.wire->binding->normalsPerCorner;
+        params->normalsLeftHanded = in.wire->binding->normalsLeftHanded;
     }
     params->valid = !params->auxPoints.empty() &&
                     (recomputeExtent || !params->topologyCounts.empty());
@@ -9525,6 +9539,8 @@ RrOpParametersKey(std::string *key, const RrGeoMoverParameters &p, bool content)
     RrOpBytes(key, p.curveKnots);
     RrOpBytes(key, p.dropoffDistance);
     RrOpBytes(key, p.widths);
+    RrOpBytes(key, p.normalsPerCorner);
+    RrOpBytes(key, p.normalsLeftHanded);
     RrOpBytes(key, p.skinTransforms);
     RrOpBytes(key, p.skinLayoutRead);
     RrOpBytes(key, p.skinElementSize);

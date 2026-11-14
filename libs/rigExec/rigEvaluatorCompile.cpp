@@ -114,6 +114,8 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((rigExecJointWeights, SchemaAttrText::rigExecJointWeights))
     ((rigExecElementSize, SchemaAttrText::rigExecElementSize))
     (normals)
+    ((primvarsNormals, "primvars:normals"))
+    ((primvarsNormalsIndices, "primvars:normals:indices"))
     (extent)
     (faceVertexCounts)
     (faceVertexIndices)
@@ -2510,9 +2512,19 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             continue;
         }
         for (const bool isNormals : {true, false}) {
-            const TfToken &property =
-                isNormals ? _tokens->normals : _tokens->extent;
-            const SdfPath derivedTarget = ownerPath.AppendProperty(property);
+            SdfPath derivedTarget = ownerPath.AppendProperty(
+                isNormals ? _tokens->normals : _tokens->extent);
+            // On a mesh, primvars:normals, when authored, wins over normals.
+            if (isNormals && UsdGeomMesh(owner)) {
+                const SdfPath primvarTarget =
+                    ownerPath.AppendProperty(_tokens->primvarsNormals);
+                if (const UsdAttribute primvar =
+                        _stage->GetAttributeAtPath(primvarTarget)) {
+                    if (primvar.HasAuthoredValue()) {
+                        derivedTarget = primvarTarget;
+                    }
+                }
+            }
             const UsdAttribute authored =
                 _stage->GetAttributeAtPath(derivedTarget);
             if (!authored || !authored.HasAuthoredValue()) {
@@ -2541,7 +2553,43 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 ownerPath.AppendProperty(_tokens->faceVertexCounts);
             derived.binding.topologyIndices =
                 ownerPath.AppendProperty(_tokens->faceVertexIndices);
-            if (!isNormals) {
+            if (isNormals) {
+                const UsdAttribute normalsIndices = _stage->GetAttributeAtPath(
+                    ownerPath.AppendProperty(_tokens->primvarsNormalsIndices));
+                TfToken interpolation, orientation;
+                authored.GetMetadata(UsdGeomTokens->interpolation,
+                                     &interpolation);
+                const UsdGeomMesh mesh(owner);
+                mesh.GetOrientationAttr().Get(&orientation);
+                std::string why;
+                if (!RigExecResolveNormalsLayout(
+                        derivedTarget, interpolation,
+                        derivedTarget.GetNameToken() ==
+                                _tokens->primvarsNormals &&
+                            normalsIndices && normalsIndices.HasAuthoredValue(),
+                        orientation, &derived.binding, &why)) {
+                    return fail(why);
+                }
+                // A walk only for a topology no frame can change: unsampled
+                // and unconnected. An edit of it recompiles (the digest
+                // hashes it), so the kernel trusts the walk.
+                const UsdAttribute counts = mesh.GetFaceVertexCountsAttr(),
+                                   indices = mesh.GetFaceVertexIndicesAttr();
+                if (!counts.ValueMightBeTimeVarying() &&
+                    !indices.ValueMightBeTimeVarying() &&
+                    !counts.HasAuthoredConnections() &&
+                    !indices.HasAuthoredConnections()) {
+                    VtVec3fArray restPoints;
+                    VtIntArray countValues, indexValues;
+                    mesh.GetPointsAttr().Get(&restPoints,
+                                             UsdTimeCode::EarliestTime());
+                    counts.Get(&countValues);
+                    indices.Get(&indexValues);
+                    RigExecAttachNormalsTopology(&derived.binding,
+                                                 restPoints.size(), countValues,
+                                                 indexValues);
+                }
+            } else {
                 // The authoritative winning widths, when authored: they
                 // widen the extent bound (Pass 3 wires resolvedWidths).
                 const SdfPath widthsPath =

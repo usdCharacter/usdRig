@@ -22,6 +22,7 @@
 #include "pxr/usd/usd/prim.h"
 #include "pxr/usd/usd/primRange.h"
 #include "pxr/usd/usd/relationship.h"
+#include "pxr/usd/usdGeom/tokens.h"
 #include "pxr/usd/usdGeom/xformable.h"
 
 #include <algorithm>
@@ -92,6 +93,10 @@ TF_DEFINE_PRIVATE_TOKENS(
     (normals)
     (extent)
     (widths)
+    ((primvarsNormals, "primvars:normals"))
+    ((primvarsNormalsIndices, "primvars:normals:indices"))
+    (faceVertexCounts)
+    (faceVertexIndices)
     ((rigExecActivation, SchemaAttrText::rigExecActivation))
     ((rigExecActiveSpaceAttribute, SchemaAttrText::rigExecActiveSpaceAttribute))
     ((rigExecAimAxis, SchemaAttrText::rigExecAimAxis))
@@ -2052,6 +2057,48 @@ RigExecRigEvaluator::_ComputeStructureDigest(unsigned segments,
                     digest += authored(_tokens->normals) ? 'n' : '-';
                     digest += authored(_tokens->extent) ? 'e' : '-';
                     digest += authored(_tokens->widths) ? 'w' : '-';
+                    // The maintained normals' source, layout and
+                    // orientation are compiled.
+                    digest += authored(_tokens->primvarsNormals) ? 'p' : '-';
+                    digest +=
+                        authored(_tokens->primvarsNormalsIndices) ? 'i' : '-';
+                    const TfToken *const layoutFacts[] = {
+                        &_tokens->normals, &_tokens->primvarsNormals,
+                        &UsdGeomTokens->orientation};
+                    for (const TfToken *name : layoutFacts) {
+                        const SdfPath path = owner.AppendProperty(*name);
+                        noteValue(path);
+                        const UsdAttribute a = _stage->GetAttributeAtPath(path);
+                        TfToken fact;
+                        if (a && name != &UsdGeomTokens->orientation)
+                            a.GetMetadata(UsdGeomTokens->interpolation, &fact);
+                        else if (a)
+                            a.Get(&fact);
+                        digest += ':';
+                        if (!fact.IsEmpty())
+                            digest += fact.GetString();
+                    }
+                    // A static mesh topology is compiled into the
+                    // vertex-normal walk: editing it recompiles.
+                    if (authored(_tokens->normals) ||
+                        authored(_tokens->primvarsNormals)) {
+                        for (const TfToken *name :
+                             {&_tokens->faceVertexCounts,
+                              &_tokens->faceVertexIndices}) {
+                            const SdfPath path = owner.AppendProperty(*name);
+                            noteValue(path);
+                            const UsdAttribute a =
+                                _stage->GetAttributeAtPath(path);
+                            VtValue value;
+                            const bool varying =
+                                a && (a.ValueMightBeTimeVarying() ||
+                                      a.HasAuthoredConnections());
+                            if (a && !varying)
+                                a.Get(&value);
+                            digest += varying ? ":v" : ":";
+                            digest += std::to_string(value.GetHash());
+                        }
+                    }
                     digest += ',';
                 }
             }

@@ -7059,6 +7059,13 @@ private:
         if (!_Binding(*r.binding, row + ".binding")) {
             return false;
         }
+        if ((r.binding->normalsPerCorner || r.binding->normalsLeftHanded) &&
+            (r.op != uint8_t(fb::RevisionOp::RecomputeNormals) ||
+             _f.formatVersion < RigExecFormatNormalsLayoutVersion)) {
+            return _Bad(row + ".binding: a normals layout outside a format " +
+                        _N(RigExecFormatNormalsLayoutVersion) +
+                        " RecomputeNormals revision");
+        }
         for (size_t ch = 0; ch < r.blendChannels.size(); ++ch) {
             if (!_BlendChannel(r.blendChannels[ch],
                                row + ".blend_channels[" + _N(ch) + "]")) {

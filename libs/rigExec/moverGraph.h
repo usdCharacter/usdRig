@@ -682,6 +682,24 @@ bool RigExecApplyDerivedKernel(RigExecRevisionOp op,
                                const GfVec3f *authored, size_t authoredCount,
                                std::vector<GfVec3f> *result);
 
+/// Sets \p binding's recomputed-normals layout from the winning normals
+/// attribute \p target (primvars:normals over normals on a mesh): one value
+/// per corner for faceVarying, negated for a leftHanded \p orientation. False
+/// with the refusal in \p why for indexed normals or an interpolation other
+/// than vertex, varying or faceVarying. Every compiler calls this one rule.
+bool RigExecResolveNormalsLayout(const SdfPath &target,
+                                 const TfToken &interpolation, bool indexed,
+                                 const TfToken &orientation,
+                                 RigExecRevisionBinding *binding,
+                                 std::string *why);
+
+/// Attaches the vertex-normal walk of a static topology to \p binding. Call
+/// only when the topology cannot change without a recompile: the kernel
+/// trusts it and checks only its sizes.
+void RigExecAttachNormalsTopology(RigExecRevisionBinding *binding,
+                                  size_t pointCount, const VtIntArray &counts,
+                                  const VtIntArray &indices);
+
 /// Applies \p op to \p pts in place, returning false when the packet fails
 /// atomically.
 ///

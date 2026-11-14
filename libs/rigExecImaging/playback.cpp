@@ -33,6 +33,7 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((generated, "__RigExecGenerated"))
     (points)
     (normals)
+    ((primvarsNormals, "primvars:normals"))
     (extent)
 );
 
@@ -483,15 +484,17 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
         }
         const SdfPath &primPath = output.primPath;
         const TfToken &property = output.name;
+        const bool isNormals = property == normalsName ||
+                               property == _playbackTokens->primvarsNormals;
         RigExecPublishedPrim *published = nullptr;
-        if (property == pointsName || property == normalsName ||
+        if (property == pointsName || isNormals ||
             (property == extentName && moved.points.size() == 2)) {
             published = &snapshot->prims[primPath];
             published->assetRoot = _assetRoot;
         } else {
             continue;
         }
-        if (property == pointsName || property == normalsName) {
+        if (property == pointsName || isNormals) {
             const auto source = moved.points.Share();
             if (output.pointsSource != source) {
                 VtVec3fArray points(moved.points.size());

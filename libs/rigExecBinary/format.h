@@ -39,8 +39,8 @@ struct AncestorRead;
 struct ConstraintSource;
 struct TwoBoneIkParams;
 struct SplineIkParams;
-}  // namespace fb
-}  // namespace rigExec
+} // namespace fb
+} // namespace rigExec
 
 // The native-type conversions the generated code calls by name: Pack<Name>
 // and UnPack<Name> per struct, plus an unsuffixed Pack for the structs a
@@ -79,8 +79,8 @@ inline rigExec::fb::F64 PackF64(const double &value);
 inline double UnPackF64(const rigExec::fb::F64 &value);
 inline rigExec::fb::F32 PackF32(const float &value);
 inline float UnPackF32(const rigExec::fb::F32 &value);
-inline rigExec::fb::PropertyInputCandidate
-PackPropertyInputCandidate(const rigExec::RigExecWirePropertyInputCandidate &value);
+inline rigExec::fb::PropertyInputCandidate PackPropertyInputCandidate(
+    const rigExec::RigExecWirePropertyInputCandidate &value);
 inline rigExec::RigExecWirePropertyInputCandidate
 UnPackPropertyInputCandidate(const rigExec::fb::PropertyInputCandidate &value);
 inline rigExec::fb::ReadPhase
@@ -111,7 +111,7 @@ inline rigExec::fb::Vec3d Pack(const rigExec::RigExecWireVec3d &value);
 inline rigExec::fb::Vec3f Pack(const rigExec::RigExecWireVec3f &value);
 inline rigExec::fb::Vec3i Pack(const rigExec::RigExecWireVec3i &value);
 inline rigExec::fb::Matrix4d Pack(const rigExec::RigExecWireMatrix4d &value);
-}  // namespace flatbuffers
+} // namespace flatbuffers
 
 #include "rigExecBinary/generated/rigexec_generated.h"
 
@@ -284,21 +284,36 @@ UnPackF32(const rigExec::fb::F32 &value)
     return value.v();
 }
 
-inline rigExec::fb::F64 Pack(const double &value) { return PackF64(value); }
-inline rigExec::fb::F32 Pack(const float &value) { return PackF32(value); }
-inline rigExec::fb::Vec2f Pack(const rigExec::RigExecWireVec2f &value) { return PackVec2f(value); }
+inline rigExec::fb::F64
+Pack(const double &value)
+{
+    return PackF64(value);
+}
+inline rigExec::fb::F32
+Pack(const float &value)
+{
+    return PackF32(value);
+}
+inline rigExec::fb::Vec2f
+Pack(const rigExec::RigExecWireVec2f &value)
+{
+    return PackVec2f(value);
+}
 
 inline rigExec::fb::PropertyInputCandidate
-PackPropertyInputCandidate(const rigExec::RigExecWirePropertyInputCandidate &value)
+PackPropertyInputCandidate(
+    const rigExec::RigExecWirePropertyInputCandidate &value)
 {
-    return rigExec::fb::PropertyInputCandidate(value.slot,
-        rigExec::fb::PropertyCandidateKind(value.kind), value.version, value.raw, value.poseWeight, value.crossDomain);
+    return rigExec::fb::PropertyInputCandidate(
+        value.slot, rigExec::fb::PropertyCandidateKind(value.kind),
+        value.version, value.raw, value.poseWeight, value.crossDomain);
 }
 
 inline rigExec::RigExecWirePropertyInputCandidate
 UnPackPropertyInputCandidate(const rigExec::fb::PropertyInputCandidate &value)
 {
-    return {value.slot(), uint8_t(value.kind()), value.version(), value.raw(), value.poseWeight(), value.crossDomain()};
+    return {value.slot(), uint8_t(value.kind()), value.version(),
+            value.raw(),  value.poseWeight(),    value.crossDomain()};
 }
 
 inline rigExec::fb::ReadPhase
@@ -355,9 +370,9 @@ UnPackConstraintSource(const rigExec::fb::ConstraintSource &value)
 inline rigExec::fb::TwoBoneIkParams
 PackTwoBoneIkParams(const rigExec::RigExecWireTwoBoneIkParams &value)
 {
-    return rigExec::fb::TwoBoneIkParams(
-        value.upperLength, value.lowerLength, value.stretch, value.softness,
-        value.preferredBendRadians);
+    return rigExec::fb::TwoBoneIkParams(value.upperLength, value.lowerLength,
+                                        value.stretch, value.softness,
+                                        value.preferredBendRadians);
 }
 
 inline rigExec::RigExecWireTwoBoneIkParams
@@ -417,7 +432,7 @@ Pack(const rigExec::RigExecWireMatrix4d &value)
     return PackMatrix4d(value);
 }
 
-}  // namespace flatbuffers
+} // namespace flatbuffers
 
 namespace rigExec {
 
@@ -462,8 +477,7 @@ using RigExecWireProviderFrameInput = fb::RigExecWireProviderFrameInput;
 using RigExecWireProviderRefreshCarry = fb::RigExecWireProviderRefreshCarry;
 using RigExecWireProviderRefresh = fb::RigExecWireProviderRefresh;
 using RigExecWireBlendSampleBinding = fb::RigExecWireBlendSampleBinding;
-using RigExecWireBlendSampleBindingList =
-    fb::RigExecWireBlendSampleBindingList;
+using RigExecWireBlendSampleBindingList = fb::RigExecWireBlendSampleBindingList;
 using RigExecWireRevisionBinding = fb::RigExecWireRevisionBinding;
 using RigExecWireBlendSample = fb::RigExecWireBlendSample;
 using RigExecWireBlendChannel = fb::RigExecWireBlendChannel;
@@ -577,7 +591,15 @@ inline constexpr uint8_t RigExecWireConstraintRadialBlend =
 /// rigExec:clampOutput is false; absent when every map clamps) and
 /// File.scalar_primvar_chains (the property chains published as constant
 /// primvars). Older files hold none of them.
-inline constexpr uint32_t RigExecFormatVersion = 31;
+///
+/// Format 32 adds RevisionBinding.normals_per_corner and
+/// normals_left_handed: a RecomputeNormals target's faceVarying layout and
+/// leftHanded orientation. Older files hold neither.
+inline constexpr uint32_t RigExecFormatVersion = 32;
+
+/// The first format version whose RecomputeNormals binding may carry the
+/// normals layout.
+inline constexpr uint32_t RigExecFormatNormalsLayoutVersion = 32;
 
 /// The first format version that may hold a Range Smooth or DeltaMush.
 inline constexpr uint32_t RigExecFormatRangeSmoothVersion = 28;
@@ -610,8 +632,7 @@ inline constexpr uint32_t RigExecFormatAffineFramesVersion = 21;
 /// The mover attributes format 21 adds to revision op \p op (DeltaMush,
 /// Lattice or SurfaceProject), in the order the assembly reads them, with
 /// their count in \p count; null with 0 for every other op.
-const char *const *RigExecFormatExtendedSettingNames(uint8_t op,
-                                                     size_t *count);
+const char *const *RigExecFormatExtendedSettingNames(uint8_t op, size_t *count);
 
 /// The frame providers a revision of op \p op with extended settings may
 /// hold as influences: a Delta Mush at most one (rigExec:frame), a lattice
@@ -629,10 +650,15 @@ RigExecFormatIsRangeRevision(const fb::RigExecWireRevision &r)
 }
 
 // Format 29: sparse blend chunks carry their channel indices in key.
-inline bool RigExecFormatIsChunkBlend(const fb::RigExecWireRevision &r)
+inline bool
+RigExecFormatIsChunkBlend(const fb::RigExecWireRevision &r)
 {
-    if (!RigExecFormatIsRangeRevision(r) || r.op != uint8_t(fb::RevisionOp::BlendShape)) return false;
-    for (const auto &chunk : r.chunks) if (!chunk.key.empty()) return true;
+    if (!RigExecFormatIsRangeRevision(r) ||
+        r.op != uint8_t(fb::RevisionOp::BlendShape))
+        return false;
+    for (const auto &chunk : r.chunks)
+        if (!chunk.key.empty())
+            return true;
     return false;
 }
 
@@ -701,8 +727,7 @@ inline constexpr char RigExecFormatIdentifier[] = "REXB";
 /// count in 21) and the nested presentation (bounded like Open's buffer,
 /// then verified with its REXP identifier). Any readable format version
 /// validates. False with a reason naming the table, index and field.
-bool RigExecFormatValidate(const fb::RigExecWireFile &file,
-                           std::string *error);
+bool RigExecFormatValidate(const fb::RigExecWireFile &file, std::string *error);
 
 /// Decodes \p bytes: refuses a buffer shorter than 8 bytes, the old REXB
 /// container (with a rebake message), a wrong file identifier or format
@@ -725,8 +750,7 @@ bool RigExecFormatWrite(const fb::RigExecWireFile &file,
 
 /// The text of path id \p id: "/A/B" for a prim, "/A/B.attr" for a
 /// property, the token itself for a token; "" for 0 or an id out of range.
-std::string RigExecFormatPathText(const fb::RigExecWireFile &file,
-                                  uint32_t id);
+std::string RigExecFormatPathText(const fb::RigExecWireFile &file, uint32_t id);
 
 /// Step \p step's label, as the baked program spells it
 /// (RigExecBakedStepKindName and StepLabel): the kind, a space, then the
@@ -768,8 +792,8 @@ RigExecFormatSkinLayoutValidates(const int32_t *indices, size_t indexCount,
                                  const float *weights, size_t weightCount,
                                  int32_t elementSize, uint64_t influenceCount)
 {
-    if (!RigExecFormatSkinShapeValidates(indexCount, weightCount,
-                                         elementSize, influenceCount)) {
+    if (!RigExecFormatSkinShapeValidates(indexCount, weightCount, elementSize,
+                                         influenceCount)) {
         return false;
     }
     for (size_t k = 0; k < indexCount; ++k) {
@@ -820,6 +844,6 @@ void RigExecFormatExpandTopology(const fb::RigExecWireSkinTopology &topology,
                                  std::vector<int32_t> *indices,
                                  std::vector<float> *weights);
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_BINARY_FORMAT_H
+#endif // RIGEXEC_BINARY_FORMAT_H

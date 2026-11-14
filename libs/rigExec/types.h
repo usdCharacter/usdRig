@@ -30,8 +30,9 @@ struct RigExecMoverHandler;
 
 // Defined in rigExecMath/deltaMushKernel.h; the alias is the one
 // rigExecMath/geometryKernels.h declares. Packets hold it by shared_ptr.
-template<class Point, class Wide> struct RigExecDeltaMushRestData;
+template <class Point, class Wide> struct RigExecDeltaMushRestData;
 using RigExecDeltaMushRest = RigExecDeltaMushRestData<GfVec3f, GfVec3d>;
+struct RigExecVertexNormalsTopology;
 
 /// Retain the shared computation/type registration library in headless hosts.
 void RigExecLoadComputations();
@@ -43,15 +44,23 @@ struct RigExecPointFrameArray {
     std::vector<RigExecPointFrame> frames;
     std::vector<std::array<GfVec3d, 4>> rests;
 
-    bool operator==(const RigExecPointFrameArray &o) const {
+    bool operator==(const RigExecPointFrameArray &o) const
+    {
         return frames == o.frames && rests == o.rests;
     }
-    bool operator!=(const RigExecPointFrameArray &o) const {
+    bool operator!=(const RigExecPointFrameArray &o) const
+    {
         return !(*this == o);
     }
 
-    bool IsEmpty() const { return frames.empty(); }
-    size_t GetSize() const { return frames.size(); }
+    bool IsEmpty() const
+    {
+        return frames.empty();
+    }
+    size_t GetSize() const
+    {
+        return frames.size();
+    }
 };
 
 /// Immutable resolved weight field value published by weight objects
@@ -72,29 +81,33 @@ struct RigExecPointFrameArray {
 struct RigExecPointsPacket {
     std::vector<GfVec3f> points;
 
-    bool operator==(const RigExecPointsPacket &o) const {
+    bool operator==(const RigExecPointsPacket &o) const
+    {
         return points == o.points;
     }
-    bool operator!=(const RigExecPointsPacket &o) const {
+    bool operator!=(const RigExecPointsPacket &o) const
+    {
         return !(*this == o);
     }
 };
 
 struct RigExecWeightPacket {
-    TfToken representation;      ///< constant, dense, or sparse
-    TfToken rangePolicy;         ///< strict or clamp
-    std::vector<float> values;   ///< 0, logicalCount, or indices.size()
-    std::vector<int> indices;    ///< sparse support (sorted)
-    float defaultWeight = 0.0f;  ///< constant broadcast or sparse fallback
+    TfToken representation;     ///< constant, dense, or sparse
+    TfToken rangePolicy;        ///< strict or clamp
+    std::vector<float> values;  ///< 0, logicalCount, or indices.size()
+    std::vector<int> indices;   ///< sparse support (sorted)
+    float defaultWeight = 0.0f; ///< constant broadcast or sparse fallback
     bool valid = false;
 
-    bool operator==(const RigExecWeightPacket &o) const {
+    bool operator==(const RigExecWeightPacket &o) const
+    {
         return representation == o.representation &&
                rangePolicy == o.rangePolicy && values == o.values &&
                indices == o.indices && defaultWeight == o.defaultWeight &&
                valid == o.valid;
     }
-    bool operator!=(const RigExecWeightPacket &o) const {
+    bool operator!=(const RigExecWeightPacket &o) const
+    {
         return !(*this == o);
     }
 
@@ -140,10 +153,12 @@ struct RigExecWeightPacket {
 struct RigExecFalloffLut {
     std::vector<float> samples;
 
-    bool operator==(const RigExecFalloffLut &o) const {
+    bool operator==(const RigExecFalloffLut &o) const
+    {
         return samples == o.samples;
     }
-    bool operator!=(const RigExecFalloffLut &o) const {
+    bool operator!=(const RigExecFalloffLut &o) const
+    {
         return !(*this == o);
     }
 };
@@ -174,11 +189,13 @@ struct RigExecBlendSampleLayout {
     /// once, to decide whether it can hand back the pointer it already had
     /// rather than make the mover's packet compare unequal and re-run the
     /// whole accumulate for a shape that did not move.
-    bool operator==(const RigExecBlendSampleLayout &o) const {
+    bool operator==(const RigExecBlendSampleLayout &o) const
+    {
         return valid == o.valid && pointCount == o.pointCount &&
                indices == o.indices && offsets == o.offsets;
     }
-    bool operator!=(const RigExecBlendSampleLayout &o) const {
+    bool operator!=(const RigExecBlendSampleLayout &o) const
+    {
         return !(*this == o);
     }
 };
@@ -204,22 +221,28 @@ struct RigExecBlendSampleData {
     const GfVec3f *borrowedPoints = nullptr;
     size_t borrowedCount = 0;
     bool borrowsPoints = false;
-    const GfVec3f *PointData() const {
+    const GfVec3f *PointData() const
+    {
         return borrowsPoints ? borrowedPoints : points.data();
     }
-    size_t PointCount() const {
+    size_t PointCount() const
+    {
         return borrowsPoints ? borrowedCount : points.size();
     }
     std::shared_ptr<const RigExecBlendSampleLayout> layout;
 
-    bool operator==(const RigExecBlendSampleData &o) const {
+    bool operator==(const RigExecBlendSampleData &o) const
+    {
         if (activation != o.activation || layout != o.layout ||
-            PointCount() != o.PointCount()) return false;
-        for (size_t i=0;i<PointCount();++i)
-            if (PointData()[i] != o.PointData()[i]) return false;
+            PointCount() != o.PointCount())
+            return false;
+        for (size_t i = 0; i < PointCount(); ++i)
+            if (PointData()[i] != o.PointData()[i])
+                return false;
         return true;
     }
-    bool operator!=(const RigExecBlendSampleData &o) const {
+    bool operator!=(const RigExecBlendSampleData &o) const
+    {
         return !(*this == o);
     }
 };
@@ -230,10 +253,12 @@ struct RigExecBlendChannel {
     float weight = 0.0f;
     std::vector<RigExecBlendSampleData> samples;
 
-    bool operator==(const RigExecBlendChannel &o) const {
+    bool operator==(const RigExecBlendChannel &o) const
+    {
         return weight == o.weight && samples == o.samples;
     }
-    bool operator!=(const RigExecBlendChannel &o) const {
+    bool operator!=(const RigExecBlendChannel &o) const
+    {
         return !(*this == o);
     }
 };
@@ -252,10 +277,10 @@ struct RigExecBlendChannel {
 /// Held by shared_ptr and compared by identity: two packets naming the same
 /// layout name the same arrays, and that identity is the equality that matters.
 struct RigExecSkinTopology {
-    std::vector<int> indices;     ///< pointCount * elementSize
-    std::vector<float> weights;   ///< parallel to indices
-    int elementSize = 0;          ///< influence slots per point
-    size_t pointCount = 0;        ///< indices.size() / elementSize
+    std::vector<int> indices;   ///< pointCount * elementSize
+    std::vector<float> weights; ///< parallel to indices
+    int elementSize = 0;        ///< influence slots per point
+    size_t pointCount = 0;      ///< indices.size() / elementSize
     /// The influence-table size the indices were range-checked against.
     /// Compiled rig state (rigExec:influences is), and the O(1) guard that lets the
     /// kernel trust the range check without repeating it.
@@ -272,13 +297,14 @@ struct RigExecSkinTopology {
     /// it once, to decide whether it can hand back the pointer it already
     /// had -- which is what keeps an edit that touched nothing about the
     /// binding from re-running the per-point kernel.
-    bool operator==(const RigExecSkinTopology &o) const {
+    bool operator==(const RigExecSkinTopology &o) const
+    {
         return elementSize == o.elementSize && pointCount == o.pointCount &&
-               influenceCount == o.influenceCount &&
-               validated == o.validated && indices == o.indices &&
-               weights == o.weights;
+               influenceCount == o.influenceCount && validated == o.validated &&
+               indices == o.indices && weights == o.weights;
     }
-    bool operator!=(const RigExecSkinTopology &o) const {
+    bool operator!=(const RigExecSkinTopology &o) const
+    {
         return !(*this == o);
     }
 };
@@ -292,7 +318,7 @@ struct RigExecMoverParameters {
     /// recomputeNormals, or recomputeExtent.
     TfToken kind;
     bool enabled = true;
-    bool valid = false;    ///< false => MoverFailed pass-through
+    bool valid = false; ///< false => MoverFailed pass-through
     GfMatrix4d transform{1.0};
 
     /// Take a fraction of the transform's ROTATION rather than of the
@@ -389,6 +415,14 @@ struct RigExecMoverParameters {
     /// whose numbers cannot move.
     std::shared_ptr<const RigExecDeltaMushRest> mushRest;
 
+    /// Recomputed normals: one value per face corner (faceVarying) rather
+    /// than per point, negated on a leftHanded mesh. Compile facts.
+    bool normalsPerCorner = false;
+    bool normalsLeftHanded = false;
+    /// The compiled vertex-normal walk; kernel-only and outside operator==
+    /// for the reason mushRest is.
+    std::shared_ptr<const RigExecVertexNormalsTopology> normalsTopology;
+
     /// Plugin-owned payload. The registered schema identifies its callbacks.
     const RigExecMoverHandler *externalHandler = nullptr;
     TfToken externalSchema;
@@ -398,23 +432,28 @@ struct RigExecMoverParameters {
     /// null otherwise. Not part of the packet's value: excluded from ==.
     struct RigExecWindowRun *window = nullptr;
 
-    bool operator==(const RigExecMoverParameters &o) const {
+    bool operator==(const RigExecMoverParameters &o) const
+    {
         return kind == o.kind && enabled == o.enabled && valid == o.valid &&
                transform == o.transform && radialWeight == o.radialWeight &&
-               weights == o.weights &&
-               blendDeltas == o.blendDeltas && blendSurfaceFrame == o.blendSurfaceFrame &&
-               referenceVolume == o.referenceVolume &&
-               strength == o.strength &&
+               weights == o.weights && blendDeltas == o.blendDeltas &&
+               blendSurfaceFrame == o.blendSurfaceFrame &&
+               referenceVolume == o.referenceVolume && strength == o.strength &&
                mushIterations == o.mushIterations && mushStep == o.mushStep &&
                mushPinBorders == o.mushPinBorders &&
-               mushDistanceWeight == o.mushDistanceWeight && mushDisplacement == o.mushDisplacement &&
-               mushSettings == o.mushSettings && mushComputationToTarget == o.mushComputationToTarget &&
+               mushDistanceWeight == o.mushDistanceWeight &&
+               mushDisplacement == o.mushDisplacement &&
+               mushSettings == o.mushSettings &&
+               mushComputationToTarget == o.mushComputationToTarget &&
                wrinkleSettings == o.wrinkleSettings &&
                surfaceSettings == o.surfaceSettings &&
-               targetToSurface == o.targetToSurface && surfaceToTarget == o.surfaceToTarget &&
+               targetToSurface == o.targetToSurface &&
+               surfaceToTarget == o.surfaceToTarget &&
                surfaceToMetric == o.surfaceToMetric &&
-               latticeSettings == o.latticeSettings && targetToLattice == o.targetToLattice &&
-               latticeToTarget == o.latticeToTarget && cageToLattice == o.cageToLattice &&
+               latticeSettings == o.latticeSettings &&
+               targetToLattice == o.targetToLattice &&
+               latticeToTarget == o.latticeToTarget &&
+               cageToLattice == o.cageToLattice &&
                topologyCounts == o.topologyCounts &&
                topologyIndices == o.topologyIndices &&
                auxPoints == o.auxPoints && auxPointsB == o.auxPointsB &&
@@ -422,19 +461,20 @@ struct RigExecMoverParameters {
                bindCoords == o.bindCoords && frames == o.frames &&
                wireBindCoords == o.wireBindCoords &&
                curveOrder == o.curveOrder && curveKnots == o.curveKnots &&
-               dropoffDistance == o.dropoffDistance &&
-               widths == o.widths &&
+               dropoffDistance == o.dropoffDistance && widths == o.widths &&
                skinTransforms == o.skinTransforms &&
-               skinIndices == o.skinIndices &&
-               skinWeights == o.skinWeights &&
+               skinIndices == o.skinIndices && skinWeights == o.skinWeights &&
                skinTopology == o.skinTopology &&
                // mushRest deliberately excluded: see the member comment.
                skinElementSize == o.skinElementSize &&
                skinningMethod == o.skinningMethod &&
+               normalsPerCorner == o.normalsPerCorner &&
+               normalsLeftHanded == o.normalsLeftHanded &&
                externalSchema == o.externalSchema &&
                externalData == o.externalData;
     }
-    bool operator!=(const RigExecMoverParameters &o) const {
+    bool operator!=(const RigExecMoverParameters &o) const
+    {
         return !(*this == o);
     }
 };
@@ -446,16 +486,21 @@ struct RigExecMoverStatus {
     TfToken state;               ///< "ok", "disabled", or "moverFailed"
     std::string firstBadAddress; ///< first bad canonical value address
 
-    bool operator==(const RigExecMoverStatus &o) const {
+    bool operator==(const RigExecMoverStatus &o) const
+    {
         return state == o.state && firstBadAddress == o.firstBadAddress;
     }
-    bool operator!=(const RigExecMoverStatus &o) const {
+    bool operator!=(const RigExecMoverStatus &o) const
+    {
         return !(*this == o);
     }
 
-    bool AllowsApply() const { return state == "ok"; }
+    bool AllowsApply() const
+    {
+        return state == "ok";
+    }
 };
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_TYPES_H
+#endif // RIGEXEC_TYPES_H

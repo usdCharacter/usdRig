@@ -9146,6 +9146,55 @@ TestExternallyOwnedStoreConstructor()
     CHECK(store->Get() == second);
 }
 
+// Recomputed faceVarying primvars:normals publish one value per corner
+// with the authored faceVarying interpolation, not vertex.
+static void
+TestFaceVaryingNormalsPublish()
+{
+    const UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    CHECK(stage->GetRootLayer()->ImportFromString(R"USD(#usda 1.0
+def RigExecRoot "Rig" {
+ def RigExecControl "Turn" {
+  double avars:rx = 30
+ }
+ def Mesh "Sheet" {
+  point3f[] points = [(0,0,0),(1,0,0),(2,0,0.5),(0,1,0),(1,1,0.25),(2,1,0)]
+  int[] faceVertexCounts = [4, 4]
+  int[] faceVertexIndices = [0,1,4,3, 1,2,5,4]
+  normal3f[] primvars:normals = [(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1)] (interpolation = "faceVarying")
+ }
+ def RigExecMatrixMover "TurnSheet" (prepend apiSchemas = ["RigExecMoverAPI"]) {
+  rel rigExec:moves = </Rig/Sheet.points>
+  rel rigExec:transform = </Rig/Turn>
+ }
+}
+)USD"));
+    RigExecImagingBridge bridge(stage, SdfPath("/Rig"));
+    std::vector<std::string> errors;
+    CHECK(bridge.Compile(&errors));
+    CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
+    auto upstream = UsdImagingStageSceneIndex::New();
+    upstream->SetStage(stage);
+    upstream->ApplyPendingUpdates();
+    const auto results =
+        RigExecResultsSceneIndex::New(upstream, bridge.GetStore());
+    const HdPrimvarSchema normals =
+        HdPrimvarsSchema::GetFromParent(
+            results->GetPrim(SdfPath("/Rig/Sheet")).dataSource)
+            .GetPrimvar(HdTokens->normals);
+    CHECK(normals.GetInterpolation() &&
+          normals.GetInterpolation()->GetTypedValue(0.0f) ==
+              HdPrimvarSchemaTokens->faceVarying);
+    const HdSampledDataSourceHandle value = normals.GetPrimvarValue();
+    CHECK(value);
+    if (value) {
+        const VtValue v = value->GetValue(0.0f);
+        CHECK(v.IsHolding<VtVec3fArray>() &&
+              v.UncheckedGet<VtVec3fArray>().size() == 8 &&
+              v.UncheckedGet<VtVec3fArray>()[0] != GfVec3f(0, 0, 1));
+    }
+}
+
 int
 main(int argc, char **argv)
 {
@@ -9170,6 +9219,7 @@ main(int argc, char **argv)
                     imagingResources.c_str());
         return 2;
     }
+    TestFaceVaryingNormalsPublish();
 
     TestDrivenXformConditioning();
     TestPrePopulationAttachment();

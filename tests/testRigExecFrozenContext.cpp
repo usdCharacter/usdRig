@@ -8848,10 +8848,80 @@ TestAClonesDropsIdleScratch(const std::string &examplesDir)
                            warmed4);
 }
 
+// Recomputed normals warm bit-identically in their authored layout:
+// faceVarying normals on a leftHanded mesh, one per corner, and
+// primvars:normals over a stale constant normals.
+void
+TestNormalsLayoutWarmsBitIdentical()
+{
+    const auto stage = UsdStage::CreateInMemory();
+    CHECK(stage->GetRootLayer()->ImportFromString(R"USD(#usda 1.0
+def RigExecRoot "Rig" {
+ def RigExecControl "Turn" {
+  double avars:rx.timeSamples = {1: 0, 2: 30, 3: 75}
+ }
+ def Mesh "Sheet" {
+  uniform token orientation = "leftHanded"
+  point3f[] points = [(0,0,0),(1,0,0),(2,0,0.5),(0,1,0),(1,1,0.25),(2,1,0)]
+  int[] faceVertexCounts = [4, 4]
+  int[] faceVertexIndices = [0,1,4,3, 1,2,5,4]
+  normal3f[] normals = [(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1)] (interpolation = "faceVarying")
+ }
+ def Mesh "Card" {
+  point3f[] points = [(0,0,0),(1,0,0),(0,1,0),(1,1,0.5)]
+  int[] faceVertexCounts = [4]
+  int[] faceVertexIndices = [0,1,3,2]
+  normal3f[] normals = [(0,0,1)] (interpolation = "constant")
+  normal3f[] primvars:normals = [(0,0,1),(0,0,1),(0,0,1),(0,0,1)] (interpolation = "vertex")
+ }
+ def RigExecMatrixMover "TurnSheet" (prepend apiSchemas = ["RigExecMoverAPI"]) {
+  rel rigExec:moves = </Rig/Sheet.points>
+  rel rigExec:transform = </Rig/Turn>
+ }
+ def RigExecMatrixMover "TurnCard" (prepend apiSchemas = ["RigExecMoverAPI"]) {
+  rel rigExec:moves = </Rig/Card.points>
+  rel rigExec:transform = </Rig/Turn>
+ }
+}
+)USD"));
+    const SdfPath root("/Rig");
+    RigExecRigEvaluator evaluator(stage, root);
+    std::vector<std::string> errors;
+    CHECK(evaluator.Compile(&errors));
+    CHECK(evaluator.Evaluate(UsdTimeCode(1)).valid);
+    RigExecBackgroundScheduler scheduler;
+    for (double time : {2.0, 3.0, 1.0}) {
+        std::shared_ptr<const RigExecFrozenProgram> frozen;
+        std::string error;
+        CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
+        if (!frozen) {
+            std::printf("normals layout freeze: %s\n", error.c_str());
+            return;
+        }
+        RigExecFrameInputs inputs;
+        CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(time), {},
+                                       &inputs, &error));
+        const auto warmed = RunWarmingJob(&evaluator, root, frozen, inputs,
+                                          &scheduler, nullptr);
+        const auto live = evaluator.Evaluate(UsdTimeCode(time));
+        CHECK(live.valid && live.diagnostics.empty());
+        CheckPosesBitIdentical("normals layout frozen", live, warmed);
+        const auto size = [&](const char *path) {
+            const auto found = warmed.movedProperties.find(SdfPath(path));
+            return found == warmed.movedProperties.end()
+                       ? size_t(0)
+                       : found->second.Get<VtVec3fArray>().size();
+        };
+        CHECK(size("/Rig/Sheet.normals") == 8);
+        CHECK(size("/Rig/Card.primvars:normals") == 4);
+    }
+}
+
 int
 main(int argc, char **argv)
 {
     TestFrozenPropertySkinLayoutRecovery();
+    TestNormalsLayoutWarmsBitIdentical();
     if (argc > 1)
         TestFrozenEnvelopeVolumesRecovery(argv[1]);
     TestValuesAreFoundByPath();

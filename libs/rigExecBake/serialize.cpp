@@ -1565,6 +1565,8 @@ _FileFill::_Revision(const RigExecBakedProgramImpl::GeomRevision &revision,
         bound->phases.push_back(_Phase(entry.second));
     }
     bound->transformPhase = _Phase(binding.transformPhase);
+    bound->normalsPerCorner = binding.normalsPerCorner;
+    bound->normalsLeftHanded = binding.normalsLeftHanded;
     out->binding = std::move(bound);
     out->blendChannels.resize(revision.blendChannels.size());
     for (size_t ch = 0; ch < revision.blendChannels.size(); ++ch) {

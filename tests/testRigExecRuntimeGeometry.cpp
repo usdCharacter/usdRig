@@ -59,12 +59,12 @@ static int failures = 0;
 static int comparedFixtures = 0;
 static int comparedFrames = 0;
 
-#define CHECK(cond)                                                     \
-    do {                                                                \
-        if (!(cond)) {                                                  \
-            ++failures;                                                 \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);  \
-        }                                                               \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 #include "rigExecFileEdit.h"
@@ -96,9 +96,8 @@ _ParseFrames(const std::string &text)
     size_t begin = 0;
     while (begin <= text.size()) {
         const size_t end = text.find(",", begin);
-        const std::string piece =
-            text.substr(begin, end == std::string::npos
-                        ? std::string::npos : end - begin);
+        const std::string piece = text.substr(
+            begin, end == std::string::npos ? std::string::npos : end - begin);
         if (!piece.empty()) {
             frames.push_back(std::stod(piece));
         }
@@ -124,8 +123,8 @@ _NativeRevisionSteps(const RigExecRigEvaluator &evaluator)
         return steps;
     }
     const RigExecBakedProgramImpl &B = program->GetStepGraph();
-    for (size_t c = 0;
-         c < B.opGraph.ops.size() && c < B.opExecution.ran.size(); ++c) {
+    for (size_t c = 0; c < B.opGraph.ops.size() && c < B.opExecution.ran.size();
+         ++c) {
         if (!B.opExecution.ran[c]) {
             continue;
         }
@@ -165,12 +164,12 @@ _RuntimeRevisionSteps(const fb::RigExecWireFile &file,
             continue;
         }
         const auto &at = geometry.revisionIndex[size_t(step.object)];
-        steps.emplace(fuse,
-                      RigExecFormatPathText(file,
-                                            geometry.chains[size_t(at.first)]
-                                                .revisions[size_t(at.second)]
-                                                .moverPath),
-                      fuse ? 0 : int(step.part));
+        steps.emplace(
+            fuse,
+            RigExecFormatPathText(file, geometry.chains[size_t(at.first)]
+                                            .revisions[size_t(at.second)]
+                                            .moverPath),
+            fuse ? 0 : int(step.part));
     }
     return steps;
 }
@@ -203,8 +202,7 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
     {
         RigExecRigEvaluator baker(stage, rigPath);
         if (!RigExecTestBakeAt(baker, frames.front(), &bytes, &error)) {
-            std::printf("%s: FAILED (bake: %s)\n", name.c_str(),
-                        error.c_str());
+            std::printf("%s: FAILED (bake: %s)\n", name.c_str(), error.c_str());
             CHECK(false);
             return;
         }
@@ -252,11 +250,11 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
         for (const RigExecRuntimePoints &moved : readerPoints) {
             points.push_back(&moved);
         }
-        std::sort(points.begin(), points.end(),
-                  [](const RigExecRuntimePoints *a,
-                     const RigExecRuntimePoints *b) {
-                      return a->path < b->path;
-                  });
+        std::sort(
+            points.begin(), points.end(),
+            [](const RigExecRuntimePoints *a, const RigExecRuntimePoints *b) {
+                return a->path < b->path;
+            });
         // Geometry owns the point-array entries; scalar property
         // results (inputs:weight, rigExec:gain, ...) are the pose
         // family's publication, compared by its own test.
@@ -266,8 +264,7 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
             if (!entry.second.IsHolding<VtVec3fArray>()) {
                 continue;
             }
-            wantPoints.push_back(
-                {entry.first.GetString(), entry.second});
+            wantPoints.push_back({entry.first.GetString(), entry.second});
         }
         std::sort(wantPoints.begin(), wantPoints.end(),
                   [](const std::pair<std::string, VtValue> &a,
@@ -276,11 +273,10 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
                   });
         if (points.size() != wantPoints.size()) {
             std::printf("%s frame %.17g: %zu moved properties vs %zu\n",
-                        name.c_str(), frame, points.size(),
-                        wantPoints.size());
+                        name.c_str(), frame, points.size(), wantPoints.size());
             for (const auto *moved : points) {
-                std::printf("  got:  %s (%zu points)\n",
-                            moved->path.c_str(), moved->points.size());
+                std::printf("  got:  %s (%zu points)\n", moved->path.c_str(),
+                            moved->points.size());
             }
             for (const auto &entry : wantPoints) {
                 std::printf("  want: %s\n", entry.first.c_str());
@@ -293,8 +289,9 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
             const std::string &path = wantPoints[at].first;
             if (points[at]->path != path) {
                 std::printf("%s frame %.17g: moved property %zu is %s, "
-                            "expected %s\n", name.c_str(), frame, at,
-                            points[at]->path.c_str(), path.c_str());
+                            "expected %s\n",
+                            name.c_str(), frame, at, points[at]->path.c_str(),
+                            path.c_str());
                 CHECK(false);
                 failed = true;
                 break;
@@ -307,22 +304,21 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
                  std::memcmp(got.data(), want.cdata(),
                              want.size() * sizeof(GfVec3f)) != 0)) {
                 size_t firstDiff = 0;
-                while (firstDiff < got.size() &&
-                       firstDiff < want.size() &&
+                while (firstDiff < got.size() && firstDiff < want.size() &&
                        std::memcmp(&got[firstDiff], &want[firstDiff],
                                    sizeof(GfVec3f)) == 0) {
                     ++firstDiff;
                 }
                 std::printf("%s frame %.17g: %s points differ "
-                            "(%zu vs %zu, first at %zu)\n", name.c_str(),
-                            frame, path.c_str(), got.size(), want.size(),
-                            firstDiff);
+                            "(%zu vs %zu, first at %zu)\n",
+                            name.c_str(), frame, path.c_str(), got.size(),
+                            want.size(), firstDiff);
                 if (firstDiff < got.size() && firstDiff < want.size()) {
                     std::printf("  got:  %.9g %.9g %.9g\n  want: %.9g "
-                                "%.9g %.9g\n", got[firstDiff][0],
-                                got[firstDiff][1], got[firstDiff][2],
-                                want[firstDiff][0], want[firstDiff][1],
-                                want[firstDiff][2]);
+                                "%.9g %.9g\n",
+                                got[firstDiff][0], got[firstDiff][1],
+                                got[firstDiff][2], want[firstDiff][0],
+                                want[firstDiff][1], want[firstDiff][2]);
                 }
                 CHECK(false);
                 failed = true;
@@ -335,25 +331,23 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
         const auto &wantDiags = pose.diagnostics;
         if (diagnostics != wantDiags) {
             std::printf("%s frame %.17g: diagnostics differ "
-                        "(%zu vs %zu)\n", name.c_str(), frame,
-                        diagnostics.size(), wantDiags.size());
+                        "(%zu vs %zu)\n",
+                        name.c_str(), frame, diagnostics.size(),
+                        wantDiags.size());
             const size_t common =
                 std::min(diagnostics.size(), wantDiags.size());
             for (size_t i = 0; i < common; ++i) {
                 if (diagnostics[i] != wantDiags[i]) {
                     std::printf("  got:  %s\n  want: %s\n",
-                                diagnostics[i].c_str(),
-                                wantDiags[i].c_str());
+                                diagnostics[i].c_str(), wantDiags[i].c_str());
                     break;
                 }
             }
             if (diagnostics.size() > common) {
-                std::printf("  extra got:  %s\n",
-                            diagnostics[common].c_str());
+                std::printf("  extra got:  %s\n", diagnostics[common].c_str());
             }
             if (wantDiags.size() > common) {
-                std::printf("  extra want: %s\n",
-                            wantDiags[common].c_str());
+                std::printf("  extra want: %s\n", wantDiags[common].c_str());
             }
             CHECK(false);
             failed = true;
@@ -366,8 +360,8 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
                 _RuntimeRevisionSteps(*file, *reader);
             if (native != runtime) {
                 std::printf("%s frame %.17g: %zu native revision step(s) "
-                            "ran vs %zu in the runtime\n", name.c_str(),
-                            frame, native.size(), runtime.size());
+                            "ran vs %zu in the runtime\n",
+                            name.c_str(), frame, native.size(), runtime.size());
                 CHECK(false);
                 failed = true;
             }
@@ -392,8 +386,7 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
         std::printf("%s: compared %d frame(s) of a bake at %.17g%s (%zu "
                     "input(s), %zu sampled per frame)\n",
                     name.c_str(), compared, frames.front(),
-                    staticClass ? ", static" : "",
-                    player->GetInputCount(),
+                    staticClass ? ", static" : "", player->GetInputCount(),
                     player.Sampler().GetAnimatedCount());
     }
 }
@@ -424,8 +417,8 @@ _CurrentPhaseStage()
     const UsdPrim mesh =
         stage->DefinePrim(SdfPath("/Asset/Geom/M"), TfToken("Points"));
     mesh.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
-        .Set(VtVec3fArray{GfVec3f(0, 0, 0), GfVec3f(0, 4, 0),
-                          GfVec3f(0, 8, 0)});
+        .Set(
+            VtVec3fArray{GfVec3f(0, 0, 0), GfVec3f(0, 4, 0), GfVec3f(0, 8, 0)});
     const UsdGeomXform source =
         UsdGeomXform::Define(stage, SdfPath("/Asset/PullTo"));
     source.MakeMatrixXform().Set(
@@ -442,20 +435,21 @@ _CurrentPhaseStage()
         .Set(0.0);
     sphere.CreateRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({SdfPath("/Asset/Geom/M.points")});
-    sphere.CreateAttribute(TfToken("inputs:falloffMin"),
-                           SdfValueTypeNames->Float)
+    sphere
+        .CreateAttribute(TfToken("inputs:falloffMin"), SdfValueTypeNames->Float)
         .Set(0.0f);
-    sphere.CreateAttribute(TfToken("inputs:falloffMax"),
-                           SdfValueTypeNames->Float)
+    sphere
+        .CreateAttribute(TfToken("inputs:falloffMax"), SdfValueTypeNames->Float)
         .Set(8.0f);
-    sphere.CreateAttribute(TfToken("rigExec:falloffProfile"),
-                           SdfValueTypeNames->Token)
+    sphere
+        .CreateAttribute(TfToken("rigExec:falloffProfile"),
+                         SdfValueTypeNames->Token)
         .Set(TfToken("linear"));
     sphere.GetRelationship(TfToken("rigExec:weightTarget"))
         .SetMetadata(TfToken("rigExecReadPhase"), std::string("preceding"));
-    const UsdPrim constraint = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Sweep/Pull"),
-        TfToken("RigExecPositionConstraint"));
+    const UsdPrim constraint =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Sweep/Pull"),
+                          TfToken("RigExecPositionConstraint"));
     constraint.ApplyAPI(TfToken("RigExecMoverAPI"));
     constraint.CreateRelationship(TfToken("rigExec:moves"))
         .SetTargets({SdfPath("/Asset/Geom/M.points")});
@@ -482,8 +476,7 @@ _SamePoints(const std::vector<std::vector<RigExecRuntimePoints>> &a,
                 a[f][p].points.size() != b[f][p].points.size() ||
                 (!a[f][p].points.empty() &&
                  std::memcmp(a[f][p].points.data(), b[f][p].points.data(),
-                             a[f][p].points.size() * sizeof(RrVec3f)) !=
-                     0)) {
+                             a[f][p].points.size() * sizeof(RrVec3f)) != 0)) {
                 return false;
             }
         }
@@ -629,8 +622,8 @@ _PoseDrivenBlendStage(bool published)
     stage->DefinePrim(SdfPath("/Asset/Rig/Controls"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig/Controls/Shoulder"),
                       TfToken("RigExecControl"));
-    const UsdPrim control = stage->DefinePrim(driver,
-                                              TfToken("RigExecControl"));
+    const UsdPrim control =
+        stage->DefinePrim(driver, TfToken("RigExecControl"));
     const UsdAttribute rz = control.GetAttribute(TfToken("avars:rz"));
     rz.Set(0.0, UsdTimeCode(1.0));
     rz.Set(30.0, UsdTimeCode(2.0));
@@ -655,8 +648,9 @@ _PoseDrivenBlendStage(bool published)
     swing.GetAttribute(TfToken("rigExec:kernel")).Set(TfToken("gaussian"));
     swing.GetAttribute(TfToken("rigExec:twistAxis")).Set(TfToken("Z"));
     const auto addPose = [&](const char *poseName, double degrees) {
-        const UsdPrim pose = stage->DefinePrim(
-            interpolator.AppendChild(TfToken(poseName)), TfToken("RigExecPose"));
+        const UsdPrim pose =
+            stage->DefinePrim(interpolator.AppendChild(TfToken(poseName)),
+                              TfToken("RigExecPose"));
         const double half = GfDegreesToRadians(degrees) * 0.5;
         pose.GetAttribute(TfToken("rigExec:poseType")).Set(TfToken("whole"));
         pose.GetAttribute(TfToken("rigExec:rotation"))
@@ -669,24 +663,24 @@ _PoseDrivenBlendStage(bool published)
     addPose("neutral", 0.0);
     const UsdPrim forward = addPose("Forward", 45.0);
     addPose("Back", -45.0);
-    const UsdPrim input = stage->DefinePrim(
-        SdfPath("/Asset/Rig/BlendInputs/Corrective"),
-        TfToken("RigExecBlendInput"));
+    const UsdPrim input =
+        stage->DefinePrim(SdfPath("/Asset/Rig/BlendInputs/Corrective"),
+                          TfToken("RigExecBlendInput"));
     const UsdAttribute weight = input.GetAttribute(TfToken("inputs:weight"));
     weight.Set(0.0f);
     weight.AddConnection(
         forward.GetPath().AppendProperty(TfToken("outputs:weight")));
-    const UsdPrim sample = stage->DefinePrim(
-        SdfPath("/Asset/Rig/BlendInputs/Corrective/Full"),
-        TfToken("RigExecBlendSample"));
+    const UsdPrim sample =
+        stage->DefinePrim(SdfPath("/Asset/Rig/BlendInputs/Corrective/Full"),
+                          TfToken("RigExecBlendSample"));
     sample.GetAttribute(TfToken("rigExec:activation")).Set(1.0f);
     sample.CreateRelationship(TfToken("rigExec:targetPoints"))
         .SetTargets({SdfPath("/Asset/Targets/Full.points")});
     input.CreateRelationship(TfToken("rigExec:samples"))
         .SetTargets({sample.GetPath()});
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
-    const UsdPrim blend = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Blend"), TfToken("RigExecBlendShapeMover"));
+    const UsdPrim blend = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Blend"),
+                                            TfToken("RigExecBlendShapeMover"));
     blend.ApplyAPI(TfToken("RigExecMoverAPI"));
     blend.GetRelationship(TfToken("rigExec:moves"))
         .SetTargets({SdfPath("/Asset/Geom/Mesh.points")});
@@ -694,15 +688,16 @@ _PoseDrivenBlendStage(bool published)
     blend.CreateRelationship(TfToken("rigExec:blendInputs"))
         .SetTargets({input.GetPath()});
     if (published) {
-        const UsdPrim offset = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Movers/Offset"),
-            TfToken("RigExecFloatMathMover"));
+        const UsdPrim offset =
+            stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Offset"),
+                              TfToken("RigExecFloatMathMover"));
         CHECK(offset.ApplyAPI(TfToken("RigExecMoverAPI")));
-        offset.CreateAttribute(TfToken("rigExec:operation"),
-                               SdfValueTypeNames->Token)
+        offset
+            .CreateAttribute(TfToken("rigExec:operation"),
+                             SdfValueTypeNames->Token)
             .Set(TfToken("add"));
-        offset.CreateAttribute(TfToken("inputs:value"),
-                               SdfValueTypeNames->Float)
+        offset
+            .CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float)
             .Set(0.25f);
         offset.CreateRelationship(TfToken("rigExec:moves"))
             .SetTargets({weight.GetPath()});
@@ -763,8 +758,7 @@ _ActivationDragStage()
             p[2] += dz;
         }
         stage->DefinePrim(SdfPath(path), TfToken("Points"))
-            .CreateAttribute(TfToken("points"),
-                             SdfValueTypeNames->Point3fArray)
+            .CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
             .Set(points);
     };
     target("/Asset/Targets/Half", 4.0f);
@@ -773,9 +767,9 @@ _ActivationDragStage()
         SdfPath("/Asset/Rig/BlendInputs/Smile"), TfToken("RigExecBlendInput"));
     input.GetAttribute(TfToken("inputs:weight")).Set(0.6f);
     const auto sample = [&](const char *name, const char *targetPath) {
-        const UsdPrim prim = stage->DefinePrim(
-            input.GetPath().AppendChild(TfToken(name)),
-            TfToken("RigExecBlendSample"));
+        const UsdPrim prim =
+            stage->DefinePrim(input.GetPath().AppendChild(TfToken(name)),
+                              TfToken("RigExecBlendSample"));
         prim.CreateRelationship(TfToken("rigExec:targetPoints"))
             .SetTargets({SdfPath(targetPath)});
         return prim;
@@ -788,8 +782,8 @@ _ActivationDragStage()
     input.CreateRelationship(TfToken("rigExec:samples"))
         .SetTargets({half.GetPath(), full.GetPath()});
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
-    const UsdPrim blend = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Blend"), TfToken("RigExecBlendShapeMover"));
+    const UsdPrim blend = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Blend"),
+                                            TfToken("RigExecBlendShapeMover"));
     blend.ApplyAPI(TfToken("RigExecMoverAPI"));
     blend.GetRelationship(TfToken("rigExec:moves"))
         .SetTargets({SdfPath("/Asset/Geom/Mesh.points")});
@@ -860,9 +854,8 @@ TestBlendActivationDrag()
     // 1.5 authored on the avar.
     const auto references = [&](const std::vector<RigExecTestEdit> &edits) {
         std::vector<RigExecRigPose> poses;
-        const bool ok = RigExecTestEditedPoses(
-            stage, rigPath,
-            edits, frames, &poses, &error);
+        const bool ok = RigExecTestEditedPoses(stage, rigPath, edits, frames,
+                                               &poses, &error);
         CHECK(ok);
         if (!ok) {
             std::printf("%s: reference: %s\n", name, error.c_str());
@@ -877,42 +870,39 @@ TestBlendActivationDrag()
         return;
     }
     // One frame against \p pose.
-    const auto run = [&](const char *what, size_t f,
-                         const RigExecRigPose &pose,
-                         std::vector<std::vector<RigExecRuntimePoints>>
-                             *played) {
-        if (!player.Play(frames[f], &error)) {
-            std::printf("%s, %s frame %.17g: %s\n", name, what, frames[f],
-                        error.c_str());
-            CHECK(false);
-            return false;
-        }
-        played->push_back(player->GetPoints());
-        if (!_SameMovedPoints(pose, played->back())) {
-            std::printf("%s, %s frame %.17g: the runtime's points differ "
-                        "from the baked program's\n",
-                        name, what, frames[f]);
-            return false;
-        }
-        return true;
-    };
-    const auto pass = [&](const char *what,
-                          const std::vector<RigExecRigPose> &poses,
-                          std::vector<std::vector<RigExecRuntimePoints>>
-                              *played) {
-        bool same = true;
-        for (size_t f = 0; f < frames.size(); ++f) {
-            same = run(what, f, poses[f], played) && same;
-        }
-        return same;
-    };
-    std::vector<std::vector<RigExecRuntimePoints>> undragged, dragged,
-        released, releasedHere;
+    const auto run =
+        [&](const char *what, size_t f, const RigExecRigPose &pose,
+            std::vector<std::vector<RigExecRuntimePoints>> *played) {
+            if (!player.Play(frames[f], &error)) {
+                std::printf("%s, %s frame %.17g: %s\n", name, what, frames[f],
+                            error.c_str());
+                CHECK(false);
+                return false;
+            }
+            played->push_back(player->GetPoints());
+            if (!_SameMovedPoints(pose, played->back())) {
+                std::printf("%s, %s frame %.17g: the runtime's points differ "
+                            "from the baked program's\n",
+                            name, what, frames[f]);
+                return false;
+            }
+            return true;
+        };
+    const auto pass =
+        [&](const char *what, const std::vector<RigExecRigPose> &poses,
+            std::vector<std::vector<RigExecRuntimePoints>> *played) {
+            bool same = true;
+            for (size_t f = 0; f < frames.size(); ++f) {
+                same = run(what, f, poses[f], played) && same;
+            }
+            return same;
+        };
+    std::vector<std::vector<RigExecRuntimePoints>> undragged, dragged, released,
+        releasedHere;
     CHECK(pass("undragged", unset, &undragged));
     CHECK(player.Hold(txPath, 1.5, &error));
     CHECK(pass("dragged", set, &dragged));
-    CHECK(dragged.size() == frames.size() &&
-          undragged.size() == frames.size());
+    CHECK(dragged.size() == frames.size() && undragged.size() == frames.size());
     for (size_t f = 0; f < dragged.size() && f < undragged.size(); ++f) {
         CHECK(!_SamePoints({dragged[f]}, {undragged[f]}));
     }
@@ -938,10 +928,9 @@ _BlendShapeLayoutStage()
     stage->SetEndTimeCode(3.0);
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const VtVec3fArray base{GfVec3f(0.0f, 0.0f, 0.0f),
-                            GfVec3f(1.0f, 0.0f, 0.0f),
-                            GfVec3f(1.0f, 1.0f, 0.0f),
-                            GfVec3f(0.0f, 1.0f, 0.0f)};
+    const VtVec3fArray base{
+        GfVec3f(0.0f, 0.0f, 0.0f), GfVec3f(1.0f, 0.0f, 0.0f),
+        GfVec3f(1.0f, 1.0f, 0.0f), GfVec3f(0.0f, 1.0f, 0.0f)};
     stage->DefinePrim(SdfPath("/Asset/Geom/Mesh"), TfToken("Mesh"))
         .GetAttribute(TfToken("points"))
         .Set(base);
@@ -976,20 +965,19 @@ _BlendShapeLayoutStage()
             input.GetAttribute(TfToken("inputs:weight"));
         weight.Set(0.0f, UsdTimeCode(1.0));
         weight.Set(1.0f, UsdTimeCode(3.0));
-        const UsdPrim sample = stage->DefinePrim(
-            input.GetPath().AppendChild(TfToken("Full")),
-            TfToken("RigExecBlendSample"));
+        const UsdPrim sample =
+            stage->DefinePrim(input.GetPath().AppendChild(TfToken("Full")),
+                              TfToken("RigExecBlendSample"));
         sample.GetAttribute(TfToken("rigExec:activation")).Set(1.0f);
         sample.CreateRelationship(TfToken("rigExec:blendShape"))
-            .SetTargets({SdfPath("/Asset/Targets").AppendChild(
-                TfToken(name))});
+            .SetTargets({SdfPath("/Asset/Targets").AppendChild(TfToken(name))});
         input.CreateRelationship(TfToken("rigExec:samples"))
             .SetTargets({sample.GetPath()});
         inputs.push_back(input.GetPath());
     }
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
-    const UsdPrim blend = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Blend"), TfToken("RigExecBlendShapeMover"));
+    const UsdPrim blend = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Blend"),
+                                            TfToken("RigExecBlendShapeMover"));
     blend.ApplyAPI(TfToken("RigExecMoverAPI"));
     blend.GetRelationship(TfToken("rigExec:moves"))
         .SetTargets({SdfPath("/Asset/Geom/Mesh.points")});
@@ -1040,9 +1028,9 @@ _FindPoints(const RigExecRuntimeReader &reader, const char *path)
 // difference.
 static bool
 _FieldsMatchNative(const std::string &name, const UsdStageRefPtr &stage,
-                    const std::vector<double> &frames,
-                    const char *weightObject, const char *pointsPath,
-                    std::vector<std::vector<float>> *fields)
+                   const std::vector<double> &frames, const char *weightObject,
+                   const char *pointsPath,
+                   std::vector<std::vector<float>> *fields)
 {
     const SdfPath rigPath = _FindRig(stage);
     RigExecRigEvaluator baked(stage, rigPath);
@@ -1077,24 +1065,25 @@ _FieldsMatchNative(const std::string &name, const UsdStageRefPtr &stage,
             _FindWeightField(player.Reader(), weightObject);
         if (wantField == want.weightFields.end() || !gotField) {
             std::printf("%s frame %g: no field for %s (native %d, runtime "
-                        "%d)\n", name.c_str(), frame, weightObject,
+                        "%d)\n",
+                        name.c_str(), frame, weightObject,
                         int(wantField != want.weightFields.end()),
                         int(gotField != nullptr));
             return false;
         }
         const auto &w = wantField->second.weights;
         if (gotField->weights.size() != w.size() ||
-            (!w.empty() &&
-             std::memcmp(gotField->weights.data(), w.data(),
-                         w.size() * sizeof(float)) != 0)) {
+            (!w.empty() && std::memcmp(gotField->weights.data(), w.data(),
+                                       w.size() * sizeof(float)) != 0)) {
             std::printf("%s frame %g: the runtime's field for %s differs "
-                        "from the native evaluator's\n", name.c_str(),
-                        frame, weightObject);
+                        "from the native evaluator's\n",
+                        name.c_str(), frame, weightObject);
             for (size_t i = 0; i < gotField->weights.size() || i < w.size();
                  ++i) {
                 std::printf("  [%zu] runtime %.9g, native %.9g\n", i,
                             i < gotField->weights.size()
-                                ? double(gotField->weights[i]) : -1.0,
+                                ? double(gotField->weights[i])
+                                : -1.0,
                             i < w.size() ? double(w[i]) : -1.0);
             }
             same = false;
@@ -1110,14 +1099,13 @@ _FieldsMatchNative(const std::string &name, const UsdStageRefPtr &stage,
             same = false;
             continue;
         }
-        const VtVec3fArray &p =
-            wantPoints->second.UncheckedGet<VtVec3fArray>();
+        const VtVec3fArray &p = wantPoints->second.UncheckedGet<VtVec3fArray>();
         if (gotPoints->points.size() != p.size() ||
-            (!p.empty() &&
-             std::memcmp(gotPoints->points.data(), p.cdata(),
-                         p.size() * sizeof(GfVec3f)) != 0)) {
+            (!p.empty() && std::memcmp(gotPoints->points.data(), p.cdata(),
+                                       p.size() * sizeof(GfVec3f)) != 0)) {
             std::printf("%s frame %g: %s differs from the dynamic "
-                        "evaluator's\n", name.c_str(), frame, pointsPath);
+                        "evaluator's\n",
+                        name.c_str(), frame, pointsPath);
             same = false;
         }
     }
@@ -1144,11 +1132,11 @@ _GeometryDomainArmStage(bool narrowFalloff = false)
     const UsdPrim slab =
         stage->DefinePrim(SdfPath("/Asset/Geom/Slab"), TfToken("Points"));
     slab.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
-        .Set(VtVec3fArray{GfVec3f(0, 0, 0), GfVec3f(0, 4, 0),
-                          GfVec3f(0, 8, 0)});
+        .Set(
+            VtVec3fArray{GfVec3f(0, 0, 0), GfVec3f(0, 4, 0), GfVec3f(0, 8, 0)});
 
-    const UsdPrim lift = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Controls/Lift"), TfToken("RigExecControl"));
+    const UsdPrim lift = stage->DefinePrim(SdfPath("/Asset/Rig/Controls/Lift"),
+                                           TfToken("RigExecControl"));
     const UsdAttribute liftTy =
         lift.CreateAttribute(TfToken("avars:ty"), SdfValueTypeNames->Double);
     liftTy.Set(0.0, UsdTimeCode(1.0));
@@ -1159,31 +1147,33 @@ _GeometryDomainArmStage(bool narrowFalloff = false)
         SdfPath("/Asset/Rig/Weights/Sphere"), TfToken("RigExecSphereWeight"));
     sphere.CreateRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({SdfPath("/Asset/Geom/Slab.points")});
-    sphere.CreateAttribute(TfToken("inputs:falloffMin"),
-                           SdfValueTypeNames->Float)
+    sphere
+        .CreateAttribute(TfToken("inputs:falloffMin"), SdfValueTypeNames->Float)
         .Set(0.0f);
     const UsdAttribute falloffMax = sphere.CreateAttribute(
         TfToken("inputs:falloffMax"), SdfValueTypeNames->Float);
     falloffMax.Set(8.0f, UsdTimeCode(1.0));
     falloffMax.Set(8.0f, UsdTimeCode(3.0));
     falloffMax.Set(6.0f, UsdTimeCode(5.0));
-    sphere.CreateAttribute(TfToken("rigExec:falloffProfile"),
-                           SdfValueTypeNames->Token)
+    sphere
+        .CreateAttribute(TfToken("rigExec:falloffProfile"),
+                         SdfValueTypeNames->Token)
         .Set(TfToken("linear"));
     sphere.GetRelationship(TfToken("rigExec:weightTarget"))
         .SetMetadata(TfToken("rigExecReadPhase"), std::string("preceding"));
     sphere.CreateAttribute(TfToken("avars:ty"), SdfValueTypeNames->Double)
         .AddConnection(liftTy.GetPath());
     if (narrowFalloff) {
-        const UsdPrim narrow = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Movers/Narrow"),
-            TfToken("RigExecFloatMathMover"));
+        const UsdPrim narrow =
+            stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Narrow"),
+                              TfToken("RigExecFloatMathMover"));
         CHECK(narrow.ApplyAPI(TfToken("RigExecMoverAPI")));
-        narrow.CreateAttribute(TfToken("rigExec:operation"),
-                               SdfValueTypeNames->Token)
+        narrow
+            .CreateAttribute(TfToken("rigExec:operation"),
+                             SdfValueTypeNames->Token)
             .Set(TfToken("multiply"));
-        narrow.CreateAttribute(TfToken("inputs:value"),
-                               SdfValueTypeNames->Float)
+        narrow
+            .CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float)
             .Set(0.5f);
         narrow.CreateRelationship(TfToken("rigExec:moves"))
             .SetTargets({falloffMax.GetPath()});
@@ -1191,11 +1181,10 @@ _GeometryDomainArmStage(bool narrowFalloff = false)
 
     const UsdGeomXform pull =
         UsdGeomXform::Define(stage, SdfPath("/Asset/PullTo"));
-    pull.MakeMatrixXform().Set(
-        GfMatrix4d(1.0).SetTranslate(GfVec3d(6, 0, 0)));
-    const UsdPrim constraint = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Sweep/Pull"),
-        TfToken("RigExecPositionConstraint"));
+    pull.MakeMatrixXform().Set(GfMatrix4d(1.0).SetTranslate(GfVec3d(6, 0, 0)));
+    const UsdPrim constraint =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Sweep/Pull"),
+                          TfToken("RigExecPositionConstraint"));
     constraint.ApplyAPI(TfToken("RigExecMoverAPI"));
     constraint.CreateRelationship(TfToken("rigExec:moves"))
         .SetTargets({SdfPath("/Asset/Geom/Slab.points")});
@@ -1253,8 +1242,7 @@ _TestFalloffInputMatchesSessionEdit()
             poses.size() == 1 &&
             RigExecCompareRuntimeOutputs(poses[0], player.Reader(), &diffs);
         CHECK(same);
-        std::printf("%s, %s: %s\n", name,
-                    "native",
+        std::printf("%s, %s: %s\n", name, "native",
                     same ? "binary == session edit" : "MISMATCH");
         for (const std::string &line : diffs) {
             std::printf("    %s\n", line.c_str());
@@ -1273,14 +1261,14 @@ _StackedChainStage(float firstWeight, bool failMiddle)
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const UsdPrim moving = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Moving"), TfToken("RigExecControl"));
+    const UsdPrim moving = stage->DefinePrim(SdfPath("/Asset/Rig/Moving"),
+                                             TfToken("RigExecControl"));
     for (int frame = 1; frame <= 3; ++frame) {
         moving.GetAttribute(TfToken("avars:tx"))
             .Set(double(frame), UsdTimeCode(frame));
     }
-    const UsdPrim still = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Still"), TfToken("RigExecControl"));
+    const UsdPrim still = stage->DefinePrim(SdfPath("/Asset/Rig/Still"),
+                                            TfToken("RigExecControl"));
     still.GetAttribute(TfToken("avars:ty")).Set(1.0);
     const SdfPath target("/Asset/Shape.points");
     const UsdPrim shape =
@@ -1349,8 +1337,8 @@ _WeightOverlayStage(bool unnamedLast = false)
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const UsdPrim moving = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Moving"), TfToken("RigExecControl"));
+    const UsdPrim moving = stage->DefinePrim(SdfPath("/Asset/Rig/Moving"),
+                                             TfToken("RigExecControl"));
     for (int frame = 1; frame <= 4; ++frame) {
         moving.GetAttribute(TfToken("avars:tx"))
             .Set(double(frame), UsdTimeCode(frame));
@@ -1360,8 +1348,8 @@ _WeightOverlayStage(bool unnamedLast = false)
         stage->DefinePrim(target.GetPrimPath(), TfToken("Points"));
     shape.GetAttribute(TfToken("points"))
         .Set(VtVec3fArray{GfVec3f(0), GfVec3f(1, 0, 0), GfVec3f(0, 2, 0)});
-    const UsdPrim base = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Weights/Base"), TfToken("RigExecStaticWeight"));
+    const UsdPrim base = stage->DefinePrim(SdfPath("/Asset/Rig/Weights/Base"),
+                                           TfToken("RigExecStaticWeight"));
     base.CreateRelationship(TfToken("rigExec:weightTarget"), false)
         .SetTargets({target});
     base.CreateAttribute(TfToken("rigExec:representation"),
@@ -1376,20 +1364,23 @@ _WeightOverlayStage(bool unnamedLast = false)
     base.CreateAttribute(TfToken("rigExec:defaultWeight"),
                          SdfValueTypeNames->Float, false)
         .Set(0.25f);
-    const UsdPrim weight = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Weights/W"), TfToken("RigExecDynamicWeight"));
+    const UsdPrim weight = stage->DefinePrim(SdfPath("/Asset/Rig/Weights/W"),
+                                             TfToken("RigExecDynamicWeight"));
     weight.CreateRelationship(TfToken("rigExec:weightTarget"), false)
         .SetTargets({target});
     weight.CreateRelationship(TfToken("rigExec:baseWeight"), false)
         .SetTargets({base.GetPath()});
-    weight.CreateAttribute(TfToken("rigExec:representation"),
-                           SdfValueTypeNames->Token, false)
+    weight
+        .CreateAttribute(TfToken("rigExec:representation"),
+                         SdfValueTypeNames->Token, false)
         .Set(TfToken("sparse"));
-    weight.CreateAttribute(TfToken("rigExec:rangePolicy"),
-                           SdfValueTypeNames->Token, false)
+    weight
+        .CreateAttribute(TfToken("rigExec:rangePolicy"),
+                         SdfValueTypeNames->Token, false)
         .Set(TfToken("clamp"));
-    weight.CreateAttribute(TfToken("rigExec:indices"),
-                           SdfValueTypeNames->IntArray, false)
+    weight
+        .CreateAttribute(TfToken("rigExec:indices"),
+                         SdfValueTypeNames->IntArray, false)
         .Set(named);
     UsdAttribute driver = weight.CreateAttribute(
         TfToken("inputs:driver"), SdfValueTypeNames->Float, false);
@@ -1398,8 +1389,8 @@ _WeightOverlayStage(bool unnamedLast = false)
     driver.Set(3.0f, UsdTimeCode(3.0));
     driver.Set(0.5f, UsdTimeCode(4.0));
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
-    const UsdPrim mover = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/M0"), TfToken("RigExecMatrixMover"));
+    const UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/M0"),
+                                            TfToken("RigExecMatrixMover"));
     mover.ApplyAPI(TfToken("RigExecMoverAPI"));
     mover.GetRelationship(TfToken("rigExec:moves")).SetTargets({target});
     mover.GetRelationship(TfToken("rigExec:transform"))
@@ -1423,8 +1414,8 @@ TestPacketArrayVersions()
     _TestStage(name, _WeightOverlayStage(), frames);
     std::vector<std::vector<float>> fields;
     CHECK(_FieldsMatchNative(name, _WeightOverlayStage(), frames,
-                              "/Asset/Rig/Weights/W", "/Asset/Shape.points",
-                              &fields));
+                             "/Asset/Rig/Weights/W", "/Asset/Shape.points",
+                             &fields));
     TfSetenv("RIGEXEC_VERIFY_PACKET_VERSIONS", "0");
     CHECK(fields.size() == frames.size());
     if (fields.size() == frames.size()) {
@@ -1441,8 +1432,8 @@ TestPacketArrayVersions()
     _TestStage(defaultName, _WeightOverlayStage(true), frames);
     std::vector<std::vector<float>> defaultFields;
     CHECK(_FieldsMatchNative(defaultName, _WeightOverlayStage(true), frames,
-                              "/Asset/Rig/Weights/W", "/Asset/Shape.points",
-                              &defaultFields));
+                             "/Asset/Rig/Weights/W", "/Asset/Shape.points",
+                             &defaultFields));
     TfSetenv("RIGEXEC_VERIFY_PACKET_VERSIONS", "0");
     CHECK(defaultFields.size() == frames.size());
     if (defaultFields.size() == frames.size()) {
@@ -1465,8 +1456,8 @@ TestGeometryDomainArm()
     _CheckFramesDiffer(name, rows);
     std::vector<std::vector<float>> fields;
     CHECK(_FieldsMatchNative(name, _GeometryDomainArmStage(), frames,
-                              "/Asset/Rig/Weights/Sphere",
-                              "/Asset/Geom/Slab.points", &fields));
+                             "/Asset/Rig/Weights/Sphere",
+                             "/Asset/Geom/Slab.points", &fields));
     // The field follows the sphere: 1 - d/8 about y = 0 at frame 1 and
     // about y = 8 at frame 3.
     CHECK(fields.size() == frames.size());
@@ -1487,8 +1478,8 @@ TestGeometryDomainArm()
     _CheckFramesDiffer(chained, rows);
     std::vector<std::vector<float>> narrowed;
     CHECK(_FieldsMatchNative(chained, _GeometryDomainArmStage(true), frames,
-                              "/Asset/Rig/Weights/Sphere",
-                              "/Asset/Geom/Slab.points", &narrowed));
+                             "/Asset/Rig/Weights/Sphere",
+                             "/Asset/Geom/Slab.points", &narrowed));
     CHECK(narrowed.size() == frames.size());
     if (narrowed.size() == frames.size()) {
         CHECK(narrowed[0] == (std::vector<float>{1.0f, 0.0f, 0.0f}));
@@ -1537,8 +1528,8 @@ _CurrentPhaseThroughCombineStage(float strength = 1.0f)
     liftTy.Set(5.0, UsdTimeCode(1.0));
     liftTy.Set(0.0, UsdTimeCode(4.0));
 
-    const UsdPrim full = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Weights/Full"), TfToken("RigExecStaticWeight"));
+    const UsdPrim full = stage->DefinePrim(SdfPath("/Asset/Rig/Weights/Full"),
+                                           TfToken("RigExecStaticWeight"));
     full.CreateRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({target});
     full.CreateAttribute(TfToken("rigExec:representation"),
@@ -1556,29 +1547,30 @@ _CurrentPhaseThroughCombineStage(float strength = 1.0f)
     place(sphere, 0, 0, 0);
     sphere.CreateRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({target});
-    sphere.CreateAttribute(TfToken("inputs:falloffMin"),
-                           SdfValueTypeNames->Float)
+    sphere
+        .CreateAttribute(TfToken("inputs:falloffMin"), SdfValueTypeNames->Float)
         .Set(0.0f);
-    sphere.CreateAttribute(TfToken("inputs:falloffMax"),
-                           SdfValueTypeNames->Float)
+    sphere
+        .CreateAttribute(TfToken("inputs:falloffMax"), SdfValueTypeNames->Float)
         .Set(3.0f);
-    sphere.CreateAttribute(TfToken("rigExec:falloffProfile"),
-                           SdfValueTypeNames->Token)
+    sphere
+        .CreateAttribute(TfToken("rigExec:falloffProfile"),
+                         SdfValueTypeNames->Token)
         .Set(TfToken("linear"));
     sphere.GetRelationship(TfToken("rigExec:weightTarget"))
         .SetMetadata(TfToken("rigExecReadPhase"), std::string("preceding"));
 
     // The mover binds the combine, not the sphere.
     const UsdPrim combine = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Weights/Wrapped"),
-        TfToken("RigExecCombineWeight"));
+        SdfPath("/Asset/Rig/Weights/Wrapped"), TfToken("RigExecCombineWeight"));
     combine.CreateRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({target});
     combine.CreateRelationship(TfToken("rigExec:inputWeights"))
         .SetTargets({sphere.GetPath()});
     if (strength != 1.0f) {
-        combine.CreateAttribute(TfToken("inputs:strength"),
-                                SdfValueTypeNames->Float)
+        combine
+            .CreateAttribute(TfToken("inputs:strength"),
+                             SdfValueTypeNames->Float)
             .Set(strength);
     }
 
@@ -1608,9 +1600,9 @@ TestCurrentPhaseThroughCombine()
     _TestStage(name, _CurrentPhaseThroughCombineStage(), frames, &rows);
     _CheckFramesDiffer(name, rows);
     std::vector<std::vector<float>> fields;
-    CHECK(_FieldsMatchNative(name, _CurrentPhaseThroughCombineStage(),
-                              frames, "/Asset/Rig/Weights/Wrapped",
-                              "/Asset/Geom/M.points", &fields));
+    CHECK(_FieldsMatchNative(name, _CurrentPhaseThroughCombineStage(), frames,
+                             "/Asset/Rig/Weights/Wrapped",
+                             "/Asset/Geom/M.points", &fields));
     CHECK(fields.size() == frames.size());
     if (fields.size() == frames.size()) {
         // Lifted 5 and 10/3: every point is beyond the sphere's reach.
@@ -1692,15 +1684,15 @@ _RangeChainStage(size_t count, const _RangeChainOptions &options)
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const UsdPrim moving = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Moving"), TfToken("RigExecControl"));
+    const UsdPrim moving = stage->DefinePrim(SdfPath("/Asset/Rig/Moving"),
+                                             TfToken("RigExecControl"));
     for (int frame = 1; frame <= 3; ++frame) {
         moving.GetAttribute(TfToken("avars:tx"))
             .Set(options.baseMovesInRangeZero ? 1.0 : double(frame),
                  UsdTimeCode(frame));
     }
-    const UsdPrim still = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Still"), TfToken("RigExecControl"));
+    const UsdPrim still = stage->DefinePrim(SdfPath("/Asset/Rig/Still"),
+                                            TfToken("RigExecControl"));
     still.GetAttribute(TfToken("avars:ty")).Set(1.0);
 
     const SdfPath target("/Asset/Shape.points");
@@ -1726,7 +1718,7 @@ _RangeChainStage(size_t count, const _RangeChainOptions &options)
 
     // The cage at rest is its default; its middle layer widens per frame.
     const VtVec3fArray rest = {
-        GfVec3f(-1, -1, 0), GfVec3f(1, -1, 0), GfVec3f(-1, 1, 0),
+        GfVec3f(-1, -1, 0), GfVec3f(1, -1, 0),  GfVec3f(-1, 1, 0),
         GfVec3f(1, 1, 0),   GfVec3f(-1, -1, 2), GfVec3f(1, -1, 2),
         GfVec3f(-1, 1, 2),  GfVec3f(1, 1, 2),   GfVec3f(-1, -1, 4),
         GfVec3f(1, -1, 4),  GfVec3f(-1, 1, 4),  GfVec3f(1, 1, 4)};
@@ -1751,12 +1743,11 @@ _RangeChainStage(size_t count, const _RangeChainOptions &options)
         .Set(VtVec3fArray{GfVec3f(0), GfVec3f(1, 0, 0), GfVec3f(0, 2, 0)});
 
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
-    const auto matrixMover = [&](const std::string &name,
-                                 const SdfPath &moves,
+    const auto matrixMover = [&](const std::string &name, const SdfPath &moves,
                                  const UsdPrim &control) {
-        const UsdPrim mover = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Movers/" + name),
-            TfToken("RigExecMatrixMover"));
+        const UsdPrim mover =
+            stage->DefinePrim(SdfPath("/Asset/Rig/Movers/" + name),
+                              TfToken("RigExecMatrixMover"));
         mover.ApplyAPI(TfToken("RigExecMoverAPI"));
         mover.GetRelationship(TfToken("rigExec:moves")).SetTargets({moves});
         mover.GetRelationship(TfToken("rigExec:transform"))
@@ -1766,12 +1757,12 @@ _RangeChainStage(size_t count, const _RangeChainOptions &options)
     const UsdPrim m0 = matrixMover("M0", target, moving);
     if (options.sparseFirst) {
         const UsdPrim weight = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Weights/Face"),
-            TfToken("RigExecStaticWeight"));
+            SdfPath("/Asset/Rig/Weights/Face"), TfToken("RigExecStaticWeight"));
         weight.CreateRelationship(TfToken("rigExec:weightTarget"), false)
             .SetTargets({target});
-        weight.CreateAttribute(TfToken("rigExec:representation"),
-                               SdfValueTypeNames->Token, false)
+        weight
+            .CreateAttribute(TfToken("rigExec:representation"),
+                             SdfValueTypeNames->Token, false)
             .Set(TfToken("sparse"));
         VtIntArray indices(100);
         VtFloatArray values(100);
@@ -1779,14 +1770,17 @@ _RangeChainStage(size_t count, const _RangeChainOptions &options)
             indices[i] = i;
             values[i] = 0.25f + 0.0075f * float(i);
         }
-        weight.CreateAttribute(TfToken("rigExec:indices"),
-                               SdfValueTypeNames->IntArray, false)
+        weight
+            .CreateAttribute(TfToken("rigExec:indices"),
+                             SdfValueTypeNames->IntArray, false)
             .Set(indices);
-        weight.CreateAttribute(TfToken("rigExec:values"),
-                               SdfValueTypeNames->FloatArray, false)
+        weight
+            .CreateAttribute(TfToken("rigExec:values"),
+                             SdfValueTypeNames->FloatArray, false)
             .Set(values);
-        weight.CreateAttribute(TfToken("rigExec:defaultWeight"),
-                               SdfValueTypeNames->Float, false)
+        weight
+            .CreateAttribute(TfToken("rigExec:defaultWeight"),
+                             SdfValueTypeNames->Float, false)
             .Set(0.0f);
         m0.CreateRelationship(TfToken("rigExec:weightObject"), false)
             .SetTargets({weight.GetPath()});
@@ -1860,17 +1854,21 @@ _RangeChainStage(size_t count, const _RangeChainOptions &options)
         SdfPath("/Asset/Rig/Weights/Wire"), TfToken("RigExecStaticWeight"));
     wireWeight.CreateRelationship(TfToken("rigExec:weightTarget"), false)
         .SetTargets({target});
-    wireWeight.CreateAttribute(TfToken("rigExec:representation"),
-                               SdfValueTypeNames->Token, false)
+    wireWeight
+        .CreateAttribute(TfToken("rigExec:representation"),
+                         SdfValueTypeNames->Token, false)
         .Set(TfToken("sparse"));
-    wireWeight.CreateAttribute(TfToken("rigExec:indices"),
-                               SdfValueTypeNames->IntArray, false)
+    wireWeight
+        .CreateAttribute(TfToken("rigExec:indices"),
+                         SdfValueTypeNames->IntArray, false)
         .Set(named);
-    wireWeight.CreateAttribute(TfToken("rigExec:values"),
-                               SdfValueTypeNames->FloatArray, false)
+    wireWeight
+        .CreateAttribute(TfToken("rigExec:values"),
+                         SdfValueTypeNames->FloatArray, false)
         .Set(strengths);
-    wireWeight.CreateAttribute(TfToken("rigExec:defaultWeight"),
-                               SdfValueTypeNames->Float, false)
+    wireWeight
+        .CreateAttribute(TfToken("rigExec:defaultWeight"),
+                         SdfValueTypeNames->Float, false)
         .Set(0.0f);
     const auto wireMover = [&](const std::string &name, const char *table) {
         const UsdPrim mover = stage->DefinePrim(
@@ -1973,7 +1971,8 @@ TestRangeChainRolesAndCutoff()
     }
     const std::unique_ptr<fb::RigExecWireFile> file = RigExecTestUnpack(bytes);
     RigExecTestPlayer player;
-    const bool opened = file && file->geometry && player.Open(bytes, stage, &error);
+    const bool opened =
+        file && file->geometry && player.Open(bytes, stage, &error);
     CHECK(opened);
     if (!opened) {
         std::printf("%s: FAILED (%s)\n", name, error.c_str());
@@ -2020,8 +2019,7 @@ TestRangeChainRolesAndCutoff()
             .insert(step.part);
     }
     CHECK(parts["/Asset/Rig/Movers/M0"] == std::set<int>({0}));
-    CHECK(parts["/Asset/Rig/Movers/WireSparse"] ==
-          std::set<int>({0, 1, 2, 3}));
+    CHECK(parts["/Asset/Rig/Movers/WireSparse"] == std::set<int>({0, 1, 2, 3}));
     for (const char *ungated : {"M1", "M2", "Lattice", "Half", "WireDense"}) {
         CHECK(parts[std::string("/Asset/Rig/Movers/") + ungated].size() == 10);
     }
@@ -2042,23 +2040,21 @@ TestRangeChainRolesAndCutoff()
             continue;
         }
         const auto &at = geometry.revisionIndex[size_t(step.object)];
-        const std::string mover = RigExecFormatPathText(
-            *file, geometry.chains[size_t(at.first)]
-                       .revisions[size_t(at.second)]
-                       .moverPath);
+        const std::string mover =
+            RigExecFormatPathText(*file, geometry.chains[size_t(at.first)]
+                                             .revisions[size_t(at.second)]
+                                             .moverPath);
         const auto found = position.find(mover);
         if (found == position.end()) {
             continue;
         }
-        const bool want =
-            found->second == first->second ||
-            (found->second > first->second && step.part == 0);
+        const bool want = found->second == first->second ||
+                          (found->second > first->second && step.part == 0);
         const bool ran = player->GetStepRanForTesting(s);
         CHECK(ran == want);
         if (ran != want) {
-            std::printf("%s: %s range %d %s at frame 2\n", name,
-                        mover.c_str(), int(step.part),
-                        ran ? "ran" : "did not run");
+            std::printf("%s: %s range %d %s at frame 2\n", name, mover.c_str(),
+                        int(step.part), ran ? "ran" : "did not run");
         }
         ++checked;
     }
@@ -2155,8 +2151,8 @@ _GroupChainStage(const _GroupChainOptions &options)
     for (size_t i = 0; i < points.size(); ++i) {
         points[i] = GfVec3f(0.125f * float(i % 8), 0.25f * float(i / 8),
                             0.0625f * float(i % 5));
-        lifted[i] = points[i] +
-                    GfVec3f(0.0f, 0.0f, 0.5f + 0.03125f * float(i % 4));
+        lifted[i] =
+            points[i] + GfVec3f(0.0f, 0.0f, 0.5f + 0.03125f * float(i % 4));
     }
     stage->DefinePrim(target.GetPrimPath(), TfToken("Points"))
         .GetAttribute(TfToken("points"))
@@ -2175,17 +2171,17 @@ _GroupChainStage(const _GroupChainOptions &options)
     } else {
         weight.Set(0.5f);
     }
-    const UsdPrim sample = stage->DefinePrim(
-        input.GetPath().AppendChild(TfToken("Full")),
-        TfToken("RigExecBlendSample"));
+    const UsdPrim sample =
+        stage->DefinePrim(input.GetPath().AppendChild(TfToken("Full")),
+                          TfToken("RigExecBlendSample"));
     sample.CreateRelationship(TfToken("rigExec:targetPoints"))
         .SetTargets({SdfPath("/Asset/Targets/Lifted.points")});
     sample.GetAttribute(TfToken("rigExec:activation")).Set(1.0f);
     input.CreateRelationship(TfToken("rigExec:samples"))
         .SetTargets({sample.GetPath()});
 
-    const UsdPrim face = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Weights/Face"), TfToken("RigExecStaticWeight"));
+    const UsdPrim face = stage->DefinePrim(SdfPath("/Asset/Rig/Weights/Face"),
+                                           TfToken("RigExecStaticWeight"));
     face.CreateRelationship(TfToken("rigExec:weightTarget"), false)
         .SetTargets({target});
     face.CreateAttribute(TfToken("rigExec:representation"),
@@ -2260,8 +2256,7 @@ _GroupChainStage(const _GroupChainOptions &options)
     } else {
         middleWeight.Set(1.0f);
     }
-    skin("Dual", "dualQuaternion", {root.GetPath()},
-         [](size_t) { return 0; });
+    skin("Dual", "dualQuaternion", {root.GetPath()}, [](size_t) { return 0; });
     // Keep the mixed-role fixture's DQ method changeable.
     const auto method = stage->GetAttributeAtPath(
         SdfPath("/Asset/Rig/Movers/Dual.rigExec:skinningMethod"));
@@ -2344,17 +2339,21 @@ _SmoothChainStage(bool mush = false)
         SdfPath("/Asset/Rig/Weights/RowZero"), TfToken("RigExecStaticWeight"));
     weight.CreateRelationship(TfToken("rigExec:weightTarget"), false)
         .SetTargets({target});
-    weight.CreateAttribute(TfToken("rigExec:representation"),
-                           SdfValueTypeNames->Token, false)
+    weight
+        .CreateAttribute(TfToken("rigExec:representation"),
+                         SdfValueTypeNames->Token, false)
         .Set(TfToken("sparse"));
-    weight.CreateAttribute(TfToken("rigExec:indices"),
-                           SdfValueTypeNames->IntArray, false)
+    weight
+        .CreateAttribute(TfToken("rigExec:indices"),
+                         SdfValueTypeNames->IntArray, false)
         .Set(named);
-    weight.CreateAttribute(TfToken("rigExec:values"),
-                           SdfValueTypeNames->FloatArray, false)
+    weight
+        .CreateAttribute(TfToken("rigExec:values"),
+                         SdfValueTypeNames->FloatArray, false)
         .Set(VtFloatArray(named.size(), 1.0f));
-    weight.CreateAttribute(TfToken("rigExec:defaultWeight"),
-                           SdfValueTypeNames->Float, false)
+    weight
+        .CreateAttribute(TfToken("rigExec:defaultWeight"),
+                         SdfValueTypeNames->Float, false)
         .Set(0.0f);
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
     const auto mover = [&](const char *name, const char *type) {
@@ -2372,7 +2371,8 @@ _SmoothChainStage(bool mush = false)
     after.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
     if (mush) {
         mover("Mush", "RigExecDeltaMushMover")
-            .CreateAttribute(TfToken("inputs:iterations"), SdfValueTypeNames->Int)
+            .CreateAttribute(TfToken("inputs:iterations"),
+                             SdfValueTypeNames->Int)
             .Set(3);
     } else {
         mover("SmoothTwice", "RigExecSmoothMover");
@@ -2516,15 +2516,13 @@ TestGroupChainRolesAndCutoff()
                 std::vector<fb::SlotRange> writes;
                 for (const fb::SlotRange &range : step.writes) {
                     if (range.domain() != fb::SlotDomain::RevisionOut ||
-                        lastGroup < range.begin() ||
-                        lastGroup >= range.end()) {
+                        lastGroup < range.begin() || lastGroup >= range.end()) {
                         writes.push_back(range);
                         continue;
                     }
                     if (range.begin() < lastGroup) {
-                        writes.push_back(fb::SlotRange(range.domain(),
-                                                       range.begin(),
-                                                       lastGroup));
+                        writes.push_back(fb::SlotRange(
+                            range.domain(), range.begin(), lastGroup));
                     }
                     if (lastGroup + 1 < range.end()) {
                         writes.push_back(fb::SlotRange(
@@ -2563,10 +2561,10 @@ TestGroupChainRolesAndCutoff()
             continue;
         }
         const auto &at = geometry.revisionIndex[size_t(step.object)];
-        const std::string mover = RigExecFormatPathText(
-            *file, geometry.chains[size_t(at.first)]
-                       .revisions[size_t(at.second)]
-                       .moverPath);
+        const std::string mover =
+            RigExecFormatPathText(*file, geometry.chains[size_t(at.first)]
+                                             .revisions[size_t(at.second)]
+                                             .moverPath);
         const auto found = position.find(mover);
         if (found == position.end()) {
             continue;
@@ -2600,14 +2598,12 @@ TestGroupChainRolesAndCutoff()
 static void
 TestEpilogueSharesPublications()
 {
-    static_assert(
-        std::is_same<decltype(RrWeightFieldPublish::weights),
-                     RrRetainedArray<float>>::value,
-        "a published weight field shares its producer's array");
-    static_assert(
-        std::is_same<decltype(RrStore::movedProperties)::mapped_type,
-                     RrRetainedArray<RrVec3f>>::value,
-        "published points share their producer's array");
+    static_assert(std::is_same<decltype(RrWeightFieldPublish::weights),
+                               RrRetainedArray<float>>::value,
+                  "a published weight field shares its producer's array");
+    static_assert(std::is_same<decltype(RrStore::movedProperties)::mapped_type,
+                               RrRetainedArray<RrVec3f>>::value,
+                  "published points share their producer's array");
     RrRetainedArray<float> field;
     field.Write().assign(4, 0.5f);
     RrWeightFieldPublish published;
@@ -2678,9 +2674,10 @@ _VolumeMixStage(const _MixOptions &options)
 {
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     const SdfPath target("/Asset/Geom/M.points");
-    const VtVec3fArray rest{GfVec3f(0, 0, 0),         GfVec3f(0.5f, 0.25f, 0),
-                            GfVec3f(-1, -0.5f, 0.25f), GfVec3f(2, 0, -0.5f),
-                            GfVec3f(0.25f, 1, 0.5f),  GfVec3f(-0.5f, 0.5f, -1)};
+    const VtVec3fArray rest{
+        GfVec3f(0, 0, 0),          GfVec3f(0.5f, 0.25f, 0),
+        GfVec3f(-1, -0.5f, 0.25f), GfVec3f(2, 0, -0.5f),
+        GfVec3f(0.25f, 1, 0.5f),   GfVec3f(-0.5f, 0.5f, -1)};
     stage->DefinePrim(SdfPath("/Asset/Geom/M"), TfToken("Points"))
         .CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
         .Set(rest);
@@ -2719,8 +2716,8 @@ _VolumeMixStage(const _MixOptions &options)
     liftTy.Set(1.5, UsdTimeCode(1.0));
     liftTy.Set(0.0, UsdTimeCode(4.0));
 
-    const UsdPrim full = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Weights/Full"), TfToken("RigExecStaticWeight"));
+    const UsdPrim full = stage->DefinePrim(SdfPath("/Asset/Rig/Weights/Full"),
+                                           TfToken("RigExecStaticWeight"));
     full.CreateRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({target});
     setToken(full, "rigExec:representation", "dense");
@@ -2744,15 +2741,14 @@ _VolumeMixStage(const _MixOptions &options)
     setFloat(sphere, "inputs:scaleZNeg", 1.5f);
 
     // The plane samples the authored points, never the ones in flight.
-    const UsdPrim plane = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Weights/Plane"), TfToken("RigExecPlaneWeight"));
+    const UsdPrim plane = stage->DefinePrim(SdfPath("/Asset/Rig/Weights/Plane"),
+                                            TfToken("RigExecPlaneWeight"));
     place(plane, -0.5, 0, 0);
     plane.CreateRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({target});
     if (options.animatedSampler) {
         const UsdAttribute sampler =
-            stage->DefinePrim(SdfPath("/Asset/Geom/Sampler"),
-                              TfToken("Points"))
+            stage->DefinePrim(SdfPath("/Asset/Geom/Sampler"), TfToken("Points"))
                 .CreateAttribute(TfToken("points"),
                                  SdfValueTypeNames->Point3fArray);
         VtVec3fArray moved = rest;
@@ -2774,8 +2770,9 @@ _VolumeMixStage(const _MixOptions &options)
     setFloat(plane, "inputs:extentV", 0.6f);
 
     const UsdAttribute curvePoints =
-        stage->DefinePrim(SdfPath("/Asset/Geom/CurveSource"),
-                          TfToken("BasisCurves"))
+        stage
+            ->DefinePrim(SdfPath("/Asset/Geom/CurveSource"),
+                         TfToken("BasisCurves"))
             .CreateAttribute(TfToken("points"),
                              SdfValueTypeNames->Point3fArray);
     const VtVec3fArray along{GfVec3f(-1, 0.5f, 0), GfVec3f(1, 0.5f, 0)};
@@ -2786,8 +2783,8 @@ _VolumeMixStage(const _MixOptions &options)
     } else {
         curvePoints.Set(along);
     }
-    const UsdPrim curve = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Weights/Curve"), TfToken("RigExecCurveWeight"));
+    const UsdPrim curve = stage->DefinePrim(SdfPath("/Asset/Rig/Weights/Curve"),
+                                            TfToken("RigExecCurveWeight"));
     place(curve, 0, 0, 0);
     preceding(curve);
     curve.CreateRelationship(TfToken("rigExec:curve"))
@@ -2796,8 +2793,8 @@ _VolumeMixStage(const _MixOptions &options)
     setFloat(curve, "inputs:falloffMax", 1.5f);
     setToken(curve, "rigExec:falloffProfile", "linear");
 
-    const UsdPrim combine = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Weights/Mix"), TfToken("RigExecCombineWeight"));
+    const UsdPrim combine = stage->DefinePrim(SdfPath("/Asset/Rig/Weights/Mix"),
+                                              TfToken("RigExecCombineWeight"));
     combine.CreateRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({target});
     combine.CreateRelationship(TfToken("rigExec:inputWeights"))
@@ -2845,8 +2842,8 @@ TestVolumeMixCurrentPhase()
         _CheckFramesDiffer(name, rows);
         std::vector<std::vector<float>> fields;
         CHECK(_FieldsMatchNative(name, _VolumeMixStage(options), frames,
-                                  "/Asset/Rig/Weights/Mix",
-                                  "/Asset/Geom/M.points", &fields));
+                                 "/Asset/Rig/Weights/Mix",
+                                 "/Asset/Geom/M.points", &fields));
         // Not vacuous: some point lies strictly inside the field.
         size_t inside = 0;
         for (const std::vector<float> &field : fields) {
@@ -2856,8 +2853,8 @@ TestVolumeMixCurrentPhase()
         }
         CHECK(inside > 0);
         std::printf("%s: %zu field(s) equal the native evaluator's, %zu "
-                    "weight(s) strictly inside\n", name.c_str(),
-                    fields.size(), inside);
+                    "weight(s) strictly inside\n",
+                    name.c_str(), fields.size(), inside);
     }
 }
 
@@ -2915,13 +2912,14 @@ TestAnimatedStaticPointsReported()
                       slot < int64_t(file->inputs.size()));
                 size_t publicIndex = 0;
                 CHECK(!reader->FindInput(sampledPath, &publicIndex));
-                const auto inputs = RigExecRuntimeStageArrayInputs::Enumerate(*reader);
-                CHECK(std::count_if(inputs.begin(), inputs.end(),
-                    [&](const auto &info) {
-                        return info.name == sampledPath &&
-                               info.slot == size_t(slot) &&
-                               info.tag == RrInputTag::Vec3fArray;
-                    }) == 1);
+                const auto inputs =
+                    RigExecRuntimeStageArrayInputs::Enumerate(*reader);
+                CHECK(std::count_if(
+                          inputs.begin(), inputs.end(), [&](const auto &info) {
+                              return info.name == sampledPath &&
+                                     info.slot == size_t(slot) &&
+                                     info.tag == RrInputTag::Vec3fArray;
+                          }) == 1);
             }
         }
         std::vector<RigExecBakeStaticEntry> entries;
@@ -2939,7 +2937,8 @@ TestAnimatedStaticPointsReported()
     _MixOptions curve;
     curve.animatedCurve = true;
     report(curve, "/Asset/Geom/CurveSource.points");
-    std::printf("animated private sample source and curve: transported, not static\n");
+    std::printf(
+        "animated private sample source and curve: transported, not static\n");
 }
 
 // Open refuses an envelope index on a geometry-domain constraint (whose
@@ -2982,8 +2981,7 @@ TestComputedOpenRefusals()
     CHECK(got == "invalid .rigexec: pose.constraints[0]: "
                  "weight_object_index does not name the envelope of its "
                  "weight object");
-    std::printf("envelope index on a geometry constraint: %s\n",
-                got.c_str());
+    std::printf("envelope index on a geometry constraint: %s\n", got.c_str());
     CHECK(!file->geometry->chains.empty() &&
           !file->geometry->chains[0].revisions.empty());
     if (file->geometry->chains.empty() ||
@@ -2997,8 +2995,7 @@ TestComputedOpenRefusals()
     CHECK(got == "invalid .rigexec: geometry.chains[0].revisions[0]."
                  "default_weight: present on a derived revision or missing "
                  "on a main one");
-    std::printf("main revision without its default weight: %s\n",
-                got.c_str());
+    std::printf("main revision without its default weight: %s\n", got.c_str());
 }
 
 // A skin whose per-point layout holds, inside its rows, index-0 entries of
@@ -3019,8 +3016,8 @@ _SparseSkinStage(const char *method, bool negative)
                              const std::array<double, 3> &values) {
         const UsdPrim prim =
             stage->DefinePrim(SdfPath(path), TfToken("RigExecControl"));
-        const UsdAttribute attribute = prim.CreateAttribute(
-            TfToken(avar), SdfValueTypeNames->Double);
+        const UsdAttribute attribute =
+            prim.CreateAttribute(TfToken(avar), SdfValueTypeNames->Double);
         for (size_t f = 0; f < values.size(); ++f) {
             attribute.Set(values[f], UsdTimeCode(double(f + 1)));
         }
@@ -3042,23 +3039,22 @@ _SparseSkinStage(const char *method, bool negative)
         .SetTargets({SdfPath("/Asset/Geom/Mesh.points")});
     skin.CreateRelationship(TfToken("rigExec:influences"))
         .SetTargets({a.GetPath(), b.GetPath(), c.GetPath()});
-    skin.CreateAttribute(TfToken("rigExec:elementSize"),
-                         SdfValueTypeNames->Int)
+    skin.CreateAttribute(TfToken("rigExec:elementSize"), SdfValueTypeNames->Int)
         .Set(4);
     skin.CreateAttribute(TfToken("rigExec:skinningMethod"),
                          SdfValueTypeNames->Token)
         .Set(TfToken(method));
     skin.CreateAttribute(TfToken("rigExec:jointIndices"),
                          SdfValueTypeNames->IntArray)
-        .Set(VtIntArray{0, 1, 0, 2,   //
-                        2, 1, 0, 0,   //
-                        1, 0, 2, 0,   //
+        .Set(VtIntArray{0, 1, 0, 2, //
+                        2, 1, 0, 0, //
+                        1, 0, 2, 0, //
                         0, 0, 1, 2});
     skin.CreateAttribute(TfToken("rigExec:jointWeights"),
                          SdfValueTypeNames->FloatArray)
-        .Set(VtFloatArray{0.0f, 0.5f, -0.0f, 0.5f,                    //
-                          0.0f, 1.0f, 0.0f, -0.0f,                    //
-                          negative ? -0.25f : 0.25f, 0.75f, 0.0f, 0.0f,  //
+        .Set(VtFloatArray{0.0f, 0.5f, -0.0f, 0.5f,                      //
+                          0.0f, 1.0f, 0.0f, -0.0f,                      //
+                          negative ? -0.25f : 0.25f, 0.75f, 0.0f, 0.0f, //
                           -0.0f, 0.0f, 0.6f, 0.4f});
     return stage;
 }
@@ -3098,18 +3094,16 @@ TestSparseSkinTopology()
             }
             CHECK(topology->elementSize == 4 && topology->pointCount == 4);
             CHECK(topology->validated);
-            CHECK(topology->counts8 ==
-                  (std::vector<uint8_t>{4, 4, 3, 4}));
+            CHECK(topology->counts8 == (std::vector<uint8_t>{4, 4, 3, 4}));
             CHECK(topology->indexWidth == 1);
-            CHECK(topology->indices8 ==
-                  (std::vector<uint8_t>{0, 1, 0, 2,  //
-                                        2, 1, 0, 0,  //
-                                        1, 0, 2,     //
-                                        0, 0, 1, 2}));
-            const std::vector<float> kept = {0.0f,  0.5f, -0.0f, 0.5f,  //
-                                             0.0f,  1.0f, 0.0f,  -0.0f, //
-                                             0.25f, 0.75f, 0.0f,        //
-                                             -0.0f, 0.0f, 0.6f,  0.4f};
+            CHECK(topology->indices8 == (std::vector<uint8_t>{0, 1, 0, 2, //
+                                                              2, 1, 0, 0, //
+                                                              1, 0, 2,    //
+                                                              0, 0, 1, 2}));
+            const std::vector<float> kept = {0.0f,  0.5f,  -0.0f, 0.5f,  //
+                                             0.0f,  1.0f,  0.0f,  -0.0f, //
+                                             0.25f, 0.75f, 0.0f,         //
+                                             -0.0f, 0.0f,  0.6f,  0.4f};
             CHECK(topology->weights.size() == kept.size() &&
                   std::memcmp(topology->weights.data(), kept.data(),
                               sizeof(float) * kept.size()) == 0);
@@ -3180,21 +3174,17 @@ TestSharedLayoutRule()
         RigExecSkinTopology built;
         RigExecBuildSkinTopology(TfSpan<const int>(layout.indices),
                                  TfSpan<const float>(layout.weights),
-                                 layout.elementSize, layout.influences,
-                                 &built);
+                                 layout.elementSize, layout.influences, &built);
         const bool shared = RigExecFormatSkinLayoutValidates(
-            layout.indices.data(), layout.indices.size(),
-            layout.weights.data(), layout.weights.size(), layout.elementSize,
-            layout.influences);
+            layout.indices.data(), layout.indices.size(), layout.weights.data(),
+            layout.weights.size(), layout.elementSize, layout.influences);
         CHECK(shared == built.validated);
-        const bool rows = layout.elementSize >= 1 &&
-                          layout.indices.size() == layout.weights.size() &&
-                          layout.indices.size() %
-                                  size_t(layout.elementSize) ==
-                              0;
+        const bool rows =
+            layout.elementSize >= 1 &&
+            layout.indices.size() == layout.weights.size() &&
+            layout.indices.size() % size_t(layout.elementSize) == 0;
         CHECK(built.pointCount ==
-              (rows ? layout.indices.size() / size_t(layout.elementSize)
-                    : 0));
+              (rows ? layout.indices.size() / size_t(layout.elementSize) : 0));
         if (shared != built.validated) {
             std::printf("shared layout rule, %s: format %d, evaluator %d\n",
                         layout.name, int(shared), int(built.validated));
@@ -3235,8 +3225,7 @@ _ArraySetsMatch(const char *name, const std::string &leg,
     std::string error;
     if (!RigExecTestApplyArraySets(reader, sets, &error) ||
         !reader->Execute(&error)) {
-        std::printf("FAILED: %s, %s: %s\n", name, leg.c_str(),
-                    error.c_str());
+        std::printf("FAILED: %s, %s: %s\n", name, leg.c_str(), error.c_str());
         ++failures;
         return false;
     }
@@ -3244,8 +3233,7 @@ _ArraySetsMatch(const char *name, const std::string &leg,
     {
         RigExecRigPose pose;
         if (!RigExecTestArrayReference(stage, rigPath, sets,
-                                       reader->GetBakeTime(), &pose,
-                                       &error)) {
+                                       reader->GetBakeTime(), &pose, &error)) {
             std::printf("FAILED: %s, %s: %s\n", name, leg.c_str(),
                         error.c_str());
             ++failures;
@@ -3272,8 +3260,7 @@ static std::unique_ptr<RigExecRuntimeReader>
 _PrivateOracleSetterReader(const char *name, const UsdStageRefPtr &stage,
                            const SdfPath &rigPath,
                            const std::vector<uint8_t> &bytes,
-                           const std::string &path,
-                           const VtVec3fArray &points,
+                           const std::string &path, const VtVec3fArray &points,
                            RigExecRuntimeReader *original)
 {
     const auto file = RigExecTestUnpack(bytes);
@@ -3293,8 +3280,8 @@ _PrivateOracleSetterReader(const char *name, const UsdStageRefPtr &stage,
     if (!changed.empty()) {
         changed[0][0] += 1.0f;
     }
-    const RigExecRuntimeArray value{
-        RrInputTag::Vec3fArray, changed.cdata(), changed.size()};
+    const RigExecRuntimeArray value{RrInputTag::Vec3fArray, changed.cdata(),
+                                    changed.size()};
     std::string error;
     CHECK(!original->SetInputArray(path, value, &error));
     CHECK(!original->SetInputArrayAt(size_t(slot), value, &error));
@@ -3305,13 +3292,12 @@ _PrivateOracleSetterReader(const char *name, const UsdStageRefPtr &stage,
     CHECK(original->Execute(&error));
     {
         RigExecRigPose pose;
-        CHECK(RigExecTestArrayReference(stage, rigPath, {}, 2.0,
-                                        &pose, &error));
+        CHECK(
+            RigExecTestArrayReference(stage, rigPath, {}, 2.0, &pose, &error));
         std::vector<std::string> diffs;
         CHECK(RigExecCompareRuntimeRun(pose, *original, &diffs));
         for (const auto &diff : diffs) {
-            std::printf("  %s, refused private set: %s\n", name,
-                        diff.c_str());
+            std::printf("  %s, refused private set: %s\n", name, diff.c_str());
         }
     }
     return _ArrayReader(name, RigExecTestListPrivateArraySlots(bytes));
@@ -3357,8 +3343,8 @@ TestOraclePointsSet()
         const fb::RigExecWirePathRead *row =
             RigExecTestPathReadRow(file.get(), sampler, false);
         CHECK(slot >= 0 && slot >= int64_t(file->listedInputs) &&
-              slot < int64_t(file->inputs.size()) && listed == 1 &&
-              row && row->read &&
+              slot < int64_t(file->inputs.size()) && listed == 1 && row &&
+              row->read &&
               (file->inputs[size_t(slot)].flags() &
                uint8_t(fb::InputSlotFlags::Listed)) == 0 &&
               !row->value &&
@@ -3371,8 +3357,8 @@ TestOraclePointsSet()
     }
     {
         RigExecRigPose pose;
-        CHECK(RigExecTestArrayReference(stage, rigPath, {}, 2.0,
-                                        &pose, &error));
+        CHECK(
+            RigExecTestArrayReference(stage, rigPath, {}, 2.0, &pose, &error));
         std::vector<std::string> diffs;
         CHECK(RigExecCompareRuntimeRun(pose, *reader, &diffs));
         for (const std::string &diff : diffs) {
@@ -3382,8 +3368,8 @@ TestOraclePointsSet()
     VtVec3fArray points;
     CHECK(stage->GetAttributeAtPath(SdfPath(sampler))
               .Get(&points, UsdTimeCode(2.0)));
-    reader = _PrivateOracleSetterReader(name, stage, rigPath, bytes,
-                                        sampler, points, reader.get());
+    reader = _PrivateOracleSetterReader(name, stage, rigPath, bytes, sampler,
+                                        points, reader.get());
     if (!reader) {
         return;
     }
@@ -3401,9 +3387,9 @@ TestOraclePointsSet()
         _ArrayReader(name, RigExecTestListPrivateArraySlots(bytes));
     if (fewer) {
         VtVec3fArray shorter(points.begin(), points.end() - 1);
-        matched += _ArraySetsMatch(name, "sampled, one point fewer", stage,
-                                   rigPath, fewer.get(),
-                                   {{sampler, VtValue(shorter), true}});
+        matched +=
+            _ArraySetsMatch(name, "sampled, one point fewer", stage, rigPath,
+                            fewer.get(), {{sampler, VtValue(shorter), true}});
         const std::string failed =
             "current-phase weight failed: /Asset/Rig/Weights/Plane: "
             "sampled point count does not match the target";
@@ -3456,8 +3442,7 @@ TestOracleSlotIsCanonical()
                 samples < int64_t(file->inputs.size()) && gathered >= 0 &&
                 (file->inputs[size_t(samples)].flags() &
                  uint8_t(fb::InputSlotFlags::Listed)) == 0 &&
-                samples != gathered &&
-                object.oracleSamplesSlot == samples &&
+                samples != gathered && object.oracleSamplesSlot == samples &&
                 object.samplePoints.empty() &&
                 !RigExecTestPathReadRow(file.get(), sampler, false) && row &&
                 row->read &&
@@ -3471,8 +3456,8 @@ TestOracleSlotIsCanonical()
     }
     {
         RigExecRigPose pose;
-        CHECK(RigExecTestArrayReference(stage, rigPath, {}, 2.0,
-                                        &pose, &error));
+        CHECK(
+            RigExecTestArrayReference(stage, rigPath, {}, 2.0, &pose, &error));
         std::vector<std::string> diffs;
         CHECK(RigExecCompareRuntimeRun(pose, *reader, &diffs));
         for (const std::string &diff : diffs) {
@@ -3482,8 +3467,8 @@ TestOracleSlotIsCanonical()
     VtVec3fArray points;
     CHECK(stage->GetAttributeAtPath(SdfPath(sampler))
               .Get(&points, UsdTimeCode(2.0)));
-    reader = _PrivateOracleSetterReader(name, stage, rigPath, bytes,
-                                        sampler, points, reader.get());
+    reader = _PrivateOracleSetterReader(name, stage, rigPath, bytes, sampler,
+                                        points, reader.get());
     if (!reader) {
         return;
     }
@@ -3511,44 +3496,52 @@ TestStageArrayOracleAndChain()
         const bool privateOracle = kind != 1;
         const bool curveOracle = kind == 2;
         const bool blockedAtBake = kind == 3;
-        const char *name = blockedAtBake ? "stage blocked-at-bake chain raw fallback"
-            : curveOracle ? "stage private curve missing/recovery"
+        const char *name =
+            blockedAtBake   ? "stage blocked-at-bake chain raw fallback"
+            : curveOracle   ? "stage private curve missing/recovery"
             : privateOracle ? "stage private oracle samples"
                             : "stage unweighted chain missing/empty base";
         _MixOptions options;
         options.animatedSampler = true;
         options.samplerPrim = true;
         options.animatedCurve = curveOracle;
-        if (curveOracle) options.mode = "average";
+        if (curveOracle)
+            options.mode = "average";
         auto stage = _VolumeMixStage(options);
         const SdfPath rigPath("/Asset/Rig");
-        const SdfPath path(curveOracle ? "/Asset/Geom/CurveSource.points"
-            : privateOracle ? "/Asset/Geom/Sampler.points"
-                            : "/Asset/Geom/M.points");
+        const SdfPath path(curveOracle     ? "/Asset/Geom/CurveSource.points"
+                           : privateOracle ? "/Asset/Geom/Sampler.points"
+                                           : "/Asset/Geom/M.points");
         if (!privateOracle) {
             // Changing weighted-domain cardinality is a compiled rig refusal.
             // This clean unweighted chain exercises legal sampled base changes.
             stage = UsdStage::CreateInMemory();
             stage->DefinePrim(rigPath, TfToken("RigExecRoot"));
-            const auto mesh = stage->DefinePrim(path.GetPrimPath(), TfToken("Points"));
-            mesh.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
+            const auto mesh =
+                stage->DefinePrim(path.GetPrimPath(), TfToken("Points"));
+            mesh.CreateAttribute(TfToken("points"),
+                                 SdfValueTypeNames->Point3fArray)
                 .Set(VtVec3fArray{GfVec3f(0, 0, 0), GfVec3f(1, 0, 0),
-                                 GfVec3f(0, 1, 0)});
-            const auto joint = stage->DefinePrim(
-                SdfPath("/Asset/Rig/Joints/J"), TfToken("RigExecJoint"));
-            joint.CreateAttribute(TfToken("avars:ty"), SdfValueTypeNames->Double)
+                                  GfVec3f(0, 1, 0)});
+            const auto joint = stage->DefinePrim(SdfPath("/Asset/Rig/Joints/J"),
+                                                 TfToken("RigExecJoint"));
+            joint
+                .CreateAttribute(TfToken("avars:ty"), SdfValueTypeNames->Double)
                 .Set(2.0);
-            const auto mover = stage->DefinePrim(
-                SdfPath("/Asset/Rig/Movers/Move"), TfToken("RigExecMatrixMover"));
+            const auto mover =
+                stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Move"),
+                                  TfToken("RigExecMatrixMover"));
             CHECK(mover.ApplyAPI(TfToken("RigExecMoverAPI")));
-            mover.CreateRelationship(TfToken("rigExec:moves")).SetTargets({path});
+            mover.CreateRelationship(TfToken("rigExec:moves"))
+                .SetTargets({path});
             mover.CreateRelationship(TfToken("rigExec:transform"))
                 .SetTargets({joint.GetPath()});
         }
         const auto attribute = stage->GetAttributeAtPath(path);
         VtVec3fArray initial;
         CHECK(attribute.Get(&initial, UsdTimeCode(1)) && !initial.empty());
-        if (initial.empty()) continue;
+        if (initial.empty())
+            continue;
         VtVec3fArray changed = initial;
         for (auto &point : changed) {
             point[0] -= 0.75f;
@@ -3570,8 +3563,9 @@ TestStageArrayOracleAndChain()
             CHECK(stage->GetAttributeAtPath(fallbackPath).Get(&raw) &&
                   raw == initial);
             double precedingLift = 0.0;
-            CHECK(stage->GetAttributeAtPath(
-                      SdfPath("/Asset/Rig/Joints/Lift.avars:ty"))
+            CHECK(stage
+                      ->GetAttributeAtPath(
+                          SdfPath("/Asset/Rig/Joints/Lift.avars:ty"))
                       .Get(&precedingLift, UsdTimeCode(1)) &&
                   precedingLift != 0.0);
             // The Mix is current-phase through its preceding Sphere. Plane's
@@ -3588,12 +3582,15 @@ TestStageArrayOracleAndChain()
         }
         const auto file = RigExecTestUnpack(bytes);
         CHECK(file);
-        if (!file) continue;
+        if (!file)
+            continue;
         const int64_t slot = RigExecTestSlotOf(*file, path.GetString());
         CHECK(slot >= 0 && slot < int64_t(file->inputs.size()));
-        if (slot < 0 || slot >= int64_t(file->inputs.size())) continue;
+        if (slot < 0 || slot >= int64_t(file->inputs.size()))
+            continue;
         auto reader = _ArrayReader(name, bytes);
-        if (!reader) continue;
+        if (!reader)
+            continue;
         const size_t publicCount = reader->GetInputCount();
         if (privateOracle) {
             CHECK(slot >= int64_t(file->listedInputs));
@@ -3601,8 +3598,8 @@ TestStageArrayOracleAndChain()
             CHECK(!reader->FindInput(path.GetString(), &publicIndex));
             RigExecRuntimeArray view;
             CHECK(!reader->GetInputArrayAt(size_t(slot), &view));
-            const RigExecRuntimeArray value{
-                RrInputTag::Vec3fArray, changed.cdata(), changed.size()};
+            const RigExecRuntimeArray value{RrInputTag::Vec3fArray,
+                                            changed.cdata(), changed.size()};
             CHECK(!reader->SetInputArray(path.GetString(), value, &error));
             CHECK(!reader->SetInputArrayAt(size_t(slot), value, &error));
             CHECK(!reader->SetSampledInputArrayAt(size_t(slot), value, &error));
@@ -3613,7 +3610,9 @@ TestStageArrayOracleAndChain()
                     (curveOracle ? "/Asset/Rig/Weights/Curve"
                                  : "/Asset/Rig/Weights/Plane")) {
                     bound += (curveOracle ? object.oracleCurveSlot
-                                          : object.oracleSamplesSlot) == slot ? 1 : 0;
+                                          : object.oracleSamplesSlot) == slot
+                                 ? 1
+                                 : 0;
                 }
             }
             CHECK(bound == 1);
@@ -3629,33 +3628,39 @@ TestStageArrayOracleAndChain()
                     CHECK(file->inputs[size_t(fallbackSlot)].type() ==
                           fb::InputTag::Vec3fArray);
                     size_t publicIndex = 0;
-                    const bool listed = fallbackSlot < int64_t(file->listedInputs);
-                    CHECK(reader->FindInput(fallbackPath.GetString(), &publicIndex)
-                          == listed);
-                    if (listed) CHECK(publicIndex == size_t(fallbackSlot));
+                    const bool listed =
+                        fallbackSlot < int64_t(file->listedInputs);
+                    CHECK(reader->FindInput(fallbackPath.GetString(),
+                                            &publicIndex) == listed);
+                    if (listed)
+                        CHECK(publicIndex == size_t(fallbackSlot));
                 }
-                CHECK(std::any_of(file->geometry->chains.begin(),
-                                  file->geometry->chains.end(),
-                    [&](const auto &chain) {
+                CHECK(std::any_of(
+                    file->geometry->chains.begin(),
+                    file->geometry->chains.end(), [&](const auto &chain) {
                         return RigExecFormatPathText(*file, chain.target) ==
                                    fallbackPath.GetString() &&
-                            std::any_of(chain.revisions.begin(), chain.revisions.end(),
-                                [](const auto &revision) {
-                                    return revision.weightCurrentPhase;
-                                });
+                               std::any_of(
+                                   chain.revisions.begin(),
+                                   chain.revisions.end(),
+                                   [](const auto &revision) {
+                                       return revision.weightCurrentPhase;
+                                   });
                     }));
                 for (const auto &object : file->geometry->weightObjects) {
                     if (RigExecFormatPathText(*file, object.path) ==
                         "/Asset/Rig/Weights/Plane") {
                         CHECK(object.targetPoints.size() == 1 &&
-                              RigExecFormatPathText(*file, object.targetPoints[0]) ==
+                              RigExecFormatPathText(*file,
+                                                    object.targetPoints[0]) ==
                                   fallbackPath.GetString() &&
                               object.targetValid == std::vector<uint8_t>{0});
                     }
                 }
             }
         }
-        const auto transported = RigExecRuntimeStageArrayInputs::Enumerate(*reader);
+        const auto transported =
+            RigExecRuntimeStageArrayInputs::Enumerate(*reader);
         CHECK(std::count_if(transported.begin(), transported.end(),
                             [&](const auto &info) {
                                 return info.slot == size_t(slot) &&
@@ -3673,13 +3678,14 @@ TestStageArrayOracleAndChain()
             "could not read the points to sample";
         for (const double time : {1., 2., 3., 4., 5., 6., 2.}) {
             bool sampled = false;
-            CHECK(sampler.Apply(UsdTimeCode(time), reader.get(), &error, &sampled));
+            CHECK(sampler.Apply(UsdTimeCode(time), reader.get(), &error,
+                                &sampled));
             CHECK(reader->Execute(&error));
             CHECK(reader->GetInputCount() == publicCount);
             {
                 RigExecRigPose pose;
-                CHECK(RigExecTestArrayReference(stage, rigPath, {}, time,
-                                                &pose, &error));
+                CHECK(RigExecTestArrayReference(stage, rigPath, {}, time, &pose,
+                                                &error));
                 std::vector<std::string> diffs;
                 CHECK(RigExecCompareRuntimeRun(pose, *reader, &diffs));
                 for (const auto &diff : diffs) {
@@ -3690,15 +3696,17 @@ TestStageArrayOracleAndChain()
                 const auto &lines = reader->GetDiagnostics();
                 if (curveOracle) {
                     const std::string curveFailure =
-                        "current-phase weight failed: /Asset/Rig/Weights/Curve: "
+                        "current-phase weight failed: "
+                        "/Asset/Rig/Weights/Curve: "
                         "rigExec:curve must name exactly one points source";
-                    CHECK(_HasLine(lines, curveFailure) == (time == 4 || time == 5));
+                    CHECK(_HasLine(lines, curveFailure) ==
+                          (time == 4 || time == 5));
                 } else {
-                    CHECK(_HasLine(lines, countFailure) == (time == 3 || time == 4));
+                    CHECK(_HasLine(lines, countFailure) ==
+                          (time == 3 || time == 4));
                     // A blocked primary sampleSource falls back to raw
                     // weightTarget points. A successful empty primary does not.
-                    CHECK(_HasLine(lines, missingFailure) ==
-                          false);
+                    CHECK(_HasLine(lines, missingFailure) == false);
                 }
                 size_t publicIndex = 0;
                 CHECK(!reader->FindInput(path.GetString(), &publicIndex));
@@ -3707,19 +3715,21 @@ TestStageArrayOracleAndChain()
                 RigExecRigPose held;
                 CHECK(RigExecTestArrayReference(
                     stage, rigPath,
-                    {{path.GetString(), VtValue(initial), true}}, time,
-                    &held, &error));
+                    {{path.GetString(), VtValue(initial), true}}, time, &held,
+                    &error));
                 std::vector<std::string> diffs;
                 CHECK(!RigExecCompareRuntimeOutputs(held, *reader, &diffs));
             }
             // A repeated frame performs no new stage sampling, including
             // after failed reads. The reader still retains that read kind.
             sampled = true;
-            CHECK(sampler.Apply(UsdTimeCode(time), reader.get(), &error, &sampled));
+            CHECK(sampler.Apply(UsdTimeCode(time), reader.get(), &error,
+                                &sampled));
             CHECK(!sampled);
         }
-        std::printf("%s: original slot, 7 frames incl short/empty/missing/recovery\n",
-                    name);
+        std::printf(
+            "%s: original slot, 7 frames incl short/empty/missing/recovery\n",
+            name);
     }
 }
 
@@ -3779,12 +3789,11 @@ TestLosslessLayoutPlaysAsLive()
                             sizeof(float) * weights.size()) == 0;
             CHECK(same);
             // Its inputs default to that layout.
-            CHECK(revision.jointIndicesSlot ==
-                      RigExecTestSlotOf(*file,
-                                        mover + ".rigExec:jointIndices") &&
-                  revision.jointWeightsSlot ==
-                      RigExecTestSlotOf(*file,
-                                        mover + ".rigExec:jointWeights"));
+            CHECK(
+                revision.jointIndicesSlot ==
+                    RigExecTestSlotOf(*file, mover + ".rigExec:jointIndices") &&
+                revision.jointWeightsSlot ==
+                    RigExecTestSlotOf(*file, mover + ".rigExec:jointWeights"));
             for (size_t e = 0; e + 1 < indices.size(); e += 2) {
                 leadingZeros += indices[e] == 0 && weights[e] == 0.0f ? 1 : 0;
             }
@@ -3809,22 +3818,26 @@ TestLosslessLayoutPlaysAsLive()
                 VtFloatArray signedZero = weights;
                 signedZero[z] = -0.0f;
                 CHECK(RigExecTestApplyArraySets(
-                          reader.get(),
-                          {{input, VtValue(signedZero), false}}, &error) &&
+                          reader.get(), {{input, VtValue(signedZero), false}},
+                          &error) &&
                       reader->Execute(&error));
                 CHECK(!reader->GetSkinLayoutIsOpenForTesting(mover));
                 CHECK(reader->Execute(&error));
                 const uint64_t unchanged =
                     reader->GetCounters().executedOpCount;
-                CHECK(unchanged == 0 && reader->GetLastRunTraceForTesting().empty());
+                CHECK(unchanged == 0 &&
+                      reader->GetLastRunTraceForTesting().empty());
                 CHECK(reader->ResetInput(input, &error) &&
                       reader->Execute(&error));
                 CHECK(reader->GetSkinLayoutIsOpenForTesting(mover));
                 bool ranLayout = false;
                 for (int32_t id : reader->GetLastRunTraceForTesting())
-                    ranLayout = ranLayout || (id >= 0 && size_t(id) < file->steps.size() &&
-                        file->steps[size_t(id)].kind == fb::StepKind::SkinTopology &&
-                        reader->GetStepLabelForTesting(size_t(id)).find(mover) != std::string::npos);
+                    ranLayout = ranLayout ||
+                                (id >= 0 && size_t(id) < file->steps.size() &&
+                                 file->steps[size_t(id)].kind ==
+                                     fb::StepKind::SkinTopology &&
+                                 reader->GetStepLabelForTesting(size_t(id))
+                                         .find(mover) != std::string::npos);
                 CHECK(ranLayout);
                 RigExecRigPose restored;
                 CHECK(RigExecTestArrayReference(stage, rigPath, {}, 1001.0,
@@ -3833,7 +3846,8 @@ TestLosslessLayoutPlaysAsLive()
                 CHECK(RigExecCompareRuntimeRun(restored, *reader,
                                                &restoredDiffs, true));
                 for (const auto &diff : restoredDiffs)
-                    std::printf("restored signed-zero layout: %s\n", diff.c_str());
+                    std::printf("restored signed-zero layout: %s\n",
+                                diff.c_str());
                 CHECK(reader->Execute(&error));
                 CHECK(reader->GetCounters().executedOpCount == unchanged);
                 CHECK(reader->GetLastRunTraceForTesting().empty());
@@ -3860,9 +3874,10 @@ _DynamicSupportStage()
 {
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     const SdfPath target("/Asset/Geom/M.points");
-    const VtVec3fArray rest{GfVec3f(0, 0, 0),         GfVec3f(0.5f, 0.25f, 0),
-                            GfVec3f(-1, -0.5f, 0.25f), GfVec3f(2, 0, -0.5f),
-                            GfVec3f(0.25f, 1, 0.5f),  GfVec3f(-0.5f, 0.5f, -1)};
+    const VtVec3fArray rest{
+        GfVec3f(0, 0, 0),          GfVec3f(0.5f, 0.25f, 0),
+        GfVec3f(-1, -0.5f, 0.25f), GfVec3f(2, 0, -0.5f),
+        GfVec3f(0.25f, 1, 0.5f),   GfVec3f(-0.5f, 0.5f, -1)};
     stage->DefinePrim(SdfPath("/Asset/Geom/M"), TfToken("Points"))
         .CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
         .Set(rest);
@@ -3901,16 +3916,16 @@ _DynamicSupportStage()
     liftTy.Set(1.5, UsdTimeCode(1.0));
     liftTy.Set(0.0, UsdTimeCode(4.0));
 
-    const UsdPrim full = weight("/Asset/Rig/Weights/Full",
-                                "RigExecStaticWeight");
+    const UsdPrim full =
+        weight("/Asset/Rig/Weights/Full", "RigExecStaticWeight");
     setToken(full, "rigExec:representation", "dense");
     full.CreateAttribute(TfToken("rigExec:values"),
                          SdfValueTypeNames->FloatArray)
         .Set(VtFloatArray(rest.size(), 1.0f));
     setFloat(full, "rigExec:defaultWeight", 0.0f);
 
-    const UsdPrim sphere = weight("/Asset/Rig/Weights/Sphere",
-                                  "RigExecSphereWeight");
+    const UsdPrim sphere =
+        weight("/Asset/Rig/Weights/Sphere", "RigExecSphereWeight");
     sphere.GetRelationship(TfToken("rigExec:weightTarget"))
         .SetMetadata(TfToken("rigExecReadPhase"), std::string("preceding"));
     place(sphere, 0, 0, 0);
@@ -3918,8 +3933,8 @@ _DynamicSupportStage()
     setFloat(sphere, "inputs:falloffMax", 2.5f);
     setToken(sphere, "rigExec:falloffProfile", "linear");
 
-    const UsdPrim base = weight("/Asset/Rig/Weights/Base",
-                                "RigExecStaticWeight");
+    const UsdPrim base =
+        weight("/Asset/Rig/Weights/Base", "RigExecStaticWeight");
     setToken(base, "rigExec:representation", "sparse");
     setFloat(base, "rigExec:defaultWeight", 0.0f);
     base.CreateAttribute(TfToken("rigExec:indices"),
@@ -3928,17 +3943,18 @@ _DynamicSupportStage()
     base.CreateAttribute(TfToken("rigExec:values"),
                          SdfValueTypeNames->FloatArray)
         .Set(VtFloatArray{0.5f, 0.25f});
-    const UsdPrim dynamic = weight("/Asset/Rig/Weights/Dyn",
-                                   "RigExecDynamicWeight");
+    const UsdPrim dynamic =
+        weight("/Asset/Rig/Weights/Dyn", "RigExecDynamicWeight");
     setToken(dynamic, "rigExec:representation", "sparse");
     dynamic.CreateRelationship(TfToken("rigExec:baseWeight"))
         .SetTargets({base.GetPath()});
-    dynamic.CreateAttribute(TfToken("rigExec:indices"),
-                            SdfValueTypeNames->IntArray)
+    dynamic
+        .CreateAttribute(TfToken("rigExec:indices"),
+                         SdfValueTypeNames->IntArray)
         .Set(VtIntArray{0, 1});
 
-    const UsdPrim combine = weight("/Asset/Rig/Weights/Mix",
-                                   "RigExecCombineWeight");
+    const UsdPrim combine =
+        weight("/Asset/Rig/Weights/Mix", "RigExecCombineWeight");
     combine.CreateRelationship(TfToken("rigExec:inputWeights"))
         .SetTargets({sphere.GetPath(), dynamic.GetPath()});
     setToken(combine, "rigExec:combineMode", "max");
@@ -3977,7 +3993,8 @@ TestDynamicSupportFromSlots()
     const std::string indices = dynamic + ".rigExec:indices";
     const std::string failed =
         "current-phase weight failed: dynamic/base sparse support mismatch "
-        "on " + dynamic;
+        "on " +
+        dynamic;
     std::vector<uint8_t> bytes;
     std::string error;
     {
@@ -4012,8 +4029,8 @@ TestDynamicSupportFromSlots()
     // At its defaults the support matches: live's run.
     {
         RigExecRigPose pose;
-        CHECK(RigExecTestArrayReference(stage, rigPath, {}, 2.0,
-                                        &pose, &error));
+        CHECK(
+            RigExecTestArrayReference(stage, rigPath, {}, 2.0, &pose, &error));
         std::vector<std::string> diffs;
         CHECK(RigExecCompareRuntimeRun(pose, *reader, &diffs));
         for (const std::string &diff : diffs) {
@@ -4038,8 +4055,8 @@ TestDynamicSupportFromSlots()
     CHECK(hasLine(*reader));
     {
         RigExecRigPose pose;
-        CHECK(RigExecTestArrayReference(stage, rigPath, off, 2.0,
-                                        &pose, &error));
+        CHECK(
+            RigExecTestArrayReference(stage, rigPath, off, 2.0, &pose, &error));
         std::vector<std::string> diffs;
         CHECK(RigExecCompareRuntimeRun(pose, *reader, &diffs, true));
         for (const std::string &diff : diffs) {
@@ -4094,8 +4111,7 @@ TestLayoutSetOnChunkedRevision()
         for (size_t id = 0; id < geometry.revisionIndex.size(); ++id) {
             const auto &at = geometry.revisionIndex[id];
             const fb::RigExecWireRevision &revision =
-                geometry.chains[size_t(at.first)]
-                    .revisions[size_t(at.second)];
+                geometry.chains[size_t(at.first)].revisions[size_t(at.second)];
             if (RigExecFormatPathText(*file, revision.moverPath) != skin) {
                 continue;
             }
@@ -4154,7 +4170,8 @@ TestLayoutSetOnChunkedRevision()
             .CreateAttribute(TfToken("rigExec:skinningMethod"),
                              SdfValueTypeNames->Token)
             .Set(TfToken("dualQuaternion"));
-        const auto method = stage->GetAttributeAtPath(SdfPath(skin + ".rigExec:skinningMethod"));
+        const auto method = stage->GetAttributeAtPath(
+            SdfPath(skin + ".rigExec:skinningMethod"));
         method.Set(TfToken("dualQuaternion"), UsdTimeCode(1));
         method.Set(TfToken("dualQuaternion"), UsdTimeCode(2));
         const UsdPrim lift = stage->DefinePrim(
@@ -4180,11 +4197,10 @@ TestLayoutSetOnChunkedRevision()
                   reader->GetSkinLayoutIsOpenForTesting(skin));
             // A repaint: the partition holds other indices, so the
             // revision runs whole, and only J1 moves the points.
-            CHECK(_ArraySetsMatch(name, "dual, repainted, J1 moved", stage,
-                                  rigPath, reader.get(),
-                                  {{indices, VtValue(VtIntArray{1, 1, 1, 1}),
-                                    false},
-                                   {j1, VtValue(25.0), false}}));
+            CHECK(_ArraySetsMatch(
+                name, "dual, repainted, J1 moved", stage, rigPath, reader.get(),
+                {{indices, VtValue(VtIntArray{1, 1, 1, 1}), false},
+                 {j1, VtValue(25.0), false}}));
             CHECK(reader->GetPartitionStaleForTesting(skin) &&
                   !reader->GetSkinLayoutIsOpenForTesting(skin));
             // Back to the file's layout: the Open one, and the chunks run.
@@ -4238,40 +4254,39 @@ _SimdSettingStage()
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
     stage->DefinePrim(SdfPath("/Asset/Rig/Controls"), TfToken("Scope"));
-    const auto control = [&](const char *path,
-                             const std::vector<std::pair<const char *,
-                                                         double>> &avars) {
-        const UsdPrim prim =
-            stage->DefinePrim(SdfPath(path), TfToken("RigExecControl"));
-        prim.CreateAttribute(TfToken("rest:space"),
-                             SdfValueTypeNames->Matrix4d)
-            .Set(GfMatrix4d(1.0));
-        for (const auto &[avar, value] : avars) {
-            prim.CreateAttribute(TfToken(avar), SdfValueTypeNames->Double)
-                .Set(value);
-        }
-        return prim.GetPath();
-    };
-    const SdfPath shift = control(
-        "/Asset/Rig/Controls/Shift",
-        {{"avars:tx", 3.0}, {"avars:ty", -2.0}, {"avars:tz", 5.0}});
-    const SdfPath turn = control(
-        "/Asset/Rig/Controls/Turn",
-        {{"avars:rz", 33.0}, {"avars:tx", 1.5}, {"avars:ty", -0.5}});
+    const auto control =
+        [&](const char *path,
+            const std::vector<std::pair<const char *, double>> &avars) {
+            const UsdPrim prim =
+                stage->DefinePrim(SdfPath(path), TfToken("RigExecControl"));
+            prim.CreateAttribute(TfToken("rest:space"),
+                                 SdfValueTypeNames->Matrix4d)
+                .Set(GfMatrix4d(1.0));
+            for (const auto &[avar, value] : avars) {
+                prim.CreateAttribute(TfToken(avar), SdfValueTypeNames->Double)
+                    .Set(value);
+            }
+            return prim.GetPath();
+        };
+    const SdfPath shift =
+        control("/Asset/Rig/Controls/Shift",
+                {{"avars:tx", 3.0}, {"avars:ty", -2.0}, {"avars:tz", 5.0}});
+    const SdfPath turn =
+        control("/Asset/Rig/Controls/Turn",
+                {{"avars:rz", 33.0}, {"avars:tx", 1.5}, {"avars:ty", -0.5}});
 
     // Dyadic coordinates, so a whole-number translation is exact in float
     // and lands on no zero.
     const VtVec3fArray rest = {
-        GfVec3f(1.5f, 2.25f, -3.5f),   GfVec3f(-2.5f, 0.75f, 4.25f),
-        GfVec3f(3.25f, -1.5f, 0.5f),   GfVec3f(-0.25f, 5.5f, -2.75f),
-        GfVec3f(4.5f, -3.25f, 1.25f),  GfVec3f(-5.75f, 1.5f, 2.5f),
-        GfVec3f(0.5f, -4.5f, -1.75f),  GfVec3f(2.75f, 3.5f, -0.25f)};
+        GfVec3f(1.5f, 2.25f, -3.5f),  GfVec3f(-2.5f, 0.75f, 4.25f),
+        GfVec3f(3.25f, -1.5f, 0.5f),  GfVec3f(-0.25f, 5.5f, -2.75f),
+        GfVec3f(4.5f, -3.25f, 1.25f), GfVec3f(-5.75f, 1.5f, 2.5f),
+        GfVec3f(0.5f, -4.5f, -1.75f), GfVec3f(2.75f, 3.5f, -0.25f)};
     stage->DefinePrim(SdfPath("/Asset/Geom"), TfToken("Scope"));
     const auto points = [&](const char *path) {
         const UsdPrim prim =
             stage->DefinePrim(SdfPath(path), TfToken("Points"));
-        prim.CreateAttribute(TfToken("points"),
-                             SdfValueTypeNames->Point3fArray)
+        prim.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
             .Set(rest);
         return prim.GetPath().AppendProperty(TfToken("points"));
     };
@@ -4290,39 +4305,40 @@ _SimdSettingStage()
             stage->DefinePrim(weightPath, TfToken("RigExecStaticWeight"));
         weight.CreateRelationship(TfToken("rigExec:weightTarget"))
             .SetTargets({target});
-        weight.CreateAttribute(TfToken("rigExec:representation"),
-                               SdfValueTypeNames->Token)
+        weight
+            .CreateAttribute(TfToken("rigExec:representation"),
+                             SdfValueTypeNames->Token)
             .Set(TfToken("dense"));
-        weight.CreateAttribute(TfToken("rigExec:values"),
-                               SdfValueTypeNames->FloatArray)
+        weight
+            .CreateAttribute(TfToken("rigExec:values"),
+                             SdfValueTypeNames->FloatArray)
             .Set(values);
-        weight.CreateAttribute(TfToken("rigExec:defaultWeight"),
-                               SdfValueTypeNames->Float)
+        weight
+            .CreateAttribute(TfToken("rigExec:defaultWeight"),
+                             SdfValueTypeNames->Float)
             .Set(0.0f);
         const UsdPrim mover = stage->DefinePrim(
             SdfPath("/Asset/Rig/Movers").AppendChild(TfToken(name)),
             TfToken("RigExecMatrixMover"));
         mover.ApplyAPI(TfToken("RigExecMoverAPI"));
-        mover.GetRelationship(TfToken("rigExec:moves"))
-            .SetTargets({target});
+        mover.GetRelationship(TfToken("rigExec:moves")).SetTargets({target});
         mover.CreateRelationship(TfToken("rigExec:transform"))
             .SetTargets({transform});
         mover.CreateRelationship(TfToken("rigExec:weightObject"))
             .SetTargets({weightPath});
     };
-    matrixMover("Lift", lift, shift, {0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f,
-                                      0.0f, 1.0f});
-    matrixMover("Bend", bend, turn, {0.0f, 1.0f, 0.3f, 0.5f, 1.0f, 0.0f,
-                                     0.7f, 0.15f});
+    matrixMover("Lift", lift, shift,
+                {0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f});
+    matrixMover("Bend", bend, turn,
+                {0.0f, 1.0f, 0.3f, 0.5f, 1.0f, 0.0f, 0.7f, 0.15f});
 
-    const UsdPrim skin = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Skin"), TfToken("RigExecSkinMover"));
+    const UsdPrim skin = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Skin"),
+                                           TfToken("RigExecSkinMover"));
     skin.ApplyAPI(TfToken("RigExecMoverAPI"));
     skin.GetRelationship(TfToken("rigExec:moves")).SetTargets({skinned});
     skin.CreateRelationship(TfToken("rigExec:influences"))
         .SetTargets({shift, turn});
-    skin.CreateAttribute(TfToken("rigExec:elementSize"),
-                         SdfValueTypeNames->Int)
+    skin.CreateAttribute(TfToken("rigExec:elementSize"), SdfValueTypeNames->Int)
         .Set(2);
     skin.CreateAttribute(TfToken("rigExec:skinningMethod"),
                          SdfValueTypeNames->Token)
@@ -4332,10 +4348,10 @@ _SimdSettingStage()
         .Set(VtIntArray{0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1});
     skin.CreateAttribute(TfToken("rigExec:jointWeights"),
                          SdfValueTypeNames->FloatArray)
-        .Set(VtFloatArray{1.0f, 0.0f,  0.5f, 0.5f,   //
-                          1.0f, 0.0f,  0.25f, 0.75f, //
-                          0.0f, 1.0f,  1.0f, 0.0f,   //
-                          0.6f, 0.4f,  0.9f, 0.1f});
+        .Set(VtFloatArray{1.0f, 0.0f, 0.5f, 0.5f,   //
+                          1.0f, 0.0f, 0.25f, 0.75f, //
+                          0.0f, 1.0f, 1.0f, 0.0f,   //
+                          0.6f, 0.4f, 0.9f, 0.1f});
     return stage;
 }
 
@@ -4348,11 +4364,11 @@ _TwoKeySkinStage()
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const UsdPrim j0 = stage->DefinePrim(SdfPath("/Asset/Rig/J0"),
-                                         TfToken("RigExecControl"));
+    const UsdPrim j0 =
+        stage->DefinePrim(SdfPath("/Asset/Rig/J0"), TfToken("RigExecControl"));
     j0.GetAttribute(TfToken("avars:tx")).Set(10.0);
-    const UsdPrim j1 = stage->DefinePrim(SdfPath("/Asset/Rig/J1"),
-                                         TfToken("RigExecControl"));
+    const UsdPrim j1 =
+        stage->DefinePrim(SdfPath("/Asset/Rig/J1"), TfToken("RigExecControl"));
     j1.GetAttribute(TfToken("avars:ty")).Set(20.0);
     const SdfPath target("/Asset/Geom/Mesh.points");
     const UsdPrim mesh =
@@ -4363,15 +4379,15 @@ _TwoKeySkinStage()
     }
     mesh.GetAttribute(TfToken("points")).Set(points);
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
-    const UsdPrim skin = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Skin"), TfToken("RigExecSkinMover"));
+    const UsdPrim skin = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Skin"),
+                                           TfToken("RigExecSkinMover"));
     skin.ApplyAPI(TfToken("RigExecMoverAPI"));
     skin.GetRelationship(TfToken("rigExec:moves")).SetTargets({target});
     skin.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
     skin.CreateRelationship(TfToken("rigExec:influences"))
         .SetTargets({j0.GetPath(), j1.GetPath()});
-    skin.CreateAttribute(TfToken("rigExec:elementSize"),
-                         SdfValueTypeNames->Int).Set(1);
+    skin.CreateAttribute(TfToken("rigExec:elementSize"), SdfValueTypeNames->Int)
+        .Set(1);
     skin.CreateAttribute(TfToken("rigExec:jointIndices"),
                          SdfValueTypeNames->IntArray)
         .Set(VtIntArray{0, 0, 1, 1});
@@ -4407,8 +4423,8 @@ TestRepaintedChunkLayoutRunsWhole()
     CHECK(RigExecTestBakeAt(evaluator, 1.0, &asBuilt, &error));
 
     fb::RigExecWireSkinTopology repainted;
-    CHECK(RigExecFormatTopology({1, 1, 1, 1}, {1.0f, 1.0f, 1.0f, 1.0f}, 1, 4,
-                                2, true, &repainted, &error));
+    CHECK(RigExecFormatTopology({1, 1, 1, 1}, {1.0f, 1.0f, 1.0f, 1.0f}, 1, 4, 2,
+                                true, &repainted, &error));
     int edited = 0;
     const std::vector<uint8_t> repaintedBytes =
         RigExecTestEdited(asBuilt, [&](fb::RigExecWireFile *file) {
@@ -4560,8 +4576,7 @@ TestSimdSettingPerReader()
             for (size_t i = 0; i < target.exact.size(); ++i) {
                 const RrVec3f &x = a->points[i];
                 const RrVec3f &y = b->points[i];
-                const bool same =
-                    std::memcmp(&x, &y, sizeof(RrVec3f)) == 0;
+                const bool same = std::memcmp(&x, &y, sizeof(RrVec3f)) == 0;
                 differing += same ? 0 : 1;
                 double distance = 0.0;
                 for (int k = 0; k < 3; ++k) {
@@ -4573,8 +4588,8 @@ TestSimdSettingPerReader()
                     ++failures;
                     std::printf("FAIL %s, %s: %s point %zu is (%.9g %.9g "
                                 "%.9g) scalar, (%.9g %.9g %.9g) SIMD\n",
-                                name, what, target.path, i, x[0], x[1],
-                                x[2], y[0], y[1], y[2]);
+                                name, what, target.path, i, x[0], x[1], x[2],
+                                y[0], y[1], y[2]);
                 }
             }
         }
@@ -4607,7 +4622,8 @@ static UsdStageRefPtr
 _AcceptanceStage()
 {
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
-    const bool imported = stage->GetRootLayer()->ImportFromString(R"USD(#usda 1.0
+    const bool imported =
+        stage->GetRootLayer()->ImportFromString(R"USD(#usda 1.0
 (
     startTimeCode = 1
     endTimeCode = 4
@@ -4828,23 +4844,27 @@ TestAcceptanceFailureRecovers()
                 decided);
 }
 
-static void TestRetainedResultOwnership()
+static void
+TestRetainedResultOwnership()
 {
     RrRetainedArray<RrVec3f> producer;
-    std::vector<RrVec3f> spare(1,RrVec3f(1,2,3));
+    std::vector<RrVec3f> spare(1, RrVec3f(1, 2, 3));
     producer.swap(spare);
-    const auto retained=producer;
-    CHECK(retained.data()==producer.data());
-    spare.assign(1,RrVec3f(4,5,6));producer.swap(spare);
-    CHECK(retained.Read()[0]==RrVec3f(1,2,3));
-    CHECK(producer.Read()[0]==RrVec3f(4,5,6));
-    producer.clear();CHECK(producer.empty());
-    CHECK(retained.size()==1);
-    RrRetainedArray<float> weights;weights.Write().assign(1,0.25f);
-    const auto retainedWeights=weights;
-    weights.Write()[0]=0.75f;
-    CHECK(retainedWeights.Read()[0]==0.25f);
-    CHECK(weights.Read()[0]==0.75f);
+    const auto retained = producer;
+    CHECK(retained.data() == producer.data());
+    spare.assign(1, RrVec3f(4, 5, 6));
+    producer.swap(spare);
+    CHECK(retained.Read()[0] == RrVec3f(1, 2, 3));
+    CHECK(producer.Read()[0] == RrVec3f(4, 5, 6));
+    producer.clear();
+    CHECK(producer.empty());
+    CHECK(retained.size() == 1);
+    RrRetainedArray<float> weights;
+    weights.Write().assign(1, 0.25f);
+    const auto retainedWeights = weights;
+    weights.Write()[0] = 0.75f;
+    CHECK(retainedWeights.Read()[0] == 0.25f);
+    CHECK(weights.Read()[0] == 0.75f);
 }
 
 // A reader and the input sampler bound to it. Bind's warnings are the
@@ -4900,10 +4920,10 @@ _SameRun(const std::string &what, const RigExecRuntimeReader &want,
     for (size_t k = 0; same && k < wantPoints.size(); ++k) {
         const std::vector<RrVec3f> &a = wantPoints[k].points.Vector();
         const std::vector<RrVec3f> &b = gotPoints[k].points.Vector();
-        same = wantPoints[k].path == gotPoints[k].path &&
-               a.size() == b.size() &&
-               (a.empty() ||
-                std::memcmp(a.data(), b.data(), a.size() * sizeof(RrVec3f)) == 0);
+        same =
+            wantPoints[k].path == gotPoints[k].path && a.size() == b.size() &&
+            (a.empty() ||
+             std::memcmp(a.data(), b.data(), a.size() * sizeof(RrVec3f)) == 0);
     }
     if (!same) {
         std::printf("%s: points differ\n", what.c_str());
@@ -4926,12 +4946,13 @@ _SameRun(const std::string &what, const RigExecRuntimeReader &want,
                     want.GetDiagnostics().size(), got.GetDiagnostics().size());
         return false;
     }
-    if (want.GetCounters().executedOpCount != got.GetCounters().executedOpCount ||
+    if (want.GetCounters().executedOpCount !=
+            got.GetCounters().executedOpCount ||
         want.GetClosedClusterCountForTesting() !=
             got.GetClosedClusterCountForTesting()) {
         std::printf("%s: counts differ (ops %zu vs %zu, clusters %zu vs "
-                    "%zu)\n", what.c_str(),
-                    size_t(want.GetCounters().executedOpCount),
+                    "%zu)\n",
+                    what.c_str(), size_t(want.GetCounters().executedOpCount),
                     size_t(got.GetCounters().executedOpCount),
                     want.GetClosedClusterCountForTesting(),
                     got.GetClosedClusterCountForTesting());
@@ -4942,8 +4963,7 @@ _SameRun(const std::string &what, const RigExecRuntimeReader &want,
     std::sort(wantTrace.begin(), wantTrace.end());
     std::sort(gotTrace.begin(), gotTrace.end());
     if (wantTrace != gotTrace) {
-        std::printf("%s: the run traces list different steps\n",
-                    what.c_str());
+        std::printf("%s: the run traces list different steps\n", what.c_str());
         return false;
     }
     return true;
@@ -5008,8 +5028,7 @@ TestDispatchedExecuteMatchesSerial(const std::string &examplesDir)
             opened = opened && judged.Open(bytes, stage, &error);
         }
         if (!opened) {
-            std::printf("%s: FAILED (open: %s)\n", name.c_str(),
-                        error.c_str());
+            std::printf("%s: FAILED (open: %s)\n", name.c_str(), error.c_str());
             CHECK(false);
             continue;
         }
@@ -5019,8 +5038,7 @@ TestDispatchedExecuteMatchesSerial(const std::string &examplesDir)
         cleared.reader->SetTaskDispatch(nullptr, nullptr);
         const bool parallelSafe =
             dispatched.reader->GetParallelSafeForTesting();
-        std::printf("%s: parallelSafe %d\n", name.c_str(),
-                    int(parallelSafe));
+        std::printf("%s: parallelSafe %d\n", name.c_str(), int(parallelSafe));
         std::atomic<size_t> tasks{0}, judgedTasks{0};
         bool ok = true;
         for (int rep = 0; ok && rep < entry.repetitions; ++rep) {
@@ -5044,8 +5062,8 @@ TestDispatchedExecuteMatchesSerial(const std::string &examplesDir)
                               *dispatched.reader) ||
                     !_SameRun(at + " (cleared)", *plain.reader,
                               *cleared.reader) ||
-                    (rep == 0 && !_SameRun(at + " (reset judge)",
-                                           *plain.reader, *judged.reader))) {
+                    (rep == 0 && !_SameRun(at + " (reset judge)", *plain.reader,
+                                           *judged.reader))) {
                     CHECK(false);
                     ok = false;
                     break;
@@ -5072,12 +5090,12 @@ TestDispatchedExecuteMatchesSerial(const std::string &examplesDir)
         }
         if (ok) {
             std::printf("%s: %d repetition(s) of %zu frame(s) matched serial "
-                        "(%zu cluster(s) dispatched)\n", name.c_str(),
-                        entry.repetitions, entry.frames.size(), tasks.load());
+                        "(%zu cluster(s) dispatched)\n",
+                        name.c_str(), entry.repetitions, entry.frames.size(),
+                        tasks.load());
         }
     }
-    std::printf("dispatch: %zu production stage(s) dispatched\n",
-                safeTargets);
+    std::printf("dispatch: %zu production stage(s) dispatched\n", safeTargets);
     CHECK(safeTargets > 0);
 }
 
@@ -5224,13 +5242,11 @@ TestExtendedDeformerSettingsPlay()
 
     if (const UsdStageRefPtr stage =
             _StageFromText(latticeReferenceCases[0].stage)) {
-        stage->DefinePrim(SdfPath("/Rig/CageFrame"),
-                          TfToken("RigExecControl"));
+        stage->DefinePrim(SdfPath("/Rig/CageFrame"), TfToken("RigExecControl"));
         stage->DefinePrim(SdfPath("/Rig/TargetFrame"),
                           TfToken("RigExecControl"));
-        const UsdAttribute tx =
-            stage->GetPrimAtPath(SdfPath("/Rig/CageFrame"))
-                .GetAttribute(TfToken("avars:tx"));
+        const UsdAttribute tx = stage->GetPrimAtPath(SdfPath("/Rig/CageFrame"))
+                                    .GetAttribute(TfToken("avars:tx"));
         CHECK(tx && tx.Set(0.15, UsdTimeCode(1)) &&
               tx.Set(0.3, UsdTimeCode(2)));
         const UsdPrim lattice = stage->GetPrimAtPath(SdfPath("/Rig/Lattice"));
@@ -5269,12 +5285,128 @@ TestExtendedDeformerSettingsPlay()
                 same ? "plays its format-21 points" : "DIFFERS");
 }
 
+// Recomputed normals keep the authored layout: faceVarying normals on a
+// leftHanded sheet, one per corner and negated, beside the same sheet with
+// vertex normals; primvars:normals winning over a stale constant normals.
+// \p cardInterpolation and \p indexed restate the card's primvar.
+static std::string
+_NormalsLayoutText(const char *cardInterpolation = "vertex",
+                   bool indexed = false)
+{
+    std::string text = R"USD(#usda 1.0
+def RigExecRoot "Rig" {
+ def RigExecControl "Turn" {
+  double avars:rx.timeSamples = {1: 0, 2: 30, 3: 75}
+  double avars:tz.timeSamples = {1: 0, 2: 0.5, 3: 1}
+ }
+ def Mesh "Sheet" {
+  uniform token orientation = "leftHanded"
+  point3f[] points = [(0,0,0),(1,0,0),(2,0,0.5),(0,1,0),(1,1,0.25),(2,1,0)]
+  int[] faceVertexCounts = [4, 4]
+  int[] faceVertexIndices = [0,1,4,3, 1,2,5,4]
+  normal3f[] normals = [(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1)] (interpolation = "faceVarying")
+ }
+ def Mesh "SheetVertex" {
+  point3f[] points = [(0,0,0),(1,0,0),(2,0,0.5),(0,1,0),(1,1,0.25),(2,1,0)]
+  int[] faceVertexCounts = [4, 4]
+  int[] faceVertexIndices = [0,1,4,3, 1,2,5,4]
+  normal3f[] normals = [(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1)] (interpolation = "vertex")
+ }
+ def Mesh "Card" {
+  point3f[] points = [(0,0,0),(1,0,0),(0,1,0),(1,1,0.5)]
+  int[] faceVertexCounts = [4]
+  int[] faceVertexIndices = [0,1,3,2]
+  normal3f[] normals = [(0,0,1)] (interpolation = "constant")
+  normal3f[] primvars:normals = [(0,0,1),(0,0,1),(0,0,1),(0,0,1)] (interpolation = "CARD")
+)USD";
+    if (indexed)
+        text += "  int[] primvars:normals:indices = [0,1,2,3]\n";
+    text += R"USD( }
+ def Scope "Movers" {
+  def RigExecMatrixMover "TurnSheet" (prepend apiSchemas = ["RigExecMoverAPI"]) {
+   rel rigExec:moves = </Rig/Sheet.points>
+   rel rigExec:transform = </Rig/Turn>
+  }
+  def RigExecMatrixMover "TurnSheetVertex" (prepend apiSchemas = ["RigExecMoverAPI"]) {
+   rel rigExec:moves = </Rig/SheetVertex.points>
+   rel rigExec:transform = </Rig/Turn>
+  }
+  def RigExecMatrixMover "TurnCard" (prepend apiSchemas = ["RigExecMoverAPI"]) {
+   rel rigExec:moves = </Rig/Card.points>
+   rel rigExec:transform = </Rig/Turn>
+  }
+ }
+}
+)USD";
+    text.replace(text.find("CARD"), 4, cardInterpolation);
+    return text;
+}
+
+static void
+TestNormalsLayout()
+{
+    const auto open = [](const std::string &text) {
+        const UsdStageRefPtr stage = UsdStage::CreateInMemory();
+        CHECK(stage->GetRootLayer()->ImportFromString(text));
+        return stage;
+    };
+    const UsdStageRefPtr stage = open(_NormalsLayoutText());
+    _TestStage("normals layout", stage, {1, 2, 3, 2, 1});
+
+    RigExecRigEvaluator evaluator(stage, SdfPath("/Rig"));
+    const SdfPath sheet("/Rig/Sheet.normals"),
+        vertex("/Rig/SheetVertex.normals"), card("/Rig/Card.primvars:normals");
+    const int indices[] = {0, 1, 4, 3, 1, 2, 5, 4};
+    for (const double frame : {2.0, 3.0}) {
+        const RigExecRigPose pose = evaluator.Evaluate(frame);
+        CHECK(pose.valid && pose.diagnostics.empty());
+        const auto find = [&](const SdfPath &path) {
+            const auto it = pose.movedProperties.find(path);
+            return it == pose.movedProperties.end() ||
+                           !it->second.IsHolding<VtVec3fArray>()
+                       ? VtVec3fArray()
+                       : it->second.UncheckedGet<VtVec3fArray>();
+        };
+        const VtVec3fArray corners = find(sheet), points = find(vertex);
+        CHECK(corners.size() == 8 && points.size() == 6);
+        for (size_t c = 0; c < corners.size() && points.size() == 6; ++c) {
+            const GfVec3f want = -points[size_t(indices[c])];
+            CHECK(std::memcmp(&corners[c], &want, sizeof(GfVec3f)) == 0);
+        }
+        CHECK(points.size() == 6 && points[0] != GfVec3f(0, 0, 1));
+        CHECK(find(card).size() == 4);
+        CHECK(pose.movedProperties.count(SdfPath("/Rig/Card.normals")) == 0);
+    }
+    // A static topology carries its compiled vertex-normal walk.
+    size_t walks = 0;
+    for (const auto &chain : evaluator.GetBakedProgram()->GetStepGraph().chains)
+        for (const auto &derived : chain.derived)
+            walks +=
+                derived.revision.op == RigExecRevisionOp::RecomputeNormals &&
+                derived.revision.binding.normalsTopology;
+    CHECK(walks == 3);
+
+    for (const auto &[text, why] :
+         std::vector<std::pair<std::string, std::string>>{
+             {_NormalsLayoutText("uniform"), "uniform interpolation"},
+             {_NormalsLayoutText("vertex", true), "indexed normals"}}) {
+        RigExecRigEvaluator refused(open(text), SdfPath("/Rig"));
+        std::vector<std::string> errors;
+        CHECK(!refused.Compile(&errors));
+        bool named = false;
+        for (const std::string &error : errors)
+            named = named || error.find(why) != std::string::npos;
+        if (!named)
+            std::printf("normals layout: no '%s' refusal\n", why.c_str());
+        CHECK(named);
+    }
+}
+
 int
 main(int argc, char **argv)
 {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
-    PlugRegistry::GetInstance().RegisterPlugins(
-        RIGEXEC_SCHEMA_RESOURCE_DIR);
+    PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
     TestComputedCurrentPhase();
     TestChainPointVersions();
     TestRangeChainPlays();
@@ -5304,6 +5436,7 @@ main(int argc, char **argv)
     TestBlendShapeLayouts();
     TestExtendedDeformerSettingsPlay();
     TestAcceptanceFailureRecovers();
+    TestNormalsLayout();
 
     std::string examplesDir = RIGEXEC_EXAMPLES_DIR;
     if (argc > 1) {
@@ -5320,8 +5453,7 @@ main(int argc, char **argv)
             continue;
         }
         sawBaking = true;
-        const std::string stagePath =
-            examplesDir + "/" + fixture.stage;
+        const std::string stagePath = examplesDir + "/" + fixture.stage;
         const std::vector<double> frames = _ParseFrames(fixture.frames);
         CHECK(!frames.empty());
         if (frames.empty()) {
@@ -5347,7 +5479,7 @@ main(int argc, char **argv)
         return 0;
     }
     std::printf("testRigExecRuntimeGeometry: %d failures "
-                "(%d stage(s) compared over %d frame(s))\n", failures,
-                comparedFixtures, comparedFrames);
+                "(%d stage(s) compared over %d frame(s))\n",
+                failures, comparedFixtures, comparedFrames);
     return 1;
 }

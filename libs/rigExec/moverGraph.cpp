@@ -11,6 +11,7 @@
 #include "rigExecMath/geometryKernels.h"
 #include "rigExecMath/envelope.h"
 #include "rigExecMath/latticeKernel.h"
+#include "rigExecMath/normalsLayoutKernel.h"
 #include "rigExecMath/pointBlocks.h"
 #include "rigExecMath/pointFrame.h"
 #include "rigExecMath/simdKernels.h"
@@ -1117,13 +1118,34 @@ RigExecApplyDerivedKernel(RigExecRevisionOp op, const RigExecMoverParameters &p,
     if (!result || (authoredCount && !authored))
         return false;
     const bool extent = op == RigExecRevisionOp::RecomputeExtent;
-    std::vector<GfVec3f> values =
-        extent ? RigExecComputeExtent(p.auxPoints, p.widths)
-               : RigExecComputeVertexNormals(
-                     p.auxPoints.data(), p.auxPoints.size(),
-                     p.topologyCounts.data(), p.topologyCounts.size(),
-                     p.topologyIndices.data(), p.topologyIndices.size(),
-                     RigExecGeometryRanges());
+    std::vector<GfVec3f> values;
+    if (extent) {
+        values = RigExecComputeExtent(p.auxPoints, p.widths);
+    } else {
+        const RigExecVertexNormalsTopology *const topology =
+            p.normalsTopology &&
+                    p.normalsTopology->Fits(p.auxPoints.size(),
+                                            p.topologyCounts.size(),
+                                            p.topologyIndices.size())
+                ? p.normalsTopology.get()
+                : nullptr;
+        values = topology
+                     ? RigExecComputeVertexNormals(
+                           p.auxPoints.data(), p.auxPoints.size(),
+                           p.topologyCounts.data(), p.topologyCounts.size(),
+                           p.topologyIndices.data(), p.topologyIndices.size(),
+                           *topology, RigExecGeometryRanges())
+                     : RigExecComputeVertexNormals(
+                           p.auxPoints.data(), p.auxPoints.size(),
+                           p.topologyCounts.data(), p.topologyCounts.size(),
+                           p.topologyIndices.data(), p.topologyIndices.size(),
+                           RigExecGeometryRanges());
+        if (!values.empty() &&
+            !RigExecLayoutNormals(&values, p.topologyIndices.data(),
+                                  p.topologyIndices.size(), p.normalsPerCorner,
+                                  p.normalsLeftHanded))
+            return false;
+    }
     if (values.empty() || (extent && values.size() != 2) ||
         authoredCount != values.size())
         return false;
@@ -1138,6 +1160,45 @@ RigExecApplyDerivedKernel(RigExecRevisionOp op, const RigExecMoverParameters &p,
     // Do not touch the caller's output until all original refusal checks pass.
     *result = std::move(values);
     return true;
+}
+
+bool
+RigExecResolveNormalsLayout(const SdfPath &target, const TfToken &interpolation,
+                            bool indexed, const TfToken &orientation,
+                            RigExecRevisionBinding *binding, std::string *why)
+{
+    const auto refuse = [&](const std::string &reason) {
+        if (why)
+            *why = reason;
+        return false;
+    };
+    if (indexed)
+        return refuse("indexed normals " + target.GetString() +
+                      " cannot be maintained on a moved mesh; author them "
+                      "unindexed");
+    const TfToken &layout =
+        interpolation.IsEmpty() ? UsdGeomTokens->vertex : interpolation;
+    if (layout != UsdGeomTokens->vertex && layout != UsdGeomTokens->varying &&
+        layout != UsdGeomTokens->faceVarying)
+        return refuse("normals " + target.GetString() + " with " +
+                      layout.GetString() +
+                      " interpolation cannot be maintained on a moved mesh; "
+                      "author vertex, varying or faceVarying normals");
+    binding->normalsPerCorner = layout == UsdGeomTokens->faceVarying;
+    binding->normalsLeftHanded = orientation == UsdGeomTokens->leftHanded;
+    return true;
+}
+
+void
+RigExecAttachNormalsTopology(RigExecRevisionBinding *binding, size_t pointCount,
+                             const VtIntArray &counts,
+                             const VtIntArray &indices)
+{
+    binding->normalsTopology =
+        std::make_shared<const RigExecVertexNormalsTopology>(
+            RigExecBuildVertexNormalsTopology(pointCount, counts.cdata(),
+                                              counts.size(), indices.cdata(),
+                                              indices.size()));
 }
 
 bool
@@ -2208,7 +2269,9 @@ RigExecRevisionBinding::operator==(const RigExecRevisionBinding &o) const
            driverTransformCount == o.driverTransformCount &&
            driverSpaceCount == o.driverSpaceCount &&
            driverBaseTransformCount == o.driverBaseTransformCount &&
-           widths == o.widths && shaderDials == o.shaderDials &&
+           widths == o.widths && normalsPerCorner == o.normalsPerCorner &&
+           normalsLeftHanded == o.normalsLeftHanded &&
+           shaderDials == o.shaderDials &&
            meshWorldInverse == o.meshWorldInverse &&
            blendInputs == o.blendInputs && blendSamples == o.blendSamples &&
            phases == o.phases && transformPhase == o.transformPhase &&
@@ -3741,6 +3804,11 @@ RigExecAssembleParameters(const UsdPrim &moverPrim, RigExecRevisionOp op,
             params.widths =
                 _Array<float>(moverPrim, binding.widths, time, values.resolved);
         }
+        if (op == RigExecRevisionOp::RecomputeNormals) {
+            params.normalsPerCorner = binding.normalsPerCorner;
+            params.normalsLeftHanded = binding.normalsLeftHanded;
+            params.normalsTopology = binding.normalsTopology;
+        }
         // Vertex normals need the adjacency; without it the kernel reports
         // MoverFailed rather than emitting garbage normals. Extent needs only
         // the points (matches _BuildRecomputeNormals/ExtentParameters).
@@ -4761,6 +4829,10 @@ RigExecAssembleFromLeaves(RigExecRevisionOp op,
         params.topologyIndices = L.Array<int>(Role::TopologyIndices);
         if (op == RigExecRevisionOp::RecomputeExtent) {
             params.widths = L.Array<float>(Role::Widths);
+        } else {
+            params.normalsPerCorner = binding.normalsPerCorner;
+            params.normalsLeftHanded = binding.normalsLeftHanded;
+            params.normalsTopology = binding.normalsTopology;
         }
         params.valid = !params.auxPoints.empty() &&
                        (op == RigExecRevisionOp::RecomputeExtent ||

@@ -28,6 +28,7 @@ namespace rigExec {
 struct RigExecWeightPacket;
 struct RigExecPointFrameArray;
 struct RigExecSkinTopology;
+struct RigExecVertexNormalsTopology;
 class RigExecSkinTopologyCache;
 class RigExecResolvedInputs;
 
@@ -209,6 +210,13 @@ struct RigExecRevisionBinding {
     int driverBaseTransformCount = 0;
     SdfPath driverFrames; ///< aggregate frame provider
     SdfPath widths;       ///< authored widths (extent maintenance)
+    /// Normals maintenance: the target holds one value per face corner
+    /// (faceVarying) and the mesh is leftHanded. Resolved at compile.
+    bool normalsPerCorner = false;
+    bool normalsLeftHanded = false;
+    /// The vertex-normal walk built at compile from the mesh topology.
+    /// Derived from compiled topology, so outside operator==.
+    std::shared_ptr<const RigExecVertexNormalsTopology> normalsTopology;
     /// Surface projector: rigExec:shaderDialSources, in order, at most
     /// sixteen, and the static asset-to-mesh map. The historical field name
     /// is retained on the C++/binary binding; provider frames are asset-space.

@@ -1204,6 +1204,11 @@ table RevisionBinding {
   phase_inputs: [uint];
   phases: [ReadPhase];
   transform_phase: ReadPhase (native_inline);
+  /// Format 32: a RecomputeNormals target holds one normal per face corner
+  /// (faceVarying), and a leftHanded mesh's normals are negated. False on
+  /// every other op and in older files.
+  normals_per_corner: bool;
+  normals_left_handed: bool;
 }
 /// One sample of a blend channel: its stage handles, its epoch layout, its
 /// dense points at bake_time and its activation read.

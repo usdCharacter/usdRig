@@ -7,11 +7,20 @@
 #include "bridgeSnapshot.h"
 
 #include "pxr/base/gf/vec3f.h"
+#include "pxr/base/tf/staticTokens.h"
 
 #include <cmath>
 #include <utility>
 
 namespace rigExec {
+
+namespace {
+
+TF_DEFINE_PRIVATE_TOKENS(_motionTokens, (points)(normals)(extent)(
+                                            (primvarsNormals,
+                                             "primvars:normals")));
+
+} // namespace
 
 bool
 RigExecImagingBridge::PreflightMotionProfile(
@@ -111,10 +120,12 @@ RigExecImagingBridge::EvaluateAndPublishSamples(
             // Geometry only, and checked before snapshot->prims is indexed:
             // see EvaluateAndPublishResult for why minting an entry for a
             // property-domain result is wrong.
+            const bool isNormals = property == _motionTokens->normals ||
+                                   property == _motionTokens->primvarsNormals;
             const bool isGeometry =
                 value.IsHolding<VtVec3fArray>() &&
-                (property == "points" || property == "normals" ||
-                 property == "extent");
+                (property == _motionTokens->points || isNormals ||
+                 property == _motionTokens->extent);
             if (!isGeometry) {
                 // Not Hydra data -- but a scalar here is a rig output a
                 // tool may want (a blend weight, a pose-interpolator
@@ -137,9 +148,9 @@ RigExecImagingBridge::EvaluateAndPublishSamples(
             RigExecPublishedPrim &published = snapshot->prims[primPath];
             published.sampleOffsets = shutterOffsets;
             const auto &array = value.UncheckedGet<VtVec3fArray>();
-            if (property == "points")
+            if (property == _motionTokens->points)
                 published.pointsSamples.push_back(array);
-            else if (property == "normals")
+            else if (isNormals)
                 published.normalsSamples.push_back(array);
             else if (array.size() == 2) {
                 published.extentMinSamples.push_back(GfVec3d(array[0]));
@@ -147,10 +158,10 @@ RigExecImagingBridge::EvaluateAndPublishSamples(
             } else
                 return result;
             if (i == baseIndex) {
-                if (property == "points") {
+                if (property == _motionTokens->points) {
                     published.hasPoints = true;
                     published.points = value.UncheckedGet<VtVec3fArray>();
-                } else if (property == "normals") {
+                } else if (isNormals) {
                     published.hasNormals = true;
                     published.normals = value.UncheckedGet<VtVec3fArray>();
                 } else {

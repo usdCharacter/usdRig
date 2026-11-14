@@ -311,5 +311,41 @@ main()
           !variants[0].matrixOutput);
     CHECK(variants[0].record.op == RigExecRevisionOp::RecomputeExtent &&
           variants[0].target == extent.fact.path);
+    // Normals: primvars:normals wins over normals, faceVarying lays out per
+    // corner, leftHanded negates, and an indexed primvar refuses.
+    const auto vec3s = [](const char *path) {
+        RigExecSceneAttributeDescriptor a;
+        a.fact.path = SdfPath(path);
+        a.fact.type = SdfValueTypeNames->Normal3fArray;
+        a.fact.hasAuthoredValue = true;
+        a.inputs.resize(1);
+        a.inputs[0].raw = VtValue(VtVec3fArray(4, GfVec3f(0, 0, 1)));
+        return a;
+    };
+    scene.attributes[SdfPath("/Mesh.normals")] = vec3s("/Mesh.normals");
+    RigExecSceneAttributeDescriptor primvarNormals =
+        vec3s("/Mesh.primvars:normals");
+    primvarNormals.fact.metadata["interpolation"] =
+        VtValue(TfToken("faceVarying"));
+    scene.attributes[primvarNormals.fact.path] = primvarNormals;
+    RigExecSceneAttributeDescriptor orientation;
+    orientation.fact.path = SdfPath("/Mesh.orientation");
+    orientation.inputs.resize(1);
+    orientation.inputs[0].raw = VtValue(TfToken("leftHanded"));
+    scene.attributes[orientation.fact.path] = orientation;
+    CHECK(RigExecTranslateSceneDerivedGeometry(scene, SdfPath("/Mesh.points"),
+                                               &variants, &error));
+    CHECK(variants.size() == 2 &&
+          variants[0].record.op == RigExecRevisionOp::RecomputeNormals &&
+          variants[0].target == primvarNormals.fact.path &&
+          variants[0].record.binding.normalsPerCorner &&
+          variants[0].record.binding.normalsLeftHanded);
+    RigExecSceneAttributeDescriptor normalsIndices;
+    normalsIndices.fact.path = SdfPath("/Mesh.primvars:normals:indices");
+    normalsIndices.fact.hasAuthoredValue = true;
+    scene.attributes[normalsIndices.fact.path] = normalsIndices;
+    CHECK(!RigExecTranslateSceneDerivedGeometry(scene, SdfPath("/Mesh.points"),
+                                                &variants, &error) &&
+          error.find("indexed normals") != std::string::npos);
     return failures ? 1 : 0;
 }
