@@ -1,0 +1,3 @@
+renderer: Apple M4 Max
+hgi: Metal
+os: Darwin 27.3.0 arm64

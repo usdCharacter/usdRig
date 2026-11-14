@@ -38,3 +38,26 @@ establish semantic correctness. The independent numerical expectations live in
 `testRigExecSkeleton2dKernel`, `testRigExecSkeleton2d`, `testRigExecLayerBind`
 and `testRigExecVolumeWeights`; CPU/SIMD comparisons also run in
 `testRigExecParallelKernels`.
+
+## Rendered-image baselines
+
+`render/twistRibbon_1001.png` and `render/twistRibbon_1024.png` are 128x128
+Storm color captures of `examples/05_TwistRibbonSpine.usda` (guides shown,
+lighting off) at frames 1001 and 1024. `testRigExecImagingRender` renders the
+stage headlessly through `UsdImagingGLEngine` on a hidden OpenGL context and
+compares each frame with its baseline. A pixel differs when any channel moves
+by more than 8; the test fails when more than 40 pixels differ and writes
+`actual_<name>.png` to its working directory. It exits with ctest's skip code
+where no context or Storm is available (a context is only created on macOS).
+
+`render/reference.txt` records the GPU renderer, graphics API, OS release and
+architecture of the capture. On any other configuration the test still renders
+and checks that both frames are non-blank and differ from each other, but skips
+the pixel comparison with a note and passes. After a deliberate rendering change, review the new
+images and rewrite them:
+
+```sh
+source bin/_env.sh
+RIGEXEC_RENDER_UPDATE_BASELINES=1 build/testRigExecImagingRender \
+  examples tests/fixtures/render
+```

@@ -1811,6 +1811,17 @@ add_test(NAME testRigExecImagingFineClustersReference COMMAND testRigExecImaging
 set_tests_properties(testRigExecImagingFineClustersReference PROPERTIES
     ENVIRONMENT "RIGEXEC_BAKED_GRAIN_US=0;RIGEXEC_ENABLE_PARALLEL_EVAL=0")
 
+add_executable(testRigExecImagingRender tests/testRigExecImagingRender.cpp)
+target_link_libraries(testRigExecImagingRender PRIVATE
+    rigExecImaging usdImagingGL hio)
+target_compile_definitions(testRigExecImagingRender PRIVATE
+    ${_rigexec_schema_resource_define} ${_rigexec_imaging_resource_define})
+add_test(NAME testRigExecImagingRender COMMAND testRigExecImagingRender
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/render")
+set_tests_properties(testRigExecImagingRender PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 60)
+
 add_executable(testRigExecProfilerApi tests/testRigExecProfilerApi.cpp)
 target_link_libraries(testRigExecProfilerApi PRIVATE rigExecImaging js)
 target_compile_definitions(testRigExecProfilerApi PRIVATE ${_rigexec_schema_resource_define})
