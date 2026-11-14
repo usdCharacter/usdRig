@@ -60,6 +60,23 @@ def TestSnapshotAbsentSpec():
            "restoring an absent snapshot must remove the spec")
 
 
+def TestSnapshotUndoRemovesCreatedOvers():
+    stage = _Stage()
+    layer = stage.GetSessionLayer()
+    path = "/Rig/Ctl.avars:tx"
+    _Check(layer.GetPrimAtPath("/Rig") is None, "clean session layer")
+    before = rigExecUndo.AttributeSnapshot.Capture(layer, path)
+    with Usd.EditContext(stage, layer):
+        stage.GetAttributeAtPath(path).Set(2.0)
+    _Check(layer.GetPrimAtPath("/Rig/Ctl") is not None, "edit made overs")
+    after = rigExecUndo.AttributeSnapshot.Capture(layer, path)
+    before.Restore()
+    _Check(layer.GetPrimAtPath("/Rig") is None and not layer.rootPrims,
+           "undo removes the over specs the edit created")
+    after.Restore()
+    _Check(stage.GetAttributeAtPath(path).Get() == 2.0, "redo recreates")
+
+
 def TestSnapshotDefaultAndTimeSamples():
     stage = _Stage()
     layer = stage.GetRootLayer()
@@ -513,6 +530,7 @@ def main():
     _RegisterSchema()
     groups = [
         ("absent spec", TestSnapshotAbsentSpec),
+        ("undo removes created overs", TestSnapshotUndoRemovesCreatedOvers),
         ("default + time samples", TestSnapshotDefaultAndTimeSamples),
         ("spline", TestSnapshotSpline),
         ("undo stack", TestUndoStack),

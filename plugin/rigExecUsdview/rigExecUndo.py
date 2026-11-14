@@ -46,12 +46,18 @@ class AttributeSnapshot(object):
         self.default = None
         self.spline = None
         self.timeSamples = {}
+        self.createdPrefix = None
 
     @classmethod
     def Capture(cls, layer, specPath):
         snap = cls(layer, specPath)
         spec = layer.GetAttributeAtPath(snap.specPath)
         if spec is None:
+            # The shallowest prim spec a later set would create here.
+            for prefix in snap.specPath.GetPrimPath().GetPrefixes():
+                if layer.GetPrimAtPath(prefix) is None:
+                    snap.createdPrefix = prefix
+                    break
             return snap
         snap.exists = True
         snap.typeName = spec.typeName
@@ -81,6 +87,22 @@ class AttributeSnapshot(object):
         return Sdf.AttributeSpec(
             primSpec, self.specPath.name, self.typeName, self.variability)
 
+    def _RemoveCreatedPrims(self):
+        # Walk up from the owner, dropping the over specs the first set
+        # created, stopping at the first one that still carries content.
+        if self.createdPrefix is None:
+            return
+        path = self.specPath.GetPrimPath()
+        while path.HasPrefix(self.createdPrefix):
+            primSpec = self.layer.GetPrimAtPath(path)
+            if primSpec is None:
+                break
+            if not (primSpec.specifier == Sdf.SpecifierOver
+                    and primSpec.isInert):
+                break
+            _RemoveSpec(self.layer, path)
+            path = path.GetParentPath()
+
     def Restore(self):
         with Sdf.ChangeBlock():
             spec = self.layer.GetAttributeAtPath(self.specPath)
@@ -88,6 +110,7 @@ class AttributeSnapshot(object):
                 if spec is not None:
                     primSpec = spec.owner
                     primSpec.RemoveProperty(spec)
+                self._RemoveCreatedPrims()
                 return
             spec = self._EnsureSpec()
             if self.hasDefault:
