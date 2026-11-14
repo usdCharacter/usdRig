@@ -1,7 +1,8 @@
 # Third-party notices and provenance
 
-The root [MIT license](LICENSE) covers original RigExec code and documentation.
-It does not replace licenses or grant rights in material owned by others.
+The root [MIT license](LICENSE) covers usdRig's original code, documentation
+and project-owned assets. It does not replace licenses or grant rights in
+material owned by others.
 
 ## Bundled code
 
@@ -86,10 +87,55 @@ distributed under the MIT License:
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 > SOFTWARE.
 
+## Assets and generated material
+
+[tools/license_manifest.json](tools/license_manifest.json) is the
+machine-readable provenance record for this distribution. It partitions every
+tracked file into a license family, pins the upstream commits the derived files
+came from, and maps how each legal text travels through the install prefix and
+the tutorial archives. Non-text assets are inventoried there rather than
+described file by file.
+
+The icon atlas (`icons/`), the usdview icons (`plugin/rigExecUsdview/icons/`),
+the `asset_lib` component library, the example artwork, the documentation
+assets and the test fixtures are recorded there as project-authored art under
+the root MIT license, on the owner's statement that this art is unique to the
+project (2026-11-14). The one asset in `examples/` that is not ours is the
+Squarebit Eye shader above: it keeps its own EULA and nothing here relicenses
+it.
+
+Generated output — the `flatc` headers in `libs/rigExecBinary/generated`, the
+schema resources under `plugin/rigExecSchema/resources` and the node pages in
+`docs/nodes` — is machine output. Its origin class is the fact the manifest
+records; the grant comes from the generator and its inputs.
+
+The install prefix ships that record at
+`share/rigExec/tools/license_manifest.json` next to the canonical texts and the
+copies of every third-party license it installs. [tools/check_licenses.py](tools/check_licenses.py)
+re-derives the partition from the checkout and checks the mapping against the
+install map and the shipped archives member by member; it runs in the test
+suite as `testRigExecLicenseManifest`, and `testRigExecLegalPackaging` covers
+the packaging helpers in docs/legal_members.py. Run it against the checkout, an
+install prefix with `--install <prefix>`, or one archive with `--archive
+<path>`; `--self-test` exercises its synthetic fixtures, and `--addon-root`
+points at the add-on checkout that owns add-on-bound legal texts. Three link
+targets in this file resolve only in a checkout or an install prefix: the two
+prose references [docs/references.md](docs/references.md) and
+[docs/concepts/riglogic.md](docs/concepts/riglogic.md), and the checker itself,
+which is a tool rather than a legal text and is not packed into the tutorial
+archives.
+
 ## Published methods
 
 Dual-quaternion skinning and Delta Mush have public research references listed in
 [Method references](docs/references.md). Those references identify techniques,
 not a claim that RigExec invented them or an endorsement by their authors.
 A citation alone does not establish rights to source code or assets.
+
+`docs/references.md` and `docs/concepts/riglogic.md` are source-only prose
+references: they cite and explain upstream work, they are not license texts, and
+they are not installed or archived as legal material. Every other relative link
+in this file names a legal text that travels with the distribution at the same
+source-relative path, under `share/rigExec` in the install prefix and in the
+tutorial archives.
 

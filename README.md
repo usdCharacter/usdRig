@@ -11,10 +11,15 @@ the results through Hydra for live playback in `usdview`.
 
 See the [domain glossary](CONTEXT.md) for canonical project and engine terminology.
 
-**Status: 0.1 alpha.** APIs and file formats may change. Original project code
-is [MIT licensed](LICENSE). See [third-party notices](THIRD_PARTY_NOTICES.md)
-for bundled code, published methods, and the eye shader license.
-The distribution [NOTICE](NOTICE) identifies OpenUSD, noodles, and font credits.
+**Status: 0.1 alpha.** APIs and file formats may change. Project-authored code
+and documentation are [MIT licensed](LICENSE), as is the project's icon
+atlas, component library, example artwork, documentation imagery and test
+fixtures; bundled and derived third-party material keeps its own terms. See the
+[licensing guide](docs/concepts/licensing.md), the
+[third-party notices](THIRD_PARTY_NOTICES.md) for bundled code, published
+methods, and the eye shader license,
+and the distribution [NOTICE](NOTICE) for the components and their pinned
+commits.
 
 Authors: [Nick Burkard](https://github.com/n-burk) and
 [Squarebit Studios](https://www.squarebitstudios.com)' [Walt Yoder](https://github.com/wyoder)

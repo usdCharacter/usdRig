@@ -694,6 +694,26 @@ add_test(NAME testRigExecAllocationChecker
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/testRigExecAllocationChecker.py")
 set_tests_properties(testRigExecAllocationChecker PROPERTIES LABELS "fast")
 
+# The legal packaging layer is stdlib-only. The manifest must partition the
+# tree exactly once, name every shipped legal text by its canonical file name,
+# and agree with the install prefix and the shipped archives member by member.
+add_test(NAME testRigExecLegalPackaging
+    COMMAND ${Python3_EXECUTABLE}
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/testRigExecLegalPackaging.py")
+set_tests_properties(testRigExecLegalPackaging PROPERTIES LABELS "fast")
+
+add_test(NAME testRigExecLicenseManifest
+    COMMAND ${Python3_EXECUTABLE}
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_licenses.py")
+set_tests_properties(testRigExecLicenseManifest PROPERTIES LABELS "fast")
+
+# The checker's own rules are proven on synthetic trees and archives, so a
+# broken rule cannot pass against a manifest that agrees with itself.
+add_test(NAME testRigExecLicenseChecker
+    COMMAND ${Python3_EXECUTABLE}
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_licenses.py" --self-test)
+set_tests_properties(testRigExecLicenseChecker PROPERTIES LABELS "fast")
+
 add_executable(testRigExecMath tests/testRigExecMath.cpp)
 add_executable(testRigExecWrinkleMath tests/testRigExecWrinkleMath.cpp)
 target_link_libraries(testRigExecWrinkleMath PRIVATE rigExecMath)
@@ -3039,3 +3059,27 @@ install(FILES thirdparty/lzma/NOTICE.md
     DESTINATION "share/rigExec/licenses" RENAME LZMA-SDK-NOTICE.md)
 install(FILES thirdparty/lzma/DOC/lzma-sdk.txt
     DESTINATION "share/rigExec/licenses" RENAME LZMA-SDK-LICENSE.txt)
+
+# Source-relative copies of every legal text THIRD_PARTY_NOTICES.md links, so
+# those links resolve inside the install prefix. The usdNoodles texts ship
+# whether or not RIGEXEC_BUILD_USDNOODLES built the editor; they are checked in.
+install(FILES thirdparty/lzma/NOTICE.md
+    DESTINATION "share/rigExec/thirdparty/lzma")
+install(FILES thirdparty/lzma/DOC/lzma-sdk.txt
+    DESTINATION "share/rigExec/thirdparty/lzma/DOC")
+install(FILES thirdparty/flatbuffers/LICENSE
+    DESTINATION "share/rigExec/thirdparty/flatbuffers")
+install(FILES plugin/usdNoodles/LICENSE.txt
+         plugin/usdNoodles/NOODLES_LICENSE.txt
+         plugin/usdNoodles/THIRD_PARTY_LICENSES.txt
+    DESTINATION "share/rigExec/plugin/usdNoodles")
+
+# The manifest ships with the prefix so a consumer can trace every installed
+# legal text back to its source, and the checker that keeps that record honest
+# ships beside it with the member reader it imports, so an installed consumer
+# runs it without a checkout. docs/references.md and docs/concepts/riglogic.md
+# are documentation prose, not legal texts, and are deliberately not installed.
+install(FILES tools/license_manifest.json
+         tools/check_licenses.py
+         docs/legal_members.py
+    DESTINATION "share/rigExec/tools")
