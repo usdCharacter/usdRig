@@ -11,7 +11,7 @@
 # question is always the same: is the driver not moving, is the
 # interpolator not resolving, or is the shape not bound? Reading that off a
 # prim tree means navigating to
-# `/Biped/Rig/PoseInterpolators/<driver>/<pose>.outputs:weight` for each of
+# `<rig>/PoseInterpolators/<driver>/<pose>.outputs:weight` for each of
 # 121 poses in turn. This shows all of them at once, live.
 #
 import re
@@ -19,6 +19,7 @@ import re
 from pxr import Sdf, Usd
 
 
+ROOT = "RigExecRoot"
 INTERPOLATOR = "RigExecPoseInterpolator"
 POSE = "RigExecPose"
 BLEND_INPUT = "RigExecBlendInput"
@@ -92,24 +93,42 @@ class Interpolator(object):
                 if not p.is_neutral and abs(p.weight) > LIVE]
 
 
-def Discover(stage, rigPath="/Biped/Rig"):
+def RigRoots(stage):
+    """Every RigExecRoot on the stage, found by type."""
+    if stage is None:
+        return []
+    return [p for p in stage.Traverse() if p.GetTypeName() == ROOT]
+
+
+def Discover(stage, rigPath=None):
     """Every interpolator on the stage, with its poses and their targets.
 
-    Pure stage reads: no evaluation, no Qt, no side effects. Returns [] on
-    a stage with no PSD rather than raising, because the panel is expected
-    to open on rigs that have none.
+    With no rigPath, the scan covers every RigExecRoot on the stage. An
+    explicit rigPath limits it to that prim. Pure stage reads: no
+    evaluation, no Qt, no side effects. Returns [] on a stage with no PSD
+    rather than raising, because the panel is expected to open on rigs
+    that have none.
     """
     if stage is None:
         return []
-    root = stage.GetPrimAtPath(Sdf.Path(rigPath))
-    if not root or not root.IsValid():
-        root = stage.GetPseudoRoot()
+    if rigPath is None:
+        roots = RigRoots(stage)
+    else:
+        root = stage.GetPrimAtPath(Sdf.Path(rigPath))
+        roots = [root] if root and root.IsValid() else []
+
+    prims, seen = [], set()
+    for root in roots:
+        for prim in Usd.PrimRange(root):
+            if prim.GetPath() not in seen:
+                seen.add(prim.GetPath())
+                prims.append(prim)
 
     # pose path -> the blend channel it drives. Built by walking the
     # channels and reading their connections, because the arrow points
     # that way: a BlendInput names its pose, a pose names nothing.
     driven = {}
-    for prim in Usd.PrimRange(root):
+    for prim in prims:
         if prim.GetTypeName() != BLEND_INPUT:
             continue
         attr = prim.GetAttribute("inputs:weight")
@@ -119,7 +138,7 @@ def Discover(stage, rigPath="/Biped/Rig"):
             driven[source.GetPrimPath()] = prim.GetName()
 
     found = []
-    for prim in Usd.PrimRange(root):
+    for prim in prims:
         if prim.GetTypeName() != INTERPOLATOR:
             continue
         interp = Interpolator(prim)
