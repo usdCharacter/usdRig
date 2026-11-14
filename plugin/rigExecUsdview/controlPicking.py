@@ -2,6 +2,10 @@
 
 from pxr import Gf, UsdImagingGL
 
+CONTROL_TYPE = "RigExecControl"
+DRAW_MODE = "guide:drawMode"
+WIRE = "wire"
+
 
 class ControlPicking:
     def __init__(self, view):
@@ -17,8 +21,8 @@ class ControlPicking:
     def _IsControl(self, path):
         stage = self.view._dataModel.stage
         prim = stage.GetPrimAtPath(path) if stage else None
-        return bool(prim and prim.GetTypeName() == 'RigExecControl'
-                    and prim.GetAttribute('guide:drawMode').Get() == 'wire')
+        return bool(prim and prim.GetTypeName() == CONTROL_TYPE
+                    and prim.GetAttribute(DRAW_MODE).Get() == WIRE)
 
     def _Pick(self, frustum):
         hits = self.original(frustum)
