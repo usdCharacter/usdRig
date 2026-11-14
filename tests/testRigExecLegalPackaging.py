@@ -411,6 +411,34 @@ class Partition(unittest.TestCase):
             self.assertEqual(record["spdx"], "MIT", f"{name} in {family_id}")
             self.assertEqual(record["holder"], legal_holder, f"{name} in {family_id}")
 
+    def test_the_licensing_guide_restates_the_manifest_counts(self):
+        """docs/concepts/licensing.md spells the partition total and the art
+        family sizes, so a refreshed inventory must refresh the guide too."""
+        guide_path = ROOT / "docs" / "concepts" / "licensing.md"
+        lines = guide_path.read_text(encoding="utf-8").splitlines()
+        totals = MANIFEST["totals"]
+        by_category = totals["by_category"]
+        stated = re.search(
+            r"the partition covers (\d+) files: (\d+) original, (\d+) derived,"
+            r" (\d+) bundled, (\d+) generated", " ".join(lines))
+        self.assertIsNotNone(stated, "the guide states no partition total")
+        self.assertEqual([int(group) for group in stated.groups()],
+                         [totals["assigned_files"], by_category["original"],
+                          by_category["derived"], by_category["bundled"],
+                          by_category["generated"]])
+        matched = {family["id"]: family["matched_files"]
+                   for family in MANIFEST["families"]}
+        for family_id in ("original-icon-atlas", "original-usdview-icons",
+                          "original-component-library",
+                          "original-example-assets", "original-doc-assets",
+                          "original-test-fixtures"):
+            row = next((line for line in lines
+                        if line.startswith(f"| `{family_id}` |")), None)
+            self.assertIsNotNone(row, f"the guide has no {family_id} row")
+            cells = row.split("|")
+            self.assertEqual(int(cells[3].strip()), matched[family_id],
+                             f"{family_id} size in the guide")
+
     def test_no_tracked_file_is_left_without_a_grant(self):
         """The unresolved category survives only as the precedence-6 fallback,
         so a new file that no family claims is a failure, not an asset with no

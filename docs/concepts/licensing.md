@@ -39,7 +39,7 @@ repository.
 | **generated** | machine output of a checked-in generator or an external tool | origin only: the grant comes from the generator and its inputs |
 | **unresolved** | no provenance evidence in the repository | no grant at all until an owner records an origin |
 
-At the manifest's inventory boundary the partition covers 1791 files: 1510
+At the manifest's inventory boundary the partition covers 1798 files: 1517
 original, 166 derived, 45 bundled, 70 generated and none unresolved, with
 nothing unassigned and nothing double-assigned. A path belongs to the family
 with the lowest precedence number whose globs match it, after that family's
@@ -130,7 +130,7 @@ manifest, and the answered entries in `owner_questions`):
 | `original-component-library` | `asset_lib/**` | 14 | project work under MIT |
 | `original-example-assets` | `examples/**` | 198 | the biped geometry, the bust and rubberhose artwork and its textures are unique project art under MIT |
 | `original-doc-assets` | `docs/examples/**`, `docs/images/**`, `docs/gifs/**`, `docs/assets/**`, `docs/*.svg` | 128 | project captures and tutorial stages under MIT |
-| `original-test-fixtures` | `tests/fixtures/**` | 46 | project MIT; `rigLogicReference.inc` holds values upstream OpenRigLogic produced, and that upstream is MIT itself, so no separate grant is needed |
+| `original-test-fixtures` | `tests/fixtures/**` | 49 | project MIT; `rigLogicReference.inc` holds values upstream OpenRigLogic produced, and that upstream is MIT itself, so no separate grant is needed |
 
 The recorded evidence for these six is the owner's statement, not an
 independent chain of title; the `copyright-holder` question in
