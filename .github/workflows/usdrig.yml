@@ -353,7 +353,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ctest-linux
-          path: build/Testing/Temporary/
+          path: |
+            build/Testing/Temporary/
+            build/verify-binary/*.log
 
   # --------------------------------------------------------------------------
   # Install tree: cmake --install into a scratch prefix, then verify the
@@ -619,6 +621,7 @@ jobs:
           name: logs-${{ matrix.os }}-${{ runner.arch }}
           path: |
             build/Testing/Temporary/
+            build/verify-binary/*.log
             build/CMakeFiles/CMakeConfigureLog.yaml
             installed-scene-build/Testing/Temporary/
             usd-build/**/log.txt

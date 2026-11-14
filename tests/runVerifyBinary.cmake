@@ -43,19 +43,23 @@ if (DEFINED DRAGS AND NOT DRAGS STREQUAL "")
         math(EXPR _drag_count "${_drag_count} + 1")
     endforeach()
 endif()
+# Capture directly to per-fixture files so CI retains every subprocess ledger.
 execute_process(
     COMMAND "${BAKE}" "${STAGE}" --time "${TIME}" --report-static
             -o "${OUT}"
     RESULT_VARIABLE _bake_rc
-    OUTPUT_VARIABLE _bake_out
-    ERROR_VARIABLE _bake_err)
+    OUTPUT_FILE "${OUT}.bake.stdout.log"
+    ERROR_FILE "${OUT}.bake.stderr.log")
+file(READ "${OUT}.bake.stdout.log" _bake_out)
+file(READ "${OUT}.bake.stderr.log" _bake_err)
 if (NOT _bake_rc EQUAL 0)
     message(FATAL_ERROR
         "bake failed (${_bake_rc}):\n${_bake_out}\n${_bake_err}")
 endif()
 # The class guard: a class cannot outlive its reason.
 if (NOT _bake_out MATCHES "static report: ([0-9]+) animated source")
-    message(FATAL_ERROR "the bake printed no static report:\n${_bake_out}")
+    message(FATAL_ERROR "the bake printed no static report (exit ${_bake_rc}):"
+                        "\nstdout: ${_bake_out}\nstderr: ${_bake_err}")
 endif()
 set(_static_sources "${CMAKE_MATCH_1}")
 if ((CLASS STREQUAL "static" AND _static_sources EQUAL 0) OR
@@ -68,22 +72,29 @@ message(STATUS "class ${CLASS}: ${_static_sources} animated static "
 execute_process(
     COMMAND "${CONFORMANCE}" --conformance "${STAGE}" "${TIME}" "${CLASS}" "${OUT}"
     RESULT_VARIABLE _conformance_rc
-    OUTPUT_VARIABLE _conformance_out
-    ERROR_VARIABLE _conformance_err)
+    OUTPUT_FILE "${OUT}.conformance.stdout.log"
+    ERROR_FILE "${OUT}.conformance.stderr.log")
+file(READ "${OUT}.conformance.stdout.log" _conformance_out)
+file(READ "${OUT}.conformance.stderr.log" _conformance_err)
 message(STATUS "${_conformance_out}")
 if (NOT _conformance_rc EQUAL 0)
     message(FATAL_ERROR "binary conformance failed (${_conformance_rc}):\n${_conformance_out}\n${_conformance_err}")
 endif()
 if (NOT _conformance_out MATCHES "binary conformance: .* failures=0")
-    message(FATAL_ERROR "binary conformance printed no successful ledger")
+    message(FATAL_ERROR "binary conformance printed no successful ledger "
+                        "(exit ${_conformance_rc}):"
+                        "\nstdout: ${_conformance_out}"
+                        "\nstderr: ${_conformance_err}")
 endif()
 set(_pose_command "${POSE}" "${STAGE}" --verify-binary "${OUT}"
                   --frames "${_verify_frames}" ${_drag_args})
 execute_process(
     COMMAND ${_pose_command}
     RESULT_VARIABLE _pose_rc
-    OUTPUT_VARIABLE _pose_out
-    ERROR_VARIABLE _pose_err)
+    OUTPUT_FILE "${OUT}.pose.stdout.log"
+    ERROR_FILE "${OUT}.pose.stderr.log")
+file(READ "${OUT}.pose.stdout.log" _pose_out)
+file(READ "${OUT}.pose.stderr.log" _pose_err)
 # Always show the ledger: a passing gate with no ledger is a gate that
 # cannot be audited.
 message(STATUS "${_pose_out}")
