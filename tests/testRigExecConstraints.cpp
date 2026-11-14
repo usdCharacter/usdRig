@@ -1351,6 +1351,42 @@ TestMeshAndXformTargetsAgree()
     CHECK(GfIsClose(meshResult, xformResult, 1e-12));
 }
 
+// A source under the asset that resets its xform stack is detached from the
+// asset root; its frame must still be read relative to the asset.
+static void
+TestResetSourceIsAssetRelative()
+{
+    const UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    MakeXform(stage, SdfPath("/Asset"),
+              Matrix(GfVec3d(10, 0, 0), GfRotation(GfVec3d(0, 1, 0), 30.0)));
+    stage->DefinePrim(SdfPath("/Asset/Geom"), TfToken("Scope"));
+    stage->DefinePrim(SdfPath("/Asset/Geom/Target"), TfToken("Xform"));
+    const UsdPrim source =
+        MakeXform(stage, SdfPath("/Asset/Source"),
+                  Matrix(GfVec3d(1, 2, 3), GfRotation(GfVec3d(0, 1, 0), 90.0)));
+    CHECK(UsdGeomXform(source).SetResetXformStack(true));
+    stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
+    stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
+    const UsdPrim rotation =
+        MakeConstraint(stage, "Rot", "RigExecRotationConstraint",
+                       {SdfPath("/Asset/Geom/Target")});
+    rotation.CreateRelationship(TfToken("rigExec:sources"))
+        .SetTargets({SdfPath("/Asset/Source")});
+    RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+    std::vector<std::string> errors;
+    CHECK(evaluator.Compile(&errors));
+    const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
+    const auto revised =
+        pose.providerXforms.find(SdfPath("/Asset/Geom/Target"));
+    CHECK(revised != pose.providerXforms.end());
+    if (revised != pose.providerXforms.end()) {
+        // World Y 90 divided by the asset's Y 30 leaves Y 60.
+        const double radians = GfDegreesToRadians(60.0);
+        CHECK(Near(revised->second.TransformDir(GfVec3d(1, 0, 0)),
+                   GfVec3d(std::cos(radians), 0, -std::sin(radians))));
+    }
+}
+
 // The registry is the single source of truth about which operators exist.
 // Every concrete constraint in the schema must have exactly one row, and the
 // membership predicates must agree with it -- otherwise another operator
@@ -5705,6 +5741,7 @@ main()
     TestTransformProviderPredicate();
     TestPointDomainMoverNamesTheFix();
     TestMeshAndXformTargetsAgree();
+    TestResetSourceIsAssetRelative();
     TestGeometryDomainTargetCompiles();
     TestGeometryConstraintDenseEnvelopeSupersedesScalar();
     TestGeometryConstraintsOnOneTargetShareALevel();

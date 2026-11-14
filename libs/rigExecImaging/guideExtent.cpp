@@ -588,10 +588,9 @@ _AssetSpaceToLocal(const PXR_NS::UsdPrim &prim,
     bool resetsBelowAsset = false;
     const PXR_NS::GfMatrix4d localToAsset =
         cache.ComputeRelativeTransform(prim, assetRoot, &resetsBelowAsset);
-    // A reset detaches the prim from the asset root, so there is no
-    // relative transform to divide out and guessing at one would move the
-    // box somewhere nobody asked for. Matches what the evaluator does with
-    // the same condition.
+    // A reset detaches the prim from the asset root, so the relative
+    // transform is world-space and there is nothing to divide out. The
+    // evaluator instead recomputes an asset-relative matrix there.
     if (resetsBelowAsset || localToAsset == PXR_NS::GfMatrix4d(1.0)) {
         return range;
     }

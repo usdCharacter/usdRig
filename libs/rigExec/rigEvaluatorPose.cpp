@@ -486,8 +486,14 @@ RigExecRigEvaluator::_FrameFromXformRelativeToAsset(
         return false;
     }
     bool resetsBelowAsset = false;
-    const GfMatrix4d relative = xformCache->ComputeRelativeTransform(
+    GfMatrix4d relative = xformCache->ComputeRelativeTransform(
         prim, assetRoot, &resetsBelowAsset);
+    if (resetsBelowAsset) {
+        // The relative result is world-space once a reset detaches the
+        // prim; row vectors: local-to-asset = local-to-world * world-to-asset.
+        relative = xformCache->GetLocalToWorldTransform(prim) *
+                   xformCache->GetLocalToWorldTransform(assetRoot).GetInverse();
+    }
     if (outFrame) {
         *outFrame = RigExecFrameFromMatrix(relative);
     }

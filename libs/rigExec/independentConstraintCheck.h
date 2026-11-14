@@ -131,7 +131,10 @@ StageFrame(const UsdStageRefPtr &stage, const UsdPrim &asset,
     if (!prim || !asset || !UsdGeomXformable(prim))
         return false;
     bool resets = false;
-    const auto relative = cache->ComputeRelativeTransform(prim, asset, &resets);
+    auto relative = cache->ComputeRelativeTransform(prim, asset, &resets);
+    if (resets)
+        relative = cache->GetLocalToWorldTransform(prim) *
+                   cache->GetLocalToWorldTransform(asset).GetInverse();
     if (frame)
         *frame = RigExecFrameFromMatrix(relative);
     if (matrix)
