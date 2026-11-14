@@ -5,8 +5,10 @@
 
 #include "pxr/base/gf/vec3d.h"
 #include "pxr/base/gf/vec3f.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/usd/usd/prim.h"
 #include "pxr/usd/usd/primRange.h"
+#include "pxr/usd/usdGeom/tokens.h"
 #include "pxr/usd/usdGeom/xformable.h"
 
 #include <algorithm>
@@ -20,7 +22,24 @@ namespace {
 
 const std::string primvarsPrefix("primvars:");
 
+TF_DEFINE_PRIVATE_TOKENS(_snapshotTokens,
+                         ((primvarsNormals, "primvars:normals")));
+
 } // namespace
+
+const TfToken &
+RigExecBridgeSnapshotBuilder::_PrimvarName(const SdfPath &propertyPath)
+{
+    auto found = _primvarNames.find(propertyPath);
+    if (found == _primvarNames.end()) {
+        found =
+            _primvarNames
+                .emplace(propertyPath, TfToken(propertyPath.GetName().substr(
+                                           primvarsPrefix.size())))
+                .first;
+    }
+    return found->second;
+}
 
 void
 RigExecBridgeSnapshotBuilder::_Build(const RigExecSnapshotCall &call,
@@ -34,6 +53,10 @@ RigExecBridgeSnapshotBuilder::_Build(const RigExecSnapshotCall &call,
     // what a pose query reads; the generation stamp, the guide fills and
     // the GPU deform history belong to the publisher.
     const bool displayed = mode == RigExecSnapshotBuildMode::Displayed;
+    if (call.stageStructureSerial != _primvarNamesSerial) {
+        _primvarNames.clear();
+        _primvarNamesSerial = call.stageStructureSerial;
+    }
     // Matrix primvars a rig computes for a shader on the prim (a surface
     // projector's frame and dials), published as constant primvars. The
     // rig writes them as moved `primvars:<name>` properties and nothing
@@ -49,9 +72,8 @@ RigExecBridgeSnapshotBuilder::_Build(const RigExecSnapshotCall &call,
             !found->second.IsHolding<float>()) {
             continue;
         }
-        const std::string &name = propertyPath.GetName();
         auto &published = snapshot->prims[propertyPath.GetPrimPath()];
-        published.shaderFloats[TfToken(name.substr(primvarsPrefix.size()))] =
+        published.shaderFloats[_PrimvarName(propertyPath)] =
             found->second.UncheckedGet<float>();
     }
     // Property chains' scalar primvars, from the compiled list only; a
@@ -84,7 +106,7 @@ RigExecBridgeSnapshotBuilder::_Build(const RigExecSnapshotCall &call,
             continue;
         }
         auto &published = snapshot->prims[propertyPath.GetPrimPath()];
-        const TfToken primvar(name.substr(primvarsPrefix.size()));
+        const TfToken &primvar = _PrimvarName(propertyPath);
         published.shaderMatrices[primvar] = value.UncheckedGet<GfMatrix4d>();
         if (std::binary_search(projectorTargets.begin(), projectorTargets.end(),
                                propertyPath)) {
@@ -102,7 +124,7 @@ RigExecBridgeSnapshotBuilder::_Build(const RigExecSnapshotCall &call,
         // below and makes the scene index resolve a prim RigExec publishes
         // nothing for. Look the entry up only once there is something to
         // put in it.
-        if (property == "points" &&
+        if (property == UsdGeomTokens->points &&
             value.IsHolding<RigExecGpuDeformPublication>()) {
             const auto &publication =
                 value.UncheckedGet<RigExecGpuDeformPublication>();
@@ -117,8 +139,10 @@ RigExecBridgeSnapshotBuilder::_Build(const RigExecSnapshotCall &call,
             continue;
         }
         const bool isGeometry = value.IsHolding<VtVec3fArray>() &&
-                                (property == "points" ||
-                                 property == "normals" || property == "extent");
+                                (property == UsdGeomTokens->points ||
+                                 property == UsdGeomTokens->normals ||
+                                 property == _snapshotTokens->primvarsNormals ||
+                                 property == UsdGeomTokens->extent);
         if (!isGeometry) {
             // Not Hydra data -- but a scalar here is a rig output a
             // tool may want (a blend weight, a pose-interpolator
@@ -139,10 +163,11 @@ RigExecBridgeSnapshotBuilder::_Build(const RigExecSnapshotCall &call,
             continue;
         }
         RigExecPublishedPrim &published = snapshot->prims[primPath];
-        if (property == "points") {
+        if (property == UsdGeomTokens->points) {
             published.hasPoints = true;
             published.points = value.UncheckedGet<VtVec3fArray>();
-        } else if (property == "normals") {
+        } else if (property == UsdGeomTokens->normals ||
+                   property == _snapshotTokens->primvarsNormals) {
             published.hasNormals = true;
             published.normals = value.UncheckedGet<VtVec3fArray>();
         } else {

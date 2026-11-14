@@ -57,9 +57,9 @@ struct RigExecVolumeGuideElement {
     /// keeping it per element is what lets the announcement machinery
     /// treat a type change as the structural event it is.
     TfToken primType;
-    VtVec3fArray points;   ///< empty for the implicits
-    VtIntArray counts;     ///< curveVertexCounts, or faceVertexCounts
-    VtIntArray indices;    ///< faceVertexIndices; empty for curves
+    VtVec3fArray points; ///< empty for the implicits
+    VtIntArray counts;   ///< curveVertexCounts, or faceVertexCounts
+    VtIntArray indices;  ///< faceVertexIndices; empty for curves
     /// Optional mesh normals. `normalsInterpolation` is empty when normals
     /// are absent; curve tubes use faceVarying normals so their closed end
     /// caps can stay flat without splitting the manifold's ring vertices.
@@ -77,16 +77,17 @@ struct RigExecVolumeGuideElement {
     /// the authored guide opacity.
     float opacity = -1.0f;
 
-    bool operator==(const RigExecVolumeGuideElement &other) const {
+    bool operator==(const RigExecVolumeGuideElement &other) const
+    {
         return xform == other.xform && primType == other.primType &&
                points == other.points && counts == other.counts &&
                indices == other.indices && normals == other.normals &&
                normalsInterpolation == other.normalsInterpolation &&
                doubleSided == other.doubleSided &&
-               wireWidth == other.wireWidth &&
-               opacity == other.opacity;
+               wireWidth == other.wireWidth && opacity == other.opacity;
     }
-    bool operator!=(const RigExecVolumeGuideElement &other) const {
+    bool operator!=(const RigExecVolumeGuideElement &other) const
+    {
         return !(*this == other);
     }
 };
@@ -373,7 +374,8 @@ struct RigExecImagingSnapshot {
 
     /// True when this generation describes \p queryStage at \p time.
     bool Describes(const UsdStageWeakPtr &queryStage,
-                   const UsdTimeCode &time) const {
+                   const UsdTimeCode &time) const
+    {
         if (!stage || stage != queryStage) {
             return false;
         }
@@ -459,11 +461,11 @@ public:
     /// changed-leaf sets diffed against the previous generation (the
     /// authoritative input for precise dirtying). Prims whose
     /// published values are identical produce no entry.
-    RigExecPublishedDirtyVector Publish(
-        std::shared_ptr<RigExecImagingSnapshot> snapshot) {
+    RigExecPublishedDirtyVector
+    Publish(std::shared_ptr<RigExecImagingSnapshot> snapshot)
+    {
         std::lock_guard<std::mutex> lock(_writeMutex);
-        RigExecImagingSnapshotConstPtr previous =
-            std::atomic_load(&_current);
+        RigExecImagingSnapshotConstPtr previous = std::atomic_load(&_current);
         RigExecPublishedDirtyVector dirtied;
         if (snapshot) {
             // DERIVE the fast-path flag here rather than trusting whoever
@@ -491,8 +493,9 @@ public:
             static const Prims none;
             const Prims &after = snapshot ? snapshot->prims : none;
             const Prims &before = previous ? previous->prims : none;
-            std::vector<std::pair<Prims::const_iterator,
-                                  const RigExecPublishedPrim *>> pairs;
+            std::vector<
+                std::pair<Prims::const_iterator, const RigExecPublishedPrim *>>
+                pairs;
             pairs.reserve(after.size());
             auto a = after.begin();
             auto b = before.begin();
@@ -527,26 +530,33 @@ public:
         std::set<SdfPath> resetChanges;
         if (previous) {
             for (const auto &path : previous->xformResetPaths)
-                if (!snapshot || !snapshot->xformResetPaths.count(path)) resetChanges.insert(path);
+                if (!snapshot || !snapshot->xformResetPaths.count(path))
+                    resetChanges.insert(path);
         }
         if (snapshot) {
             for (const auto &path : snapshot->xformResetPaths)
-                if (!previous || !previous->xformResetPaths.count(path)) resetChanges.insert(path);
+                if (!previous || !previous->xformResetPaths.count(path))
+                    resetChanges.insert(path);
         }
         for (const auto &path : resetChanges) {
-            auto entry = std::find_if(dirtied.begin(), dirtied.end(),
+            auto entry = std::find_if(
+                dirtied.begin(), dirtied.end(),
                 [&path](const auto &dirty) { return dirty.path == path; });
-            if (entry == dirtied.end()) dirtied.push_back({path, RigExecChangeXform});
-            else entry->changes |= RigExecChangeXform;
+            if (entry == dirtied.end())
+                dirtied.push_back({path, RigExecChangeXform});
+            else
+                entry->changes |= RigExecChangeXform;
         }
-        std::atomic_store(
-            &_current, RigExecImagingSnapshotConstPtr(std::move(snapshot)));
+        std::atomic_store(&_current,
+                          RigExecImagingSnapshotConstPtr(std::move(snapshot)));
+        _Stamp();
         return dirtied;
     }
 
     /// Publish without the diff, for a publisher whose caller never reads
     /// the changed-leaf sets: the swap and the fast-path flag only.
-    void Replace(std::shared_ptr<RigExecImagingSnapshot> snapshot) {
+    void Replace(std::shared_ptr<RigExecImagingSnapshot> snapshot)
+    {
         std::lock_guard<std::mutex> lock(_writeMutex);
         if (snapshot) {
             snapshot->hasDrivenXforms = false;
@@ -557,14 +567,35 @@ public:
                 }
             }
         }
-        std::atomic_store(
-            &_current, RigExecImagingSnapshotConstPtr(std::move(snapshot)));
+        std::atomic_store(&_current,
+                          RigExecImagingSnapshotConstPtr(std::move(snapshot)));
+        _Stamp();
     }
 
     /// Lock-free read of the current complete generation (may be null
-    /// before the first publication).
-    RigExecImagingSnapshotConstPtr Get() const {
-        return std::atomic_load(&_current);
+    /// before the first publication). A thread re-reading an unchanged
+    /// generation skips the shared_ptr atomic load, whose libc++ and
+    /// libstdc++ implementations take a global spinlock pool.
+    RigExecImagingSnapshotConstPtr Get() const
+    {
+        struct Cache {
+            const RigExecSnapshotStore *store = nullptr;
+            uint64_t stamp = 0;
+            std::weak_ptr<const RigExecImagingSnapshot> snapshot;
+        };
+        thread_local Cache cache;
+        const uint64_t stamp = _stamp.load(std::memory_order_acquire);
+        if (cache.store == this && cache.stamp == stamp) {
+            if (RigExecImagingSnapshotConstPtr hit = cache.snapshot.lock()) {
+                return hit;
+            }
+        }
+        // Loaded after the stamp, so never older than the stamp names.
+        RigExecImagingSnapshotConstPtr current = std::atomic_load(&_current);
+        cache.store = this;
+        cache.stamp = stamp;
+        cache.snapshot = current;
+        return current;
     }
 
 private:
@@ -572,9 +603,9 @@ private:
     /// the previous generation, or whose owned leaf set changed
     /// (ownership begins/ends: the derivative blocks appear/disappear
     /// with points ownership), is structural.
-    static uint16_t _Diff(
-        const RigExecPublishedPrim *before,
-        const RigExecPublishedPrim &after) {
+    static uint16_t _Diff(const RigExecPublishedPrim *before,
+                          const RigExecPublishedPrim &after)
+    {
         if (!before) {
             return RigExecChangeStructural;
         }
@@ -595,7 +626,8 @@ private:
             // immediately: universal dirtiness re-pulls the container and
             // the new primvar is simply there.
             before->shaderMatrices.size() != after.shaderMatrices.size() ||
-            before->targetLocalShaderMatrices != after.targetLocalShaderMatrices ||
+            before->targetLocalShaderMatrices !=
+                after.targetLocalShaderMatrices ||
             before->shaderFloats.size() != after.shaderFloats.size() ||
             before->hasWeightOverlay != after.hasWeightOverlay ||
             before->hasVolumeGuides != after.hasVolumeGuides ||
@@ -642,7 +674,8 @@ private:
             before->shaderFloats != after.shaderFloats) {
             changes |= RigExecChangeShaderMatrix;
         }
-        if (after.hasControlFrame && before->controlFrame != after.controlFrame) {
+        if (after.hasControlFrame &&
+            before->controlFrame != after.controlFrame) {
             changes |= RigExecChangeControlGuideXform;
         }
         // Styling is shared by both guide payloads (one prim never carries
@@ -652,39 +685,43 @@ private:
                                   before->guideOpacity != after.guideOpacity;
         // Both halves matter: the consumer publishes a delta built from the
         // pair, so a moving base with a static revision still moves the prim.
-        if (after.hasXform && (before->xform != after.xform ||
-                               before->xformBase != after.xformBase ||
-                               before->sampleOffsets != after.sampleOffsets ||
-                               before->xformSamples != after.xformSamples ||
-                               before->xformBaseSamples != after.xformBaseSamples)) {
+        if (after.hasXform &&
+            (before->xform != after.xform ||
+             before->xformBase != after.xformBase ||
+             before->sampleOffsets != after.sampleOffsets ||
+             before->xformSamples != after.xformSamples ||
+             before->xformBaseSamples != after.xformBaseSamples)) {
             changes |= RigExecChangeXform;
         }
-        if (after.hasPoints &&
-            (before->points != after.points ||
-             before->sampleOffsets != after.sampleOffsets ||
-             before->pointsSamples != after.pointsSamples)) {
+        if (after.hasPoints && (before->points != after.points ||
+                                before->sampleOffsets != after.sampleOffsets ||
+                                before->pointsSamples != after.pointsSamples)) {
             changes |= RigExecChangePoints;
         }
         if (after.gpuDeform) {
             if (before->gpuDeformStatic != after.gpuDeformStatic ||
-                before->gpuDeform->baseVersion != after.gpuDeform->baseVersion) {
-                changes |= RigExecChangeGpuDeformStatic | RigExecChangeGpuDeform;
+                before->gpuDeform->baseVersion !=
+                    after.gpuDeform->baseVersion) {
+                changes |=
+                    RigExecChangeGpuDeformStatic | RigExecChangeGpuDeform;
             } else if (*before->gpuDeform != *after.gpuDeform ||
                        before->gpuDeformVelocityScale !=
                            after.gpuDeformVelocityScale) {
                 changes |= RigExecChangeGpuDeform;
             }
         }
-        if (after.hasNormals && (before->normals != after.normals ||
-            before->sampleOffsets != after.sampleOffsets ||
-            before->normalsSamples != after.normalsSamples)) {
+        if (after.hasNormals &&
+            (before->normals != after.normals ||
+             before->sampleOffsets != after.sampleOffsets ||
+             before->normalsSamples != after.normalsSamples)) {
             changes |= RigExecChangeNormals;
         }
-        if (after.hasExtent && (before->extentMin != after.extentMin ||
-                                before->extentMax != after.extentMax ||
-                                before->sampleOffsets != after.sampleOffsets ||
-                                before->extentMinSamples != after.extentMinSamples ||
-                                before->extentMaxSamples != after.extentMaxSamples)) {
+        if (after.hasExtent &&
+            (before->extentMin != after.extentMin ||
+             before->extentMax != after.extentMax ||
+             before->sampleOffsets != after.sampleOffsets ||
+             before->extentMinSamples != after.extentMinSamples ||
+             before->extentMaxSamples != after.extentMaxSamples)) {
             changes |= RigExecChangeExtent;
         }
         if (after.hasGuides) {
@@ -732,8 +769,7 @@ private:
         if (after.hasControlGuide &&
             (before->controlGuideWireWidth != after.controlGuideWireWidth ||
              before->controlGuidePoints != after.controlGuidePoints ||
-             before->guidePurpose != after.guidePurpose ||
-             styleChanged)) {
+             before->guidePurpose != after.guidePurpose || styleChanged)) {
             changes |= RigExecChangeGuides;
         }
         // Volume guides ride the SAME change bit as the other two guide
@@ -758,10 +794,21 @@ private:
         return changes;
     }
 
+    /// Under _writeMutex, after the swap: a process-unique stamp, so a
+    /// reader cache keyed by (store, stamp) never matches a store that
+    /// later reuses this address.
+    void _Stamp()
+    {
+        _stamp.store(_nextStamp.fetch_add(1, std::memory_order_relaxed) + 1,
+                     std::memory_order_release);
+    }
+
     RigExecImagingSnapshotConstPtr _current;
+    std::atomic<uint64_t> _stamp{0};
     std::mutex _writeMutex;
+    static inline std::atomic<uint64_t> _nextStamp{0};
 };
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_IMAGING_SNAPSHOT_STORE_H
+#endif // RIGEXEC_IMAGING_SNAPSHOT_STORE_H

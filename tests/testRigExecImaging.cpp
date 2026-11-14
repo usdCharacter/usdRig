@@ -331,6 +331,89 @@ TestPopulatedWrappingAndResync()
     chain.results->RemoveObserver(HdSceneIndexObserverPtr(&observer));
 }
 
+// Replacing the owned scopes removes the newly owned ones and re-adds the
+// released ones with their descendants; unchanged scopes send nothing.
+static void
+TestOwnedScopeReplacement()
+{
+    HdRetainedSceneIndexRefPtr upstream = HdRetainedSceneIndex::New();
+    const SdfPath meshPath("/Asset/Geom/Body");
+    const SdfPath scopeA("/Asset/RigA/__RigExecGenerated");
+    const SdfPath scopeB("/Asset/RigB/__RigExecGenerated");
+    const SdfPath appA = scopeA.AppendChild(TfToken("App_0"));
+    const SdfPath appB = scopeB.AppendChild(TfToken("App_0"));
+    upstream->AddPrims({_MeshShell(meshPath), _GeneratedShell(scopeA),
+                        _GeneratedShell(appA), _GeneratedShell(scopeB),
+                        _GeneratedShell(appB)});
+    auto pruning = RigExecInternalPrimPruningSceneIndex::New(upstream);
+    pruning->SetOwnedScopes({scopeA});
+    _RecordingObserver observer;
+    pruning->AddObserver(HdSceneIndexObserverPtr(&observer));
+    const auto contains = [](const SdfPathVector &paths, const SdfPath &p) {
+        return std::find(paths.begin(), paths.end(), p) != paths.end();
+    };
+
+    pruning->SetOwnedScopes({scopeB});
+    CHECK(observer.removed == SdfPathVector{scopeB});
+    CHECK(contains(observer.added, scopeA));
+    CHECK(contains(observer.added, appA));
+    CHECK(!contains(observer.added, scopeB));
+    CHECK(!contains(observer.added, appB));
+    CHECK(pruning->GetPrim(appA).dataSource);
+    CHECK(!pruning->GetPrim(appB).dataSource);
+
+    observer.added.clear();
+    observer.removed.clear();
+    pruning->SetOwnedScopes({scopeB});
+    CHECK(observer.added.empty());
+    CHECK(observer.removed.empty());
+
+    // A newly owned scope beneath a released one stays hidden on re-add.
+    pruning->SetOwnedScopes({appB.GetParentPath().GetParentPath()});
+    CHECK(observer.removed.size() == 1);
+    CHECK(observer.added.empty());
+    observer.removed.clear();
+    pruning->SetOwnedScopes({scopeB});
+    CHECK(observer.removed.empty());
+    CHECK(contains(observer.added, SdfPath("/Asset/RigB")));
+    CHECK(!contains(observer.added, scopeB));
+    CHECK(!contains(observer.added, appB));
+
+    observer.added.clear();
+    pruning->SetOwnedScopes({});
+    CHECK(observer.removed.empty());
+    CHECK(contains(observer.added, scopeB));
+    CHECK(contains(observer.added, appB));
+    CHECK(!contains(observer.added, meshPath));
+    pruning->RemoveObserver(HdSceneIndexObserverPtr(&observer));
+}
+
+// A reader's per-thread cache follows every publication, across stores.
+static void
+TestSnapshotStoreReaderCache()
+{
+    auto first = std::make_shared<RigExecSnapshotStore>();
+    auto second = std::make_shared<RigExecSnapshotStore>();
+    CHECK(!first->Get());
+    auto a = std::make_shared<RigExecImagingSnapshot>();
+    const RigExecImagingSnapshot *aRaw = a.get();
+    first->Publish(a);
+    CHECK(first->Get().get() == aRaw);
+    CHECK(first->Get().get() == aRaw);
+    auto b = std::make_shared<RigExecImagingSnapshot>();
+    const RigExecImagingSnapshot *bRaw = b.get();
+    second->Replace(b);
+    CHECK(second->Get().get() == bRaw);
+    CHECK(first->Get().get() == aRaw);
+    auto c = std::make_shared<RigExecImagingSnapshot>();
+    const RigExecImagingSnapshot *cRaw = c.get();
+    first->Publish(c);
+    CHECK(first->Get().get() == cRaw);
+    first->Replace(nullptr);
+    CHECK(!first->Get());
+    CHECK(second->Get().get() == bRaw);
+}
+
 // Late-consumer traversal (spec §10.3.2, §14.5): generations publish
 // before any consumer exists; a late consumer discovers cached results
 // purely by traversal plus GetPrim, with no notices required.
@@ -9091,6 +9174,8 @@ main(int argc, char **argv)
     TestDrivenXformConditioning();
     TestPrePopulationAttachment();
     TestPopulatedWrappingAndResync();
+    TestOwnedScopeReplacement();
+    TestSnapshotStoreReaderCache();
     TestLateConsumerTraversal();
     TestNoticeStreamFiltering();
     TestNarrowLocators();

@@ -18,11 +18,13 @@
 
 #include "pxr/imaging/hd/filteringSceneIndex.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <vector>
 
@@ -136,6 +138,28 @@ public:
 private:
     bool _IsOwned(const SdfPath &path) const;
 
+    /// Empty when no entry is owned, so the caller forwards the input as is.
+    template <class Entries>
+    std::optional<Entries> _FilterOwned(const Entries &entries) const
+    {
+        if (_ownedScopes.empty()) {
+            return std::nullopt;
+        }
+        auto owned = std::find_if(
+            entries.begin(), entries.end(),
+            [this](const auto &entry) { return _IsOwned(entry.primPath); });
+        if (owned == entries.end()) {
+            return std::nullopt;
+        }
+        Entries filtered(entries.begin(), owned);
+        for (++owned; owned != entries.end(); ++owned) {
+            if (!_IsOwned(owned->primPath)) {
+                filtered.push_back(*owned);
+            }
+        }
+        return filtered;
+    }
+
     std::set<SdfPath> _ownedScopes;
 };
 
@@ -239,6 +263,8 @@ private:
     /// own; the map is small and the critical sections are tiny.
     mutable std::mutex _mutex;
     std::map<SdfPath, GfMatrix4d> _deltas;
+    /// Written under _mutex; lets a pull with no preview skip the lock.
+    std::atomic<bool> _hasDeltas{false};
 };
 
 /// Atomically receives the compiler-produced immutable compiled rig and
@@ -352,6 +378,17 @@ public:
     void _DirtySubtree(const SdfPath &path,
                        const HdDataSourceLocatorSet &locators,
                        HdSceneIndexObserver::DirtiedPrimEntries *entries) const;
+    void _DirtySubtree(const SdfPath &path,
+                       const HdDataSourceLocatorSet &locators,
+                       const RigExecImagingSnapshot *snapshot,
+                       HdSceneIndexObserver::DirtiedPrimEntries *entries) const;
+
+    /// _DirtySubtree over each of \p roots once; a root inside another
+    /// root's subtree is already covered and skipped.
+    void
+    _DirtySubtrees(std::vector<SdfPath> roots,
+                   const HdDataSourceLocatorSet &locators,
+                   HdSceneIndexObserver::DirtiedPrimEntries *entries) const;
 
     /// Dirties \p locators on the synthesized guide children announced
     /// under \p path. Their matrices bake the asset root's world transform,

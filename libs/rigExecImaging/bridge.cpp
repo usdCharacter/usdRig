@@ -35,11 +35,13 @@ RigExecSnapshotCall
 _MakeSnapshotCall(const UsdStageRefPtr &stage,
                   const RigExecRigEvaluator &evaluator, UsdTimeCode time)
 {
-    return RigExecSnapshotCall(stage, time, evaluator.GetStageEditSerial(),
-                               evaluator.GetSurfaceProjectorTargets(),
-                               evaluator.GetAnimatedMapPrimvars(),
-                               evaluator.GetScalarPrimvarTargets(),
-                               evaluator.GetScalarPrimvarNames());
+    RigExecSnapshotCall call(stage, time, evaluator.GetStageEditSerial(),
+                             evaluator.GetSurfaceProjectorTargets(),
+                             evaluator.GetAnimatedMapPrimvars(),
+                             evaluator.GetScalarPrimvarTargets(),
+                             evaluator.GetScalarPrimvarNames());
+    call.stageStructureSerial = evaluator.GetStageStructureSerial();
+    return call;
 }
 
 } // namespace

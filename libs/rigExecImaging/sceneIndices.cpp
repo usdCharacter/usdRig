@@ -32,6 +32,7 @@
 #include "pxr/imaging/hd/primvarsSchema.h"
 #include "pxr/imaging/hd/purposeSchema.h"
 #include "pxr/imaging/hd/retainedDataSource.h"
+#include "pxr/imaging/hd/sceneIndexPrimView.h"
 #include "pxr/imaging/hd/sphereSchema.h"
 #include "pxr/imaging/hd/tokens.h"
 #include "pxr/usd/usdGeom/tokens.h"
@@ -160,30 +161,82 @@ RigExecInternalPrimPruningSceneIndex::RigExecInternalPrimPruningSceneIndex(
 {
 }
 
+namespace {
+
+bool
+_UnderAnyScope(const std::set<SdfPath> &scopes, const SdfPath &path)
+{
+    for (const SdfPath &scope : scopes) {
+        if (path.HasPrefix(scope)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool
+_UnderOtherScope(const std::set<SdfPath> &scopes, const SdfPath &path)
+{
+    for (const SdfPath &scope : scopes) {
+        if (scope != path && path.HasPrefix(scope)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
 void
 RigExecInternalPrimPruningSceneIndex::SetOwnedScopes(
     const std::set<SdfPath> &scopes)
 {
-    // Structural: the previously and newly owned scopes disappear/appear.
+    const std::set<SdfPath> previous = std::move(_ownedScopes);
+    _ownedScopes = scopes;
+    if (!_IsObserved()) {
+        return;
+    }
+    // Newly owned scopes that were visible disappear; released scopes that
+    // are no longer covered reappear with their unowned descendants.
     HdSceneIndexObserver::RemovedPrimEntries removed;
     for (const SdfPath &scope : _ownedScopes) {
-        removed.emplace_back(scope);
+        if (!_UnderAnyScope(previous, scope) &&
+            !_UnderOtherScope(_ownedScopes, scope)) {
+            removed.emplace_back(scope);
+        }
     }
-    _ownedScopes = scopes;
-    if (!removed.empty() && _IsObserved()) {
+    HdSceneIndexObserver::AddedPrimEntries added;
+    const HdSceneIndexBaseRefPtr &input = _GetInputSceneIndex();
+    for (const SdfPath &scope : previous) {
+        if (_IsOwned(scope) || _UnderOtherScope(previous, scope)) {
+            continue;
+        }
+        if (!input->GetPrim(scope).dataSource &&
+            input->GetChildPrimPaths(scope).empty()) {
+            continue;
+        }
+        HdSceneIndexPrimView view(input, scope);
+        for (auto it = view.begin(); it != view.end(); ++it) {
+            const SdfPath &path = *it;
+            if (_IsOwned(path)) {
+                it.SkipDescendants();
+                continue;
+            }
+            added.emplace_back(path, input->GetPrim(path).primType);
+        }
+    }
+    if (!removed.empty()) {
         _SendPrimsRemoved(removed);
+    }
+    if (!added.empty()) {
+        _SendPrimsAdded(added);
     }
 }
 
 bool
 RigExecInternalPrimPruningSceneIndex::_IsOwned(const SdfPath &path) const
 {
-    for (const SdfPath &scope : _ownedScopes) {
-        if (path.HasPrefix(scope)) {
-            return true;
-        }
-    }
-    return false;
+    return _UnderAnyScope(_ownedScopes, path);
 }
 
 HdSceneIndexPrim
@@ -216,16 +269,12 @@ RigExecInternalPrimPruningSceneIndex::_PrimsAdded(
     if (!_IsObserved()) {
         return;
     }
-    // Filter owned entries while preserving the order of unrelated ones.
-    HdSceneIndexObserver::AddedPrimEntries filtered;
-    filtered.reserve(entries.size());
-    for (const auto &entry : entries) {
-        if (!_IsOwned(entry.primPath)) {
-            filtered.push_back(entry);
+    if (const auto filtered = _FilterOwned(entries)) {
+        if (!filtered->empty()) {
+            _SendPrimsAdded(*filtered);
         }
-    }
-    if (!filtered.empty()) {
-        _SendPrimsAdded(filtered);
+    } else {
+        _SendPrimsAdded(entries);
     }
 }
 
@@ -237,15 +286,12 @@ RigExecInternalPrimPruningSceneIndex::_PrimsRemoved(
     if (!_IsObserved()) {
         return;
     }
-    HdSceneIndexObserver::RemovedPrimEntries filtered;
-    filtered.reserve(entries.size());
-    for (const auto &entry : entries) {
-        if (!_IsOwned(entry.primPath)) {
-            filtered.push_back(entry);
+    if (const auto filtered = _FilterOwned(entries)) {
+        if (!filtered->empty()) {
+            _SendPrimsRemoved(*filtered);
         }
-    }
-    if (!filtered.empty()) {
-        _SendPrimsRemoved(filtered);
+    } else {
+        _SendPrimsRemoved(entries);
     }
 }
 
@@ -257,15 +303,12 @@ RigExecInternalPrimPruningSceneIndex::_PrimsDirtied(
     if (!_IsObserved()) {
         return;
     }
-    HdSceneIndexObserver::DirtiedPrimEntries filtered;
-    filtered.reserve(entries.size());
-    for (const auto &entry : entries) {
-        if (!_IsOwned(entry.primPath)) {
-            filtered.push_back(entry);
+    if (const auto filtered = _FilterOwned(entries)) {
+        if (!filtered->empty()) {
+            _SendPrimsDirtied(*filtered);
         }
-    }
-    if (!filtered.empty()) {
-        _SendPrimsDirtied(filtered);
+    } else {
+        _SendPrimsDirtied(entries);
     }
 }
 
@@ -2015,22 +2058,33 @@ private:
     const HdMatrixDataSourceHandle _world;
 };
 
+const HdDataSourceLocatorSet _shaderMatrixPrimvarLocators =
+    HdContainerDataSourceEditor::ComputeDirtyLocators(
+        HdDataSourceLocatorSet{HdPrimvarsSchema::GetDefaultLocator()});
+
 // Changing a target's world transform also changes its spatial shader
 // primvars, even when evaluation returned an identical local projector.
+bool
+_AddsShaderMatrixLocators(const RigExecImagingSnapshot &snapshot,
+                          const SdfPath &path,
+                          const HdDataSourceLocatorSet &locators)
+{
+    const auto it = snapshot.prims.find(path);
+    return it != snapshot.prims.end() &&
+           !it->second.targetLocalShaderMatrices.empty() &&
+           locators.Intersects(HdXformSchema::GetDefaultLocator());
+}
+
 HdDataSourceLocatorSet
 _ShaderMatrixXformLocators(const RigExecImagingSnapshot &snapshot,
                            const SdfPath &path,
                            const HdDataSourceLocatorSet &locators)
 {
-    const auto it = snapshot.prims.find(path);
-    if (it == snapshot.prims.end() ||
-        it->second.targetLocalShaderMatrices.empty() ||
-        !locators.Intersects(HdXformSchema::GetDefaultLocator())) {
+    if (!_AddsShaderMatrixLocators(snapshot, path, locators)) {
         return locators;
     }
     HdDataSourceLocatorSet result(locators);
-    result.insert(HdContainerDataSourceEditor::ComputeDirtyLocators(
-        HdDataSourceLocatorSet{HdPrimvarsSchema::GetDefaultLocator()}));
+    result.insert(_shaderMatrixPrimvarLocators);
     return result;
 }
 
@@ -2051,8 +2105,8 @@ _BuildStrongRoot(const RigExecPublishedPrim &published,
     // the published transform cannot be turned into a data source from the
     // snapshot alone -- it is a LOCAL matrix arriving at a scene index that
     // sits downstream of flattening, so it has to be combined with the
-    // upstream world matrix. _ComputeDrivenXform does that in GetPrim, where
-    // the input prim is in hand.
+    // upstream world matrix. _DrivenXformDataSource does that from the input
+    // prim GetPrim hands it.
 
     TfTokenVector primvarNames;
     std::vector<HdDataSourceBaseHandle> primvarValues;
@@ -2328,12 +2382,37 @@ _ComputeDrivenXformFrom(const HdSceneIndexBaseRefPtr &input,
     return true;
 }
 
+// True when \p primPath or an ancestor up to its reset boundary publishes a
+// driven transform: the walk _ComputeDrivenXformFrom makes, without math.
+bool
+_HasDrivenAncestor(const RigExecImagingSnapshot &snapshot,
+                   const SdfPath &primPath)
+{
+    if (!snapshot.hasDrivenXforms) {
+        return false;
+    }
+    for (SdfPath current = primPath;
+         !current.IsAbsoluteRootPath() && !current.IsEmpty();
+         current = current.GetParentPath()) {
+        const auto it = snapshot.prims.find(current);
+        if (it != snapshot.prims.end() && it->second.hasXform) {
+            return true;
+        }
+        if (snapshot.xformResetPaths.count(current)) {
+            return false;
+        }
+    }
+    return false;
+}
+
 // The driven world transform of a prim (frames on demand): k == 0 the
 // displayed matrix, an explicit motion sample at k, else the frame table's
 // snapshot of the displayed time + k composed against the upstream world at
 // offset k. A frame with no driven ancestor for the prim answers the
 // upstream world itself. A miss is demand and "not yet" (an empty VtValue;
-// typed reads return the displayed matrix).
+// typed reads return the displayed matrix). Every matrix is composed on
+// read from the generation captured at GetPrim, so one pull sees one
+// generation and a prim nobody samples costs no ancestor math.
 class _DrivenXformDataSource final
     : public HdTypedSampledDataSource<GfMatrix4d> {
 public:
@@ -2350,52 +2429,110 @@ public:
     GfMatrix4d GetTypedValue(Time offset) override
     {
         GfMatrix4d value;
-        return _Resolve(offset, &value) ? value : _base;
+        return _Resolve(offset, &value) ? value : _At(0.0f);
     }
     bool
     GetContributingSampleTimesForInterval(Time start, Time end,
                                           std::vector<Time> *times) override
     {
-        return _MotionSampleTimes(_offsets, start, end, times);
+        return _MotionSampleTimes(_Offsets(), start, end, times);
     }
 
 private:
     _DrivenXformDataSource(HdSceneIndexBaseRefPtr input, SdfPath primPath,
                            HdContainerDataSourceHandle inputDataSource,
-                           GfMatrix4d base, std::vector<float> offsets,
-                           std::vector<GfMatrix4d> samples, _FrameSource source)
+                           RigExecImagingSnapshotConstPtr snapshot)
         : _input(std::move(input)), _primPath(std::move(primPath)),
-          _inputDataSource(std::move(inputDataSource)), _base(base),
-          _offsets(std::move(offsets)), _samples(std::move(samples)),
-          _source(std::move(source))
+          _inputDataSource(std::move(inputDataSource)),
+          _snapshot(std::move(snapshot)),
+          _source(_FrameSource::From(*_snapshot, _primPath))
     {
-        if (_samples.size() != _offsets.size()) {
-            _offsets.clear();
-            _samples.clear();
+    }
+
+    // The captured generation's matrix at a shutter offset; the upstream
+    // world when no driven level there is invertible and finite.
+    GfMatrix4d _At(float offset) const
+    {
+        GfMatrix4d value;
+        if (!_ComputeDrivenXformFrom(_input, _primPath, _inputDataSource,
+                                     *_snapshot, &value, offset)) {
+            value = _ReadXform(_inputDataSource, offset);
         }
+        return value;
+    }
+
+    // RigExec's explicit samples on every driven level plus the upstream
+    // motion of the prim and its driven ancestors, sorted and unique.
+    std::vector<float> _Offsets() const
+    {
+        std::vector<float> offsets;
+        for (SdfPath current = _primPath;
+             !current.IsEmpty() && !current.IsAbsoluteRootPath();
+             current = current.GetParentPath()) {
+            const auto it = _snapshot->prims.find(current);
+            if (it != _snapshot->prims.end() && it->second.hasXform) {
+                offsets.insert(offsets.end(), it->second.sampleOffsets.begin(),
+                               it->second.sampleOffsets.end());
+            }
+        }
+        const auto appendUpstreamSamples =
+            [&offsets](const HdContainerDataSourceHandle &root) {
+                const auto matrix =
+                    HdXformSchema::GetFromParent(root).GetMatrix();
+                if (!matrix)
+                    return;
+                std::vector<float> samples;
+                if (matrix->GetContributingSampleTimesForInterval(
+                        offsets.empty()
+                            ? 0.0f
+                            : *std::min_element(offsets.begin(), offsets.end()),
+                        offsets.empty()
+                            ? 0.0f
+                            : *std::max_element(offsets.begin(), offsets.end()),
+                        &samples))
+                    offsets.insert(offsets.end(), samples.begin(),
+                                   samples.end());
+            };
+        appendUpstreamSamples(_inputDataSource);
+        for (SdfPath current = _primPath.GetParentPath();
+             !current.IsEmpty() && !current.IsAbsoluteRootPath();
+             current = current.GetParentPath()) {
+            const auto it = _snapshot->prims.find(current);
+            if (it != _snapshot->prims.end() && it->second.hasXform)
+                appendUpstreamSamples(_input->GetPrim(current).dataSource);
+        }
+        std::sort(offsets.begin(), offsets.end());
+        offsets.erase(std::unique(offsets.begin(), offsets.end()),
+                      offsets.end());
+        return offsets;
     }
 
     bool _Resolve(Time offset, GfMatrix4d *value) const
     {
         if (std::abs(offset) < kFrameOffsetEpsilon) {
-            *value = _base;
+            *value = _At(0.0f);
             return true;
         }
-        for (size_t i = 0; i < _offsets.size(); ++i) {
-            if (std::abs(_offsets[i] - offset) < kFrameOffsetEpsilon) {
-                *value = _samples[i];
+        const std::vector<float> offsets = _Offsets();
+        for (const float sample : offsets) {
+            if (std::abs(sample - offset) < kFrameOffsetEpsilon) {
+                *value = _At(sample);
                 return true;
             }
         }
-        if (!_source.Live() || !_input) {
+        if (!_source.Live()) {
+            if (offsets.empty()) {
+                *value = _At(0.0f);
+                return true;
+            }
             size_t best = 0;
-            for (size_t i = 1; i < _offsets.size(); ++i) {
-                if (std::abs(_offsets[i] - offset) <
-                    std::abs(_offsets[best] - offset)) {
+            for (size_t i = 1; i < offsets.size(); ++i) {
+                if (std::abs(offsets[i] - offset) <
+                    std::abs(offsets[best] - offset)) {
                     best = i;
                 }
             }
-            *value = _offsets.empty() ? _base : _samples[best];
+            *value = _At(offsets[best]);
             return true;
         }
         const std::shared_ptr<const RigExecImagingSnapshot> frame =
@@ -2413,9 +2550,7 @@ private:
     const HdSceneIndexBaseRefPtr _input;
     const SdfPath _primPath;
     const HdContainerDataSourceHandle _inputDataSource;
-    const GfMatrix4d _base;
-    std::vector<float> _offsets;
-    std::vector<GfMatrix4d> _samples;
+    const RigExecImagingSnapshotConstPtr _snapshot;
     const _FrameSource _source;
 };
 
@@ -2573,64 +2708,11 @@ RigExecResultsSceneIndex::GetPrim(const SdfPath &primPath) const
     // mesh parented under a constraint-driven Xform is never itself published
     // (it is carried by hierarchy, not deformed) yet its world transform
     // still has to change.
-    GfMatrix4d drivenXform(1.0);
-    if (_ComputeDrivenXform(primPath, prim.dataSource, *snapshot,
-                            &drivenXform)) {
-        std::vector<float> offsets;
-        for (SdfPath current = primPath;
-             !current.IsEmpty() && !current.IsAbsoluteRootPath();
-             current = current.GetParentPath()) {
-            const auto it = snapshot->prims.find(current);
-            if (it != snapshot->prims.end() && it->second.hasXform) {
-                offsets.insert(offsets.end(), it->second.sampleOffsets.begin(),
-                               it->second.sampleOffsets.end());
-            }
-        }
-        // Preserve upstream motion as well as RigExec's explicit samples.
-        const auto appendUpstreamSamples =
-            [&offsets](const HdContainerDataSourceHandle &root) {
-                const auto matrix =
-                    HdXformSchema::GetFromParent(root).GetMatrix();
-                if (!matrix)
-                    return;
-                std::vector<float> samples;
-                if (matrix->GetContributingSampleTimesForInterval(
-                        offsets.empty()
-                            ? 0.0f
-                            : *std::min_element(offsets.begin(), offsets.end()),
-                        offsets.empty()
-                            ? 0.0f
-                            : *std::max_element(offsets.begin(), offsets.end()),
-                        &samples))
-                    offsets.insert(offsets.end(), samples.begin(),
-                                   samples.end());
-            };
-        appendUpstreamSamples(prim.dataSource);
-        for (SdfPath current = primPath.GetParentPath();
-             !current.IsEmpty() && !current.IsAbsoluteRootPath();
-             current = current.GetParentPath()) {
-            const auto it = snapshot->prims.find(current);
-            if (it != snapshot->prims.end() && it->second.hasXform)
-                appendUpstreamSamples(
-                    _GetInputSceneIndex()->GetPrim(current).dataSource);
-        }
-        std::sort(offsets.begin(), offsets.end());
-        offsets.erase(std::unique(offsets.begin(), offsets.end()),
-                      offsets.end());
-        std::vector<GfMatrix4d> samples;
-        for (float offset : offsets) {
-            GfMatrix4d value = _ReadXform(prim.dataSource, offset);
-            _ComputeDrivenXform(primPath, prim.dataSource, *snapshot, &value,
-                                offset);
-            samples.push_back(value);
-        }
-        static const TfToken xformName = HdXformSchemaTokens->xform;
+    if (_HasDrivenAncestor(*snapshot, primPath)) {
         const HdDataSourceBaseHandle xformSource =
             HdXformSchema::Builder()
                 .SetMatrix(_DrivenXformDataSource::New(
-                    _GetInputSceneIndex(), primPath, prim.dataSource,
-                    drivenXform, offsets, samples,
-                    _FrameSource::From(*snapshot, primPath)))
+                    _GetInputSceneIndex(), primPath, prim.dataSource, snapshot))
                 // TRUE: this matrix is fully composed, exactly like the one
                 // flattening produced upstream. Marking it false would invite
                 // a later flattener to compose the parent in a second time,
@@ -2642,7 +2724,8 @@ RigExecResultsSceneIndex::GetPrim(const SdfPath &primPath) const
                 .Build();
         prim.dataSource =
             HdOverlayContainerDataSource::OverlayedContainerDataSources(
-                HdRetainedContainerDataSource::New(1, &xformName, &xformSource),
+                HdRetainedContainerDataSource::New(HdXformSchemaTokens->xform,
+                                                   xformSource),
                 prim.dataSource);
     }
 
@@ -3072,13 +3155,44 @@ RigExecResultsSceneIndex::_DirtySubtree(
     HdSceneIndexObserver::DirtiedPrimEntries *entries) const
 {
     const RigExecImagingSnapshotConstPtr snapshot = _CurrentSnapshot();
+    _DirtySubtree(path, locators, snapshot.get(), entries);
+}
+
+void
+RigExecResultsSceneIndex::_DirtySubtree(
+    const SdfPath &path, const HdDataSourceLocatorSet &locators,
+    const RigExecImagingSnapshot *snapshot,
+    HdSceneIndexObserver::DirtiedPrimEntries *entries) const
+{
     _DirtyAnnouncedGuideChildren(path, locators, entries);
     for (const SdfPath &child :
          _GetInputSceneIndex()->GetChildPrimPaths(path)) {
         entries->emplace_back(child, snapshot ? _ShaderMatrixXformLocators(
                                                     *snapshot, child, locators)
                                               : locators);
-        _DirtySubtree(child, locators, entries);
+        _DirtySubtree(child, locators, snapshot, entries);
+    }
+}
+
+void
+RigExecResultsSceneIndex::_DirtySubtrees(
+    std::vector<SdfPath> roots, const HdDataSourceLocatorSet &locators,
+    HdSceneIndexObserver::DirtiedPrimEntries *entries) const
+{
+    if (roots.empty()) {
+        return;
+    }
+    const RigExecImagingSnapshotConstPtr snapshot = _CurrentSnapshot();
+    std::sort(roots.begin(), roots.end());
+    SdfPath walked;
+    for (const SdfPath &root : roots) {
+        // Sorted, so a descendant always follows its nearest walked
+        // ancestor directly or after that ancestor's other descendants.
+        if (!walked.IsEmpty() && root.HasPrefix(walked)) {
+            continue;
+        }
+        _DirtySubtree(root, locators, snapshot.get(), entries);
+        walked = root;
     }
 }
 
@@ -3159,6 +3273,7 @@ RigExecResultsSceneIndex::NotifyFramesChanged()
     static const HdDataSourceLocatorSet xform{
         HdXformSchema::GetDefaultLocator()};
     HdSceneIndexObserver::DirtiedPrimEntries entries;
+    std::vector<SdfPath> xformRoots;
     for (const auto &[path, published] : snapshot->prims) {
         if (published.hasPoints || published.hasNormals ||
             published.hasExtent || !published.shaderFloats.empty() ||
@@ -3166,9 +3281,10 @@ RigExecResultsSceneIndex::NotifyFramesChanged()
             entries.emplace_back(path, values);
         }
         if (published.hasXform) {
-            _DirtySubtree(path, xform, &entries);
+            xformRoots.push_back(path);
         }
     }
+    _DirtySubtrees(std::move(xformRoots), xform, &entries);
     if (!entries.empty()) {
         _SendPrimsDirtied(entries);
     }
@@ -3202,6 +3318,7 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
     HdSceneIndexObserver::AddedPrimEntries addedGuides;
     HdSceneIndexObserver::RemovedPrimEntries removedGuides;
     std::vector<SdfPath> xformRoots;
+    std::vector<SdfPath> structuralRoots;
     entries.reserve(dirtied.size());
     for (const RigExecPublishedDirty &entry : dirtied) {
         if (entry.changes & RigExecChangeStructural) {
@@ -3308,8 +3425,7 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
                 _announcedDrivenXforms.count(entry.path) != 0;
             const bool isDriven = _IsDrivenXform(entry.path);
             if (wasDriven || isDriven || (entry.changes & RigExecChangeXform)) {
-                _DirtySubtree(entry.path,
-                              HdDataSourceLocatorSet::UniversalSet(), &entries);
+                structuralRoots.push_back(entry.path);
             }
             _RefreshDrivenXform(entry.path);
 
@@ -3642,24 +3758,15 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
     // children each time. A root nested under another root in this batch
     // is already inside that walk, and it dirties exactly the same locator
     // set, so it is skipped. Every prim still gets the same locators.
+    // Structural roots likewise; their subtrees take universal dirtiness.
+    _DirtySubtrees(std::move(structuralRoots),
+                   HdDataSourceLocatorSet::UniversalSet(), &entries);
     if (!xformRoots.empty()) {
         static const HdDataSourceLocatorSet xformSubtree =
             HdContainerDataSourceEditor::ComputeDirtyLocators(
                 HdDataSourceLocatorSet{HdDataSourceLocator(
                     HdXformSchemaTokens->xform, HdXformSchemaTokens->matrix)});
-        std::sort(xformRoots.begin(), xformRoots.end());
-        xformRoots.erase(std::unique(xformRoots.begin(), xformRoots.end()),
-                         xformRoots.end());
-        SdfPath walked;
-        for (const SdfPath &root : xformRoots) {
-            // Sorted, so a descendant always follows its nearest walked
-            // ancestor directly or after that ancestor's other descendants.
-            if (!walked.IsEmpty() && root.HasPrefix(walked)) {
-                continue;
-            }
-            _DirtySubtree(root, xformSubtree, &entries);
-            walked = root;
-        }
+        _DirtySubtrees(std::move(xformRoots), xformSubtree, &entries);
     }
     if (!removedGuides.empty()) {
         _SendPrimsRemoved(removedGuides);
@@ -4247,12 +4354,22 @@ RigExecResultsSceneIndex::_PrimsDirtied(
     // transform from that parent, so a parent whose either changed has to
     // drag its guide children along -- they are invisible to the flattener
     // upstream and to every observer downstream, so nothing else will.
-    HdSceneIndexObserver::DirtiedPrimEntries forwarded(entries);
+    // Copied only once an entry is rewritten or a guide child is added.
+    std::optional<HdSceneIndexObserver::DirtiedPrimEntries> forwarded;
+    const auto edit = [&forwarded, &entries]() -> auto & {
+        if (!forwarded) {
+            forwarded.emplace(entries);
+        }
+        return *forwarded;
+    };
     const RigExecImagingSnapshotConstPtr snapshot = _CurrentSnapshot();
     if (snapshot) {
-        for (auto &entry : forwarded) {
-            entry.dirtyLocators = _ShaderMatrixXformLocators(
-                *snapshot, entry.primPath, entry.dirtyLocators);
+        for (size_t i = 0; i < entries.size(); ++i) {
+            const auto &entry = entries[i];
+            if (_AddsShaderMatrixLocators(*snapshot, entry.primPath,
+                                          entry.dirtyLocators)) {
+                edit()[i].dirtyLocators.insert(_shaderMatrixPrimvarLocators);
+            }
         }
     }
     static const HdDataSourceLocatorSet inheritedLocators =
@@ -4271,7 +4388,7 @@ RigExecResultsSceneIndex::_PrimsDirtied(
         // notice upstream already sent.
         auto forward = [&](const SdfPath &childPath) {
             if (!_GetInputSceneIndex()->GetPrim(childPath).dataSource) {
-                forwarded.emplace_back(childPath, inheritedLocators);
+                edit().emplace_back(childPath, inheritedLocators);
             }
         };
         if (_announcedControlGuides.count(entry.primPath) != 0) {
@@ -4296,7 +4413,7 @@ RigExecResultsSceneIndex::_PrimsDirtied(
             }
         }
     }
-    _SendPrimsDirtied(forwarded);
+    _SendPrimsDirtied(forwarded ? *forwarded : entries);
 }
 
 // RigExecXformOverrideSceneIndex
@@ -4310,8 +4427,7 @@ RigExecXformOverrideSceneIndex::RigExecXformOverrideSceneIndex(
 bool
 RigExecXformOverrideSceneIndex::HasWorldDeltas() const
 {
-    std::lock_guard<std::mutex> lock(_mutex);
-    return !_deltas.empty();
+    return _hasDeltas.load(std::memory_order_acquire);
 }
 
 const GfMatrix4d *
@@ -4335,14 +4451,19 @@ RigExecXformOverrideSceneIndex::_FindDelta(const SdfPath &path) const
     return nullptr;
 }
 
+namespace {
+
+const HdDataSourceLocatorSet _xformOverrideLocators{
+    HdXformSchema::GetDefaultLocator()};
+
+} // namespace
+
 void
 RigExecXformOverrideSceneIndex::_DirtyXformSubtree(
     const SdfPath &path,
     HdSceneIndexObserver::DirtiedPrimEntries *entries) const
 {
-    static const HdDataSourceLocatorSet locators{
-        HdXformSchema::GetDefaultLocator()};
-    entries->emplace_back(path, locators);
+    entries->emplace_back(path, _xformOverrideLocators);
     // Descendants carry the previewed ancestor baked in, so each one's matrix
     // changes too. The walk is over the UPSTREAM children: a preview adds no
     // prims and removes none.
@@ -4379,13 +4500,20 @@ RigExecXformOverrideSceneIndex::SetWorldDeltas(
             return;
         }
         _deltas = deltas;
+        _hasDeltas.store(!_deltas.empty(), std::memory_order_release);
     }
     if (!_IsObserved()) {
         return;
     }
+    // Sorted: a nested path follows the walked ancestor that covers it.
     HdSceneIndexObserver::DirtiedPrimEntries entries;
+    SdfPath walked;
     for (const SdfPath &path : changed) {
+        if (!walked.IsEmpty() && path.HasPrefix(walked)) {
+            continue;
+        }
         _DirtyXformSubtree(path, &entries);
+        walked = path;
     }
     if (!entries.empty()) {
         _SendPrimsDirtied(entries);
@@ -4397,7 +4525,7 @@ RigExecXformOverrideSceneIndex::GetPrim(const SdfPath &primPath) const
 {
     TRACE_FUNCTION();
     HdSceneIndexPrim prim = _GetInputSceneIndex()->GetPrim(primPath);
-    if (!prim.dataSource) {
+    if (!prim.dataSource || !_hasDeltas.load(std::memory_order_acquire)) {
         return prim;
     }
     GfMatrix4d delta(1.0);
@@ -4414,7 +4542,6 @@ RigExecXformOverrideSceneIndex::GetPrim(const SdfPath &primPath) const
     // driven-xform overlay sets it: the result is fully composed, and a
     // downstream consumer that re-composed a parent into it would double the
     // ancestors.
-    static const TfToken xformName = HdXformSchemaTokens->xform;
     const HdDataSourceBaseHandle xformSource =
         HdXformSchema::Builder()
             .SetMatrix(HdRetainedTypedSampledDataSource<GfMatrix4d>::New(
@@ -4424,7 +4551,8 @@ RigExecXformOverrideSceneIndex::GetPrim(const SdfPath &primPath) const
             .Build();
     prim.dataSource =
         HdOverlayContainerDataSource::OverlayedContainerDataSources(
-            HdRetainedContainerDataSource::New(1, &xformName, &xformSource),
+            HdRetainedContainerDataSource::New(HdXformSchemaTokens->xform,
+                                               xformSource),
             prim.dataSource);
     return prim;
 }

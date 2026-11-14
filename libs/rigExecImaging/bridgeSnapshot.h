@@ -17,6 +17,7 @@ PXR_NAMESPACE_USING_DIRECTIVE
 #include <map>
 #include <memory>
 #include <set>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -50,6 +51,9 @@ struct RigExecSnapshotCall {
     /// The evaluator's stage-edit serial: the authored reset walk reruns
     /// only when this or the driven provider set moves.
     uint64_t stageEditSerial = 0;
+    /// The evaluator's stage-structure serial: memoized primvar names are
+    /// dropped when it moves.
+    uint64_t stageStructureSerial = 0;
     std::vector<SdfPath> projectorTargets;
     std::vector<SdfPath> animatedMapPrimvars;
     const std::vector<SdfPath> &scalarPrimvarTargets;
@@ -89,6 +93,10 @@ public:
                              RigExecImagingSnapshot *snapshot);
 
 private:
+    /// The primvar token named by a `primvars:<name>` property, built from
+    /// text once per property and reused on later frames.
+    const TfToken &_PrimvarName(const SdfPath &propertyPath);
+
     /// Fills \p published with a chain's program publication (shader
     /// mode): the shared tables, this frame and the adjacent one.
     void _PublishGpuDeform(const RigExecSnapshotCall &call,
@@ -120,6 +128,9 @@ private:
              std::shared_ptr<const RigExecPublishedPrim::GpuDeformStatic>>
         _gpuDeformStatics;
     std::map<SdfPath, _GpuDeformLast> _gpuDeformLast;
+    /// Owner thread only, like every member here.
+    std::unordered_map<SdfPath, TfToken, SdfPath::Hash> _primvarNames;
+    uint64_t _primvarNamesSerial = 0;
 };
 
 } // namespace rigExec
