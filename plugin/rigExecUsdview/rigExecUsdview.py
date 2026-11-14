@@ -234,6 +234,7 @@ class RigExecUsdviewContainer(PluginContainer):
         self._warmRangeFrames = []
         self._stripPanel = None
         self._timelineOverlay = None
+        self._timeline = None
         self._rigPaths = []
         self._cachedStage = None
         self._stageNoticeKey = None
@@ -406,6 +407,26 @@ class RigExecUsdviewContainer(PluginContainer):
         AddToRigExecMenu(plugUIBuilder, "Animation Editors",
                          self._volumeWeights, 50)
         self._InstallOutlinerArcMenu()
+        self._InstallTimeline()
+
+    def _InstallTimeline(self):
+        """
+        Frame range fields on usdview's timeline.
+        Best effort: a usdview whose timeline this cannot find keeps it as
+        it was.
+        """
+        try:
+            try:
+                import timelineUI
+            except ImportError:
+                sys.path.insert(
+                    0, os.path.dirname(os.path.abspath(__file__)))
+                import timelineUI
+            self._timeline = timelineUI.Install(self._api, self._UndoStack)
+        except Exception as error:
+            self._timeline = None
+            Tf.Warn("rigExecUsdview: timeline additions unavailable: %s"
+                    % error)
 
     def _InstallOutlinerArcMenu(self):
         """
@@ -1249,6 +1270,12 @@ class RigExecUsdviewContainer(PluginContainer):
             self._ClearTimelineOverlay()
         except Exception:
             pass
+        timeline = getattr(self, "_timeline", None)
+        if timeline is not None:
+            try:
+                timeline.Shutdown()
+            except Exception:
+                pass
         self._RevokeStageNotice()
         try:
             self._ReleaseCachedStage()

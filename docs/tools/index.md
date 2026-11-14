@@ -55,6 +55,12 @@ stage when the gesture ends, as one undoable edit.
 | [View cube](../specs/view-cube.md) | **RigExec ▸ Viewport ▸ View Cube** | Orbit to a named view, and back home. |
 | Volume weights | **RigExec ▸ Animation Editors ▸ Volume Weight Editor** | Shape procedural weight fields. See [volume weights](../specs/volume-weights.md). |
 
+## Reviewing
+
+| Tool | Where | What it is for |
+|---|---|---|
+| [Frame range](timeline.md#frame-range) | The outer fields of the timeline | Set the stage's start and end frames; usdview's slider follows. |
+
 ## Inspecting
 
 | Tool | Where | What it is for |
