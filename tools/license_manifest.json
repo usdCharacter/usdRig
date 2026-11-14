@@ -4,22 +4,22 @@
   "status": "owner-confirmed inventory: every tracked file carries a recorded grant, and the unresolved category is left to the precedence-6 fallback, which reaches no tracked file. For the asset families the recorded evidence is the owner statement, not an independent chain of title",
   "resolved_by": "license inventory task (issue 44), sequenced on parent PR #46",
   "inventory_boundary": {
-    "base_commit": "86d0772b0e37651f399096997446aefadd3bdfc2",
-    "base_description": "main head this branch was rebased onto: it carries the merged PR #46 naming work, the Claude workflow that PR #50 added at .github/workflows/claude.yml, and PR #48's predicted-frame evaluation work, plus the imaging, skin-weight, normals-layout, Storm render-test and usdview undo work that landed after 543fbe98. Those commits added 7 files to the audited inventory and changed no legal text or archive member: libs/rigExecMath/normalsLayoutKernel.h, tests/fixtures/render/reference.txt and its two png baselines, tests/python/test_gizmo_document_edit.py, tests/testRigExecImagingRender.cpp and tests/testRigExecInteropNotices.cpp. The first boundary was 99b250f, main when the inventory was taken.",
+    "base_commit": "47955a01fc5757802617309354962f1eecb3ba21",
+    "base_description": "main head this branch was rebased onto: it carries the merged PR #46 naming work, the Claude workflow that PR #50 added at .github/workflows/claude.yml, PR #48's predicted-frame evaluation work, the imaging, skin-weight, normals-layout, Storm render-test and usdview undo work that landed after 543fbe98, and the usdview frame-range timeline and playblast work that landed as f5edea6, 47fcc2f and 47955a01. That timeline work added 10 files to the audited inventory over the previous boundary at 86d0772 and changed no legal text or archive member: bin/test/run_testusdview_timeline.bat, bin/test/run_testusdview_timeline.sh, docs/tools/timeline.md, plugin/rigExecUsdview/playblastModel.py, plugin/rigExecUsdview/playblastUI.py, plugin/rigExecUsdview/timelineModel.py, plugin/rigExecUsdview/timelineUI.py, tests/python/test_playblast_model.py, tests/python/test_timeline_model.py and tests/testUsdviewTimeline.py. The first boundary was 99b250f, main when the inventory was taken.",
     "parent_pr": 46,
     "parent_pr_state": "merged",
     "parent_pr_base": "main",
-    "main_head_at_boundary": "86d0772b0e37651f399096997446aefadd3bdfc2",
-    "open_prs_at_boundary": [],
-    "open_pr_note": "No pull request was open at the first boundary; the inventory and this task land as their own PRs on main.",
-    "rebase_rule": "If main moves, recompute every count in this manifest against the new head before use. The archive blobs below were verified unchanged between 66b24f2, 99b250f, 543fbe98 and 86d0772, and every count was re-derived against 86d0772.",
-    "tracked_files_total": 1798,
-    "tracked_files_at_base_commit": 1793,
+    "main_head_at_boundary": "47955a01fc5757802617309354962f1eecb3ba21",
+    "open_prs_at_boundary": [49],
+    "open_pr_note": "No pull request was open at the first boundary; the inventory and this task land as their own PRs on main. The only open pull request at this boundary is this branch's own PR #49, the five files named in count_scope below.",
+    "rebase_rule": "If main moves, recompute every count in this manifest against the new head before use. The archive blobs below were verified unchanged between 66b24f2, 99b250f, 543fbe98, 86d0772 and 47955a01, and every count was re-derived against 47955a01.",
+    "tracked_files_total": 1808,
+    "tracked_files_at_base_commit": 1803,
     "inventory_scope_excludes": [
       "thirdparty/**",
       "plugin/usdNoodles/**"
     ],
-    "tracked_files_in_scope": 1593,
+    "tracked_files_in_scope": 1603,
     "license_marker_files_in_scope": 28,
     "marker_scan_definition": "Plain-text files (no NUL byte) whose content contains 'copyright', 'license' or 'spdx' case-insensitively, measured over every file of the audited inventory outside the scope exclusions. An earlier unqualified scan counted 26 by matching binary payloads too; see totals.false_positive_note. The scan matches the word wherever it appears, grant or mere reference, so prose that names the checker moves the count: .github/workflows/usdrig.yml joined the set when CI started invoking tools/check_licenses.py, and docs/concepts/licensing.md joined it with its summary line in the generated docs/index.md catalog.",
     "archive_members_inventory": [
@@ -27,7 +27,7 @@
         "archive": "docs/examples/usdview_rolling_ball.zip",
         "members": 25,
         "legal_members": 14,
-        "refresh_note": "repacked on this boundary: the nine payload members keep their bytes, and the legal members gained the root LICENSE, NOTICE and THIRD_PARTY_NOTICES.md, the source-relative copies and tools/license_manifest.json; repacked again when the owner recorded the art families as MIT, which refreshed those texts and the manifest copy while the payload digest stayed identical",
+        "refresh_note": "not repacked on this boundary: its members and payload digest are those of the last repack, which gained the root LICENSE, NOTICE and THIRD_PARTY_NOTICES.md, the source-relative copies and tools/license_manifest.json, and was refreshed again when the owner recorded the art families as MIT",
         "blob_before_repack": "0b6b85d3c383fab0c7524c24027ffddb92a0ffad",
         "payload_members": 9,
         "payload_digest": "d1078b784f090d4ca81815f397cc3f8e81fd869e3a78f8b880a73e49a0bd6c80",
@@ -59,7 +59,7 @@
         "legal_members_mapped": 3
       }
     ],
-    "count_scope": "Every count is measured on the audited inventory, the files git tracks: the 1793 tracked files of base_commit plus tools/license_manifest.json and tools/check_licenses.py (original-build-and-tooling), docs/legal_members.py and docs/concepts/licensing.md (original-documentation) and tests/testRigExecLegalPackaging.py (original-test-suites). Each family's matched_files is measured on that same tree.",
+    "count_scope": "Every count is measured on the audited inventory, the files git tracks: the 1803 tracked files of base_commit plus tools/license_manifest.json and tools/check_licenses.py (original-build-and-tooling), docs/legal_members.py and docs/concepts/licensing.md (original-documentation) and tests/testRigExecLegalPackaging.py (original-test-suites). Each family's matched_files is measured on that same tree.",
     "partition_method": "tools/check_licenses.py re-derives the partition over the audited inventory - the files git tracks, so a file staged with git add is in it and a new file must be classified before it can reach a commit - and re-runs the marker scan. Anything else in the checkout is outside the audit and is reported as excluded rather than counted: a dependency tree staged or built inside the checkout, a build archive a CI job downloads into the checkout root, a nested checkout, or an uncommitted scratch file. The counts above are what that check expects on this tree."
   },
   "categories": {
@@ -71,7 +71,7 @@
   },
   "precedence": {
     "rule": "A path belongs to the family with the lowest precedence number whose globs match it, after that family's carve_outs are applied. Ties are impossible because each family's glob set is disjoint by carve-out. A path matching nothing falls to the precedence-6 fallback.",
-    "verification": "The 29 families below partition the 1798 files of the audited inventory exactly once: 1798 assigned, 0 unassigned, 0 double-assigned, 0 in fallback-unclassified. Verify with tools/check_licenses.py, which re-derives the partition from the checkout.",
+    "verification": "The 29 families below partition the 1808 files of the audited inventory exactly once: 1808 assigned, 0 unassigned, 0 double-assigned, 0 in fallback-unclassified. Verify with tools/check_licenses.py, which re-derives the partition from the checkout.",
     "byte_identity_note": "Legal texts shipped inside the checked-in archives are CRLF-normalized copies of their repository sources. They match the source after CRLF -> LF normalization, except the two THIRD_PARTY_NOTICES copies, which are content-stale (see distribution.gaps)."
   },
   "families": [
@@ -641,7 +641,7 @@
       ],
       "generator": "cmake/generateMoverSchema.py and cmake/rigExecMover.cmake generate mover schema and registration outputs into the build tree and the install tree (not tracked files)",
       "exception_scope": "The usdview icon images shipped with the installed plugin are project art, recorded in original-usdview-icons.",
-      "matched_files": 72
+      "matched_files": 76
     },
     {
       "id": "original-test-suites",
@@ -670,7 +670,7 @@
       ],
       "generator": null,
       "exception_scope": "Fixture data is separated from test code because fixtures include reference values produced by upstream solvers.",
-      "matched_files": 294
+      "matched_files": 297
     },
     {
       "id": "original-build-and-tooling",
@@ -708,7 +708,7 @@
       ],
       "generator": null,
       "exception_scope": "External tools invoked by these scripts (flatc, usdGenSchema, clang-format, MkDocs, Qt/PySide) are not relicensed by the root MIT; only their checked-in scripts are project work.",
-      "matched_files": 113
+      "matched_files": 115
     },
     {
       "id": "original-example-generators",
@@ -785,7 +785,7 @@
       ],
       "generator": null,
       "exception_scope": "Documentation prose quoting upstream license text (the Epic MIT block in THIRD_PARTY_NOTICES.md) reproduces that text under its own terms; quoting does not transfer ownership.",
-      "matched_files": 67
+      "matched_files": 68
     },
     {
       "id": "original-icon-atlas",
@@ -992,11 +992,11 @@
     }
   ],
   "totals": {
-    "assigned_files": 1798,
+    "assigned_files": 1808,
     "unassigned_files": 0,
     "double_assigned_files": 0,
     "by_category": {
-      "original": 1517,
+      "original": 1527,
       "derived": 166,
       "bundled": 45,
       "generated": 70,
@@ -1614,5 +1614,5 @@
     "archive-identity": "Compare every archive legal member whose source resolves here, after normalizing CRLF to LF: a status string never opts a member out of the comparison, and content drift is flagged while a line-ending difference is not. The recorded boundaries are the shipped manifest snapshot, checked for presence and shape only, and a member whose entry records a stale exception, which is checked to still differ from its source. An add-on-bound member is compared when the add-on root is supplied, and is reported unverifiable when it is not.",
     "required-text-form": "Every required_texts entry is an object with exactly one of path, url or prose. A bare string is a manifest error: a path entry is checked for existence in the tree, a url entry is an upstream text that is deliberately not vendored and is never checked against the filesystem, and a prose entry names documentation that is explicitly a source-only reference and is never expected in an install prefix or an archive."
   },
-  "count_scope": "Every count is measured on the audited inventory, the files git tracks: the 1793 tracked files of base_commit plus tools/license_manifest.json and tools/check_licenses.py (original-build-and-tooling), docs/legal_members.py and docs/concepts/licensing.md (original-documentation) and tests/testRigExecLegalPackaging.py (original-test-suites). Each family's matched_files is measured on that same tree."
+  "count_scope": "Every count is measured on the audited inventory, the files git tracks: the 1803 tracked files of base_commit plus tools/license_manifest.json and tools/check_licenses.py (original-build-and-tooling), docs/legal_members.py and docs/concepts/licensing.md (original-documentation) and tests/testRigExecLegalPackaging.py (original-test-suites). Each family's matched_files is measured on that same tree."
 }
