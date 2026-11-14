@@ -31,11 +31,13 @@ from pxr.Usdviewq.qt import QtCore, QtGui, QtWidgets
 try:
     import avarEditorModel as model
     import avarWidgets
+    import editorExtension
     import sessionRegistry
 except ImportError:                    # loader that did not add our dir
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import avarEditorModel as model
     import avarWidgets
+    import editorExtension
     import sessionRegistry
 
 
@@ -343,7 +345,10 @@ class ChannelRow(QtCore.QObject):
             # A replaced stage is not the one the drag previewed.
             if (value is not None and stage is not None
                     and stage == self.panel.Stage()):
-                with Usd.EditContext(stage, target):
+                # An editor extension may route this deferred commit to
+                # its document layer.
+                with Usd.EditContext(stage, target), \
+                        editorExtension.DocumentEdit(self._Api()):
                     self._Write(value, verb="Drag")
                 authored = True
         finally:
@@ -1101,36 +1106,29 @@ class AvarEditorPanel(QtWidgets.QDialog,
     def WriteChannel(self, channel, value):
         """Write one channel, and the same avar on every selected peer.
 
-        All of it inside the caller's EditScope, so the whole multi-prim
-        edit is ONE undo entry and the rig re-evaluates once. Writing the
-        peers in their own scopes would cost a full re-evaluation each --
-        the trap the picker's zero-pose records at ~190 ms per attribute
-        on the biped.
+        Inside the caller's EditScope, so the multi-prim edit is ONE undo
+        entry, and every write in one change block after all the reads, so
+        the stage sends one notice and the rig re-evaluates once.
         """
-        self._writing = True
-        try:
-            warning = model.WriteValue(channel, value, self._frame,
-                                       self._mode)
-            for peer in self.Peers(channel):
-                peerWarning = model.WriteValue(peer, value, self._frame,
-                                               self._mode)
-                warning = warning or peerWarning
-        finally:
-            self._writing = False
-        self._Redraw()
-        return warning
+        channels = [channel] + self.Peers(channel)
+        return self._Apply(
+            [model.PlanWrite(c, value, self._frame, self._mode)
+             for c in channels])
 
     def ResetChannel(self, channel):
+        channels = [channel] + self.Peers(channel)
+        return self._Apply(
+            [model.PlanReset(c, self._frame, self._mode) for c in channels])
+
+    def _Apply(self, plans):
+        """Author `plans` (model.Plan*) together; the first warning."""
         self._writing = True
         try:
-            warning = model.ResetValue(channel, self._frame, self._mode)
-            for peer in self.Peers(channel):
-                peerWarning = model.ResetValue(peer, self._frame, self._mode)
-                warning = warning or peerWarning
+            warnings = model.ApplyPlans(plans)
         finally:
             self._writing = False
         self._Redraw()
-        return warning
+        return next((w for w in warnings if w), None)
 
     def _Redraw(self):
         update = getattr(self._api, "UpdateViewport", None)
@@ -1256,20 +1254,13 @@ class AvarEditorPanel(QtWidgets.QDialog,
         """Every channel back to rest, as ONE undo entry."""
         if not self._rows:
             return
-        warnings = []
         channels = [row.channel for row in self._rows]
-        # No Sdf.ChangeBlock here: ResetValue READS the composed channel
-        # (to promote a weaker layer's keys) and a read inside a block
-        # holding earlier writes is the hazard gizmoMath documents. The
-        # EditScope already makes the whole reset one undo entry.
         with self.EditScope(channels, "Reset %s" % self._prim.GetName()):
             self._writing = True
             try:
-                for channel in channels:
-                    warning = model.ResetValue(channel, self._frame,
-                                               self._mode)
-                    if warning:
-                        warnings.append(warning)
+                warnings = [w for w in model.ApplyPlans(
+                    [model.PlanReset(c, self._frame, self._mode)
+                     for c in channels]) if w]
             finally:
                 self._writing = False
         self._Redraw()

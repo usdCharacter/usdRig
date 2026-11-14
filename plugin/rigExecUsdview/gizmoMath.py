@@ -1540,43 +1540,52 @@ def SetAnimated(attr, value, time):
     key, AutoEase on both tangents (graph editor design spec 1.2) -- and
     a key the artist has already shaped keeps its tangents.
     """
+    writes = AnimatedWrites(attr, value, time)
+    # One notice: a first key creates the spec and then sets the spline.
+    with Sdf.ChangeBlock():
+        for write in writes:
+            write()
+
+
+def AnimatedWrites(attr, value, time, adopt=True):
+    """
+    SetAnimated's reads done now, its writes returned as callables, so a
+    caller can author several attributes in one Sdf.ChangeBlock after
+    reading them all. `adopt` False skips copying a weaker layer's
+    samples (the caller already copies them).
+    """
     from pxr import Ts
     if attr.GetVariability() == Sdf.VariabilityUniform:
-        attr.Set(value)
-        return
+        return [lambda: attr.Set(value)]
     valueType = attr.GetTypeName().type
     if (time.IsDefault() or attr.GetNumTimeSamples() > 0 or
             not Ts.Spline.IsSupportedValueType(valueType)):
-        if not time.IsDefault():
-            _AdoptTimeSamples(attr)
-        attr.Set(value, time)
-        return
+        writes = []
+        if adopt and not time.IsDefault():
+            writes.extend(_AdoptionWrites(attr))
+        writes.append(lambda: attr.Set(value, time))
+        return writes
     # Imported inside the function: graphModel imports THIS module at
     # module scope, so a top-level import here would be a cycle.
     import graphModel
     spline = graphModel.SplineFor(attr)
     graphModel.AuthorKnot(spline, time.GetValue(), value)
-    # One notice, not two: on a channel's first key USD creates the spec
-    # and then sets the spline, and the rig would update for each.
-    with Sdf.ChangeBlock():
-        attr.SetSpline(spline)
+    return [lambda: attr.SetSpline(spline)]
 
 
-def _AdoptTimeSamples(attr):
+def _AdoptionWrites(attr):
     """
-    Copy `attr`'s composed time samples into the edit target when they come
-    from another layer, as the spline branch copies the composed spline: a
-    layer's samples replace a weaker layer's outright, so keying one frame
+    Copies of `attr`'s composed time samples into the edit target when they
+    come from another layer, as the spline branch copies the composed spline:
+    a layer's samples replace a weaker layer's outright, so keying one frame
     there would leave a single key.
     """
     target = attr.GetStage().GetEditTarget()
     if not attr.GetNumTimeSamples() or target.GetLayer().GetNumTimeSamplesForPath(
             target.MapToSpecPath(attr.GetPath())):
-        return
-    samples = [(t, attr.Get(t)) for t in attr.GetTimeSamples()]
-    with Sdf.ChangeBlock():
-        for t, sample in samples:
-            attr.Set(sample, t)
+        return []
+    return [lambda t=t, sample=attr.Get(t): attr.Set(sample, t)
+            for t in attr.GetTimeSamples()]
 
 
 class Writer(object):

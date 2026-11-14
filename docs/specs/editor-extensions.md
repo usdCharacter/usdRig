@@ -178,17 +178,21 @@ implementation is `rigExecUndo.UndoStack`. The protocol:
 - `Clear()`
 - `AddListener(fn)`: `fn` takes no arguments.
 - `AddFlusher(fn)` (optional): `fn` takes no arguments and runs before every
-  `Undo()` and `Redo()`. The graph editor registers its queued commit here.
+  `Undo()` and `Redo()`. The graph editor and the avar editor register
+  their queued commits here.
 - `LIMIT`
 
 With an input owner, RigExec registers no Undo/Redo shortcuts (gizmo toolbar,
 gizmo window shortcuts, graph editor window). Its Undo and Redo buttons still
 act on the stack.
 
-`DocumentEdit(api)` wraps only the deferred commits of the gizmo and the
-graph editor, the RigExec authoring steps that happen outside the host's own
-event dispatch. Return a
-context manager that selects the edit target layer for its duration.
+`DocumentEdit(api)` wraps the deferred commits of the gizmo, the graph
+editor and the avar editor's scrub, the RigExec authoring steps that happen
+outside the host's own event dispatch. Return a context manager that selects
+the edit target layer for its duration. The gizmo also enters it at the press
+to choose the layer its drag creates xformOps in, so the op structure and the
+committed values share a layer. When the commit's layer differs from the
+press's, the one undo entry covers both layers.
 
 ## Node-graph history backend
 
@@ -216,5 +220,6 @@ Editors install their filters and shortcuts and use `rigExecUndo.UndoStack`.
 
 - Call everything on the owner (Qt main) thread.
 - Evaluation, caching, playback, and imaging author nothing to the stage;
-  an extension's `DocumentEdit` covers only the gizmo's commit.
+  an extension's `DocumentEdit` covers only the editors' commits named in
+  the undo stack protocol.
 - Answer `OwnsInput` the same way for the whole session.

@@ -621,33 +621,34 @@ def PromoteAnimationToEditTarget(attr):
 
     Returns True when something was copied.
     """
+    writes = _PromotionWrites(attr)
+    with Sdf.ChangeBlock():
+        for write in writes:
+            write()
+    return bool(writes)
+
+
+def _PromotionWrites(attr):
+    """PromoteAnimationToEditTarget's reads done now; its writes returned."""
     layer, spec = _EditTargetSpec(attr)
     if layer is None:
-        return False
+        return []
     if spec is not None:
         if spec.HasSpline() or layer.ListTimeSamplesForPath(spec.path):
-            return False           # the edit target already owns the keys
-    copied = False
+            return []              # the edit target already owns the keys
     try:
         hasSpline = attr.HasSpline()
     except AttributeError:
         hasSpline = False
     if hasSpline:
         from pxr import Ts
-        attr.SetSpline(Ts.Spline(attr.GetSpline()))
-        copied = True
-    elif attr.GetNumTimeSamples() > 0:
-        # Read EVERY sample before writing any: the first Set() gives the
-        # edit target time samples of its own, and from then on the
-        # composed read resolves from that layer alone -- so reading and
-        # writing in one pass copies sample 1 into every later frame.
-        samples = [(t, attr.Get(t)) for t in attr.GetTimeSamples()]
-        with Sdf.ChangeBlock():
-            for t, value in samples:
-                if value is not None:
-                    attr.Set(value, Usd.TimeCode(t))
-        copied = True
-    return copied
+        spline = Ts.Spline(attr.GetSpline())
+        return [lambda: attr.SetSpline(spline)]
+    # Every sample is read here, before any is written: once the edit
+    # target holds a sample the composed read resolves from it alone.
+    return [lambda t=t, value=value: attr.Set(value, Usd.TimeCode(t))
+            for t, value in ((t, attr.Get(t)) for t in attr.GetTimeSamples())
+            if value is not None]
 
 
 _KEYED_SOURCES = None
@@ -693,8 +694,37 @@ def _DefaultWarning(attr, time, hadKeys):
 
 
 def WriteValue(channel, value, time, mode):
+    """Author `value` on the channel. Returns a warning string or None.
+    See PlanWrite."""
+    return ApplyPlans([PlanWrite(channel, value, time, mode)])[0]
+
+
+def ResetValue(channel, time, mode):
+    """Reset the channel to rest. Returns a warning string or None.
+    See PlanReset."""
+    return ApplyPlans([PlanReset(channel, time, mode)])[0]
+
+
+def ApplyPlans(plans):
     """
-    Author `value` on the channel. Returns a warning string or None.
+    Author every plan's writes in one Sdf.ChangeBlock, so listeners see one
+    notice for the whole multi-channel edit. Each plan's reads were taken
+    when it was made, so nothing is read inside the block. Returns each
+    plan's warning, in order.
+    """
+    with Sdf.ChangeBlock():
+        for writes, _ in plans:
+            for write in writes:
+                write()
+    return [warning() if callable(warning) else warning
+            for _, warning in plans]
+
+
+def PlanWrite(channel, value, time, mode):
+    """
+    (writes, warning) for authoring `value` on the channel: the reads
+    happen now; `writes` are callables for ApplyPlans; `warning` is None,
+    a string, or a callable read after the writes.
 
     WRITE_ANIMATION keys the current frame through gizmoMath.SetAnimated
     (a spline knot, or a time sample on a channel that already has
@@ -713,17 +743,21 @@ def WriteValue(channel, value, time, mode):
     if channel.family not in (VALUE_FLOAT, VALUE_INT) or \
             mode == WRITE_DEFAULT:
         hadKeys = IsAnimated(attr) if mode == WRITE_DEFAULT else False
-        attr.Set(value)
-        return _DefaultWarning(attr, time, hadKeys)
-    if not time.IsDefault():
-        PromoteAnimationToEditTarget(attr)
-    gizmoMath.SetAnimated(attr, value, time)
-    return None
+        return ([lambda: attr.Set(value)],
+                lambda: _DefaultWarning(attr, time, hadKeys))
+    return _AnimatedPlan(attr, value, time), None
 
 
-def ResetValue(channel, time, mode):
+def _AnimatedPlan(attr, value, time):
+    promotion = [] if time.IsDefault() else _PromotionWrites(attr)
+    return promotion + gizmoMath.AnimatedWrites(
+        attr, value, time, adopt=not promotion)
+
+
+def PlanReset(channel, time, mode):
     """
-    Put the channel back to the rig's rest: what attr.Clear() leaves.
+    (writes, warning) putting the channel back to the rig's rest: what
+    attr.Clear() leaves.
 
     A channel with keys, in Animation mode, gets its fallback KEYED at
     the current frame instead -- Clear() would only remove the default
@@ -733,21 +767,20 @@ def ResetValue(channel, time, mode):
     shows through, which is the rest pose the rig was built with.
     """
     attr = channel.attr
-    if channel.Animated() and mode == WRITE_ANIMATION and \
+    hadKeys = channel.Animated()
+    if hadKeys and mode == WRITE_ANIMATION and \
             channel.family in (VALUE_FLOAT, VALUE_INT) and \
             not time.IsDefault():
-        PromoteAnimationToEditTarget(attr)
-        gizmoMath.SetAnimated(attr, channel.Coerce(channel.fallback), time)
-        return None
-    hadKeys = channel.Animated()
-    attr.Clear()
+        return _AnimatedPlan(attr, channel.Coerce(channel.fallback),
+                             time), None
+    warning = None
     if hadKeys and mode == WRITE_DEFAULT:
         # Clearing a default under keys changes nothing the artist can
         # see; say why, and where the reset that would work lives.
-        return ("%s: the channel's keys outrank the cleared default; use "
-                "Animation to key the rest value at this frame."
-                % attr.GetPath())
-    return None
+        warning = ("%s: the channel's keys outrank the cleared default; "
+                   "use Animation to key the rest value at this frame."
+                   % attr.GetPath())
+    return [lambda: attr.Clear()], warning
 
 
 def PeerChannels(channel, prims):

@@ -27,10 +27,12 @@ import rigexec_test_env
 
 rigexec_test_env.SetupPluginTest()
 
-from pxr import Sdf, Usd  # noqa: E402
+from pxr import Sdf, Tf, Usd  # noqa: E402
 from pxr.Usdviewq.qt import QtWidgets  # noqa: E402
 
+import avarEditorModel  # noqa: E402
 import avarEditorUI  # noqa: E402
+import editorExtension  # noqa: E402
 import gizmoMath  # noqa: E402
 import gizmoPreview  # noqa: E402
 import rigExecUndo  # noqa: E402
@@ -335,6 +337,140 @@ def TestEscapeCancelsScrub():
         panel.close()
 
 
+class _Routing(editorExtension.EditorExtension):
+    def __init__(self, stage, layer):
+        self.stage = stage
+        self.layer = layer
+        self.calls = 0
+
+    def DocumentEdit(self, usdviewApi):
+        self.calls += 1
+        return Usd.EditContext(self.stage, self.layer)
+
+
+def TestScrubCommitRoutesThroughDocumentEdit():
+    """The queued scrub commit is a deferred commit: an editor extension's
+    DocumentEdit picks its layer, and the undo entry is recorded there."""
+    stage, prim = _Stage()
+    document = Sdf.Layer.CreateAnonymous("document.usda")
+    stage.GetRootLayer().subLayerPaths.append(document.identifier)
+    routing = _Routing(stage, document)
+    editorExtension.Register(routing)
+    undo = rigExecUndo.UndoStack()
+    panel = avarEditorUI.AvarEditorPanel(_Api(stage, prim), undo)
+    try:
+        tx = panel.Row("tx")
+        path = tx.channel.attr.GetPath()
+        _Scrub(tx, (2.0, 6.0))
+        tx.field.scrubFinished.emit()
+        QtWidgets.QApplication.processEvents()
+        _Check(routing.calls >= 1, "the commit asked for the document layer")
+        spec = document.GetAttributeAtPath(path)
+        _Check(spec is not None and spec.default == 6.0
+               and _SessionSpec(stage, tx.channel.attr) is None,
+               "the scrub landed in the document layer, not the edit target")
+        _Check(len(undo._undo) == 1, "one undo entry: %d" % len(undo._undo))
+        undo.Undo()
+        _Check(document.GetAttributeAtPath(path) is None,
+               "Undo removed it from the document layer")
+    finally:
+        panel.close()
+        editorExtension.Unregister(routing)
+
+
+def _PeerStage():
+    """Three controls with the same avars, every tx keyed in the root layer
+    at frames 1 and 3; the session layer is the edit target."""
+    stage = Usd.Stage.CreateInMemory()
+    prims = []
+    for name in ("A", "B", "C"):
+        prim = stage.DefinePrim("/Rig/" + name, "Xform")
+        for avar in ("tx", "ty"):
+            attr = prim.CreateAttribute("avars:" + avar,
+                                        Sdf.ValueTypeNames.Double,
+                                        custom=True)
+            attr.Set(0.0)
+        tx = prim.GetAttribute("avars:tx")
+        tx.Set(1.0, 1.0)
+        tx.Set(3.0, 3.0)
+        prims.append(prim)
+    stage.SetEditTarget(Usd.EditTarget(stage.GetSessionLayer()))
+    return stage, prims
+
+
+def _CountNotices(stage):
+    notices = []
+    key = Tf.Notice.Register(Usd.Notice.ObjectsChanged,
+                             lambda notice, sender: notices.append(notice),
+                             stage)
+    return notices, key
+
+
+def TestPeerWriteIsOneNotice():
+    """A write reaching every selected peer authors in one change block,
+    after promoting each peer's weaker keys, as one undo entry."""
+    stage, prims = _PeerStage()
+    api = _Api(stage, prims[-1])
+    api.selectedPrims = list(prims)
+    api.frame = Usd.TimeCode(2.0)
+    undo = rigExecUndo.UndoStack()
+    panel = avarEditorUI.AvarEditorPanel(api, undo)
+    try:
+        panel._OnFrameChanged(2.0)
+        tx = panel.Row("tx")
+        session = stage.GetSessionLayer()
+        notices, key = _CountNotices(stage)
+        try:
+            tx.SetValue(7.0)
+        finally:
+            key.Revoke()
+        _Check(len(notices) == 1, "one ObjectsChanged notice, got %d"
+               % len(notices))
+        for prim in prims:
+            path = prim.GetPath().AppendProperty("avars:tx")
+            samples = session.ListTimeSamplesForPath(path)
+            _Check(list(samples) == [1.0, 2.0, 3.0],
+                   "%s: the keys were promoted and frame 2 keyed: %s"
+                   % (path, list(samples)))
+            _Check(session.QueryTimeSample(path, 2.0) == 7.0
+                   and session.QueryTimeSample(path, 3.0) == 3.0,
+                   "%s keeps the curve and keys the value" % path)
+        _Check(len(undo._undo) == 1, "one undo entry: %d" % len(undo._undo))
+        undo.Undo()
+        _Check(all(session.GetAttributeAtPath(
+            p.GetPath().AppendProperty("avars:tx")) is None for p in prims),
+            "Undo removed every peer's write")
+    finally:
+        panel.close()
+
+
+def TestResetAllIsOneNotice():
+    stage, prims = _PeerStage()
+    prim = prims[0]
+    for avar in ("tx", "ty"):
+        prim.GetAttribute("avars:" + avar).Set(5.0)
+    undo = rigExecUndo.UndoStack()
+    panel = avarEditorUI.AvarEditorPanel(_Api(stage, prim), undo)
+    try:
+        panel.SetWriteMode(avarEditorModel.WRITE_DEFAULT)
+        session = stage.GetSessionLayer()
+        notices, key = _CountNotices(stage)
+        try:
+            panel.ResetAll()
+        finally:
+            key.Revoke()
+        _Check(len(notices) == 1, "one ObjectsChanged notice, got %d"
+               % len(notices))
+        _Check(prim.GetAttribute("avars:ty").Get() == 0.0,
+               "the session override is cleared")
+        _Check(len(undo._undo) == 1, "one undo entry: %d" % len(undo._undo))
+        undo.Undo()
+        _Check(prim.GetAttribute("avars:ty").Get() == 5.0,
+               "Undo restored the override")
+    finally:
+        panel.close()
+
+
 def main():
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     _ = app
@@ -346,6 +482,9 @@ def main():
     TestScrubPreviewsAndQueuesOneCommit()
     TestQueuedScrubFlushesBeforeUndoAndEdits()
     TestEscapeCancelsScrub()
+    TestScrubCommitRoutesThroughDocumentEdit()
+    TestPeerWriteIsOneNotice()
+    TestResetAllIsOneNotice()
     print("test_avar_editor_live OK")
 
 
