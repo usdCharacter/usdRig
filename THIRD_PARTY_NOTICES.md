@@ -98,9 +98,11 @@ described file by file.
 
 The icon atlas (`icons/`), the usdview icons (`plugin/rigExecUsdview/icons/`),
 the `asset_lib` component library, the example artwork, the documentation
-assets and the test fixtures are recorded there as families carrying no license
-grant yet. Their provenance awaits owner confirmation, so the root MIT license
-does not cover them and no tool may treat them as licensed.
+assets and the test fixtures are recorded there as project-authored art under
+the root MIT license, on the owner's statement that this art is unique to the
+project (2026-11-14). The one asset in `examples/` that is not ours is the
+Squarebit Eye shader above: it keeps its own EULA and nothing here relicenses
+it.
 
 Generated output — the `flatc` headers in `libs/rigExecBinary/generated`, the
 schema resources under `plugin/rigExecSchema/resources` and the node pages in

@@ -116,5 +116,7 @@ are inventoried there rather than spelled out here.
 The icon atlas (icons/), the usdview icons
 (plugin/rigExecUsdview/icons/), the asset_lib component library, the example
 artwork, the documentation assets and the test fixtures are recorded there as
-families carrying no license grant yet. Their terms await owner confirmation;
-until an answer is recorded, the project MIT license does not cover them.
+project-authored art covered by the MIT license above, on the owner's
+statement that this art is unique to the project (2026-11-14). The one
+license-bound asset in examples/ is the Squarebit Eye shader, which keeps its
+own EULA and is not relicensed here.

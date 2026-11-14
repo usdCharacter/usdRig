@@ -374,6 +374,58 @@ class Partition(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(unverifiable, [])
 
+    def test_the_project_art_families_record_an_mit_grant(self):
+        """The owner answers for the project's art (PR #49, 2026-11-14): the
+        asset families are original MIT, and nothing tracked is left without a
+        grant. Only the Squarebit Eye shader, whose EULA is not ours to
+        relicense, stays outside MIT in the asset trees."""
+        files = check_licenses.tracked_files(ROOT)
+        self.assertIsNotNone(files, "the test tree must be a git checkout")
+        legal_holder = next(family["holder"] for family in MANIFEST["families"]
+                            if family["id"] == "original-legal-records")
+        for family_id in ("original-icon-atlas", "original-usdview-icons",
+                          "original-component-library", "original-example-assets",
+                          "original-doc-assets", "original-test-fixtures"):
+            record = next((family for family in MANIFEST["families"]
+                           if family["id"] == family_id), None)
+            self.assertIsNotNone(record, f"{family_id} is missing")
+            self.assertGreater(record["matched_files"], 0, f"{family_id} is empty")
+            self.assertEqual(record["category"], "original", family_id)
+            self.assertEqual(record["spdx"], "MIT", family_id)
+            self.assertEqual(record["holder"], legal_holder, family_id)
+            self.assertTrue(any("owner statement" in line
+                                for line in record["provenance"]),
+                            f"{family_id} records no owner answer")
+        art_paths = ("icons/", "plugin/rigExecUsdview/icons/", "asset_lib/",
+                     "examples/", "docs/examples/", "docs/images/",
+                     "docs/gifs/", "docs/assets/", "tests/fixtures/")
+        for name in files:
+            if not name.startswith(art_paths):
+                continue
+            family_id = check_licenses.family_of(name, MANIFEST["families"])
+            if family_id == "squarebit-eye-shader":
+                continue
+            record = next(family for family in MANIFEST["families"]
+                          if family["id"] == family_id)
+            self.assertEqual(record["category"], "original", f"{name} in {family_id}")
+            self.assertEqual(record["spdx"], "MIT", f"{name} in {family_id}")
+            self.assertEqual(record["holder"], legal_holder, f"{name} in {family_id}")
+
+    def test_no_tracked_file_is_left_without_a_grant(self):
+        """The unresolved category survives only as the precedence-6 fallback,
+        so a new file that no family claims is a failure, not an asset with no
+        grant."""
+        self.assertEqual([family["id"] for family in MANIFEST["families"]
+                          if family["category"] == "unresolved"],
+                         ["fallback-unclassified"])
+        self.assertEqual(MANIFEST["totals"]["by_category"]["unresolved"], 0)
+        files = check_licenses.tracked_files(ROOT)
+        self.assertIsNotNone(files, "the test tree must be a git checkout")
+        falling = [name for name in files
+                   if check_licenses.family_of(name, MANIFEST["families"])
+                   == "fallback-unclassified"]
+        self.assertEqual(falling, [])
+
     def test_a_dependency_staged_in_the_checkout_stays_outside_the_audit(self):
         """CI builds OpenUSD inside the checkout and downloads its build
         archives into the checkout root; neither is part of the audited tree,

@@ -1,6 +1,6 @@
 ---
 title: Licensing and provenance
-summary: What the project MIT license covers, which files keep upstream terms, which assets carry no grant yet, and how the legal texts travel to installs and archives.
+summary: What the project MIT license covers, which files keep upstream terms, and how the legal texts travel to installs and archives.
 order: 80
 ---
 
@@ -37,10 +37,10 @@ repository.
 | **derived** | built from a named upstream source | the upstream terms keep applying |
 | **bundled** | third-party material carried in the tree or shipped in an artifact | its own terms travel with it |
 | **generated** | machine output of a checked-in generator or an external tool | origin only: the grant comes from the generator and its inputs |
-| **unresolved** | no provenance evidence in the repository | no grant at all until an owner answers |
+| **unresolved** | no provenance evidence in the repository | no grant at all until an owner records an origin |
 
-At the manifest's inventory boundary the partition covers 1791 files: 1051
-original, 166 derived, 45 bundled, 70 generated and 459 unresolved, with
+At the manifest's inventory boundary the partition covers 1791 files: 1510
+original, 166 derived, 45 bundled, 70 generated and none unresolved, with
 nothing unassigned and nothing double-assigned. A path belongs to the family
 with the lowest precedence number whose globs match it, after that family's
 carve-outs; a path matching nothing falls to the precedence-6 fallback, which
@@ -76,10 +76,11 @@ The MIT grant is asserted for project-authored material: `libs/**`,
 `python/**`, `plugin/**`, `tests/**`, `bin/**`, `cmake/**`, `tools/**`,
 `CMakeLists.txt`, `justfile`, the CI configuration, `.clang-format`,
 `docs/requirements.txt`, `mkdocs.yml`, the handwritten documentation,
-`skills/**`, the example generator scripts and the example README files, and
-the legal records themselves — minus the carve-outs below: the OpenUSD- and
-Epic-derived kernels, `plugin/usdNoodles/**`, the generated schema resources,
-`tests/fixtures/**`, the icon atlases and the asset library.
+`skills/**`, the example generator scripts and the example README files, the
+project art families below, and the legal records themselves — minus the
+carve-outs below: the OpenUSD- and Epic-derived kernels, `plugin/usdNoodles/**`,
+the generated schema resources, and the Squarebit Eye shader in
+`examples/biped/shaders`.
 
 Five files carry their own MIT header rather than relying on the root
 LICENSE: `plugin/rigExecUsdview/profilerModel.py`,
@@ -115,25 +116,31 @@ implements; a reference to a paper grants nothing, and the harmonics
 constraint is reimplemented from a description because that repository
 states no license.
 
-## Assets with no grant yet
+## The art families the owner answers for
 
-Six families are recorded as unresolved. Their SPDX stays null, the checker
-refuses to report them as licensed, and nothing may treat them as covered by
-the root MIT:
+Six families were inventoried with no provenance evidence and stayed
+unresolved until the owner answered: the art in this repository is unique to
+the project, so it is MIT like the code (`original-*` families in the
+manifest, and the answered entries in `owner_questions`):
 
-| Family | Paths | Files | Open question |
+| Family | Paths | Files | What the owner answered |
 |---|---|---|---|
-| icon atlas | `icons/**` | 45 | who drew them, and are any taken from OpenUSD, usdview or an icon set |
-| usdview icons | `plugin/rigExecUsdview/icons/**` | 28 | project-drawn or copied from OpenUSD resources |
-| component library | `asset_lib/**` | 14 | the seven component pairs (`component.json` + `component.usda`): authored here, exported from a DCC, or taken from a component library |
-| example assets | `examples/**` | 198 | who authored the biped geometry, the bust artwork and its textures, and the rubberhose art |
-| documentation assets | `docs/examples/**`, `docs/images/**`, `docs/gifs/**`, `docs/assets/**`, `docs/*.svg` | 128 | provenance of the tutorial images and the photographic `docs/examples/textures/basketball.png` |
-| test fixtures | `tests/fixtures/**` | 46 | whether Epic's MIT license covers `rigLogicReference.inc`, values produced by upstream OpenRigLogic |
+| `original-icon-atlas` | `icons/**` | 45 | project-drawn art under MIT |
+| `original-usdview-icons` | `plugin/rigExecUsdview/icons/**` | 28 | project-drawn art under MIT; the TOST terms of the plugin code around them say nothing about the images |
+| `original-component-library` | `asset_lib/**` | 14 | project work under MIT |
+| `original-example-assets` | `examples/**` | 198 | the biped geometry, the bust and rubberhose artwork and its textures are unique project art under MIT |
+| `original-doc-assets` | `docs/examples/**`, `docs/images/**`, `docs/gifs/**`, `docs/assets/**`, `docs/*.svg` | 128 | project captures and tutorial stages under MIT |
+| `original-test-fixtures` | `tests/fixtures/**` | 46 | project MIT; `rigLogicReference.inc` holds values upstream OpenRigLogic produced, and that upstream is MIT itself, so no separate grant is needed |
 
-These are open decisions, not oversights: the manifest lists each one under
-`owner_questions` with the family it blocks. The two icon families ship into
-installed resources today with no provenance notice, which is the most
-concrete gap in the distribution.
+The recorded evidence for these six is the owner's statement, not an
+independent chain of title; the `copyright-holder` question in
+`owner_questions` stays open for that reason. Two facts survive the answer:
+`examples/biped/shaders/sbe_eye.glslfx` is carved out to
+`squarebit-eye-shader` and keeps the Squarebit Eye EULA, because purchased
+third-party art is not ours to relicense, and the two icon families still ship
+into installed resources with no notice beside them — the root MIT covers them,
+but an installed consumer sees nothing. That is the concrete distribution gap
+the manifest's `gaps` records.
 
 ## How the legal texts travel
 

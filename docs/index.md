@@ -24,7 +24,7 @@ Storm viewport with the rig guides on.
 | ![Paths and walking](../icons/concept.png) | [Paths and walking](concepts/paths.md) | Drive a rig along a BasisCurves path by arc length, author and edit the path, and steer a baked program with a moving window. |
 | ![2D skeletons, binding and smart-bone step tables](../icons/concept.png) | [2D skeletons, binding and smart-bone step tables](concepts/skeletons-2d.md) | Flat cut-out rigs: bones, the skeleton solve, binding artwork to bones, and dials whose step tables drive whole action frames. |
 | ![Weight display in usdview](../icons/concept.png) | [Weight display in usdview](concepts/weight-display.md) | Choose volume guides and surface color mappings for resolved weight fields. |
-| ![Licensing and provenance](../icons/concept.png) | [Licensing and provenance](concepts/licensing.md) | What the project MIT license covers, which files keep upstream terms, which assets carry no grant yet, and how the legal texts travel to installs and archives. |
+| ![Licensing and provenance](../icons/concept.png) | [Licensing and provenance](concepts/licensing.md) | What the project MIT license covers, which files keep upstream terms, and how the legal texts travel to installs and archives. |
 
 ## Rig
 

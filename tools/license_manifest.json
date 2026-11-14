@@ -1,7 +1,7 @@
 {
   "manifest": "usdRig license and provenance inventory",
   "schema_version": 1,
-  "status": "inventory baseline; unresolved families need owner confirmation before any automatic blessing",
+  "status": "owner-confirmed inventory: every tracked file carries a recorded grant, and the unresolved category is left to the precedence-6 fallback, which reaches no tracked file. For the asset families the recorded evidence is the owner statement, not an independent chain of title",
   "resolved_by": "license inventory task (issue 44), sequenced on parent PR #46",
   "inventory_boundary": {
     "base_commit": "543fbe98d6295e9f77623ce867802426d5b26e4a",
@@ -27,7 +27,7 @@
         "archive": "docs/examples/usdview_rolling_ball.zip",
         "members": 25,
         "legal_members": 14,
-        "refresh_note": "repacked on this boundary: the nine payload members keep their bytes, and the legal members gained the root LICENSE, NOTICE and THIRD_PARTY_NOTICES.md, the source-relative copies and tools/license_manifest.json",
+        "refresh_note": "repacked on this boundary: the nine payload members keep their bytes, and the legal members gained the root LICENSE, NOTICE and THIRD_PARTY_NOTICES.md, the source-relative copies and tools/license_manifest.json; repacked again when the owner recorded the art families as MIT, which refreshed those texts and the manifest copy while the payload digest stayed identical",
         "blob_before_repack": "0b6b85d3c383fab0c7524c24027ffddb92a0ffad",
         "payload_members": 9,
         "payload_digest": "d1078b784f090d4ca81815f397cc3f8e81fd869e3a78f8b880a73e49a0bd6c80",
@@ -67,7 +67,7 @@
     "derived": "built from a named upstream source and keeps that upstream's terms",
     "bundled": "third-party material carried in the tree or shipped in an artifact",
     "generated": "machine output of a checked-in generator or external tool; origin class is the fact, the license grant comes from the inputs",
-    "unresolved": "no provenance evidence in the repository; owner confirmation required before any automatic blessing"
+    "unresolved": "no provenance evidence in the repository; the precedence-6 fallback carries it and reaches no tracked file, so a new file that lands there is a manifest gap until an owner records its origin"
   },
   "precedence": {
     "rule": "A path belongs to the family with the lowest precedence number whose globs match it, after that family's carve_outs are applied. Ties are impossible because each family's glob set is disjoint by carve-out. A path matching nothing falls to the precedence-6 fallback.",
@@ -208,7 +208,7 @@
         "THIRD_PARTY_NOTICES.md: ports of OpenRigLogic radial-basis solvers, dense layers/activations and the animated-map conditional table, following RigLogic 13.5.0 at commit 9ca65ac08b64a1ea5f0d79466e64706b3ac524ba; OpenRigLogic MIT text quoted inline",
         "docs/concepts/riglogic.md: same claim with the upstream link",
         "THIRD_PARTY_NOTICES.md states no OpenRigLogic source file, DNA file or MetaHuman asset is included",
-        "tests/fixtures/rigLogicReference.inc holds values produced by OpenRigLogic's own solver at that commit (see unresolved-test-fixtures)"
+        "tests/fixtures/rigLogicReference.inc holds values produced by OpenRigLogic's own solver at that commit (see original-test-fixtures)"
       ],
       "required_texts": [
         {
@@ -515,7 +515,7 @@
         }
       ],
       "generator": "docs/build_pages.py (input: docs/operator_notes.py, libs/rigExecSchema/schema.usda)",
-      "exception_scope": "Do not audit the generated pages as independent authored prose; audit the generator inputs. Node pages link icons/ and docs/gifs/ assets whose provenance is unresolved.",
+      "exception_scope": "Do not audit the generated pages as independent authored prose; audit the generator inputs. Node pages link icons/ and docs/gifs/ assets, which the owner records as project art.",
       "matched_files": 66
     },
     {
@@ -608,7 +608,7 @@
         },
         {
           "glob": "plugin/rigExecUsdview/icons/**",
-          "handled_by": "unresolved-usdview-icons"
+          "handled_by": "original-usdview-icons"
         },
         {
           "glob": "plugin/rigExecUsdview/volumeWeightUI.py",
@@ -640,7 +640,7 @@
         }
       ],
       "generator": "cmake/generateMoverSchema.py and cmake/rigExecMover.cmake generate mover schema and registration outputs into the build tree and the install tree (not tracked files)",
-      "exception_scope": "The usdview icon images shipped with the installed plugin are unresolved, not original (see unresolved-usdview-icons).",
+      "exception_scope": "The usdview icon images shipped with the installed plugin are project art, recorded in original-usdview-icons.",
       "matched_files": 72
     },
     {
@@ -653,7 +653,7 @@
       "carve_outs": [
         {
           "glob": "tests/fixtures/**",
-          "handled_by": "unresolved-test-fixtures"
+          "handled_by": "original-test-fixtures"
         }
       ],
       "spdx": "MIT",
@@ -731,7 +731,7 @@
         }
       ],
       "generator": null,
-      "exception_scope": "The stages and textures these generators produce are NOT covered here; they fall to unresolved-example-assets.",
+      "exception_scope": "The stages and textures these generators produce are not covered here; they land in original-example-assets, which the owner also records as project MIT.",
       "matched_files": 42
     },
     {
@@ -788,50 +788,60 @@
       "matched_files": 67
     },
     {
-      "id": "unresolved-icons-atlas",
+      "id": "original-icon-atlas",
       "precedence": 5,
-      "category": "unresolved",
+      "category": "original",
       "globs": [
         "icons/**"
       ],
       "carve_outs": [],
-      "spdx": null,
-      "holder": null,
-      "holder_status": "unresolved",
+      "spdx": "MIT",
+      "holder": "Nick Burkard",
+      "holder_status": "stated by the root license; the owner confirmed project authorship of these assets on PR #49 (2026-11-14)",
       "provenance": [
-        "45 image files (43 png, 1 ico, 1 svg) with no header, notice or provenance record anywhere in the repository",
+        "45 image files (43 png, 1 ico, 1 svg) with no per-file header or notice of their own",
         "CMakeLists copies the icons named by the schema's nodeGraphIcon entries into the schema resources and installs them to ${RIGEXEC_INSTALL_PLUGINDIR}/rigExecSchema/resources/icons, so they ship in installed binaries",
-        "docs/package_usdview_ball.py packs docs/examples/usdview_rolling_ball.zip with icons/animation.png, icons/pose.png and icons/refresh.png as members"
+        "docs/package_usdview_ball.py packs docs/examples/usdview_rolling_ball.zip with icons/animation.png, icons/pose.png and icons/refresh.png as members",
+        "owner statement: PR #49 review comment by n-burk (2026-11-14): 'all files should be MIT. Assume art is unique and under MIT'"
       ],
-      "required_texts": [],
+      "required_texts": [
+        {
+          "path": "LICENSE"
+        }
+      ],
       "generator": null,
-      "exception_scope": "No automatic blessing. Owner must answer before these can be classified original.",
+      "exception_scope": "Project-drawn art under the root MIT. The icons copy into the schema resources and the tutorial archive with no notice beside them (see gaps).",
       "matched_files": 45
     },
     {
-      "id": "unresolved-usdview-icons",
+      "id": "original-usdview-icons",
       "precedence": 5,
-      "category": "unresolved",
+      "category": "original",
       "globs": [
         "plugin/rigExecUsdview/icons/**"
       ],
       "carve_outs": [],
-      "spdx": null,
-      "holder": null,
-      "holder_status": "unresolved",
+      "spdx": "MIT",
+      "holder": "Nick Burkard",
+      "holder_status": "stated by the root license; the owner confirmed project authorship of these assets on PR #49 (2026-11-14)",
       "provenance": [
-        "28 png icons with no attribution; the surrounding usdview plugin code is Meta/Pixar TOST-derived, so icon provenance cannot be inferred from the directory",
-        "CMakeLists installs plugin/rigExecUsdview/ with PATTERN \"*.png\", so these images ship in the installed plugin"
+        "28 png icons with no per-file attribution; the surrounding usdview plugin code is Meta/Pixar TOST-derived, so the icons cannot inherit provenance from that directory",
+        "CMakeLists installs plugin/rigExecUsdview/ with PATTERN \"*.png\", so these images ship in the installed plugin",
+        "owner statement: PR #49 review comment by n-burk (2026-11-14): 'all files should be MIT. Assume art is unique and under MIT'"
       ],
-      "required_texts": [],
+      "required_texts": [
+        {
+          "path": "LICENSE"
+        }
+      ],
       "generator": null,
-      "exception_scope": "No automatic blessing; if any icon came from OpenUSD or usdview resources it needs TOST attribution and a notice entry.",
+      "exception_scope": "Project-drawn art under the root MIT. The TOST terms of the surrounding usdview plugin code do not extend to these images and are not a claim on them.",
       "matched_files": 28
     },
     {
-      "id": "unresolved-component-library",
+      "id": "original-component-library",
       "precedence": 5,
-      "category": "unresolved",
+      "category": "original",
       "globs": [
         "asset_lib/**"
       ],
@@ -849,22 +859,27 @@
           "handled_by": "original-documentation"
         }
       ],
-      "spdx": null,
-      "holder": null,
-      "holder_status": "unresolved",
+      "spdx": "MIT",
+      "holder": "Nick Burkard",
+      "holder_status": "stated by the root license; the owner confirmed project authorship of these assets on PR #49 (2026-11-14)",
       "provenance": [
-        "7 component pairs (component.json + component.usda) for arm, eye, head, leg, mouth, spine and torso, with no provenance record",
-        "skills/compose-character/SKILL.md describes this library as the target component set for character assembly, which makes its geometry a downstream dependency"
+        "7 component pairs (component.json + component.usda) for arm, eye, head, leg, mouth, spine and torso",
+        "skills/compose-character/SKILL.md describes this library as the target component set for character assembly, which makes its geometry a downstream dependency",
+        "owner statement: PR #49 review comment by n-burk (2026-11-14): 'all files should be MIT. Assume art is unique and under MIT'"
       ],
-      "required_texts": [],
+      "required_texts": [
+        {
+          "path": "LICENSE"
+        }
+      ],
       "generator": null,
-      "exception_scope": "No automatic blessing; component geometry may be derived from an external asset library.",
+      "exception_scope": "Component stages and JSON under the root MIT. compose.py, test_components.py and README.md keep their own family and header.",
       "matched_files": 14
     },
     {
-      "id": "unresolved-example-assets",
+      "id": "original-example-assets",
       "precedence": 5,
-      "category": "unresolved",
+      "category": "original",
       "globs": [
         "examples/**"
       ],
@@ -882,23 +897,28 @@
           "handled_by": "squarebit-eye-shader"
         }
       ],
-      "spdx": null,
-      "holder": null,
-      "holder_status": "unresolved",
+      "spdx": "MIT",
+      "holder": "Nick Burkard",
+      "holder_status": "stated by the root license; the owner confirmed project authorship of these assets on PR #49 (2026-11-14)",
       "provenance": [
         "198 files: biped stage family (40 usda/usdc plus Biped.usdz), the 2D bust and rubberhose art with 120+ hand-drawn textures, example .usd/.usda stages and spider_leg components",
-        "names such as Biped_body_psd.usda and Biped_face_psd.usda suggest import from external authoring files",
-        "THIRD_PARTY_NOTICES.md claims 'The RigLogic example stages in docs/examples are original project work' but says nothing about the biped or bust art"
+        "the owner answers for the biped model geometry, the 2D bust and rubberhose artwork and their texture atlases as unique project-authored art",
+        "THIRD_PARTY_NOTICES.md already states the RigLogic example stages are original project work; the PR #49 answer extends that to the rest of examples/",
+        "owner statement: PR #49 review comment by n-burk (2026-11-14): 'all files should be MIT. Assume art is unique and under MIT'"
       ],
-      "required_texts": [],
+      "required_texts": [
+        {
+          "path": "LICENSE"
+        }
+      ],
       "generator": "the .py generators in examples/ produce some of these stages, but not the textures or the biped model geometry",
-      "exception_scope": "No automatic blessing. Owner must confirm authorship for the biped geometry, the bust/rubberhose artwork and the texture atlases; the Squarebit shader is already carved out.",
+      "exception_scope": "All project MIT except examples/biped/shaders/sbe_eye.glslfx, which is carved out to squarebit-eye-shader and keeps the Squarebit Eye EULA: purchased third-party art cannot be relicensed here.",
       "matched_files": 198
     },
     {
-      "id": "unresolved-doc-assets",
+      "id": "original-doc-assets",
       "precedence": 5,
-      "category": "unresolved",
+      "category": "original",
       "globs": [
         "docs/examples/**",
         "docs/images/**",
@@ -907,38 +927,48 @@
         "docs/*.svg"
       ],
       "carve_outs": [],
-      "spdx": null,
-      "holder": null,
-      "holder_status": "unresolved",
+      "spdx": "MIT",
+      "holder": "Nick Burkard",
+      "holder_status": "stated by the root license; the owner confirmed project authorship of these assets on PR #49 (2026-11-14)",
       "provenance": [
         "128 files: 52 doc example stages, 2 archives, docs/examples/textures/basketball.png, 41 gif animation captures plus 21 rolling-ball jpg frames and a tutorial mp4, 7 screenshot pngs, docs/assets/logo.svg, docs/assets/stylesheets/extra.css, docs/imaging-execution-architecture.svg",
-        "THIRD_PARTY_NOTICES.md asserts the docs/examples RigLogic stages are original project work, which is an owner assertion, not independent evidence",
-        "the two archives embed license texts and third-party runtime code (see distribution mapping)"
+        "the grant for these assets rests on the owner statement, not on an independent chain of title (see owner_questions copyright-holder)",
+        "the two archives embed license texts and third-party runtime code (see distribution mapping)",
+        "owner statement: PR #49 review comment by n-burk (2026-11-14): 'all files should be MIT. Assume art is unique and under MIT'"
       ],
-      "required_texts": [],
+      "required_texts": [
+        {
+          "path": "LICENSE"
+        }
+      ],
       "generator": "docs/package_usdview_ball.py and docs/package_godot_example.py produce the two archives; the gifs and screenshots are captures of the product",
-      "exception_scope": "No automatic blessing for the photographic basketball texture or any third-party UI artwork; screenshots of the project's own UI are project captures once confirmed.",
+      "exception_scope": "Project captures, screenshots and tutorial stages under the root MIT. The two archives embed third-party license texts mapped under distribution.",
       "matched_files": 128
     },
     {
-      "id": "unresolved-test-fixtures",
+      "id": "original-test-fixtures",
       "precedence": 5,
-      "category": "unresolved",
+      "category": "original",
       "globs": [
         "tests/fixtures/**"
       ],
       "carve_outs": [],
-      "spdx": null,
-      "holder": null,
-      "holder_status": "unresolved",
+      "spdx": "MIT",
+      "holder": "Nick Burkard",
+      "holder_status": "stated by the root license; the owner confirmed project authorship of these assets on PR #49 (2026-11-14)",
       "provenance": [
         "46 files: 34 usda stages, 5 golden captures, 2 rigexec programs, 2 headers, 1 .inc, 1 json, 1 README",
-        "tests/fixtures/rigLogicReference.inc holds values produced by OpenRigLogic's own solver and table at commit 9ca65ac08b64a1ea5f0d79466e64706b3ac524ba, per THIRD_PARTY_NOTICES.md: upstream-generated data inside a project test tree",
-        "tests/fixtures/README.md documents the explicit reference configuration for fixed floating-point captures"
+        "tests/fixtures/rigLogicReference.inc holds values produced by OpenRigLogic's own solver and table at commit 9ca65ac08b64a1ea5f0d79466e64706b3ac524ba, per THIRD_PARTY_NOTICES.md: upstream-generated data whose upstream license is MIT",
+        "tests/fixtures/README.md documents the explicit reference configuration for fixed floating-point captures",
+        "owner statement: PR #49 review comment by n-burk (2026-11-14): 'all files should be MIT. Assume art is unique and under MIT'"
       ],
-      "required_texts": [],
+      "required_texts": [
+        {
+          "path": "LICENSE"
+        }
+      ],
       "generator": "rigExecBake and the golden suite generate some fixtures; the rigLogicReference values come from upstream Epic code",
-      "exception_scope": "No automatic blessing. Upstream-generated reference data is the one fixture class that needs an explicit attribution decision before fixtures can be treated as project-original.",
+      "exception_scope": "Project MIT, with the upstream-generated data recorded: tests/fixtures/rigLogicReference.inc holds values OpenRigLogic's own solver produced at the pinned commit, whose upstream license is MIT, so no separate grant is needed; the missing per-file attribution header stays a gap.",
       "matched_files": 46
     },
     {
@@ -966,11 +996,11 @@
     "unassigned_files": 0,
     "double_assigned_files": 0,
     "by_category": {
-      "original": 1051,
-      "unresolved": 459,
-      "generated": 70,
+      "original": 1510,
+      "derived": 166,
       "bundled": 45,
-      "derived": 166
+      "generated": 70,
+      "unresolved": 0
     },
     "files_with_license_or_copyright_markers_in_scope": 28,
     "false_positive_note": "examples/2d/bust_dd_b/textures/MouthLine.png matches a marker scan only because compressed PNG bytes happen to contain the substring 'spdx'; a checker must scan text files only or decode binary payloads before matching."
@@ -1183,7 +1213,7 @@
         }
       ],
       "other_members": "docs/examples/tutorial_rolling_ball.usda, docs/examples/tutorial_rolling_ball_free.usda, docs/examples/textures/basketball.png, icons/control.png, icons/fk_chain.png, icons/float_math_mover.png, icons/joint.png, icons/matrix_mover.png, icons/static_weight.png, manifest.json, README.txt",
-      "gap": "bundled icons and the basketball texture carry no provenance note inside the archive"
+      "gap": "the bundled icons and the basketball texture travel in the archive with no per-asset note; the root LICENSE and NOTICE members cover them"
     },
     "godot_zip": {
       "archive": "docs/examples/godot_rolling_ball.zip",
@@ -1459,7 +1489,7 @@
               "status": "absent from the checked-in archive; USDZ members are payload only today"
             }
           ],
-          "gap": "stages only; the archive carries no legal member and its provenance is unresolved like the rest of examples/"
+          "gap": "stages only; the archive carries no legal member, so its MIT terms travel with nothing alongside it"
         }
       ]
     }
@@ -1470,7 +1500,7 @@
     "Archive legal texts are CRLF-encoded while the repository sources are LF; comparison must normalize line endings.",
     "The Epic OpenRigLogic MIT text has no separate file: it is quoted in THIRD_PARTY_NOTICES.md, which CMake installs, while the three port files carry no attribution header and no license text of their own.",
     "The Poppins OFL text lives only in plugin/usdNoodles/THIRD_PARTY_LICENSES.txt; CMake installs that file under share/rigExec/plugin/usdNoodles/ so the notice link resolves, but it has no renamed alias under share/rigExec/licenses.",
-    "45 icons/ images and 28 plugin/rigExecUsdview/icons/ images are installed into schema and usdview resources with no provenance record.",
+    "45 icons/ images and 28 plugin/rigExecUsdview/icons/ images are installed into schema and usdview resources with no license notice beside them; the root MIT covers them, but an installed consumer sees no grant.",
     "docs/examples/godot_rolling_ball.zip is generated from an untracked sibling checkout, so a fresh clone cannot reproduce it or verify its contents against the manifest.",
     "tests/fixtures/rigLogicReference.inc contains reference values produced by upstream Epic code, with no per-file attribution."
   ],
@@ -1478,52 +1508,68 @@
     {
       "id": "copyright-holder",
       "ask": "LICENSE and NOTICE name a single holder, Nick Burkard. Git history also carries commits authored by other names ('Walt', 'Cursor Agent', the bot account). Is there a contributor assignment or CLA that keeps sole copyright with Nick Burkard, or should NOTICE record joint authorship?",
-      "blocks": "every original-category family"
+      "blocks": "every original-category family",
+      "resolved": false
     },
     {
       "id": "icons-atlas",
       "ask": "Who drew the 45 icons/ images and the 45 schema node icons they feed, and are any of them taken from OpenUSD, usdview, or an icon set? If they are third-party, which license, and what notice must ship with the installed resources?",
-      "blocks": "unresolved-icons-atlas"
+      "blocks": "original-icon-atlas",
+      "answer": "owner statement on PR #49 (2026-11-14): the owner records the icon atlas as project art under MIT",
+      "resolved": true
     },
     {
       "id": "usdview-icons",
       "ask": "Are the 28 plugin/rigExecUsdview/icons/ pngs project-drawn or copied from OpenUSD/usdview resources? Project-drawn is acceptable only with an owner statement.",
-      "blocks": "unresolved-usdview-icons"
+      "blocks": "original-usdview-icons",
+      "answer": "owner statement on PR #49 (2026-11-14): the owner records the usdview icons as project art under MIT",
+      "resolved": true
     },
     {
       "id": "asset-lib-components",
       "ask": "Where did the 12 asset_lib component stage/JSON files come from: authored here, exported from a DCC, or taken from an external component library?",
-      "blocks": "unresolved-component-library"
+      "blocks": "original-component-library",
+      "answer": "owner statement on PR #49 (2026-11-14): the owner records the component library as project work under MIT",
+      "resolved": true
     },
     {
       "id": "example-artwork",
       "ask": "Who authored the biped model geometry, the bust_dd_a/bust_dd_b artwork and its 120+ textures, and the rubberhose art? Are any derived from purchased, stock, or tutorial assets that carry separate terms?",
-      "blocks": "unresolved-example-assets"
+      "blocks": "original-example-assets",
+      "answer": "owner statement on PR #49 (2026-11-14): the owner records the example artwork as unique project art under MIT",
+      "resolved": true
     },
     {
       "id": "basketball-texture",
       "ask": "docs/examples/textures/basketball.png looks photographic. Is it project-captured, licensed stock, or public domain? It ships inside the usdview tutorial archive.",
-      "blocks": "unresolved-doc-assets"
+      "blocks": "original-doc-assets",
+      "answer": "owner statement on PR #49 (2026-11-14): the owner records it as project art under MIT",
+      "resolved": true
     },
     {
       "id": "riglogic-reference-data",
       "ask": "tests/fixtures/rigLogicReference.inc holds values generated by Epic's OpenRigLogic solver at commit 9ca65ac. Does Epic's MIT license cover that data, and should the fixture carry an attribution header like the port files?",
-      "blocks": "unresolved-test-fixtures"
+      "blocks": "original-test-fixtures",
+      "answer": "owner statement on PR #49 (2026-11-14): the owner records MIT for the fixture tree; the upstream OpenRigLogic license is MIT, so the reference values need no separate grant",
+      "resolved": true
     },
     {
       "id": "godot-addon-checkout",
       "ask": "The Godot tutorial archive is packaged from ../godot_rigExec, which is not in this repository. Should the addon sources be vendored, or should the manifest pin a commit hash and archive SHA256 so the shipped zip is verifiable?",
-      "blocks": "distribution.godot_zip"
+      "blocks": "distribution.godot_zip",
+      "resolved": false
     },
     {
       "id": "squarebit-eula-text",
       "ask": "The Squarebit Eye EULA exists only as a URL. Should its text be checked in next to examples/biped/shaders/sbe_eye.glslfx, and must it be included in Biped.usdz and any installed artifact that carries the shader?",
-      "blocks": "squarebit-eye-shader"
+      "blocks": "squarebit-eye-shader",
+      "resolved": false
     },
     {
       "id": "stale-archive-notices",
       "ask": "Both archives were packaged before the third_party -> thirdparty rename and before the Epic section was added. Re-run the packers and commit the regenerated archives, or record the expected staleness in the manifest?",
-      "blocks": "distribution.usdview_zip, distribution.godot_zip"
+      "blocks": "distribution.usdview_zip, distribution.godot_zip",
+      "resolved": false
     }
   ],
   "prose_references": [
