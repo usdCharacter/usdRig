@@ -11,6 +11,7 @@
 # Tested headlessly by tests/python/test_layer_stack_model.py.
 #
 import os
+import weakref
 
 from pxr import Sdf
 
@@ -30,6 +31,10 @@ class LayerNode(object):
         self.hidden = hidden
         self.canMute = canMute
         self.children = []
+
+    @property
+    def dirty(self):
+        return self.layer is not None and bool(self.layer.dirty)
 
     @property
     def displayName(self):
@@ -89,12 +94,65 @@ def MutedSet(stage):
     return set() if stage is None else set(stage.GetMutedLayers())
 
 
+# A stage drops a muted layer, so unsaved edits in a dirty or anonymous layer
+# (and in its dirty or anonymous sublayers) are lost unless something else
+# holds it. Keyed by stage, then by the muted identifier.
+_heldLayers = weakref.WeakKeyDictionary()
+
+
+def _HoldTree(stage, identifier):
+    layers = []
+    seen = set()
+
+    def visit(layer):
+        if layer is None or layer.identifier in seen:
+            return
+        seen.add(layer.identifier)
+        if layer.dirty or layer.anonymous:
+            layers.append(layer)
+        for subLayerPath in layer.subLayerPaths:
+            visit(Sdf.Layer.Find(
+                Sdf.ComputeAssetPathRelativeToLayer(layer, subLayerPath)))
+
+    layer = Sdf.Layer.Find(identifier)
+    if layer is None:
+        for used in stage.GetUsedLayers():
+            if used.identifier == identifier:
+                layer = used
+                break
+    visit(layer)
+    return layers
+
+
+def _Hold(stage, identifiers):
+    try:
+        held = _heldLayers.setdefault(stage, {})
+    except TypeError:
+        return
+    for identifier in identifiers:
+        held[identifier] = _HoldTree(stage, identifier)
+
+
+def _Release(stage, identifiers):
+    held = _heldLayers.get(stage)
+    if held is None:
+        return
+    for identifier in identifiers:
+        held.pop(identifier, None)
+
+
+def HeldLayers(stage, identifier):
+    """The layers kept alive for a muted identifier."""
+    return list(_heldLayers.get(stage, {}).get(identifier, []))
+
+
 def ApplyMutedSet(stage, wanted):
     """Make the muted set exactly . True when anything moved.
 
     One MuteAndUnmuteLayers call, not a loop: each one resyncs the whole
     stage and the container deactivates the rig around the change, so two
-    calls is two recompiles of the character.
+    calls is two recompiles of the character. Dirty and anonymous layers
+    are held across the mute so unmuting finds their edits.
     """
     if stage is None:
         return False
@@ -104,7 +162,9 @@ def ApplyMutedSet(stage, wanted):
     toUnmute = sorted(current - wanted)
     if not toMute and not toUnmute:
         return False
+    _Hold(stage, toMute)
     stage.MuteAndUnmuteLayers(toMute, toUnmute)
+    _Release(stage, toUnmute)
     return True
 
 
@@ -143,11 +203,9 @@ def SetMuted(stage, identifier, muted):
         return False
     if bool(stage.IsLayerMuted(identifier)) == bool(muted):
         return False
-    if muted:
-        stage.MuteLayer(identifier)
-    else:
-        stage.UnmuteLayer(identifier)
-    return True
+    return ApplyMutedSet(
+        stage, (MutedSet(stage) | {identifier}) if muted
+        else (MutedSet(stage) - {identifier}))
 
 
 def UnmuteAll(stage):
@@ -157,4 +215,5 @@ def UnmuteAll(stage):
     muted = list(stage.GetMutedLayers())
     if muted:
         stage.MuteAndUnmuteLayers([], muted)
+        _Release(stage, muted)
     return len(muted)

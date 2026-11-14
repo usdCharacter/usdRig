@@ -157,6 +157,8 @@ class LayerStackPanel(QtWidgets.QDialog):
             item.setForeground(0, QtGui.QBrush(QtGui.QColor(128, 128, 128)))
         if node.missing:
             item.setText(0, "%s  [missing]" % node.displayName)
+        elif node.dirty:
+            item.setText(0, "%s *" % node.displayName)
         for child in node.children:
             self._AddNode(item, child)
         return item

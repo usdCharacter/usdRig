@@ -47,6 +47,33 @@ def _Tree(directory):
     return Usd.Stage.Open(os.path.join(directory, "root.usda"))
 
 
+def _TestMuteKeepsDirtyLayers(directory):
+    _Write(directory, "keep_root.usda",
+           '(\n    subLayers = [@./keep_a.usda@]\n)\n')
+    _Write(directory, "keep_a.usda", 'def Xform "A"\n{\n}\n')
+    stage = Usd.Stage.Open(os.path.join(directory, "keep_root.usda"))
+    keepA = os.path.join(directory, "keep_a.usda")
+    aId = Sdf.Layer.Find(keepA).identifier
+    anon = Sdf.Layer.CreateAnonymous("anon.usda")
+    Sdf.CreatePrimInLayer(anon, "/Anon")
+    stage.GetRootLayer().subLayerPaths.append(anon.identifier)
+    anonId = anon.identifier
+    del anon
+    layerA = Sdf.Layer.Find(aId)
+    Sdf.CreatePrimInLayer(layerA, "/Dirty")
+    del layerA
+    _Check(lsm.BuildTree(stage).children[0].dirty, "dirty layer is flagged")
+    _Check(lsm.ApplyMutedSet(stage, {aId, anonId}), "mute both")
+    _Check(lsm.HeldLayers(stage, aId) and lsm.HeldLayers(stage, anonId),
+           "dirty and anonymous layers are held while muted")
+    _Check(lsm.ApplyMutedSet(stage, set()), "unmute both")
+    _Check(not lsm.HeldLayers(stage, aId), "holder released on unmute")
+    _Check(stage.GetPrimAtPath("/Dirty").IsValid(),
+           "unsaved edit survives mute and unmute")
+    _Check(stage.GetPrimAtPath("/Anon").IsValid(),
+           "anonymous layer survives mute and unmute")
+
+
 def main():
     directory = tempfile.mkdtemp(prefix="layerStackModel")
     try:
@@ -89,6 +116,7 @@ def main():
         _Check(stage.GetPrimAtPath("/Char/FacePicker").IsValid(),
                "the face branch is back")
         _Check(lsm.BuildTree(None) is None, "no stage, no tree")
+        _TestMuteKeepsDirtyLayers(directory)
     finally:
         shutil.rmtree(directory, ignore_errors=True)
     print("test_layer_stack_model: ALL PASSED")
