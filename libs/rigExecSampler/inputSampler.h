@@ -19,6 +19,7 @@
 #include "pxr/base/tf/type.h"
 #include "pxr/base/vt/value.h"
 #include "pxr/usd/usd/attribute.h"
+#include "pxr/usd/usd/attributeQuery.h"
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usd/usd/timeCode.h"
 
@@ -55,9 +56,16 @@ bool RigExecInputArrayFrom(const PXR_NS::VtValue &value, RrInputTag tag,
 /// Get clears their HasValue, while a successful empty array remains a value.
 /// A Default-only array restores its captured default. False with the reader's
 /// reason when it refuses.
-bool RigExecSampleInputAt(const PXR_NS::UsdAttribute &attribute,
-                          size_t index, const std::string &name,
-                          RrInputTag tag, PXR_NS::UsdTimeCode time,
+bool RigExecSampleInputAt(const PXR_NS::UsdAttribute &attribute, size_t index,
+                          const std::string &name, RrInputTag tag,
+                          PXR_NS::UsdTimeCode time,
+                          RigExecRuntimeReader *reader, std::string *error);
+
+/// As above, reading through a retained \p query, which caches its resolve:
+/// rebuild it after a stage change.
+bool RigExecSampleInputAt(const PXR_NS::UsdAttributeQuery &query, size_t index,
+                          const std::string &name, RrInputTag tag,
+                          PXR_NS::UsdTimeCode time,
                           RigExecRuntimeReader *reader, std::string *error);
 
 class RigExecInputSampler {
@@ -97,17 +105,29 @@ public:
         _staticStale = true;
     }
 
-    /// Off by default. On: a bound input that is not Animated and whose
+    /// Off by default (every Apply reads the live stage). On: the sampler
+    /// also retains a UsdAttributeQuery per input, rebuilt at each refresh;
+    /// a bound input that is not Animated and whose
     /// attribute cannot vary with time is read only by a sampling Apply that
     /// refreshes (the first after Bind, Invalidate or NoteStageChanged, or
     /// one whose time changes Default-ness), which also re-decides which
     /// inputs are static. Order-free with Bind.
-    void SetStaticInputSkip(bool skip) { _staticSkip = skip; }
+    void SetStaticInputSkip(bool skip)
+    {
+        _staticStale = _staticStale || skip != _staticSkip;
+        _staticSkip = skip;
+    }
     /// The stage changed: the next Apply that samples reads every input and
     /// re-decides which are static. Owner thread; sets a flag only.
-    void NoteStageChanged() { _staticStale = true; }
+    void NoteStageChanged()
+    {
+        _staticStale = true;
+    }
     /// Inputs the last sampling Apply read (a cost counter for tests).
-    size_t GetLastReadCount() const { return _lastReads; }
+    size_t GetLastReadCount() const
+    {
+        return _lastReads;
+    }
 
     /// Whether Bind resolved this slot to a stage attribute. Includes static
     /// SourceBacked inputs and private slots; false for captured defaults.
@@ -125,10 +145,16 @@ public:
     }
 
     /// One line per input Bind could not resolve, naming it and why.
-    const std::vector<std::string> &GetWarnings() const { return _warnings; }
+    const std::vector<std::string> &GetWarnings() const
+    {
+        return _warnings;
+    }
 
     /// Captured temporal inputs; static SourceBacked rows are sampled separately.
-    size_t GetAnimatedCount() const { return _animatedCount; }
+    size_t GetAnimatedCount() const
+    {
+        return _animatedCount;
+    }
 
 private:
     struct _Bound {
@@ -136,6 +162,8 @@ private:
         std::string name;
         RrInputTag type = RrInputTag::Double;
         PXR_NS::UsdAttribute attribute;
+        PXR_NS::UsdAttributeQuery query;
+        bool hasFallback = false;
         bool animated = true;
         /// Not Animated, and the attribute reads one value at every numeric
         /// time; decided at Bind and at every refresh.
@@ -157,6 +185,6 @@ private:
     size_t _lastReads = 0;
 };
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_SAMPLER_INPUT_SAMPLER_H
+#endif // RIGEXEC_SAMPLER_INPUT_SAMPLER_H

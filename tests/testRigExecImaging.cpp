@@ -7326,6 +7326,8 @@ _UpstreamPlaybackSteps(const std::string &fixture)
     const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(t));
     CHECK(evaluator.GetUpstreamInputPaths().size() == 2);
     RrInputValue value;
+    CHECK(!RigExecInputValueFrom(VtValue(30.0f), RrInputTag::Double, &value));
+    CHECK(!RigExecInputValueFrom(VtValue(), RrInputTag::Double, &value));
     CHECK(RigExecInputValueFrom(VtValue(30.0), RrInputTag::Double, &value));
     CHECK(reader->SetSampledInputAt(rz, value, &error));
     CHECK(RigExecInputValueFrom(VtValue(space), RrInputTag::Matrix4d, &value));

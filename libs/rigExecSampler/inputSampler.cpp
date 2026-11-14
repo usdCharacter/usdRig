@@ -13,6 +13,9 @@
 #include "pxr/base/vt/types.h"
 #include "pxr/usd/sdf/path.h"
 #include "pxr/usd/sdf/valueTypeName.h"
+#include "pxr/usd/usd/attributeQuery.h"
+#include "pxr/usd/usd/prim.h"
+#include "pxr/usd/usd/primDefinition.h"
 #include "pxr/usd/usd/resolveInfo.h"
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -30,7 +33,54 @@ _StaticInput(bool animated, const UsdAttribute &attribute)
     return !animated && attribute && !attribute.ValueMightBeTimeVarying();
 }
 
-}  // namespace
+// Exact held-type test without a TfType lookup (no registry lock).
+bool
+_Holds(const VtValue &value, RrInputTag tag)
+{
+    switch (tag) {
+    case RrInputTag::Double:
+        return value.IsHolding<double>();
+    case RrInputTag::Float:
+        return value.IsHolding<float>();
+    case RrInputTag::Bool:
+        return value.IsHolding<bool>();
+    case RrInputTag::Int:
+        return value.IsHolding<int>();
+    case RrInputTag::Matrix4d:
+        return value.IsHolding<GfMatrix4d>();
+    case RrInputTag::Token:
+        return value.IsHolding<TfToken>();
+    case RrInputTag::Vec3d:
+        return value.IsHolding<GfVec3d>();
+    case RrInputTag::Vec3f:
+        return value.IsHolding<GfVec3f>();
+    case RrInputTag::Vec3i:
+        return value.IsHolding<GfVec3i>();
+    case RrInputTag::IntArray:
+        return value.IsHolding<VtIntArray>();
+    case RrInputTag::FloatArray:
+        return value.IsHolding<VtFloatArray>();
+    case RrInputTag::DoubleArray:
+        return value.IsHolding<VtDoubleArray>();
+    case RrInputTag::Vec2fArray:
+        return value.IsHolding<VtVec2fArray>();
+    case RrInputTag::Vec3fArray:
+        return value.IsHolding<VtVec3fArray>();
+    case RrInputTag::Vec3dArray:
+        return value.IsHolding<VtVec3dArray>();
+    case RrInputTag::Matrix4dArray:
+        return value.IsHolding<VtMatrix4dArray>();
+    case RrInputTag::TokenArray:
+        return value.IsHolding<VtTokenArray>();
+    case RrInputTag::BoolArray:
+        return value.IsHolding<VtBoolArray>();
+    default:
+        break;
+    }
+    return false;
+}
+
+} // namespace
 
 TfType
 RigExecInputTagType(RrInputTag tag)
@@ -125,11 +175,10 @@ RigExecInputTagName(RrInputTag tag)
 }
 
 bool
-RigExecInputValueFrom(const VtValue &value, RrInputTag tag,
-                      RrInputValue *out)
+RigExecInputValueFrom(const VtValue &value, RrInputTag tag, RrInputValue *out)
 {
     if (!out || tag == RrInputTag::Token || RrInputTagIsArray(tag) ||
-        value.GetType() != RigExecInputTagType(tag)) {
+        !_Holds(value, tag)) {
         return false;
     }
     RrInputValue v;
@@ -167,8 +216,8 @@ RigExecInputValueFrom(const VtValue &value, RrInputTag tag,
         break;
     }
     case RrInputTag::Vec3i: {
-        const auto &i=value.UncheckedGet<GfVec3i>();
-        v.vec3i={int32_t(i[0]),int32_t(i[1]),int32_t(i[2])};
+        const auto &i = value.UncheckedGet<GfVec3i>();
+        v.vec3i = {int32_t(i[0]), int32_t(i[1]), int32_t(i[2])};
         break;
     }
     case RrInputTag::Token:
@@ -182,8 +231,7 @@ bool
 RigExecInputArrayFrom(const VtValue &value, RrInputTag tag,
                       RigExecRuntimeArray *out)
 {
-    if (!out || !RrInputTagIsArray(tag) ||
-        value.GetType() != RigExecInputTagType(tag)) {
+    if (!out || !RrInputTagIsArray(tag) || !_Holds(value, tag)) {
         return false;
     }
     out->tag = tag;
@@ -215,23 +263,71 @@ RigExecInputArrayFrom(const VtValue &value, RrInputTag tag,
     }
 }
 
+namespace {
+
+// Reads through \p query when given, else through \p a at the live stage.
+bool _SampleInputAt(const UsdAttribute &a, const UsdAttributeQuery *query,
+                    bool queryFallback, size_t index, const std::string &name,
+                    RrInputTag tag, UsdTimeCode time,
+                    RigExecRuntimeReader *reader, std::string *error);
+
+} // namespace
+
 bool
 RigExecSampleInputAt(const UsdAttribute &a, size_t index,
-                     const std::string &name, RrInputTag tag,
-                     UsdTimeCode time, RigExecRuntimeReader *reader,
-                     std::string *error)
+                     const std::string &name, RrInputTag tag, UsdTimeCode time,
+                     RigExecRuntimeReader *reader, std::string *error)
 {
-    const auto publishBlocked=[&](bool result) {
-        if(!result || !RigExecRuntimeStageArrayInputs::CanSampleProviderValue(*reader,index))return result;
-        return RigExecRuntimeStageArrayInputs::SetSampleBlocked(*reader,index,
-            a.GetResolveInfo(time).ValueIsBlocked(),error);
+    return _SampleInputAt(a, nullptr, false, index, name, tag, time, reader,
+                          error);
+}
+
+bool
+RigExecSampleInputAt(const UsdAttributeQuery &q, size_t index,
+                     const std::string &name, RrInputTag tag, UsdTimeCode time,
+                     RigExecRuntimeReader *reader, std::string *error)
+{
+    return _SampleInputAt(q.GetAttribute(), &q, true, index, name, tag, time,
+                          reader, error);
+}
+
+namespace {
+
+bool
+_SampleInputAt(const UsdAttribute &a, const UsdAttributeQuery *query,
+               bool queryFallback, size_t index, const std::string &name,
+               RrInputTag tag, UsdTimeCode time, RigExecRuntimeReader *reader,
+               std::string *error)
+{
+    // A query returns the schema fallback for a blocked attribute where
+    // UsdAttribute::Get returns nothing; a block must read as no value.
+    const auto get = [&](auto *out) {
+        if (!query) {
+            return a.Get(out, time);
+        }
+        return query->Get(out, time) &&
+               !(queryFallback && a.GetResolveInfo(time).ValueIsBlocked());
+    };
+    // A successful Get holds a value, so it is never blocked; only a failed
+    // read asks the resolve whether a block caused it.
+    const auto publishBlocked = [&](bool result, bool read) {
+        if (!result || !RigExecRuntimeStageArrayInputs::CanSampleProviderValue(
+                           *reader, index))
+            return result;
+        const bool blocked = !read && a.GetResolveInfo(time).ValueIsBlocked();
+        return RigExecRuntimeStageArrayInputs::SetSampleBlocked(*reader, index,
+                                                                blocked, error);
     };
     if (tag == RrInputTag::Token &&
-        RigExecRuntimeStageArrayInputs::CanSampleToken(*reader,index)) {
+        RigExecRuntimeStageArrayInputs::CanSampleToken(*reader, index)) {
         TfToken value;
-        return publishBlocked(a.Get(&value,time)
-            ? RigExecRuntimeStageArrayInputs::SetTokenSample(*reader,index,value.GetString(),error)
-            : RigExecRuntimeStageArrayInputs::ClearTokenSample(*reader,index,error));
+        const bool read = get(&value);
+        return publishBlocked(
+            read ? RigExecRuntimeStageArrayInputs::SetTokenSample(
+                       *reader, index, value.GetString(), error)
+                 : RigExecRuntimeStageArrayInputs::ClearTokenSample(
+                       *reader, index, error),
+            read);
     }
     if (RrInputTagIsArray(tag)) {
         const bool bound =
@@ -240,62 +336,72 @@ RigExecSampleInputAt(const UsdAttribute &a, size_t index,
             return reader->ResetInput(name, error);
         }
         VtValue value;
-        if (!a.Get(&value, time)) {
-            return publishBlocked(RigExecRuntimeStageArrayInputs::ClearSample(*reader, index, error));
+        if (!get(&value)) {
+            return publishBlocked(RigExecRuntimeStageArrayInputs::ClearSample(
+                                      *reader, index, error),
+                                  false);
         }
-        if (value.GetType() != RigExecInputTagType(tag)) {
-            if (error) *error = name + ": the stage sample is not a " +
-                                RigExecInputTagName(tag);
+        if (!_Holds(value, tag)) {
+            if (error)
+                *error = name + ": the stage sample is not a " +
+                         RigExecInputTagName(tag);
             return false;
         }
         if (tag == RrInputTag::TokenArray) {
             const auto &tokens = value.UncheckedGet<VtTokenArray>();
             std::vector<std::string> text;
             text.reserve(tokens.size());
-            for (const auto &token : tokens) text.push_back(token.GetString());
-            return publishBlocked(RigExecRuntimeStageArrayInputs::SetTokenArraySample(
-                *reader, index, text, error));
+            for (const auto &token : tokens)
+                text.push_back(token.GetString());
+            return publishBlocked(
+                RigExecRuntimeStageArrayInputs::SetTokenArraySample(
+                    *reader, index, text, error),
+                true);
         }
         if (tag == RrInputTag::BoolArray) {
             const auto &bits = value.UncheckedGet<VtBoolArray>();
             std::vector<uint8_t> bytes;
             bytes.reserve(bits.size());
-            for (bool bit : bits) bytes.push_back(bit ? uint8_t(1) : uint8_t(0));
+            for (bool bit : bits)
+                bytes.push_back(bit ? uint8_t(1) : uint8_t(0));
             const RigExecRuntimeArray array{tag, bytes.data(), bytes.size()};
             return publishBlocked(RigExecRuntimeStageArrayInputs::SetSample(
-                *reader, index, array, error));
+                                      *reader, index, array, error),
+                                  true);
         }
         RigExecRuntimeArray array;
         if (!RigExecInputArrayFrom(value, tag, &array)) {
-            if (error) *error = name + ": the stage sample is not a " +
-                                RigExecInputTagName(tag);
+            if (error)
+                *error = name + ": the stage sample is not a " +
+                         RigExecInputTagName(tag);
             return false;
         }
         return publishBlocked(RigExecRuntimeStageArrayInputs::SetSample(
-            *reader, index, array, error));
+                                  *reader, index, array, error),
+                              true);
     }
     RrInputValue value;
     value.tag = tag;
     bool read = false;
     switch (tag) {
     case RrInputTag::Double:
-        read = a.Get(&value.f64, time);
+        read = get(&value.f64);
         break;
     case RrInputTag::Float:
-        read = a.Get(&value.f32, time);
+        read = get(&value.f32);
         break;
     case RrInputTag::Bool:
-        read = a.Get(&value.boolean, time);
+        read = get(&value.boolean);
         break;
     case RrInputTag::Int: {
         int v = 0;
-        read = a.Get(&v, time);
+        read = get(&v);
         value.i32 = int32_t(v);
         break;
     }
     case RrInputTag::Matrix4d: {
         GfMatrix4d v(1.0);
-        if ((read = a.Get(&v, time))) {
+        if ((read = get(&v))) {
             for (int r = 0; r < 4; ++r) {
                 for (int c = 0; c < 4; ++c) {
                     value.matrix[r][c] = v[r][c];
@@ -306,39 +412,48 @@ RigExecSampleInputAt(const UsdAttribute &a, size_t index,
     }
     case RrInputTag::Token: {
         TfToken v;
-        if (a.Get(&v, time)) {
-            return publishBlocked(reader->SetInputToken(name, v.GetString(), error));
+        if (get(&v)) {
+            return publishBlocked(
+                reader->SetInputToken(name, v.GetString(), error), true);
         }
         break;
     }
     case RrInputTag::Vec3d: {
         GfVec3d v(0.0);
-        if ((read = a.Get(&v, time))) {
+        if ((read = get(&v))) {
             value.vec = RrVec3d(v[0], v[1], v[2]);
         }
         break;
     }
     case RrInputTag::Vec3f: {
         GfVec3f v(0.0f);
-        if ((read = a.Get(&v, time))) {
+        if ((read = get(&v))) {
             value.vec3f = RrVec3f(v[0], v[1], v[2]);
         }
         break;
     }
     case RrInputTag::Vec3i: {
         GfVec3i v(0);
-        if((read=a.Get(&v,time)))value.vec3i={int32_t(v[0]),int32_t(v[1]),int32_t(v[2])};
+        if ((read = get(&v)))
+            value.vec3i = {int32_t(v[0]), int32_t(v[1]), int32_t(v[2])};
         break;
     }
     }
     // A failed read leaves the input with no value, as the stage has none
     // there; a value is taken as the stage holds it, finite or not.
-    if(RigExecRuntimeStageArrayInputs::CanSampleProviderValue(*reader,index))
-        return publishBlocked(read?RigExecRuntimeStageArrayInputs::SetScalarSample(*reader,index,value,error):
-            RigExecRuntimeStageArrayInputs::ClearScalarSample(*reader,index,error));
+    if (RigExecRuntimeStageArrayInputs::CanSampleProviderValue(*reader, index))
+        return publishBlocked(
+            read ? RigExecRuntimeStageArrayInputs::SetScalarSample(
+                       *reader, index, value, error)
+                 : RigExecRuntimeStageArrayInputs::ClearScalarSample(
+                       *reader, index, error),
+            read);
     return publishBlocked(read ? reader->SetSampledInputAt(index, value, error)
-                : reader->ClearInputAt(index, error));
+                               : reader->ClearInputAt(index, error),
+                          read);
 }
+
+} // namespace
 
 bool
 RigExecInputSampler::Bind(const UsdStagePtr &stage,
@@ -369,9 +484,9 @@ RigExecInputSampler::Bind(const UsdStagePtr &stage,
         const SdfPath path = SdfPath::IsValidPathString(info.name)
                                  ? SdfPath(info.name)
                                  : SdfPath();
-        const UsdAttribute attribute =
-            path.IsPropertyPath() ? stage->GetAttributeAtPath(path)
-                                  : UsdAttribute();
+        const UsdAttribute attribute = path.IsPropertyPath()
+                                           ? stage->GetAttributeAtPath(path)
+                                           : UsdAttribute();
         if (!attribute) {
             _warnings.push_back(info.name +
                                 ": the stage has no such attribute");
@@ -382,7 +497,8 @@ RigExecInputSampler::Bind(const UsdStagePtr &stage,
             typeName.GetType() != RigExecInputTagType(info.type)) {
             _warnings.push_back(info.name + ": the stage's attribute is a " +
                                 typeName.GetAsToken().GetString() +
-                                ", the input a " + RigExecInputTagName(info.type));
+                                ", the input a " +
+                                RigExecInputTagName(info.type));
             continue;
         }
         if (info.animated) {
@@ -411,26 +527,41 @@ RigExecInputSampler::Bind(const UsdStagePtr &stage,
         _animatedCount += bound.animated ? 1 : 0;
         _animated.push_back(std::move(bound));
     }
-    for (const auto &info : RigExecRuntimeStageArrayInputs::EnumerateTokens(reader)) {
+    for (const auto &info :
+         RigExecRuntimeStageArrayInputs::EnumerateTokens(reader)) {
         const auto attribute = stage->GetAttributeAtPath(SdfPath(info.name));
-        if (!attribute || attribute.GetTypeName().GetType() != RigExecInputTagType(info.tag)) {
+        if (!attribute || attribute.GetTypeName().GetType() !=
+                              RigExecInputTagType(info.tag)) {
             _warnings.push_back(info.name + ": no matching stage token");
             continue;
         }
         _Bound bound;
-        bound.index = info.slot; bound.name = info.name;
-        bound.type = info.tag; bound.attribute = attribute;
+        bound.index = info.slot;
+        bound.name = info.name;
+        bound.type = info.tag;
+        bound.attribute = attribute;
         _animatedCount += bound.animated ? 1 : 0;
         _animated.push_back(std::move(bound));
     }
-    for(const auto &info:RigExecRuntimeStageArrayInputs::EnumerateProviderValues(reader)) {
-        if(std::any_of(_animated.begin(),_animated.end(),[&](const _Bound &bound) { return bound.index==info.slot; }))continue;
-        const auto attribute=stage->GetAttributeAtPath(SdfPath(info.name));
-        if(!attribute || attribute.GetTypeName().GetType()!=RigExecInputTagType(info.tag)) {
-            _warnings.push_back(info.name+": no matching stage provider input");continue;
+    for (const auto &info :
+         RigExecRuntimeStageArrayInputs::EnumerateProviderValues(reader)) {
+        if (std::any_of(
+                _animated.begin(), _animated.end(),
+                [&](const _Bound &bound) { return bound.index == info.slot; }))
+            continue;
+        const auto attribute = stage->GetAttributeAtPath(SdfPath(info.name));
+        if (!attribute || attribute.GetTypeName().GetType() !=
+                              RigExecInputTagType(info.tag)) {
+            _warnings.push_back(info.name +
+                                ": no matching stage provider input");
+            continue;
         }
-        _Bound bound;bound.index=info.slot;bound.name=info.name;
-        bound.type=info.tag;bound.attribute=attribute;bound.animated=info.animated;
+        _Bound bound;
+        bound.index = info.slot;
+        bound.name = info.name;
+        bound.type = info.tag;
+        bound.attribute = attribute;
+        bound.animated = info.animated;
         _animatedCount += bound.animated ? 1 : 0;
         _animated.push_back(std::move(bound));
     }
@@ -464,10 +595,17 @@ RigExecInputSampler::Apply(UsdTimeCode time, RigExecRuntimeReader *reader,
     // authored since the last one make an input varying, removed keys make
     // it static again. Default and a numeric time can read different values
     // of an attribute keyed once, so a change of Default-ness refreshes too.
-    const bool refresh =
-        _staticStale || time.IsDefault() != _last.IsDefault();
+    const bool refresh = _staticStale || time.IsDefault() != _last.IsDefault();
     if (refresh) {
         for (_Bound &bound : _animated) {
+            bound.query = _staticSkip ? UsdAttributeQuery(bound.attribute)
+                                      : UsdAttributeQuery();
+            VtValue fallback;
+            bound.hasFallback =
+                _staticSkip && bound.attribute.GetPrim()
+                                   .GetPrimDefinition()
+                                   .GetAttributeFallbackValue(
+                                       bound.attribute.GetName(), &fallback);
             bound.isStatic = _StaticInput(bound.animated, bound.attribute);
         }
     }
@@ -480,8 +618,10 @@ RigExecInputSampler::Apply(UsdTimeCode time, RigExecRuntimeReader *reader,
             continue;
         }
         ++_lastReads;
-        if (!RigExecSampleInputAt(bound.attribute, bound.index, bound.name,
-                                  bound.type, time, reader, error)) {
+        if (!_SampleInputAt(bound.attribute,
+                            bound.query.IsValid() ? &bound.query : nullptr,
+                            bound.hasFallback, bound.index, bound.name,
+                            bound.type, time, reader, error)) {
             // Earlier slots may already have replaced their caller's values.
             // A retry must resample all slots, even at the last good time.
             Invalidate();
@@ -500,4 +640,4 @@ RigExecInputSampler::Apply(UsdTimeCode time, RigExecRuntimeReader *reader,
     return true;
 }
 
-}  // namespace rigExec
+} // namespace rigExec
