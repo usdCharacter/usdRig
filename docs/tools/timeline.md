@@ -51,19 +51,22 @@ restored afterwards. **Cancel** in the progress window stops the run.
 |---|---|
 | View | Shows the result when the run ends: image sequences in a flipbook (++space++ plays, arrow keys step), movies in the system's player. |
 | Show ornaments | Keeps usdview's HUD, origin axis, camera mask outline, reticles and camera guides in the frames. |
-| Render offscreen | Leaves the viewport still while frames render. Off, the viewport shows each frame. Either way frames can be larger than the viewport. |
+| Render offscreen | Leaves the viewport still while frames render. Off, the viewport follows the frames, refreshed up to 30 times a second. Either way frames render as fast as the renderer allows, not at the display's refresh rate, and can be larger than the viewport. |
 | Time range | **Time Slider** renders usdview's playback range. **Start/End** renders the typed range at usdview's step size. |
 | Format | **qt** (`.mov`), **avi**, or **image** for an image sequence. |
 | Encoding | qt: H.264, Apple ProRes 422, Apple ProRes 4444, Photo - JPEG, PNG. avi: none, MJPEG, H.264. image: the formats Qt can write, such as jpg, png, tif. |
 | Quality | 0 to 100, for H.264, JPEG and WebP. |
 | Display size | **From Window** (the viewport's pixels), **From Render Settings** (the resolution of the stage's render settings) or **Custom**. |
-| Scale | 0.10 to 1.00 times the display size. |
+| Scale | 0.10 to 1.00 times the display size. Below 1.00, frames render at the display size and are filtered down, so they keep the viewport's detail rather than becoming a coarser render. Use 1.00 for full resolution. |
 | Frame padding | Digits in image numbers: `name.0001.png`. |
-| Remove temporary files | Deletes the frames a movie was encoded from. |
+| Remove temporary files | Movie frames go straight to the encoder. Off, they are also kept as PNG images beside the encoder's log. |
 | Save to file | Writes to **Movie file**. Off, the result goes to a temporary folder. An empty **Movie file** uses the system's Videos folder and the stage's name. |
 
 Whole frames are numbered by frame; subframe steps are numbered from 0.
 Movie sizes are rounded down to even numbers, which the encoders need.
+H.264 and ProRes movies are converted with BT.709 and tagged with it, and
+JPEG movies with the BT.601 that JPEG decoders assume, so players show the
+rendered colors.
 
 The movie formats need [ffmpeg](https://ffmpeg.org): set `RIGEXEC_FFMPEG` to
 its path, or put it on `PATH`. Without it, **qt** and **avi** are unavailable

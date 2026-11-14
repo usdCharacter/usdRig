@@ -4,10 +4,16 @@
 # holds the options and the file and size rules.
 #
 # Every frame is rendered by usdview's own StageView into a framebuffer at
-# the output size, so what is drawn -- renderer, render mode, lights,
-# camera and rig pose -- is the viewport's. Render offscreen keeps the
-# visible viewport still while frames render; otherwise it shows each one.
-# Manipulators and other overlay widgets are never part of the frame.
+# the display size, so what is drawn -- renderer, render mode, lights,
+# camera and rig pose -- is the viewport's; below full Scale it is filtered
+# down. Render offscreen keeps the visible viewport still while frames
+# render; otherwise it follows them. Manipulators and other overlay widgets
+# are never part of the frame.
+#
+# Capture is not paced by the display: Qt events, the progress window and
+# the visible viewport are serviced at most every _UI_INTERVAL_S, since each
+# window swap waits for vertical sync. Movie frames stream to ffmpeg's
+# standard input while the next frame renders.
 #
 import collections
 import contextlib
@@ -34,6 +40,8 @@ _SETTINGS_KEY = "options"
 # A progressive renderer is polled until it converges, up to this long a
 # frame. Storm converges in one pass.
 _CONVERGE_TIMEOUT_S = 60.0
+
+_UI_INTERVAL_S = 1.0 / 30.0
 
 # View settings that draw ornaments into the frame; DrawAxis has none.
 _ORNAMENT_SETTINGS = ("showHUD", "showMask_Outline", "showReticles_Inside",
@@ -88,30 +96,38 @@ def _FramebufferClasses():
 
 
 @contextlib.contextmanager
-def _ViewSize(view, width, height):
-    # usdview sizes the render from _physicalWindowSize but places its HUD,
-    # camera mask and reticles from width() and height(); for one offscreen
-    # frame both describe the offscreen buffer.
+def _ViewSize(view, renderSize, outputSize):
+    # usdview sizes the render from _physicalWindowSize, places its HUD from
+    # width() and height(), and its mask and reticles from those times
+    # devicePixelRatioF(). Logical size is the output's, so ornaments keep
+    # their size in a frame that is filtered down; physical size is the
+    # render's.
     ratio = view.devicePixelRatioF() or 1.0
+    factor = float(renderSize[0]) / outputSize[0]
     saved = view._physicalWindowSize
-    view._physicalWindowSize = (width, height)
-    view.width = lambda: width / ratio
-    view.height = lambda: height / ratio
+    view._physicalWindowSize = tuple(renderSize)
+    view.width = lambda: outputSize[0] / ratio
+    view.height = lambda: outputSize[1] / ratio
+    view.devicePixelRatioF = lambda: ratio * factor
     try:
         yield
     finally:
         del view.width
         del view.height
+        del view.devicePixelRatioF
         view._physicalWindowSize = saved
 
 
 class OffscreenTarget(object):
     """A framebuffer of its own that the StageView renders into, at any
-    size and without drawing to the screen. Close() before discarding."""
+    size and without drawing to the screen; frames come back at
+    `outputSize`. Close() before discarding."""
 
-    def __init__(self, view, width, height):
+    def __init__(self, view, renderSize, outputSize=None):
         self._view = view
-        self._size = (int(width), int(height))
+        self._size = (int(renderSize[0]), int(renderSize[1]))
+        self._outputSize = (self._size if outputSize is None else
+                            (int(outputSize[0]), int(outputSize[1])))
         self._fbo = None
 
     def _Ensure(self):
@@ -132,7 +148,7 @@ class OffscreenTarget(object):
         return fbo
 
     def Render(self):
-        """The current frame as an opaque QImage."""
+        """The current frame as an opaque Format_RGB32 QImage."""
         view = self._view
         view.makeCurrent()
         try:
@@ -140,7 +156,7 @@ class OffscreenTarget(object):
             if not fbo.bind():
                 raise RuntimeError("cannot bind the offscreen framebuffer")
             try:
-                with _ViewSize(view, *self._size):
+                with _ViewSize(view, self._size, self._outputSize):
                     deadline = time.monotonic() + _CONVERGE_TIMEOUT_S
                     while True:
                         view.paintGL()
@@ -154,7 +170,12 @@ class OffscreenTarget(object):
                 fbo.release()
         finally:
             view.doneCurrent()
-        return image.convertToFormat(QtGui.QImage.Format_RGB32)
+        image = image.convertToFormat(QtGui.QImage.Format_RGB32)
+        if self._outputSize != self._size:
+            image = image.scaled(self._outputSize[0], self._outputSize[1],
+                                 QtCore.Qt.IgnoreAspectRatio,
+                                 QtCore.Qt.SmoothTransformation)
+        return image
 
     def Close(self):
         if self._fbo is None:
@@ -273,26 +294,61 @@ def _ConfirmOverwrite(parent, paths):
     return answer == QtWidgets.QMessageBox.Yes
 
 
-def _Encode(argv, logPath, progress):
-    kwargs = {}
-    if os.name == "nt":
-        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    with open(logPath, "wb") as log:
-        process = subprocess.Popen(argv, stdin=subprocess.DEVNULL,
-                                   stdout=subprocess.DEVNULL, stderr=log,
-                                   **kwargs)
-        while process.poll() is None:
+class _Encoder(object):
+    """ffmpeg encoding raw frames written to its standard input. Close()
+    before discarding."""
+
+    def __init__(self, argv, logPath):
+        self._logPath = logPath
+        self._log = open(logPath, "wb")
+        kwargs = {}
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW",
+                                              0)
+        try:
+            self._process = subprocess.Popen(
+                argv, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                stderr=self._log, **kwargs)
+        except OSError:
+            self._log.close()
+            raise
+
+    def Write(self, image):
+        try:
+            self._process.stdin.write(image.constBits())
+        except OSError:
+            self._process.wait()
+            raise self._Failure()
+
+    def Finish(self, progress):
+        try:
+            self._process.stdin.close()
+        except OSError:
+            pass
+        while self._process.poll() is None:
             QtWidgets.QApplication.processEvents()
             if progress.wasCanceled():
-                process.kill()
-                process.wait()
                 raise _Canceled()
             time.sleep(0.02)
-    if process.returncode != 0:
-        with open(logPath, "rb") as log:
+        if self._process.returncode != 0:
+            raise self._Failure()
+
+    def Close(self):
+        if self._process.poll() is None:
+            self._process.kill()
+            self._process.wait()
+        try:
+            self._process.stdin.close()
+        except OSError:
+            pass
+        self._log.close()
+
+    def _Failure(self):
+        self._log.flush()
+        with open(self._logPath, "rb") as log:
             detail = log.read().decode("utf-8", "replace").strip()
-        raise RuntimeError("ffmpeg failed (%d): %s"
-                           % (process.returncode, detail[-800:]))
+        return RuntimeError("ffmpeg failed (%s): %s"
+                            % (self._process.returncode, detail[-800:]))
 
 
 def Playblast(usdviewApi, options, parent=None):
@@ -332,8 +388,9 @@ def Playblast(usdviewApi, options, parent=None):
         if renderSettings is None:
             _Warn(parent, "The stage has no render settings resolution; "
                   "using the window size.")
-    width, height = model.OutputSize(
-        options, view.GetPhysicalWindowSize(), renderSettings)
+    windowSize = view.GetPhysicalWindowSize()
+    width, height = model.OutputSize(options, windowSize, renderSettings)
+    renderSize = model.RenderSize(options, windowSize, renderSettings)
     rate = model.FrameRate(stage.GetTimeCodesPerSecond(), controller.step,
                            controller.framesPerSecond)
     numbers = model.FrameNumbers(frames)
@@ -361,6 +418,7 @@ def Playblast(usdviewApi, options, parent=None):
     except OSError as error:
         _Warn(parent, "Cannot create the playblast folder: %s" % error)
         return None
+    keepFrames = not movie or not options.removeTemporaryFiles
     if movie:
         frameBase = os.path.join(workDirectory, stem)
         frameEncoding = model.INTERMEDIATE_ENCODING
@@ -379,39 +437,53 @@ def Playblast(usdviewApi, options, parent=None):
     progress.setWindowModality(QtCore.Qt.WindowModal)
     progress.setMinimumDuration(0)
     progress.setValue(0)
-    target = OffscreenTarget(view, width, height)
+    target = OffscreenTarget(view, renderSize, (width, height))
+    encoder = None
+    encoded = False
     controller._rigExecPlayblasting = True
     framePaths = []
     try:
+        if movie:
+            encoder = _Encoder(
+                model.FfmpegCommand(ffmpeg, (width, height), rate,
+                                    options.format, options.encoding,
+                                    options.quality, outputs[0]),
+                os.path.join(workDirectory, "ffmpeg.log"))
         with _PlayblastState(controller, options.offScreen), \
                 _Ornaments(view, controller._dataModel.viewSettings,
                            options.showOrnaments):
+            serviced = None
             for index, frame in enumerate(frames):
                 if progress.wasCanceled():
                     raise _Canceled()
-                progress.setLabelText("Playblasting frame %s (%d of %d)"
-                                      % (model.FormatNumber(frame), index + 1,
-                                         len(frames)))
                 _ShowFrame(controller, frame)
                 image = target.Render()
-                path = model.ImagePath(frameBase, frameNumbers[index],
-                                       options.framePadding, frameEncoding)
-                if not image.save(path, writer, quality):
-                    raise RuntimeError("cannot write %s" % path)
-                framePaths.append(path)
-                if not options.offScreen:
-                    view.repaint()
-                progress.setValue(index + 1)
-                QtWidgets.QApplication.processEvents()
-        if movie:
+                if encoder is not None:
+                    encoder.Write(image)
+                if keepFrames:
+                    path = model.ImagePath(frameBase, frameNumbers[index],
+                                           options.framePadding,
+                                           frameEncoding)
+                    if not image.save(path, writer, quality):
+                        raise RuntimeError("cannot write %s" % path)
+                    framePaths.append(path)
+                now = time.monotonic()
+                if (index + 1 == len(frames) or serviced is None or
+                        now - serviced >= _UI_INTERVAL_S):
+                    progress.setLabelText(
+                        "Playblasting frame %s (%d of %d)"
+                        % (model.FormatNumber(frame), index + 1,
+                           len(frames)))
+                    if not options.offScreen:
+                        view.update()
+                    progress.setValue(index + 1)
+                    QtWidgets.QApplication.processEvents()
+                    serviced = time.monotonic()
+        if encoder is not None:
             progress.setLabelText("Encoding %s..." % outputs[0])
-            pattern = model.FfmpegPattern(frameBase, options.framePadding,
-                                          frameEncoding)
-            _Encode(model.FfmpegCommand(ffmpeg, pattern, rate,
-                                        options.format, options.encoding,
-                                        options.quality, outputs[0]),
-                    os.path.join(workDirectory, "ffmpeg.log"), progress)
+            encoder.Finish(progress)
             progress.setValue(len(frames) + 1)
+            encoded = True
     except _Canceled:
         usdviewApi.PrintStatus("Playblast canceled.")
         return None
@@ -420,6 +492,13 @@ def Playblast(usdviewApi, options, parent=None):
         return None
     finally:
         controller._rigExecPlayblasting = False
+        if encoder is not None:
+            encoder.Close()
+            if not encoded:
+                try:
+                    os.remove(outputs[0])
+                except OSError:
+                    pass
         target.Close()
         progress.close()
         if movie and workDirectory and options.removeTemporaryFiles:

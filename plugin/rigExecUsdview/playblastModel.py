@@ -14,6 +14,7 @@ import math
 import os
 import re
 import shutil
+import sys
 
 FORMAT_QT = "qt"
 FORMAT_AVI = "avi"
@@ -49,7 +50,7 @@ MOVIE_EXTENSIONS = {FORMAT_QT: ".mov", FORMAT_AVI: ".avi"}
 # Encodings whose output quality the Quality field controls.
 QUALITY_ENCODINGS = frozenset((H264, PHOTO_JPEG, MJPEG, "jpg", "webp"))
 
-# The lossless image the movie formats encode from.
+# Frames a movie was encoded from, kept when Remove temporary files is off.
 INTERMEDIATE_ENCODING = "png"
 
 SCALE_RANGE = (0.1, 1.0)
@@ -236,6 +237,20 @@ def OutputSize(options, windowSize, renderSettingsSize=None):
     return (width, height)
 
 
+def RenderSize(options, windowSize, renderSettingsSize=None):
+    """The size frames render at before they are filtered to OutputSize.
+
+    Below full Scale, frames render at the display size and are filtered
+    down, so a smaller playblast is the viewport's picture made smaller
+    rather than a coarser render.
+    """
+    if options.scale >= SCALE_RANGE[1]:
+        return OutputSize(options, windowSize, renderSettingsSize)
+    width, height = BaseSize(options, windowSize, renderSettingsSize)
+    return (int(_Clamp(int(width), 1, SIZE_LIMIT)),
+            int(_Clamp(int(height), 1, SIZE_LIMIT)))
+
+
 def FrameNumbers(frames):
     """The number each frame's file carries: the frame itself when every
     frame is whole, else its position (subframe steps)."""
@@ -247,10 +262,6 @@ def FrameNumbers(frames):
 def ImagePath(base, number, padding, extension):
     """Maya's naming: base.0001.ext"""
     return "%s.%0*d.%s" % (base, padding, number, extension)
-
-
-def FfmpegPattern(base, padding, extension):
-    return "%s.%%0%dd.%s" % (base, padding, extension)
 
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -299,21 +310,35 @@ def _QualityScale(quality, best, worst):
     return int(round(worst + (best - worst) * _Clamp(quality, 0, 100) / 100.0))
 
 
+_COLORSPACE_TAGS = {"bt709": "bt709", "bt601": "bt470bg"}
+
+
+def _Yuv(pixelFormat, matrix, colorRange):
+    """Convert the sRGB frames to YUV with `matrix` and tag it. Untagged
+    H.264 and ProRes are decoded with BT.601 or BT.709 by frame size; JPEG
+    is always decoded as BT.601 (JFIF)."""
+    return ["-vf", "scale=out_color_matrix=%s:out_range=%s:"
+            "flags=accurate_rnd+full_chroma_int" % (matrix, colorRange),
+            "-pix_fmt", pixelFormat, "-color_range", colorRange,
+            "-colorspace", _COLORSPACE_TAGS[matrix],
+            "-color_primaries", "bt709", "-color_trc", "iec61966-2-1"]
+
+
 def CodecArguments(format, encoding, quality):
     """ffmpeg output arguments for one movie encoding."""
     if encoding == H264:
-        args = ["-c:v", "libx264", "-preset", "medium",
-                "-crf", str(_QualityScale(quality, 12, 40)),
-                "-pix_fmt", "yuv420p"]
+        args = (["-c:v", "libx264", "-preset", "medium",
+                 "-crf", str(_QualityScale(quality, 12, 40))]
+                + _Yuv("yuv420p", "bt709", "tv"))
     elif encoding == PRORES_422:
-        args = ["-c:v", "prores_ks", "-profile:v", "2",
-                "-pix_fmt", "yuv422p10le"]
+        args = (["-c:v", "prores_ks", "-profile:v", "2"]
+                + _Yuv("yuv422p10le", "bt709", "tv"))
     elif encoding == PRORES_4444:
-        args = ["-c:v", "prores_ks", "-profile:v", "4",
-                "-pix_fmt", "yuv444p10le"]
+        args = (["-c:v", "prores_ks", "-profile:v", "4"]
+                + _Yuv("yuv444p10le", "bt709", "tv"))
     elif encoding in (PHOTO_JPEG, MJPEG):
-        args = ["-c:v", "mjpeg", "-q:v", str(_QualityScale(quality, 2, 31)),
-                "-pix_fmt", "yuvj420p"]
+        args = (["-c:v", "mjpeg", "-q:v", str(_QualityScale(quality, 2, 31))]
+                + _Yuv("yuvj420p", "bt601", "pc"))
     elif encoding == PNG_MOVIE:
         args = ["-c:v", "png", "-pix_fmt", "rgb24"]
     elif encoding == NONE_AVI:
@@ -332,12 +357,19 @@ def FormatNumber(value):
     return "%.6g" % value
 
 
-def FfmpegCommand(ffmpeg, pattern, rate, format, encoding, quality, output):
-    """The ffmpeg command that encodes the numbered intermediate images
-    (numbered from 0) into `output`."""
+def RawPixelFormat(byteorder=sys.byteorder):
+    """ffmpeg's name for a 32-bit 0xffRRGGBB QImage (Format_RGB32) in
+    memory."""
+    return "bgr0" if byteorder == "little" else "0rgb"
+
+
+def FfmpegCommand(ffmpeg, size, rate, format, encoding, quality, output):
+    """The ffmpeg command that encodes raw Format_RGB32 frames of `size`,
+    written to its standard input, into `output`."""
     return ([ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-             "-framerate", FormatNumber(rate), "-start_number", "0",
-             "-i", pattern]
+             "-f", "rawvideo", "-pix_fmt", RawPixelFormat(),
+             "-video_size", "%dx%d" % tuple(size),
+             "-framerate", FormatNumber(rate), "-i", "-"]
             + CodecArguments(format, encoding, quality) + [output])
 
 

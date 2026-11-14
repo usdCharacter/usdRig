@@ -112,6 +112,13 @@ def TestSize():
            (2048, 858), "render settings")
     _Check(model.OutputSize(settings, (100, 50), None) == (100, 50),
            "no render settings falls back to the window")
+    _Check(model.RenderSize(options, (1201, 801)) == (1201, 801),
+           "below full scale, frames render at the display size")
+    _Check(model.RenderSize(full, (1201, 801)) == (1201, 801) and
+           model.RenderSize(full.Copy(format=model.FORMAT_QT,
+                                      encoding=model.H264),
+                            (1201, 801)) == (1200, 800),
+           "at full scale, frames render at the output size")
 
 
 def TestNames():
@@ -119,8 +126,6 @@ def TestNames():
            "Maya's name.####.ext")
     _Check(model.ImagePath("b", -3, 4, "jpg") == "b.-003.jpg",
            "negative frames")
-    _Check(model.FfmpegPattern("/t/x", 4, "png") == "/t/x.%04d.png",
-           "ffmpeg pattern")
     _Check(model.StageStem("C:\\shots\\sh010.anim.usda") == "sh010",
            "stem from a layer path")
     _Check(model.StageStem("anon:0x1234:tmp.usda") == "playblast",
@@ -151,15 +156,29 @@ def TestFfmpeg():
     _Check("-movflags" in best, "qt movies are streamable")
     _Check("-movflags" not in model.CodecArguments(
         model.FORMAT_AVI, model.H264, 70), "avi takes no mov flags")
-    command = model.FfmpegCommand("ffmpeg", "/t/x.%04d.png", 23.976,
+    for encoding, matrix, tag in ((model.H264, "bt709", "bt709"),
+                                  (model.PRORES_422, "bt709", "bt709"),
+                                  (model.MJPEG, "bt601", "bt470bg")):
+        args = model.CodecArguments(model.FORMAT_QT, encoding, 70)
+        _Check(args[args.index("-colorspace") + 1] == tag and
+               "out_color_matrix=" + matrix in args[args.index("-vf") + 1],
+               "%s converts with and tags %s" % (encoding, matrix))
+    _Check("-colorspace" not in model.CodecArguments(
+        model.FORMAT_QT, model.PNG_MOVIE, 70), "RGB encodings stay RGB")
+    command = model.FfmpegCommand("ffmpeg", (640, 360), 23.976,
                                   model.FORMAT_QT, model.H264, 70,
                                   "/o/x.mov")
     _Check(command[0] == "ffmpeg" and command[-1] == "/o/x.mov",
            "program and output")
     _Check(command[command.index("-framerate") + 1] == "23.976",
            "fractional rate")
-    _Check(command[command.index("-start_number") + 1] == "0",
-           "intermediates number from zero")
+    _Check(command[command.index("-video_size") + 1] == "640x360" and
+           command[command.index("-f") + 1] == "rawvideo" and
+           command[command.index("-i") + 1] == "-",
+           "raw frames on standard input")
+    _Check(model.RawPixelFormat("little") == "bgr0" and
+           model.RawPixelFormat("big") == "0rgb",
+           "Format_RGB32 byte order")
     _Check(model.FindFfmpeg({model.FFMPEG_ENV: "/no/such/ffmpeg"},
                             lambda name: "/usr/bin/ffmpeg") is None,
            "an explicit path that is missing is not replaced by PATH")

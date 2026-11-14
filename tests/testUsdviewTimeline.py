@@ -110,6 +110,7 @@ def _Pixels(QtGui, path):
 
 
 def _TestPlayblast(app, api, QtGui, QtWidgets, directory):
+    from pxr.Usdviewq.qt import QtCore
     import playblastModel as model
     import playblastUI
 
@@ -139,7 +140,8 @@ def _TestPlayblast(app, api, QtGui, QtWidgets, directory):
     _Check(app._dataModel.currentFrame == frame, "the frame is put back")
     _Check(not app._dataModel.playing, "not left playing")
     _Check(view._physicalWindowSize == physical and
-           "width" not in view.__dict__ and "DrawAxis" not in view.__dict__,
+           "width" not in view.__dict__ and "DrawAxis" not in view.__dict__
+           and "devicePixelRatioF" not in view.__dict__,
            "the viewport's own size is untouched")
     _Check(view.updatesEnabled(), "viewport updates resume")
 
@@ -169,6 +171,19 @@ def _TestPlayblast(app, api, QtGui, QtWidgets, directory):
     _Check((image.width(), image.height()) ==
            (int(round(width * 0.5)), int(round(height * 0.5))),
            "From Window at half scale")
+    bareWindow = window.Copy(showOrnaments=False, endTime=1001,
+                             encoding="png")
+    full = playblastUI.Playblast(api, bareWindow.Copy(
+        scale=1.0, movieFile=os.path.join(directory, "full")))
+    half = playblastUI.Playblast(api, bareWindow.Copy(
+        movieFile=os.path.join(directory, "half")))
+    filtered = _Pixels(QtGui, full.paths[0]).convertToFormat(
+        QtGui.QImage.Format_RGB32).scaled(
+            image.width(), image.height(), QtCore.Qt.IgnoreAspectRatio,
+            QtCore.Qt.SmoothTransformation)
+    _Check(_Pixels(QtGui, half.paths[0]).convertToFormat(
+        QtGui.QImage.Format_RGB32) == filtered,
+           "below full scale, the display-size frame is filtered down")
 
     viewer = playblastUI.ShowResult(result, api.qMainWindow, "test")
     _Check(viewer._slider.maximum() == 23, "the flipbook holds every frame")
