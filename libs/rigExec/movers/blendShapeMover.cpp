@@ -261,6 +261,24 @@ _ValidateBlendShapeMover(const rigExec::RigExecMoverValidateContext &ctx,
                              " UsdSkelBlendShape prim";
                     return false;
                 }
+                if (ctx.notices) {
+                    const UsdSkelBlendShape shape(
+                        stage->GetPrimAtPath(sparseShape[0].GetPrimPath()));
+                    const bool hasInbetweens = !shape.GetInbetweens().empty();
+                    const UsdAttribute normals = shape.GetNormalOffsetsAttr();
+                    const bool hasNormals =
+                        normals && normals.HasAuthoredValue();
+                    if (hasInbetweens || hasNormals) {
+                        ctx.notices->push_back(
+                            sparseShape[0].GetString() +
+                            ": UsdSkelBlendShape authors " +
+                            (hasInbetweens ? "inbetweens" : "") +
+                            (hasInbetweens && hasNormals ? " and " : "") +
+                            (hasNormals ? "normalOffsets" : "") +
+                            ", which RigExec does not apply; only offsets "
+                            "and pointIndices are used");
+                    }
+                }
                 // No phased read to validate: the offsets are
                 // authored data, not a chain revision, so there
                 // is no preceding or final version of them.

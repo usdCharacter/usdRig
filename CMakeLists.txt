@@ -812,6 +812,10 @@ target_compile_definitions(testRigExecConstraints PRIVATE
     ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecConstraints COMMAND testRigExecConstraints)
 
+add_executable(testRigExecInteropNotices tests/testRigExecInteropNotices.cpp)
+target_link_libraries(testRigExecInteropNotices PRIVATE rigExec)
+add_test(NAME testRigExecInteropNotices COMMAND testRigExecInteropNotices)
+
 set(RIGEXEC_GOLDEN_SUITE_DIR "" CACHE PATH "Independent original-source suite goldens")
 function(rigexec_add_graph_test name)
     cmake_parse_arguments(A "CONE_VERIFY;SEPARATE_PARALLEL" "" "" ${ARGN})
@@ -2832,7 +2836,7 @@ foreach(_rigexec_scene_exe IN ITEMS
     testRigExecFrozenContext testRigExecGeometryOpsBakedParity
     testRigExecGeometryProgram testRigExecGraphBindings
     testRigExecGroupForwarding testRigExecInputActions testRigExecInputReplayHosting
-    testRigExecInteractive testRigExecLattice testRigExecLeaves
+    testRigExecInteractive testRigExecInteropNotices testRigExecLattice testRigExecLeaves
     testRigExecOneLoopAcceptance testRigExecOpTrace
     testRigExecPatchMover testRigExecPhaseBindings testRigExecPoseInterpolator
     testRigExecPropertyOps testRigExecRestOps testRigExecRuntimeInputs

@@ -829,7 +829,7 @@ RigExecRigEvaluator::_DiscoverMovers(
                 }
                 if (moverHandler->validate) {
                     const RigExecMoverValidateContext moverCtx{
-                        _stage, prim, record.targets, moverHandler};
+                        _stage, prim, record.targets, moverHandler, errors};
                     if (!moverHandler->validate(moverCtx, &moverError)) {
                         return fail(moverError, {prim.GetPath()});
                     }

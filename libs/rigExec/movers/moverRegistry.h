@@ -12,6 +12,8 @@
 #include "pxr/usd/usd/stage.h"
 
 #include <functional>
+#include <string>
+#include <vector>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -149,6 +151,9 @@ struct RigExecMoverValidateContext {
     const UsdPrim &prim;
     const std::vector<SdfPath> &targets;
     const RigExecMoverHandler *handler;
+    /// Compile notices: reported to the author, never fatal. Null when the
+    /// caller does not collect them.
+    std::vector<std::string> *notices = nullptr;
 };
 
 /// One registered mover. Constructed with the three columns every mover

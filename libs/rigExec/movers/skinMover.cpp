@@ -165,6 +165,18 @@ _ValidateSkinMover(const rigExec::RigExecMoverValidateContext &ctx,
     VtVec3fArray points;
     if (targetAttr.Get(&points) && !points.empty() &&
         indices.size() != points.size() * size_t(elementSize)) {
+        // A UsdSkel rigid binding authors one influence set with constant
+        // interpolation; RigExec skin layouts are per point only.
+        if (points.size() > 1 && indices.size() == size_t(elementSize)) {
+            *error = who() +
+                     ": rigExec:jointIndices holds a single influence set "
+                     "(constant interpolation, as a UsdSkel rigid binding); "
+                     "RigExec needs one set per point, " +
+                     std::to_string(points.size()) + " points * elementSize " +
+                     std::to_string(elementSize) +
+                     " entries. Expand the binding to per-point values";
+            return false;
+        }
         *error = who() + ": rigExec:jointIndices length " +
                  std::to_string(indices.size()) + " must equal " +
                  std::to_string(points.size()) + " points * elementSize " +
@@ -182,6 +194,36 @@ _ValidateSkinMover(const rigExec::RigExecMoverValidateContext &ctx,
             *error = who() + ": rigExec:jointWeights[" + std::to_string(i) +
                      "] must be finite and non-negative";
             return false;
+        }
+    }
+    // RigExec does not normalize: the kernel keeps (1 - sum w) of the entering
+    // point, where UsdSkel renormalizes. Say so for imported weights.
+    if (ctx.notices && elementSize >= 1) {
+        constexpr double kSumTolerance = 1e-3;
+        const size_t count = weights.size() / size_t(elementSize);
+        size_t offSum = 0, firstOff = 0;
+        double firstSum = 0.0;
+        for (size_t p = 0; p < count; ++p) {
+            double sum = 0.0;
+            for (size_t k = 0; k < size_t(elementSize); ++k)
+                sum += weights[p * size_t(elementSize) + k];
+            // A zero sum marks a deliberately unskinned point.
+            if (sum > kSumTolerance && std::abs(sum - 1.0) > kSumTolerance) {
+                if (offSum++ == 0) {
+                    firstOff = p;
+                    firstSum = sum;
+                }
+            }
+        }
+        if (offSum) {
+            ctx.notices->push_back(
+                who() + ": " + std::to_string(offSum) +
+                " point(s) have rigExec:jointWeights that do not sum to 1 "
+                "(first: point " +
+                std::to_string(firstOff) + " sums to " +
+                std::to_string(firstSum) +
+                "); RigExec does not normalize, so the remainder keeps the "
+                "entering position");
         }
     }
     return true;
