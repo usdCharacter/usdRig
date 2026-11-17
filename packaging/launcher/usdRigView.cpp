@@ -483,6 +483,7 @@ BuildEnv(const Bundle &bundle)
     AppendExisting(pluginPath, app / "plugins" / "touchPose");
     AppendExisting(pluginPath, app / "plugins" / "shapeEditor");
     AppendExisting(pluginPath, rigPython / "UsdNoodles");
+    AppendExisting(pluginPath, rigPython / "rigExecUsdview");
 
     std::vector<std::string> path;
     AppendExisting(path, bundle.pythonDir);

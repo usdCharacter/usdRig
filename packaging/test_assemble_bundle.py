@@ -427,6 +427,9 @@ class AssembleBundleTest(unittest.TestCase):
         self.assertIn(editor_dir.resolve(),
                       [Path(entry).resolve() for entry in
                        env_values["PYTHONPATH"].split(os.pathsep)])
+        self.assertIn(editor_dir.resolve(),
+                      [Path(entry).resolve() for entry in
+                       env_values["PXR_PLUGINPATH_NAME"].split(os.pathsep)])
         imaging.unlink()
         broken = subprocess.run([str(exe), "--usdRig-check"],
                                 capture_output=True, text=True)
