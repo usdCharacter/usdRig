@@ -291,7 +291,8 @@ struct RigExecSubscriptionStats {
 /// pool's lanes, which publish into that cache behind the wait. Closing closes
 /// every client, releases every lease and reservation it holds, and retires
 /// queued demand -- without holding the state lock across the wait. A
-/// moved-from service holds no state: only destroying it is valid there.
+/// moved-from service holds no state: only destroying it is valid there, and
+/// assigning over a live service retires the replaced one first.
 class RigExecOutputSubscriptionService {
 public:
     explicit RigExecOutputSubscriptionService(RigExecSubscriptionHost host);
@@ -303,8 +304,12 @@ public:
     operator=(const RigExecOutputSubscriptionService &) = delete;
     RigExecOutputSubscriptionService(RigExecOutputSubscriptionService &&other) =
         default;
+    /// Takes over `other`'s state and retires the service it replaces the way
+    /// its destructor would: the replaced state can outlive this object
+    /// through its live handles and its queued work, and nothing else closes
+    /// it. Self-assignment changes nothing.
     RigExecOutputSubscriptionService &
-    operator=(RigExecOutputSubscriptionService &&other) = default;
+    operator=(RigExecOutputSubscriptionService &&other);
 
     /// Asks for `request`'s outputs at their exact frames on `rig`. The
     /// request is validated against the rig's current catalog before anything

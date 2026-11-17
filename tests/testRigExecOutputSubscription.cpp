@@ -2701,6 +2701,198 @@ TestServiceDestructionReleasesEveryLivePin()
     CHECK(h.scheduler->ReservedExplicitBytes() == 0);
 }
 
+// Destroying the service with work still queued leaves none of itself behind
+// in the pool it shares. A queued closure holds the state and its demand, so
+// in manual mode -- where nothing drains the queue on its own -- the
+// reservation, the rig's queued-plus-running count and the coverage charge
+// stand with it until the queue drops it: destruction purges exactly this
+// service's keys, releases its pins, and never runs its lanes. Another host's
+// queued job stays with its own reservation.
+void
+TestServiceDestructionCancelsItsQueuedJobs()
+{
+    Harness h; // zero workers: the queue only moves when the test moves it
+    const RigFixture a = StageA();
+    h.catalogs[a.root] = a.catalog;
+
+    // A foreign host's explicit job at a frame this service never demands,
+    // and unrelated warming at a frame it does. The foreign job is queued
+    // after this service's first job has run, so the manual drain below takes
+    // the service's job, not the foreign host's.
+    RigExecExplicitRequest foreign;
+    foreign.rig = a.root;
+    foreign.time = TimeOf(30.0);
+    foreign.generation.programIdentity = a.epoch;
+    foreign.generation.inputRevision = 7777;
+    foreign.outputs = {a.scalar};
+    foreign.editGeneration = h.scheduler->CurrentGeneration(a.root);
+    foreign.reservationBytes = 2048;
+    const RigExecExplicitJobKey foreignKey = foreign.Key();
+    std::atomic<int> foreignRuns{0};
+
+    // The handles outlive the service on purpose: a live client keeps the
+    // state alive past its owner, so only the shutdown can release what it
+    // holds.
+    std::vector<RigExecSubscriptionHandle> kept;
+    RigExecCoverageBytes standing;
+    {
+        auto service = h.MakeService();
+        kept.push_back(service.Subscribe(a.root,
+                                         RequestAt(TimeOf(12.0), {a.scalar})));
+        CHECK(kept.back().IsValid());
+        CHECK(h.scheduler->DrainQueueForTesting() == 1);
+        CHECK(h.laneRuns == 1);
+        // What one standing record costs, with no demand of this service in
+        // flight and nothing of any other host queued.
+        standing = h.cache.CoverageHeld();
+        CHECK(standing.capture > 0);
+        CHECK(standing.pinned == 0);
+        CHECK(AllReady(service.PollResults(kept.back())));
+        CHECK(service.Stats().pinnedPayloads == 1);
+        CHECK(h.cache.CoverageHeld().pinned > 0);
+        CHECK(h.scheduler->ReservedExplicitBytes() == 0);
+        CHECK(h.scheduler->ExplicitInFlightCount(a.root) == 0);
+
+        if (RigExecBackgroundWarmingEnabled()) {
+            CHECK(h.scheduler->Enqueue(a.root, UsdTimeCode(12.0),
+                                       RigExecWarmPriority::Sweep,
+                                       h.scheduler->CurrentGeneration(a.root),
+                                       [](const RigExecWarmRequest &) {
+                                           return RigExecWarmOutcome::Published;
+                                       }));
+        }
+        CHECK(h.scheduler->AdmitExplicitOutput(
+            foreign, [&foreignRuns](const RigExecExplicitRequest &) {
+                ++foreignRuns;
+                return RigExecExplicitOutcome::Published;
+            }));
+
+        kept.push_back(
+            service.Subscribe(a.root, RequestAt(TimeOf(13.0), {a.points})));
+        CHECK(kept.back().IsValid());
+        CHECK(service.Stats().demandsInFlight == 1);
+        CHECK(h.scheduler->ExplicitInFlightCount(a.root) == 2);
+        CHECK(h.scheduler->ReservedExplicitBytes() > foreign.reservationBytes);
+        CHECK(h.cache.CoverageHeld().capture > standing.capture);
+    }
+
+    // The queued job is gone, its share of every reservation came back, and
+    // the pins left with it. Only the foreign job stands. No edit ran, so no
+    // fence token moved.
+    CHECK(h.scheduler->Stats().explicitCanceled == 1);
+    CHECK(h.scheduler->ExplicitInFlightCount(a.root) == 1);
+    const std::vector<RigExecExplicitJobKey> stillQueued =
+        h.scheduler->QueuedExplicitKeys(a.root);
+    CHECK(stillQueued.size() == 1);
+    CHECK(stillQueued.size() == 1 && stillQueued[0] == foreignKey);
+    CHECK(h.scheduler->ReservedExplicitBytes() == foreign.reservationBytes);
+    CHECK(h.cache.CoverageHeld().pinned == 0);
+    // The standing record's own charge is all of the account the shutdown
+    // leaves behind: the retired demand's capture and payload charges came
+    // back with its queued closure.
+    CHECK(h.cache.CoverageHeld().capture == standing.capture);
+    CHECK(h.cache.CoverageHeld().workspace == standing.workspace);
+    CHECK(h.cache.CoverageHeld().payload == standing.payload);
+    CHECK(h.cache.CoverageRecordCount() == 1);
+    CHECK(h.scheduler->CurrentExplicitFenceToken(a.root, TimeOf(12.0)) == 0);
+    CHECK(h.scheduler->CurrentExplicitFenceToken(a.root, TimeOf(13.0)) == 0);
+    CHECK(h.laneRuns == 1);
+
+    // The surviving job still runs: it belongs to the other host, and the
+    // shutdown touched only its own demand.
+    CHECK(h.scheduler->RunNextQueuedForTesting());
+    CHECK(foreignRuns == 1);
+    CHECK(h.scheduler->QueuedExplicitKeys(a.root).empty());
+    CHECK(h.scheduler->ReservedExplicitBytes() == 0);
+    CHECK(h.laneRuns == 1);
+}
+
+// Assigning a service over a live one retires the replaced service the way
+// its destructor does. Its handles keep the old state alive, so nothing else
+// closes its clients, releases its pins or drops its queued jobs, and its
+// lanes would keep running over hosts the owner already replaced.
+void
+TestMoveAssignmentShutsDownTheReplacedService()
+{
+    Harness h; // zero workers: the queue only moves when the test moves it
+    const RigFixture a = StageA();
+    h.catalogs[a.root] = a.catalog;
+    std::vector<RigExecSubscriptionHandle> kept;
+    auto service = h.MakeService();
+    kept.push_back(
+        service.Subscribe(a.root, RequestAt(TimeOf(12.0), {a.scalar})));
+    CHECK(kept.back().IsValid());
+    CHECK(h.scheduler->DrainQueueForTesting() == 1);
+    CHECK(h.laneRuns == 1);
+    const RigExecCoverageBytes standing = h.cache.CoverageHeld();
+    CHECK(standing.capture > 0);
+    CHECK(standing.pinned == 0);
+    CHECK(AllReady(service.PollResults(kept.back())));
+    CHECK(service.Stats().pinnedPayloads == 1);
+    CHECK(h.cache.CoverageHeld().pinned > 0);
+
+    // Outstanding demand of its own, still only queued.
+    kept.push_back(
+        service.Subscribe(a.root, RequestAt(TimeOf(13.0), {a.points})));
+    CHECK(kept.back().IsValid());
+    CHECK(service.Stats().demandsInFlight == 1);
+    CHECK(h.scheduler->ExplicitInFlightCount(a.root) == 1);
+    CHECK(h.scheduler->ReservedExplicitBytes() > 0);
+    const size_t canceledBefore = h.scheduler->Stats().explicitCanceled;
+
+    // Self-assignment moves nothing: the service is not retired by its own
+    // assignment operator. Through a reference, so the compiler cannot read
+    // the aliasing as a typo.
+    RigExecOutputSubscriptionService &self = service;
+    service = std::move(self);
+    CHECK(!service.IsStopping());
+    CHECK(service.Stats().pinnedPayloads == 1);
+    CHECK(h.cache.CoverageHeld().pinned > 0);
+    CHECK(h.scheduler->Stats().explicitCanceled == canceledBefore);
+    CHECK(h.scheduler->ExplicitInFlightCount(a.root) == 1);
+    CHECK(AllReady(service.PollResults(kept[0])));
+
+    // Replacing it retires the old state: pins come back, its queued job
+    // leaves the queue, and its lane never runs.
+    auto replacement = h.MakeService();
+    service = std::move(replacement);
+    CHECK(!service.IsStopping());
+    CHECK(service.Stats().subscriptions == 0);
+    CHECK(service.Stats().demandsInFlight == 0);
+    CHECK(h.cache.CoverageHeld().pinned == 0);
+    CHECK(h.scheduler->Stats().explicitCanceled == canceledBefore + 1);
+    CHECK(h.scheduler->ExplicitInFlightCount(a.root) == 0);
+    CHECK(h.scheduler->QueuedExplicitKeys(a.root).empty());
+    CHECK(h.scheduler->ReservedExplicitBytes() == 0);
+    CHECK(h.cache.CoverageRecordCount() == 1);
+    CHECK(h.laneRuns == 1);
+
+    // The moved-in service is a fresh service over the same pool and cache:
+    // its own demand is admitted, runs, and answers.
+    auto fresh = service.Subscribe(a.root, RequestAt(TimeOf(14.0), {a.scalar}));
+    CHECK(fresh.IsValid());
+    CHECK(service.Stats().subscriptions == 1);
+    CHECK(h.scheduler->DrainQueueForTesting() == 1);
+    CHECK(h.laneRuns == 2);
+    const std::vector<RigExecOutputPacket> again = service.PollResults(fresh);
+    CHECK(again.size() == 1);
+    CHECK(AllReady(again));
+
+    // The old clients die against a stopping state: closing them pulls no
+    // work and pins nothing, and the replaced service keeps its own demand.
+    kept.clear();
+    CHECK(h.scheduler->Stats().explicitCanceled == canceledBefore + 1);
+    CHECK(h.scheduler->QueuedExplicitKeys(a.root).empty());
+    CHECK(h.scheduler->ExplicitInFlightCount(a.root) == 0);
+    CHECK(h.scheduler->ReservedExplicitBytes() == 0);
+    // The replaced service's pins stayed gone: only the new client's own pin
+    // stands.
+    CHECK(service.Stats().pinnedPayloads == 1);
+    CHECK(h.cache.CoverageHeld().pinned > 0);
+    CHECK(h.cache.CoverageRecordCount() == 2);
+    CHECK(h.laneRuns == 2);
+}
+
 // The last client to leave a frame takes its queued job and its reservation
 // with it, whether it closes or moves its demand.
 void
@@ -3183,6 +3375,8 @@ main()
     TestExistingSubscriptionRefusesARecompiledRig();
     TestRefusalOfReplacementWorkEndsTheRetiredAnswer();
     TestServiceDestructionReleasesEveryLivePin();
+    TestServiceDestructionCancelsItsQueuedJobs();
+    TestMoveAssignmentShutsDownTheReplacedService();
     TestLastClientLeavingAQueuedJobRetiresIt();
     TestClosingOneClientCancelsOnlyItsOwnJob();
     TestWorkEndingInsideAdmissionKeepsItsDisposition();

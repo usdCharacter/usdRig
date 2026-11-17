@@ -442,18 +442,22 @@ public:
     }
 
     /// Closes every client, releases every lease and reservation this service
-    /// owns, and joins the pool -- holding no lock while it does.
+    /// owns, drops its queued jobs from the pool, and joins the lanes --
+    /// holding no lock while it does.
     void Shutdown()
     {
         std::vector<uint64_t> ids;
+        std::vector<RigExecExplicitJobKey> keys;
         {
             std::lock_guard<std::mutex> lock(_mutex);
             _stopping = true;
             _callback = nullptr;
             _events.clear();
             ids = _clientIds();
+            keys.reserve(_demands.size());
             for (const auto &entry : _demands) {
                 entry.second->live = false;
+                keys.push_back(entry.first);
             }
             _clients.clear();
             _demands.clear();
@@ -463,7 +467,18 @@ public:
             _StageClientPins(id);
         }
         _ReleaseStagedPins();
-        if (_host.scheduler && _host.scheduler->GetWorkerCount() > 0) {
+        if (!_host.scheduler) {
+            return;
+        }
+        // A queued closure holds this state and its demand, so its byte and
+        // coverage reservations stand with it: a manual pool never drains on
+        // its own, and joining cannot be waited for there. Purge exactly this
+        // service's keys -- another host's queued work is untouched -- then
+        // join what already popped, whose body sees the demand went dead.
+        for (const RigExecExplicitJobKey &key : keys) {
+            _host.scheduler->CancelExplicitJob(key);
+        }
+        if (_host.scheduler->GetWorkerCount() > 0) {
             _host.scheduler->WaitUntilIdle();
         }
     }
@@ -1459,6 +1474,21 @@ RigExecOutputSubscriptionService::~RigExecOutputSubscriptionService()
     if (_state) {
         _state->Shutdown();
     }
+}
+
+RigExecOutputSubscriptionService &
+RigExecOutputSubscriptionService::operator=(
+    RigExecOutputSubscriptionService &&other)
+{
+    if (this != &other) {
+        // Live handles and queued work keep the replaced state alive past this
+        // object, so its own destructor never runs: retire it here.
+        if (_state) {
+            _state->Shutdown();
+        }
+        _state = std::move(other._state);
+    }
+    return *this;
 }
 
 RigExecSubscriptionHandle

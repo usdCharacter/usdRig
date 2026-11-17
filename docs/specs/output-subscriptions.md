@@ -466,6 +466,12 @@ subscription id and the exact frames the request demands:
   default frame, at another frame, or speculative warming — stays queued with
   its fence token standing; only an edit re-fences a time. A coverage lease
   another owner holds is never touched, and the record stays for the next host.
+- **A retired service leaves no residue in the pool.** Destroying a service,
+  or assigning a service over a live one, closes its clients, releases its
+  pins, and purges exactly the jobs its own demands queued, so their byte and
+  coverage reservations come back even in a pool with no lanes to drain them;
+  the lanes that already popped are joined. Another host's queued work, and a
+  lease another owner holds, are untouched.
 - **The demand is owned before the pool sees the job.** The service registers
   the demand and its launched mask, then admits it: admission notifies the
   lanes and returns with no completion barrier, so a worker can reach its
