@@ -38,14 +38,17 @@ than appending to it (only `PATH` keeps the caller's tail, for child
 tools), so another USD or Python install on the user's machine cannot
 leak its modules, plug-ins, or DLLs into the bundle. On Windows the
 launcher also sets `PXR_USD_WINDOWS_DLL_PATH` to the bundle's library
-directories, and the assembler copies the MSVC runtime
+directories (including `app/rig/bin`, where the node editor's
+`noodles.dll` is installed), and the assembler copies the MSVC runtime
 (`msvcp140*.dll`, `vcruntime140*.dll`, from the bundled Python's
 PySide6 packages) into `app/usd/lib` and `app/rig/lib`, so the bundle
 does not depend on the host's Visual C++ runtime version.
 `usdRigView --usdRig-check` verifies the bundle without starting the
 viewer; `--usdRig-print-env` shows the computed environment. The installed
 `rigExecUsdview` directory is also on `PYTHONPATH`, so TouchPose and Shape
-Editor can import the shared editor modules.
+Editor can import the shared editor modules, and on `PXR_PLUGINPATH_NAME`,
+so usdview loads its plug-in container (the RigExec menu, viewport tools
+and pickers).
 
 On macOS, assembly rewrites every Mach-O install name that points at a
 build-machine location (a copied CPython framework prefix records

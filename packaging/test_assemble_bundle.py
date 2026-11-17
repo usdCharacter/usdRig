@@ -427,6 +427,19 @@ class AssembleBundleTest(unittest.TestCase):
         self.assertIn(editor_dir.resolve(),
                       [Path(entry).resolve() for entry in
                        env_values["PYTHONPATH"].split(os.pathsep)])
+        # usdview only loads the editor's plug-in container when its
+        # plugInfo.json directory is registered.
+        self.assertIn(editor_dir.resolve(),
+                      [Path(entry).resolve() for entry in
+                       env_values["PXR_PLUGINPATH_NAME"].split(os.pathsep)])
+        if HOST_PLATFORM == "windows":
+            # noodles.dll installs into rig/bin; the pinned DLL search
+            # has to reach it or UsdNoodles fails to load.
+            tools_dir = imaging.parent.parent / "bin"
+            self.assertIn(tools_dir.resolve(),
+                          [Path(entry).resolve() for entry in
+                           env_values["PXR_USD_WINDOWS_DLL_PATH"]
+                           .split(os.pathsep)])
         imaging.unlink()
         broken = subprocess.run([str(exe), "--usdRig-check"],
                                 capture_output=True, text=True)

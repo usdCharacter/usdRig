@@ -261,7 +261,7 @@ jobs:
             $name, $value = $line -split "=", 2
             Set-Item "env:$name" $value
           }
-          & "$bundle/app/python/python.exe" -c "from pxr import Usd; import rigExecUsdview, rigexec, numpy; s = Usd.Stage.Open('$bundle/app/examples/rigexec_flat.usda'); assert s is not None; a = Usd.Stage.Open(str(s.GetRootLayer().realPath).replace('rigexec_flat.usda', 'ArmShotAnim.usda')); assert a and a.GetPrimAtPath('/Shot/HeroArm/Geom/ArmBody'); print('bundle smoke OK')"
+          & "$bundle/app/python/python.exe" -c "from pxr import Usd; import rigExecUsdview, rigexec, numpy; from UsdNoodles import _usdNoodles; from pxr import Plug; assert Plug.Registry().GetPluginWithName('rigExecUsdview') is not None; s = Usd.Stage.Open('$bundle/app/examples/rigexec_flat.usda'); assert s is not None; a = Usd.Stage.Open(str(s.GetRootLayer().realPath).replace('rigexec_flat.usda', 'ArmShotAnim.usda')); assert a and a.GetPrimAtPath('/Shot/HeroArm/Geom/ArmBody'); print('bundle smoke OK')"
           if ($LASTEXITCODE -ne 0) { throw "bundle python smoke failed" }
           & "$bundle/app/python/python.exe" "$bundle/app/usd/bin/usdview" --help | Select-Object -First 5
           if ($LASTEXITCODE -ne 0) { throw "usdview --help failed" }
