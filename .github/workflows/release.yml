@@ -289,7 +289,8 @@ jobs:
             }
           }
           $dll = $printed | Where-Object { $_ -like "PXR_USD_WINDOWS_DLL_PATH=*" }
-          if (-not $dll -or -not $dll.Contains($bundle)) {
+          $bundleFull = (Resolve-Path $bundle).Path
+          if (-not $dll -or -not $dll.Contains($bundleFull)) {
             throw "PXR_USD_WINDOWS_DLL_PATH does not pin the bundle: $dll"
           }
 

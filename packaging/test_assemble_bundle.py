@@ -497,13 +497,16 @@ class AssembleBundleTest(unittest.TestCase):
             self.assertIn(name, values)
             self.assertNotIn(bogus, values[name],
                              f"ambient {name} leaked into the bundle env")
-        self.assertEqual(Path(values["PYTHONHOME"]), app / "python")
+        self.assertEqual(Path(values["PYTHONHOME"]).resolve(),
+                         (app / "python").resolve())
         if HOST_PLATFORM == "windows":
             self.assertIn("PXR_USD_WINDOWS_DLL_PATH", values)
             dll_path = values["PXR_USD_WINDOWS_DLL_PATH"]
             self.assertNotIn(bogus, dll_path)
-            self.assertIn(str(app / "usd" / "lib"), dll_path)
-            self.assertIn(str(app / "rig" / "lib"), dll_path)
+            dll_entries = [Path(entry).resolve() for entry in
+                           dll_path.split(os.pathsep) if entry]
+            self.assertIn((app / "usd" / "lib").resolve(), dll_entries)
+            self.assertIn((app / "rig" / "lib").resolve(), dll_entries)
 
 
 if __name__ == "__main__":
