@@ -84,7 +84,8 @@ def _LoadRigExecImaging():
     # frame gizmo read) are probed for by absence at their call sites,
     # exactly as before: a session without them behaves the way it always
     # did.
-    lib = ctypes.CDLL(ImagingLibraryPath())
+    with Tf.WindowsImportWrapper():
+        lib = ctypes.CDLL(ImagingLibraryPath())
     imagingHandle.BindLibrary(lib)
     try:
         lib.RigExecImaging_GetMovedDoublesForStage.argtypes = [
