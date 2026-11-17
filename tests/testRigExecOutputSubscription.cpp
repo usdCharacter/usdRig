@@ -2737,8 +2737,8 @@ TestServiceDestructionCancelsItsQueuedJobs()
     RigExecCoverageBytes standing;
     {
         auto service = h.MakeService();
-        kept.push_back(service.Subscribe(a.root,
-                                         RequestAt(TimeOf(12.0), {a.scalar})));
+        kept.push_back(
+            service.Subscribe(a.root, RequestAt(TimeOf(12.0), {a.scalar})));
         CHECK(kept.back().IsValid());
         CHECK(h.scheduler->DrainQueueForTesting() == 1);
         CHECK(h.laneRuns == 1);
