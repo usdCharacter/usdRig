@@ -500,6 +500,7 @@ BuildEnv(const Bundle &bundle)
 
     std::vector<std::string> loaderPath;
     AppendExisting(loaderPath, rigLib);
+    AppendExisting(loaderPath, rigBin);
     AppendExisting(loaderPath, usd / "lib");
 
     Env env;
