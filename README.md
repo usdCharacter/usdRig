@@ -11,12 +11,12 @@
 > under active development. Its APIs, behavior, and file formats may change
 > without notice. See [layer readiness](STATUS.md) for per-layer status.
 
-usdRig is a **character-rigging engine for OpenUSD** — for animation artists
-and for AI agents that build rigs programmatically. Its engine, **RigExec**,
-evaluates controls, constraints, solvers, and geometry deformers live inside
-the USD stage, then publishes the result through Hydra for playback in
-`usdview`. OpenUSD describes scenes; OpenExec computes; RigExec is the rigging
-layer on top of them.
+usdRig is an **OpenUSD character-rigging project** — for animation artists and
+for AI agents that build rigs programmatically. Its engine, **RigExec**,
+evaluates controls, constraints, solvers, and geometry deformers by running the
+compiled operation graph in memory, without changing the source stage, then
+publishes the result through Hydra for playback in `usdview`. OpenUSD
+describes the rig; RigExec is the rigging layer that computes it.
 
 - 📦 **Try it now:** download a self-contained release bundle (no OpenUSD, Python,
   or Qt install needed) from the [latest release](https://github.com/usdCharacter/usdRig/releases/latest) —
@@ -33,9 +33,10 @@ See the [domain glossary](CONTEXT.md) for canonical project and engine terminolo
 
 ## Status
 
-usdRig runs end to end, is MIT-licensed, and ships runnable binaries with
-every release; per-layer readiness is tracked in [STATUS.md](STATUS.md)
-(see the warning above for volatility details).
+usdRig runs end to end and is MIT-licensed; the [v0.2.0 release](https://github.com/usdCharacter/usdRig/releases/tag/v0.2.0)
+ships runnable bundles for Windows, macOS and Linux, and later releases follow
+the [bundle policy](packaging/README.md); per-layer readiness is tracked in
+[STATUS.md](STATUS.md) (see the warning above for volatility details).
 
 Project-authored code and documentation are [MIT licensed](LICENSE); bundled
 and derived third-party material keeps its own terms. See the
@@ -72,7 +73,7 @@ Start with [the smallest rig](examples/rigexec_flat.usda), the animated
 [reference arm](examples/ArmShotAnim.usda), or the [example catalog](examples/README.md).
 The [biped](examples/biped/README.md) is the full character example.
 
-More motion demos in [docs/gifs](docs/gifs): [Delta Mush](docs/gifs/smooth_mover.gif),
+More motion demos in [docs/gifs](docs/gifs): [Smooth Mover](docs/gifs/smooth_mover.gif),
 [blend shapes](docs/gifs/blend_sample.gif), [cloth](docs/gifs/cloth_mover.gif),
 [position constraints](docs/gifs/position_constraint.gif), and more.
 

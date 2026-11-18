@@ -1,8 +1,8 @@
 # Contributing to usdRig
 
-Thanks for interest in usdRig! usdRig is an OpenUSD character-rigging engine
-(RigExec) under active development. This guide gets you from fork to merged
-pull request.
+Thanks for interest in usdRig! usdRig is an OpenUSD character-rigging project
+whose engine, RigExec, is under active development. This guide gets you from
+fork to merged pull request.
 
 ## Before you start
 
