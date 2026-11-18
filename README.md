@@ -144,6 +144,7 @@ The documentation is published at **[usdcharacter.github.io/usdRig](https://usdc
 - [Build and register external movers](docs/concepts/external-movers.md)
 - [Inspect the live evaluator graph and thread trace](docs/concepts/live-evaluator-inspection.md)
 - [Standalone runtime](docs/specs/standalone-runtime.md)
+- [Format and plugin API compatibility matrix](docs/compat-matrix.md)
 - [Public method references](docs/references.md)
 - [Agent and contributor guide](AGENTS.md)
 - [Release bundles](packaging/README.md): self-contained `usdview` downloads built for every `v<major>.<minor>.0` tag
@@ -248,4 +249,7 @@ Godot, Unreal and the Maya plug-in play baked rigs with the USD-free runtime in
 Maya ASCII file formats work on the other side of that bake: they translate
 source files into native USD rigs that RigExec compiles in this repository.
 The mobile rows carry the Hydra path in `libs/rigExecImaging` and the
-`plugin/rigExecUsdview` tools into their own viewer shells.
+`plugin/rigExecUsdview` tools into their own viewer shells. Which `.rigexec`
+format versions and mover plugin API versions each of these speaks, and where
+they currently drift, is listed in the
+[compatibility matrix](docs/compat-matrix.md).

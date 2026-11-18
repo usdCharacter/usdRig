@@ -147,6 +147,7 @@ nav:
       - Catalog: index.md
   - Architecture:
       - Overview: specs/spec.md
+      - Format and plugin API compatibility: compat-matrix.md
       - Presentation: specs/rigexec-presentation.md
       - Standalone runtime: specs/standalone-runtime.md
       - Standalone pack: specs/standalone-pack.md
