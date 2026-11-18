@@ -741,6 +741,7 @@
       "category": "original",
       "globs": [
         "AGENTS.md",
+        "CONTRIBUTING.md",
         "CONTEXT.md",
         "README.md",
         "STATUS.md",

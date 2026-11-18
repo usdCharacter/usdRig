@@ -1,25 +1,48 @@
-# usdRig
+# usdRig — character rigging for OpenUSD
+
+[![CI](https://github.com/usdCharacter/usdRig/actions/workflows/usdrig.yml/badge.svg)](https://github.com/usdCharacter/usdRig/actions/workflows/usdrig.yml)
+[![Release v0.2.0](https://img.shields.io/github/release/usdCharacter/usdRig.svg)](https://github.com/usdCharacter/usdRig/releases/latest)
+[![Docs](https://img.shields.io/badge/docs-online-blue)](https://usdcharacter.github.io/usdRig/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+![Two-bone IK evaluated live by RigExec](docs/gifs/two_bone_ik.gif)
 
 > **Warning: work in progress.** usdRig is an early AI-generated prototype
 > under active development. Its APIs, behavior, and file formats may change
 > without notice. See [layer readiness](STATUS.md) for per-layer status.
 
-usdRig is an OpenUSD-based character-rigging project. Its engine, **RigExec**,
-is an experimental character-rig evaluator for OpenUSD 26.08. RigExec evaluates
-controls, constraints, solvers, and geometry deformers in memory, then publishes
-the results through Hydra for live playback in `usdview`.
+usdRig is an **OpenUSD character-rigging project** — for animation artists and
+for AI agents that build rigs programmatically. Its engine, **RigExec**,
+evaluates controls, constraints, solvers, and geometry deformers by running the
+compiled operation graph in memory, without changing the source stage, then
+publishes the result through Hydra for playback in `usdview`. OpenUSD
+describes the rig; RigExec is the rigging layer that computes it.
+
+- 📦 **Try it now:** download a self-contained release bundle (no OpenUSD, Python,
+  or Qt install needed) from the [latest release](https://github.com/usdCharacter/usdRig/releases/latest) —
+  Windows `.zip`, macOS (Apple Silicon) and Linux (Ubuntu x86-64) `.tar.gz`.
+- 📖 **Documentation:** [usdcharacter.github.io/usdRig](https://usdcharacter.github.io/usdRig/)
+- 🧩 **Engine integrations:** [Godot](https://github.com/usdCharacter/usdRig_godot),
+  [Unreal](https://github.com/usdCharacter/usdRig_unreal), [Maya](https://github.com/usdCharacter/usdRig_maya),
+  [Blender](https://github.com/usdCharacter/usdRig_blender)
+- 🤝 **Contributing:** see [CONTRIBUTING.md](CONTRIBUTING.md) — issues labeled
+  [`good first issue`](https://github.com/usdCharacter/usdRig/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+  are a great entry point.
 
 See the [domain glossary](CONTEXT.md) for canonical project and engine terminology.
 
-**Status: 0.1 alpha.** APIs and file formats may change. Project-authored code
-and documentation are [MIT licensed](LICENSE), as is the project's icon
-atlas, component library, example artwork, documentation imagery and test
-fixtures; bundled and derived third-party material keeps its own terms. See the
+## Status
+
+usdRig runs end to end and is MIT-licensed; the [v0.2.0 release](https://github.com/usdCharacter/usdRig/releases/tag/v0.2.0)
+ships runnable bundles for Windows, macOS and Linux, and later releases follow
+the [bundle policy](packaging/README.md); per-layer readiness is tracked in
+[STATUS.md](STATUS.md) (see the warning above for volatility details).
+
+Project-authored code and documentation are [MIT licensed](LICENSE); bundled
+and derived third-party material keeps its own terms. See the
 [licensing guide](docs/concepts/licensing.md), the
-[third-party notices](THIRD_PARTY_NOTICES.md) for bundled code, published
-methods, and the eye shader license,
-and the distribution [NOTICE](NOTICE) for the components and their pinned
-commits.
+[third-party notices](THIRD_PARTY_NOTICES.md), and the distribution
+[NOTICE](NOTICE).
 
 Authors: [Nick Burkard](https://github.com/n-burk) and
 [Squarebit Studios](https://www.squarebitstudios.com)' [Walt Yoder](https://github.com/wyoder)
@@ -43,6 +66,33 @@ the [node reference](docs/index.md) describes authoring and parameters.
 
 The [evaluation guide](docs/concepts/baked-vs-dynamic.md) describes the shared
 operation graph, frozen execution, binary playback, and independent checks.
+
+## Examples
+
+Start with [the smallest rig](examples/rigexec_flat.usda), the animated
+[reference arm](examples/ArmShotAnim.usda), or the [example catalog](examples/README.md).
+The [biped](examples/biped/README.md) is the full character example.
+
+More motion demos in [docs/gifs](docs/gifs): [Smooth Mover](docs/gifs/smooth_mover.gif),
+[blend shapes](docs/gifs/blend_sample.gif), [cloth](docs/gifs/cloth_mover.gif),
+[position constraints](docs/gifs/position_constraint.gif), and more.
+
+## Documentation
+
+The documentation is published at **[usdcharacter.github.io/usdRig](https://usdcharacter.github.io/usdRig/)**.
+
+- [Node reference and tutorials](docs/index.md)
+- [Animator tools](docs/tools/index.md): picker, hover picker, marking menu, TouchPose and limbs
+- [Architecture and repository boundaries](docs/specs/spec.md)
+- [Viewport tools](docs/specs/viewport-gizmos.md) and [graph editor](docs/specs/graph-editor.md)
+- [Bake and inverse APIs](docs/specs/python-bake-inverse.md)
+- [Build and register external movers](docs/concepts/external-movers.md)
+- [Inspect the live evaluator graph and thread trace](docs/concepts/live-evaluator-inspection.md)
+- [Standalone runtime](docs/specs/standalone-runtime.md)
+- [Format and plugin API compatibility matrix](docs/compat-matrix.md)
+- [Public method references](docs/references.md)
+- [Agent and contributor guide](AGENTS.md)
+- [Release bundles](packaging/README.md): self-contained `usdview` downloads built for every `v<major>.<minor>.0` tag
 
 ## Build and run
 
@@ -127,27 +177,6 @@ build and installed consumers. Manual linker users call `RigExecRegisterOracle()
 from `rigExecOracle/registerOracle.h` and keep the library loaded for the process
 lifetime. Missing support reports an error; golden APIs without an error channel
 throw `std::runtime_error`.
-
-## Examples and documentation
-
-Start with [the smallest rig](examples/rigexec_flat.usda), the animated
-[reference arm](examples/ArmShotAnim.usda), or the [example catalog](examples/README.md).
-The [biped](examples/biped/README.md) is the full character example.
-
-The documentation is published at **[usdcharacter.github.io/usdRig](https://usdcharacter.github.io/usdRig/)**.
-
-- [Node reference and tutorials](docs/index.md)
-- [Animator tools](docs/tools/index.md): picker, hover picker, marking menu, TouchPose and limbs
-- [Architecture and repository boundaries](docs/specs/spec.md)
-- [Viewport tools](docs/specs/viewport-gizmos.md) and [graph editor](docs/specs/graph-editor.md)
-- [Bake and inverse APIs](docs/specs/python-bake-inverse.md)
-- [Build and register external movers](docs/concepts/external-movers.md)
-- [Inspect the live evaluator graph and thread trace](docs/concepts/live-evaluator-inspection.md)
-- [Standalone runtime](docs/specs/standalone-runtime.md)
-- [Format and plugin API compatibility matrix](docs/compat-matrix.md)
-- [Public method references](docs/references.md)
-- [Agent and contributor guide](AGENTS.md)
-- [Release bundles](packaging/README.md): self-contained `usdview` downloads built for every `v<major>.<minor>.0` tag
 
 ## Repository layout
 
