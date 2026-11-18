@@ -14,13 +14,13 @@
   "stage_sync"
  ],
  "layer_counts": {
-  "model": 66,
+  "model": 65,
   "core": 3,
   "interaction": 82,
   "render": 47,
   "selection": 24,
   "stage_sync": 28,
-  "editing": 58
+  "editing": 59
  },
  "methods": {
   "__init__": "core",
@@ -206,7 +206,7 @@
   "_resolveShortcutConflicts": "interaction",
   "_restoreNodePositions": "model",
   "_rowEdgePinCandidates": "model",
-  "_runLinkOperationOnLayer": "model",
+  "_runLinkOperationOnLayer": "editing",
   "_saveLayerAsSpelled": "stage_sync",
   "_saveStage": "stage_sync",
   "_screenSpaceProjectionMatrix": "model",

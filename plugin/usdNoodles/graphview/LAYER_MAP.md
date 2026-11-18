@@ -15,9 +15,9 @@ registry is created in Phase 2 from the `_make_*` helpers.
 | Layer | Methods | Approx LOC |
 |---|---:|---:|
 | core | 3 | 368 |
-| editing | 58 | 2323 |
+| editing | 59 | 2362 |
 | interaction | 82 | 2948 |
-| model | 66 | 1466 |
+| model | 65 | 1427 |
 | render | 47 | 2091 |
 | selection | 24 | 760 |
 | stage_sync | 28 | 1058 |
@@ -28,7 +28,7 @@ registry is created in Phase 2 from the `_make_*` helpers.
 - `setUsdviewApi` (23 LOC)
 - `_printProfilingStatsIfNeeded` (9 LOC)
 
-## editing (58 methods)
+## editing (59 methods)
 
 - `_completeLinkDrag` (195 LOC)
 - `addNodesFromPrimTreeSelection` (184 LOC)
@@ -52,6 +52,7 @@ registry is created in Phase 2 from the `_make_*` helpers.
 - `_addNewNodeFast` (43 LOC)
 - `_finishConnectionReplacement` (42 LOC)
 - `_addPrimAsNode` (39 LOC)
+- `_runLinkOperationOnLayer` (39 LOC)
 - `_onNodeCreated` (37 LOC)
 - `removeSelectedNodes` (36 LOC)
 - `_pushDeleteSelectedUndo` (31 LOC)
@@ -174,7 +175,7 @@ registry is created in Phase 2 from the `_make_*` helpers.
 - `_showWarningPopup` (2 LOC)
 - `_toggleFrameInPrimTree` (2 LOC)
 
-## model (66 methods)
+## model (65 methods)
 
 - `_initCachedSettings` (112 LOC)
 - `_rebuildLinks` (90 LOC)
@@ -185,7 +186,6 @@ registry is created in Phase 2 from the `_make_*` helpers.
 - `_surfaceConnectionEndpointPins` (44 LOC)
 - `_collectIncidentLinkKeys` (41 LOC)
 - `_collectSiblingDanglingLinks` (41 LOC)
-- `_runLinkOperationOnLayer` (39 LOC)
 - `_updateLinksForMovedNodes` (39 LOC)
 - `_getLinkEndpointPosition` (37 LOC)
 - `_getLinksForNodeDirection` (37 LOC)
