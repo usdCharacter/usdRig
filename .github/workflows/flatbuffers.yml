@@ -1,0 +1,58 @@
+# Generated-header drift check for the .rigexec wire format.
+#
+# libs/rigExecBinary/generated is checked in, 31k lines of flatc output.
+# It must match the .fbs schemas exactly: the headers static_assert the
+# pinned runtime headers under thirdparty/flatbuffers, and
+# bin/gen_flatbuffers.sh refuses any flatc but 25.12.19. This job runs
+# that script with the release binary for the pinned tag and fails on
+# any drift, so a .fbs edit that forgot to regenerate cannot merge.
+# Offline and seconds-fast, like the other audit jobs; needs no OpenUSD.
+
+name: FlatBuffers generated headers
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  regenerate:
+    name: flatc 25.12.19 matches the checked-in headers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout usdRig
+        uses: actions/checkout@v4
+
+      # Official release binary of google/flatbuffers tag v25.12.19, the
+      # same tag thirdparty/flatbuffers pins (docs/concepts/licensing.md).
+      # The checksum pins the exact artifact; gen_flatbuffers.sh still
+      # re-checks 'flatc --version' and refuses anything else.
+      - name: Fetch the pinned flatc
+        run: |
+          set -euo pipefail
+          curl -fsSL -o flatc.zip \
+            https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
+          echo '9f87066dc5dfa7fe02090b55bab5f3e55df03e32c9b0cdf229004ade7d091039  flatc.zip' | sha256sum -c -
+          unzip -q flatc.zip
+          ./flatc --version
+
+      - name: Regenerate the headers
+        env:
+          FLATC: ${{ github.workspace }}/flatc
+        run: bin/gen_flatbuffers.sh
+
+      # git add stages regenerated changes and any header flatc produced
+      # but that was never committed; --exit-code is the drift verdict.
+      - name: Fail on drift against the committed headers
+        run: |
+          set -euo pipefail
+          git add -A -- libs/rigExecBinary/generated
+          if ! git diff --cached --exit-code --stat -- libs/rigExecBinary/generated; then
+              echo "::error::libs/rigExecBinary/generated does not match the .fbs schemas."
+              echo "::error::Run bin/gen_flatbuffers.sh with flatc 25.12.19 and commit the result."
+              exit 1
+          fi
