@@ -1,12 +1,7 @@
-# Generated-header drift check for the .rigexec wire format.
-#
-# libs/rigExecBinary/generated is checked in, 31k lines of flatc output.
-# It must match the .fbs schemas exactly: the headers static_assert the
-# pinned runtime headers under thirdparty/flatbuffers, and
-# bin/gen_flatbuffers.sh refuses any flatc but 25.12.19. This job runs
-# that script with the release binary for the pinned tag and fails on
-# any drift, so a .fbs edit that forgot to regenerate cannot merge.
-# Offline and seconds-fast, like the other audit jobs; needs no OpenUSD.
+# Generated-header drift check for the .rigexec wire format: the checked-in
+# headers under libs/rigExecBinary/generated must match the .fbs schemas,
+# because they static_assert the FlatBuffers runtime pinned under
+# thirdparty/flatbuffers. Needs no OpenUSD build.
 
 name: FlatBuffers generated headers
 
@@ -27,10 +22,9 @@ jobs:
       - name: Checkout usdRig
         uses: actions/checkout@v4
 
-      # Official release binary of google/flatbuffers tag v25.12.19, the
-      # same tag thirdparty/flatbuffers pins (docs/concepts/licensing.md).
-      # The checksum pins the exact artifact; gen_flatbuffers.sh still
-      # re-checks 'flatc --version' and refuses anything else.
+      # Release binary of the tag thirdparty/flatbuffers pins
+      # (docs/concepts/licensing.md); the checksum pins this artifact and
+      # gen_flatbuffers.sh still refuses any other flatc version.
       - name: Fetch the pinned flatc
         run: |
           set -euo pipefail
@@ -40,13 +34,19 @@ jobs:
           unzip -q flatc.zip
           ./flatc --version
 
-      - name: Regenerate the headers
+      # flatc only writes the headers its schemas name, so regenerating over
+      # the checkout would leave a committed header for a deleted schema
+      # untouched; an empty directory makes its absence a deletion.
+      - name: Regenerate into an empty generated directory
         env:
           FLATC: ${{ github.workspace }}/flatc
-        run: bin/gen_flatbuffers.sh
+        run: |
+          set -euo pipefail
+          rm -rf libs/rigExecBinary/generated
+          bin/gen_flatbuffers.sh
 
-      # git add stages regenerated changes and any header flatc produced
-      # but that was never committed; --exit-code is the drift verdict.
+      # git add -A stages adds, edits and deletions, so --exit-code is the
+      # drift verdict and --stat names every differing path.
       - name: Fail on drift against the committed headers
         run: |
           set -euo pipefail

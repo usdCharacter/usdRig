@@ -20,8 +20,9 @@ that does not verify as REXP, or a control whose input the file does not
 list. `RigExecFormatOpen` bounds and verifies the nested buffer whenever it
 opens a file. After a schema edit, regenerate with `bin/gen_flatbuffers.sh`
 or `bin/gen_flatbuffers.bat` and regenerate any exporter's builder code; CI
-regenerates the checked-in headers with the pinned flatc release and fails
-on any drift.
+regenerates the checked-in headers with the pinned flatc release into an
+empty directory and fails on any drift, including a header left behind by a
+renamed or deleted schema.
 Unsupported data must be diagnosed during export or loading rather than
 silently discarded.
 
