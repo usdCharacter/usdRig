@@ -267,8 +267,8 @@ RigExec's evaluation and playback layers are consumed outside this repository.
 | [usdRig_unreal](https://github.com/usdCharacter/usdRig_unreal) | Unreal Engine plugin that re-poses a baked rig in the editor through Control Rig and Sequencer | public |
 | [usdRig_maya](https://github.com/usdCharacter/usdRig_maya) | Maya plug-in animating a rig baked outside Maya, plus a read-only OpenUSD file format for Maya ASCII | public |
 | [usdRig_blender](https://github.com/usdCharacter/usdRig_blender) | Read-only OpenUSD file format that opens Blender `.blend` files as RigExec rigs | public |
-| [usdRig_ios](https://github.com/usdCharacter/usdRig_ios) | usdview for iPad with the RigExec viewer plugins and `rigExecImaging` on Storm over HgiMetal | see repo |
-| [usdRig_android](https://github.com/usdCharacter/usdRig_android) | Android port of that viewer on Storm over HgiVulkan | see repo |
+| `usdRig_ios` | usdview for iPad with the RigExec viewer plugins and `rigExecImaging` on Storm over HgiMetal | closed source |
+| `usdRig_android` | Android port of that viewer on Storm over HgiVulkan | closed source |
 
 Godot, Unreal and the Maya plug-in play baked rigs with the USD-free runtime in
 `libs/rigExecRuntime`, the same operation graph the viewport runs; see

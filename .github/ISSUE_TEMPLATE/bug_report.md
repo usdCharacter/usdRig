@@ -21,5 +21,5 @@ What the rig should do versus what it did.
 
 ## Diagnostics
 
-Output from `rigExecPose`, CTest failures, or `--usdRig-check` (for release
-bundles), if any.
+Output from `rigExecPose`, CTest failures, or `usdRigView --usdRig-check`
+(for release bundles), if any.

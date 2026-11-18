@@ -26,28 +26,42 @@ configuration for you.
    `feat/...`, `docs/...`).
 2. Keep commits atomic: one coherent change per commit, with a succinct
    message describing it (see [AGENTS.md](AGENTS.md#git)).
-3. Build and test:
+3. Build and test. `bin/build_rigexec.sh` (Windows: `bin\build_rigexec.bat`)
+   configures, builds everything and runs the whole suite; it is the right
+   command for a fresh checkout. For an incremental change, run the set it
+   affects:
    ```sh
-   bin/build_rigexec.sh              # Windows: bin\build_rigexec.bat
-   bin/test_changed.sh --run
+   bin/test_changed.sh --run <changed paths>   # direct set, then the transitive set before pushing
+   ctest --test-dir build -L fast              # the short tier
    ```
+   Source `bin/_env.sh` (Windows: `bin\_env.bat`) first: `ctest` and anything
+   importing `pxr` or `rigexec` needs this build's USD, Python and plugin path.
    Python interaction-math tests: `bin/test/run_python_tests.sh` (or the
    `.bat` equivalent). Viewer integration tests need a working graphics
    context.
-4. Format C++ with the pinned CI policy:
+4. A new tracked file must be classified in
+   [tools/license_manifest.json](tools/license_manifest.json): the license
+   audit fails a file no family claims. Run `python3 tools/check_licenses.py`
+   after editing the manifest.
+5. Format C++ with the pinned CI policy:
    ```sh
    just format        # or: python3 bin/format_cpp.py --fix <files>
    ```
-5. For docs changes, preview the site with
+6. For docs changes, preview the site with
    `python -m mkdocs serve` (deps in `docs/requirements.txt`).
 
 ## Pull requests
 
 - One PR per coherent change; describe what changed and how it was verified.
 - CI (`usdRig` workflow) must pass: it builds and tests the C++ libraries on
-  Ubuntu 24.04, Windows 2022 and macOS 15, and checks style, hidden locks,
-   and allocation rules.
-- A maintainer reviews and merges; squash merges are preferred.
+  Ubuntu 24.04, Windows 2022 and macOS 15, and checks formatting, hidden
+  locks, allocations and the license manifest.
+- CI does not run the Python bindings or the `usdview` helpers; run those
+  yourself when a change touches them.
+- Node documentation pages are generated: edit `docs/operator_notes.py` or
+  the schema docs and regenerate with `python docs/build_pages.py`.
+- A maintainer reviews and lands the change once CI and review are green on
+  the current head; a stale branch is rebased onto main and re-validated.
 
 ## Reporting bugs
 
