@@ -7,6 +7,10 @@
 
 ![Two-bone IK evaluated live by RigExec](docs/gifs/two_bone_ik.gif)
 
+> **Warning: work in progress.** usdRig is an early AI-generated prototype
+> under active development. Its APIs, behavior, and file formats may change
+> without notice. See [layer readiness](STATUS.md) for per-layer status.
+
 usdRig is a **character-rigging engine for OpenUSD** — for animation artists
 and for AI agents that build rigs programmatically. Its engine, **RigExec**,
 evaluates controls, constraints, solvers, and geometry deformers live inside
@@ -29,10 +33,9 @@ See the [domain glossary](CONTEXT.md) for canonical project and engine terminolo
 
 ## Status
 
-usdRig is a rapidly evolving prototype (0.2 alpha): it runs end to end, is
-MIT-licensed, and ships runnable binaries with every release, but its APIs,
-behavior, and file formats may change without notice. Per-layer readiness is
-tracked in [STATUS.md](STATUS.md).
+usdRig runs end to end, is MIT-licensed, and ships runnable binaries with
+every release; per-layer readiness is tracked in [STATUS.md](STATUS.md)
+(see the warning above for volatility details).
 
 Project-authored code and documentation are [MIT licensed](LICENSE); bundled
 and derived third-party material keeps its own terms. See the
