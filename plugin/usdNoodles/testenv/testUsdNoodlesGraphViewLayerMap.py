@@ -134,15 +134,26 @@ class TestGraphViewLayerMap(unittest.TestCase):
             self.fail(f"layer_map.json uses unknown layers: {invalid}")
 
     def test_guard_detects_an_unassigned_method(self):
-        """Self-test: the check actually trips on a new unassigned method."""
-        fake_source = (
+        """Self-test: the completeness check trips on a new method.
+
+        Runs the completeness check itself on an isolated instance holding a
+        synthetic GraphView method set, so removing the check's failure
+        branch, or an extractor that stops seeing methods, fails here.
+        """
+        synthetic_source = (
             "class GraphView:\n"
             "    def __init__(self): pass\n"
             "    def brand_new_method(self): pass\n"
         )
-        fake_methods = _graphview_method_names(fake_source)
-        missing = fake_methods - set(self.layer_map)
-        self.assertIn("brand_new_method", missing)
+        probe = TestGraphViewLayerMap(
+            "test_every_method_has_a_layer_assignment")
+        # Instance state shadows the class state setUpClass installed, so the
+        # probe runs the check against the injected method set only.
+        probe.methods = _graphview_method_names(synthetic_source)
+        probe.layer_map = dict(self.layer_map)
+        with self.assertRaises(AssertionError) as caught:
+            probe.test_every_method_has_a_layer_assignment()
+        self.assertIn("brand_new_method", str(caught.exception))
 
 
 if __name__ == "__main__":
