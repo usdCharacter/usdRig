@@ -8,10 +8,11 @@
 
 Every method defined on ``GraphView`` in ``plugin/usdNoodles/graphView.py``
 must carry a layer assignment in
-``plugin/usdNoodles/graphview/layer_map.json``. Adding a new method to
-``GraphView`` without assigning it to a layer fails this test; deleting a
-method without removing its map entry also fails, keeping the map
-authoritative through the Phase 2 extractions.
+``plugin/usdNoodles/graphview/layer_map.json``, and
+``graphview/LAYER_MAP.md`` must assign the same methods to the same layers.
+Adding a new method to ``GraphView`` without assigning it to a layer fails
+this test; deleting a method without removing its map entry also fails,
+keeping both views of the map authoritative through the Phase 2 extractions.
 
 The guard reads ``graphView.py`` as source text through the AST, so it
 needs neither Qt, GL, nor pxr and runs in any plain interpreter.
@@ -22,6 +23,7 @@ from __future__ import annotations
 import ast
 import json
 import pathlib
+import re
 import unittest
 
 VALID_LAYERS = frozenset(
@@ -29,22 +31,15 @@ VALID_LAYERS = frozenset(
      "selection", "stage_sync", "core"}
 )
 
-
-def _find_pair():
-    """Locate graphView.py and layer_map.json in the source or staged tree."""
-    here = pathlib.Path(__file__).resolve().parent
-    candidates = [
-        # Source tree: plugin/usdNoodles/testenv -> plugin/usdNoodles/
-        here.parent,
-        # Staged tree: build/python/UsdNoodles/testenv -> build/python/UsdNoodles/
-        here.parent.parent.parent / "plugin" / "usdNoodles",
-    ]
-    for root in candidates:
-        source = root / "graphView.py"
-        layer_map = root / "graphview" / "layer_map.json"
-        if source.is_file() and layer_map.is_file():
-            return source, layer_map
-    return None, None
+# testenv sits directly inside the UsdNoodles package in the source tree, in
+# the staged build/python/UsdNoodles package, and in the installed package, so
+# the guarded files are always one directory above this file.
+_PACKAGE_DIR = pathlib.Path(__file__).resolve().parent.parent
+_SOURCE = _PACKAGE_DIR / "graphView.py"
+_MAP_PATH = _PACKAGE_DIR / "graphview" / "layer_map.json"
+_MAP_MARKDOWN = _PACKAGE_DIR / "graphview" / "LAYER_MAP.md"
+_SECTION_RE = re.compile(r"^## (\w+) \(\d+ methods?\)$")
+_ENTRY_RE = re.compile(r"^- `(\w+)` \(\d+ LOC\)$")
 
 
 def _graphview_method_names(source_text):
@@ -60,16 +55,37 @@ def _graphview_method_names(source_text):
     return set()
 
 
-_SOURCE, _MAP_PATH = _find_pair()
+def _markdown_layers(markdown_text):
+    """{method: layer} read from the generated LAYER_MAP.md body."""
+    assignment = {}
+    layer = None
+    for line in markdown_text.splitlines():
+        section = _SECTION_RE.match(line)
+        if section:
+            layer = section.group(1)
+            continue
+        entry = _ENTRY_RE.match(line)
+        if layer is not None and entry:
+            assignment[entry.group(1)] = layer
+    return assignment
 
 
-@unittest.skipUnless(_SOURCE, "graphView.py or layer_map.json not found")
 class TestGraphViewLayerMap(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # No skip for the pair the guard is named for: a guard that skips when
+        # its own inputs are missing passes vacuously, and every UsdNoodles
+        # package layout stages graphView.py and layer_map.json beside testenv.
+        absent = [str(path) for path in (_SOURCE, _MAP_PATH)
+                  if not path.is_file()]
+        if absent:
+            raise AssertionError(
+                "layer-map guard found no " + ", ".join(absent))
         cls.source_text = _SOURCE.read_text()
         cls.methods = _graphview_method_names(cls.source_text)
         cls.layer_map = json.loads(_MAP_PATH.read_text())["methods"]
+        cls.markdown_map = (_markdown_layers(_MAP_MARKDOWN.read_text())
+                            if _MAP_MARKDOWN.is_file() else None)
 
     def test_every_method_has_a_layer_assignment(self):
         """A method added to GraphView without a layer entry fails here."""
@@ -88,6 +104,25 @@ class TestGraphViewLayerMap(unittest.TestCase):
         if stale:
             self.fail(f"layer_map.json assigns layers to methods that no "
                       f"longer exist on GraphView: {stale}")
+
+    @unittest.skipUnless(_MAP_MARKDOWN.is_file(),
+                         "LAYER_MAP.md is documentation: the staged and "
+                         "installed UsdNoodles packages hold only .py/.json")
+    def test_layer_map_markdown_matches_the_json(self):
+        """The generated human-readable view lists the same assignment."""
+        if self.markdown_map != self.layer_map:
+            missing = sorted(set(self.layer_map) - set(self.markdown_map))
+            extra = sorted(set(self.markdown_map) - set(self.layer_map))
+            moved = sorted(
+                name
+                for name in set(self.layer_map) & set(self.markdown_map)
+                if self.layer_map[name] != self.markdown_map[name]
+            )
+            self.fail(
+                "graphview/LAYER_MAP.md disagrees with layer_map.json "
+                f"(missing={missing}, extra={extra}, moved={moved}); "
+                "regenerate the markdown from the map"
+            )
 
     def test_layer_values_are_valid(self):
         invalid = {
