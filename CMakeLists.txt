@@ -141,6 +141,17 @@ target_sources(rigExecScene INTERFACE
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs/rigExecScene/sceneLinkAnchor.cpp>"
     "$<INSTALL_INTERFACE:${RIGEXEC_INSTALL_CMAKEDIR}/sceneLinkAnchor.cpp>")
 
+# rigExecEval: the solver glue the exec callbacks, the baked program and
+# the scene programs share. A build boundary, not a shipped library: its
+# objects are composed into librigExec below, and the target is never
+# installed, exported, aliased or linked.
+add_library(rigExecEval OBJECT libs/rigExec/solverKernels.cpp)
+target_include_directories(rigExecEval
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/libs")
+target_link_libraries(rigExecEval PRIVATE rigExecMath gf vt tf)
+set_target_properties(rigExecEval PROPERTIES
+    POSITION_INDEPENDENT_CODE ON)
+
 # rigExec: schema bindings and native evaluation. It does not link the
 # scene or oracle libraries. Callers that compile a stage link
 # rigExecScene. Cpu-reference and golden runs link rigExecOracle.
@@ -150,7 +161,7 @@ add_library(rigExec SHARED
     libs/rigExec/computations.cpp
     libs/rigExec/affineFrameComputations.cpp
     libs/rigExec/moverKernels.cpp
-    libs/rigExec/solverKernels.cpp
+    $<TARGET_OBJECTS:rigExecEval>
     libs/rigExec/weightPackets.cpp
     libs/rigExec/inputReplay.cpp
     libs/rigExec/scalarReferenceAdapter.cpp
