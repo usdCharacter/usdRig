@@ -594,8 +594,7 @@ RigExecBridgeGuides::_FillControlGuides(const RigExecGuideCall &call,
         _GuideInputs &inputs = _GuideInputsFor(call, controlPath);
         const UsdPrim &prim = inputs.prim;
         if (!inputs.controlReady || inputs.controlLive) {
-            // The schema fallbacks, restated. Normally GetAttribute resolves
-            // them for us, but a stage composed without the codeless schema
+            // A stage composed without the codeless schema
             // plugin registered has no fallback to find, and an empty shape
             // token names no shape at all -- so a rig would silently stop
             // drawing control guides rather than draw the documented default.
@@ -686,8 +685,7 @@ RigExecBridgeGuides::_FillControlGuides(const RigExecGuideCall &call,
         GfVec3d authoredScale = inputs.scale;
         double wireWidth = inputs.wireWidth;
         // Unlike the scale, a non-positive width is NOT a reason to draw
-        // nothing: it selects the hairline fallback, which is what wire
-        // guides did before the width existed. Non-finite collapses to the
+        // nothing: it selects the hairline fallback. Non-finite collapses to the
         // same thing rather than reaching the curves as a NaN.
         if (!std::isfinite(wireWidth) || wireWidth <= 0.0) {
             wireWidth = 0.0;

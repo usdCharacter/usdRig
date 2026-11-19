@@ -122,9 +122,7 @@ RigExecImagingRegistry::SetWeightOverlay(const std::string &weightPrimPath)
             } else {
                 // Cancel BEFORE the bridge clears: the overlay
                 // flag rides to workers in context.flags and changes pose
-                // content without moving the key, so the old clear-then-
-                // cancel order let a worker publish a stale-overlay pose
-                // into the cleared cache between the two. Retired jobs
+                // content without moving the key. Retired jobs
                 // re-enqueue fresh on the next commit.
                 _CancelGenerationLocked(session.rigPath);
                 session.bridge->SetWeightOverlay(resolved);

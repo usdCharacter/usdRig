@@ -56,7 +56,7 @@ RigExecBridgeFrameCache::AdmitOverrideControls(
     const RigExecOutputAffectedIndex *synced = _SyncAffectedIndex(call);
     if (!synced || synced->Empty()) {
         // No oracle, no admission: the overrides stay foreign and every
-        // plan over them stays conservative, as before.
+        // plan over them stays conservative.
         return;
     }
     const RigExecBakedProgramImpl &impl = program->GetStepGraph();

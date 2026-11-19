@@ -15,10 +15,9 @@
 // evaluates, and the recorded frames are the evaluated ones.
 // Keyless (apiSchemaName is the empty string in plugInfo -- omitting the key
 // is a discovery error) rather than a prim adapter on purpose: a prim adapter
-// would REPLACE the fallback data source a RigExecRoot prim gets today, while
+// would REPLACE the fallback data source a RigExecRoot prim gets, while
 // an API schema adapter's contribution is OVERLAID onto it
-// (apiSchemaAdapter.h:71-74). The rig prim keeps the exact representation it
-// has always had; this file only adds one container to it.
+// (apiSchemaAdapter.h:71-74).
 // THE STAGE KEY (docs/multistage-imaging.md). Several stages may be imaged in
 // one process, each with its own imaging context, and a scene-index chain is
 // built with no stage at all. So the same container also carries
@@ -28,7 +27,7 @@
 // population to bind its chain to that context (registry.h, "Chain ->
 // context binding"). Every other prim is untouched: a prim that is neither a
 // RigExecRoot nor top-level pays one type-name and one path-length
-// comparison and gets no subprim data, exactly as before.
+// comparison and gets no subprim data.
 #include "rigExecSchema/schemaNames.h"
 #include "registry.h"
 #include "sceneIndices.h"

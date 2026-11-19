@@ -128,13 +128,9 @@ RigExecImagingRegistry::_EvaluateSessions(
 
         // Carried across for the same reason xformResetPaths is: the
         // combined snapshot is BUILT here, field by field, so anything
-        // not named is silently dropped. That is how this one was lost
-        // the first time -- the bridge recorded every pose weight, the
-        // store published them, and the merge quietly left them behind,
-        // so RigExecImaging_GetMovedFloats found 0 of 121 with no error
-        // anywhere. Two rigs cannot publish the same property path (the
-        // prim check below already rejects a shared prim), so a plain
-        // insert is right.
+        // not named is silently dropped. Two rigs cannot publish the same
+        // property path (the prim check below already rejects a shared
+        // prim), so a plain insert is right.
         combined->movedFloats.insert(rigSnapshot->movedFloats.begin(),
                                      rigSnapshot->movedFloats.end());
         combined->movedArrays.insert(rigSnapshot->movedArrays.begin(),

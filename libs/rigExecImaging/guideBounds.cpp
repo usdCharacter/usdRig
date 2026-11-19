@@ -189,7 +189,7 @@ _AccumulateGuideBounds(const rigExec::RigExecPublishedPrim &published,
 // descendants", bboxCache.cpp). RigExec nests providers as a matter of
 // course -- a joint chain is joints under joints -- so an extent covering
 // only its own guide silently drops every descendant from any ancestor's
-// bound, and framing a rig framed its first joint.
+// bound.
 // Purpose-scoped, though, because one extent carries ONE purpose: the
 // cache files this box under the boundable's own resolved purpose. Folding
 // a default-purpose control nested under a guide-purpose joint into that

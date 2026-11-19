@@ -135,9 +135,8 @@ RigExecImagingRegistry::_Activate(const UsdStageRefPtr &stage,
 {
     if (stage && UsdStageWeakPtr(stage) != _boundStage) {
         // A context only ever evaluates its own stage. Another stage is
-        // forwarded to ITS context (created when it has none), which is
-        // exactly what the old singleton's "activate replaces" becomes when
-        // every stage has its own registry: nothing here is replaced.
+        // forwarded to ITS context (created when it has none): nothing here
+        // is replaced.
         const Ptr target = ForStage(stage, /* create = */ true);
         if (!target || target.get() == this) {
             if (errors) {
