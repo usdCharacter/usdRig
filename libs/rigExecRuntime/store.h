@@ -37,13 +37,13 @@ namespace rigExec {
 // Runtime vectors and matrices are bare scalar arrays, so their key bytes
 // are their object bytes and contiguous runs of them key with one append.
 static_assert(sizeof(RrVec2f) == 2 * sizeof(float) &&
-              sizeof(RrVec3f) == 3 * sizeof(float) &&
-              sizeof(RrVec3d) == 3 * sizeof(double) &&
-              sizeof(RrMat4d) == 16 * sizeof(double) &&
-              std::is_trivially_copyable<RrVec2f>::value &&
-              std::is_trivially_copyable<RrVec3f>::value &&
-              std::is_trivially_copyable<RrVec3d>::value &&
-              std::is_trivially_copyable<RrMat4d>::value,
+                  sizeof(RrVec3f) == 3 * sizeof(float) &&
+                  sizeof(RrVec3d) == 3 * sizeof(double) &&
+                  sizeof(RrMat4d) == 16 * sizeof(double) &&
+                  std::is_trivially_copyable<RrVec2f>::value &&
+                  std::is_trivially_copyable<RrVec3f>::value &&
+                  std::is_trivially_copyable<RrVec3d>::value &&
+                  std::is_trivially_copyable<RrMat4d>::value,
               "key runs need padding-free, trivially copyable elements");
 template <> struct RigExecOpKeyBulkElement<RrVec2f> : std::true_type {};
 template <> struct RigExecOpKeyBulkElement<RrVec3f> : std::true_type {};
@@ -86,11 +86,16 @@ enum RrSolverField : int {
     RrSolverTwistTurns = 11,
     RrSolverRibbonSampleCount = 12,
     RrSolverIkSpace = 13,
-    RrSolverPin=14,RrSolverUpperScale=15,RrSolverLowerScale=16,RrSolverSoftDistance=17,RrSolverLimbTwist=18,
+    RrSolverPin = 14,
+    RrSolverUpperScale = 15,
+    RrSolverLowerScale = 16,
+    RrSolverSoftDistance = 17,
+    RrSolverLimbTwist = 18,
     RrSolverFieldCount = 19,
 };
-static_assert(size_t(RrSolverFieldCount) == RigExecWireSolverFixedFieldCount,
-              "solver fixed fields: format.h, serialize.cpp, computedCapture.cpp");
+static_assert(
+    size_t(RrSolverFieldCount) == RigExecWireSolverFixedFieldCount,
+    "solver fixed fields: format.h, serialize.cpp, computedCapture.cpp");
 
 enum RrConstraintField : int {
     RrConstraintEnabled = 0,
@@ -114,7 +119,7 @@ enum RrConstraintField : int {
     RrConstraintWorldUpVector = 18,
     RrConstraintPoleVector = 19,
     RrConstraintTwistDegrees = 20,
-    RrConstraintStretch=21,
+    RrConstraintStretch = 21,
     // An IK/FK match's scalars: switch, stretch, softDistance, upperScale,
     // lowerScale, pin, twist. Absent on every other constraint.
     RrConstraintMatchFirst = 22,
@@ -166,25 +171,47 @@ struct RrLadderLive {
 // keep their old payload intact across later executions and workspace clones.
 template <class T> class RrRetainedArray {
     std::shared_ptr<std::vector<T>> _data;
+
 public:
-    const std::vector<T> &Read() const {
+    const std::vector<T> &Read() const
+    {
         return _data ? *_data : Empty();
     }
     static const std::vector<T> &Empty();
-    bool empty() const { return Read().empty(); }
-    size_t size() const { return Read().size(); }
-    const T *data() const { return Read().data(); }
-    void clear() { _data.reset(); }
-    std::vector<T> &Write() {
-        if (!_data) _data=std::make_shared<std::vector<T>>();
-        else if (!_data.unique()) _data=std::make_shared<std::vector<T>>(*_data);
+    bool empty() const
+    {
+        return Read().empty();
+    }
+    size_t size() const
+    {
+        return Read().size();
+    }
+    const T *data() const
+    {
+        return Read().data();
+    }
+    void clear()
+    {
+        _data.reset();
+    }
+    std::vector<T> &Write()
+    {
+        if (!_data)
+            _data = std::make_shared<std::vector<T>>();
+        else if (!_data.unique())
+            _data = std::make_shared<std::vector<T>>(*_data);
         return *_data;
     }
-    void swap(std::vector<T> &spare) {
-        if (_data && _data.unique()) { _data->swap(spare); return; }
+    void swap(std::vector<T> &spare)
+    {
+        if (_data && _data.unique()) {
+            _data->swap(spare);
+            return;
+        }
         auto next = std::make_shared<std::vector<T>>();
         next->swap(spare);
-        if (_data && _data.unique()) spare.swap(*_data);
+        if (_data && _data.unique())
+            spare.swap(*_data);
         _data = std::move(next);
     }
     // Another retainer of the current buffer, not a copy of its elements.
@@ -194,12 +221,20 @@ public:
 };
 // Namespace-owned empty storage avoids worker-local static initialization.
 inline const std::vector<RrVec3f> RrEmptyRetainedPoints;
-template <> inline const std::vector<RrVec3f> &
-RrRetainedArray<RrVec3f>::Empty() { return RrEmptyRetainedPoints; }
+template <>
+inline const std::vector<RrVec3f> &
+RrRetainedArray<RrVec3f>::Empty()
+{
+    return RrEmptyRetainedPoints;
+}
 
 inline const std::vector<float> RrEmptyRetainedWeights;
-template <> inline const std::vector<float> &
-RrRetainedArray<float>::Empty() { return RrEmptyRetainedWeights; }
+template <>
+inline const std::vector<float> &
+RrRetainedArray<float>::Empty()
+{
+    return RrEmptyRetainedWeights;
+}
 
 inline const std::shared_ptr<const std::vector<RrVec3f>> RrEmptySharedPoints =
     std::make_shared<const std::vector<RrVec3f>>();
@@ -211,14 +246,21 @@ std::shared_ptr<const std::vector<T>> RrRetainedEmptyShared();
 
 template <>
 inline std::shared_ptr<const std::vector<RrVec3f>>
-RrRetainedEmptyShared<RrVec3f>() { return RrEmptySharedPoints; }
+RrRetainedEmptyShared<RrVec3f>()
+{
+    return RrEmptySharedPoints;
+}
 
 template <>
 inline std::shared_ptr<const std::vector<float>>
-RrRetainedEmptyShared<float>() { return RrEmptySharedWeights; }
+RrRetainedEmptyShared<float>()
+{
+    return RrEmptySharedWeights;
+}
 
 template <class T>
-inline std::shared_ptr<const std::vector<T>> RrRetainedArray<T>::Share() const
+inline std::shared_ptr<const std::vector<T>>
+RrRetainedArray<T>::Share() const
 {
     return _data ? std::shared_ptr<const std::vector<T>>(_data)
                  : RrRetainedEmptyShared<T>();
@@ -229,7 +271,8 @@ inline std::shared_ptr<const std::vector<T>> RrRetainedArray<T>::Share() const
 // threads do not share a pool. A share that is still held is not recycled,
 // so its bytes stay immutable.
 template <class T>
-inline std::vector<std::vector<T>> &RrRetainedPool()
+inline std::vector<std::vector<T>> &
+RrRetainedPool()
 {
     thread_local std::vector<std::vector<T>> pool;
     return pool;
@@ -238,9 +281,11 @@ inline std::vector<std::vector<T>> &RrRetainedPool()
 // Gives \p spare \p count elements. A pooled buffer of that size is swapped
 // in; otherwise resize allocates.
 template <class T>
-inline void RrRetainedPrepare(std::vector<T> *spare, size_t count)
+inline void
+RrRetainedPrepare(std::vector<T> *spare, size_t count)
 {
-    if (spare->size() == count) return;
+    if (spare->size() == count)
+        return;
     if (spare->capacity() >= count) {
         spare->resize(count);
         return;
@@ -260,11 +305,14 @@ inline void RrRetainedPrepare(std::vector<T> *spare, size_t count)
 // Moves \p share's storage into the pool when \p share is its only owner.
 // The vector was allocated non-const; the const pointer is the public view.
 template <class T>
-inline void RrRetainedRecycle(std::shared_ptr<const std::vector<T>> share)
+inline void
+RrRetainedRecycle(std::shared_ptr<const std::vector<T>> share)
 {
-    if (!share || share.use_count() != 1 || share->capacity() == 0) return;
+    if (!share || share.use_count() != 1 || share->capacity() == 0)
+        return;
     auto &pool = RrRetainedPool<T>();
-    if (pool.size() >= 32) return;
+    if (pool.size() >= 32)
+        return;
     pool.emplace_back();
     pool.back().swap(*const_cast<std::vector<T> *>(share.get()));
 }
@@ -336,7 +384,7 @@ struct RrProviderConversionScratch {
 };
 
 struct RrProviderRefreshScratch {
-    std::vector<RrPointFrame> baseInputs,finInputs,baseOutputs,finOutputs;
+    std::vector<RrPointFrame> baseInputs, finInputs, baseOutputs, finOutputs;
     std::vector<uint8_t> blocked;
 };
 
@@ -560,8 +608,7 @@ struct RrStatic {
     {
         return file->pose->constraintArrays[k].weights;
     }
-    const std::vector<RigExecWireVec3d> &ArrayTranslationOffsets(
-        size_t k) const
+    const std::vector<RigExecWireVec3d> &ArrayTranslationOffsets(size_t k) const
     {
         return file->pose->constraintArrays[k].translationOffsets;
     }
@@ -569,7 +616,10 @@ struct RrStatic {
     {
         return file->pose->constraintArrays[k].rotationOffsets;
     }
-    bool ArrayOk(size_t k) const { return file->pose->constraintArrays[k].ok; }
+    bool ArrayOk(size_t k) const
+    {
+        return file->pose->constraintArrays[k].ok;
+    }
     const std::vector<double> &ArrayPoleWeights(size_t k) const
     {
         return file->pose->constraintArrays[k].poleWeights;
@@ -655,7 +705,7 @@ struct RrGeoSettings {
 struct RrProgram {
     // Explicit captured source state; no runtime Stage lookup or inferred frame validity.
     fb::RigExecWireRequiredStageFramesAdmission requiredStageFramesAdmission;
-    bool requiredStageFramesFullOwed=false;
+    bool requiredStageFramesFullOwed = false;
     RigExecCompiledGraph opGraph;
     /// The windowed operations, settled from the common graph at compile
     /// (RigExecSettleWindowLayout), and the canonical-op mask of a history
@@ -785,7 +835,8 @@ struct RrProgram {
     // no switch pays nothing at all. Empty when the binary carries none.
     std::vector<int32_t> spaceSwitchBySlot;
     // Exact native declaration-derived seed steps, independent of clustering.
-    std::vector<std::vector<int32_t>> avarReaderSteps, chainBaseSteps, revisionSteps;
+    std::vector<std::vector<int32_t>> avarReaderSteps, chainBaseSteps,
+        revisionSteps;
     std::vector<int32_t> revisionStaticStep;
     std::vector<std::array<int32_t, RrSolverFieldCount>> solverRead;
     // Per solver, a RigExecSkeleton2d's channel reads (thirteen per bone,
@@ -872,18 +923,24 @@ struct RrProgram {
 
     RrInputValue ReadLadder(size_t slot, int field) const
     {
-        const auto &ladder=poses->ladders[slot];
-        const int channel=field<=2?field:field==RrLadderParentSpace?3:
-            field==RrLadderParentDefaultSpace?4:field==RrLadderAvarDefaultSpace?5:
-            field==RrLadderPosedDefaultSpace?6:-1;
-        if(channel>=0 && size_t(channel)<ladder.spaceValues.size()) {
-            const int id=ladder.spaceValues[size_t(channel)];
-            if(id>=0 && size_t(id)<store.providerValues.size()) {
-                const auto &state=store.providerValues[size_t(id)];
-                const auto *matrix=std::get_if<std::array<double,16>>(&state.value);
-                if(state.initialized && !state.blocked && matrix) {
-                    RrInputValue value; value.tag=RrInputTag::Matrix4d;
-                    std::memcpy(value.matrix._mtx,matrix->data(),sizeof(double)*16);
+        const auto &ladder = poses->ladders[slot];
+        const int channel = field <= 2                            ? field
+                            : field == RrLadderParentSpace        ? 3
+                            : field == RrLadderParentDefaultSpace ? 4
+                            : field == RrLadderAvarDefaultSpace   ? 5
+                            : field == RrLadderPosedDefaultSpace  ? 6
+                                                                  : -1;
+        if (channel >= 0 && size_t(channel) < ladder.spaceValues.size()) {
+            const int id = ladder.spaceValues[size_t(channel)];
+            if (id >= 0 && size_t(id) < store.providerValues.size()) {
+                const auto &state = store.providerValues[size_t(id)];
+                const auto *matrix =
+                    std::get_if<std::array<double, 16>>(&state.value);
+                if (state.initialized && !state.blocked && matrix) {
+                    RrInputValue value;
+                    value.tag = RrInputTag::Matrix4d;
+                    std::memcpy(value.matrix._mtx, matrix->data(),
+                                sizeof(double) * 16);
                     return value;
                 }
             }
@@ -968,7 +1025,8 @@ bool RrRunPropertyPart(RrProgram *program, size_t chain, size_t part,
                        std::vector<std::string> *diagnostics);
 void RrPropertyBegin(RrProgram *program);
 void RrPropertyPublish(RrProgram *program);
-void RrPropertyPublishFinished(RrProgram *program, const std::vector<char> &finished);
+void RrPropertyPublishFinished(RrProgram *program,
+                               const std::vector<char> &finished);
 bool RrRunRestHead(RrProgram *program, size_t group, bool ladder);
 bool RrRunTopologyHead(RrProgram *program, size_t revision);
 bool RrRunPropertyChains(RrProgram *program,
@@ -989,9 +1047,11 @@ void RrShareLatticeBinds(RrProgram *program);
 // Step bodies by family.
 bool RrRunPoseStep(RrProgram *program, size_t step, std::string *error);
 bool RrRunGeometryStep(RrProgram *program, size_t step, std::string *error);
-bool RrWeightFieldEffectiveInputMemo(const RrProgram *, uint32_t, std::string *, std::vector<uint32_t> *);
+bool RrWeightFieldEffectiveInputMemo(const RrProgram *, uint32_t, std::string *,
+                                     std::vector<uint32_t> *);
 bool RrRunWeightStep(RrProgram *program, size_t step, std::string *error);
-bool RrRevisionWeightFieldInput(const RrProgram *, size_t, const RrVec3f **, size_t *);
+bool RrRevisionWeightFieldInput(const RrProgram *, size_t, const RrVec3f **,
+                                size_t *);
 bool RrRunRevisionWeightField(RrProgram *program, size_t fieldIndex);
 // Evaluate one compiled per-consumer field without stage or publication-map
 // lookup. The graph producer supplies the actual entering point count.
@@ -1073,6 +1133,6 @@ enum class RrRotationFilter : uint8_t { All = 0, Twist = 1, Swing = 2 };
 RrMat4d RrFilterSpaceRotation(const RrMat4d &m, const RrVec3d &axis,
                               RrRotationFilter filter);
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_RUNTIME_STORE_H
+#endif // RIGEXEC_RUNTIME_STORE_H

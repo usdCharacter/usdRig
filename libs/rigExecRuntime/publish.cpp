@@ -85,8 +85,8 @@ _RrEnsureEpilogueIndex(RrProgram *program)
 // come in step order.
 template <class Visit>
 void
-_RrAppendBlock(const RrProgram &program, RrStepLines block,
-               const Visit &visit, std::vector<std::string> *out)
+_RrAppendBlock(const RrProgram &program, RrStepLines block, const Visit &visit,
+               std::vector<std::string> *out)
 {
     const RrStore &store = program.store;
     const std::vector<RigExecWireStep> &steps = *program.steps;
@@ -135,7 +135,8 @@ _RrAppendBlock(const RrProgram &program, RrStepLines block,
         std::vector<size_t> summaries;
         visit([&](size_t i) {
             if (steps[i].kind == RigExecWireStepKind::RevisionFuse &&
-                !store.stepOutputs[i].diagnostics.empty()) summaries.push_back(i);
+                !store.stepOutputs[i].diagnostics.empty())
+                summaries.push_back(i);
         });
         std::sort(summaries.begin(), summaries.end(), [&](size_t a, size_t b) {
             return steps[a].object < steps[b].object;
@@ -143,8 +144,10 @@ _RrAppendBlock(const RrProgram &program, RrStepLines block,
         size_t next = 0;
         visit([&](size_t i) {
             if (steps[i].kind == RigExecWireStepKind::RevisionFuse &&
-                !store.stepOutputs[i].diagnostics.empty()) diagnostics(summaries[next++]);
-            else if (_RrPublishedGeometryKind(steps[i].kind)) diagnostics(i);
+                !store.stepOutputs[i].diagnostics.empty())
+                diagnostics(summaries[next++]);
+            else if (_RrPublishedGeometryKind(steps[i].kind))
+                diagnostics(i);
         });
         return;
     }
@@ -160,16 +163,24 @@ _RrAppendStepLines(RrProgram *program, RrStepLines block,
     RrEpilogue &E = program->epilogue;
     const std::vector<uint32_t> &held = E.held.Ascending();
     const size_t begin = out->size();
-    _RrAppendBlock(*program, block, [&](const auto &each) {
-        for (const uint32_t i : held) each(size_t(i));
-    }, out);
+    _RrAppendBlock(
+        *program, block,
+        [&](const auto &each) {
+            for (const uint32_t i : held)
+                each(size_t(i));
+        },
+        out);
     if (!E.verify) {
         return;
     }
     std::vector<std::string> swept;
-    _RrAppendBlock(*program, block, [&](const auto &each) {
-        for (size_t i = 0; i < program->steps->size(); ++i) each(i);
-    }, &swept);
+    _RrAppendBlock(
+        *program, block,
+        [&](const auto &each) {
+            for (size_t i = 0; i < program->steps->size(); ++i)
+                each(i);
+        },
+        &swept);
     if (swept.size() != out->size() - begin ||
         !std::equal(swept.begin(), swept.end(),
                     out->begin() + std::ptrdiff_t(begin))) {
@@ -199,16 +210,17 @@ RrFoldHeldSteps(RrProgram *program)
         return;
     }
     const std::vector<char> &ran = program->store.opExecution.ran;
-    for (uint32_t c = 0; c < program->opGraph.ops.size() && c < ran.size(); ++c) {
-        if (!ran[c]) continue;
+    for (uint32_t c = 0; c < program->opGraph.ops.size() && c < ran.size();
+         ++c) {
+        if (!ran[c])
+            continue;
         const uint32_t i = program->opGraph.ops[c].originalIndex;
         E.held.Note(i, _RrHoldsOutput(program->store, i));
     }
 }
 
 bool
-RrPublishPose(RrProgram *program,
-              std::vector<std::string> *poseDiagnostics,
+RrPublishPose(RrProgram *program, std::vector<std::string> *poseDiagnostics,
               std::string *error)
 {
     RrStore &store = program->store;
@@ -224,7 +236,8 @@ RrPublishPose(RrProgram *program,
         for (size_t i = 0; same && i < program->steps->size(); ++i)
             same = (program->epilogue.held.holding[i] != 0) ==
                    _RrHoldsOutput(store, i);
-        if (!same) ++program->epilogue.mismatches;
+        if (!same)
+            ++program->epilogue.mismatches;
     }
     const std::vector<char> &aliveSolver = program->epilogue.aliveSolver;
 
@@ -237,17 +250,16 @@ RrPublishPose(RrProgram *program,
 
     // Fallback joints: one line per failing writer, in walk order,
     // stable-sorted by joint path.
-    std::vector<std::pair<uint32_t, std::pair<uint32_t, int>>>
-        fallbackJoints;
+    std::vector<std::pair<uint32_t, std::pair<uint32_t, int>>> fallbackJoints;
     std::map<uint32_t, uint32_t> lastPublishingWriter;
     for (const RigExecWireWalkStep &walk : program->poses->walkSteps) {
         if (!walk.solverBatch) {
             continue;
         }
         for (int si : walk.batchSolvers) {
-            if (!aliveSolver[size_t(si)]) continue;
-            const RigExecWireSolver &s =
-                program->poses->solvers[size_t(si)];
+            if (!aliveSolver[size_t(si)])
+                continue;
+            const RigExecWireSolver &s = program->poses->solvers[size_t(si)];
             for (size_t k = 0; k < s.outputs.size(); ++k) {
                 const uint32_t jointPath =
                     meta.paths[size_t(s.outputs[k].first)];
@@ -257,23 +269,20 @@ RrPublishPose(RrProgram *program,
                     continue;
                 }
                 int element = -1;
-                const auto binding =
-                    program->jointBindingIndex.find(jointPath);
+                const auto binding = program->jointBindingIndex.find(jointPath);
                 if (binding != program->jointBindingIndex.end()) {
                     const size_t row = binding->second;
                     const std::vector<uint32_t> &writers =
-                        program->poses
-                            ->jointBindingSolvers[row].v;
+                        program->poses->jointBindingSolvers[row].v;
                     for (size_t w = 0; w < writers.size(); ++w) {
                         if (writers[w] == s.path) {
-                            element = program->poses
-                                          ->jointBindingElements[row].v[w];
+                            element =
+                                program->poses->jointBindingElements[row].v[w];
                             break;
                         }
                     }
                 }
-                fallbackJoints.push_back(
-                    {jointPath, {s.path, element}});
+                fallbackJoints.push_back({jointPath, {s.path, element}});
             }
         }
     }
@@ -304,18 +313,15 @@ RrPublishPose(RrProgram *program,
             store.providerXforms.erase(meta.paths[slot]);
             store.providerBaseXforms.erase(meta.paths[slot]);
             poseDiagnostics->push_back(
-                "constraint target " +
-                program->TextOrEmpty(meta.paths[slot]) +
+                "constraint target " + program->TextOrEmpty(meta.paths[slot]) +
                 " has an invalid final frame; transform omitted");
             continue;
         }
         RrMat4d revised;
         revised.SetIdentity();
-        if (RrPointsToMatrix(RrIdentityLandmarks(), frame.points,
-                             &revised)) {
+        if (RrPointsToMatrix(RrIdentityLandmarks(), frame.points, &revised)) {
             store.providerXforms[meta.paths[slot]] = revised;
-            store.providerBaseXforms[meta.paths[slot]] =
-                store.xformBase[k];
+            store.providerBaseXforms[meta.paths[slot]] = store.xformBase[k];
         } else {
             store.providerXforms.erase(meta.paths[slot]);
             store.providerBaseXforms.erase(meta.paths[slot]);
@@ -328,8 +334,7 @@ RrPublishPose(RrProgram *program,
     store.jointMatrixPublished.assign(meta.jointSlots.size(), 0);
     for (size_t k = 0; k < meta.jointSlots.size(); ++k) {
         const size_t slot = size_t(meta.jointSlots[k]);
-        const RrPointFrame &finalFrame =
-            store.fin[size_t(store.finLast[slot])];
+        const RrPointFrame &finalFrame = store.fin[size_t(store.finLast[slot])];
         if (finalFrame.IsValid() && !finalFrame.IsDegenerate()) {
             store.jointMatrixPublished[k] = 1;
         } else {
@@ -363,32 +368,37 @@ RrPublishPose(RrProgram *program,
     // every control under a presented one rides its revision
     // (PresentIkFkMatches, bakedPose.cpp).
     const auto &constraints = program->poses->constraints;
-    for (size_t ci = 0; ci < constraints.size() &&
-                        ci < store.matchShownMask.size(); ++ci) {
+    for (size_t ci = 0;
+         ci < constraints.size() && ci < store.matchShownMask.size(); ++ci) {
         const RigExecWireConstraint &c = constraints[ci];
         if (!c.ikFkMatch || !store.matchShownMask[ci] || c.sources.size() != 10)
             continue;
         RrMat4d delta[5];
         bool deltaOk[5] = {false, false, false, false, false};
         for (size_t k = 0; k < 5; ++k) {
-            if (!(store.matchShownMask[ci] & (1u << k))) continue;
-            const auto found = store.controlFrames.find(
-                meta.paths[size_t(c.sources[5 + k])]);
-            if (found == store.controlFrames.end()) continue;
+            if (!(store.matchShownMask[ci] & (1u << k)))
+                continue;
+            const auto found =
+                store.controlFrames.find(meta.paths[size_t(c.sources[5 + k])]);
+            if (found == store.controlFrames.end())
+                continue;
             RrMat4d before, after;
             deltaOk[k] =
                 RrPointsToMatrix(RrIdentityLandmarks(), found->second.points,
                                  &before) &&
                 RrPointsToMatrix(RrIdentityLandmarks(),
                                  store.matchShown[ci][k].points, &after);
-            if (deltaOk[k]) delta[k] = before.GetInverse() * after;
+            if (deltaOk[k])
+                delta[k] = before.GetInverse() * after;
             found->second = store.matchShown[ci][k];
         }
         for (const auto &[slot, rides] : store.matchRiders[ci]) {
-            if (!deltaOk[size_t(rides)]) continue;
+            if (!deltaOk[size_t(rides)])
+                continue;
             const auto found =
                 store.controlFrames.find(meta.paths[size_t(slot)]);
-            if (found == store.controlFrames.end()) continue;
+            if (found == store.controlFrames.end())
+                continue;
             RrMat4d frame;
             if (RrPointsToMatrix(RrIdentityLandmarks(), found->second.points,
                                  &frame)) {
@@ -410,8 +420,7 @@ RrPublishPose(RrProgram *program,
 }
 
 void
-RrPublishGeometry(RrProgram *program,
-                  std::vector<std::string> *poseDiagnostics)
+RrPublishGeometry(RrProgram *program, std::vector<std::string> *poseDiagnostics)
 {
     RrStore &store = program->store;
     const std::vector<RigExecWireStep> &steps = *program->steps;
@@ -428,8 +437,7 @@ RrPublishGeometry(RrProgram *program,
     for (const uint32_t index : program->epilogue.geometrySteps) {
         const RigExecWireStep &step = steps[index];
         if (step.kind == RigExecWireStepKind::RevisionStatic) {
-            const auto &entry =
-                geo.revisionIndex[size_t(step.object)];
+            const auto &entry = geo.revisionIndex[size_t(step.object)];
             const size_t chain = size_t(entry.first);
             if (!store.chainPublish[chain].haveBase) {
                 continue;
@@ -440,8 +448,7 @@ RrPublishGeometry(RrProgram *program,
                 continue;
             }
             const RigExecWireRevision &wire =
-                geo.chains[chain]
-                    .revisions[size_t(entry.second)];
+                geo.chains[chain].revisions[size_t(entry.second)];
             RrWeightFieldPublish field;
             field.target = publish.weightFieldTarget;
             field.weights = publish.weightField;
@@ -470,4 +477,4 @@ RrPublishGeometry(RrProgram *program,
     }
 }
 
-}  // namespace rigExec
+} // namespace rigExec
