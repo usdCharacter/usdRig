@@ -1141,6 +1141,11 @@ add_executable(testRigExecOpValues tests/testRigExecOpValues.cpp)
 target_link_libraries(testRigExecOpValues PRIVATE rigExec)
 add_test(NAME testRigExecOpValues COMMAND testRigExecOpValues)
 
+add_executable(testRigExecCompiledProgram tests/testRigExecCompiledProgram.cpp)
+target_link_libraries(testRigExecCompiledProgram PRIVATE rigExec)
+target_compile_definitions(testRigExecCompiledProgram PRIVATE ${_rigexec_schema_resource_define})
+add_test(NAME testRigExecCompiledProgram COMMAND testRigExecCompiledProgram)
+
 add_executable(testRigExecSurfaceKernelCache tests/testRigExecSurfaceKernelCache.cpp)
 target_link_libraries(testRigExecSurfaceKernelCache PRIVATE rigExecMath)
 add_test(NAME testRigExecSurfaceKernelCache COMMAND testRigExecSurfaceKernelCache)
@@ -2833,7 +2838,7 @@ foreach(_rigexec_scene_exe IN ITEMS
     testRigExecBakedMode testRigExecBakedSchedule testRigExecBinary
     testRigExecChainLevels testRigExecConstraints testRigExecCrossDomainInputs
     testRigExecDefaultSpaces testRigExecDeltaMush testRigExecEnvelopeVolumes
-    testRigExecCompiledRigRests testRigExecExampleParity testRigExecExecCrossCheck
+    testRigExecCompiledProgram testRigExecCompiledRigRests testRigExecExampleParity testRigExecExecCrossCheck
     testRigExecExecCrossCheckRows testRigExecExternalMovers
     testRigExecFrameCacheCones_Verify testRigExecFrameCacheSparsity
     testRigExecFrozenContext testRigExecGeometryOpsBakedParity

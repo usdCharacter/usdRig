@@ -1,5 +1,6 @@
 // Exact frame-input and compiled rig constant fingerprints.
 
+#include "compiledProgram.h"
 #include "frozenContextInternal.h"
 #include "pathText.h"
 #include "pxr/base/gf/vec2f.h"
@@ -63,11 +64,11 @@ _HashVtValue(uint64_t *hash, const VtValue &value)
     if (value.IsEmpty()) {
         return true;
     }
-#define _RIGEXEC_FROZEN_SCALAR(type)                  \
-    if (value.IsHolding<type>()) {                    \
-        const type &held = value.UncheckedGet<type>(); \
-        *hash = _HashBytes(*hash, &held, sizeof(held)); \
-        return true;                                  \
+#define _RIGEXEC_FROZEN_SCALAR(type)                                           \
+    if (value.IsHolding<type>()) {                                             \
+        const type &held = value.UncheckedGet<type>();                         \
+        *hash = _HashBytes(*hash, &held, sizeof(held));                        \
+        return true;                                                           \
     }
     _RIGEXEC_FROZEN_SCALAR(bool)
     _RIGEXEC_FROZEN_SCALAR(int)
@@ -80,16 +81,16 @@ _HashVtValue(uint64_t *hash, const VtValue &value)
     _RIGEXEC_FROZEN_SCALAR(GfVec4f)
     _RIGEXEC_FROZEN_SCALAR(GfMatrix4d)
 #undef _RIGEXEC_FROZEN_SCALAR
-#define _RIGEXEC_FROZEN_ARRAY(type, element)                       \
-    if (value.IsHolding<type>()) {                                 \
-        const type &held = value.UncheckedGet<type>();              \
-        const size_t count = held.size();                          \
-        *hash = _HashBytes(*hash, &count, sizeof(count));           \
-        if (!held.empty()) {                                       \
-            *hash = _HashBytes(*hash, held.cdata(),                 \
-                               held.size() * sizeof(element));      \
-        }                                                          \
-        return true;                                               \
+#define _RIGEXEC_FROZEN_ARRAY(type, element)                                   \
+    if (value.IsHolding<type>()) {                                             \
+        const type &held = value.UncheckedGet<type>();                         \
+        const size_t count = held.size();                                      \
+        *hash = _HashBytes(*hash, &count, sizeof(count));                      \
+        if (!held.empty()) {                                                   \
+            *hash = _HashBytes(*hash, held.cdata(),                            \
+                               held.size() * sizeof(element));                 \
+        }                                                                      \
+        return true;                                                           \
     }
     _RIGEXEC_FROZEN_ARRAY(VtBoolArray, bool)
     _RIGEXEC_FROZEN_ARRAY(VtIntArray, int)
@@ -172,8 +173,7 @@ RigExecFrozenPurityAudit()
          "assembly and application read only the declared inputs and the "
          "provider values; payload keys are plain strings; no token built "
          "from text, no lock"},
-        {"libs/rigExec/solverKernels.{h,cpp}",
-         RigExecFrozenPurity::Pure,
+        {"libs/rigExec/solverKernels.{h,cpp}", RigExecFrozenPurity::Pure,
          "ribbon/twist/rotation glue over caller buffers; no statics, no "
          "locks, no USD"},
         {"libs/rigExec/moverKernels.cpp exec callbacks and helpers",
@@ -197,8 +197,7 @@ RigExecFrozenPurityAudit()
          "jobs and exact value keys control propagation. Bodies consume "
          "copied source facts and typed values without USD queries; API4 "
          "plugins receive immutable compile data and declared typed inputs"},
-        {"property operations (bakedProperties.cpp)",
-         RigExecFrozenPurity::Pure,
+        {"property operations (bakedProperties.cpp)", RigExecFrozenPurity::Pure,
          "ordinary shared-graph operations over sampled leaves, explicit "
          "overrides, and bound property versions; no separate head executor"},
         {"reader walks (bakedProperties.cpp RigExecBakedResolveReaderWalk)",
@@ -208,11 +207,11 @@ RigExecFrozenPurityAudit()
          "the resolved inputs -- resolves from head leaves, override slots, "
          "chain finals and records: no USD, no path built, no lock; live "
          "and a frozen job call the same function"},
-        {"shared operation graph executor",
-         RigExecFrozenPurity::Pure,
+        {"shared operation graph executor", RigExecFrozenPurity::Pure,
          "one readiness and value-cutoff loop for native, frozen, and runtime; "
          "caller-owned workspaces retain exact semantic state. Dispatch "
-         "callbacks choose serial or parallel execution without changing dependencies"},
+         "callbacks choose serial or parallel execution without changing "
+         "dependencies"},
         {"per-point geometry kernels (moverGraph.cpp parallel regions)",
          RigExecFrozenPurity::Pure,
          "range-independent per-point math; the per-context serial hook "
@@ -228,10 +227,10 @@ RigExecFrozenPurityAudit()
          "each layout operation consumes current sampled leaves and declared "
          "property versions; unchanged semantic layouts retain their handle. "
          "Geometry adopts the handle inside its owning operation"},
-        {"ladder tables (restM through rotOrder)",
-         RigExecFrozenPurity::Pure,
+        {"ladder tables (restM through rotOrder)", RigExecFrozenPurity::Pure,
          "RestCompose and LadderCompose are graph operations over copied "
-         "source facts and declared provider values; each owns its output slot"},
+         "source facts and declared provider values; each owns its output "
+         "slot"},
         {"upstream layer (upstream, lastUpstream, upstreamOn, "
          "upstreamChanged)",
          RigExecFrozenPurity::Pure,
@@ -264,7 +263,8 @@ RigExecFrozenPurityAudit()
          "guideTaps)",
          RigExecFrozenPurity::LiveOnly,
          "snapshot construction clears live pointers; each frozen lane "
-         "rebinds only its private resolver, profiler, and copied compiled rig tables"},
+         "rebinds only its private resolver, profiler, and copied compiled rig "
+         "tables"},
         {"ExecUsdSystem / TapSet / Snapshot (dynamic path)",
          RigExecFrozenPurity::LiveOnly,
          "owning-thread source capture and optional reference checks only; "
@@ -296,8 +296,7 @@ RigExecFrozenPurityAudit()
          RigExecFrozenPurity::LiveOnly,
          "single-threaded or notice-invalidated live state (THREAD rule); "
          "workers use sampled values and held bindings, never the caches"},
-        {"RigExecSkinTopologyCache",
-         RigExecFrozenPurity::LiveOnly,
+        {"RigExecSkinTopologyCache", RigExecFrozenPurity::LiveOnly,
          "dynamic only; baked and frozen build layouts in the SkinTopology "
          "op"},
         {"calibration/timing frame counters (program framesSeen fields)",
@@ -328,20 +327,50 @@ RigExecFrameCacheCompiledRigSignature(const RigExecRigEvaluator &evaluator)
     // constant values. A value patch moves the constant digest the
     // control half folds -- not this -- so it opens a new key namespace
     // instead of evicting the compiled rig.
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
-    const uint64_t constants = uint64_t(B.avarConstants.size());
+    const RigExecCompiledProgram &compiled = program->GetCompiledProgram();
+    const uint64_t constants = uint64_t(compiled.GetAvarConstantCount());
     h = _HashBytes(h, &constants, sizeof(constants));
-    const uint64_t bindings = uint64_t(B.avarConstantBindings.size());
+    const uint64_t bindings = uint64_t(compiled.GetAvarConstantBindingCount());
     h = _HashBytes(h, &bindings, sizeof(bindings));
-    for (const RigExecBakedProgramImpl::AvarBinding &binding :
-         B.avarConstantBindings) {
+    for (const RigExecBakedAvarBinding &binding :
+         compiled.GetAvarConstantBindings()) {
         const uint64_t slot = uint64_t(binding.slot);
         h = _HashBytes(h, &slot, sizeof(slot));
     }
-    const uint64_t varying = uint64_t(B.avarBindings.size());
+    const uint64_t varying = uint64_t(compiled.GetAvarBindingCount());
     h = _HashBytes(h, &varying, sizeof(varying));
-    const uint64_t table = uint64_t(B.avars.size());
+    const uint64_t table = uint64_t(compiled.GetAvarSlotCount());
     h = _HashBytes(h, &table, sizeof(table));
+    return h;
+}
+
+// Defined here, beside the byte-hash it folds with, so the constant digest
+// has one definition: the view's accessor and RigExecFrozenAvarRegionDigest
+// reach the same fold.
+uint64_t
+RigExecCompiledProgram::GetConstantDigest() const noexcept
+{
+    // Exactly the fields RigExecProgramAvarPatch writes, plus the table it
+    // keeps beside them: per-binding constants and varying flags, the
+    // promoted set, the varying count, and the constant table. Working
+    // state (avars, lastAvars) is history, not region, and is excluded --
+    // it converges on the next run whatever the snapshot holds.
+    uint64_t h = 1469598103934665603ULL;
+    h = _HashBytes(h, &_compiled->varyingInputs,
+                   sizeof(_compiled->varyingInputs));
+    for (double constant : _compiled->avarConstants) {
+        h = _HashBytes(h, &constant, sizeof(constant));
+    }
+    for (const RigExecBakedAvarBinding &binding :
+         _compiled->avarConstantBindings) {
+        h = _HashBytes(h, &binding.input.constant,
+                       sizeof(binding.input.constant));
+        const unsigned char varying = binding.input.varying ? 1 : 0;
+        h = _HashBytes(h, &varying, sizeof(varying));
+    }
+    for (size_t promoted : _compiled->promotedAvars) {
+        h = _HashBytes(h, &promoted, sizeof(promoted));
+    }
     return h;
 }
 
@@ -362,8 +391,7 @@ RigExecConstantRegionsForPaths(const RigExecBakedProgram &program,
         if (found == B.patchableAvars.end()) {
             continue;
         }
-        const uint64_t region =
-            RigExecConstantRegionForBinding(found->second);
+        const uint64_t region = RigExecConstantRegionForBinding(found->second);
         if (regions.empty() || regions.back() != region) {
             // patchableAvars iterates in path order, not binding order,
             // so contiguity is not guaranteed; the sort below fixes it.
@@ -371,16 +399,14 @@ RigExecConstantRegionsForPaths(const RigExecBakedProgram &program,
         }
     }
     std::sort(regions.begin(), regions.end());
-    regions.erase(std::unique(regions.begin(), regions.end()),
-                  regions.end());
+    regions.erase(std::unique(regions.begin(), regions.end()), regions.end());
     return regions;
 }
 
 bool
-RigExecCaptureFrozenAvarPatch(const RigExecFrozenProgram &base,
-                                const RigExecBakedProgram &live,
-                                std::shared_ptr<const RigExecFrozenAvarPatch> *out,
-                                std::string *error)
+RigExecCaptureFrozenAvarPatch(
+    const RigExecFrozenProgram &base, const RigExecBakedProgram &live,
+    std::shared_ptr<const RigExecFrozenAvarPatch> *out, std::string *error)
 {
     const auto fail = [&error](const std::string &why) {
         if (error) {
@@ -391,7 +417,8 @@ RigExecCaptureFrozenAvarPatch(const RigExecFrozenProgram &base,
     if (!out) {
         return fail("no snapshot to patch into");
     }
-    if (!base.program || !base.bindings) return fail("empty frozen snapshot");
+    if (!base.program || !base.bindings)
+        return fail("empty frozen snapshot");
     const RigExecBakedProgramImpl &L = live.GetStepGraph();
     const RigExecBakedProgramImpl &S = *base.program;
     // Live's avar slots, carried below, hold the upstream values its last
@@ -407,12 +434,14 @@ RigExecCaptureFrozenAvarPatch(const RigExecFrozenProgram &base,
         S.avarConstants.size() != L.avarConstants.size()) {
         return fail("avar region changed shape: re-freeze, do not patch");
     }
-    if (S.avars.size() != L.avars.size()) return fail("avar table changed shape");
+    if (S.avars.size() != L.avars.size())
+        return fail("avar table changed shape");
     auto patch = std::make_shared<RigExecFrozenAvarPatch>();
     patch->basis = &base;
     for (size_t i = 0; i < L.avarConstantBindings.size(); ++i) {
         const auto &binding = L.avarConstantBindings[i];
-        if (binding.slot >= L.avars.size() || binding.slot != S.avarConstantBindings[i].slot)
+        if (binding.slot >= L.avars.size() ||
+            binding.slot != S.avarConstantBindings[i].slot)
             return fail("avar slot changed: re-freeze, do not patch");
         patch->avars.push_back({binding.input.constant, L.avars[binding.slot],
                                 binding.input.varying});
@@ -429,18 +458,21 @@ RigExecCaptureFrozenAvarPatch(const RigExecFrozenProgram &base,
 
 bool
 RigExecApplyFrozenAvarPatch(const RigExecFrozenProgram &base,
-    const RigExecFrozenAvarPatch &patch,
-    std::shared_ptr<const RigExecFrozenProgram> *out, std::string *error)
+                            const RigExecFrozenAvarPatch &patch,
+                            std::shared_ptr<const RigExecFrozenProgram> *out,
+                            std::string *error)
 {
     if (!base.program || !base.bindings) {
-        if (error) *error = "empty frozen snapshot";
+        if (error)
+            *error = "empty frozen snapshot";
         return false;
     }
     const auto &S = *base.program;
     if (!out || patch.basis != &base ||
         patch.avars.size() != S.avarConstantBindings.size() ||
         patch.constants.size() != S.avarConstants.size()) {
-        if (error) *error = "captured avar patch does not match frozen snapshot";
+        if (error)
+            *error = "captured avar patch does not match frozen snapshot";
         return false;
     }
     auto snapshot = std::make_shared<RigExecFrozenProgram>();
@@ -454,13 +486,13 @@ RigExecApplyFrozenAvarPatch(const RigExecFrozenProgram &base,
 }
 
 bool
-RigExecPatchFrozenAvarConstants(const RigExecFrozenProgram &base,
-    const RigExecBakedProgram &live,
+RigExecPatchFrozenAvarConstants(
+    const RigExecFrozenProgram &base, const RigExecBakedProgram &live,
     std::shared_ptr<const RigExecFrozenProgram> *out, std::string *error)
 {
     std::shared_ptr<const RigExecFrozenAvarPatch> patch;
     return RigExecCaptureFrozenAvarPatch(base, live, &patch, error) &&
-        RigExecApplyFrozenAvarPatch(base, *patch, out, error);
+           RigExecApplyFrozenAvarPatch(base, *patch, out, error);
 }
 
 } // namespace rigExec

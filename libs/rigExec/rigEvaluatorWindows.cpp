@@ -15,6 +15,7 @@
 // captures feed a ring the target generation reads, so a result never
 // depends on where an earlier pass happened to start.
 
+#include "compiledProgram.h"
 #include "frozenContext.h"
 #include "rigEvaluator.h"
 
@@ -64,7 +65,7 @@ _FrozenFlags(bool weightFields, bool guides)
            (guides ? kRigExecFrozenSolverGuidesEnabled : 0u);
 }
 
-}  // namespace
+} // namespace
 
 size_t
 RigExecRigEvaluator::GetHistoryTickCountForTesting() const
@@ -78,23 +79,30 @@ RigExecRigEvaluator::GetWindowRings(UsdTimeCode time,
                                     std::string *error) const
 {
     const auto fail = [error](const std::string &why) {
-        if (error) *error = why;
+        if (error)
+            *error = why;
         return false;
     };
-    if (!rings) return fail("no ring destination");
+    if (!rings)
+        return fail("no ring destination");
     rings->clear();
     const RigExecBakedProgram *live = _bakedProgram.get();
-    if (!live || !live->GetWindowedOpCount()) return true;
+    if (!live || !live->GetWindowedOpCount())
+        return true;
     const size_t windowCount = live->GetWindowedOpCount();
     rings->assign(windowCount, RigExecWindowRing());
     // The default time has no earlier frames: every window is empty.
-    if (time.IsDefault()) return true;
+    if (time.IsDefault())
+        return true;
 
-    if (!_windowHistory) _windowHistory = std::make_shared<_WindowHistory>();
+    if (!_windowHistory)
+        _windowHistory = std::make_shared<_WindowHistory>();
     _WindowHistory &h = *_windowHistory;
-    const uint32_t flags = _FrozenFlags(_publishWeightFields, _solverGuidesEnabled);
+    const uint32_t flags =
+        _FrozenFlags(_publishWeightFields, _solverGuidesEnabled);
     const bool programMoved =
-        !h.snapshot || h.program != live || h.programBuild != _bakedProgramBuilds ||
+        !h.snapshot || h.program != live ||
+        h.programBuild != _bakedProgramBuilds ||
         RigExecFrozenSnapshotOwesLiveEdits(*h.snapshot, *live) ||
         RigExecFrozenAvarRegionDigest(*live) != h.avarRegion;
     if (programMoved || h.stageSerial != _stageEditSerial ||
@@ -122,32 +130,45 @@ RigExecRigEvaluator::GetWindowRings(UsdTimeCode time,
     h.upstream = _upstreamAdmitted;
     h.flags = flags;
     const std::vector<RigExecBakedProgram::WindowedOpInfo> &ops = h.ops;
-    if (ops.size() != windowCount) return fail("windowed history is out of date");
+    if (ops.size() != windowCount)
+        return fail("windowed history is out of date");
 
     // Which earlier ticks each op needs complete captures at, as offsets
     // from `time`: [1, frames] for every op; an inner op Y of X needs its
     // own window at each tick X needs, [lo + 1, hi + frames(Y)].
     std::vector<uint32_t> lo(windowCount, 1), hi(windowCount, 0);
-    for (size_t w = 0; w < windowCount; ++w) hi[w] = ops[w].frames;
+    for (size_t w = 0; w < windowCount; ++w)
+        hi[w] = ops[w].frames;
     for (bool moved = true; moved;) {
         moved = false;
         for (size_t x = 0; x < windowCount; ++x) {
-            if (hi[x] < lo[x]) continue;
+            if (hi[x] < lo[x])
+                continue;
             for (const uint32_t y : ops[x].inner) {
-                if (y >= windowCount) continue;
+                if (y >= windowCount)
+                    continue;
                 const uint32_t needLo = lo[x] + 1;
                 const uint32_t needHi = hi[x] + ops[y].frames;
                 if (hi[y] < lo[y]) {
-                    lo[y] = needLo; hi[y] = needHi; moved = true;
+                    lo[y] = needLo;
+                    hi[y] = needHi;
+                    moved = true;
                     continue;
                 }
-                if (needLo < lo[y]) { lo[y] = needLo; moved = true; }
-                if (needHi > hi[y]) { hi[y] = needHi; moved = true; }
+                if (needLo < lo[y]) {
+                    lo[y] = needLo;
+                    moved = true;
+                }
+                if (needHi > hi[y]) {
+                    hi[y] = needHi;
+                    moved = true;
+                }
             }
         }
     }
     uint32_t deepest = 0;
-    for (size_t w = 0; w < windowCount; ++w) deepest = std::max(deepest, hi[w]);
+    for (size_t w = 0; w < windowCount; ++w)
+        deepest = std::max(deepest, hi[w]);
     const double t = time.GetValue();
     const auto key = [t](uint32_t offset) { return t - double(offset); };
     const auto completeAt = [&h](double tau, size_t w) {
@@ -178,18 +199,18 @@ RigExecRigEvaluator::GetWindowRings(UsdTimeCode time,
     RigExecFrozenEvalContext context;
     context.compiledRigSignature = GetCompiledRigSignature();
     context.slotCount = live->GetProviderCount();
-    context.programDigest =
-        context.compiledRigSignature ^
-        (uint64_t(live->GetBoundInputCount()) * 1099511628211ull) ^
-        (uint64_t(live->GetVaryingInputCount()) * 16777619ull);
+    context.programDigest = live->GetCompiledProgram().GetProgramDigest(
+        context.compiledRigSignature);
     context.flags = flags;
     context.frozen = h.snapshot.get();
     context.workspace = h.workspace.get();
     const std::vector<RigExecUpstreamValue> upstream =
         RigExecUpstreamValuesOf(_upstreamAdmitted);
     const auto bind = [&](std::string *why) {
-        if (h.bound) return true;
-        if (!RigExecBindChainSampleInputs(*this, &h.bindings, why)) return false;
+        if (h.bound)
+            return true;
+        if (!RigExecBindChainSampleInputs(*this, &h.bindings, why))
+            return false;
         h.bound = true;
         return true;
     };
@@ -202,36 +223,41 @@ RigExecRigEvaluator::GetWindowRings(UsdTimeCode time,
         bool needed = false;
         for (size_t w = 0; w < windowCount && !needed; ++w)
             needed = offset >= lo[w] && offset <= hi[w] && !completeAt(tau, w);
-        if (!needed) continue;
+        if (!needed)
+            continue;
         std::vector<RigExecWindowRing> innerRings(windowCount);
         std::vector<char> innerComplete(windowCount, 1);
         for (size_t y = 0; y < windowCount; ++y)
-            if (ops[y].feedsWindow) innerComplete[y] = ringAt(tau, y, &innerRings[y]) ? 1 : 0;
+            if (ops[y].feedsWindow)
+                innerComplete[y] = ringAt(tau, y, &innerRings[y]) ? 1 : 0;
         RigExecFrameInputs inputs;
         std::string why;
         std::vector<RigExecWindowPacketPtr> captures;
-        bool ran = bind(&why) &&
-                   RigExecSampleHistoryTickInputs(*this, UsdTimeCode(tau), upstream,
-                                                  h.bindings, &inputs, &why);
+        bool ran = bind(&why) && RigExecSampleHistoryTickInputs(
+                                     *this, UsdTimeCode(tau), upstream,
+                                     h.bindings, &inputs, &why);
         if (ran) {
             context.varyingInputCount = inputs.values.size();
             ran = RigExecRunFrozenHistoryTick(context, inputs, innerRings,
                                               &captures, &why);
         }
         ++h.tickRuns;
-        if (!ran && failure.empty()) failure = why;
+        if (!ran && failure.empty())
+            failure = why;
         _WindowHistory::Tick &tick = h.ticks[tau];
         tick.captures.resize(windowCount);
         tick.complete.resize(windowCount, 0);
         for (size_t w = 0; w < windowCount; ++w) {
-            if (tick.complete[w]) continue;  // never downgrade a complete one
+            if (tick.complete[w])
+                continue; // never downgrade a complete one
             bool complete = true;
             for (const uint32_t y : ops[w].inner)
                 complete = complete && y < windowCount && innerComplete[y];
             // A declined tick holds nothing, and holds it completely: the
             // stage answers the same way every time it is asked.
-            tick.captures[w] = ran && w < captures.size() ? captures[w]
-                                                          : RigExecWindowPacketPtr();
+            tick.captures[w] = ran && w < captures.size()
+                                   ? captures[w]
+                                   : RigExecWindowPacketPtr();
             tick.complete[w] = complete ? 1 : 0;
         }
     }
@@ -240,7 +266,8 @@ RigExecRigEvaluator::GetWindowRings(UsdTimeCode time,
         ring.clear();
         for (uint32_t k = ops[w].frames; k >= 1; --k) {
             const auto found = h.ticks.find(key(k));
-            ring.push_back(found != h.ticks.end() && w < found->second.captures.size()
+            ring.push_back(found != h.ticks.end() &&
+                                   w < found->second.captures.size()
                                ? found->second.captures[w]
                                : RigExecWindowPacketPtr());
         }
@@ -251,7 +278,8 @@ RigExecRigEvaluator::GetWindowRings(UsdTimeCode time,
     h.placedTime = t;
     h.placedInnerComplete.assign(windowCount, 1);
     for (size_t y = 0; y < windowCount; ++y) {
-        if (!ops[y].feedsWindow) continue;
+        if (!ops[y].feedsWindow)
+            continue;
         RigExecWindowRing scratch;
         h.placedInnerComplete[y] = ringAt(t, y, &scratch) ? 1 : 0;
     }
@@ -259,10 +287,13 @@ RigExecRigEvaluator::GetWindowRings(UsdTimeCode time,
     // a jump across the timeline does not grow it without bound.
     const double reach = double(4 * deepest + 64);
     for (auto it = h.ticks.begin(); it != h.ticks.end();) {
-        if (std::fabs(it->first - t) > reach) it = h.ticks.erase(it);
-        else ++it;
+        if (std::fabs(it->first - t) > reach)
+            it = h.ticks.erase(it);
+        else
+            ++it;
     }
-    if (!failure.empty()) return fail("a windowed history tick declined: " + failure);
+    if (!failure.empty())
+        return fail("a windowed history tick declined: " + failure);
     return true;
 }
 
@@ -276,7 +307,8 @@ RigExecRigEvaluator::_NoteWindowCaptures(UsdTimeCode time)
         return;
     }
     _WindowHistory &h = *_windowHistory;
-    if (h.program != _bakedProgram.get() || h.programBuild != _bakedProgramBuilds ||
+    if (h.program != _bakedProgram.get() ||
+        h.programBuild != _bakedProgramBuilds ||
         h.stageSerial != _stageEditSerial || h.upstream != _upstreamAdmitted ||
         h.ops.size() != _bakedProgram->GetWindowedOpCount()) {
         return;
@@ -288,20 +320,24 @@ RigExecRigEvaluator::_NoteWindowCaptures(UsdTimeCode time)
     }
     const std::vector<RigExecWindowPacketPtr> captures =
         _bakedProgram->GetWindowCaptures();
-    if (captures.size() != h.ops.size()) return;
+    if (captures.size() != h.ops.size())
+        return;
     // A capture is complete when the inner rings the generation read were.
     _WindowHistory::Tick &tick = h.ticks[t];
     tick.captures.resize(captures.size());
     tick.complete.resize(captures.size(), 0);
     for (size_t w = 0; w < captures.size(); ++w) {
-        if (tick.complete[w]) continue;
+        if (tick.complete[w])
+            continue;
         bool complete = true;
         for (const uint32_t y : h.ops[w].inner)
-            complete = complete && y < captures.size() && h.placedInnerComplete[y];
-        if (!complete) continue;
+            complete =
+                complete && y < captures.size() && h.placedInnerComplete[y];
+        if (!complete)
+            continue;
         tick.captures[w] = captures[w];
         tick.complete[w] = 1;
     }
 }
 
-}  // namespace rigExec
+} // namespace rigExec
