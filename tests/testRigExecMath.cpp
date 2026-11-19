@@ -492,8 +492,7 @@ static void
 TestParamsRoundTrip()
 {
     // Matrix -> points -> params -> matrix must round trip for rotated
-    // nonuniform scale and every shear component (spec §5.4; regression
-    // for the upper-triangular stretch-rebuild defect).
+    // nonuniform scale and every shear component (spec §5.4).
     GfMatrix4d shearXY(1.0), shearXZ(1.0), shearYZ(1.0);
     shearXY[1][0] = 0.4;
     shearXZ[2][0] = -0.3;
@@ -1345,8 +1344,7 @@ TestGeometryKernels()
     // colinear, equally spaced in arc length, and frames orthonormal.
     {
         // Zero- and one-point drivers have no segment to sample.  They must
-        // fail closed rather than entering the linear interpolation branch
-        // (the one-point case previously indexed controlPoints[-1]).
+        // fail closed rather than entering the linear interpolation branch.
         CHECK(RigExecSampleCurveRMF({}, 5).GetSize() == 0);
         CHECK(RigExecSampleCurveRMF({{1, 2, 3}}, 5).GetSize() == 0);
 
@@ -1378,11 +1376,11 @@ TestGeometryKernels()
         // Two pentagons meeting along a seam, both flat in z = 0 and both
         // wound counter-clockwise, so every vertex normal is unambiguously
         // +Z. Vertex 2 is the seam's middle, and in BOTH faces it lands
-        // next to the fan anchor: a per-triangle kernel -- which this one
-        // used to be -- therefore gives it exactly one sliver triangle from
-        // each face, the two are mirror images, and they cancel to a zero
-        // normal on a perfectly valid manifold vertex. puppetA
-        // (chars/puppetA) has one such vertex on its face.
+        // next to the fan anchor: a per-triangle kernel therefore gives it
+        // exactly one sliver triangle from each face, the two are mirror
+        // images, and they cancel to a zero normal on a perfectly valid
+        // manifold vertex. puppetA (chars/puppetA) has one such vertex on
+        // its face.
         const auto seam = RigExecComputeVertexNormals(
             {{0, 0, 0}, {0, 1, 0}, {0.05f, 0.5f, 0},      // the seam
              {1, 0.2f, 0}, {1, 0.8f, 0},                  // +x side
@@ -3331,9 +3329,8 @@ TestSolverSharedTriangulation()
 static void
 TestMeshAdjacencyBuild()
 {
-    // H1: the sorted-vector adjacency answers the legacy set-based
-    // verdicts: sorted unique neighbors, a repeated corner once, and
-    // the same invalid-topology failures with the output untouched.
+    // H1: sorted unique neighbors, a repeated corner once, and
+    // invalid-topology failures with the output untouched.
     RigExecMeshAdjacency adjacency;
     CHECK(RigExecBuildMeshAdjacency(
         4, {4}, {0, 1, 2, 3}, &adjacency));

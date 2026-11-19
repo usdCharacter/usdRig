@@ -87,8 +87,7 @@ static RigExecConnectedBridgeFixture RigExecMakeConnectedBridgeFixture(XformFn M
         .SetConnections({bridge.GetPath().AppendProperty(TfToken("posed:defaultSpace"))});
     const UsdPrim root = control("/Asset/Rig/Controls/Root", 0);
     const UsdPrim pole = control("/Asset/Rig/Controls/Pole", 0, 5);
-    // rest:tx 0/5/10 so the IK's bones MEASURE 5 and 5. These tests
-    // used to author absolute lengths, which Compile now rejects.
+    // rest:tx 0/5/10 so the IK's bones MEASURE 5 and 5.
     SdfPathVector joints;
     {
         double tx = 0.0;

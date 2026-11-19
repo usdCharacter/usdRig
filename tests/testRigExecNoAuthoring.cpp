@@ -2,9 +2,9 @@
 // author NOTHING to the source stage (spec §7.2 revised).
 // The existing assertions elsewhere probe for specific known artifacts -- the
 // absence of a __RigExecGenerated prim, a session layer with no sublayers.
-// Those only catch the mechanism that used to exist. This instead captures the
-// whole composed scene, runs everything, and demands byte equality, so it
-// catches any authoring at all, including a mechanism nobody has invented yet.
+// This instead captures the whole composed scene, runs everything, and
+// demands byte equality, so it catches any authoring at all, including a
+// mechanism nobody has invented yet.
 // argv[1] = path to the examples directory. The codeless schema plugin is
 // expected at <examples>/../plugin/rigExecSchema/resources.
 #include "rigExec/rigEvaluator.h"

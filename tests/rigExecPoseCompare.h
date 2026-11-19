@@ -1,4 +1,4 @@
-// Shared exact published-value comparisons mirror RigExecComparePoses.
+// Shared exact published-value comparisons.
 // History tests compare maps and ordered diagnostics; executor work traces
 // are checked separately because cached and fresh runs can execute differently.
 // Helpers report through the caller-owned failure counter.

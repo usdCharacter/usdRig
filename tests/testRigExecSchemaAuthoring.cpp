@@ -137,9 +137,8 @@ TestAppliedSchemasAndRelationships(const UsdStageRefPtr &stage)
     control.SetAttribute(
         TfToken("rigExec:channelRole"), VtValue(TfToken("tweak")));
 
-    // The public call takes the USD schema identifier directly. This standard
-    // API's identifier differs from its C++ TfType name, making it a regression
-    // test for identifier-vs-TfType confusion.
+    // The public call takes the USD schema identifier directly. This
+    // standard API's identifier differs from its C++ TfType name.
     control.ApplyAPI(TfToken("NodeGraphNodeAPI"));
     CHECK(control.HasAPI(TfToken("NodeGraphNodeAPI")));
 
@@ -194,8 +193,8 @@ TestAppliedSchemasAndRelationships(const UsdStageRefPtr &stage)
     }));
 
     // The weight-object relationship is common too, including for a scalar
-    // property mover.  MatrixMover used to declare this relationship itself,
-    // so using FloatMathMover here proves it really comes from MoverAPI.
+    // property mover, so using FloatMathMover here proves it really comes
+    // from MoverAPI.
     RigExecSchemaPrim scalarMover = RigExecSchemaPrim::Define(
         stage, SdfPath("/Rig/ScalarMover"), TfToken("RigExecFloatMathMover"));
     scalarMover.ApplyAPI(TfToken("RigExecMoverAPI"));

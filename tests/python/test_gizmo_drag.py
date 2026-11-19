@@ -282,10 +282,7 @@ def TestTranslateSnapping():
 
     # The grid path rounds the WORLD position onto the lattice, so
     # the assertion names the landed station: with a 0.1 grid the
-    # 0.28813 unsnapped X delta lands the pivot on 0.3. The old
-    # gridSize-1.0 form snapped back to the pivot and proved only
-    # "different from raw", which a branch returning (0, 0, 0) for
-    # every grid drag would satisfy trivially.
+    # 0.28813 unsnapped X delta lands the pivot on 0.3.
     grid = gd.ApplyDrag(state, current, settings, holdGrid=True,
                         gridSize=0.1)
     _Check(target.LastKwargs() == {"snapStep": None, "snapAbsolute": False},

@@ -1,5 +1,5 @@
 // Native evaluator cache/history, independent scalar references, literal
-// provider arithmetic and exact pose comparator regression coverage.
+// provider arithmetic and exact pose comparator coverage.
 #include "rigExecFrameRecordCheck.h"
 #include "rigExecPoseCompare.h"
 
@@ -556,12 +556,9 @@ EditKeyedFootRoll(const UsdStageRefPtr &stage, const SdfPath &rigPath)
     EditInSession(stage);
     size_t keyed = 0;
     for (const UsdPrim &prim : UsdPrimRange(stage->GetPrimAtPath(rigPath))) {
-        // `avars:footRoll` since the foot dials moved onto the per-limb
-        // param node: the dial
-        // was `bank_?.foot:roll`, and params.py now MIGRATES it -- the
-        // connections are re-pointed and the original deleted, so the
-        // old name resolves to nothing and this test silently found no
-        // attribute to key.
+        // `avars:footRoll`: params.py MIGRATES the old
+        // `bank_?.foot:roll` -- the connections are re-pointed and the
+        // original deleted, so the old name resolves to nothing.
         const UsdAttribute roll =
             prim.GetAttribute(TfToken("avars:footRoll"));
         if (!roll) {
@@ -581,12 +578,9 @@ EditFootRollValue(const UsdStageRefPtr &stage, const SdfPath &rigPath)
     EditInSession(stage);
     size_t edited = 0;
     for (const UsdPrim &prim : UsdPrimRange(stage->GetPrimAtPath(rigPath))) {
-        // `avars:footRoll` since the foot dials moved onto the per-limb
-        // param node: the dial
-        // was `bank_?.foot:roll`, and params.py now MIGRATES it -- the
-        // connections are re-pointed and the original deleted, so the
-        // old name resolves to nothing and this test silently found no
-        // attribute to key.
+        // `avars:footRoll`: params.py MIGRATES the old
+        // `bank_?.foot:roll` -- the connections are re-pointed and the
+        // original deleted, so the old name resolves to nothing.
         const UsdAttribute roll =
             prim.GetAttribute(TfToken("avars:footRoll"));
         if (!roll) {
@@ -1244,14 +1238,11 @@ MoveARestChannel(const UsdStageRefPtr &stage)
 
 
 // The frames to sweep a stage at, from the stage's OWN authored range.
-// The sweep used to run every example at frames 1, 2 and 3. The numbered
-// examples are authored over 1001-1048, so all three reads held the first
-// key and the sweep compared one static pose three times -- it had never
-// compared an interpolated frame of any of them. Start, middle and end of
-// the authored range instead, and 1-3 for a stage with no authored range,
-// so a newly added example is swept at frames that differ the day it lands
-// rather than the day someone adds it to a table. The biped overlay authors
-// 1-200, so it sweeps start, middle and end like the numbered examples.
+// Start, middle and end of the authored range, and 1-3 for a stage with no
+// authored range, so a newly added example is swept at frames that differ
+// the day it lands rather than the day someone adds it to a table. The
+// biped overlay authors 1-200, so it sweeps start, middle and end like the
+// numbered examples.
 static std::vector<double>
 _SweepFrames(const UsdStageRefPtr &stage)
 {

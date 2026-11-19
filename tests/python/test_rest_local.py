@@ -106,10 +106,7 @@ def TestTopLevelProviderUnchanged():
     # Read from the asset rather than written down here. The property being
     # asserted is that a top-level provider's evaluated frame IS its authored
     # rest -- there is no parent to be relative to -- and a literal copy of the
-    # number only asserts that as long as nobody re-authors the rig. Somebody
-    # did (2e95684 "spider leg" moved the shoulder from 4.5459 to 4.6381) and
-    # the test failed for describing an asset that no longer existed, which is
-    # the opposite of what it is for.
+    # number only asserts that as long as nobody re-authors the rig.
     shoulder = stage.GetPrimAtPath(_JOINTS[0])
     authored = shoulder.GetAttribute("rest:ty").Get()
     _Check(authored is not None,

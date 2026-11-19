@@ -51,16 +51,14 @@ _UP = _SKULL + "/M_UpFace"
 # Sdf paths do not resolve "..", so the jaw is spelled from _SKULL.
 _JAW = _SKULL + "/M_LoFace/M_Jaw"
 
-# (label, control, avar, value, mesh, floor). Measured 2026-09-24.
+# (label, control, avar, value, mesh, floor).
 #
 # THE LOOK IS NOT IN THIS TABLE. It drives the IRIS, not the eyeball:
 # the ball is a sphere skinned to eye_?_trans_def, which rides the socket
 # and never turns, and the iris is placed by the surface projector's
-# shader matrix. Asserting that the look moves l_eye_geo asserted the
-# BUG -- the eyeballs were bound to the aimed bone eye_?_def and rolled
-# inside their own sockets after the socket stretch. _check_look_drives_
-# the_iris below asserts the real contract, in both directions: the ball
-# must NOT move and the iris matrix MUST.
+# shader matrix. _check_look_drives_the_iris below asserts the real
+# contract, in both directions: the ball must NOT move and the iris
+# matrix MUST.
 _DRIVES = [
     # lid -> lash proxy, the weights Biped_lashes.usda carries.
     # measured 1.2009
@@ -98,9 +96,7 @@ def _check_look_drives_the_iris(failures):
 
     # M_Look's space avar now ships at 0 -- the eyes ride their sockets
     # until an animator asks for the look -- so switch it on to test it.
-    # It was face:lookAt, then briefly avars:space, and is now
-    # avars:lookAt -- `space` belongs to M_Look's real space switch.
-    # other control uses for the same kind of channel.
+    # It is avars:lookAt -- `space` belongs to M_Look's real space switch.
     for p in stage.Traverse():
         if p.GetName() == "M_Look" and str(p.GetTypeName()) == "RigExecControl":
             a = p.GetAttribute("avars:lookAt")

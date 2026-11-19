@@ -26,8 +26,7 @@
 // a chunk that skins a vertex against an identity it never noticed is a
 // silently wrong deformation, not a crash -- and that a revision whose packet
 // the frame rejects passes its preceding points through exactly as the
-// dynamic path does, which is the decision the fuse took over from the
-// kernel.
+// dynamic path does, which is the fuse's decision.
 // argv[1] = path to the examples directory (containing biped/Biped.usda).
 #include "rigExec/bakedProgram.h"
 #include "rigExec/bakedProgramImpl.h"
@@ -1165,12 +1164,8 @@ TestThePartitionIsCutOnlyWhereItPays(const BuiltProgram &built,
 /// comparison is the elementwise one with the identity case taken first.
 ///
 /// The derived maintenance step is the frame's serial tail -- one bounding
-/// box over the whole mesh -- and it used to make three passes over 315KB
-/// before it computed anything: the assemble copied the chain's points into
-/// the packet, `parameters != lastParameters` walked them, and
-/// `lastParameters = parameters` copied them again. The last two are gone
-/// because auxPoints IS the chain's final buffer and VtArray is
-/// copy-on-write, so identity decides the value.
+/// box over the whole mesh. auxPoints IS the chain's final buffer and
+/// VtArray is copy-on-write, so identity decides the value.
 ///
 /// That substitution is only sound if two things hold, and both are asserted
 /// here rather than assumed: the run really does remember the buffer rather
@@ -1485,10 +1480,10 @@ TestARecompiledRigStillAgreesWithTheDynamicPath(const std::string &stagePath,
 /// A skin revision the frame rejects publishes what the dynamic path
 /// publishes: the preceding points, and the MoverFailed line.
 ///
-/// The decision moved: the kernel used to make it, and now the fuse does,
-/// out of a packet that no longer carries the influence matrices and a fold
-/// that checks them separately. So the fixture drives a rejection through an
-/// interactive override -- the route a manipulator uses, and the one that
+/// The fuse makes the decision, out of a packet without the influence
+/// matrices and a fold that checks them separately. So the fixture drives
+/// a rejection through an interactive override -- the route a manipulator
+/// uses, and the one that
 /// reaches the packet without rebuilding the program -- and asks the parity
 /// mode, which runs both paths in one generation and compares every
 /// published map, whether they agreed.
@@ -2290,9 +2285,9 @@ TestTheConeClosuresAreSound(const BuiltProgram &built, const char *name)
 /// Every pose write has storage of its own, and every read names a version
 /// some writer produced (§3.1).
 ///
-/// The property the restore closure used to buy at runtime and the versioned
-/// storage now has by construction. Three things make it true, and all three
-/// are checked here against the program's own tables rather than against a
+/// The property the versioned storage has by construction. Three things
+/// make it true, and all three are checked here against the program's own
+/// tables rather than against a
 /// number: no two write sites share an entry (that is what SSA IS), every
 /// read and every carry names an entry that exists and is not a later
 /// version than the reader's own point, and the last-version table really
@@ -2668,19 +2663,13 @@ StepConeBound(const RigExecBakedProgramImpl &B,
 ///
 /// An override on a constraint's own input moves nothing upstream of it: the
 /// controls are where they were, so the compose that produced its target's
-/// frame is clean. That frame used to be READ-MODIFY-WRITTEN in place, so the
-/// one storage at the end of a run held the constrained value and not the
-/// composed one -- re-running the constraint over it would have constrained a
-/// constrained frame, and the restore closure put the whole compose (and
-/// everything downstream of it, which on a biped is the program) back into
-/// the run to prevent exactly that. Versioned storage ends it: the constraint
-/// reads the version its program point names, that version is still in the
-/// entry the compose wrote it to, and the run is the constraint's own cone.
+/// frame is clean. The constraint reads the version its program point names,
+/// that version is still in the entry the compose wrote it to, and the run
+/// is the constraint's own cone.
 ///
 /// Both halves are asserted. The pose must equal a path that never skipped
 /// anything -- which is what a missing version would break -- and the run
-/// must be strictly smaller than the program, which is what the restore
-/// closure made impossible.
+/// must be strictly smaller than the program.
 void
 TestAConstraintDragRunsOnlyItsCone(const std::string &stagePath,
                                    const SdfPath &mover,

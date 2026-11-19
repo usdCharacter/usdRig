@@ -1244,12 +1244,11 @@ TestPartialSubsetTearIsPinned()
 
 /// A FRAME read below its writer is POSITIONAL, and does not reorder anything.
 ///
-/// The FK reads the ankle, which only the IK writes. Under the old rule that
-/// read forced the FK to run second, reversing the composed namespace. Under
-/// the unified pose stack the namespace IS the order and nothing bends it: the
-/// FK is the bottom sibling, so it runs first and reads the ankle as it stands
-/// at its own place in the stack -- the rest-propagated frame, before the IK
-/// wrote it. Nothing contradicts anything and nothing is reported.
+/// The FK reads the ankle, which only the IK writes. Under the unified pose
+/// stack the namespace IS the order and nothing bends it: the FK is the
+/// bottom sibling, so it runs first and reads the ankle as it stands at its
+/// own place in the stack -- the rest-propagated frame, before the IK wrote
+/// it. Nothing contradicts anything and nothing is reported.
 void
 TestDataFlowOutranksTheNamespace()
 {
@@ -1270,7 +1269,7 @@ TestDataFlowOutranksTheNamespace()
         ChainText(evaluator.GetFrameChains(), kHip);
     CHECK(!hipLine.empty());
     // Definition order is LegIK then LegFK, so the REVERSE -- the stack --
-    // is LegFK then LegIK, and the ankle read no longer flips it.
+    // is LegFK then LegIK.
     CHECK(InOrder(hipLine, kLegFk.GetString(), kLegIk.GetString()));
     CHECK(!Mentions(errors, "dependency cycle"));
     const RigExecRigPose stacked = evaluator.Evaluate(UsdTimeCode(5.0));
@@ -1431,12 +1430,8 @@ TestConstraintObservesTopOfStack()
 
 /// Every joint's writer list is a restriction of ONE order.
 ///
-/// Two joints with different writer sets used to settle their order
-/// independently, so a writer waiting on a solver absent from one of the sets
-/// looked free there and blocked in the other -- and the adjacent-pair stack
-/// edges then pointed both ways and Kahn reported a pose cycle on a rig that
-/// is entirely legal. Partial-subset stacking is one of the shapes this
-/// feature exists for, so this compiles or the feature does not work.
+/// Partial-subset stacking is one of the shapes this feature exists for,
+/// so this compiles or the feature does not work.
 void
 TestPartialSubsetsAgreeOnOneOrder()
 {
@@ -1483,9 +1478,7 @@ TestPartialSubsetsAgreeOnOneOrder()
 ///
 /// The stack order is settled against the finished pose graph, so a pair only
 /// a solver -> constraint -> solver path reaches is ordered by that path and
-/// no stack edge is inserted against it. Adding a constraint that names
-/// neither solver's rigExec:joints used to turn this compiling rig into a
-/// pose cycle.
+/// no stack edge is inserted against it.
 void
 TestConstraintMediatedOrderIsRespected()
 {
@@ -1668,8 +1661,8 @@ TestConstraintAboveASolverRevisesIt()
 /// a constraint below the chain moves the joint and the chain carries that
 /// displacement through its own solve instead of replacing it.
 ///
-/// Every aggregate solver answers to this rule; the FK chain is the one that
-/// used to be the exception, so it is the one pinned here.
+/// Every aggregate solver answers to this rule; the FK chain is the one
+/// pinned here.
 void
 TestFkChainComposesOverTheIncomingFrame()
 {

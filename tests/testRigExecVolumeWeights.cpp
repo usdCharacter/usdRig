@@ -136,8 +136,8 @@ struct Fixture {
 
     // Puts \p prim at \p at, through the TRANSLATE AVARS.
     // An authored posed:space would say the same thing in one attribute --
-    // it is what this fixture used to do -- and it is the one placement the
-    // baked program declines, because a posed:space is whatever an arbitrary
+    // and it is the one placement the baked program declines, because a
+    // posed:space is whatever an arbitrary
     // computation says from the middle of the pose walk and there is no
     // compiled rig constant summary of that. Over an identity rest with no default
     // and no posed parent, a translation composed from avars is the same
@@ -1195,10 +1195,7 @@ TestCombineSubtractOrder()
 // its own rigExec:weightTarget.
 // This is not an exotic case: "constant" is the schema default for an
 // authored weight object, so it is what a rigger gets the first time they
-// multiply two freshly created static weights. Before the fix the exec
-// kernel published an invalid packet (mover passes through, points do not
-// move) while the CPU oracle resolved every constant to `count` values
-// and moved them -- a parity mismatch rather than a visible error.
+// multiply two freshly created static weights.
 static void
 TestCombineOfConstantInputs()
 {
@@ -1426,11 +1423,7 @@ TestCurveWeightRejectsTwoCurves()
 }
 
 // A DEFAULT combine: author the prim, wire two inputs, change nothing
-// else. rigExec:representation used to inherit `constant` from
-// RigExecWeightObject, which the exec builder rejects while the CPU
-// oracle resolved it happily -- a parity mismatch reachable by doing the
-// most obvious possible thing. Every other combine test here authors
-// `dense` explicitly and so could never have caught it.
+// else. Every other combine test here authors `dense` explicitly.
 static void
 TestDefaultCombineNeedsNoRepresentation()
 {

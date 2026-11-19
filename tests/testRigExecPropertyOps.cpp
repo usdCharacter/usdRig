@@ -2333,7 +2333,6 @@ TestAChainDragIsNoLongerAWholeRigCost(const std::string &examples)
     evaluator->SetInteractiveOverrides(drag);
     const RigExecRigPose cone = evaluator->Evaluate(t);
     const size_t coneSteps = nonSource();
-    // The steps the old rule re-ran on any moved chain result.
     size_t skippedChainReaders = 0;
     {
         const std::set<size_t> ran = StepsRan(B);

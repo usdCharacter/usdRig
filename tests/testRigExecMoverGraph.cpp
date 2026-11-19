@@ -604,9 +604,9 @@ TestMixedOpChain()
     }
 }
 
-// The bindings the compiler used to author as rigExec:resolved* relationships
-// are pure path resolution. These assert the resolver reproduces each one, so
-// the graph can build the edge without anything being authored.
+// The bindings are pure path resolution. These assert the resolver
+// reproduces each one, so the graph can build the edge without anything
+// being authored.
 static void
 TestRevisionBindingResolution()
 {

@@ -8,7 +8,7 @@
 // BuildWarmWork ingredients (sampling, compiled rig signature, control digest) and
 // the rig's scale, so a lag report can be attributed rather than guessed
 // at. Prints human-readable numbers; asserts nothing, so it is built but
-// deliberately NOT registered with ctest (like benchFrameCacheWarm).
+// NOT registered with ctest (like benchFrameCacheWarm).
 //   benchCommitLag [examplesDir]
 // Environment, read and reported, never assumed: RIGEXEC_FRAME_CACHE (unset
 // is set to "on" in-process for the run, so a bare bench measures warming;

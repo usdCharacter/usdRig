@@ -32,7 +32,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(os.path.dirname(_HERE))
 _STACK = os.path.join(_REPO, "examples", "biped", "Biped_stack.usda")
 _RIG = "/Biped/Rig"
-# the character's own asymmetry is well under this; the fault was 10 deg
+# the character's own asymmetry is well under this
 _ROT_TOL = 0.5
 _TRA_TOL = 0.02
 

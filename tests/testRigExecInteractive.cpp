@@ -1,4 +1,4 @@
-// Persistent graph and interactive edit regressions through the public evaluator.
+// Persistent graph and interactive edits through the public evaluator.
 #include "rigExec/bakedProgramImpl.h"
 #include "rigExec/frozenContext.h"
 #include "rigExec/inputReplay.h"
@@ -681,17 +681,12 @@ static void TestInteractiveOverrides()
 // A released drag is an ordinary value edit, so nothing about the rig's
 // structure moves and no recompile follows it. What the baked program holds
 // across such an edit therefore has to be re-read, and for a spline-valued
-// input it was not: the program pinned a UsdAttributeQuery to the attribute
-// at bake time, and a UsdAttributeQuery does not follow a later edit to a
-// SPLINE the way it follows an edited time sample or default -- it resolves
-// the spline once and keeps answering from that copy.
-// In usdview that read as the drag being ignored. The first release on a
-// control CREATES the property spec, which resyncs and rebakes, so it
-// worked; every release after it re-authored the same knot, which is
-// changed-info only, so nothing rebaked and the rig kept publishing the
-// first drag's pose. The control followed the preview and sprang back the
-// instant the artist let go -- until some other control's first release
-// resynced the stage and rebaked the program for all of them.
+// input a UsdAttributeQuery does not follow a later edit to a SPLINE the
+// way it follows an edited time sample or default -- it resolves the spline
+// once and keeps answering from that copy. The first release on a control
+// CREATES the property spec, which resyncs and rebakes; every release after
+// it re-authors the same knot, which is changed-info only, so nothing
+// rebakes.
 // Two drags is the whole test: one release to create the spec, and one more
 // to be answered from the spline as it now stands. The suite runs under
 // RIGEXEC_EVALUATION_MODE=baked in the parity harness, which is where this
