@@ -9,14 +9,26 @@
 ``graphview/model.py`` is pure stdlib, so it is loaded by path instead of
 through ``UsdNoodles``: importing the package would pull in pxr and Qt and
 force these cases to skip on a machine that has neither. The probe of the
-two spellings in the package directory needs no pxr, Qt, or GL either, so
-the whole file runs in any plain interpreter.
+two spellings in the package directory needs no pxr, Qt, or GL either. Only
+the alias-identity case imports the widget, and it reports an explicit skip
+when a dependency is missing.
 """
 
 import importlib.machinery
 import importlib.util
 import pathlib
 import unittest
+
+try:
+    from UsdNoodles.graphView import GraphView, _isPathRelated, _nodeIdPrimPath
+    from UsdNoodles.graphview import model
+
+    _has_graph = True
+except (ImportError, OSError) as error:  # pragma: no cover - import probe
+    # OSError too: PyOpenGL raises it when the host has no GL library, and
+    # this file's stdlib-only cases must still run and report 0 skips there.
+    print("graph view alias imports failed: %s" % error)
+    _has_graph = False
 
 # testenv sits directly inside the UsdNoodles package in the source tree, in
 # the staged build/python/UsdNoodles package, and in the installed package, so
@@ -150,6 +162,26 @@ class PackageAndModuleSpellingTest(unittest.TestCase):
 
         print("graphview -> %s; graphView -> %s"
               % (package_spec.origin, module_spec.origin))
+
+
+@unittest.skipUnless(
+    _has_graph,
+    "UsdNoodles.graphView not importable (needs pxr, PySide6 and OpenGL)")
+class GraphViewPathAliasTest(unittest.TestCase):
+    """``graphView`` reads the model's functions, it does not own a copy.
+
+    Identity rather than equal behaviour: one shared function object is what
+    keeps the widget and the model from diverging on the next edit.
+    """
+
+    def test_the_module_aliases_are_the_model_functions(self):
+        self.assertIs(_isPathRelated, model.paths_related)
+        self.assertIs(_nodeIdPrimPath, model.node_id_prim_path)
+
+    def test_graph_view_is_still_the_mixed_case_module(self):
+        """Fails if the package ever shadows the module in a staged or
+        installed tree."""
+        self.assertEqual(GraphView.__module__, "UsdNoodles.graphView")
 
 
 if __name__ == "__main__":

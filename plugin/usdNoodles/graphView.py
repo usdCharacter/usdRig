@@ -41,6 +41,8 @@ from ._schema_pin_names import (
     resolve_property_name_for_display_pin,
 )
 from .constants import MAX_RENDER_DEPTH, node_content_depth
+from .graphview.model import node_id_prim_path as _nodeIdPrimPath
+from .graphview.model import paths_related as _isPathRelated
 from .linkRenderer import computeLinkCurveBounds, LinkRenderer, sampleLinkCurve
 from .nodeFactory import NodeFactory
 from .nodeActivation import capture_activation, replay_activation
@@ -128,40 +130,6 @@ def _nodeRect(node):
         float(node.size[0]),
         float(node.size[1]),
     )
-
-
-def _nodeIdPrimPath(nodeId):
-    """The prim-path half of a node id.
-
-    Most node ids ARE prim paths. Blueprint / Container I/O nodes are
-    synthesized rather than prim-backed and carry their pin in a ``#`` suffix
-    (``/Bp#input:foo:bar``); the part before the ``#`` is still the prim path
-    they hang off, which is what makes them follow that prim when it moves.
-    """
-    return nodeId.split("#", 1)[0]
-
-
-def _isPathRelated(pathA, pathB):
-    """Whether one path is the other, or contains the other.
-
-    "Contains" spans both separators USD uses: ``/`` for a child prim and ``.``
-    for a property, so ``/World/Cube`` is related to ``/World/Cube/Leg`` and to
-    ``/World/Cube.inputs:x`` alike -- a resync can name either, and both mean
-    "the node at /World/Cube is stale".
-
-    The boundary is the point. Plain ``startswith`` reads ``/World/Cube`` as an
-    ancestor of ``/World/CubeTwo``, so editing one prim invalidates unrelated
-    siblings whose names merely share a prefix.
-    """
-    if pathA == pathB:
-        return True
-    longer, shorter = (pathA, pathB) if len(pathA) > len(pathB) else (pathB, pathA)
-    if not longer.startswith(shorter):
-        return False
-    # The pseudo-root is the one path that already ends in its own separator.
-    if shorter.endswith("/"):
-        return True
-    return longer[len(shorter)] in "/."
 
 
 def _push_undo_command(description, do_func, undo_func, *, view):
