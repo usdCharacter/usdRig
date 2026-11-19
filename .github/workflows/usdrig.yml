@@ -504,7 +504,7 @@ jobs:
       - name: Extract OpenUSD prefix
         run: |
           mkdir -p usd-install
-          tar -C usd-install -xf usd-install.tar
+          tar -C usd-install -xf usd-install-py.tar
 
       - name: Configure
         run: |

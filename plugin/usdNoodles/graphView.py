@@ -226,13 +226,13 @@ def _frameOf(value):
 def _makeStageSync(view):
     """This editor's stage-lifecycle service, bound to *view*.
 
-    The policy lives in graphview/stage_sync, which imports no Qt or GL;
-    the two widget-owned pieces -- posting to the owner thread and warning
-    -- arrive as callables that resolve this module's ``QtCore`` and ``Tf``
+    Policy lives in graphview/stage_sync, which imports no Qt or GL; the
+    widget-owned post and warn resolve this module's ``QtCore`` and ``Tf``
     at call time, so the StageReload patch points keep intercepting them.
     """
     return stage_sync.StageSync(
         read=lambda: stage_sync.readStageContext(view),
+        notice=lambda: stage_sync.readNoticeContext(view),
         apply=lambda delta: stage_sync.applyStageDelta(view, delta),
         post=lambda callback: QtCore.QTimer.singleShot(0, callback),
         listen=lambda receiver: UsdNoticeHandler(receiver),

@@ -114,11 +114,13 @@ class FinishReload:
 
 @dataclass(frozen=True, slots=True)
 class StageContext:
-    """The view's state as one owner-thread read.
+    """The view's state as one owner-thread read, for one reload decision.
 
     ``view`` stays the duck-typed context the functions here expect; the rest
     is snapshotted so a caller can see what the service decided from without
-    reaching back into the widget.
+    reaching back into the widget. This is the reload path's read: it names
+    every node the graph is about to lose, so it is the all-node snapshot and
+    costs what the graph costs.
     """
 
     view: object
@@ -126,6 +128,20 @@ class StageContext:
     mode: str
     prim_path: object
     node_ids: tuple
+    syncing_selection: bool
+
+
+@dataclass(frozen=True, slots=True)
+class NoticeContext:
+    """What one USD notice reads from the view: the view and its mute flag.
+
+    Deliberately not ``StageContext``: a notice reaches at most the nodes its
+    own paths name, so copying every node id -- or asking which loader a
+    rebuild would re-run -- per notice would make a single-property edit scale
+    with the size of the graph.
+    """
+
+    view: object
     syncing_selection: bool
 
 
@@ -639,7 +655,7 @@ def stageLoadMode(view):
 
 
 def readStageContext(view):
-    """One owner-thread read of everything the service decides from."""
+    """One owner-thread read of everything a reload decides from."""
     api = view._usdviewApi
     return StageContext(
         view=view,
@@ -648,6 +664,13 @@ def readStageContext(view):
         prim_path=view._currentPrimPath,
         node_ids=tuple(view.nodes),
         syncing_selection=view._syncingSelection,
+    )
+
+
+def readNoticeContext(view):
+    """One owner-thread read for a USD notice -- no whole-graph snapshot."""
+    return NoticeContext(
+        view=view, syncing_selection=view._syncingSelection
     )
 
 
@@ -798,9 +821,10 @@ class StageSync:
     """One editor's stage lifecycle: replace, bind, notice, finish, close.
 
     Constructed per editor with the callables the view supplies -- ``read()``
-    for one owner-thread read of the view, ``apply(delta)`` to perform a
-    mutation synchronously on the owner thread, ``post(callback)`` to schedule
-    on the widget owner thread, ``listen(receiver)`` to build the editor's
+    for one owner-thread read of the view for a reload, ``notice()`` for the
+    narrower read a USD notice needs, ``apply(delta)`` to perform a mutation
+    synchronously on the owner thread, ``post(callback)`` to schedule on the
+    widget owner thread, ``listen(receiver)`` to build the editor's
     UsdNoticeHandler, and ``warn(message)`` for the diagnostics channel. None
     of them may import Qt or GL here, which is what lets the whole lifecycle
     run headless against a recording stub.
@@ -811,8 +835,9 @@ class StageSync:
     undone by a timer tick from the previous stage.
     """
 
-    def __init__(self, read, apply, post, listen, warn=None, sink=None):
+    def __init__(self, read, notice, apply, post, listen, warn=None, sink=None):
         self._read = read
+        self._notice = notice
         self._apply = apply
         self._post = post
         self._warn = warn
@@ -865,7 +890,13 @@ class StageSync:
         The epoch moves first, so every callback an earlier replace queued --
         and the notice receiver stamped with the old stage -- is stale before
         any teardown work starts.
+
+        A closed editor ignores the delivery entirely: the widget can outlive
+        its close event, and a replacement that got through would re-arm the
+        notice receiver and reload a graph nobody is displaying.
         """
+        if self._closed:
+            return
         ctx = self._read()
         view = ctx.view
         self._epoch += 1
@@ -952,7 +983,7 @@ class StageSync:
         """One USD notice, delivered under the epoch that bound its stage."""
         if self._closed or epoch != self._epoch:
             return
-        ctx = self._read()
+        ctx = self._notice()
         if ctx.syncing_selection:
             return
         applyUsdChanges(
@@ -960,7 +991,11 @@ class StageSync:
             resyncedPaths,
             infoChangedPaths,
             movedPaths,
-            trace=_ReconcileTrace(self._sink, epoch),
+            trace=(
+                _ReconcileTrace(self._sink, epoch)
+                if self._sink is not None
+                else None
+            ),
         )
 
     # -- internals --------------------------------------------------------

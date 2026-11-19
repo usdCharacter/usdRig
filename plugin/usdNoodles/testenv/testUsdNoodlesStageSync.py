@@ -21,6 +21,11 @@ layer's export before and after to prove it.
 The import-identity case guards the two spelling-sensitive module names:
 UsdNoodles.graphview (the package directory) and UsdNoodles.graphView (the
 legacy module) must keep binding their own files on every platform.
+
+Only OpenUSD is treated as an optional dependency here. The modules under
+test -- the graphview package, the notice handler, and the editor module that
+wires them -- are product code: an ImportError from one of them is a broken
+staged package, so it fails the run instead of skipping the coverage.
 """
 
 from __future__ import annotations
@@ -29,16 +34,23 @@ import dataclasses
 import sys
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 try:
     from pxr import Sdf, Usd, UsdGeom
+
+    _has_usd = True
+except ImportError as error:  # pragma: no cover - OpenUSD not installed
+    print("OpenUSD imports failed: %s" % error)
+    _has_usd = False
+
+if _has_usd:
     from UsdNoodles.graphview import stage_sync
+    from UsdNoodles.graphView import _makeStageSync, GraphView
     from UsdNoodles.usdNoticeHandler import UsdNoticeHandler
 
     _has_stage_sync = True
-except ImportError as error:  # pragma: no cover - import probe
-    print("stage sync imports failed: %s" % error)
+else:
     _has_stage_sync = False
 
 try:
@@ -104,6 +116,38 @@ class _StubGraph:
 
     def getStage(self):
         return self._stage
+
+
+class _KeyedOnlyNodes(dict):
+    """A node map a USD notice may index but must never walk.
+
+    ``__contains__`` and ``__getitem__`` do not consult ``__iter__`` on a
+    dict, so the keyed lookups reconciliation makes keep working while any
+    whole-graph scan raises -- which is the difference between a notice that
+    costs the notice and one that costs the graph.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.iterated = []
+
+    def _refuse(self, how):
+        self.iterated.append(how)
+        raise AssertionError(
+            "the notice path walked the node map (%s)" % how
+        )
+
+    def __iter__(self):
+        return self._refuse("__iter__")
+
+    def keys(self):
+        return self._refuse("keys")
+
+    def values(self):
+        return self._refuse("values")
+
+    def items(self):
+        return self._refuse("items")
 
 
 class _StubView:
@@ -211,6 +255,11 @@ class _LifecycleView:
             syncing_selection=self.syncing,
         )
 
+    def readNotice(self):
+        return stage_sync.NoticeContext(
+            view=self, syncing_selection=self.syncing
+        )
+
     def apply(self, delta):
         self.applied.append(delta)
         if isinstance(delta, stage_sync.BeginReload):
@@ -237,6 +286,7 @@ class _LifecycleHarness:
         self.warnings = []
         self.sync = stage_sync.StageSync(
             read=view.read,
+            notice=view.readNotice,
             apply=view.apply,
             post=lambda callback: self.queued.append(callback),
             listen=lambda receiver: UsdNoticeHandler(receiver),
@@ -917,6 +967,9 @@ class NoticeRegistrationTest(unittest.TestCase):
                 node_ids=tuple(view.nodes),
                 syncing_selection=view._syncingSelection,
             ),
+            notice=lambda: stage_sync.NoticeContext(
+                view=view, syncing_selection=view._syncingSelection
+            ),
             apply=lambda delta: None,
             post=lambda callback: None,
             listen=lambda receiver: UsdNoticeHandler(receiver),
@@ -946,6 +999,162 @@ class NoticeRegistrationTest(unittest.TestCase):
         self.assertTrue(view.linksChanged)
         self.assertTrue(view.textChanged)
         view._hooks.update.assert_called_once()
+
+
+@unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
+class ReplaceAfterCloseTest(unittest.TestCase):
+    """A stage replace delivered to a closed editor stays in the delivery.
+
+    A closed Qt widget is not a destroyed one: usdview's dataModel keeps the
+    signal connected and can hand a replacement to an editor that is already
+    shutting down. Nothing may be read, applied, registered or queued then --
+    a reload that tears down a graph nobody is displaying, and re-arms a
+    notice receiver close had revoked, ends in a widget left with paint off.
+    """
+
+    def test_close_then_replace_touches_nothing(self) -> None:
+        stageA = Usd.Stage.CreateInMemory()
+        stageB = Usd.Stage.CreateInMemory()
+        view = _LifecycleView(["/Alpha"])
+        env = _LifecycleHarness(view)
+        env.sync.replace(stageA, "stage", None, "frame")
+        env.run_queued()
+        handler = env.sync.handler()
+        handler.register(stageA)
+        self.assertIs(handler.getStage(), stageA)
+
+        live = env.sync.epoch()
+        applied = list(view.applied)
+        published = list(env.deltas)
+
+        env.sync.close()
+        env.sync.replace(stageB, "blueprint", "/Bp", "late-frame")
+
+        # No delta published, no delta applied: the view was not read, so no
+        # BeginReload tore down its state and no Load replaced its graph.
+        self.assertEqual(env.deltas, published)
+        self.assertEqual(view.applied, applied)
+        self.assertEqual(view.frames, ["frame"])
+        self.assertEqual(view.loaded, (stageA, "stage", None))
+        self.assertEqual(list(view.nodes), ["/Alpha"])
+        # No listener on the late stage, and the editor's own is gone.
+        self.assertIsNone(handler.getStage())
+        # Nothing queued for the owner thread, and the live finish is the
+        # only one that ever ran.
+        self.assertEqual(env.queued, [])
+        self.assertEqual(view.finishes, 1)
+        # close() moved the epoch; the late replace did not, and its epoch is
+        # stale with it -- so a notice stamped with the live generation still
+        # cannot reach the model.
+        self.assertEqual(env.sync.epoch(), live + 1)
+        env.sync.changed(live, {"/Alpha"}, set())
+        self.assertEqual(view.applied, applied)
+
+
+@unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
+class ProductionAdapterTest(unittest.TestCase):
+    """The editor's own wiring -- ``_makeStageSync`` -- against a stub view.
+
+    The stubs above hand the service its readers; these cases run the
+    readers the shipped editor builds, so a reader that reaches too much of
+    the widget, or a policy the widget stops applying, fails here.
+    """
+
+    def _view(self, stage, paths):
+        """A stub view whose node map refuses to be walked (see
+        ``_KeyedOnlyNodes``), plus the usdview api ``readStageContext`` reads.
+        """
+        view = _StubView(stage, paths)
+        view.nodeGraph.nodes = _KeyedOnlyNodes(view.nodeGraph.nodes)
+        view._usdviewApi = SimpleNamespace(
+            stage=stage, frame=Usd.TimeCode.Default()
+        )
+        return view
+
+    def test_a_single_property_notice_never_walks_the_graph(self) -> None:
+        """The notice path reads the view for the notice, not for a reload.
+
+        One authored property value is one info-only path: reconciliation may
+        index ``view.nodes`` for that path and nothing else. Taking the
+        reload snapshot here would copy every node id per notice, so a value
+        drag -- a notice per mouse-move -- would scale with the graph.
+
+        The radius starts out authored, so the write below is a value change
+        and not a property create, which USD reports as a prim resync.
+        """
+        stage = Usd.Stage.CreateInMemory()
+        for name in ("Alpha", "Keeper"):
+            prim = UsdGeom.Sphere.Define(stage, "/%s" % name).GetPrim()
+            prim.GetAttribute("radius").Set(1.0)
+        view = self._view(stage, ["/Alpha", "/Keeper"])
+        service = _makeStageSync(view)
+        service.bind(stage)
+        service.handler().register(stage)
+
+        stage.GetPrimAtPath("/Alpha").GetAttribute("radius").Set(3.0)
+
+        self.assertEqual(view.nodes.iterated, [])
+        view.nodes["/Alpha"].invalidateCache.assert_called_once()
+        view.nodes["/Keeper"].invalidateCache.assert_not_called()
+        # A value change repaints; it does not rebuild links or re-layout text.
+        self.assertFalse(view.linksChanged)
+        self.assertFalse(view.textChanged)
+        view._hooks.update.assert_called_once()
+
+    def test_the_shipped_notice_carries_no_reconcile_trace(self) -> None:
+        """No sink means no trace: the shipped editor publishes nothing.
+
+        ``_makeStageSync`` builds the service without a sink, so per notice
+        there is nowhere to record. Sorting and copying the path sets for a
+        trace nobody reads would tax every mouse-move value notice; the audit
+        sink in ``NoticeRegistrationTest`` is what exercises the traced path.
+        """
+        stage = Usd.Stage.CreateInMemory()
+        UsdGeom.Sphere.Define(stage, "/Alpha").GetPrim().GetAttribute(
+            "radius"
+        ).Set(1.0)
+        view = self._view(stage, ["/Alpha"])
+        service = _makeStageSync(view)
+        service.bind(stage)
+        service.handler().register(stage)
+
+        traces = []
+
+        def capture(*_args, **kwargs):
+            traces.append(kwargs.get("trace"))
+
+        with patch.object(stage_sync, "applyUsdChanges", capture):
+            stage.GetPrimAtPath("/Alpha").GetAttribute("radius").Set(3.0)
+
+        self.assertEqual(len(traces), 1)
+        self.assertIsNone(traces[0])
+
+    def test_a_replace_delivered_after_close_stops_at_the_service(self) -> None:
+        """usdview's signal reaches a closed editor through the real slot."""
+        stageA = Usd.Stage.CreateInMemory()
+        UsdGeom.Sphere.Define(stageA, "/Alpha")
+        UsdGeom.Sphere.Define(stageA, "/Keeper")
+        stageB = Usd.Stage.CreateInMemory()
+        view = self._view(stageA, ["/Alpha", "/Keeper"])
+        service = _makeStageSync(view)
+        view._stageSync = service
+        view._noticeHandler = service.handler()
+        service.handler().register(stageA)
+        service.close()
+
+        with patch(
+            "UsdNoodles.graphView.QtCore.QTimer.singleShot"
+        ) as posted:
+            GraphView._onStageReplaced(view)
+
+        posted.assert_not_called()
+        self.assertIsNone(service.handler().getStage())
+        self.assertEqual(view.nodes.iterated, [])
+        self.assertEqual(len(view.nodes), 2)
+        self.assertIn("/Alpha", view.nodes)
+        self.assertIn("/Keeper", view.nodes)
+        # Not one view hook ran: no paint guard, no cache clear, no load.
+        self.assertEqual(view._hooks.mock_calls, [])
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
@@ -994,18 +1203,13 @@ class ImportIdentityTest(unittest.TestCase):
         )
 
     def test_the_legacy_module_binds_graphView_py(self) -> None:
-        try:
-            import UsdNoodles.graphView
-        except ImportError as error:  # pragma: no cover - Qt not installed
-            self.skipTest("graphView not importable: %s" % error)
+        module = sys.modules["UsdNoodles.graphView"]
         self.assertTrue(
-            UsdNoodles.graphView.__file__.replace("\\", "/").endswith(
-                "graphView.py"
-            ),
-            "UsdNoodles.graphView bound %s" % UsdNoodles.graphView.__file__,
+            module.__file__.replace("\\", "/").endswith("graphView.py"),
+            "UsdNoodles.graphView bound %s" % module.__file__,
         )
         self.assertIsNot(
-            UsdNoodles.graphView, sys.modules.get("UsdNoodles.graphview")
+            module, sys.modules.get("UsdNoodles.graphview")
         )
 
 
