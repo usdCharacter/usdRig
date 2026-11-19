@@ -1318,8 +1318,6 @@ class RigExecAimConstraint "RigExecAimConstraint" (
     )
     # Aim writes rotation, so it masks with the inherited
     # inputs:affectRotation* rather than a channel name of its own.
-
-    # Legacy RigExecAimConstraint contract, preserved for existing assets.
     rel rigExec:aimTarget (
         doc = """Legacy single aim source, read only when rigExec:sources is
         empty; retained for backward compatibility. With it and no world-up
@@ -1432,10 +1430,7 @@ class RigExecParentConstraint "RigExecParentConstraint" (
 {
     # Parent is the one operator that writes all three groups, and the one
     # that leaves scale OFF unless asked -- the FBX runtime default. The base
-    # class defaults scale on, so the override is restated here. It must be
-    # authored in this block: generatedSchema.usda is flattened, so an
-    # inherited default is re-emitted per concrete class and there is no
-    # other place for the override to live.
+    # class defaults scale on, so the override is restated here.
     bool inputs:affectScaleX = false
     bool inputs:affectScaleY = false
     bool inputs:affectScaleZ = false
@@ -4522,11 +4517,10 @@ class RigExecPickerButton "RigExecPickerButton" (
 # each naming the control that poses them, so a click on the model
 # selects the control that drives that part of it.
 #
-# These are NOT GeomSubsets. hdSt collects every face GeomSubset
-# under a mesh whatever its familyName, so a touch set collided with
-# the materialBind subset owning the same face: 16,739 warnings on
-# open, and the renderer doing work for data that is not for it.
-# They live in their own scope instead, found by type.
+# These are NOT GeomSubsets: hdSt collects every face GeomSubset
+# under a mesh whatever its familyName, so a touch set would collide
+# with the materialBind subset owning the same face. They live in
+# their own scope instead, found by type.
 ################################################################
 
 class RigExecTouchRegions "RigExecTouchRegions" (

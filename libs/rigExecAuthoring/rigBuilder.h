@@ -204,8 +204,8 @@ public:
     /// Optional base frame (rigExec:startFrame): the joint or control the
     /// chain hangs from. The solver composes every element onto that
     /// provider's rest-to-pose delta, so the chain rides it. Unauthored
-    /// (or an empty path, which clears it) leaves the historical absolute
-    /// behaviour untouched. Use it when the chain's joints are namespace
+    /// (or an empty path, which clears it) leaves the absolute behaviour
+    /// untouched. Use it when the chain's joints are namespace
     /// children of something ANOTHER solver poses -- the fingers under a
     /// wrist driven by the arm's IK/FK blend -- where nesting the first
     /// control cannot work: a solver-posed joint is an absolute override
