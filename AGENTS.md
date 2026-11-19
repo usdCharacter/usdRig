@@ -78,7 +78,10 @@ starting its workflow, and keep this list current when adding or changing skills
   invalidation, and frame caching. Preserve dynamic/baked parity.
   `Evaluate` runs that baked program, or returns an invalid pose and the
   `IsBakeable` reasons. It does not evaluate through OpenExec. The tap set
-  remains for cross-check and tests.
+  remains for cross-check and tests. `libs/rigExec/solverKernels.cpp`
+  compiles into the `rigExecEval` OBJECT target, composed into `librigExec` by `$<TARGET_OBJECTS:rigExecEval>`;
+  that target is not installed or exported, and an edit there is still
+  attributed to `rigExec` by `bin/test_changed.sh`.
 - `libs/rigExecAuthoring` and `python`: authoring APIs and Python bindings.
   `rigExecAuthoring` also hosts the skin-weight generator
   (`generateSkinWeights`, bound as `rigexec.binding.generate_skin_weights`);

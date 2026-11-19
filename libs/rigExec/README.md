@@ -13,10 +13,16 @@ reports cycles, assigns canonical IDs and lowers safe linear clusters.
 | `rigEvaluatorInputs.cpp` | Requested interactive/upstream inputs and admission |
 | `bakedProgram.cpp` | Typed input binding and compiled domain records |
 | `bakedPose.cpp`, `bakedProperties.cpp`, `bakedGeometry.cpp`, `bakedWeights.cpp` | Domain descriptors and pure operation bodies |
+| `solverKernels.cpp` | Solver glue shared by the exec callbacks, the baked program and the scene programs; compiled as the `rigExecEval` OBJECT target and composed into `librigExec.so` |
 | `bakedOpGraph.cpp`, `bakedOpValues.cpp` | Native graph adapter, exact value keys and unavailable cycle outputs |
 | `bakedSchedule.cpp` | Operation dispatch, timing and graph reports |
 | `rigExecGraph/opGraph.cpp` | Common producer compiler, SCC reporting, clusters and readiness executor |
 | `rigExecScene/sceneProgramTranslation.cpp` | Detached typed graph assembly from composed scene descriptors |
+
+That object library is a build boundary, not a shipped library: it is not
+installed, exported or linked, so callers still link `rigExec` (or
+`rigExec::rigExecScene`) exactly as before. It is the first boundary of the
+planned compile/eval/schedule split, not the whole of it.
 
 At each evaluation, the host samples source inputs before executing the
 common graph. Operations wait for their declared predecessors. Exact
