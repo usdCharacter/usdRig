@@ -862,8 +862,7 @@ struct RrProgram {
     std::shared_ptr<void> properties;
 
     // Test-only family mask: bit 0 pose, 1 weights, 2 geometry. All set
-    // outside tests; a masked family's steps are skipped, which is how
-    // one family's outputs are compared while another is still landing.
+    // outside tests; a masked family's steps are skipped.
 
     // The file's compile notices, replayed ahead of the program lines on
     // the first Execute, then drained.

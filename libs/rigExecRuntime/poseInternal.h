@@ -347,9 +347,7 @@ struct RrPoseScratch {
     // Constraint envelope scratch, one step's own storage.
     std::vector<std::vector<float>> weightScratch;
     std::vector<std::string> weightError;
-    // Geometry-domain constraint deltas. Conceptually framework-visible
-    // (the Matrix revision reads them), but RrStore has no home for
-    // them, so they live here until the framework grows one.
+    // Geometry-domain constraint deltas (the Matrix revision reads them).
     std::vector<RrMat4d> deltaValues;
     std::vector<char> deltaPresent;
 };
