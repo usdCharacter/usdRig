@@ -387,7 +387,7 @@ add_library(rigExecImagingHost OBJECT
 # rigExecScene enters as link-only: its INTERFACE link anchor is a source,
 # and every target that links the scene library compiles its own copy.
 # The shared target links rigExecScene plainly and carries the one anchor
-# into the DSO, as before.
+# into the DSO.
 foreach(_rigexec_imaging_obj IN ITEMS
         rigExecImagingContext rigExecImagingFrames
         rigExecImagingInteraction rigExecImagingQueries
@@ -447,8 +447,7 @@ target_include_directories(rigExecImaging PUBLIC
 # Compose the domain object libraries into the shared library first: CMake
 # adds their objects to this target only, never to its consumers, and
 # composing first keeps their link order over the scene library ahead of
-# the dependency archives, as it was when one target compiled every
-# imaging source.
+# the dependency archives.
 target_link_libraries(rigExecImaging PRIVATE
     rigExecImagingContext rigExecImagingFrames rigExecImagingInteraction
     rigExecImagingQueries rigExecImagingHost)
@@ -2400,14 +2399,13 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_deformer_order.py"
             "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
     # A pose sample sitting on top of its neutral makes the RBF degenerate
-    # and the weights run away -- the right deltoid ballooned this way.
+    # and the weights run away.
     add_test(NAME testRigExecPoseRotationsPython
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_pose_rotations.py"
             "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
     # The projector's ray is the SOURCE FRAME's Z axis, and the two eye
-    # bind joints are 180 degrees apart rather than mirrored, so the right
-    # eye once cast into the back of its own eyeball.
+    # bind joints are 180 degrees apart rather than mirrored.
     add_test(NAME testRigExecEyeSymmetryPython
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_eye_symmetry.py"
@@ -2419,9 +2417,7 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_face_smooth.py"
             "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
-    # The spine's volume preservation must stay in the spine: an
-    # inherited shear rode through the head's scale constraints and grew
-    # the cranium 6.56% when the hips moved.
+    # The spine's volume preservation must stay in the spine.
     add_test(NAME testRigExecRigidHeadPython
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_rigid_head.py"
@@ -2859,7 +2855,7 @@ if (MSVC AND NOT CMAKE_DISABLE_PRECOMPILE_HEADERS)
     # The libraries, and every test, bench or probe executable linking one
     # of the USD-facing libraries. The imaging object libraries carry the
     # same compile options and definitions as rigExecImaging, so they
-    # reuse the same PCH as their sources did before the split.
+    # reuse the same PCH.
     set(_rigexec_pch_users rigExec rigExecScene rigExecOracle rigExecImaging
         rigExecImagingContext rigExecImagingFrames
         rigExecImagingInteraction rigExecImagingQueries rigExecImagingHost
