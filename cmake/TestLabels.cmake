@@ -9,8 +9,12 @@ set(_rigexec_pxr_libs
     esf esfUsd hd usdImaging usdUtils hio sdr js trace pcp usdShade usdLux
     usdRender usdVol usdMedia usdPhysics cameraUtil pxOsd geomUtil glf garch hf
     usdImagingGL)
+# The four rigExec layers are object libraries: they compose into rigExec
+# and never appear on a test's own link line, so they label nothing today.
+# They are listed so a consumer that names one directly is still labeled.
 set(_rigexec_project_libs
-    rigExec rigExecScene rigExecOracle rigExecRuntime rigExecMath rigExecGraph
+    rigExec rigExecCompile rigExecEval rigExecSchedule rigExecVerify
+    rigExecScene rigExecOracle rigExecRuntime rigExecMath rigExecGraph
     rigExecBinary rigExecBake rigExecImaging rigExecAuthoring rigExecStandalone
     rigExecSampler rigExecLzma)
 set(_rigexec_fast_direct rigExecMath)

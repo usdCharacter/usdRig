@@ -141,91 +141,27 @@ target_sources(rigExecScene INTERFACE
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs/rigExecScene/sceneLinkAnchor.cpp>"
     "$<INSTALL_INTERFACE:${RIGEXEC_INSTALL_CMAKEDIR}/sceneLinkAnchor.cpp>")
 
+# The evaluator's layers, as object libraries: build boundaries, not
+# shipped libraries. Each file declares its own target, sources, include
+# directories and links, and the four compose into librigExec below. None
+# of them is installed, exported, aliased or linked.
+include(cmake/rigExecCompileSources.cmake)
+include(cmake/rigExecEvalSources.cmake)
+include(cmake/rigExecScheduleSources.cmake)
+include(cmake/rigExecVerifySources.cmake)
+
 # rigExec: schema bindings and native evaluation. It does not link the
 # scene or oracle libraries. Callers that compile a stage link
-# rigExecScene. Cpu-reference and golden runs link rigExecOracle.
+# rigExecScene. Cpu-reference and golden runs link rigExecOracle. The
+# layer objects compose in DAG order; only the facade's lifecycle and
+# source-notice sources compile here.
 add_library(rigExec SHARED
-    libs/rigExec/types.cpp
-    libs/rigExec/parallel.cpp
-    libs/rigExec/computations.cpp
-    libs/rigExec/affineFrameComputations.cpp
-    libs/rigExec/moverKernels.cpp
-    libs/rigExec/solverKernels.cpp
-    libs/rigExec/weightPackets.cpp
-    libs/rigExec/inputReplay.cpp
-    libs/rigExec/scalarReferenceAdapter.cpp
-    libs/rigExec/oracleDispatch.cpp
-    libs/rigExec/sceneDispatch.cpp
-    libs/rigExec/weightField.cpp
-    libs/rigExecScene/constraintProgram.cpp
-    libs/rigExecScene/geometryProgram.cpp
-    libs/rigExecScene/poseProgram.cpp
-    libs/rigExecScene/propertyProgram.cpp
-    libs/rigExecScene/providerContextBinding.cpp
-    libs/rigExecScene/providerProgram.cpp
-    libs/rigExecScene/sceneCompileInputs.cpp
-    libs/rigExecScene/solverProgram.cpp
-    libs/rigExecScene/typedValues.cpp
-    libs/rigExecScene/weightProgram.cpp
-    libs/rigExec/movers/moverRegistry.cpp
-    libs/rigExec/movers/matrixMover.cpp
-    libs/rigExec/movers/skinMover.cpp
-    libs/rigExec/movers/armatureMover.cpp
-    libs/rigExec/movers/blendShapeMover.cpp
-    libs/rigExec/movers/smoothMover.cpp
-    libs/rigExec/movers/deltaMushMover.cpp
-    libs/rigExec/movers/wrinkleMover.cpp
-    libs/rigExec/movers/volumeCorrectMover.cpp
-    libs/rigExec/movers/latticeMover.cpp
-    libs/rigExec/movers/surfaceBindingMover.cpp
-    libs/rigExec/movers/patchMover.cpp
-    libs/rigExec/movers/surfaceMover.cpp
-    libs/rigExec/movers/curveMover.cpp
-    libs/rigExec/movers/mathMovers.cpp
-    libs/rigExec/movers/pathOperation.cpp
-    libs/rigExec/moverGraph.cpp
-    libs/rigExec/gpuDeformTranslation.cpp
-    libs/rigExec/gpuCloth.cpp
-    libs/rigExec/tapSet.cpp
+    $<TARGET_OBJECTS:rigExecCompile>
+    $<TARGET_OBJECTS:rigExecEval>
+    $<TARGET_OBJECTS:rigExecSchedule>
+    $<TARGET_OBJECTS:rigExecVerify>
     libs/rigExec/rigEvaluator.cpp
-    libs/rigExec/rigEvaluatorChainPlan.cpp
-    libs/rigExec/rigEvaluatorCompile.cpp
-    libs/rigExec/rigEvaluatorDependencies.cpp
-    libs/rigExec/rigEvaluatorDigest.cpp
-    libs/rigExec/rigEvaluatorGeometry.cpp
-    libs/rigExec/rigEvaluatorInputs.cpp
-    libs/rigExec/rigEvaluatorLiveGraph.cpp
     libs/rigExec/rigEvaluatorNotices.cpp
-    libs/rigExec/rigEvaluatorPose.cpp
-    libs/rigExec/rigEvaluatorProperties.cpp
-    libs/rigExec/rigEvaluatorValidation.cpp
-    libs/rigExec/rigEvaluatorWindows.cpp
-    libs/rigExec/bakedProgram.cpp
-    libs/rigExec/crossDomainInputs.cpp
-    libs/rigExec/bakedSpaces.cpp
-    libs/rigExec/bakedIkFkMatch.cpp
-    libs/rigExec/bakedHarmonics.cpp
-    libs/rigExec/bakedPose.cpp
-    libs/rigExec/bakedProperties.cpp
-    libs/rigExec/bakedOpValues.cpp
-    libs/rigExec/bakedOpGraph.cpp
-    libs/rigExec/bakedSchedule.cpp
-    libs/rigExec/bakedTrace.cpp
-    libs/rigExec/bakedUpstream.cpp
-    libs/rigExec/bakedGeometry.cpp
-    libs/rigExec/bakedWeights.cpp
-    libs/rigExec/bakedVerify.cpp
-    libs/rigExec/frameCache.cpp
-    libs/rigExec/frozenContext.cpp
-    libs/rigExec/frozenDigest.cpp
-    libs/rigExec/frozenPropertySampling.cpp
-    libs/rigExec/frozenSampling.cpp
-    libs/rigExec/frozenSnapshot.cpp
-    libs/rigExec/frozenWorker.cpp
-    libs/rigExec/backgroundScheduler.cpp
-    libs/rigExec/outputAffectedIndex.cpp
-    libs/rigExec/taskListCache.cpp
-    libs/rigExec/frameCacheSparsity.cpp
 )
 target_include_directories(rigExec PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
@@ -2863,6 +2799,7 @@ if (MSVC AND NOT CMAKE_DISABLE_PRECOMPILE_HEADERS)
     set(_rigexec_pch_users rigExec rigExecScene rigExecOracle rigExecImaging
         rigExecImagingContext rigExecImagingFrames
         rigExecImagingInteraction rigExecImagingQueries rigExecImagingHost
+        rigExecCompile rigExecEval rigExecSchedule rigExecVerify
         rigExecBake)
     get_property(_rigexec_pch_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
     foreach(_target IN LISTS _rigexec_pch_targets)
