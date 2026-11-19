@@ -228,12 +228,9 @@ RrPublishPose(RrProgram *program,
     }
     const std::vector<char> &aliveSolver = program->epilogue.aliveSolver;
 
-    store.providerXforms.clear();
-    store.providerBaseXforms.clear();
-    store.jointMatricesFinal.clear();
-    store.jointFramesBase.clear();
-    store.jointFramesFinal.clear();
-    store.controlFrames.clear();
+    // The maps keep their entries from run to run, as their keys are the
+    // file's: each is assigned again below, and one this run leaves out is
+    // erased, so a run does not reallocate them.
 
     _RrAppendStepLines(program, RrStepLines::Property, poseDiagnostics);
     _RrAppendStepLines(program, RrStepLines::Walk, poseDiagnostics);
@@ -304,6 +301,8 @@ RrPublishPose(RrProgram *program,
         const size_t slot = size_t(meta.xformSlots[k]);
         const RrPointFrame &frame = store.fin[size_t(store.finLast[slot])];
         if (!RrFrameUsable(frame)) {
+            store.providerXforms.erase(meta.paths[slot]);
+            store.providerBaseXforms.erase(meta.paths[slot]);
             poseDiagnostics->push_back(
                 "constraint target " +
                 program->TextOrEmpty(meta.paths[slot]) +
@@ -317,6 +316,9 @@ RrPublishPose(RrProgram *program,
             store.providerXforms[meta.paths[slot]] = revised;
             store.providerBaseXforms[meta.paths[slot]] =
                 store.xformBase[k];
+        } else {
+            store.providerXforms.erase(meta.paths[slot]);
+            store.providerBaseXforms.erase(meta.paths[slot]);
         }
     }
 
@@ -347,6 +349,8 @@ RrPublishPose(RrProgram *program,
         if (store.jointMatrixPublished[k]) {
             store.jointMatricesFinal[meta.jointPaths[k]] =
                 store.finalMatrix[slot];
+        } else {
+            store.jointMatricesFinal.erase(meta.jointPaths[k]);
         }
     }
     for (int index : meta.controlPublishOrder) {

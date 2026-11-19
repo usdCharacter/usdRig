@@ -517,6 +517,10 @@ struct RrStore {
     // (RrProgram::slotSourceOps), so the memo is rebuilt. And how many kept
     // memos RIGEXEC_VERIFY_SOURCE_KEYS found moved.
     std::vector<char> sourceDirty;
+    // The ops a sparse run visits for their memos: the ones that run on
+    // every Execute (from Open) and, this run, the written ones; the other
+    // visits would keep their memos and seed nothing.
+    std::vector<uint32_t> sourceAlways, sourceSparse;
     size_t sourceKeyMismatches = 0;
     // How many memos of steps that read inputs the last run built.
     size_t sourceKeysBuilt = 0;

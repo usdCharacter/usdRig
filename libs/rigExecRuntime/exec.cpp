@@ -6,6 +6,7 @@
 #include "poseInternal.h"
 
 #include <algorithm>
+#include <set>
 
 namespace rigExec {
 
@@ -492,6 +493,148 @@ RigExecRuntimeReader::GetSkinLayoutIsOpenForTesting(
     const std::string &moverPath) const
 {
     return RrGeometrySkinLayoutIsOpenForTesting(_program.get(), moverPath);
+}
+
+bool
+RigExecRuntimeReader::GetAlwaysReach(RigExecRuntimeInputReach *reach) const
+{
+    return _Reach(size_t(-1), reach);
+}
+
+bool
+RigExecRuntimeReader::GetInputReach(size_t index,
+                                    RigExecRuntimeInputReach *reach) const
+{
+    if (index == size_t(-1))
+        return false;
+    return _Reach(index, reach);
+}
+
+bool
+RigExecRuntimeReader::_Reach(size_t index,
+                             RigExecRuntimeInputReach *reach) const
+{
+    *reach = RigExecRuntimeInputReach();
+    if (!_program || !_program->steps)
+        return false;
+    const RrProgram &p = *_program;
+    const RigExecCompiledGraph &graph = p.opGraph;
+    const RigExecOpAdapterState &state = p.store.opAdapter;
+    const bool always = index == size_t(-1);
+    if (!state.compiled ||
+        (!always && index + 1 >= p.slotSourceBegin.size()))
+        return false;
+    const std::vector<RigExecWireStep> &steps = *p.steps;
+    const size_t count = graph.ops.size();
+    std::vector<char> reached(count, 0);
+    std::vector<uint32_t> pending;
+    const auto seed = [&](uint32_t op) {
+        if (op < count && !reached[op]) {
+            reached[op] = 1;
+            pending.push_back(op);
+        }
+    };
+    const auto seedReaders = [&](RigExecValueId value) {
+        const auto found = graph.readers.find(value);
+        if (found != graph.readers.end())
+            for (const uint32_t op : found->second)
+                seed(op);
+    };
+    // The steps whose sources read the input, and those reading a leaf
+    // keyed by it, as RrExecuteOpGraph seeds a run that wrote it.
+    for (uint32_t i = always ? 0 : p.slotSourceBegin[index];
+         !always &&
+         i < p.slotSourceBegin[index + 1]; ++i)
+        seed(p.slotSourceOps[i]);
+    if (!always && index + 1 < p.slotLeafBegin.size())
+        for (uint32_t i = p.slotLeafBegin[index];
+             i < p.slotLeafBegin[index + 1]; ++i)
+            seedReaders(p.slotLeaves[i]);
+    // A mesh's base points as an input: every base leaf, when any chain
+    // or derived mesh takes its base from this one.
+    using D = RigExecWireSlotDomain;
+    if (!always && p.geometry) {
+        bool base = false;
+        for (const auto &chain : p.geometry->chains) {
+            base = base || chain.baseSlot == int32_t(index);
+            for (const auto &derived : chain.derived)
+                base = base || derived.baseSlot == int32_t(index);
+        }
+        if (base)
+            for (const RigExecValueId leaf : p.otherLeaves) {
+                const uint32_t domain = state.values[size_t(leaf)].domain;
+                if (domain == uint32_t(D::ChainInput) ||
+                    domain == uint32_t(D::DerivedBase))
+                    seedReaders(leaf);
+            }
+    }
+    // Steps that run on every Execute, whatever changed (GetAlwaysReach).
+    if (always) {
+        for (const uint32_t op : graph.volatileOps)
+            seed(op);
+        for (uint32_t op = 0; op < count; ++op)
+            if (steps[graph.ops[op].originalIndex].headAlwaysRuns)
+                seed(op);
+    }
+    for (size_t at = 0; at < pending.size(); ++at)
+        for (const uint32_t next : graph.ops[pending[at]].successors)
+            seed(next);
+
+    // What the reached steps publish.
+    std::set<uint32_t> fins, frames;
+    std::set<std::string> points, matrices;
+    for (const uint32_t op : pending) {
+        for (const RigExecValueId value : graph.ops[op].descriptor.writes) {
+            const auto &written = state.values[size_t(value)];
+            if (written.domain == uint32_t(D::PoseFin))
+                fins.insert(written.slot);
+        }
+        const RigExecWireStep &step = steps[graph.ops[op].originalIndex];
+        if (step.object < 0)
+            continue;
+        const size_t object = size_t(step.object);
+        if (step.kind == RigExecWireStepKind::ChainStatus && p.geometry &&
+            object < p.geometry->chains.size()) {
+            points.insert(p.TextOrEmpty(p.geometry->chains[object].target));
+        } else if (step.kind == RigExecWireStepKind::Derived && p.geometry &&
+                   object < p.geometry->derivedIndex.size()) {
+            const auto &entry = p.geometry->derivedIndex[object];
+            const std::string target = p.TextOrEmpty(
+                p.geometry->chains[size_t(entry.first)]
+                    .derived[size_t(entry.second)]
+                    .target);
+            // A derived mesh publishes points or a matrix by what it ran.
+            points.insert(target);
+            matrices.insert(target);
+        } else if (step.kind == RigExecWireStepKind::Constraint && p.poses &&
+                   object < p.poses->walkSteps.size()) {
+            // An IK/FK match presents its five controls, and every control
+            // riding them, elsewhere than their final frames.
+            const int walk = p.poses->walkSteps[object].index;
+            if (walk < 0 || size_t(walk) >= p.poses->constraints.size())
+                continue;
+            const RigExecWireConstraint &c =
+                p.poses->constraints[size_t(walk)];
+            if (!c.ikFkMatch || c.sources.size() != 10)
+                continue;
+            for (size_t k = 5; k < 10; ++k)
+                if (c.sources[k] >= 0)
+                    frames.insert(uint32_t(c.sources[k]));
+            if (size_t(walk) < p.store.matchRiders.size())
+                for (const auto &rider : p.store.matchRiders[size_t(walk)])
+                    frames.insert(uint32_t(rider.first));
+        }
+    }
+    if (p.slotMeta)
+        for (size_t slot = 0; slot < p.slotMeta->paths.size() &&
+                              slot < p.store.finLast.size();
+             ++slot)
+            if (fins.count(uint32_t(p.store.finLast[slot])))
+                frames.insert(uint32_t(slot));
+    reach->points.assign(points.begin(), points.end());
+    reach->matrixPrimvars.assign(matrices.begin(), matrices.end());
+    reach->frameSlots.assign(frames.begin(), frames.end());
+    return true;
 }
 
 std::vector<int32_t>
