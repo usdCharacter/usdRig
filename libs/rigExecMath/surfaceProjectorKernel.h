@@ -277,7 +277,7 @@ struct RigExecSurfaceProjectorInputs {
     bool hasSpace = false;
     Mat4 spaceFinal;
     /// Asset-to-mesh transform: where a source with no sourceSpace is
-    /// expressed in the mesh's space. The field retains its historical name.
+    /// expressed in the mesh's space.
     Mat4 worldToMesh;
 };
 

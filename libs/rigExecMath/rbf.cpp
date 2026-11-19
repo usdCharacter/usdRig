@@ -102,9 +102,7 @@ RigExecRbfCombine(double angle, double width, double gap,
                   bool enableTranslation)
 {
     // The rotation-only case returns the BARE ratio, with no square and no
-    // square root. That is the float the kernels were handed before the
-    // translation channel existed, and every table already shipped was
-    // solved with it; sqrt(x * x) would be right to within an ulp and wrong
+    // square root; sqrt(x * x) would be right to within an ulp and wrong
     // as a promise.
     if (!enableTranslation) {
         if (!enableRotation) {
@@ -756,9 +754,8 @@ RigExecRbfSolver::Solve()
     // kernel carrying POSE i's width, and asks that it come out as 1 at pose
     // c and 0 at the others. Since Matrix()[r][i] is phi_i(pose_r), that
     // reads W @ M.T == I, so what has to be inverted is M TRANSPOSED.
-    // With one shared radius M is symmetric and the two are the same matrix,
-    // which is why this went unnoticed for as long as every
-    // interpolator had one. Per-pose widths make it asymmetric --
+    // With one shared radius M is symmetric and the two are the same
+    // matrix. Per-pose widths make it asymmetric --
     // phi_far(near) is not phi_near(far) -- and inverting the UNTRANSPOSED
     // matrix then produces weights that are wrong AT THE POSES, which is the
     // one place an interpolator is supposed to be exact. The error can be
@@ -895,9 +892,7 @@ RigExecRbfSolver::Coverage(int steps) const
     // every shape switches off there and snaps back on as the driver leaves.
     // It is what popping usually is, and it is invisible to any check made
     // AT the poses, where the answer is always right. It happens with the
-    // linear kernel, whose support is compact -- the left thigh had poses 25
-    // to 150 degrees apart under a 30 degree radius, so the whole middle of
-    // every swing was uncovered.
+    // linear kernel, whose support is compact.
     const size_t size = _poses.size();
     if (size < 2) {
         return 1.0;
@@ -1026,9 +1021,6 @@ RigExecRbfFitWidth(const RigExecRbfSolverDesc &desc,
     for (double value : gaps) {
         widestGap = std::max(widestGap, value);
     }
-    // Python takes max() of the list without a zero seed, but every entry is
-    // a distance or the 0.0 placeholder Spacing() writes for an isolated
-    // pose, so a zero seed cannot change the answer.
 
     auto fill = [](RigExecRbfFitReport *out, const RigExecRbfSolver &solver,
                    bool perPose, double scale, double coverage,
@@ -1045,9 +1037,9 @@ RigExecRbfFitWidth(const RigExecRbfSolverDesc &desc,
     };
 
     if (widest <= 0.0 && widestGap <= 0.0) {
-        // Nothing to fit against: no spread on either measured channel. The
-        // Python returns the unsolved probe here; Solve() is called so every
-        // path out of this function hands back something evaluable.
+        // Nothing to fit against: no spread on either measured channel.
+        // Solve() is called so every path out of this function hands back
+        // something evaluable.
         fill(report, measure, false, 0.0, 1.0, 0.0);
         measure.Solve();
         return measure;

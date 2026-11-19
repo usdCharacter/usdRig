@@ -7,9 +7,7 @@
 // Traversal order is semantic -- delta-mush breaks equal-length neighbor
 // ties by index, wrinkle solves its constraints in edge order -- so every
 // builder below is an order-preserving sorted-vector build: neighbors
-// ascending, edges lexicographic, exactly the order the std::set/std::map
-// builders they replace produced. A cached entry costs one allocation per
-// vertex instead of one node per edge endpoint.
+// ascending, edges lexicographic.
 #ifndef RIGEXEC_MATH_MESH_CONNECTIVITY_H
 #define RIGEXEC_MATH_MESH_CONNECTIVITY_H
 
@@ -40,10 +38,8 @@ struct RigExecMeshAdjacency {
 };
 
 // Builds the adjacency for \p pointCount points. False (\p out untouched)
-// on the same inputs the legacy set-based builders rejected: a face corner
-// past the index array or addressing no point. A repeated corner
-// contributes once, exactly as the set insert did. No count<3 or
-// trailing-index rule: the smooth kernel never had one.
+// on a face corner past the index array or addressing no point. A repeated
+// corner contributes once. No count<3 or trailing-index rule.
 //
 // The span form borrows both ranges for the call only; the caller keeps
 // the storage (e.g. the VtArray behind cdata()) alive until it returns.
@@ -111,8 +107,7 @@ RigExecBuildMeshAdjacency(
 }
 
 // One triangle edge: its endpoints in minmax order with the opposite
-// corner of every triangle using it, in triangle order -- the sorted key
-// order std::map iteration produced, with the same per-key lists.
+// corner of every triangle using it, in triangle order.
 struct RigExecWrinkleEdge {
     int a = -1;
     int b = -1;
@@ -194,9 +189,9 @@ RigExecBuildWrinkleMesh(
             corners.push_back(a);
             polygonEdges.emplace_back(std::minmax(a, b));
         }
-        // The kernel's per-face duplicate-corner verdict, without the set:
-        // every corner appears as `a` exactly once, so a sorted adjacent
-        // match is the same rejection.
+        // The kernel's per-face duplicate-corner verdict: every corner
+        // appears as `a` exactly once, so a sorted adjacent match is the
+        // same rejection.
         std::sort(corners.begin(), corners.end());
         for (size_t i = 1; i < corners.size(); ++i) {
             if (corners[i] == corners[i - 1]) {
@@ -219,8 +214,7 @@ RigExecBuildWrinkleMesh(
     if (offset != indices.size()) {
         return false;
     }
-    // Border vertices: polygon edges used exactly once, as the map count
-    // the kernel consulted. Sorted runs give the same verdicts.
+    // Border vertices: polygon edges used exactly once.
     std::sort(polygonEdges.begin(), polygonEdges.end());
     for (size_t i = 0; i < polygonEdges.size();) {
         size_t j = i + 1;
@@ -237,9 +231,9 @@ RigExecBuildWrinkleMesh(
     built.borderVertices.erase(
         std::unique(built.borderVertices.begin(), built.borderVertices.end()),
         built.borderVertices.end());
-    // Triangle edges in map order with per-key opposites in triangle
-    // order: the stable sort keeps each key's list in the order the
-    // triangle walk pushed it.
+    // Triangle edges in sorted key order with per-key opposites in
+    // triangle order: the stable sort keeps each key's list in the order
+    // the triangle walk pushed it.
     std::vector<std::pair<std::pair<int, int>, int>> keyed;
     keyed.reserve(triangles.size() * 3);
     for (const std::array<int, 3> &triangle : triangles) {

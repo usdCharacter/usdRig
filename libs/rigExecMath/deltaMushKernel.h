@@ -37,8 +37,7 @@ template<class Wide> bool Normalize(Wide *value) {
     *value /= length;
     return true;
 }
-// One definition, shared with the smooth kernel: the same sorted neighbor
-// lists the set-based build produced, without a node per edge endpoint.
+// One definition, shared with the smooth kernel.
 inline std::vector<std::vector<int>>
 BuildAdjacency(
     size_t pointCount,
@@ -510,10 +509,9 @@ RigExecBuildDeltaMushRestData(
             }
         }
     }
-    // Sorted polygon edges with run counts instead of a map: the same
-    // lexicographic order the neighbor pushes below run in, without a node
-    // per edge. A run of one is a border edge. Connectivity only -- the
-    // distance weights stay rest-derived.
+    // Sorted polygon edges with run counts: the same lexicographic order
+    // the neighbor pushes below run in. A run of one is a border edge.
+    // Connectivity only -- the distance weights stay rest-derived.
     std::vector<std::pair<int,int>> edges;
     size_t offset = 0;
     for (int count : counts) {

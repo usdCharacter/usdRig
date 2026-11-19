@@ -734,7 +734,7 @@ RigExecBuildClothGrid(const RigExecClothColliders &colliders,
 
 /// The collision answer for one particle at one substep: the closest
 /// violated triangle, its normal and the closest point's barycentric
-/// weights. Mirrored by the GPU shader.
+/// weights.
 struct RigExecClothContact {
     int32_t triangle = -1;
     float violation = 0.0f;

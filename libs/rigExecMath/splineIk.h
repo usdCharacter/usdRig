@@ -9,12 +9,6 @@
 // volume-preservation scale thins (stretch) or thickens (squash) the
 // off-axis handles. The whole thing is pure math on plain types: no stage,
 // no schema, no hierarchy. Callers resolve the frames and hand them in.
-// Why not RigExecRibbon or the single-chain IK: the ribbon reads its driver
-// curve as native scene data, so a curve reshaped by control-driven movers
-// is invisible to it; a single-chain IK solves to an effector with no
-// shaping, twist distribution, or arc-length stretch. This kernel builds
-// the curve itself from control frames and therefore lives entirely in the
-// pose phase.
 // Conventions (state them, then trust them):
 //   * Row-vector matrices, p' = p * M, the GfMatrix4d layout used by every
 //     other RigExec kernel. The only matrices used here are the rest->pose

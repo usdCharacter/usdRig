@@ -148,8 +148,7 @@ enum class RigExecScaleBlend {
 /// \p outRestPoints, when given, is the basis the blended map is APPLIED
 /// to -- the joint's rest reference as an earlier step of the pose stack left
 /// it (spec 4.2) -- while \p restPoints stays the basis the two inputs are
-/// MEASURED against. Null keeps both roles on \p restPoints, which is the
-/// blend as it was before joint rests reached it.
+/// MEASURED against. Null keeps both roles on \p restPoints.
 RigExecPointFrame RigExecBlendFrames(
     const RigExecPointFrame &a,
     const RigExecPointFrame &b,

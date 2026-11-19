@@ -93,9 +93,7 @@ double RigExecRbfEvalKernel(RigExecRbfKernel kernel, double distance,
 /// evaluated with a radius of exactly 1.
 ///
 /// THE ROTATION-ONLY CASE IS THE BARE RATIO, not sqrt(x*x). With
-/// enableTranslation off this returns `angle / width` and nothing else,
-/// because that is the float the kernels were handed before the translation
-/// channel existed and every table already shipped was solved with it.
+/// enableTranslation off this returns `angle / width` and nothing else.
 /// Routing it through a square and a root would be right to within an ulp
 /// and wrong as a promise.
 ///

@@ -330,8 +330,7 @@ RigExecSolveTwoBoneIk(
     // CARRY THE SPACE INTO THE PUBLISHED HANDLES. _FrameFromAxes keeps
     // the rest handle lengths, so the posed/rest ratio the pose ladder
     // reads as scale comes out 1 and every child that is not itself
-    // solver-posed sits at its unscaled offset -- a twist driver hanging
-    // off a solved knee stayed put while the leg doubled. The effector
+    // solver-posed sits at its unscaled offset. The effector
     // frame out[2] copies a control, which already carries its scale.
     if (params.space != GfMatrix4d(1.0)) {
         for (size_t f = 0; f < 2; ++f) {
@@ -372,7 +371,7 @@ RigExecBlendFrames(
 {
     const double w = std::min(std::max(weight, 0.0), 1.0);
     if (!outRestPoints) {
-        // The historical shortcut: at the ends the blend IS the input frame,
+        // At the ends the blend IS the input frame,
         // bit for bit, with no SRT round trip.
         if (w <= 0.0) return a;
         if (w >= 1.0) return b;
@@ -860,21 +859,6 @@ _Affects(const RigExecConstraintAxisMask &mask, int axis)
 
 // Shear belongs to the same linear block as scale, and a constraint that
 // governs all three scale axes governs that whole block.
-//
-// WHY THIS EXISTS. _FrameFromConstraintParams rebuilds L = R(q) H(s,h) from
-// the INPUT's decomposition with only the masked channels replaced, so a
-// shear the input inherited survived a constraint that had just overwritten
-// translation, rotation and scale from a clean source. On the biped that is
-// visible: M_HipSwivel ty=-50 stretches the spine 2.45x, the spline IK's
-// volume preservation gives spine_3_def a legitimate (1, 0.275, 0.275), and
-// composing that anisotropy with each child's rotated rest offset raises
-// shear -- 0.0587 at spine_0_def, 0.2327 by spine_5_def. Every scale
-// magnitude down the chain was already correct (each joint's scale
-// constraint had replaced it); only the shear rode through, and it reached
-// skull_def and face_upper_def at 0.157, which is what made the head and
-// shoulders visibly deform. The rig's authored behaviour has no shear at
-// all: its joints compensate their parent's scale, so none inherits it
-// and none carries shear.
 //
 // Masked per-block rather than per-axis because shear is not axis
 // separable: (h_xy, h_xz, h_yz) each mix two axes, so a partial scale mask
