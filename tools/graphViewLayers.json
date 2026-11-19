@@ -1,6 +1,12 @@
 {
   "version": 1,
   "files": {
+    "plugin/usdNoodles/graphview/__init__.py": {
+      "layer": "coordinator"
+    },
+    "plugin/usdNoodles/graphview/stage_sync.py": {
+      "layer": "stage_sync"
+    },
     "plugin/usdNoodles/graphView.py": {
       "class": "GraphView",
       "symbols": {
@@ -316,6 +322,6 @@
     }
   },
   "line_ceilings": {
-    "plugin/usdNoodles/graphView.py": 11865
+    "plugin/usdNoodles/graphView.py": 11422
   }
 }
