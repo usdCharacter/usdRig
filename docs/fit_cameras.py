@@ -19,8 +19,6 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# render_media owns the camera: bake is still exported from there for
-# anything that wants an evaluated stage, but nothing here needs it.
 from render_media import RIG, camera_ops, prepare_stage
 
 from pxr import Gf, Usd, UsdGeom  # noqa: E402
