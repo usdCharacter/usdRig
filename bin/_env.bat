@@ -41,8 +41,7 @@ if not defined PY set "PY=python"
 
 rem Where THIS USD build keeps its python modules. A Windows install uses
 rem Lib\site-packages; a build configured the POSIX way puts them under
-rem lib\python. Both are added when both exist rather than one being assumed,
-rem which is what let build_rigexec.bat and gen_schema.bat disagree about it.
+rem lib\python. Both are added when both exist rather than one being assumed.
 rem build\python is where the build stages the UsdNoodles package beside its
 rem native module; launch_usdview.bat registers it.
 set "PYTHONPATH=%RIG%\plugin\rigExecUsdview;%_RIGEXEC_BUILD%\python"

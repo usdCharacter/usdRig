@@ -1724,8 +1724,7 @@ main(int argc, char **argv)
         // Default, not the NaN behind it: a stage with no authored range is
         // an unanimated asset, and the default time code is the time it
         // authors its values at. (The two are the same object -- UsdTimeCode
-        // stores Default AS a NaN and IsDefault() tests for it -- so this
-        // says what was already meant rather than changing it.)
+        // stores Default AS a NaN and IsDefault() tests for it.)
         frames.push_back(stage->HasAuthoredTimeCodeRange()
                              ? UsdTimeCode(stage->GetStartTimeCode())
                              : UsdTimeCode::Default());
