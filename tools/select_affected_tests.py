@@ -17,7 +17,8 @@ library that links it. An OBJECT library is the exception: its sources
 are compiled into every target that composes it (by a link at any
 visibility or by $<TARGET_OBJECTS:...>), so they are attributed to
 those targets as well. --self-test checks this rule against synthetic
-CMake text and this repository's imaging inventory.
+CMake text, this repository's imaging inventory, and rigExecEval's
+ownership of its source in the real build.
 """
 
 from __future__ import annotations
@@ -725,6 +726,14 @@ IMAGING_TESTS = [
 ]
 
 
+# An OBJECT library's sources belong to the target that composes them, so
+# an edit in this core layer must still select the rigExec consumers.
+EVAL_OBJECT_SOURCE = "libs/rigExec/solverKernels.cpp"
+EVAL_OBJECT_TARGET = "rigExecEval"
+EVAL_COMPOSED_INTO = "rigExec"
+EVAL_OWNERSHIP_ANCHOR = "libs/rigExec/rigEvaluator.cpp"
+
+
 def self_test() -> int:
     """Run parse()/select() against synthetic CMake text and the real tree."""
     failures = []
@@ -779,6 +788,40 @@ def self_test() -> int:
           res["direct_executables"], IMAGING_EXECUTABLES)
     check("the imaging sources together select the imaging tests",
           res["direct_tests"], IMAGING_TESTS)
+
+    # (e) The real repository's rigExecEval object library: the source is a
+    # direct source of the object library alone, is attributed to the target
+    # that composes it, and selects the same set as an unambiguous rigExec
+    # source. A missing rigExecEval shows up here, never as a traceback.
+    eval_obj = real_model["libraries"].get(EVAL_OBJECT_TARGET) or {}
+    eval_parent = real_model["libraries"].get(EVAL_COMPOSED_INTO) or {}
+    check(f"{EVAL_OBJECT_TARGET} is an OBJECT library",
+          [eval_obj.get("kind")], ["OBJECT"])
+    check(f"{EVAL_OBJECT_TARGET} compiles only {EVAL_OBJECT_SOURCE}",
+          eval_obj.get("sources") or [], [EVAL_OBJECT_SOURCE])
+    direct_owners = sorted(
+        lib for lib, info in real_model["libraries"].items()
+        if EVAL_OBJECT_SOURCE in info.get("sources", [])
+    )
+    check(f"{EVAL_OBJECT_SOURCE} is a direct source of {EVAL_OBJECT_TARGET} alone",
+          direct_owners, [EVAL_OBJECT_TARGET])
+    check(f"{EVAL_COMPOSED_INTO} composes {EVAL_OBJECT_TARGET} by generator expression",
+          [EVAL_OBJECT_TARGET in (eval_parent.get("objects") or [])], [True])
+    check(f"{EVAL_COMPOSED_INTO} does not also list {EVAL_OBJECT_SOURCE}",
+          [EVAL_OBJECT_SOURCE in (eval_parent.get("sources") or [])], [False])
+    check(f"{EVAL_OBJECT_SOURCE} is attributed to {EVAL_OBJECT_TARGET} and {EVAL_COMPOSED_INTO}",
+          sorted(set(real_index["source_to_lib"].get(EVAL_OBJECT_SOURCE, []))),
+          sorted([EVAL_OBJECT_TARGET, EVAL_COMPOSED_INTO]))
+    check(f"{EVAL_OBJECT_SOURCE} owner note names {EVAL_OBJECT_TARGET}",
+          [real_index.get("owner_notes", {}).get((EVAL_OBJECT_SOURCE, EVAL_COMPOSED_INTO))],
+          [EVAL_OBJECT_TARGET])
+    obj_res = select([EVAL_OBJECT_SOURCE], real_model, real_index, False)
+    anchor_res = select([EVAL_OWNERSHIP_ANCHOR], real_model, real_index, False)
+    for key in ("direct_executables", "direct_tests", "executables", "tests"):
+        words = key.replace("_", " ")
+        check(f"{EVAL_OBJECT_SOURCE} selects the same {words} "
+              f"as {EVAL_OWNERSHIP_ANCHOR}",
+              [bool(obj_res[key]), obj_res[key] == anchor_res[key]], [True, True])
 
     if failures:
         print(f"self-test FAILED: {len(failures)} check(s)")
