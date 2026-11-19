@@ -358,7 +358,7 @@ public:
     /// part of the notice is something else -- a resync, a field other than
     /// the default, a non-avar property the bake read, an avar reached
     /// through a connection, or one that has just become animated. The
-    /// caller then takes the rebuild path exactly as before.
+    /// caller then takes the rebuild path.
     bool ApplyAvarValueEdits(const UsdNotice::ObjectsChanged &notice);
 
     /// Whether \p path is one of the patchable avar properties: a constant

@@ -80,9 +80,9 @@ struct RigExecRetainedFrameState {
     size_t RetainedBytes() const;
 };
 
-/// Accounted bytes of the source snapshot: path strings plus value payloads
-/// by the bench's counting. An estimate the cap holds monotonically, not a
-/// heap measure.
+/// Accounted bytes of the source snapshot: path strings plus value
+/// payloads (array payloads and scalar sizes). An estimate the cap holds
+/// monotonically, not a heap measure.
 size_t RigExecRetainedSourcesBytes(const RigExecRetainedFrameState &state);
 
 /// Whether two source samples are the same value: presence and hasValue

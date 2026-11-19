@@ -136,7 +136,8 @@ struct RigExecFrameCacheStats {
 /// (RigExecFrameInputs::varyingLayoutRows and varyingRevisionLeaves): a
 /// skin layout that is not fixed, an external mover's varying input. Each
 /// folds its row (and key) and its values bitwise, with no type name. Both
-/// lists empty fold nothing, so a rig without such inputs keys as before.
+/// lists empty fold nothing, so a rig without such inputs keys as the
+/// identity.
 ///
 /// Upstream values fold after the seeds, as a tagged block ("ups"), sorted
 /// by path: each entry's path and type, then the value

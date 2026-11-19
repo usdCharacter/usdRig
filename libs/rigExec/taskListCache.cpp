@@ -13,8 +13,8 @@ RigExecTaskListCache::Lookup(uint64_t compiledRig,
         ++_misses;
         return false;
     }
-    // The set crosses the lock by copy; it is one or two words on any rig
-    // that bakes today, so the copy is not the critical section's cost.
+    // The set crosses the lock by copy; it is one or two words on any
+    // baking rig, so the copy is not the critical section's cost.
     std::lock_guard<std::mutex> lock(_mutex);
     const auto found = _map.find(RigExecTaskListKey(compiledRig, control));
     if (found == _map.end()) {

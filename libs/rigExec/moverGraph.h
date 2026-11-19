@@ -409,8 +409,8 @@ RigExecMeasureWireDriver(const GfMatrix4d &transform, const GfMatrix4d &space,
 /// polygon on output; \p auxPoints receives the posed polygon. A posed wire
 /// with no carry has its displacement multiplied by the space's scale; one
 /// with a carry has both polygons carried instead (RigExecCarryWireCurves).
-/// Shared by native and frozen parameter assembly; runtime mirrors the same
-/// measurement and per-call selected-pair cache.
+/// Shared by native and frozen parameter assembly; the runtime applies the
+/// same measurement and per-call selected-pair cache.
 inline void
 RigExecPoseWireDrivers(const std::vector<GfMatrix4d> &table, size_t t, size_t s,
                        size_t bt, const VtFloatArray &weights,

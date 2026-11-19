@@ -162,7 +162,7 @@ RigExecRigEvaluator::Compile(std::vector<std::string> *errors)
     // to read, not the settle path's to replay.
     _failedCompile = _FailedCompileMemo();
     // Element selection is an authored input contract, not a recoverable
-    // operation cycle. Validate it before operation set-aside retries.
+    // operation cycle.
     const UsdPrim inputRoot =
         _stage ? _stage->GetPrimAtPath(_rigPath) : UsdPrim();
     if (inputRoot)
@@ -200,9 +200,7 @@ RigExecRigEvaluator::Compile(std::vector<std::string> *errors)
     return compiled;
 }
 
-// Retry without failed operations so incomplete rigs still publish valid
-// outputs. Structural edits retry all operations; a failure with no operation
-// owner rejects the rig as a whole.
+// A failure with no operation owner rejects the rig as a whole.
 bool
 RigExecRigEvaluator::_CompileRig(std::vector<std::string> *errors)
 {
@@ -213,8 +211,6 @@ RigExecRigEvaluator::_CompileRig(std::vector<std::string> *errors)
         return false;
     }
 
-    // Bounds the retries on a rig that is broken everywhere at once; past it
-    // the rig fails as a whole, as it always did.
     static constexpr size_t kMaxSkippedOperations = 64;
 
     const std::map<SdfPath, std::string> committedSkips = _skippedOperations;
@@ -227,16 +223,14 @@ RigExecRigEvaluator::_CompileRig(std::vector<std::string> *errors)
             break;
         }
         // The operation the error is about -- or, for a dependency cycle,
-        // every operation in it: a cycle is no one member's fault, and
-        // setting aside whichever happens to be named first would leave the
-        // rest running on an order nobody chose.
+        // every operation in it.
         const auto &culprits = failure.operations;
         const bool repeat = std::any_of(
             culprits.begin(), culprits.end(),
             [this](const SdfPath &path) { return _IsSkippedOperation(path); });
         if (culprits.empty() || repeat ||
             _skippedOperations.size() >= kMaxSkippedOperations) {
-            // Not one operation's fault. The rig fails as a whole, and the
+            // The rig fails as a whole, and the
             // program it had -- with the operations IT had set aside --
             // keeps running. What was set aside on the way is said first:
             // a rig whose only operation is broken fails with "publishes
@@ -885,9 +879,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 // in the schema -- bone lengths are measured from the bound
                 // joints' rests. An asset saved against the old schema can
                 // still carry one as a custom property, where it would be
-                // silently inert; that used to freeze the bone, so a rig
-                // relying on it would change shape with no explanation.
-                // Fail loudly instead and name the knob that replaced it.
+                // silently inert. Fail loudly instead and name the knob
+                // that replaced it.
                 if (t == SchemaTypeName::RigExecTwoBoneIk) {
                     const TfToken lengthAttrs[2] = {
                         _tokens->rigExecUpperLength,
@@ -1204,13 +1197,6 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                         // also author its own posed:space connection (the solver
                         // pose is supplied as an override and would silently win
                         // over the connection the raw stage shows).
-                        // There is no longer a companion check for a legacy
-                        // authored rigExec:frameSource. Nothing reads that name
-                        // now -- it is neither a schema property nor a
-                        // registered computation input -- so a leftover opinion
-                        // from an asset saved against the old schema is inert,
-                        // and failing the compile over it would reject a rig
-                        // that evaluates correctly.
                         if (const UsdPrim srcJoint =
                                 _stage->GetPrimAtPath(jointPath)) {
                             if (const UsdAttribute posed =
@@ -1406,7 +1392,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // solver pair.
     // Only a READER that is itself a stack step consults it. A PRODUCER has no
     // position for the comparison to be about, so it keeps the unconditional
-    // "wait for every writer of what I read" edge it always had -- which is
+    // "wait for every writer of what I read" edge -- which is
     // its data-flow meaning, and which leaves a genuine loop among producers
     // (two of them reading each other's joints) a cycle, reported as one.
     const auto stackBefore = [&solverStackOrdinal](const SdfPath &a,
@@ -3795,7 +3781,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
 
     // A driver-frames revision requires an actually admitted aggregate
     // batch, not merely a prim of solver type. Refuse only its authored
-    // owner so the existing compile retry retains independent revisions.
+    // owner.
     std::set<SdfPath> admittedAggregates;
     for (const _SolverBatch &batch : newSolverBatches)
         admittedAggregates.insert(batch.solvers.begin(), batch.solvers.end());

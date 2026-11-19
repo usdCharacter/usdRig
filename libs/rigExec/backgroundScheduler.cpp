@@ -1091,8 +1091,7 @@ RigExecBackgroundScheduler::_EnqueueTriggerTime(
     }
     if (!built.work) {
         // A reasoned skip counts declined (it never entered the queue)
-        // plus its per-reason breakout; an unreasoned one skips silently,
-        // as before.
+        // plus its per-reason breakout; an unreasoned one skips silently.
         if (built.skip != RigExecWarmSkipReason::None) {
             std::lock_guard<std::mutex> lock(_mutex);
             ++_declined;

@@ -59,9 +59,8 @@ namespace {
 size_t
 _ArrayBytes(const VtValue &value)
 {
-    // The bench's counting for the array payloads rig inputs actually hold;
-    // anything else counts its shell. Mirrors frameCache.cpp's table for the
-    // common cases without duplicating its scalar list: scalars are small
+    // Array payloads for the array types rig inputs actually hold;
+    // anything else counts its shell. Scalars are small
     // and uniform beside the arrays that dominate the snapshot.
     if (value.IsHolding<VtVec3fArray>()) {
         return value.UncheckedGet<VtVec3fArray>().size() * sizeof(GfVec3f);

@@ -517,8 +517,7 @@ public:
     /// _FillWeightOverlay, plus the Python weight_field binding), and the
     /// bridge's is off unless a rigger has selected a weight object -- so the
     /// bridge turns this off and the overlay costs nothing until it is asked
-    /// for. Defaults to ON: a caller that never sets it (every test, every
-    /// tool, the Python bindings) sees the field exactly as before.
+    /// for. Defaults to ON.
     void SetPublishWeightFields(bool publish);
     bool GetPublishWeightFields() const { return _publishWeightFields; }
 
@@ -1252,8 +1251,7 @@ private:
         /// have already been carried into the rig's posed frame by a skin,
         /// so the offset measured in its space has to be conjugated by
         /// the rig's carry -- or, with no rigExec:space named, by the
-        /// measuring space's scale alone, which is all the correction
-        /// there was before. See RigExecClusterInPointFrame.
+        /// measuring space's scale alone. See RigExecClusterInPointFrame.
         bool transformPosedPoints = false;
         /// Skin only: none of rigExec:jointIndices, jointWeights or
         /// elementSize can change within this compiled rig, so the layout may be
@@ -1433,7 +1431,7 @@ private:
         /// wrote that joint, so the chain's rest reference for it is the
         /// frame that step left rather than its authored rest.
         /// All zero on every rig with no step below the constraint, and the
-        /// rest-derived IK preparation is then what it always was.
+        /// rest-derived IK preparation is then unchanged.
         std::vector<char> ikRestLive;
         /// Non-empty when the constraint writes the GEOMETRY domain: the
         /// <prim>.points property it revises. targets[0] stays the owning
@@ -1450,7 +1448,7 @@ private:
         /// holds: no property chain revises a mask attribute, none is
         /// connected, and each is a single authored opinion. When it holds
         /// the per-frame mask reads are skipped; when it does not the values
-        /// are ignored and the live read runs exactly as before.
+        /// are ignored and the live read runs.
         bool masksStatic = false;
         RigExecConstraintAxisMask precompTranslation;
         RigExecConstraintAxisMask precompRotation;
@@ -1603,10 +1601,9 @@ private:
     /// overrides on each volume's computeFalloffLut stub.
     ///
     /// They live here rather than being rebuilt per frame because a
-    /// falloff curve is structural: exec has no accessor for an
-    /// attribute's spline (see RigExecFalloffLut in types.h), so the
-    /// curve is resampled once at Compile and replayed unchanged until
-    /// the next compiled rig.
+    /// falloff curve is structural: it is resampled once at Compile and
+    /// replayed unchanged until the next compiled rig
+    /// (see RigExecFalloffLut in types.h).
     std::vector<RigExecValueOverride> _falloffLutOverrides;
 
     /// Volume weight objects whose rigExec:weightTarget reads `preceding`,
@@ -1681,7 +1678,7 @@ private:
     /// the digest at the end of Compile and again by every settle whose
     /// recomputed digest came out equal; invalid from the head of a Compile
     /// until its digest is joined, so a notice that arrives in between is
-    /// suspect exactly as every notice was before the gate.
+    /// treated as suspect.
     _DigestGate _digestGate;
     /// Paths of the digest-suspect notices since the last settle that could
     /// make the edit certainly structural (_NoteCertainStructuralCandidates),

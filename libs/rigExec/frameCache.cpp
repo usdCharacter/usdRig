@@ -82,7 +82,7 @@ _FoldBytes(uint64_t hash, const void *data, size_t size)
     if (size > 0) {
         // Zero-padded, with the length mixed in so a short tail cannot
         // equal a longer stream's shared prefix. An empty fold stays a
-        // no-op, as before.
+        // no-op.
         uint64_t tail = 0;
         std::memcpy(&tail, bytes, size);
         hash = _MixWord(hash, tail + size);
@@ -492,7 +492,7 @@ _FoldVaryingTransport(uint64_t hash, const RigExecFrameInputs &inputs)
     return hash;
 }
 
-// Payload bytes of one VtValue, by the bench's counting: array payloads and
+// Payload bytes of one VtValue: array payloads and
 // scalar sizes; unknown types count the shell (the report says so).
 size_t
 _VtValueBytes(const VtValue &value)
@@ -547,7 +547,7 @@ RigExecControlStateDigest(const RigExecFrameInputs &inputs)
 
 // The upstream block: a tag, the count, then per path (sorted, the last
 // entry of a path winning) its path and value type, then the value. Empty
-// folds nothing, so a frame with no upstream value keys as before.
+// folds nothing, so a frame with no upstream value keys as the identity.
 uint64_t
 _FoldUpstream(uint64_t hash, const std::vector<RigExecUpstreamValue> &upstream)
 {
@@ -578,7 +578,7 @@ _FoldUpstream(uint64_t hash, const std::vector<RigExecUpstreamValue> &upstream)
 // The windowed operations' history (RigExecFrameInputs::windowRings): a
 // tag, the ring count, then per ring its length and per packet a presence
 // byte and its values' bits. No rings fold nothing, so a rig without
-// windowed operations keys as before.
+// windowed operations keys as the identity.
 uint64_t
 _FoldWindowRings(uint64_t hash, const RigExecFrameInputs &inputs)
 {

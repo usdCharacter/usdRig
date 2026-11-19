@@ -242,7 +242,7 @@ RigExecBakedScheduleReportRequested()
 //   CommitApply      candidate slots + propagation pairs
 //   ProviderMatrix   one matrix; the whole step is its fixed term
 //   FrameMatrix      one matrix, like ProviderMatrix
-//   SnapshotFinals   provider slots (reserved: no longer emitted)
+//   SnapshotFinals   provider slots (reserved)
 //   InfluenceFold    influences -- NOT vertices; the fold is O(joints)
 //   RevisionStatic   the target's vertices (ResolveAll of the envelope)
 //   RevisionChunk    vertices x elementSize, NOT x influences: elementSize IS
