@@ -223,6 +223,23 @@ def _frameOf(value):
         return Usd.TimeCode.Default()
 
 
+def _makeStageSync(view):
+    """This editor's stage-lifecycle service, bound to *view*.
+
+    The policy lives in graphview/stage_sync, which imports no Qt or GL;
+    the two widget-owned pieces -- posting to the owner thread and warning
+    -- arrive as callables that resolve this module's ``QtCore`` and ``Tf``
+    at call time, so the StageReload patch points keep intercepting them.
+    """
+    return stage_sync.StageSync(
+        read=lambda: stage_sync.readStageContext(view),
+        apply=lambda delta: stage_sync.applyStageDelta(view, delta),
+        post=lambda callback: QtCore.QTimer.singleShot(0, callback),
+        listen=lambda receiver: UsdNoticeHandler(receiver),
+        warn=lambda message: Tf.Warn(message),
+    )
+
+
 def _make_value_edit(prim_path, property_name, components, time_code, mode):
     """Return a callable that authors *components* onto one attribute.
 
@@ -420,13 +437,10 @@ class GraphView(QGLWidget):
     # re-register on the new instance.
     nodeGraphReplaced = QtCore.Signal()
 
-
-
-
-
-
-
-
+    # The stage-lifecycle service, built in __init__. Views that never ran
+    # it (test doubles) see None; the reload entry points below run the
+    # same policy for those through a transient service.
+    _stageSync = None
 
     _worldProjCacheKey = None
     _worldProjCache = None
@@ -769,8 +783,11 @@ class GraphView(QGLWidget):
         # Z-order counter for node layering (bring-to-front on selection)
         self._nextZOrder = 0
 
-        # USD Notice handler for responding to external USD changes
-        self._noticeHandler = UsdNoticeHandler(self)
+        # The stage-lifecycle service owns the notice receiver; the handler
+        # object stays on the view because the loaders register through it
+        # and the authoring sites suppress through it.
+        self._stageSync = _makeStageSync(self)
+        self._noticeHandler = self._stageSync.handler()
 
         # Register Ctrl+S shortcut for saving using QAction
         self._saveAction = QtGui.QAction("Save Stage", self)
@@ -1619,111 +1636,39 @@ class GraphView(QGLWidget):
     def closeEvent(self, event):
         unsubscribe_edit_target_warning(self._showWarningPopup)
         self._undoHistory = None
+        sync = getattr(self, "_stageSync", None)
+        if isinstance(sync, stage_sync.StageSync):
+            sync.close()
         super().closeEvent(event)
 
     def _onStageReplaced(self):
-        # Block paint events at the Qt level.  Python-level guards
-        # (self.initialized) are insufficient because QGLWidget's
-        # internal event handling still touches the GL surface before
-        # paintGL() runs, and on NVIDIA Windows drivers this can crash
-        # if the stageView's context was just destroyed/recreated on
-        # the same thread.
-        self.setUpdatesEnabled(False)
-        self.initialized = False
-
-        self._noticeHandler.unregister()
-        self._invalidateBackReferenceLinkDataCache()
-
-        # A value drag / editor / popup pinned to the old stage must not
-        # survive into the new one.
-        self._clearValueInteractionState()
-        self._currentTimeCode = _frameOf(
+        sync = getattr(self, "_stageSync", None)
+        if not isinstance(sync, stage_sync.StageSync):
+            # Test doubles never ran __init__: run the same policy through
+            # a transient service rather than a second copy of it.
+            sync = _makeStageSync(self)
+            self._stageSync = sync
+        frame = _frameOf(
             getattr(self._usdviewApi, "frame", Usd.TimeCode.Default())
             if self._usdviewApi
             else Usd.TimeCode.Default()
         )
-
-        # Clear state that holds dead Usd.Prim / Usd.Stage references
-        self._lastPrimTreeSelection = []
-        self._lastSelectedNode = None
-        self._selectedNodes.clear()
-        self._selectedLinks.clear()
-        self._linkUnderCursor = -1
-        # Drop per-node position watermarks for the torn-down graph; the next
-        # graph's nodes reconcile fresh (and this bounds the map's growth).
-        self._reconciledPositionVersions.clear()
-        self._lastPinIndex = -1
-        self._lastLinkCycleIndex = 0
-        self._lastInputLinkIndex = -1
-        self._lastOutputLinkIndex = -1
-        self._lastDanglingLinkIndex = -1
-
         stage = self._usdviewApi.stage if self._usdviewApi else None
-        if stage is None:
-            self._undoHistory = None
-            QtCore.QTimer.singleShot(0, self._finishStageReload)
-            return
+        sync.replace(
+            stage,
+            stage_sync.stageLoadMode(self),
+            self._currentPrimPath,
+            frame,
+        )
 
-        # Reload the graph from the new stage using the same load path
-        # that was used originally.  loadBlueprint/loadContainer/loadStage
-        # replace the nodeGraph, re-register the notice handler, and
-        # clear all render caches.
-        #
-        # We set _deferRenderCacheClear so that _clearRenderCache (called
-        # from inside loadStage/loadBlueprint/loadContainer) skips its GL
-        # work and only marks the clear as pending.  _finishStageReload
-        # runs the real glDelete* calls after the QTimer tick, when the
-        # NVIDIA driver is no longer in its non-functional window.
-        from .nodeGraphBpContainer import NodeGraphBpContainer
-
-        self._deferRenderCacheClear = True
-        try:
-            if (
-                isinstance(self.nodeGraph, NodeGraphBpContainer)
-                and self._currentPrimPath
-            ):
-                self.loadContainer(stage, self._currentPrimPath)
-            elif self._currentPrimPath is not None:
-                self.loadBlueprint(stage, self._currentPrimPath)
-            else:
-                self.loadStage(stage)
-        except Exception as e:
-            Tf.Warn(f"Failed to reload graph after stage replace: {e}")
-        finally:
-            self._deferRenderCacheClear = False
-
-        # Defer re-enabling rendering to the next event-loop iteration.
-        # On NVIDIA Windows drivers, the legacy QGLWidget context is
-        # temporarily non-functional while the stageView's renderer is
-        # being torn down and recreated on the same thread.  By the
-        # time the event loop runs the deferred callback, the driver's
-        # internal state has stabilized and makeCurrent() works again.
-        self.initialized = False
-        QtCore.QTimer.singleShot(0, self._finishStageReload)
-
-    def _finishStageReload(self):
-        # Do NOT set self.fontAtlas/self.shaderLibrary to None here.
-        # CPython's refcounting would immediately call their C++
-        # destructors (which call glDelete*) with no GL context
-        # current, corrupting the NVIDIA driver state.  Instead let
-        # initializeGL() replace them while the context IS current —
-        # the old destructors then run safely.
-
-        # If _onStageReplaced deferred the render-cache clear, run it
-        # now that the driver state has stabilized.  Doing this inside
-        # _onStageReplaced would race with the stageView's renderer
-        # teardown and crash the NVIDIA driver on its worker thread.
-        if self._renderCacheClearPending:
-            self._renderCacheClearPending = False
-            self.makeCurrent()
-            self._nodeRenderManager.clearCache()
-            self.doneCurrent()
-
-        self.linksChanged = True
-        self.textChanged = True
-        self.initialized = True
-        self.setUpdatesEnabled(True)
-        self.update()
+    def _finishStageReload(self, epoch=None):
+        sync = getattr(self, "_stageSync", None)
+        if not isinstance(sync, stage_sync.StageSync):
+            # Test doubles never ran __init__: run the same policy through
+            # a transient service rather than a second copy of it.
+            sync = _makeStageSync(self)
+            self._stageSync = sync
+        sync.finish(sync.epoch() if epoch is None else epoch)
 
     def _onPropSelectionChanged(self):
         if self._syncingSelection:

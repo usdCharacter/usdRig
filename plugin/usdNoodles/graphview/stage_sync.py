@@ -5,18 +5,128 @@
 # in plugin/usdNoodles/ in this repository.
 #
 
-"""Stage reconciliation: the graph follows the stage, never the reverse.
+"""Stage reconciliation and stage reload policy: the graph follows the stage.
 
 The stage_sync layer of the noodle editor: USD notice classification, scope
-validation, namespace-move re-keying, and the invalidation decisions they
-drive. Every function takes the view as a duck-typed context, reading only
-its state attributes and calling only the listed view hooks, so the layer
-runs headless and against stub views while the widget side effects (repaint,
-render caches) stay behind those hooks. Reconciliation is read-only: it
-never authors a USD opinion.
+validation, namespace-move re-keying, the invalidation decisions they drive,
+and the replace / reload / close lifecycle in ``StageSync``. Every function
+takes the view as a duck-typed context, reading only its state attributes and
+calling only the listed view hooks, so the layer runs headless and against
+stub views while the widget side effects (repaint, render caches) stay behind
+those hooks. Nothing here imports Qt or GL: scheduling and warning arrive as
+callables the view supplies. Reconciliation is read-only: it never authors a
+USD opinion.
 """
 
+from contextlib import contextmanager
+from dataclasses import dataclass
+
 from pxr import Sdf, Tf
+
+
+# ---------------------------------------------------------------------------
+# The published trace of one lifecycle step.
+#
+# Each record names the epoch that produced it, so a consumer can tell the
+# current generation's work from a stale one. They are records, not a queue:
+# the reload and notice paths emit them as the work happens, and the model
+# mutations they describe are the functions below. Paths are strings, id
+# collections are tuples, and endpoint / port metadata keeps the order the
+# graph iterates in.
+# ---------------------------------------------------------------------------
+
+MODE_STAGE = "stage"
+MODE_BLUEPRINT = "blueprint"
+MODE_CONTAINER = "container"
+
+
+@dataclass(frozen=True, slots=True)
+class BeginReload:
+    """Paint is off and the previous stage's transient state is dropped.
+
+    *frame* is the time the reloaded graph reads at.
+    """
+
+    epoch: int
+    frame: object
+
+
+@dataclass(frozen=True, slots=True)
+class Load:
+    """Re-run the loader for *mode* (one of MODE_STAGE / MODE_BLUEPRINT /
+    MODE_CONTAINER) on *stage*. The stage is live only inside the
+    owner-thread dispatch that applies this record."""
+
+    epoch: int
+    stage: object
+    mode: str
+    prim_path: object
+
+
+@dataclass(frozen=True, slots=True)
+class ClearHistory:
+    """Drop the undo history: its records name prims on a stage that is gone."""
+
+    epoch: int
+
+
+@dataclass(frozen=True, slots=True)
+class Remap:
+    """Nodes re-keyed across a namespace move, ``(old, new)`` pairs."""
+
+    epoch: int
+    pairs: tuple
+
+
+@dataclass(frozen=True, slots=True)
+class Remove:
+    """Node ids the graph lost -- a dropped prim, or a rebuilt graph."""
+
+    epoch: int
+    ids: tuple
+
+
+@dataclass(frozen=True, slots=True)
+class Adopt:
+    """Scope paths the graph took on because a prim appeared in USD."""
+
+    epoch: int
+    paths: tuple
+
+
+@dataclass(frozen=True, slots=True)
+class Invalidate:
+    """The rebuild / repaint decision a notice pass ended with."""
+
+    epoch: int
+    paths: tuple
+    links: bool
+    text: bool
+    paint: bool
+
+
+@dataclass(frozen=True, slots=True)
+class FinishReload:
+    """The deferred render-cache clear, links and text dirty, paint back on."""
+
+    epoch: int
+
+
+@dataclass(frozen=True, slots=True)
+class StageContext:
+    """The view's state as one owner-thread read.
+
+    ``view`` stays the duck-typed context the functions here expect; the rest
+    is snapshotted so a caller can see what the service decided from without
+    reaching back into the widget.
+    """
+
+    view: object
+    stage: object
+    mode: str
+    prim_path: object
+    node_ids: tuple
+    syncing_selection: bool
 
 
 def _nodeIdPrimPath(nodeId):
@@ -313,12 +423,14 @@ def remapMovedNodes(view, movedPaths):
     return remap
 
 
-def applyUsdChanges(view, resyncedPaths, infoChangedPaths, movedPaths=None):
+def applyUsdChanges(
+    view, resyncedPaths, infoChangedPaths, movedPaths=None, trace=None
+):
     """Handle USD changes detected via the Notice system.
 
-    This is called by UsdNoticeHandler (through the view's delegator) when
-    USD prims/properties change. It invalidates caches and triggers redraws
-    as needed.
+    This is called by UsdNoticeHandler (through the service's receiver, and
+    through the view's delegator for direct callers) when USD prims/properties
+    change. It invalidates caches and triggers redraws as needed.
 
     Args:
         resyncedPaths: Set of path strings that had structural changes
@@ -327,6 +439,8 @@ def applyUsdChanges(view, resyncedPaths, infoChangedPaths, movedPaths=None):
                          (positions, metadata)
         movedPaths: Optional ``{oldPath: newPath}`` for prims USD reports as
                     renamed or reparented rather than deleted and recreated.
+        trace: Optional ``_ReconcileTrace`` publishing what this pass decided
+               (see Remap / Remove / Adopt / Invalidate).
     """
     # Ignore changes if we're in the middle of syncing selection
     # (those are likely our own edits)
@@ -339,6 +453,8 @@ def applyUsdChanges(view, resyncedPaths, infoChangedPaths, movedPaths=None):
     # runs, or the move reads as a delete of the old path plus an
     # unrelated create of the new one.
     movedNodes = remapMovedNodes(view, movedPaths) if movedPaths else {}
+    if trace is not None and movedNodes:
+        trace.remap(tuple(movedNodes.items()))
 
     needsLinkRebuild = False
     needsRepaint = False
@@ -468,9 +584,22 @@ def applyUsdChanges(view, resyncedPaths, infoChangedPaths, movedPaths=None):
         removed = validateNodesAgainstStage(view)
         adopted = adoptPrimsNewToScope(view, resyncedPaths)
         if removed or adopted:
+            if trace is not None:
+                trace.remove(tuple(removed))
+                trace.adopt(tuple(adopted))
             needsLinkRebuild = True
             needsRepaint = True
             needsTextUpdate = True
+
+    if trace is not None and (
+        needsLinkRebuild or needsTextUpdate or needsRepaint
+    ):
+        trace.invalidate(
+            tuple(sorted(set(resyncedPaths) | set(infoChangedPaths))),
+            needsLinkRebuild,
+            needsTextUpdate,
+            needsRepaint,
+        )
 
     # Apply the updates
     if needsLinkRebuild:
@@ -482,3 +611,380 @@ def applyUsdChanges(view, resyncedPaths, infoChangedPaths, movedPaths=None):
 
     if needsRepaint:
         view.update()
+
+
+# ---------------------------------------------------------------------------
+# Stage replace / reload / close policy
+# ---------------------------------------------------------------------------
+
+
+def stageLoadMode(view):
+    """Which loader a reload of this view has to re-run.
+
+    The mode is the view's own history, not the stage's: a container graph and
+    a blueprint graph both scope themselves to a prim, and a plain graph does
+    not, so the choice follows the graph that is currently loaded -- read it
+    BEFORE any loader replaces it.
+    """
+    from ..nodeGraphBpContainer import NodeGraphBpContainer
+
+    if (
+        isinstance(view.nodeGraph, NodeGraphBpContainer)
+        and view._currentPrimPath
+    ):
+        return MODE_CONTAINER
+    if view._currentPrimPath is not None:
+        return MODE_BLUEPRINT
+    return MODE_STAGE
+
+
+def readStageContext(view):
+    """One owner-thread read of everything the service decides from."""
+    api = view._usdviewApi
+    return StageContext(
+        view=view,
+        stage=api.stage if api else None,
+        mode=stageLoadMode(view),
+        prim_path=view._currentPrimPath,
+        node_ids=tuple(view.nodes),
+        syncing_selection=view._syncingSelection,
+    )
+
+
+def _beginReloadOnView(view, frame):
+    # Block paint events at the Qt level.  Python-level guards
+    # (view.initialized) are insufficient because QGLWidget's internal event
+    # handling still touches the GL surface before paintGL() runs, and on
+    # NVIDIA Windows drivers this can crash if the stageView's context was
+    # just destroyed/recreated on the same thread.
+    view.setUpdatesEnabled(False)
+    view.initialized = False
+
+    view._noticeHandler.unregister()
+    view._invalidateBackReferenceLinkDataCache()
+
+    # A value drag / editor / popup pinned to the old stage must not survive
+    # into the new one.
+    view._clearValueInteractionState()
+    view._currentTimeCode = frame
+
+    # Clear state that holds dead Usd.Prim / Usd.Stage references
+    view._lastPrimTreeSelection = []
+    view._lastSelectedNode = None
+    view._selectedNodes.clear()
+    view._selectedLinks.clear()
+    view._linkUnderCursor = -1
+    # Drop per-node position watermarks for the torn-down graph; the next
+    # graph's nodes reconcile fresh (and this bounds the map's growth).
+    view._reconciledPositionVersions.clear()
+    view._lastPinIndex = -1
+    view._lastLinkCycleIndex = 0
+    view._lastInputLinkIndex = -1
+    view._lastOutputLinkIndex = -1
+    view._lastDanglingLinkIndex = -1
+
+
+def _loadOnView(view, delta):
+    if delta.mode == MODE_CONTAINER:
+        view.loadContainer(delta.stage, delta.prim_path)
+    elif delta.mode == MODE_BLUEPRINT:
+        view.loadBlueprint(delta.stage, delta.prim_path)
+    else:
+        view.loadStage(delta.stage)
+
+
+def _finishReloadOnView(view):
+    # Do NOT set view.fontAtlas/view.shaderLibrary to None here.
+    # CPython's refcounting would immediately call their C++
+    # destructors (which call glDelete*) with no GL context
+    # current, corrupting the NVIDIA driver state.  Instead let
+    # initializeGL() replace them while the context IS current --
+    # the old destructors then run safely.
+
+    # Run the render-cache clear that the loaders deferred, now that the
+    # driver state has stabilized.  Doing it during BeginReload would race
+    # with the stageView's renderer teardown and crash the NVIDIA driver on
+    # its worker thread.
+    if view._renderCacheClearPending:
+        view._renderCacheClearPending = False
+        view.makeCurrent()
+        try:
+            view._nodeRenderManager.clearCache()
+        finally:
+            view.doneCurrent()
+
+    view.linksChanged = True
+    view.textChanged = True
+    view.initialized = True
+    view.setUpdatesEnabled(True)
+    view.update()
+
+
+def applyStageDelta(view, delta):
+    """Perform one reload delta on *view*, synchronously, owner thread.
+
+    Remap / Remove / Adopt / Invalidate are records of work reconciliation
+    already did, so they carry nothing to apply here.
+    """
+    if isinstance(delta, BeginReload):
+        _beginReloadOnView(view, delta.frame)
+    elif isinstance(delta, Load):
+        _loadOnView(view, delta)
+    elif isinstance(delta, ClearHistory):
+        view._undoHistory = None
+    elif isinstance(delta, FinishReload):
+        _finishReloadOnView(view)
+
+
+class _ReconcileTrace:
+    """Builds the reconcile records for one pass and hands them to the sink."""
+
+    def __init__(self, sink, epoch):
+        self._sink = sink
+        self._epoch = epoch
+
+    def _publish(self, record):
+        if self._sink is not None:
+            self._sink(record)
+
+    def remap(self, pairs):
+        self._publish(Remap(self._epoch, pairs))
+
+    def remove(self, ids):
+        self._publish(Remove(self._epoch, ids))
+
+    def adopt(self, paths):
+        self._publish(Adopt(self._epoch, paths))
+
+    def invalidate(self, paths, links, text, paint):
+        self._publish(
+            Invalidate(self._epoch, paths, links, text, paint)
+        )
+
+
+class _NoticeReceiver:
+    """What the UsdNoticeHandler calls, stamped with a stage generation.
+
+    ``UsdNoticeHandler`` keeps its protocol -- an object with
+    ``_handleUsdChanges(resyncedPaths, infoChangedPaths, movedPaths=None)`` --
+    but in production the object behind it is this receiver, not the widget.
+    It carries the epoch of its binding, so a delivery that no longer matches
+    the live generation never reaches the model.
+    """
+
+    def __init__(self, service):
+        self._service = service
+        self._epoch = service.epoch()
+        self._revoked = False
+
+    def rebind(self, epoch):
+        self._epoch = epoch
+        self._revoked = False
+
+    def revoke(self):
+        self._revoked = True
+
+    def _handleUsdChanges(
+        self, resyncedPaths, infoChangedPaths, movedPaths=None
+    ):
+        if self._revoked:
+            return
+        self._service.changed(
+            self._epoch, resyncedPaths, infoChangedPaths, movedPaths
+        )
+
+
+class StageSync:
+    """One editor's stage lifecycle: replace, bind, notice, finish, close.
+
+    Constructed per editor with the callables the view supplies -- ``read()``
+    for one owner-thread read of the view, ``apply(delta)`` to perform a
+    mutation synchronously on the owner thread, ``post(callback)`` to schedule
+    on the widget owner thread, ``listen(receiver)`` to build the editor's
+    UsdNoticeHandler, and ``warn(message)`` for the diagnostics channel. None
+    of them may import Qt or GL here, which is what lets the whole lifecycle
+    run headless against a recording stub.
+
+    Every replace moves one *epoch*. Deferred callbacks and notice deliveries
+    carry the epoch they were produced under, and anything that no longer
+    matches the live epoch is dropped: a stage replace in flight cannot be
+    undone by a timer tick from the previous stage.
+    """
+
+    def __init__(self, read, apply, post, listen, warn=None, sink=None):
+        self._read = read
+        self._apply = apply
+        self._post = post
+        self._warn = warn
+        self._sink = sink
+        self._epoch = 0
+        self._boundStage = None
+        self._closed = False
+        self._receiver = _NoticeReceiver(self)
+        self._handler = listen(self._receiver)
+
+    # -- the editor's notice handler -------------------------------------
+
+    def handler(self):
+        """The UsdNoticeHandler built by ``listen``.
+
+        The view keeps it as ``view._noticeHandler``: the authoring sites
+        suppress through that object, and the loaders register the stage on it
+        (``register`` unregisters first), so this service never registers a
+        second listener.
+        """
+        return self._handler
+
+    def epoch(self):
+        return self._epoch
+
+    def isClosed(self):
+        return self._closed
+
+    @contextmanager
+    def suppressed(self):
+        """Ignore USD notices for the duration of the block.
+
+        The state lives on the editor's UsdNoticeHandler, and the value in
+        front when the block opened is restored on the normal path and on an
+        exception, so nesting cannot leave the editor deaf.
+        """
+        handler = self._handler
+        previous = handler.isEnabled()
+        handler.setEnabled(False)
+        try:
+            yield
+        finally:
+            handler.setEnabled(previous)
+
+    # -- replace / reload -------------------------------------------------
+
+    def replace(self, stage, mode, prim_path, frame):
+        """usdview replaced the stage: tear the graph down, rebuild it.
+
+        The epoch moves first, so every callback an earlier replace queued --
+        and the notice receiver stamped with the old stage -- is stale before
+        any teardown work starts.
+        """
+        ctx = self._read()
+        view = ctx.view
+        self._epoch += 1
+        epoch = self._epoch
+
+        begin = BeginReload(epoch, frame)
+        self._publish(begin)
+        self._apply(begin)
+        self.bind(stage)
+
+        if stage is None:
+            clear = ClearHistory(epoch)
+            self._publish(clear)
+            self._apply(clear)
+            self._scheduleFinish(epoch)
+            return
+
+        # The loaders build a whole new nodeGraph, so every id in the graph
+        # read above is gone; recorded rather than applied.
+        self._publish(Remove(epoch, ctx.node_ids))
+        load = Load(epoch, stage, mode, prim_path)
+        self._publish(load)
+
+        # While this is set, the _clearRenderCache the loaders run only marks
+        # the clear pending: the glDelete* calls wait for the finish, when the
+        # NVIDIA driver is out of its non-functional window.
+        view._deferRenderCacheClear = True
+        try:
+            self._apply(load)
+        except Exception as error:
+            if self._warn is not None:
+                self._warn(
+                    "Failed to reload graph after stage replace: %s" % error
+                )
+        finally:
+            view._deferRenderCacheClear = False
+
+        # A loader can bring the widget back up through initializeGL; the
+        # finish below is what decides the generation is live again.
+        view.initialized = False
+        self._scheduleFinish(epoch)
+
+    def bind(self, stage):
+        """Record the stage this generation listens to, and stamp the receiver.
+
+        The loaders call ``register`` on the UsdNoticeHandler themselves, so
+        nothing here registers -- that would double-register. Re-binding
+        replaces whatever epoch the receiver carried, which is what revokes
+        the previous binding: a notice from a replaced stage cannot reach the
+        model.
+        """
+        self._boundStage = stage
+        self._receiver.rebind(self._epoch)
+        return stage
+
+    def finish(self, epoch):
+        """Bring one generation's rendering back up -- the latest live one only.
+
+        A stale epoch does nothing at all: its render caches belong to a graph
+        that no longer exists, and re-enabling paint would let the widget touch
+        a GL surface the newer replace has already torn down.
+        """
+        if self._closed or epoch != self._epoch:
+            return
+        delta = FinishReload(epoch)
+        self._publish(delta)
+        self._apply(delta)
+
+    def close(self):
+        """Revoke the notice receiver and invalidate anything still queued."""
+        self._closed = True
+        # Past every queued finish and every receiver stamp: the epoch moving
+        # is what makes the deferred callbacks return without touching the
+        # model.
+        self._epoch += 1
+        self._boundStage = None
+        self._receiver.revoke()
+        if self._handler is not None:
+            self._handler.unregister()
+
+    # -- USD notices ------------------------------------------------------
+
+    def changed(self, epoch, resyncedPaths, infoChangedPaths, movedPaths=None):
+        """One USD notice, delivered under the epoch that bound its stage."""
+        if self._closed or epoch != self._epoch:
+            return
+        ctx = self._read()
+        if ctx.syncing_selection:
+            return
+        applyUsdChanges(
+            ctx.view,
+            resyncedPaths,
+            infoChangedPaths,
+            movedPaths,
+            trace=_ReconcileTrace(self._sink, epoch),
+        )
+
+    # -- internals --------------------------------------------------------
+
+    def _publish(self, delta):
+        if self._sink is not None:
+            self._sink(delta)
+
+    def _scheduleFinish(self, epoch):
+        """One finish per replace, on the widget owner thread.
+
+        The callback carries its epoch and the binding it was queued under:
+        a replace or a close since then makes it stale, and a stale finish
+        must not re-enable paint on a graph that has moved on.
+        """
+        binding = self._boundStage
+
+        def _run():
+            if (
+                self._closed
+                or epoch != self._epoch
+                or binding is not self._boundStage
+            ):
+                return
+            self.finish(epoch)
+
+        self._post(_run)

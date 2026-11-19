@@ -25,6 +25,7 @@ legacy module) must keep binding their own files on every platform.
 
 from __future__ import annotations
 
+import dataclasses
 import sys
 import unittest
 from types import SimpleNamespace
@@ -33,6 +34,7 @@ from unittest.mock import MagicMock
 try:
     from pxr import Sdf, Usd, UsdGeom
     from UsdNoodles.graphview import stage_sync
+    from UsdNoodles.usdNoticeHandler import UsdNoticeHandler
 
     _has_stage_sync = True
 except ImportError as error:  # pragma: no cover - import probe
@@ -173,6 +175,79 @@ class _StubView:
             self.nodeGraph.getStage(), pathStr
         )
         return pathStr
+
+
+class _LifecycleView:
+    """A headless editor: the model a reload mutates, recorded.
+
+    The service's ``read``/``apply`` contract against plain state -- no Qt,
+    no GL -- so the lifecycle cases below see exactly the epoch gating,
+    scheduling and suppression the shipped editor gets.
+    """
+
+    def __init__(self, node_ids=()):
+        self.nodes = {node_id: object() for node_id in node_ids}
+        self.stage = None
+        self.mode = "stage"
+        self.prim_path = None
+        self.syncing = False
+        self._deferRenderCacheClear = False
+        self.initialized = True
+        self.updates_enabled = True
+        self.history = ["undo-record"]
+        self.loaded = None
+        self.fail_loads = False
+        self.frames = []
+        self.applied = []
+        self.finishes = 0
+
+    def read(self):
+        return stage_sync.StageContext(
+            view=self,
+            stage=self.stage,
+            mode=self.mode,
+            prim_path=self.prim_path,
+            node_ids=tuple(self.nodes),
+            syncing_selection=self.syncing,
+        )
+
+    def apply(self, delta):
+        self.applied.append(delta)
+        if isinstance(delta, stage_sync.BeginReload):
+            self.updates_enabled = False
+            self.frames.append(delta.frame)
+        elif isinstance(delta, stage_sync.Load):
+            if self.fail_loads:
+                raise RuntimeError("load boom")
+            self.loaded = (delta.stage, delta.mode, delta.prim_path)
+        elif isinstance(delta, stage_sync.ClearHistory):
+            self.history = None
+        elif isinstance(delta, stage_sync.FinishReload):
+            self.finishes += 1
+            self.updates_enabled = True
+
+
+class _LifecycleHarness:
+    """A StageSync over a _LifecycleView with recording sink and scheduler."""
+
+    def __init__(self, view):
+        self.view = view
+        self.deltas = []
+        self.queued = []
+        self.warnings = []
+        self.sync = stage_sync.StageSync(
+            read=view.read,
+            apply=view.apply,
+            post=lambda callback: self.queued.append(callback),
+            listen=lambda receiver: UsdNoticeHandler(receiver),
+            warn=self.warnings.append,
+            sink=self.deltas.append,
+        )
+
+    def run_queued(self):
+        queued, self.queued = self.queued, []
+        for callback in queued:
+            callback()
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
@@ -582,6 +657,318 @@ class ApplyUsdChangesTest(unittest.TestCase):
         view.nodes["/Alpha"].invalidateCache.assert_called_once()
         self.assertFalse(view.linksChanged)
         self.assertFalse(view.textChanged)
+
+
+@unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
+class ReplaceStalenessTest(unittest.TestCase):
+    """Only the latest generation's deferred work may touch the model."""
+
+    def test_replace_a_b_none_before_any_callback_runs(self) -> None:
+        stageA = Usd.Stage.CreateInMemory()
+        stageB = Usd.Stage.CreateInMemory()
+        view = _LifecycleView(["/Alpha", "/Bp#input:drive"])
+        env = _LifecycleHarness(view)
+
+        env.sync.replace(stageA, "stage", None, "frame-A")
+        env.sync.replace(stageB, "stage", None, "frame-B")
+        env.sync.replace(None, "stage", None, "frame-None")
+
+        # Nothing deferred has run yet: three finishes are queued, and every
+        # emitted delta carries the epoch that produced it.
+        self.assertEqual(len(env.queued), 3)
+        self.assertEqual(
+            [type(delta).__name__ for delta in env.deltas],
+            [
+                "BeginReload",
+                "Remove",
+                "Load",
+                "BeginReload",
+                "Remove",
+                "Load",
+                "BeginReload",
+                "ClearHistory",
+            ],
+        )
+        self.assertEqual(
+            [delta.epoch for delta in env.deltas], [1, 1, 1, 2, 2, 2, 3, 3]
+        )
+        self.assertEqual(view.frames, ["frame-A", "frame-B", "frame-None"])
+        # The reload records the whole graph it tore down, synthetic ids
+        # included.
+        self.assertEqual(env.deltas[1].ids, ("/Alpha", "/Bp#input:drive"))
+
+        # A notice stamped with an older generation never reaches the model.
+        applied = list(view.applied)
+        env.sync.changed(1, {"/Alpha"}, set())
+        env.sync.changed(2, {"/Alpha"}, set())
+        self.assertEqual(view.applied, applied)
+        self.assertEqual(len(env.deltas), 8)
+
+        env.run_queued()
+
+        # The two stale finishes did nothing at all; the null-stage finish
+        # ran exactly once.
+        finishes = [
+            delta
+            for delta in env.deltas
+            if isinstance(delta, stage_sync.FinishReload)
+        ]
+        self.assertEqual(finishes, [stage_sync.FinishReload(3)])
+        self.assertEqual(view.finishes, 1)
+        self.assertTrue(view.updates_enabled)
+        # No third load ran; the null stage cleared the history instead.
+        self.assertEqual(view.loaded[0], stageB)
+        self.assertIsNone(view.history)
+
+    def test_finish_from_a_rebound_stage_is_dropped(self) -> None:
+        """The queued callback checks its source binding, not just its
+        epoch."""
+        stageA = Usd.Stage.CreateInMemory()
+        stageB = Usd.Stage.CreateInMemory()
+        env = _LifecycleHarness(_LifecycleView())
+
+        env.sync.replace(stageA, "stage", None, "frame")
+        env.sync.bind(stageB)
+        env.run_queued()
+
+        self.assertEqual(env.view.finishes, 0)
+        self.assertEqual(
+            [
+                delta
+                for delta in env.deltas
+                if isinstance(delta, stage_sync.FinishReload)
+            ],
+            [],
+        )
+
+    def test_selection_sync_suppresses_a_live_notice(self) -> None:
+        stageA = Usd.Stage.CreateInMemory()
+        view = _LifecycleView()
+        view.syncing = True
+        env = _LifecycleHarness(view)
+        env.sync.replace(stageA, "stage", None, "frame")
+
+        applied = list(view.applied)
+        env.sync.changed(1, {"/Alpha"}, set())
+
+        self.assertEqual(view.applied, applied)
+        self.assertEqual(len(env.deltas), 3)
+
+
+@unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
+class LoadFailureTest(unittest.TestCase):
+    """A failing load must not strand the editor or the next replace."""
+
+    def test_a_failing_load_warns_restores_and_still_finishes(self) -> None:
+        stageA = Usd.Stage.CreateInMemory()
+        stageB = Usd.Stage.CreateInMemory()
+        view = _LifecycleView()
+        view.fail_loads = True
+        env = _LifecycleHarness(view)
+
+        env.sync.replace(stageA, "stage", None, "frame")
+
+        self.assertEqual(len(env.warnings), 1)
+        self.assertIn("load boom", env.warnings[0])
+        self.assertFalse(view._deferRenderCacheClear)
+        self.assertEqual(len(env.queued), 1)
+
+        env.run_queued()
+        self.assertEqual(view.finishes, 1)
+
+        view.fail_loads = False
+        env.sync.replace(stageB, "stage", None, "frame")
+        env.run_queued()
+
+        self.assertEqual(view.loaded[0], stageB)
+        self.assertEqual(view.finishes, 2)
+        self.assertEqual(
+            [delta.epoch for delta in env.deltas], [1, 1, 1, 1, 2, 2, 2, 2]
+        )
+
+
+@unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
+class ReloadModeTest(unittest.TestCase):
+    """Each mode reaches the loader it names."""
+
+    def test_each_mode_reaches_the_loader_it_names(self) -> None:
+        for mode, prim_path in (
+            ("stage", None),
+            ("blueprint", "/Bp"),
+            ("container", "/Box"),
+        ):
+            with self.subTest(mode=mode):
+                stage = Usd.Stage.CreateInMemory()
+                view = _LifecycleView()
+                env = _LifecycleHarness(view)
+
+                env.sync.replace(stage, mode, prim_path, "frame")
+
+                loads = [
+                    delta
+                    for delta in env.deltas
+                    if isinstance(delta, stage_sync.Load)
+                ]
+                self.assertEqual(len(loads), 1)
+                self.assertIs(loads[0].stage, stage)
+                self.assertEqual(loads[0].mode, mode)
+                self.assertEqual(view.loaded, (stage, mode, prim_path))
+
+
+@unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
+class SuppressionTest(unittest.TestCase):
+    """Suppression lives on the editor's handler and always restores."""
+
+    def test_suppression_restores_on_the_normal_path(self) -> None:
+        env = _LifecycleHarness(_LifecycleView())
+        handler = env.sync.handler()
+
+        self.assertTrue(handler.isEnabled())
+        with env.sync.suppressed():
+            self.assertFalse(handler.isEnabled())
+        self.assertTrue(handler.isEnabled())
+
+    def test_suppression_restores_on_exception(self) -> None:
+        env = _LifecycleHarness(_LifecycleView())
+        handler = env.sync.handler()
+
+        with self.assertRaises(RuntimeError):
+            with env.sync.suppressed():
+                raise RuntimeError("edit boom")
+        self.assertTrue(handler.isEnabled())
+
+    def test_nested_suppression_restores_the_outer_state(self) -> None:
+        env = _LifecycleHarness(_LifecycleView())
+        handler = env.sync.handler()
+
+        with env.sync.suppressed():
+            with self.assertRaises(RuntimeError):
+                with env.sync.suppressed():
+                    raise RuntimeError("inner boom")
+            self.assertFalse(handler.isEnabled())
+        self.assertTrue(handler.isEnabled())
+
+
+@unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
+class CloseTest(unittest.TestCase):
+    """Close revokes the receiver and invalidates anything still queued."""
+
+    def test_close_drops_queued_finishes_and_later_notices(self) -> None:
+        stageA = Usd.Stage.CreateInMemory()
+        stageB = Usd.Stage.CreateInMemory()
+        view = _LifecycleView()
+        env = _LifecycleHarness(view)
+        env.sync.replace(stageA, "stage", None, "frame")
+        env.run_queued()
+        self.assertEqual(view.finishes, 1)
+
+        env.sync.replace(stageB, "stage", None, "frame")
+        live = env.sync.epoch()
+        env.sync.handler().register(stageB)
+        self.assertIs(env.sync.handler().getStage(), stageB)
+        env.sync.close()
+
+        self.assertTrue(env.sync.isClosed())
+        self.assertIsNone(env.sync.handler().getStage())
+        env.run_queued()
+        self.assertEqual(view.finishes, 1)
+        applied = list(view.applied)
+        env.sync.changed(live, {"/Alpha"}, set())
+        self.assertEqual(view.applied, applied)
+        self.assertEqual(
+            [
+                delta
+                for delta in env.deltas
+                if isinstance(delta, stage_sync.FinishReload)
+            ],
+            [stage_sync.FinishReload(1)],
+        )
+
+
+@unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
+class NoticeRegistrationTest(unittest.TestCase):
+    """The handler delivers a real ObjectsChanged through the service."""
+
+    @staticmethod
+    def _rename(stage):
+        editor = Usd.NamespaceEditor(stage)
+        if not editor.RenamePrim(stage.GetPrimAtPath("/Alpha"), "Renamed"):
+            raise AssertionError("the rename did not stage")
+        if not editor.ApplyEdits():
+            raise AssertionError("the rename did not apply")
+
+    def test_a_live_rename_reconciles_through_the_handler(self) -> None:
+        stages = []
+        for _ in range(2):
+            stage = Usd.Stage.CreateInMemory()
+            UsdGeom.Sphere.Define(stage, "/Alpha")
+            UsdGeom.Sphere.Define(stage, "/Keeper")
+            stages.append(stage)
+        stage, twin = stages
+
+        view = _StubView(stage, ["/Alpha", "/Keeper"])
+        deltas = []
+        service = stage_sync.StageSync(
+            read=lambda: stage_sync.StageContext(
+                view=view,
+                stage=stage,
+                mode="stage",
+                prim_path=None,
+                node_ids=tuple(view.nodes),
+                syncing_selection=view._syncingSelection,
+            ),
+            apply=lambda delta: None,
+            post=lambda callback: None,
+            listen=lambda receiver: UsdNoticeHandler(receiver),
+            warn=lambda message: None,
+            sink=deltas.append,
+        )
+        service.bind(stage)
+        service.handler().register(stage)
+
+        self._rename(stage)
+        self._rename(twin)
+
+        # The same rename, with and without the service listening: the layer
+        # texts match, so reconciliation authored no opinion of its own.
+        self.assertEqual(_layer_text(stage), _layer_text(twin))
+        # And the graph followed the prim through the real notice.
+        self.assertEqual(list(view.nodes), ["/Renamed", "/Keeper"])
+        self.assertEqual(
+            deltas,
+            [
+                stage_sync.Remap(0, (("/Alpha", "/Renamed"),)),
+                stage_sync.Invalidate(
+                    0, ("/Alpha", "/Renamed"), True, True, True
+                ),
+            ],
+        )
+        self.assertTrue(view.linksChanged)
+        self.assertTrue(view.textChanged)
+        view._hooks.update.assert_called_once()
+
+
+@unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
+class DeltaRecordsTest(unittest.TestCase):
+    """The published trace: frozen, slotted, always stamped with an epoch."""
+
+    def test_every_record_is_frozen_slotted_and_stamped(self) -> None:
+        records = [
+            stage_sync.BeginReload(7, "frame"),
+            stage_sync.Load(7, object(), "blueprint", "/Bp"),
+            stage_sync.ClearHistory(7),
+            stage_sync.Remap(7, (("/A", "/B"),)),
+            stage_sync.Remove(7, ("/A",)),
+            stage_sync.Adopt(7, ("/B",)),
+            stage_sync.Invalidate(7, ("/A",), True, False, True),
+            stage_sync.FinishReload(7),
+        ]
+        for record in records:
+            with self.subTest(record=type(record).__name__):
+                self.assertEqual(record.epoch, 7)
+                self.assertFalse(hasattr(record, "__dict__"))
+                with self.assertRaises(dataclasses.FrozenInstanceError):
+                    record.epoch = 8
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
