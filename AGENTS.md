@@ -147,6 +147,8 @@ starting its workflow, and keep this list current when adding or changing skills
   `usdview` tools with the same split. A host application can take over the
   editors' input, undo and edit target through `editorExtension.py`
   ([spec](docs/specs/editor-extensions.md)).
+  `plugin/rigExecUsdview/usdRigAssistant` is the AI Assistant panel and its
+  local MCP server ([guide](docs/tools/ai-assistant.md)).
 - `plugin/usdNoodles`: bundled third-party node editor; preserve its license.
 - `tools`: the `rigExecPose`, `rigExecBake`, and `rigExecReplayInputs`
   command-line programs, and the test selector behind `bin/test_changed.sh`.

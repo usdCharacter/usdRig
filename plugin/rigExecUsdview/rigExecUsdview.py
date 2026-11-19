@@ -118,7 +118,7 @@ def _LoadRigExecImaging():
 #   General Editors     20: Avar Editor 10, Layer Stack 15,
 #                           Layer Opinions 20, Execution Stack 30,
 #                           Deformer Toggles 35, Profiler 40,
-#                           Cache Strip 50
+#                           Cache Strip 50, AI Assistant 60
 #   Animation Editors   30: Graph Editor 10, Shape Editor 20,
 #                           Control Picker 30, TouchPose 40,
 #                           Volume Weight Editor 50
@@ -366,6 +366,11 @@ class RigExecUsdviewContainer(PluginContainer):
             "Cache Strip",
             lambda api: self._OpenCacheStripPanel(api))
 
+        self._assistant = plugRegistry.registerCommandPlugin(
+            "RigExecUsdviewContainer.assistant",
+            "AI Assistant",
+            lambda api: self._OpenAssistantPanel(api))
+
         dataModel = self._api.dataModel
         # Plugins load before the stage opens: bind stage observation on
         # replacement, discover roots added later by authoring, and
@@ -397,6 +402,8 @@ class RigExecUsdviewContainer(PluginContainer):
                          self._profiler, 40)
         AddToRigExecMenu(plugUIBuilder, "General Editors",
                          self._cacheStrip, 50)
+        AddToRigExecMenu(plugUIBuilder, "General Editors",
+                         self._assistant, 60)
         AddToRigExecMenu(plugUIBuilder, "Animation Editors",
                          self._graphEditor, 10)
         # Shape Editor (20) and TouchPose (40) come from their own
@@ -654,6 +661,16 @@ class RigExecUsdviewContainer(PluginContainer):
             import profilerUI
 
         return profilerUI.OpenProfilerPanel(usdviewApi or self._api)
+
+    def _OpenAssistantPanel(self, usdviewApi=None):
+        try:
+            import assistantUI
+        except ImportError:
+            sys.path.insert(
+                0, os.path.dirname(os.path.abspath(__file__)))
+            import assistantUI
+
+        return assistantUI.OpenAssistantPanel(usdviewApi or self._api, self)
 
     def _OpenDeformerTogglesPanel(self, usdviewApi=None):
         # Same lazy sibling import as the other panels: this module pulls
@@ -1443,6 +1460,10 @@ class RigExecUsdviewContainer(PluginContainer):
         self._EnsureViewCube()
         self._EnsureViewAxis()
         self._RestoreHoverPicker()
+        # Only once a panel was opened: importing it pulls in Qt.
+        assistant = sys.modules.get("assistantUI")
+        if assistant is not None:
+            assistant.StageReplaced(self._api, self)
         self._EnsureMarkingMenu()
         editorExtension.StageReplaced(getattr(self, "_api", None))
 

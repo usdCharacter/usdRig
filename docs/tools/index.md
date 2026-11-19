@@ -71,3 +71,4 @@ stage when the gesture ends, as one undoable edit.
 | Deformer Toggles | **RigExec ▸ General Editors ▸ Deformer Toggles** | Switch deformers on and off to see what each contributes. |
 | Profiler | **RigExec ▸ General Editors ▸ Profiler** | Where a frame's time goes, and how many threads it ran on. |
 | Cache Strip | **RigExec ▸ General Editors ▸ Cache Strip** | Which frames are warm in the cache. See [frame cache warming](../concepts/frame-cache-warming.md). |
+| [AI Assistant](ai-assistant.md) | **RigExec ▸ General Editors ▸ AI Assistant** | Ask about the stage and its rigs, or ask for a pose or a change. |

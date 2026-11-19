@@ -124,6 +124,7 @@ nav:
       - tools/touchpose.md
       - tools/limbs.md
       - tools/timeline.md
+      - tools/ai-assistant.md
       - Viewport gizmos: specs/viewport-gizmos.md
       - Weight display: concepts/weight-display.md
       - Graph editor: specs/graph-editor.md
