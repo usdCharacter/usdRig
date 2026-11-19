@@ -75,8 +75,8 @@ RigExecTranslateSceneProperty(const RigExecSceneDescriptors &scene,
             record.opValid = valid;
         },
         result.record);
-    // Existing property movers read the first direct authored weight target,
-    // rather than forwarding a relationship-property target.
+    // The mover's weight object is the first authored rigExec:weightObject
+    // target.
     if (const auto *weight = source.Relationship(
             mover.AppendProperty(_tokens->rigExecWeightObject)))
         if (!weight->fact.targets.empty())
