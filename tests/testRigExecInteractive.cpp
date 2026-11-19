@@ -3,6 +3,7 @@
 #include "rigExec/frozenContext.h"
 #include "rigExec/inputReplay.h"
 #include "rigExec/rigEvaluator.h"
+#include "rigExec/tapSet.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/getenv.h"
 #include "pxr/base/tf/setenv.h"

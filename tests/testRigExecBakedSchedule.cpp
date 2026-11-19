@@ -44,7 +44,7 @@
 #include "rigExecMath/simdKernels.h"
 #include "rigExecMath/solvers.h"
 #include "rigExec/rigEvaluator.h"
-#include "rigExec/tapSet.h"
+#include "rigExec/valueAddress.h"
 
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/plug/registry.h"

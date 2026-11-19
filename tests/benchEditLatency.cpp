@@ -49,7 +49,7 @@
 #include "rigExec/parallel.h"
 #include "rigExec/profiler.h"
 #include "rigExec/rigEvaluator.h"
-#include "rigExec/tapSet.h"
+#include "rigExec/valueAddress.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"

@@ -11,7 +11,7 @@
 #include "rigExec/bakedProgram.h"
 #include "rigExec/bakedProgramImpl.h"
 #include "rigExec/rigEvaluator.h"
-#include "rigExec/tapSet.h"
+#include "rigExec/valueAddress.h"
 #include "rigExecMath/pointBlocks.h"
 
 #include "pxr/base/gf/matrix4d.h"

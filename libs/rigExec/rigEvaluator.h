@@ -9,7 +9,7 @@
 #include "moverGraphTypes.h"
 #include "profiler.h"
 #include "solverKernels.h"
-#include "tapSet.h"
+#include "valueAddress.h"
 
 #include "rigExecMath/rbf.h"
 #include "rigExecMath/solvers.h"

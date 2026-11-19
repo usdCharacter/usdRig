@@ -28,7 +28,7 @@
 #include "pathText.h"
 #include "profiler.h"
 #include "solverKernels.h"
-#include "tapSet.h"
+#include "valueAddress.h"
 #include "types.h"
 #include "weightPackets.h"
 #include "rigExecGraph/opGraph.h"

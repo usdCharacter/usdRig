@@ -13,7 +13,7 @@
 #define RIGEXEC_BAKED_PROGRAM_H
 
 #include "bakedTrace.h"
-#include "tapSet.h"
+#include "valueAddress.h"
 
 #include "rigExecGraph/windowHistory.h"
 

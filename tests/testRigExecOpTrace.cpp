@@ -24,7 +24,7 @@
 #include "rigExec/bakedTrace.h"
 #include "rigExec/parallel.h"
 #include "rigExec/rigEvaluator.h"
-#include "rigExec/tapSet.h"
+#include "rigExec/valueAddress.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/getenv.h"

@@ -157,9 +157,10 @@ requests before a prim removal reaches OpenExec, which works around the
 `tests/python/test_rigexec_stage_edits.py`.
 
 `RigExecValueAddress` and `RigExecValueOverride` are declared in
-`libs/rigExec/tapSet.h` but are plain data types. Production uses them for
-interactive overrides, falloff tables and input replay, and the header includes
-no OpenExec header.
+`libs/rigExec/valueAddress.h` as plain data types. Production uses them for
+interactive overrides, falloff tables and input replay; the ExecUsd-backed
+`RigExecTapSet` sits on top of that contract and its header includes no
+OpenExec header.
 
 `libs/rigExecStandalone/adapter.{h,cpp}` implements OpenExec's Esf scene
 interfaces over `RigExecSceneDb`, but nothing calls it. The
@@ -257,5 +258,5 @@ Paths are relative to the repository root.
 | Direct test references | Tap sets built by tests | `tests/testRigExecDefaultSpaces.cpp:56`, `tests/testRigExecArm.cpp:198`, `tests/testRigExecConstraints.cpp:2641`, `tests/testRigExecStandalone.cpp:547`, `tests/testRigExecStandalone.cpp:915`, `tests/testRigExecInteractive.cpp:161` |
 | Esf | Adapter with no callers | `libs/rigExecStandalone/adapter.h:7-8`, `libs/rigExecStandalone/adapter.cpp:182-186` |
 | | Standalone runtime translation into the shared graph | `libs/rigExecStandalone/sceneRuntime.cpp:4-18` |
-| Shared data types | `RigExecValueAddress`, `RigExecValueOverride` | `libs/rigExec/tapSet.h:41-57`, `libs/rigExec/tapSet.h:73-98` |
+| Shared data types | `RigExecValueAddress`, `RigExecValueOverride` | `libs/rigExec/valueAddress.h:30-48`, `libs/rigExec/valueAddress.h:64-89` |
 | | Production uses of the override type | `libs/rigExec/bakedProgram.h:439`, `libs/rigExec/frameCache.h:158` |

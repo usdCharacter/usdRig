@@ -1,7 +1,7 @@
 #ifndef RIGEXEC_STANDALONE_SYSTEM_H
 #define RIGEXEC_STANDALONE_SYSTEM_H
 #include "sceneDb.h"
-#include "rigExec/tapSet.h"
+#include "rigExec/valueAddress.h"
 #include <memory>
 
 namespace rigExec {

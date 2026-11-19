@@ -14,7 +14,7 @@
 #define RIGEXEC_OUTPUT_AFFECTED_INDEX_H
 
 #include "bakedClusters.h"
-#include "tapSet.h"
+#include "valueAddress.h"
 
 #include <atomic>
 #include <cstddef>
