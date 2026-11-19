@@ -8878,8 +8878,7 @@ private:
                     declaration.flavour == fb::ExternalInputFlavour::Present;
                 // An absent optional property has no input slot. Capture
                 // transports its fallback as a literal (arrays use Resolved
-                // with an empty walk); this does not change the declaration's
-                // raw sampling semantics.
+                // with an empty walk).
                 const auto &read = *declaration.read;
                 const bool literal =
                     read.walk.empty() && read.propertyCandidates.empty() &&

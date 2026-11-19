@@ -232,12 +232,11 @@ InverseError(const Nodes &nodes, Forward forward, Backward backward,
 }  // namespace rigExecStepGraphDetail
 
 /// Empty when no step of \p steps is of the reserved SnapshotFinals kind
-/// or reads or writes the reserved Snapshots domain, whose store is gone;
-/// otherwise the first such step. \p rangeOf as RigExecStepGraphError's.
+/// or reads or writes the reserved Snapshots domain; otherwise the first
+/// such step. \p rangeOf as RigExecStepGraphError's.
 /// The file validator runs it straight after its range checks on kinds
 /// and domains, ahead of every rule about what a step of a given kind
-/// reads or writes: nothing such a rule says matters if the file is of a
-/// shape playback no longer has.
+/// reads or writes.
 template <class Step, class RangeOf>
 std::string
 RigExecStepGraphReservedError(const std::vector<Step> &steps,
@@ -294,8 +293,6 @@ RigExecStepGraphError(const std::vector<Step> &steps,
     const size_t stepCount = steps.size();
     const auto stepName = [](size_t s) { return "step " + Text(int64_t(s)); };
 
-    // The reserved values first: nothing a later rule says about a step
-    // matters if the file is of a shape playback no longer has.
     {
         std::string why = RigExecStepGraphReservedError(steps, rangeOf);
         if (!why.empty()) {

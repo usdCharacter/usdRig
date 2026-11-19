@@ -11,8 +11,7 @@
 // interprets them. The file holds one ExternalMover entry per plugin
 // revision (rigexec.fbs): its type, its compiled data bytes and the frame bytes of
 // the bake's run.
-// The serialized schema retains the field name `epoch` for compiled data;
-// this naming does not change the binary format or the payload tags.
+// The serialized schema retains the field name `epoch` for compiled data.
 //
 // Everything here is plain data and function pointers: a runtime without
 // USD can carry a kernel, and a runtime with no kernel for a type passes
