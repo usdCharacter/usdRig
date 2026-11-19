@@ -728,8 +728,8 @@ def NoticeAffectsTarget(resyncedPaths, changedPaths, targetPath,
 # to, because several usdview sessions can share this module in one process
 # and the same prim path in two of their stages is two different attributes.
 # A read only ever sees its own stage's values. The None key holds values
-# installed with no stage (SetPreviewValues(values) as it was always called),
-# which stand in for every stage exactly as before.
+# installed with no stage (SetPreviewValues(values)), which stand in for
+# every stage.
 _previewValues = {}
 
 
@@ -1181,8 +1181,8 @@ def _RefuseBothModes(frames, message):
 _publishedControlFrameReaders = sessionRegistry.SessionRegistry(
     "gizmoMath published control frame readers")
 
-# A reader installed with no session: the old one-reader-per-process call,
-# still what a headless caller (tests/python/test_gizmo_math.py) makes.
+# A reader installed with no session: what a headless caller
+# (tests/python/test_gizmo_math.py) makes.
 _keylessControlFrameReader = None
 
 
@@ -1379,14 +1379,7 @@ def _ComputeRigFrames(stage, prim, time, solverPosed, ctx):
         # propagates because an ancestor whose pose is not its avars
         # leaves THIS prim composed off a stale parent frame -- but a
         # published parent frame is not stale, it is the evaluator's own
-        # answer, so nothing downstream of it is in doubt. Without this
-        # guard the refusal above reached every finger control on the
-        # biped rather than the 10 roots the constraints actually write:
-        # the 32 nested FK controls the animator grabs (index_002..,
-        # thumb_001..) do honour their own avars -- measured, avars:tx=5
-        # on L_IndexBase moves it and its joints 5.0000 cm, while
-        # the same on the constrained root moves nothing at all -- and
-        # refusing them would have traded a misplaced gizmo for no gizmo.
+        # answer, so nothing downstream of it is in doubt.
         if (parentFrames.reason and not explicitParent
                 and not parentFrames.published):
             frames.reason = "parent %s: %s" % (
@@ -2170,9 +2163,9 @@ class _RigTarget(Target):
         return root.GetPath() if root else None
 
     def _WriteVector(self, names, values):
-        # No change block: these collect rather than author (Writer.Set), so
-        # there is no edit to batch. The batching moved to where the editing
-        # did -- Writer.CommitToStage wraps the whole release in one block.
+        # No change block: these collect rather than author (Writer.Set),
+        # so there is no edit to batch. Writer.CommitToStage wraps the
+        # whole release in one block.
         for name, value in zip(names, values):
             self._Write(name, value)
 
@@ -3022,8 +3015,6 @@ def PoseProviderPaths(prim, time):
 # units for a move: a member already carried into place by a selected
 # ancestor lands within floating-point noise of where it belongs, and
 # authoring that noise would put a key on every control in the chain.
-# Measured on Biped.usda, the residual for a carried member under a
-# rigid pivot is under 1e-13 of either.
 _GROUP_EPSILON_DEGREES = 1e-9
 _GROUP_EPSILON_LENGTH = 1e-9
 
@@ -3210,8 +3201,7 @@ class GroupTarget(Target):
         # is what makes gizmoDrag take the world-axis route: _Orientation
         # falls back to Object when this is None, and DragState then has
         # no gimbal base to quantise against. A group of ONE is not a
-        # group -- it keeps its member's rings, so a selection where
-        # everything but the lead was refused behaves as it does today.
+        # group -- it keeps its member's rings.
         if len(self.members) == 1:
             return self.members[0].RotationState()
         return None

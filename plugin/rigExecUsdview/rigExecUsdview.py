@@ -81,9 +81,7 @@ def _LoadRigExecImaging():
     #
     # Optional scoped features (the warming triggers, the frame-cache
     # queries and repaint gate, the manipulation preview, the control-
-    # frame gizmo read) are probed for by absence at their call sites,
-    # exactly as before: a session without them behaves the way it always
-    # did.
+    # frame gizmo read) are probed for by absence at their call sites.
     with Tf.WindowsImportWrapper():
         lib = ctypes.CDLL(ImagingLibraryPath())
     imagingHandle.BindLibrary(lib)
@@ -110,9 +108,7 @@ def _LoadRigExecImaging():
 # a rank so that the order holds no matter which plugin container's
 # configureView runs first: usdview's PluginMenu only appends, and
 # plugin/touchPose and plugin/shapeEditor add their items to the same
-# submenus from their own containers. Those two carry a copy of this
-# helper rather than importing it, so the directories stay independent;
-# keep the ranks in step.
+# submenus from their own containers.
 #
 #   Viewport            10: Viewport Tools 10, View Cube 20, View Axis 30
 #   General Editors     20: Avar Editor 10, Layer Stack 15,
@@ -128,12 +124,10 @@ _MENU_RANK = "rigExecMenuRank"
 
 # How long a notice burst must be quiet before the pending edit-commit
 # warms. The flush samples the whole neighbor+sweep band synchronously on
-# the UI thread (benchCommitLag: ~136 ms on the biped, ~121 ms of it the
-# per-frame sampling), so firing it on the next event-loop turn put that
-# freeze inside every gizmo release and every undo/redo. The delay keeps
-# warming out of a run of edits -- picker clicks, drags, Avar Editor
-# scrubs a moment apart -- and warms the held playhead once the animator
-# pauses. Must stay positive: zero puts the burst back inside the gesture.
+# the UI thread, so the delay keeps that burst out of a run of edits --
+# picker clicks, drags, Avar Editor scrubs a moment apart -- and warms
+# the held playhead once the animator pauses. Must stay positive: zero
+# puts the burst inside the gesture.
 _WARMING_COMMIT_DELAY_MS = 500
 
 
@@ -209,9 +203,9 @@ def ContainerFor(usdviewApi=None):
 
 
 def __getattr__(name):
-    # `_container` was the process's single container. It is now a view
-    # onto the per-session registry, for scripts that read it (the
-    # testusdview harness): in a plain usdview it is the one container.
+    # `_container` is a view onto the per-session registry, for scripts
+    # that read it (the testusdview harness): in a plain usdview it is
+    # the one container.
     if name == "_container":
         return _containers.Current()
     raise AttributeError("module %r has no attribute %r" % (__name__, name))
@@ -796,8 +790,6 @@ class RigExecUsdviewContainer(PluginContainer):
                 self._hoverPickerRestored = True
                 return
             if module.StageView(self._api) is None:
-                # The first stage can arrive before the stage view is
-                # built; try again shortly rather than never.
                 tries = getattr(self, "_hoverPickerTries", 0)
                 if tries < 50:
                     self._hoverPickerTries = tries + 1
@@ -826,8 +818,6 @@ class RigExecUsdviewContainer(PluginContainer):
                 self._api, self._UndoStack(), switchIkFk=self.SwitchIkFk,
                 knownLimbs=self._IkFkLimbs)
             if self._markingMenu is None and                     getattr(self, "_markingMenuTries", 0) < 50:
-                # The first stage can arrive before the stage view is
-                # built; try again shortly rather than never.
                 self._markingMenuTries = getattr(
                     self, "_markingMenuTries", 0) + 1
                 from pxr.Usdviewq.qt import QtCore
@@ -1595,7 +1585,7 @@ class RigExecUsdviewContainer(PluginContainer):
         # notice stream, whose single-shots would otherwise fire mid-stream
         # -- warms once, when it stops. Without Qt (or without usdview's
         # shim) this degrades to the pending flag, which the next frame
-        # change consumes as before.
+        # change consumes.
         timer = getattr(self, "_warmingTimer", None)
         if getattr(self, "_warmingFlushArmed", False):  # bare test containers skip __init__
             if timer is not None:
@@ -2034,12 +2024,7 @@ class RigExecUsdviewContainer(PluginContainer):
 
     def _OnFrameChanged(self, frame):
         # The SIGNAL's frame, never dataModel.currentFrame -- see
-        # _FrameValue. Reading the property here published the previous
-        # frame's pose, which a drag hides almost perfectly (each step
-        # draws the step before it) and which turns every other edit into
-        # a no-op: the authoring panel writes a spline knot at the frame
-        # the artist is LOOKING at, so an engine sitting one frame back
-        # resolves the untouched value and the overlay appears frozen.
+        # _FrameValue: the property can lag the frame being edited.
         if not self._active and getattr(self, "_adoptPending", False):
             self._AdoptNativeActivation()
         if not (self._active and self._lib):

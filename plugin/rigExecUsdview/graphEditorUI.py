@@ -1298,8 +1298,7 @@ class GraphEditorPanel(QtWidgets.QWidget):
         # A floor, not a size: below it a QHBoxLayout stops clipping the
         # tool rows and starts shrinking the checkboxes under their own
         # labels, which reads as a rendering fault rather than a squeeze.
-        # 1080 fits Time + Value + Pre + the five key buttons; the Pre
-        # box and Single button grew the first row past the old 940.
+        # 1080 fits Time + Value + Pre + the five key buttons.
         self.setMinimumWidth(1080)
         self.resize(1180, 640)
 
@@ -1847,7 +1846,7 @@ class GraphEditorPanel(QtWidgets.QWidget):
                 primPaths = []
             self._curves = graphModel.DiscoverCurves(stage, propPaths,
                                                      primPaths)
-        # Prune visibility sets for curves that no longer exist (bug #7):
+        # Prune visibility sets for curves that no longer exist:
         # without this, re-selecting the same prim re-hides curves that
         # were hidden before the rebuild.
         labels = set(ref.Label() for ref in self._curves)

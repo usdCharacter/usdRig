@@ -21,12 +21,9 @@
 # travel as the `snapStep` keyword on Apply*, and nothing here rounds
 # a world delta for them. The WORLD snaps (X grid, point, edge
 # and surface: snapping design 4.2-4.4) are decided here instead, as
-# plain world deltas through gizmoSnap, because the old channel-space
-# X put round channel numbers at arbitrary world positions under a
-# posed parent (snapping design section 2). The exceptions are
+# plain world deltas through gizmoSnap. The exceptions are
 # _DisplayAngle below, which is a readout, not a decision, and the
-# Rotate absolute grid, which re-bases one Euler channel here because
-# gizmoMath.py is frozen and gains no new Target API.
+# Rotate absolute grid, which re-bases one Euler channel here.
 #
 import math
 
@@ -520,9 +517,9 @@ def _Rotate(state, settings, holdSnap, snapMode):
             # Rotate's grid is degrees on the dragged gimbal channel
             # (snapping design 1.8, 4.3): the LANDED channel lands on a
             # multiple of stepSize, so the delta is recomputed from the
-            # press-time base. No new Target API: rotationBase was read
-            # once at the press because RotationState() is live
-            # (gizmoMath.py:850-855). state.angle is set from the
+            # press-time base: rotationBase is read once at the press
+            # because RotationState() is live (gizmoMath.py:850-855).
+            # state.angle is set from the
             # absolute result, not _DisplayAngle, or the wedge and the
             # deg readout disagree with what was written.
             angle = RingAngle(state)

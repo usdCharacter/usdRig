@@ -33,9 +33,9 @@
 # imaging context through its own sink. So the sink and the declaration state
 # live on a PreviewChannel filed under the session (the usdview main window),
 # and every entry point below takes the session it is for. A call with no
-# session is the old single-session call: it reaches the one session there is
-# (or the one owning the active window), and before any session has installed
-# a sink -- headless, the tests -- a keyless channel of its own.
+# session reaches the one session there is (or the one owning the active
+# window), and before any session has installed a sink -- headless, the
+# tests -- a keyless channel of its own.
 #
 from pxr import Vt
 

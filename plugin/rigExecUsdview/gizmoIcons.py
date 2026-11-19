@@ -8,20 +8,13 @@
 # colours, so one file works on the dark chrome and on the blue checked
 # background the stylesheet paints behind an active tool.
 #
-# Every glyph also exists as a few QPainterPath strokes below. That is not a
-# second implementation of the same thing -- it is what the toolbar falls back
-# to when a file is missing, because the alternative failure is a row of blank
-# buttons, and a toolbar that cannot say what its buttons do is worse than one
-# drawn a little more plainly. It costs nothing to keep: no file, no load, and
-# it is the same code that drew the first version of this set.
+# Every glyph also exists as a few QPainterPath strokes below: it is what
+# the toolbar falls back to when a file is missing, and the alternative
+# failure is a row of blank buttons.
 #
 # WHY ICONS AT ALL. QToolBar folds whatever does not fit into an overflow
-# chevron, from the end, and the row of text buttons did not fit at usdview's
-# default viewport width (~600 logical px) on a platform whose UI font is wider
-# than the one the labels were tuned against: Windows with Roboto 10pt wanted
-# 856 px and put Snap, Undo, Redo, Settings and Graph where nobody finds them.
-# Text width is a property of the platform's font; a glyph's is not. The row is
-# ~390 px here and the same everywhere.
+# chevron, from the end, and text width is a property of the platform's
+# font while a glyph's is not.
 #
 # The labels are NOT deleted. Every action keeps its text -- for its tooltip,
 # for the overflow menu, for accessibility, and for the tests that look actions
