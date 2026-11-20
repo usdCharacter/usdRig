@@ -2837,6 +2837,26 @@ struct RigExecBakedWeightObject {
            combineLeaves = 0;
 };
 
+/// The identity facts of one chain, one of its revisions, and one weight
+/// object: the paths and operation that name them, and nothing an evaluator
+/// computes. The view copies these from the program once, at construction,
+/// so a consumer can hold an identity across a frame without reaching an
+/// execution record.
+struct RigExecCompiledChainFacts {
+    SdfPath target;
+};
+
+struct RigExecCompiledRevisionFacts {
+    SdfPath moverPath;
+    SdfPath target;
+    RigExecRevisionOp op = RigExecRevisionOp::Skin;
+};
+
+struct RigExecCompiledWeightFacts {
+    SdfPath path;
+    TfToken type;
+};
+
 /// The compiled rig, sealed: counts, records by index in the order the
 /// program runs them, the operation graph, the declared reads and writes,
 /// the stage-frame admission, the bound paths, and the inputs the program
@@ -2882,6 +2902,18 @@ public:
     size_t GetWeightObjectCount() const noexcept;
     const RigExecBakedWeightObject &
     GetWeightObject(size_t index) const noexcept;
+
+    /// The published facts of one chain, one of its revisions, or one weight
+    /// object, indexed as the records above: the chain index guards the
+    /// revision index. These references borrow the view's own storage, so
+    /// they live as long as the view does, across a value patch and a frame.
+    const RigExecCompiledChainFacts &GetChainFacts(size_t index) const noexcept;
+    const RigExecCompiledRevisionFacts &
+    GetChainRevisionFacts(size_t chainIndex,
+                          size_t revisionIndex) const noexcept;
+    const RigExecCompiledWeightFacts &
+    GetWeightObjectFacts(size_t index) const noexcept;
+
     size_t GetConstraintCount() const noexcept;
     const RigExecBakedConstraint &GetConstraint(size_t index) const noexcept;
     size_t GetSolverCount() const noexcept;
@@ -3017,6 +3049,13 @@ private:
     }
 
     std::shared_ptr<const RigExecBakedProgramImpl> _compiled;
+
+    /// The facts projected from the compiled storage once at construction,
+    /// in program order, one revision list per chain. The facts queries
+    /// borrow from here; nothing re-projects per getter or per frame.
+    std::vector<RigExecCompiledChainFacts> _chainFacts;
+    std::vector<std::vector<RigExecCompiledRevisionFacts>> _chainRevisionFacts;
+    std::vector<RigExecCompiledWeightFacts> _weightFacts;
 };
 
 } // namespace rigExec
