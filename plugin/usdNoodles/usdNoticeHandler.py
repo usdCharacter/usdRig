@@ -34,10 +34,10 @@ class UsdNoticeHandler:
         if not stage:
             return
 
-        self._stage = stage
-        self._listener = Tf.Notice.Register(
+        listener = Tf.Notice.Register(
             Usd.Notice.ObjectsChanged, self._onObjectsChanged, stage
         )
+        self._listener, self._stage = listener, stage
 
     def unregister(self):
         if self._listener:
@@ -94,6 +94,9 @@ class UsdNoticeHandler:
         return moved
 
     def _onObjectsChanged(self, notice, sender):
+        if self._stage is None or sender is not self._stage:
+            return
+
         if not self._enabled:
             return
 
