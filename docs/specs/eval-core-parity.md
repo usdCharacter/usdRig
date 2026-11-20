@@ -187,19 +187,22 @@ dynamic walk keeps calling them, it does not gain a second copy. `core` here is
 ## Numeric ports (layer 3)
 
 `libs/rigExecMath/geometryKernels.h/.cpp` (2,226 lines, `pxr/base/gf/*`) and
-`libs/rigExecMath/dualQuat.h/.cpp` (675 lines, plus `solvers.cpp:640-712`) are
-the canonical numbers; RigExecRuntime re-implements them over `Rr*` types
-inside `geometry.cpp:1296-2470`. The kernels in `rigExecMath` are already
-USD-free in shape, so the fix is a trait over the primitive types, not a copy.
+`libs/rigExecMath/dualQuat.h/.cpp` (plus `solvers.cpp:640-712`) are the
+canonical numbers; RigExecRuntime re-implements the remaining ones over `Rr*`
+types inside `geometry.cpp`. The dual-quaternion family is now one body,
+`libs/rigExecMath/dualQuatKernel.h`, instantiated by both engines over the
+`RigExecDualQuatMath<Point, Double>` trait. The kernels in `rigExecMath` are
+already USD-free in shape, so the fix is a trait over the primitive types, not
+a copy.
 
 | canonical | canonical site | playback port | disposition / owner |
 | --- | --- | --- | --- |
-| dual-quat normalize, blend, from-matrix, rotate, translate, transform | `rigExecMath/dualQuat.h:96,112,120,130,86,152` (`dualQuat.cpp:14-160`) | `RrGeoDualQuatNormalize` `1564`, `RrGeoBlendDualQuats` `1581`, `RrGeoDualQuatFromRotationTranslation` `1631`, `RrGeoDualQuatRotateVector` `1686`, `RrGeoDualQuatTranslation` `1695`, `RrGeoDualQuatTransformPoint` `1705` | `unify` through the affine trait; `Gf` public functions in `dualQuat.cpp` stay as instantiations — `dualquat-trait` |
-| scaled dual-quat from-matrix, blend, transform | `dualQuat.h:204,217,230,238` | `RrGeoScaledDualQuatFromMatrix` `1752`, `RrGeoBlendScaledDualQuats` `1763`, `RrGeoScaledDualQuatTransformPoint` `1795` | `unify` — `dualquat-trait` |
-| scale-aware blend (`_BlendStretch` in `dualQuat.cpp:212`) | `dualQuat.cpp:212` | `RrGeoBlendStretch` `1712` | `unify` (replace the port) — `dualquat-trait` |
-| matrix decomposition, proper-rotation and finiteness checks | `dualQuat.cpp:14,24,117`, `geometryKernels.h:197` | `RrGeoIsProperRotation` `1546`, `RrGeoQuatIsFinite` `1538`, `RrGeoDecomposeMatrix` `1641`, `RrGeoMulRow` `1678` | `unify` — `dualquat-trait` |
-| 3x3 symmetric eigen solve | `rigExecMath/pointFrame.cpp:302` (`_SymmetricEigen3`) | `RrGeoSymmetricEigen3` `1326` | `unify` — `dualquat-trait` |
-| point-to-parameter solve | `moverGraph.cpp:5100` (`RigExecWorldFromRest`) and its helpers | `RrGeoPointsToParams` `1439` | `unify` — `dualquat-trait` |
+| dual-quat normalize, blend, from-matrix, rotate, translate, transform | `rigExecMath/dualQuatKernel.h` (`RigExecDualQuat*Kernel`) | deleted (`dualquat-trait`) | `unified`: `dualQuatKernel.h` over `RigExecDualQuatMath<Point, Double>`; the `Gf` public functions in `dualQuat.cpp` are instantiations, the runtime's `RrGeo*` copy is gone |
+| scaled dual-quat from-matrix, blend, transform | `dualQuatKernel.h` (`RigExecScaledDualQuat*Kernel`) | deleted (`dualquat-trait`) | `unified` |
+| scale-aware blend (the stretch mean, `BlendStretch`) | `dualQuatKernel.h` (`dualQuatDetail::BlendStretch`) | deleted (`dualquat-trait`) | `unified` |
+| matrix decomposition, proper-rotation and finiteness checks | `dualQuatKernel.h` (`dualQuatDetail::DecomposeMatrix`, `IsProperRotation`, `QuatIsFinite`), `geometryKernels.h:197` | deleted (`dualquat-trait`) | `unified`; the polar split reads its frame solve through the trait's `PointsToMatrix` / `MatrixToPoints`, and its 3x3 accessors through `SetRotate` / `Orthonormalize` / `ExtractRotationQuaternion` |
+| 3x3 symmetric eigen solve | `rigExecMath/pointFrame.cpp` (`_SymmetricEigen3`), `dualQuatKernel.h` (`dualQuatDetail::SymmetricEigen3`) | deleted (`dualquat-trait`) | `unified` for the dual-quaternion split; `pointFrame.cpp` keeps its own copy for the pose path |
+| point-to-parameter solve | `moverGraph.cpp:5100` (`RigExecWorldFromRest`) and its helpers, `pointFrame.cpp` (`RigExecPointsToParams`) | deleted (`dualquat-trait`) | `unified` for the dual-quaternion split (`dualQuatKernel.h`, `dualQuatDetail::PointsToParams`); the pose path's `RigExecWorldFromRest` still calls `pointFrame.cpp` |
 | dual-quat influence gather, palette, apply | `solvers.cpp:640-712` (`RigExecGatherDualQuatInfluences`, `RigExecSkinDualQuatPalette`, `RigExecApplyDualQuatSkin`) | `RrGeoGatherDualQuatInfluences` `1806`, `RrGeoSkinDualQuatPalette` `1816`, `RrGeoApplyDualQuatSkin` `1828` | `unify` — `skin-dispatch-lift` over the `dualquat-trait` result |
 | bound volume, volume correct | `geometryKernels.h:73,79` | `RrGeoBoundVolume` `1856`, `RrGeoApplyVolumeCorrect` `1873` | `unify` — `mesh-ops-lift` |
 | mesh adjacency | `rigExecMath/meshConnectivity.h` | `RrGeoBuildAdjacency` `1897` | `unify` — `mesh-ops-lift` |

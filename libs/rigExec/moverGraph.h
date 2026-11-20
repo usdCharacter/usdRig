@@ -566,9 +566,9 @@ void RigExecBlendEnvelopeAll(const GfVec3f *preceding, const float *envelope,
 
 /// One influence split into a stretch and a unit dual quaternion; the
 /// dual-quaternion skinning path blends these rather than the matrices.
-/// Named here only as a pointer, so dualQuat.h stays out of every
+/// Named here only as a pointer, so its Gf instantiation stays out of every
 /// translation unit that assembles a packet.
-struct RigExecScaledDualQuat;
+template <class Point, class Double> struct RigExecScaledDualQuatKernelT;
 
 /// The influence tables one skin range reads.
 ///
@@ -585,7 +585,7 @@ struct RigExecSkinTransformsView {
     const float *rows = nullptr;
     /// transformCount + 1 entries (the last one the weight complement's
     /// identity), or null.
-    const RigExecScaledDualQuat *palette = nullptr;
+    const RigExecScaledDualQuatKernelT<GfVec3f, GfVec3d> *palette = nullptr;
     size_t paletteSize = 0;
 };
 
