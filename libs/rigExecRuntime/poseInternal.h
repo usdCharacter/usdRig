@@ -35,22 +35,18 @@ const std::vector<RrPointFrame> &RrPoseRestFrames(const RrProgram *program);
 
 namespace runtimePoseDetail {
 
-RrMat4d
-_RrIdentity();
+RrMat4d _RrIdentity();
 
 // std::acos(-1) rather than M_PI, as the kernels do.
 inline const double _RrPi = std::acos(-1);
 
-RrMat4d
-_RrComposeAvars(double tx, double ty, double tz, double sx, double sy,
-                double sz, double rx, double ry, double rz, double rspin,
-                const std::string &order);
+RrMat4d _RrComposeAvars(double tx, double ty, double tz, double sx, double sy,
+                        double sz, double rx, double ry, double rz,
+                        double rspin, const std::string &order);
 
-bool
-_RrLive(const RrProgram *program, const RigExecWireInput &read);
+bool _RrLive(const RrProgram *program, const RigExecWireInput &read);
 
-bool
-_RrLiveSolver(const RrProgram *program, size_t solver, int field);
+bool _RrLiveSolver(const RrProgram *program, size_t solver, int field);
 
 enum class _RrRbfKernel : uint8_t {
     Gaussian = 0,
@@ -66,30 +62,26 @@ enum class _RrRbfPoseType : uint8_t {
     Twist = 2,
 };
 
-RrVec3d
-_RrRbfEulerFromQuaternion(const RrQuatd &quaternion);
+RrVec3d _RrRbfEulerFromQuaternion(const RrQuatd &quaternion);
 
 // A pose interpolator reconstituted from its solved wire table.
-class _RrRbfSolver
-{
+class _RrRbfSolver {
 public:
     _RrRbfSolver() = default;
 
     _RrRbfSolver(const std::vector<RrVec3d> &poses,
                  const std::vector<RrVec3d> &translations,
                  const std::vector<_RrRbfPoseType> &poseTypes,
-                 const RrVec3d &twistAxis, _RrRbfKernel kernel,
-                 double radius, double translationRadius,
-                 bool normalize,
-                 bool enableRotation, bool enableTranslation);
+                 const RrVec3d &twistAxis, _RrRbfKernel kernel, double radius,
+                 double translationRadius, bool normalize, bool enableRotation,
+                 bool enableTranslation);
 
     void SetSolvedTable(const std::vector<double> &radii,
                         const std::vector<double> &translationRadii,
                         const std::vector<std::vector<double>> &weights);
 
     void Evaluate(const RrVec3d &euler, const RrVec3d *translation,
-                  std::vector<double> *out,
-                  bool allowNegativeWeights) const;
+                  std::vector<double> *out, bool allowNegativeWeights) const;
 
 private:
     void Kernels(const RrVec3d &euler, const RrVec3d *translation,
@@ -99,8 +91,7 @@ private:
 
     double Distance(const RrQuatd &quaternion, size_t index) const;
 
-    double TranslationDistance(const RrVec3d *translation,
-                               size_t index) const;
+    double TranslationDistance(const RrVec3d *translation, size_t index) const;
 
     double Ratio(const RrQuatd &quaternion, size_t index,
                  const RrVec3d *translation) const;
@@ -131,33 +122,26 @@ private:
     std::vector<std::vector<double>> _weights;
 };
 
-RrPoseScratch *
-_RrScratch(RrProgram *program);
+RrPoseScratch *_RrScratch(RrProgram *program);
 
-std::string
-_RrStepHead(const RrProgram *program, size_t step);
+std::string _RrStepHead(const RrProgram *program, size_t step);
 
-bool
-_RrComputeCommitDeltas(RrProgram *program, size_t step,
-                       const RigExecWireCommit &commit,
-                       RrCommitScratch *scratch, std::string *error);
+bool _RrComputeCommitDeltas(RrProgram *program, size_t step,
+                            const RigExecWireCommit &commit,
+                            RrCommitScratch *scratch, std::string *error);
 
-bool
-_RrStageCommitPairs(RrProgram *program, size_t step,
-                    const RigExecWireCommit &commit,
-                    RrCommitScratch *scratch, size_t begin, size_t end,
-                    std::string *error);
+bool _RrStageCommitPairs(RrProgram *program, size_t step,
+                         const RigExecWireCommit &commit,
+                         RrCommitScratch *scratch, size_t begin, size_t end,
+                         std::string *error);
 
-bool
-_RrFinishCommit(RrProgram *program, size_t step, size_t commitIndex,
-                std::string *error);
+bool _RrFinishCommit(RrProgram *program, size_t step, size_t commitIndex,
+                     std::string *error);
 
-bool
-_RrRunSolveStep(RrProgram *program, size_t step, std::string *error);
+bool _RrRunSolveStep(RrProgram *program, size_t step, std::string *error);
 
-bool
-_RrRunSolverCommitStep(RrProgram *program, size_t step,
-                       std::string *error);
+bool _RrRunSolverCommitStep(RrProgram *program, size_t step,
+                            std::string *error);
 
 // RigExecTransformParams (pointFrame.h), field for field.
 struct _RrTransformParams {
@@ -168,13 +152,11 @@ struct _RrTransformParams {
     int reflectionAxis = 2;
 };
 
-bool
-_RrPointsToParams(const std::array<RrVec3d, 4> &restPoints,
-                  const std::array<RrVec3d, 4> &posePoints,
-                  int reflectionAxis, _RrTransformParams *params);
+bool _RrPointsToParams(const std::array<RrVec3d, 4> &restPoints,
+                       const std::array<RrVec3d, 4> &posePoints,
+                       int reflectionAxis, _RrTransformParams *params);
 
-RrMat4d
-_RrParamsToMatrix(const _RrTransformParams &params);
+RrMat4d _RrParamsToMatrix(const _RrTransformParams &params);
 
 // RigExecBlendEnvelope (envelope.h): the endpoint branches are the
 // contract, not an optimization.
@@ -191,33 +173,27 @@ _RrBlendEnvelope(const T &preceding, const T &full, Weight weight)
     return preceding + (full - preceding) * weight;
 }
 
-RrPointFrame
-_RrBlendFrames(const RrPointFrame &a, const RrPointFrame &b,
-               const std::array<RrVec3d, 4> &restPoints,
-               double weight, bool logScale,
-               const std::array<RrVec3d, 4> *outRestPoints);
+RrPointFrame _RrBlendFrames(const RrPointFrame &a, const RrPointFrame &b,
+                            const std::array<RrVec3d, 4> &restPoints,
+                            double weight, bool logScale,
+                            const std::array<RrVec3d, 4> *outRestPoints);
 
-void
-_RrSwingTwist(const RrQuatd &q, const RrVec3d &axis,
-              RrQuatd *swing, RrQuatd *twist);
+void _RrSwingTwist(const RrQuatd &q, const RrVec3d &axis, RrQuatd *swing,
+                   RrQuatd *twist);
 
 // RigExecTransformFrame: every landmark carried by \p space, nothing else.
-RrPointFrame
-_RrTransformFrame(const RrPointFrame &frame, const RrMat4d &space);
+RrPointFrame _RrTransformFrame(const RrPointFrame &frame, const RrMat4d &space);
 
-bool
-_RrRunConstraintStep(RrProgram *program, size_t step,
-                     std::string *error);
+bool _RrRunConstraintStep(RrProgram *program, size_t step, std::string *error);
 
-bool
-_RrMatchPoleParent(RrProgram *program, int switchIndex,
-                   const std::vector<uint8_t> &rides, const RrMat4d &moved,
-                   RrMat4d *out);
+bool _RrMatchPoleParent(RrProgram *program, int switchIndex,
+                        const std::vector<uint8_t> &rides, const RrMat4d &moved,
+                        RrMat4d *out);
 
 // A control's channels as the compose reads them, for the match kernels.
-RigExecIkFkMatchChannels
-_RrMatchChannelsOf(const RrProgram &program, const RrPoseScratch &scratch,
-                   size_t slot);
+RigExecIkFkMatchChannels _RrMatchChannelsOf(const RrProgram &program,
+                                            const RrPoseScratch &scratch,
+                                            size_t slot);
 
 } // namespace runtimePoseDetail
 
@@ -239,9 +215,9 @@ struct RrPoseTwoBoneIkParams {
     double stretch = 1;
     double softness = 0;
     double preferredBendRadians = 0;
-    bool softDistancePolicy=false,scaleSegments=false;
+    bool softDistancePolicy = false, scaleSegments = false;
     RigExecLimbStretch limb;
-    double twistRadians=0;
+    double twistRadians = 0;
     RrMat4d space = RrMat4d(1.0);
 };
 
@@ -301,7 +277,8 @@ struct RrPoseScratch {
     // posedAuthored(M)/restRoundTrip/defaultRoundTrip tables.
     std::vector<RrMat4d> restM, selfD, parentDinv, posedAuthoredM;
     std::vector<RrMat4d> posedD, parentSpaceM;
-    std::vector<std::vector<RigExecSpaceCheckpointInputT<RrMat4d>>> checkpointInputs;
+    std::vector<std::vector<RigExecSpaceCheckpointInputT<RrMat4d>>>
+        checkpointInputs;
     std::vector<char> parentSpaceAuthored;
     std::vector<RrMat4d> restRoundTrip, defaultRoundTrip;
     std::vector<std::array<RrVec3d, 4>> restPts;

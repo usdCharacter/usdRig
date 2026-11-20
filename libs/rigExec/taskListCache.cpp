@@ -28,8 +28,8 @@ RigExecTaskListCache::Lookup(uint64_t compiledRig,
 
 void
 RigExecTaskListCache::Store(uint64_t compiledRig,
-                           const RigExecControlId &control,
-                           const RigExecBakedClusterSet &set)
+                            const RigExecControlId &control,
+                            const RigExecBakedClusterSet &set)
 {
     std::lock_guard<std::mutex> lock(_mutex);
     _map[RigExecTaskListKey(compiledRig, control)] = set;
@@ -81,4 +81,4 @@ RigExecTaskListCache::Size() const
     return _map.size();
 }
 
-}  // namespace rigExec
+} // namespace rigExec

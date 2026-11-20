@@ -249,8 +249,7 @@ public:
 
     /// Euclidean distance from a position to one authored pose, in metres.
     /// There is no per-axis weighting here.
-    double TranslationDistance(const GfVec3d *translation,
-                               size_t index) const;
+    double TranslationDistance(const GfVec3d *translation, size_t index) const;
 
     /// How far the driver is from one pose, in units of THAT pose's falloff.
     double Ratio(const GfQuatd &quaternion, size_t index,
@@ -290,32 +289,69 @@ public:
               GfVec3d *translation) const;
 
     // -- the solved constants -------------------------------------------
-    const std::vector<GfVec3d> &GetPoses() const { return _poses; }
-    const std::vector<GfVec3d> &GetTranslations() const {
+    const std::vector<GfVec3d> &GetPoses() const
+    {
+        return _poses;
+    }
+    const std::vector<GfVec3d> &GetTranslations() const
+    {
         return _translations;
     }
-    double GetRadius() const { return _radius; }
-    double GetTranslationRadius() const { return _translationRadius; }
-    const std::vector<double> &GetRadii() const { return _radii; }
-    const std::vector<double> &GetTranslationRadii() const {
+    double GetRadius() const
+    {
+        return _radius;
+    }
+    double GetTranslationRadius() const
+    {
+        return _translationRadius;
+    }
+    const std::vector<double> &GetRadii() const
+    {
+        return _radii;
+    }
+    const std::vector<double> &GetTranslationRadii() const
+    {
         return _translationRadii;
     }
     /// One row per pose; constant once solved. Empty until Solve().
-    const std::vector<std::vector<double>> &GetWeights() const {
+    const std::vector<std::vector<double>> &GetWeights() const
+    {
         return _weights;
     }
-    const std::vector<RigExecRbfPoseType> &GetPoseTypes() const {
+    const std::vector<RigExecRbfPoseType> &GetPoseTypes() const
+    {
         return _poseTypes;
     }
-    const GfVec3d &GetTwistAxis() const { return _twistAxis; }
-    double GetRegularization() const { return _regularization; }
-    bool GetEnableRotation() const { return _enableRotation; }
-    bool GetEnableTranslation() const { return _enableTranslation; }
-    RigExecRbfKernel GetKernel() const { return _kernel; }
-    bool GetNormalize() const { return _normalize; }
+    const GfVec3d &GetTwistAxis() const
+    {
+        return _twistAxis;
+    }
+    double GetRegularization() const
+    {
+        return _regularization;
+    }
+    bool GetEnableRotation() const
+    {
+        return _enableRotation;
+    }
+    bool GetEnableTranslation() const
+    {
+        return _enableTranslation;
+    }
+    RigExecRbfKernel GetKernel() const
+    {
+        return _kernel;
+    }
+    bool GetNormalize() const
+    {
+        return _normalize;
+    }
     /// True when Solve() had to fall back on the RigExecRbfSingular nudge
     /// because the matrix was singular outright.
-    bool GetRegularizedSingular() const { return _regularizedSingular; }
+    bool GetRegularizedSingular() const
+    {
+        return _regularizedSingular;
+    }
 
     /// Adopt an already-solved table: the per-pose widths and the inverted
     /// matrix, exactly as a converted rig stores them.
@@ -345,10 +381,10 @@ private:
     const GfVec3d *_Translation(size_t index) const;
     double _MeasureRadius() const;
     double _MeasureTranslationRadius() const;
-    std::vector<double> _MeasureRadii(const std::vector<double> &falloffs)
-        const;
-    std::vector<double> _MeasureTranslationRadii(
-        const std::vector<double> &falloffs) const;
+    std::vector<double>
+    _MeasureRadii(const std::vector<double> &falloffs) const;
+    std::vector<double>
+    _MeasureTranslationRadii(const std::vector<double> &falloffs) const;
 
     std::vector<GfVec3d> _poses;
     std::vector<GfVec3d> _translations;
@@ -371,12 +407,12 @@ private:
 
 /// What RigExecRbfFitWidth settled on.
 struct RigExecRbfFitReport {
-    double width = 0.0;             ///< the rotation falloff it chose
-    double translationWidth = 0.0;  ///< and the translation one
-    bool perPose = false;           ///< per-pose widths or one shared
-    double scale = 0.0;             ///< the sweep step that won (0 = none)
-    double coverage = 0.0;          ///< the worst kernel sum between poses
-    double overshoot = 0.0;         ///< how far past 0..1 the weights went
+    double width = 0.0;            ///< the rotation falloff it chose
+    double translationWidth = 0.0; ///< and the translation one
+    bool perPose = false;          ///< per-pose widths or one shared
+    double scale = 0.0;            ///< the sweep step that won (0 = none)
+    double coverage = 0.0;         ///< the worst kernel sum between poses
+    double overshoot = 0.0;        ///< how far past 0..1 the weights went
 };
 
 /// Choose an interpolator's falloff width by what it has to do.
@@ -419,6 +455,6 @@ RigExecRbfSolver RigExecRbfFitWidth(const RigExecRbfSolverDesc &desc,
                                     RigExecRbfFitReport *report = nullptr,
                                     double floor = RigExecRbfCoverageFloor);
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_MATH_RBF_H
+#endif // RIGEXEC_MATH_RBF_H

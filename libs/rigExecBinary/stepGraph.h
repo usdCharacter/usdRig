@@ -66,46 +66,84 @@ inline std::string
 DomainName(uint8_t domain)
 {
     switch (fb::SlotDomain(domain)) {
-    case fb::SlotDomain::Avars: return "Avars";
-    case fb::SlotDomain::PoseBase: return "PoseBase";
-    case fb::SlotDomain::PoseFin: return "PoseFin";
-    case fb::SlotDomain::PosedM: return "PosedM";
-    case fb::SlotDomain::FinalMatrix: return "FinalMatrix";
-    case fb::SlotDomain::BaseMatrix: return "BaseMatrix";
-    case fb::SlotDomain::Aggregate: return "Aggregate";
-    case fb::SlotDomain::SolverPoints: return "SolverPoints";
-    case fb::SlotDomain::Candidates: return "Candidates";
-    case fb::SlotDomain::CommitTable: return "CommitTable";
-    case fb::SlotDomain::CommitDelta: return "CommitDelta";
-    case fb::SlotDomain::CommitStaging: return "CommitStaging";
-    case fb::SlotDomain::ConstraintDelta: return "ConstraintDelta";
-    case fb::SlotDomain::PropertyResult: return "PropertyResult";
-    case fb::SlotDomain::ChainBase: return "ChainBase";
-    case fb::SlotDomain::RevisionPacket: return "RevisionPacket";
+    case fb::SlotDomain::Avars:
+        return "Avars";
+    case fb::SlotDomain::PoseBase:
+        return "PoseBase";
+    case fb::SlotDomain::PoseFin:
+        return "PoseFin";
+    case fb::SlotDomain::PosedM:
+        return "PosedM";
+    case fb::SlotDomain::FinalMatrix:
+        return "FinalMatrix";
+    case fb::SlotDomain::BaseMatrix:
+        return "BaseMatrix";
+    case fb::SlotDomain::Aggregate:
+        return "Aggregate";
+    case fb::SlotDomain::SolverPoints:
+        return "SolverPoints";
+    case fb::SlotDomain::Candidates:
+        return "Candidates";
+    case fb::SlotDomain::CommitTable:
+        return "CommitTable";
+    case fb::SlotDomain::CommitDelta:
+        return "CommitDelta";
+    case fb::SlotDomain::CommitStaging:
+        return "CommitStaging";
+    case fb::SlotDomain::ConstraintDelta:
+        return "ConstraintDelta";
+    case fb::SlotDomain::PropertyResult:
+        return "PropertyResult";
+    case fb::SlotDomain::ChainBase:
+        return "ChainBase";
+    case fb::SlotDomain::RevisionPacket:
+        return "RevisionPacket";
     case fb::SlotDomain::RevisionTransforms:
         return "RevisionTransforms";
-    case fb::SlotDomain::RevisionOut: return "RevisionOut";
-    case fb::SlotDomain::RevisionDone: return "RevisionDone";
-    case fb::SlotDomain::ChainDirty: return "ChainDirty";
-    case fb::SlotDomain::ChainPoints: return "ChainPoints";
-    case fb::SlotDomain::DerivedOut: return "DerivedOut";
-    case fb::SlotDomain::WeightPacket: return "WeightPacket";
-    case fb::SlotDomain::WeightFrames: return "WeightFrames";
-    case fb::SlotDomain::PoseWeight: return "PoseWeight";
-    case fb::SlotDomain::Snapshots: return "Snapshots";
-    case fb::SlotDomain::FrameMatrix: return "FrameMatrix";
-    case fb::SlotDomain::Rest: return "Rest";
-    case fb::SlotDomain::Ladder: return "Ladder";
-    case fb::SlotDomain::SkinTopology: return "SkinTopology";
-    case fb::SlotDomain::WeightField: return "WeightField";
-    case fb::SlotDomain::WeightFramesBase: return "WeightFramesBase";
-    case fb::SlotDomain::SpaceValue: return "SpaceValue";
-    case fb::SlotDomain::SpaceLeaf: return "SpaceLeaf";
-    case fb::SlotDomain::DerivedBase: return "DerivedBase";
-    case fb::SlotDomain::ChainInput: return "ChainInput";
-    case fb::SlotDomain::ConstraintInputs: return "ConstraintInputs";
-    case fb::SlotDomain::SwitchFrame: return "SwitchFrame";
-    case fb::SlotDomain::RequiredStageFramesAdmission: return "RequiredStageFramesAdmission";
+    case fb::SlotDomain::RevisionOut:
+        return "RevisionOut";
+    case fb::SlotDomain::RevisionDone:
+        return "RevisionDone";
+    case fb::SlotDomain::ChainDirty:
+        return "ChainDirty";
+    case fb::SlotDomain::ChainPoints:
+        return "ChainPoints";
+    case fb::SlotDomain::DerivedOut:
+        return "DerivedOut";
+    case fb::SlotDomain::WeightPacket:
+        return "WeightPacket";
+    case fb::SlotDomain::WeightFrames:
+        return "WeightFrames";
+    case fb::SlotDomain::PoseWeight:
+        return "PoseWeight";
+    case fb::SlotDomain::Snapshots:
+        return "Snapshots";
+    case fb::SlotDomain::FrameMatrix:
+        return "FrameMatrix";
+    case fb::SlotDomain::Rest:
+        return "Rest";
+    case fb::SlotDomain::Ladder:
+        return "Ladder";
+    case fb::SlotDomain::SkinTopology:
+        return "SkinTopology";
+    case fb::SlotDomain::WeightField:
+        return "WeightField";
+    case fb::SlotDomain::WeightFramesBase:
+        return "WeightFramesBase";
+    case fb::SlotDomain::SpaceValue:
+        return "SpaceValue";
+    case fb::SlotDomain::SpaceLeaf:
+        return "SpaceLeaf";
+    case fb::SlotDomain::DerivedBase:
+        return "DerivedBase";
+    case fb::SlotDomain::ChainInput:
+        return "ChainInput";
+    case fb::SlotDomain::ConstraintInputs:
+        return "ConstraintInputs";
+    case fb::SlotDomain::SwitchFrame:
+        return "SwitchFrame";
+    case fb::SlotDomain::RequiredStageFramesAdmission:
+        return "RequiredStageFramesAdmission";
     }
     return "domain " + Text(domain);
 }
@@ -157,7 +195,10 @@ private:
     {
         return (uint64_t(domain) << 32) | begin;
     }
-    static uint8_t _Domain(uint64_t key) { return uint8_t(key >> 32); }
+    static uint8_t _Domain(uint64_t key)
+    {
+        return uint8_t(key >> 32);
+    }
 
     /// First slot (under the domain) -> one past the last slot.
     std::map<uint64_t, uint32_t> _runs;
@@ -168,9 +209,8 @@ template <class List>
 bool
 Contains(const List &list, int64_t value)
 {
-    return std::binary_search(
-        list.begin(), list.end(), value,
-        [](int64_t a, int64_t b) { return a < b; });
+    return std::binary_search(list.begin(), list.end(), value,
+                              [](int64_t a, int64_t b) { return a < b; });
 }
 
 /// Which side of their owner an edge list's entries must lie on.
@@ -182,8 +222,7 @@ enum class Side { Earlier, Later, Either };
 template <class List>
 std::string
 EdgeListError(const List &list, size_t count, int64_t self, Side side,
-              const std::string &owner, const char *edge,
-              const char *thing)
+              const std::string &owner, const char *edge, const char *thing)
 {
     for (size_t k = 0; k < list.size(); ++k) {
         const int64_t at = int64_t(list[k]);
@@ -229,7 +268,7 @@ InverseError(const Nodes &nodes, Forward forward, Backward backward,
     return std::string();
 }
 
-}  // namespace rigExecStepGraphDetail
+} // namespace rigExecStepGraphDetail
 
 /// Empty when no step of \p steps is of the reserved SnapshotFinals kind
 /// or reads or writes the reserved Snapshots domain; otherwise the first
@@ -239,8 +278,7 @@ InverseError(const Nodes &nodes, Forward forward, Backward backward,
 /// reads or writes.
 template <class Step, class RangeOf>
 std::string
-RigExecStepGraphReservedError(const std::vector<Step> &steps,
-                              RangeOf rangeOf)
+RigExecStepGraphReservedError(const std::vector<Step> &steps, RangeOf rangeOf)
 {
     const auto stepName = [](size_t s) {
         return "step " + rigExecStepGraphDetail::Text(int64_t(s));
@@ -305,12 +343,12 @@ RigExecStepGraphError(const std::vector<Step> &steps,
     // its other end.
     for (size_t s = 0; s < stepCount; ++s) {
         std::string why = detail::EdgeListError(
-            steps[s].preds, stepCount, int64_t(s), Side::Earlier,
-            stepName(s), "predecessor", "step");
+            steps[s].preds, stepCount, int64_t(s), Side::Earlier, stepName(s),
+            "predecessor", "step");
         if (why.empty()) {
-            why = detail::EdgeListError(steps[s].succs, stepCount,
-                                        int64_t(s), Side::Later, stepName(s),
-                                        "successor", "step");
+            why = detail::EdgeListError(steps[s].succs, stepCount, int64_t(s),
+                                        Side::Later, stepName(s), "successor",
+                                        "step");
         }
         if (!why.empty()) {
             return why;
@@ -326,8 +364,8 @@ RigExecStepGraphError(const std::vector<Step> &steps,
         std::string why = detail::InverseError(steps, preds, succs, "step",
                                                "predecessor", "successor");
         if (why.empty()) {
-            why = detail::InverseError(steps, succs, preds, "step",
-                                       "successor", "predecessor");
+            why = detail::InverseError(steps, succs, preds, "step", "successor",
+                                       "predecessor");
         }
         if (!why.empty()) {
             return why;
@@ -342,12 +380,14 @@ RigExecStepGraphError(const std::vector<Step> &steps,
             order.push_back(s);
             for (const auto predecessor : steps[s].preds) {
                 if (size_t(predecessor) >= s) {
-                    return stepName(s) + " has a predecessor outside canonical order";
+                    return stepName(s) +
+                           " has a predecessor outside canonical order";
                 }
             }
         }
         detail::WrittenRuns written;
-        for(const auto &range:excluded) written.Add(range);
+        for (const auto &range : excluded)
+            written.Add(range);
         for (const size_t s : order) {
             for (const auto &read : steps[s].reads) {
                 const RigExecStepGraphRange range = rangeOf(read);
@@ -425,8 +465,7 @@ RigExecStepGraphError(const std::vector<Step> &steps,
         if (why.empty()) {
             why = detail::EdgeListError(clusters[c].succs, clusterCount,
                                         int64_t(c), Side::Either,
-                                        clusterName(c), "successor",
-                                        "cluster");
+                                        clusterName(c), "successor", "cluster");
         }
         if (!why.empty()) {
             return why;
@@ -457,9 +496,9 @@ RigExecStepGraphError(const std::vector<Step> &steps,
             const int64_t from = int64_t(clusterOf[size_t(p)]);
             if (from != to && !Contains(clusterPreds, from)) {
                 return stepName(s) + " in cluster " + Text(to) +
-                       " depends on step " + Text(int64_t(p)) +
-                       " in cluster " + Text(from) + ", which cluster " +
-                       Text(to) + " does not depend on";
+                       " depends on step " + Text(int64_t(p)) + " in cluster " +
+                       Text(from) + ", which cluster " + Text(to) +
+                       " does not depend on";
             }
         }
     }
@@ -504,6 +543,6 @@ RigExecStepGraphError(const std::vector<Step> &steps,
     return std::string();
 }
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_BINARY_STEP_GRAPH_H
+#endif // RIGEXEC_BINARY_STEP_GRAPH_H

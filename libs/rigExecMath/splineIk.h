@@ -97,14 +97,23 @@ public:
     RigExecSplineIkCurve();
     explicit RigExecSplineIkCurve(const std::array<GfVec3d, 4> &cvs);
 
-    const std::array<GfVec3d, 4> &Cvs() const { return _cvs; }
+    const std::array<GfVec3d, 4> &Cvs() const
+    {
+        return _cvs;
+    }
 
     /// Total arc length over u in [0, 2].
-    double ArcLength() const { return _length; }
+    double ArcLength() const
+    {
+        return _length;
+    }
 
     /// True when the whole curve is shorter than RigExecSplineIkEpsilon
     /// (all four CVs coincident): there is no usable tangent anywhere.
-    bool IsDegenerate() const { return _length <= RigExecSplineIkEpsilon; }
+    bool IsDegenerate() const
+    {
+        return _length <= RigExecSplineIkEpsilon;
+    }
 
     /// Position and derivative dC/du at parameter u, clamped to [0, 2].
     /// Either output may be null.
@@ -121,8 +130,8 @@ public:
     /// is degenerate. When the derivative vanishes at the requested point
     /// (coincident CVs at one end) the tangent falls back to the chord to
     /// the nearest distinct point on the curve.
-    bool PointAtArcLength(
-        double distance, GfVec3d *position, GfVec3d *tangent) const;
+    bool PointAtArcLength(double distance, GfVec3d *position,
+                          GfVec3d *tangent) const;
 
 private:
     std::array<GfVec3d, 4> _cvs;
@@ -134,8 +143,8 @@ private:
 /// Which length the stretch ratio is measured against (see the file
 /// comment: they differ whenever the rest chain is not itself the curve).
 enum class RigExecSplineIkRestLength {
-    Curve,  ///< the rest curve's arc length: ratio == 1 at rest
-    Chain,  ///< the sum of rest segment lengths: chain spans the curve exactly
+    Curve, ///< the rest curve's arc length: ratio == 1 at rest
+    Chain, ///< the sum of rest segment lengths: chain spans the curve exactly
 };
 
 /// Everything measured at rest, all in the common space.
@@ -231,11 +240,11 @@ struct RigExecSplineIkJoint {
 
 /// The solve output.
 struct RigExecSplineIkResult {
-    std::array<GfVec3d, 4> cvs{};   ///< posed CVs the joints were laid on
-    double arcLength = 0.0;         ///< posed curve arc length
-    double ratio = 1.0;             ///< arcLength / restArcLength
-    double roll = 0.0;              ///< root twist about the chain axis + params.roll
-    double twist = 0.0;             ///< end twist - root twist + params.twist
+    std::array<GfVec3d, 4> cvs{}; ///< posed CVs the joints were laid on
+    double arcLength = 0.0;       ///< posed curve arc length
+    double ratio = 1.0;           ///< arcLength / restArcLength
+    double roll = 0.0;  ///< root twist about the chain axis + params.roll
+    double twist = 0.0; ///< end twist - root twist + params.twist
     std::vector<RigExecSplineIkJoint> joints;
 };
 
@@ -246,8 +255,7 @@ struct RigExecSplineIkResult {
 /// the available origins for every CV (one joint: all four CVs equal).
 RigExecSplineIkRest RigExecSplineIkMakeRest(
     const std::vector<RigExecPointFrame> &joints,
-    const RigExecPointFrame &rootControl,
-    const RigExecPointFrame &midControl,
+    const RigExecPointFrame &rootControl, const RigExecPointFrame &midControl,
     const RigExecPointFrame &endControl,
     const std::vector<double> &volumeWeights = {},
     RigExecSplineIkRestLength restLength = RigExecSplineIkRestLength::Curve);
@@ -255,11 +263,10 @@ RigExecSplineIkRest RigExecSplineIkMakeRest(
 /// Carries the rest CVs by the control frames as described in the file
 /// comment. Returns false (and rest CVs) if a rest control frame is
 /// singular.
-bool RigExecSplineIkPoseCvs(
-    const RigExecSplineIkRest &rest,
-    const RigExecSplineIkControls &controls,
-    const RigExecSplineIkParams &params,
-    std::array<GfVec3d, 4> *cvs);
+bool RigExecSplineIkPoseCvs(const RigExecSplineIkRest &rest,
+                            const RigExecSplineIkControls &controls,
+                            const RigExecSplineIkParams &params,
+                            std::array<GfVec3d, 4> *cvs);
 
 /// Twist of the rest->pose rotation of a frame about a unit \p axis, in
 /// radians in [-pi, pi], by swing-twist decomposition: with the rotation
@@ -268,10 +275,9 @@ bool RigExecSplineIkPoseCvs(
 /// by orthonormalising the rest->pose map first; a reflection is ignored
 /// (its proper rotation is used). Returns 0 for a singular rest frame, a
 /// zero axis, or a non-finite input.
-double RigExecSplineIkTwistAboutAxis(
-    const RigExecPointFrame &restFrame,
-    const RigExecPointFrame &posedFrame,
-    const GfVec3d &axis);
+double RigExecSplineIkTwistAboutAxis(const RigExecPointFrame &restFrame,
+                                     const RigExecPointFrame &posedFrame,
+                                     const GfVec3d &axis);
 
 /// Solves the chain. See the file comment for the model.
 ///
@@ -296,12 +302,11 @@ double RigExecSplineIkTwistAboutAxis(
 /// the swing/twist ambiguity inherent in the linear-twist model, which is
 /// why callers should hand in frames in the chain parent's space rather
 /// than world space.
-bool RigExecSolveSplineIk(
-    const RigExecSplineIkRest &rest,
-    const RigExecSplineIkControls &controls,
-    const RigExecSplineIkParams &params,
-    RigExecSplineIkResult *result);
+bool RigExecSolveSplineIk(const RigExecSplineIkRest &rest,
+                          const RigExecSplineIkControls &controls,
+                          const RigExecSplineIkParams &params,
+                          RigExecSplineIkResult *result);
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_MATH_SPLINE_IK_H
+#endif // RIGEXEC_MATH_SPLINE_IK_H

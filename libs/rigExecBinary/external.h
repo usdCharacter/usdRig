@@ -42,10 +42,24 @@ struct RigExecExternalPhasedPoints {
 
 // Plain API4 type IDs, pinned to the wire InputTag inventory.
 enum class RigExecExternalInputType : uint8_t {
-    Double = 0, Float = 1, Bool = 2, Int = 3, Matrix4d = 4, Token = 5,
-    Vec3d = 6, Vec3f = 7, IntArray = 8, FloatArray = 9,
-    DoubleArray = 10, Vec2fArray = 11, Vec3fArray = 12,
-    Vec3dArray = 13, Matrix4dArray = 14, TokenArray = 15, BoolArray = 16, Vec3i = 17
+    Double = 0,
+    Float = 1,
+    Bool = 2,
+    Int = 3,
+    Matrix4d = 4,
+    Token = 5,
+    Vec3d = 6,
+    Vec3f = 7,
+    IntArray = 8,
+    FloatArray = 9,
+    DoubleArray = 10,
+    Vec2fArray = 11,
+    Vec3fArray = 12,
+    Vec3dArray = 13,
+    Matrix4dArray = 14,
+    TokenArray = 15,
+    BoolArray = 16,
+    Vec3i = 17
 };
 
 /// One declared external input, in the plugin's declaration order. Type
@@ -86,16 +100,16 @@ struct RigExecExternalKernel {
     /// Decodes one revision's compiled data bytes into immutable state on each
     /// kernel registration. Null, with a reason, when the bytes are not ones this
     /// kernel can read; the revision then passes its points through.
-    std::shared_ptr<const void> (*prepare)(
-        const uint8_t *compiledRig, size_t compiledRigSize, std::string *error) = nullptr;
+    std::shared_ptr<const void> (*prepare)(const uint8_t *compiledRig,
+                                           size_t compiledRigSize,
+                                           std::string *error) = nullptr;
     /// Revises \p xyz (\p pointCount triples, the preceding revision's
     /// points) in place to the full-strength candidate; the runtime applies
     /// the mover's envelope afterwards. Must not change the point count or
     /// keep state between calls. False fails the mover for this frame, and
     /// the preceding points stand.
     bool (*apply)(const void *state, const uint8_t *frame, size_t frameSize,
-                  const RigExecExternalPhasedPoints *phased,
-                  size_t phasedCount,
+                  const RigExecExternalPhasedPoints *phased, size_t phasedCount,
                   const RigExecExternalInputValue *inputs, size_t inputCount,
                   float *xyz, size_t pointCount) = nullptr;
     /// Optional: apply with the provider values the binding reads as well,
@@ -127,14 +141,20 @@ struct RigExecExternalKernel {
                         size_t tickCount, float *xyz,
                         size_t pointCount) = nullptr;
 
-    bool IsSet() const { return prepare && (apply || applyWithProviders); }
-    bool IsWindowed() const { return captureWindow && applyWindow; }
+    bool IsSet() const
+    {
+        return prepare && (apply || applyWithProviders);
+    }
+    bool IsWindowed() const
+    {
+        return captureWindow && applyWindow;
+    }
 };
 
 /// The revision op a plugin mover is written with (RigExecRevisionOp::
 /// External, pinned by the format).
 inline constexpr uint8_t RigExecWireExternalRevisionOp = 16;
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_BINARY_EXTERNAL_H
+#endif // RIGEXEC_BINARY_EXTERNAL_H

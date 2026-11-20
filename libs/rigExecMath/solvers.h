@@ -37,8 +37,8 @@ struct RigExecFkChainElement {
 /// parent's moved space). The returned frame i is W_i applied to the
 /// control's rest landmarks. Elements must be topologically ordered
 /// (parentIndex < i).
-std::vector<RigExecPointFrame> RigExecSolveFkChain(
-    const std::vector<RigExecFkChainElement> &elements);
+std::vector<RigExecPointFrame>
+RigExecSolveFkChain(const std::vector<RigExecFkChainElement> &elements);
 
 /// rigExec:segmentScale "toChild" for an FK chain: each element is scaled
 /// along the bone to the next element by the bone's posed length over its
@@ -52,11 +52,11 @@ void RigExecScaleFkSegments(const std::vector<RigExecFkChainElement> &elements,
 struct RigExecTwoBoneIkParams {
     double upperLength = 1.0;
     double lowerLength = 1.0;
-    double stretch = 1.0;        ///< inputs:stretch in [0,1]: amount of
-                                 ///< stretching permitted beyond full reach
-    double softness = 0.0;       ///< inputs:softness: soft-reach distance
-    double preferredBendRadians = 0.0;  ///< fallback bend plane when the
-                                        ///< pole degenerates
+    double stretch = 1.0;  ///< inputs:stretch in [0,1]: amount of
+                           ///< stretching permitted beyond full reach
+    double softness = 0.0; ///< inputs:softness: soft-reach distance
+    double preferredBendRadians = 0.0; ///< fallback bend plane when the
+                                       ///< pole degenerates
     /// stretchPolicy "softDistance": segment lengths come from
     /// RigExecLimbSegmentLengths with \p limb instead of the
     /// uniformSegments stretch and fractional softness above.
@@ -95,10 +95,11 @@ struct RigExecTwoBoneIkParams {
 /// Shared so the dynamic computation and the baked program cannot drift:
 /// they measured separately before, and a difference here is an IK that
 /// solves one way in the viewport and another in a bake.
-void RigExecTwoBoneIkLengths(
-    const std::array<std::array<GfVec3d, 4>, 3> &restPoints,
-    const GfMatrix4d &space, double upperOffset, double lowerOffset,
-    double *upperLength, double *lowerLength);
+void
+RigExecTwoBoneIkLengths(const std::array<std::array<GfVec3d, 4>, 3> &restPoints,
+                        const GfMatrix4d &space, double upperOffset,
+                        double lowerOffset, double *upperLength,
+                        double *lowerLength);
 
 /// How much \p space lengthens the rest chain: spaced over raw length of
 /// both bones. Carries rest-unit distances (inputs:softDistance) into the
@@ -124,22 +125,22 @@ void RigExecSetTwoBoneLimbParams(
 /// defines the bend plane. rest[0..2] are the rest landmark sets of the
 /// root/mid/end results. Returns three frames: root, mid, end. End copies
 /// the effector orientation at the solved end position.
-std::array<RigExecPointFrame, 3> RigExecSolveTwoBoneIk(
-    const RigExecPointFrame &rootFrame,
-    const RigExecPointFrame &effectorFrame,
-    const RigExecPointFrame &poleFrame,
-    const std::array<std::array<GfVec3d, 4>, 3> &restPoints,
-    const RigExecTwoBoneIkParams &params);
+std::array<RigExecPointFrame, 3>
+RigExecSolveTwoBoneIk(const RigExecPointFrame &rootFrame,
+                      const RigExecPointFrame &effectorFrame,
+                      const RigExecPointFrame &poleFrame,
+                      const std::array<std::array<GfVec3d, 4>, 3> &restPoints,
+                      const RigExecTwoBoneIkParams &params);
 
 /// Rotation blend mode for RigExecBlendPointFrames.
 enum class RigExecRotationBlend {
-    ShortestArc,  ///< quaternion slerp with hemisphere alignment
+    ShortestArc, ///< quaternion slerp with hemisphere alignment
 };
 
 /// Scale blend mode for RigExecBlendPointFrames.
 enum class RigExecScaleBlend {
-    Log,     ///< per-axis blend of log(scale)
-    Linear,  ///< per-axis linear blend
+    Log,    ///< per-axis blend of log(scale)
+    Linear, ///< per-axis linear blend
 };
 
 /// Blends two frames sharing one rest landmark set (RigExecBlendPointFrames).
@@ -150,10 +151,8 @@ enum class RigExecScaleBlend {
 /// it (spec 4.2) -- while \p restPoints stays the basis the two inputs are
 /// MEASURED against. Null keeps both roles on \p restPoints.
 RigExecPointFrame RigExecBlendFrames(
-    const RigExecPointFrame &a,
-    const RigExecPointFrame &b,
-    const std::array<GfVec3d, 4> &restPoints,
-    double weight,
+    const RigExecPointFrame &a, const RigExecPointFrame &b,
+    const std::array<GfVec3d, 4> &restPoints, double weight,
     RigExecRotationBlend rotationBlend = RigExecRotationBlend::ShortestArc,
     RigExecScaleBlend scaleBlend = RigExecScaleBlend::Log,
     const std::array<GfVec3d, 4> *outRestPoints = nullptr);
@@ -168,18 +167,16 @@ RigExecPointFrame RigExecBlendFrames(
 /// carries winding information that endpoint frames alone cannot represent;
 /// fractional values support continuous animation through complete turns.
 std::vector<RigExecPointFrame> RigExecDistributeTwist(
-    const RigExecPointFrame &start,
-    const RigExecPointFrame &end,
+    const RigExecPointFrame &start, const RigExecPointFrame &end,
     const std::array<GfVec3d, 4> &startRest,
-    const std::array<GfVec3d, 4> &endRest,
-    const std::vector<double> &weights,
+    const std::array<GfVec3d, 4> &endRest, const std::vector<double> &weights,
     double twistTurns = 0.0);
 
 /// Weighted matrix movement kernel (RigExecMatrixMover):
 ///   p' = q + w (T q - q), 0 <= w <= 1,
 /// applied per point of an exact native points value.
-GfVec3d RigExecApplyWeightedMatrix(
-    const GfVec3d &point, const GfMatrix4d &transform, double weight);
+GfVec3d RigExecApplyWeightedMatrix(const GfVec3d &point,
+                                   const GfMatrix4d &transform, double weight);
 
 /// Skinning influence layout (RigExecSkinMover): UsdSkel's jointIndices /
 /// jointWeights arrangement over a table of influence matrices, elementSize
@@ -195,18 +192,20 @@ GfVec3d RigExecApplyWeightedMatrix(
 /// A view, not an owner: the pointers must outlive the call. Validate()
 /// checks the shape once so the per-point accessors can index unchecked.
 struct RigExecSkinLayout {
-    const GfMatrix4d *transforms = nullptr;  ///< one per influence
+    const GfMatrix4d *transforms = nullptr; ///< one per influence
     size_t transformCount = 0;
-    const int *indices = nullptr;            ///< pointCount * elementSize
-    const float *weights = nullptr;          ///< parallel to indices
-    size_t indexCount = 0;                   ///< length of indices/weights
-    size_t elementSize = 0;                  ///< influence slots per point
+    const int *indices = nullptr;   ///< pointCount * elementSize
+    const float *weights = nullptr; ///< parallel to indices
+    size_t indexCount = 0;          ///< length of indices/weights
+    size_t elementSize = 0;         ///< influence slots per point
     size_t pointCount = 0;
 
-    const GfMatrix4d &Transform(size_t point, size_t slot) const {
+    const GfMatrix4d &Transform(size_t point, size_t slot) const
+    {
         return transforms[indices[point * elementSize + slot]];
     }
-    float Weight(size_t point, size_t slot) const {
+    float Weight(size_t point, size_t slot) const
+    {
         return weights[point * elementSize + slot];
     }
 
@@ -225,13 +224,13 @@ struct RigExecSkinLayout {
 /// than pulled toward the origin (which is what the bare sum does), and an
 /// all-zero-weight point is left where it was. A sum above one is used as
 /// authored: the point is over-driven, not renormalized.
-GfVec3d RigExecApplyLinearBlendSkin(
-    const GfVec3d &point, const RigExecSkinLayout &layout, size_t i);
+GfVec3d RigExecApplyLinearBlendSkin(const GfVec3d &point,
+                                    const RigExecSkinLayout &layout, size_t i);
 
 /// Whole-array form of the above over \p layout.pointCount points. The
 /// caller has validated the layout. in/out may alias.
-void RigExecApplyLinearBlendSkin(
-    const GfVec3f *in, GfVec3f *out, const RigExecSkinLayout &layout);
+void RigExecApplyLinearBlendSkin(const GfVec3f *in, GfVec3f *out,
+                                 const RigExecSkinLayout &layout);
 
 /// Dual-quaternion skinning over the same layout (scale-aware DQS from
 /// dualQuat.h; scalar, there is no SIMD path for it yet):
@@ -267,15 +266,15 @@ void RigExecApplyLinearBlendSkin(
 /// weights summing to at most one the sign-corrected sum is always
 /// constructive, so this is only reachable through an over-driven sum
 /// that cancels the identity). in/out may alias.
-bool RigExecApplyDualQuatSkin(
-    const GfVec3f *in, GfVec3f *out, const RigExecSkinLayout &layout);
+bool RigExecApplyDualQuatSkin(const GfVec3f *in, GfVec3f *out,
+                              const RigExecSkinLayout &layout);
 
 /// The hoisted half of RigExecApplyDualQuatSkin: one RigExecScaledDualQuat
 /// per influence in layout order, then one trailing identity entry at
 /// index layout.transformCount that carries the weight complement. Built
 /// once per evaluation, never per point.
-std::vector<RigExecScaledDualQuat> RigExecSkinDualQuatPalette(
-    const RigExecSkinLayout &layout);
+std::vector<RigExecScaledDualQuat>
+RigExecSkinDualQuatPalette(const RigExecSkinLayout &layout);
 
 /// Array form against a palette the CALLER built with
 /// RigExecSkinDualQuatPalette, for a caller that splits the influences once
@@ -284,17 +283,19 @@ std::vector<RigExecScaledDualQuat> RigExecSkinDualQuatPalette(
 /// \p paletteSize entries built from the same influence table \p layout
 /// names; the three-argument form above is this one with a palette built on
 /// the spot. in/out may alias.
-bool RigExecApplyDualQuatSkin(
-    const GfVec3f *in, GfVec3f *out, const RigExecSkinLayout &layout,
-    const RigExecScaledDualQuat *palette, size_t paletteSize);
+bool RigExecApplyDualQuatSkin(const GfVec3f *in, GfVec3f *out,
+                              const RigExecSkinLayout &layout,
+                              const RigExecScaledDualQuat *palette,
+                              size_t paletteSize);
 
 /// Single-point form of RigExecApplyDualQuatSkin against a palette from
 /// RigExecSkinDualQuatPalette (scalar reference; allocates, so the array
 /// form does not call it per point). Returns false on a degenerate blend.
-bool RigExecApplyDualQuatSkin(
-    const GfVec3d &point, const RigExecScaledDualQuat *palette,
-    size_t paletteSize, const RigExecSkinLayout &layout, size_t i,
-    GfVec3d *out);
+bool RigExecApplyDualQuatSkin(const GfVec3d &point,
+                              const RigExecScaledDualQuat *palette,
+                              size_t paletteSize,
+                              const RigExecSkinLayout &layout, size_t i,
+                              GfVec3d *out);
 
 /// Euler application/decomposition order used by the FBX-equivalent
 /// constraints.  The named axes are applied from left to right in the same
@@ -399,10 +400,10 @@ RigExecPointFrame RigExecApplyRotationConstraint(
     const std::vector<RigExecConstraintSource> &sources,
     const RigExecRotationConstraintParams &params);
 
-RigExecPointFrame RigExecApplyScaleConstraint(
-    const RigExecPointFrame &input,
-    const std::vector<RigExecConstraintSource> &sources,
-    const RigExecScaleConstraintParams &params);
+RigExecPointFrame
+RigExecApplyScaleConstraint(const RigExecPointFrame &input,
+                            const std::vector<RigExecConstraintSource> &sources,
+                            const RigExecScaleConstraintParams &params);
 
 RigExecPointFrame RigExecApplyParentConstraint(
     const RigExecPointFrame &input,
@@ -427,9 +428,10 @@ struct RigExecAimConstraintParams {
     double weight = 1.0;
 };
 
-RigExecPointFrame RigExecApplyAimConstraint(
-    const RigExecPointFrame &input, const GfVec3d &targetPoint,
-    const RigExecAimConstraintParams &params);
+RigExecPointFrame
+RigExecApplyAimConstraint(const RigExecPointFrame &input,
+                          const GfVec3d &targetPoint,
+                          const RigExecAimConstraintParams &params);
 
 /// Aim-constraint kernel (RigExecAimConstraint): blends the authored aim
 /// landmark's direction toward the target while preserving the origin,
@@ -437,10 +439,11 @@ RigExecPointFrame RigExecApplyAimConstraint(
 /// direction is re-projected against the new aim (preserveInputUp).
 /// The weight is validated finite and clamped to [0, 1].
 /// aimLandmarkIndex is 1..3 per the constraint's authored rigExec:aimAxis.
-RigExecPointFrame RigExecApplyAimConstraint(
-    const RigExecPointFrame &input, const GfVec3d &targetOrigin,
-    double weight, int aimLandmarkIndex);
+RigExecPointFrame RigExecApplyAimConstraint(const RigExecPointFrame &input,
+                                            const GfVec3d &targetOrigin,
+                                            double weight,
+                                            int aimLandmarkIndex);
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_MATH_SOLVERS_H
+#endif // RIGEXEC_MATH_SOLVERS_H

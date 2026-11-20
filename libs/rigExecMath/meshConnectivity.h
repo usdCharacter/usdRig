@@ -32,7 +32,8 @@ struct RigExecMeshAdjacency {
     /// Whether this entry answers a mesh of \p n points. Content trust
     /// stays with the retainer (which compares the topology arrays); this
     /// is the fail-closed shape check for a hand-built entry.
-    bool Covers(size_t n) const {
+    bool Covers(size_t n) const
+    {
         return valid && pointCount == n && neighbors.size() == n;
     }
 };
@@ -47,13 +48,14 @@ struct RigExecMeshAdjacency {
 // does; a null range with size zero is the empty range. Bit-identical
 // to the vector form, which delegates to it.
 inline bool
-RigExecBuildMeshAdjacency(
-    size_t pointCount,
-    const int *faceVertexCounts, size_t faceVertexCountsSize,
-    const int *faceVertexIndices, size_t faceVertexIndicesSize,
-    RigExecMeshAdjacency *out)
+RigExecBuildMeshAdjacency(size_t pointCount, const int *faceVertexCounts,
+                          size_t faceVertexCountsSize,
+                          const int *faceVertexIndices,
+                          size_t faceVertexIndicesSize,
+                          RigExecMeshAdjacency *out)
 {
-    if (!out) return false;
+    if (!out)
+        return false;
     if ((faceVertexCountsSize > 0 && !faceVertexCounts) ||
         (faceVertexIndicesSize > 0 && !faceVertexIndices)) {
         return false;
@@ -67,14 +69,12 @@ RigExecBuildMeshAdjacency(
         for (int c = 0; c < faceCount; ++c) {
             const size_t ia = offset + c;
             const size_t ib = offset + (c + 1) % faceCount;
-            if (ia >= faceVertexIndicesSize ||
-                ib >= faceVertexIndicesSize) {
+            if (ia >= faceVertexIndicesSize || ib >= faceVertexIndicesSize) {
                 return false;
             }
             const int a = faceVertexIndices[ia];
             const int b = faceVertexIndices[ib];
-            if (a < 0 || b < 0 ||
-                static_cast<size_t>(a) >= pointCount ||
+            if (a < 0 || b < 0 || static_cast<size_t>(a) >= pointCount ||
                 static_cast<size_t>(b) >= pointCount) {
                 return false;
             }
@@ -95,11 +95,10 @@ RigExecBuildMeshAdjacency(
 }
 
 inline bool
-RigExecBuildMeshAdjacency(
-    size_t pointCount,
-    const std::vector<int> &faceVertexCounts,
-    const std::vector<int> &faceVertexIndices,
-    RigExecMeshAdjacency *out)
+RigExecBuildMeshAdjacency(size_t pointCount,
+                          const std::vector<int> &faceVertexCounts,
+                          const std::vector<int> &faceVertexIndices,
+                          RigExecMeshAdjacency *out)
 {
     return RigExecBuildMeshAdjacency(
         pointCount, faceVertexCounts.data(), faceVertexCounts.size(),
@@ -139,8 +138,8 @@ struct RigExecWrinkleMesh {
     /// of reading out of range below.
     bool Covers(size_t n, const std::vector<int> &faceCounts,
                 const std::vector<int> &faceIndices,
-                RigExecWrinkleTopology wantMode,
-                int wantNeighborDistance) const {
+                RigExecWrinkleTopology wantMode, int wantNeighborDistance) const
+    {
         return valid && pointCount == n && mode == wantMode &&
                neighborDistance == wantNeighborDistance &&
                neighbors.size() == n && counts == faceCounts &&
@@ -155,15 +154,13 @@ struct RigExecWrinkleMesh {
 // does: cloth pairs opposite corners across shared edges, surface struts
 // pairs graph-hop rings at \p neighborDistance (which cloth ignores).
 inline bool
-RigExecBuildWrinkleMesh(
-    size_t pointCount,
-    const std::vector<int> &counts,
-    const std::vector<int> &indices,
-    RigExecWrinkleTopology mode,
-    int neighborDistance,
-    RigExecWrinkleMesh *out)
+RigExecBuildWrinkleMesh(size_t pointCount, const std::vector<int> &counts,
+                        const std::vector<int> &indices,
+                        RigExecWrinkleTopology mode, int neighborDistance,
+                        RigExecWrinkleMesh *out)
 {
-    if (!out) return false;
+    if (!out)
+        return false;
     RigExecWrinkleMesh built;
     built.pointCount = pointCount;
     built.counts = counts;
@@ -200,8 +197,10 @@ RigExecBuildWrinkleMesh(
         }
         const int origin = indices[offset];
         if (count == 4 && faceIndex % 2) {
-            triangles.push_back({indices[offset], indices[offset + 1], indices[offset + 3]});
-            triangles.push_back({indices[offset + 1], indices[offset + 2], indices[offset + 3]});
+            triangles.push_back(
+                {indices[offset], indices[offset + 1], indices[offset + 3]});
+            triangles.push_back({indices[offset + 1], indices[offset + 2],
+                                 indices[offset + 3]});
         } else {
             for (int corner = 1; corner + 1 < count; ++corner) {
                 triangles.push_back({origin, indices[offset + corner],
@@ -275,19 +274,21 @@ RigExecBuildWrinkleMesh(
     }
     struct EdgeKeyLess {
         bool operator()(const RigExecWrinkleEdge &edge,
-                        const std::pair<int, int> &key) const {
+                        const std::pair<int, int> &key) const
+        {
             return edge.a < key.first ||
                    (edge.a == key.first && edge.b < key.second);
         }
         bool operator()(const std::pair<int, int> &key,
-                        const RigExecWrinkleEdge &edge) const {
+                        const RigExecWrinkleEdge &edge) const
+        {
             return key.first < edge.a ||
                    (key.first == edge.a && key.second < edge.b);
         }
     };
     const auto haveEdge = [&built](const std::pair<int, int> &pair) {
-        return std::binary_search(built.edges.begin(), built.edges.end(),
-                                  pair, EdgeKeyLess());
+        return std::binary_search(built.edges.begin(), built.edges.end(), pair,
+                                  EdgeKeyLess());
     };
     std::vector<std::pair<int, int>> bendingPairs;
     if (mode == RigExecWrinkleTopology::Cloth) {
@@ -311,9 +312,11 @@ RigExecBuildWrinkleMesh(
             distance[start] = 0;
             for (size_t cursor = 0; cursor < visited.size(); ++cursor) {
                 const int a = visited[cursor];
-                if (distance[a] == neighborDistance) continue;
+                if (distance[a] == neighborDistance)
+                    continue;
                 for (int b : built.neighbors[a]) {
-                    if (distance[b] >= 0) continue;
+                    if (distance[b] >= 0)
+                        continue;
                     distance[b] = distance[a] + 1;
                     visited.push_back(b);
                     if (distance[b] == neighborDistance && size_t(b) > start) {
@@ -321,7 +324,8 @@ RigExecBuildWrinkleMesh(
                     }
                 }
             }
-            for (int index : visited) distance[index] = -1;
+            for (int index : visited)
+                distance[index] = -1;
         }
     }
     std::sort(bendingPairs.begin(), bendingPairs.end());

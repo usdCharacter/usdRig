@@ -50,9 +50,9 @@ struct RigExecSparsityDecision {
 /// GO when \p byteCap holds at least \p minFrames full frames at
 /// (\p poseBytes + \p arenaBytes) each; whole-pose memo otherwise. Zero
 /// stored bytes is never GO: there is no measurement to decide from.
-RigExecSparsityDecision RigExecDecideSparsity(
-    size_t arenaBytes, size_t poseBytes, size_t byteCap,
-    size_t minFrames = kRigExecSparsityMinUsefulFrames);
+RigExecSparsityDecision
+RigExecDecideSparsity(size_t arenaBytes, size_t poseBytes, size_t byteCap,
+                      size_t minFrames = kRigExecSparsityMinUsefulFrames);
 
 /// The decision on the reference biped numbers at the default cap: GO, ~80
 /// full frames. A test holds this to GO so a cap change revisits the decision aloud
@@ -122,18 +122,19 @@ bool RigExecCanReuseRetainedPose(
 /// The provenance of a full evaluation over \p program: every cluster, every
 /// weight object the program reaches, and every constant region, with \p
 /// time as the first alias. Sorted and unique throughout.
-RigExecEntryProvenance RigExecFullEvalProvenance(
-    const RigExecBakedProgramImpl &program, UsdTimeCode time);
+RigExecEntryProvenance
+RigExecFullEvalProvenance(const RigExecBakedProgramImpl &program,
+                          UsdTimeCode time);
 
 /// Captures the retained frame state for a just-evaluated frame: the sampled
 /// inputs and standing overrides by value, plus the compiled rig, the
 /// compiled rig constant digest, and the cluster count the plan checks.
 /// Retains sampled inputs only; evaluation uses the normal frozen workspace.
-RigExecRetainedFrameState RigExecCaptureRetainedState(
-    const RigExecFrameInputs &inputs,
-    const std::vector<RigExecValueOverride> &overrides,
-    uint64_t compiledRigSignature, size_t clusterCount,
-    uint64_t constantDigest = 0);
+RigExecRetainedFrameState
+RigExecCaptureRetainedState(const RigExecFrameInputs &inputs,
+                            const std::vector<RigExecValueOverride> &overrides,
+                            uint64_t compiledRigSignature, size_t clusterCount,
+                            uint64_t constantDigest = 0);
 
 // Candidate lookup: which retained frame a request reuses.
 
@@ -147,8 +148,8 @@ public:
     RigExecSparseCandidateIndex() = default;
 
     RigExecSparseCandidateIndex(const RigExecSparseCandidateIndex &) = delete;
-    RigExecSparseCandidateIndex &operator=(
-        const RigExecSparseCandidateIndex &) = delete;
+    RigExecSparseCandidateIndex &
+    operator=(const RigExecSparseCandidateIndex &) = delete;
 
     /// Records that \p key was published for (\p compiledRig, \p time).
     void NotePublished(uint64_t compiledRig, UsdTimeCode time,
@@ -175,8 +176,8 @@ private:
 /// Drops every cached frame and memoized selection of \p compiledRigSignature,
 /// returning cached frames dropped (memo drops are counted on the memo).
 size_t RigExecInvalidateCompiledRig(RigExecFrameCache &cache,
-                             RigExecTaskListCache &memo,
-                             uint64_t compiledRigSignature);
+                                    RigExecTaskListCache &memo,
+                                    uint64_t compiledRigSignature);
 
 /// Routes \p notice through the baked capture index: a hit drops the
 /// compiled rig's frames and memo and answers true; a miss leaves every cached
@@ -216,9 +217,9 @@ struct RigExecShadowVerdict {
 
 /// Compares \p cached against a live evaluation through RigExecComparePoses.
 /// A null or invalid live pose is unverified, not a match.
-RigExecShadowVerdict RigExecVerifyHitWithLive(
-    const RigExecRigPose &cached, RigExecLiveRunner live);
+RigExecShadowVerdict RigExecVerifyHitWithLive(const RigExecRigPose &cached,
+                                              RigExecLiveRunner live);
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_FRAME_CACHE_SPARSITY_H
+#endif // RIGEXEC_FRAME_CACHE_SPARSITY_H

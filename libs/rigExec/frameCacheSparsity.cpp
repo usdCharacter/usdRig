@@ -28,8 +28,7 @@ RigExecDecideSparsity(size_t arenaBytes, size_t poseBytes, size_t byteCap,
         return decision;
     }
     decision.fullFramesAtCap = byteCap / fullBytes;
-    decision.go = decision.fullFramesAtCap >= minFrames &&
-                  minFrames > 0;
+    decision.go = decision.fullFramesAtCap >= minFrames && minFrames > 0;
     char memo[256];
     std::snprintf(memo, sizeof(memo),
                   "sparsity %s: full frame %zu B (arena %zu + pose %zu) "
@@ -88,8 +87,7 @@ _ArrayBytes(const VtValue &value)
     }
     if (value.IsHolding<VtStringArray>()) {
         size_t total = 0;
-        for (const std::string &s :
-             value.UncheckedGet<VtStringArray>()) {
+        for (const std::string &s : value.UncheckedGet<VtStringArray>()) {
             total += s.size();
         }
         return total;
@@ -100,7 +98,7 @@ _ArrayBytes(const VtValue &value)
     return sizeof(VtValue);
 }
 
-}  // namespace
+} // namespace
 
 size_t
 RigExecRetainedSourcesBytes(const RigExecRetainedFrameState &state)
@@ -122,7 +120,8 @@ RigExecRetainedSourcesBytes(const RigExecRetainedFrameState &state)
         total += ordered ? sizeof(bool)
                          : sampled.path.GetString().size() + sizeof(bool);
         // A verbatim copy of a static table entry shares the table's payload.
-        const bool fromTable = table && sampled.staticSample >= 0 &&
+        const bool fromTable =
+            table && sampled.staticSample >= 0 &&
             size_t(sampled.staticSample) < table->samples.size() &&
             table->samples[size_t(sampled.staticSample)].path == sampled.path;
         if (sampled.hasValue && !fromTable) {
@@ -142,8 +141,7 @@ RigExecRetainedSourcesBytes(const RigExecRetainedFrameState &state)
 }
 
 bool
-RigExecSameSourceValue(const VtValue &a, bool aHas, const VtValue &b,
-                       bool bHas)
+RigExecSameSourceValue(const VtValue &a, bool aHas, const VtValue &b, bool bHas)
 {
     if (aHas != bHas) {
         return false;
@@ -171,9 +169,10 @@ RigExecSameUpstream(const std::vector<RigExecUpstreamValue> &a,
 }
 
 std::vector<RigExecControlId>
-RigExecChangedControls(const RigExecRetainedFrameState &cached,
-                       const RigExecFrameInputs &requested,
-                       const std::vector<RigExecValueOverride> &requestedOverrides)
+RigExecChangedControls(
+    const RigExecRetainedFrameState &cached,
+    const RigExecFrameInputs &requested,
+    const std::vector<RigExecValueOverride> &requestedOverrides)
 {
     // First sample per path wins on both sides, matching FrameInputs::Find.
     std::map<SdfPath, const RigExecSampledInput *> before, after;
@@ -189,10 +188,9 @@ RigExecChangedControls(const RigExecRetainedFrameState &cached,
         if (found == after.end()) {
             changed.push_back(RigExecControlIdForPath(kv.first));
         } else if (kv.second->valueBlocked != found->second->valueBlocked ||
-                   !RigExecSameSourceValue(kv.second->value,
-                                           kv.second->hasValue,
-                                           found->second->value,
-                                           found->second->hasValue)) {
+                   !RigExecSameSourceValue(
+                       kv.second->value, kv.second->hasValue,
+                       found->second->value, found->second->hasValue)) {
             changed.push_back(RigExecControlIdForPath(kv.first));
         }
     }
@@ -203,25 +201,34 @@ RigExecChangedControls(const RigExecRetainedFrameState &cached,
     }
     // Layout sources have their own row/key routes: a same-path resolved
     // ordinary sample must not shadow a raw layout read.
-    const auto &oldRows=cached.inputs.layoutLeaves;
-    const auto &newRows=requested.layoutLeaves;
-    const auto &oldPaths=cached.inputs.layoutSourcePaths;
-    const auto &newPaths=requested.layoutSourcePaths;
-    const size_t rowCount=std::max(oldRows.size(),newRows.size());
-    for(size_t row=0;row<rowCount;++row) {
-        const size_t oldCount=row<oldRows.size()?oldRows[row].size():0;
-        const size_t newCount=row<newRows.size()?newRows[row].size():0;
-        const size_t oldPathCount=row<oldPaths.size()?oldPaths[row].size():0;
-        const size_t newPathCount=row<newPaths.size()?newPaths[row].size():0;
-        const size_t count=std::max(std::max(oldCount,newCount),std::max(oldPathCount,newPathCount));
-        for(size_t key=0;key<count;++key) {
-            const bool haveOld=key<oldCount && key<oldPathCount;
-            const bool haveNew=key<newCount && key<newPathCount;
-            const bool same=haveOld && haveNew && oldPaths[row][key]==newPaths[row][key] &&
-                RigExecExactSourceValueEqual(oldRows[row][key],newRows[row][key]);
-            if(!same) {
-                if(key<oldPathCount) changed.push_back(RigExecControlIdForPath(oldPaths[row][key]));
-                if(key<newPathCount) changed.push_back(RigExecControlIdForPath(newPaths[row][key]));
+    const auto &oldRows = cached.inputs.layoutLeaves;
+    const auto &newRows = requested.layoutLeaves;
+    const auto &oldPaths = cached.inputs.layoutSourcePaths;
+    const auto &newPaths = requested.layoutSourcePaths;
+    const size_t rowCount = std::max(oldRows.size(), newRows.size());
+    for (size_t row = 0; row < rowCount; ++row) {
+        const size_t oldCount = row < oldRows.size() ? oldRows[row].size() : 0;
+        const size_t newCount = row < newRows.size() ? newRows[row].size() : 0;
+        const size_t oldPathCount =
+            row < oldPaths.size() ? oldPaths[row].size() : 0;
+        const size_t newPathCount =
+            row < newPaths.size() ? newPaths[row].size() : 0;
+        const size_t count = std::max(std::max(oldCount, newCount),
+                                      std::max(oldPathCount, newPathCount));
+        for (size_t key = 0; key < count; ++key) {
+            const bool haveOld = key < oldCount && key < oldPathCount;
+            const bool haveNew = key < newCount && key < newPathCount;
+            const bool same = haveOld && haveNew &&
+                              oldPaths[row][key] == newPaths[row][key] &&
+                              RigExecExactSourceValueEqual(oldRows[row][key],
+                                                           newRows[row][key]);
+            if (!same) {
+                if (key < oldPathCount)
+                    changed.push_back(
+                        RigExecControlIdForPath(oldPaths[row][key]));
+                if (key < newPathCount)
+                    changed.push_back(
+                        RigExecControlIdForPath(newPaths[row][key]));
             }
         }
     }
@@ -264,18 +271,16 @@ RigExecChangedControls(const RigExecRetainedFrameState &cached,
     std::map<_Key, const RigExecValueOverride *> oldOvr, newOvr;
     for (const RigExecValueOverride &o : cached.overrides) {
         oldOvr[_Key(o.prim.GetString(), o.computation.GetString(),
-                   o.attribute.GetString())] = &o;
+                    o.attribute.GetString())] = &o;
     }
     for (const RigExecValueOverride &o : requestedOverrides) {
         newOvr[_Key(o.prim.GetString(), o.computation.GetString(),
-                   o.attribute.GetString())] = &o;
+                    o.attribute.GetString())] = &o;
     }
     for (const auto &kv : oldOvr) {
         const auto found = newOvr.find(kv.first);
-        if (found == newOvr.end() ||
-            found->second->value != kv.second->value) {
-            changed.push_back(
-                RigExecControlIdForOverride(*kv.second));
+        if (found == newOvr.end() || found->second->value != kv.second->value) {
+            changed.push_back(RigExecControlIdForOverride(*kv.second));
         }
     }
     for (const auto &kv : newOvr) {
@@ -318,14 +323,14 @@ _SameVaryingRevisionLeaves(const RigExecFrameInputs &a,
     return true;
 }
 
-}  // namespace
+} // namespace
 
 bool
 RigExecCanReuseRetainedPose(const RigExecOutputAffectedIndex &index,
-                           const RigExecRetainedFrameState &cached,
-                           uint64_t requestCompiledRig,
-                           const RigExecFrameInputs &requested,
-                           const std::vector<RigExecValueOverride> &overrides)
+                            const RigExecRetainedFrameState &cached,
+                            uint64_t requestCompiledRig,
+                            const RigExecFrameInputs &requested,
+                            const std::vector<RigExecValueOverride> &overrides)
 {
     // The external inputs the control digest folds have no control id the
     // index routes, so any difference among them misses, like upstream.
@@ -347,22 +352,29 @@ RigExecCanReuseRetainedPose(const RigExecOutputAffectedIndex &index,
             return false;
         }
     }
-    const auto completeLayouts=[](const RigExecFrameInputs &inputs) {
-        if(inputs.layoutLeaves.size()!=inputs.layoutSourcePaths.size()) return false;
-        for(size_t row=0;row<inputs.layoutLeaves.size();++row) {
-            if(inputs.layoutLeaves[row].size()!=inputs.layoutSourcePaths[row].size()) return false;
-            for(const auto &path:inputs.layoutSourcePaths[row]) if(path.IsEmpty()) return false;
+    const auto completeLayouts = [](const RigExecFrameInputs &inputs) {
+        if (inputs.layoutLeaves.size() != inputs.layoutSourcePaths.size())
+            return false;
+        for (size_t row = 0; row < inputs.layoutLeaves.size(); ++row) {
+            if (inputs.layoutLeaves[row].size() !=
+                inputs.layoutSourcePaths[row].size())
+                return false;
+            for (const auto &path : inputs.layoutSourcePaths[row])
+                if (path.IsEmpty())
+                    return false;
         }
         return true;
     };
-    if(!completeLayouts(cached.inputs) || !completeLayouts(requested)) return false;
+    if (!completeLayouts(cached.inputs) || !completeLayouts(requested))
+        return false;
     auto dirty = index.AffectedByControls(
         RigExecChangedControls(cached, requested, overrides));
     if (requested.time != cached.inputs.time) {
         dirty.Union(index.Always());
         dirty.Union(index.Varying());
     }
-    if (!overrides.empty()) dirty.Union(index.Override());
+    if (!overrides.empty())
+        dirty.Union(index.Override());
     return !dirty.Any();
 }
 
@@ -381,12 +393,10 @@ RigExecFullEvalProvenance(const RigExecBakedProgramImpl &program,
             provenance.weightReads.push_back(object.path.GetString());
         }
     }
-    std::sort(provenance.weightReads.begin(),
-              provenance.weightReads.end());
-    provenance.weightReads.erase(
-        std::unique(provenance.weightReads.begin(),
-                    provenance.weightReads.end()),
-        provenance.weightReads.end());
+    std::sort(provenance.weightReads.begin(), provenance.weightReads.end());
+    provenance.weightReads.erase(std::unique(provenance.weightReads.begin(),
+                                             provenance.weightReads.end()),
+                                 provenance.weightReads.end());
     for (size_t b = 0; b < program.avarConstantBindings.size(); ++b) {
         const uint64_t region = RigExecConstantRegionForBinding(b);
         if (provenance.constantRegions.empty() ||
@@ -394,16 +404,15 @@ RigExecFullEvalProvenance(const RigExecBakedProgramImpl &program,
             provenance.constantRegions.push_back(region);
         }
     }
-    provenance.aliasTimes.push_back(
-        time.IsDefault() ? 0.0 : time.GetValue());
+    provenance.aliasTimes.push_back(time.IsDefault() ? 0.0 : time.GetValue());
     return provenance;
 }
 
 RigExecRetainedFrameState
-RigExecCaptureRetainedState(
-    const RigExecFrameInputs &inputs,
-    const std::vector<RigExecValueOverride> &overrides,
-    uint64_t compiledRigSignature, size_t clusterCount, uint64_t constantDigest)
+RigExecCaptureRetainedState(const RigExecFrameInputs &inputs,
+                            const std::vector<RigExecValueOverride> &overrides,
+                            uint64_t compiledRigSignature, size_t clusterCount,
+                            uint64_t constantDigest)
 {
     RigExecRetainedFrameState state;
     state.inputs = inputs;
@@ -415,8 +424,9 @@ RigExecCaptureRetainedState(
 }
 
 void
-RigExecSparseCandidateIndex::NotePublished(
-    uint64_t compiledRig, UsdTimeCode time, const RigExecFrameCacheKey &key)
+RigExecSparseCandidateIndex::NotePublished(uint64_t compiledRig,
+                                           UsdTimeCode time,
+                                           const RigExecFrameCacheKey &key)
 {
     std::lock_guard<std::mutex> lock(_mutex);
     _map[std::make_pair(compiledRig, time)] = key;
@@ -424,7 +434,7 @@ RigExecSparseCandidateIndex::NotePublished(
 
 bool
 RigExecSparseCandidateIndex::Find(uint64_t compiledRig, UsdTimeCode time,
-                                 RigExecFrameCacheKey *key) const
+                                  RigExecFrameCacheKey *key) const
 {
     if (!key) {
         return false;
@@ -460,8 +470,9 @@ RigExecSparseCandidateIndex::Size() const
 }
 
 size_t
-RigExecInvalidateCompiledRig(RigExecFrameCache &cache, RigExecTaskListCache &memo,
-                       uint64_t compiledRigSignature)
+RigExecInvalidateCompiledRig(RigExecFrameCache &cache,
+                             RigExecTaskListCache &memo,
+                             uint64_t compiledRigSignature)
 {
     memo.InvalidateCompiledRig(compiledRigSignature);
     return cache.EvictCompiledRig(compiledRigSignature);
@@ -487,8 +498,7 @@ RigExecFrameCacheVerifyRequested()
 }
 
 RigExecShadowVerdict
-RigExecVerifyHitWithLive(const RigExecRigPose &cached,
-                         RigExecLiveRunner live)
+RigExecVerifyHitWithLive(const RigExecRigPose &cached, RigExecLiveRunner live)
 {
     RigExecShadowVerdict verdict;
     verdict.poseToServe = cached;
@@ -516,4 +526,4 @@ RigExecVerifyHitWithLive(const RigExecRigPose &cached,
     return verdict;
 }
 
-}  // namespace rigExec
+} // namespace rigExec

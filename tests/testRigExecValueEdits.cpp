@@ -45,18 +45,19 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
 // A conservative untracked edit runs every active operation once, including
 // source operations. The census reports actual bodies and occupied clusters.
-void CheckWholeExecution(const RigExecRigEvaluator &evaluator)
+void
+CheckWholeExecution(const RigExecRigEvaluator &evaluator)
 {
     const auto &B = evaluator.GetBakedProgram()->GetStepGraph();
     std::set<uint32_t> clusters;
@@ -66,7 +67,8 @@ void CheckWholeExecution(const RigExecRigEvaluator &evaluator)
         CHECK(B.closedSteps.Test(int(i)));
         CHECK(i < B.opExecution.ran.size() && B.opExecution.ran[i]);
         CHECK(i < B.opGraph.opClusters.size());
-        if (i < B.opGraph.opClusters.size()) clusters.insert(B.opGraph.opClusters[i]);
+        if (i < B.opGraph.opClusters.size())
+            clusters.insert(B.opGraph.opClusters[i]);
     }
     CHECK(B.closedSteps.Count() == B.opGraph.ops.size());
     CHECK(B.lastClosedSteps == B.opGraph.ops.size());
@@ -94,11 +96,16 @@ const char *
 DispositionName(RigExecNoticeDisposition d)
 {
     switch (d) {
-    case RigExecNoticeDisposition::None: return "None";
-    case RigExecNoticeDisposition::Patched: return "Patched";
-    case RigExecNoticeDisposition::StampBumped: return "StampBumped";
-    case RigExecNoticeDisposition::Edited: return "Edited";
-    case RigExecNoticeDisposition::Stale: return "Stale";
+    case RigExecNoticeDisposition::None:
+        return "None";
+    case RigExecNoticeDisposition::Patched:
+        return "Patched";
+    case RigExecNoticeDisposition::StampBumped:
+        return "StampBumped";
+    case RigExecNoticeDisposition::Edited:
+        return "Edited";
+    case RigExecNoticeDisposition::Stale:
+        return "Stale";
     }
     return "?";
 }
@@ -218,12 +225,11 @@ RunCase(const Case &c)
     if (!c.expectPath.IsEmpty()) {
         const std::vector<SdfPath> &paths =
             evaluator.GetLastNoticePatchedPaths();
-        const bool named = std::find(paths.begin(), paths.end(),
-                                     c.expectPath) != paths.end();
+        const bool named =
+            std::find(paths.begin(), paths.end(), c.expectPath) != paths.end();
         if (!named) {
             std::printf("FAIL %s: %s is not among the %zu read path(s)\n",
-                        c.name.c_str(), c.expectPath.GetText(),
-                        paths.size());
+                        c.name.c_str(), c.expectPath.GetText(), paths.size());
         }
         CHECK(named);
     }
@@ -253,7 +259,8 @@ RunCase(const Case &c)
     // And the frames after it: the edit was consumed once, and the program
     // goes on agreeing with a fresh one at the held time and at a new one.
     const RigExecRigPose held = evaluator.Evaluate(time);
-    if (c.expectWhole) CHECK(!B.closureFull);
+    if (c.expectWhole)
+        CHECK(!B.closureFull);
     CHECK(held.comparisonMismatches == 0);
     CheckSamePose(c.name + " (held frame)", FreshPose(stage, c.rig, time),
                   held);
@@ -268,8 +275,8 @@ RunCase(const Case &c)
 
 const SdfPath kBiped("/Biped/Rig");
 const SdfPath kHips("/Biped/Rig/Main/Shot/Aux/Controls/M_Body");
-const SdfPath kMover(
-    "/Biped/Rig/Movers/ballRoll_l_down_w/L_BallRoll_down_w_4_multiply");
+const SdfPath
+    kMover("/Biped/Rig/Movers/ballRoll_l_down_w/L_BallRoll_down_w_4_multiply");
 const SdfPath kCornea("/Biped/Materials/cornea_mat");
 constexpr double kHeld = 10.0;
 
@@ -379,16 +386,14 @@ TestAKeyedRestSampleReachesItsSolver(const std::string &examplesDir)
         UsdEditContext session(stage, stage->GetSessionLayer());
         const UsdAttribute a =
             stage->GetPrimAtPath(kIkSpaceKnee)
-                .CreateAttribute(TfToken("rest:ty"),
-                                 SdfValueTypeNames->Double);
+                .CreateAttribute(TfToken("rest:ty"), SdfValueTypeNames->Double);
         CHECK(a.Set(0.0, UsdTimeCode(1.0)));
         CHECK(a.Set(0.25, UsdTimeCode(5.0)));
         CHECK(a.Set(0.5, UsdTimeCode(10.0)));
     };
     c.edit = [](const UsdStageRefPtr &stage) {
         UsdEditContext session(stage, stage->GetSessionLayer());
-        CHECK(Attr(stage, kIkSpaceKnee, "rest:ty")
-                  .Set(0.75, UsdTimeCode(5.0)));
+        CHECK(Attr(stage, kIkSpaceKnee, "rest:ty").Set(0.75, UsdTimeCode(5.0)));
     };
     RunCase(c);
 }
@@ -431,9 +436,8 @@ AimStage(const std::string &examplesDir)
 void
 KeyAimWeight(const UsdStageRefPtr &stage)
 {
-    const UsdAttribute w =
-        stage->GetPrimAtPath(kAim).CreateAttribute(
-            TfToken("inputs:defaultWeight"), SdfValueTypeNames->Float);
+    const UsdAttribute w = stage->GetPrimAtPath(kAim).CreateAttribute(
+        TfToken("inputs:defaultWeight"), SdfValueTypeNames->Float);
     CHECK(w.Set(1.0f, UsdTimeCode(1.0)));
     CHECK(w.Set(0.5f, UsdTimeCode(100.0)));
 }
@@ -491,15 +495,13 @@ struct _InvalidationProbe : public TfWeakBase {
 // The weight declares no read phase, so it reads the clamp chain's BASE:
 // the driver as authored, published on the weight by the chain's run.
 void
-TestARetargetedWalkRebuildsBeforeItsUpstreamEdit(
-    const std::string &examplesDir)
+TestARetargetedWalkRebuildsBeforeItsUpstreamEdit(const std::string &examplesDir)
 {
     const SdfPath drivers = kAimRig.AppendChild(TfToken("Drivers"));
     const SdfPath driverA = drivers.AppendProperty(TfToken("drv:a"));
     const SdfPath driverB = drivers.AppendProperty(TfToken("drv:b"));
     const auto setup = [drivers](const UsdStageRefPtr &stage) {
-        const UsdPrim prim =
-            stage->DefinePrim(drivers, TfToken("Scope"));
+        const UsdPrim prim = stage->DefinePrim(drivers, TfToken("Scope"));
         const UsdAttribute a =
             prim.CreateAttribute(TfToken("drv:a"), SdfValueTypeNames->Float);
         CHECK(a.Set(0.9f, UsdTimeCode(1.0)));
@@ -520,21 +522,25 @@ TestARetargetedWalkRebuildsBeforeItsUpstreamEdit(
                                            (name[4] == 'a' ? "A" : "B"))),
                 TfToken("RigExecFloatMathMover"));
             clamp.ApplyAPI(TfToken("RigExecMoverAPI"));
-            clamp.CreateAttribute(TfToken("rigExec:operation"),
-                                  SdfValueTypeNames->Token)
+            clamp
+                .CreateAttribute(TfToken("rigExec:operation"),
+                                 SdfValueTypeNames->Token)
                 .Set(TfToken("clamp"));
-            clamp.CreateAttribute(TfToken("inputs:min"),
-                                  SdfValueTypeNames->Float).Set(0.0f);
+            clamp
+                .CreateAttribute(TfToken("inputs:min"),
+                                 SdfValueTypeNames->Float)
+                .Set(0.0f);
             // Below the drivers' values at the held time, so the chain's
             // base and final differ there.
-            clamp.CreateAttribute(TfToken("inputs:max"),
-                                  SdfValueTypeNames->Float).Set(0.5f);
+            clamp
+                .CreateAttribute(TfToken("inputs:max"),
+                                 SdfValueTypeNames->Float)
+                .Set(0.5f);
             clamp.CreateRelationship(TfToken("rigExec:moves"))
                 .SetTargets({drivers.AppendProperty(TfToken(name))});
         }
-        const UsdAttribute w =
-            stage->GetPrimAtPath(kAim).CreateAttribute(
-                TfToken("inputs:defaultWeight"), SdfValueTypeNames->Float);
+        const UsdAttribute w = stage->GetPrimAtPath(kAim).CreateAttribute(
+            TfToken("inputs:defaultWeight"), SdfValueTypeNames->Float);
         CHECK(w.SetConnections({drivers.AppendProperty(TfToken("drv:a"))}));
     };
     UsdStageRefPtr stage = UsdStage::Open(AimStage(examplesDir));
@@ -548,9 +554,9 @@ TestARetargetedWalkRebuildsBeforeItsUpstreamEdit(
 
     _InvalidationProbe probe;
     probe.evaluator = &evaluator;
-    TfNotice::Key key = TfNotice::Register(TfCreateWeakPtr(&probe),
-                                           &_InvalidationProbe::Handle,
-                                           UsdStageWeakPtr(stage));
+    TfNotice::Key key =
+        TfNotice::Register(TfCreateWeakPtr(&probe), &_InvalidationProbe::Handle,
+                           UsdStageWeakPtr(stage));
     CHECK(Attr(stage, kAim, "inputs:defaultWeight").SetConnections({driverB}));
     TfNotice::Revoke(key);
     // The walk resolved through a chain every frame, so nothing about its
@@ -591,8 +597,8 @@ TestARetargetedWalkRebuildsBeforeItsUpstreamEdit(
     CHECK(stage->GetAttributeAtPath(driverA).Set(0.6f, UsdTimeCode(100.0)));
     const RigExecRigPose stale = evaluator.Evaluate(time);
     CHECK(stale.comparisonMismatches == 0);
-    CheckSamePose("old hop after the retarget",
-                  FreshPose(stage, kAimRig, time), stale);
+    CheckSamePose("old hop after the retarget", FreshPose(stage, kAimRig, time),
+                  stale);
 }
 
 // Layer metadata is read by every time conversion and indexed nowhere. The
@@ -656,14 +662,14 @@ void
 ConnectClampToSettings(const UsdStageRefPtr &stage)
 {
     const UsdPrim settings = stage->DefinePrim(kSettings, TfToken("Scope"));
-    const UsdAttribute gain = settings.CreateAttribute(
-        TfToken("maxGain"), SdfValueTypeNames->Float);
+    const UsdAttribute gain =
+        settings.CreateAttribute(TfToken("maxGain"), SdfValueTypeNames->Float);
     CHECK(gain.Set(1.0f));
-    CHECK(settings.CreateAttribute(TfToken("otherGain"),
-                                   SdfValueTypeNames->Float)
-              .Set(1.0f));
-    CHECK(Attr(stage, kClampGain, "inputs:max")
-              .SetConnections({gain.GetPath()}));
+    CHECK(
+        settings.CreateAttribute(TfToken("otherGain"), SdfValueTypeNames->Float)
+            .Set(1.0f));
+    CHECK(
+        Attr(stage, kClampGain, "inputs:max").SetConnections({gain.GetPath()}));
 }
 
 // A property-chain mover's input connected to a property on a prim the bake
@@ -724,8 +730,7 @@ TestAConnectedChainSourceIsReported(const std::string &examplesDir)
                 DispositionName(evaluator.GetLastNoticeDisposition()));
     CHECK(evaluator.GetLastNoticeDisposition() !=
           RigExecNoticeDisposition::Edited);
-    CheckSamePose("chain source retarget",
-                  FreshPose(stage, kPropMathRig, time),
+    CheckSamePose("chain source retarget", FreshPose(stage, kPropMathRig, time),
                   evaluator.Evaluate(time));
 
     // Now the sibling is the source, and the old one is read by nothing.
@@ -741,12 +746,11 @@ TestAConnectedChainSourceIsReported(const std::string &examplesDir)
     CHECK(evaluator.GetLastNoticeDisposition() ==
           RigExecNoticeDisposition::Edited);
     CHECK(evaluator.GetLastNoticePatchedPaths().empty());
-    CheckSamePose("old chain source edit",
-                  FreshPose(stage, kPropMathRig, time),
+    CheckSamePose("old chain source edit", FreshPose(stage, kPropMathRig, time),
                   evaluator.Evaluate(time));
 }
 
-}  // namespace
+} // namespace
 
 int
 main(int argc, char **argv)
@@ -758,11 +762,11 @@ main(int argc, char **argv)
     const std::string examplesDir = argv[1];
     const std::string resources = SchemaResourceDir(examplesDir);
     if (PlugRegistry::GetInstance().RegisterPlugins(resources).empty()) {
-        std::printf("FATAL: no schema plugin found at %s\n",
-                    resources.c_str());
+        std::printf("FATAL: no schema plugin found at %s\n", resources.c_str());
         return 2;
     }
-    std::printf("graph execution; scoped verifier: %s\n", Parity() ? "on" : "off");
+    std::printf("graph execution; scoped verifier: %s\n",
+                Parity() ? "on" : "off");
     // Unbuffered, and with the whole run inside a catch: an exception out of
     // the evaluator reaches ucrtbase's abort, which discards the buffer and
     // leaves ctest reporting 0xc0000409 with no output at all. A test that
@@ -770,16 +774,16 @@ main(int argc, char **argv)
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     try {
 
-    TestAKeyedAvarSampleRunsItsCone(examplesDir);
-    TestAGuideValueRunsNothing(examplesDir);
-    TestAChainMoverInputReachesThroughTheChain(examplesDir);
-    TestAnUnreadValueOutsideTheRigRunsNothing(examplesDir);
-    TestAConstraintInputSampleRunsItsCone(examplesDir);
-    TestARetargetedWalkRebuildsBeforeItsUpstreamEdit(examplesDir);
-    TestLayerMetadataRebuilds(examplesDir);
-    TestANamedInputNoStepDeclaresBumpsTheStamp(examplesDir);
-    TestAConnectedChainSourceIsReported(examplesDir);
-    TestAKeyedRestSampleReachesItsSolver(examplesDir);
+        TestAKeyedAvarSampleRunsItsCone(examplesDir);
+        TestAGuideValueRunsNothing(examplesDir);
+        TestAChainMoverInputReachesThroughTheChain(examplesDir);
+        TestAnUnreadValueOutsideTheRigRunsNothing(examplesDir);
+        TestAConstraintInputSampleRunsItsCone(examplesDir);
+        TestARetargetedWalkRebuildsBeforeItsUpstreamEdit(examplesDir);
+        TestLayerMetadataRebuilds(examplesDir);
+        TestANamedInputNoStepDeclaresBumpsTheStamp(examplesDir);
+        TestAConnectedChainSourceIsReported(examplesDir);
+        TestAKeyedRestSampleReachesItsSolver(examplesDir);
 
     } catch (const std::exception &error) {
         std::printf("FAIL: threw: %s\n", error.what());

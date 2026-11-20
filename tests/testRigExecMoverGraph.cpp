@@ -35,18 +35,18 @@
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
-using rigExecTest::RevisionProgram;
-using rigExecTest::RevisionValue;
+using rigExec::RigExecAssembleMatrixParameters;
+using rigExec::RigExecAssembleParameters;
 using rigExec::RigExecMoverParameters;
 using rigExec::RigExecMoverStatus;
-using rigExec::RigExecRevisionBinding;
 using rigExec::RigExecResolveRevisionBinding;
+using rigExec::RigExecRevisionBinding;
 using rigExec::RigExecRevisionOp;
 using rigExec::RigExecRevisionOpForSchema;
-using rigExec::RigExecAssembleMatrixParameters;
 using rigExec::RigExecStatusForParameters;
 using rigExec::RigExecWeightPacket;
-using rigExec::RigExecAssembleParameters;
+using rigExecTest::RevisionProgram;
+using rigExecTest::RevisionValue;
 
 static int failures = 0;
 
@@ -125,8 +125,8 @@ TestSkinRevision()
     GfMatrix4d t1(1.0), t2(1.0);
     t1.SetTranslate(GfVec3d(10, 0, 0));
     t2.SetTranslate(GfVec3d(0, 10, 0));
-    const GfMatrix4d rt = GfMatrix4d(GfRotation(GfVec3d(0, 0, 1), 90.0),
-                                     GfVec3d(1, 2, 3));
+    const GfMatrix4d rt =
+        GfMatrix4d(GfRotation(GfVec3d(0, 0, 1), 90.0), GfVec3d(1, 2, 3));
     const std::vector<GfMatrix4d> transforms = {t1, t2, rt};
 
     // Single influence at weight 1: identical to the sequential matrix
@@ -145,13 +145,13 @@ TestSkinRevision()
         const auto seqSource = sequential.AddPointSource(target, base);
         RigExecMoverParameters matrix = MakeMatrixParams(GfVec3d(0), 1.0f);
         matrix.transform = rt;
-        const VtVec3fArray moved = sequential.Evaluate(
-            sequential.AddRevision(RigExecRevisionOp::Matrix, seqSource,
-                                   matrix, MakeOkStatus()));
+        const VtVec3fArray moved = sequential.Evaluate(sequential.AddRevision(
+            RigExecRevisionOp::Matrix, seqSource, matrix, MakeOkStatus()));
         CHECK(skinned.size() == 4 && moved.size() == 4);
         for (size_t i = 0; i < skinned.size() && i < moved.size(); ++i) {
             CHECK(Near(skinned[i], moved[i]));
-            CHECK(Near(skinned[i], GfVec3f(rt.TransformAffine(GfVec3d(base[i])))));
+            CHECK(Near(skinned[i],
+                       GfVec3f(rt.TransformAffine(GfVec3d(base[i])))));
         }
     }
     // Two translations at 0.5 / 0.5 on every point: the analytic midpoint
@@ -180,7 +180,8 @@ TestSkinRevision()
         const auto skin = graph.AddRevision(
             RigExecRevisionOp::Skin, source,
             MakeSkinParams(transforms, {0, 1, 0, 1, 1, 0, 2, 2},
-                           {0.25f, 0.25f, 0.0f, 0.0f, 1.0f, 0.0f, 0.5f, 0.5f}, 2),
+                           {0.25f, 0.25f, 0.0f, 0.0f, 1.0f, 0.0f, 0.5f, 0.5f},
+                           2),
             MakeOkStatus());
         const VtVec3fArray out = graph.Evaluate(skin);
         CHECK(out.size() == 4);
@@ -216,8 +217,8 @@ TestSkinRevision()
         blend.kind = TfToken("blendShape");
         blend.weights = RigExecWeightPacket::Constant(1.0f);
         blend.blendDeltas.assign(4, GfVec3f(0, 0, 1));
-        const auto blended = graph.AddRevision(
-            RigExecRevisionOp::BlendShape, source, blend, MakeOkStatus());
+        const auto blended = graph.AddRevision(RigExecRevisionOp::BlendShape,
+                                               source, blend, MakeOkStatus());
         const auto skin = graph.AddRevision(
             RigExecRevisionOp::Skin, blended,
             MakeSkinParams(transforms, {0, 0, 0, 0}, {1, 1, 1, 1}, 1),
@@ -237,8 +238,8 @@ TestSkinRevision()
         RigExecMoverParameters dq =
             MakeSkinParams(transforms, {2, 2, 2, 2}, {1, 1, 1, 1}, 1);
         dq.skinningMethod = TfToken("dualQuaternion");
-        const auto skin = graph.AddRevision(
-            RigExecRevisionOp::Skin, source, dq, MakeOkStatus());
+        const auto skin = graph.AddRevision(RigExecRevisionOp::Skin, source, dq,
+                                            MakeOkStatus());
         const VtVec3fArray out = graph.Evaluate(skin);
         CHECK(graph.GetRevisionStatus(skin).state == "ok");
         CHECK(out.size() == 4);
@@ -253,8 +254,8 @@ TestSkinRevision()
         auto failing = [&](const RigExecMoverParameters &params) {
             rigExecTest::RevisionProgram graph;
             const auto source = graph.AddPointSource(target, base);
-            const auto skin = graph.AddRevision(
-                RigExecRevisionOp::Skin, source, params, MakeOkStatus());
+            const auto skin = graph.AddRevision(RigExecRevisionOp::Skin, source,
+                                                params, MakeOkStatus());
             CHECK(graph.Evaluate(skin) == base);
             CHECK(graph.GetRevisionStatus(skin).state == "moverFailed");
         };
@@ -278,18 +279,21 @@ TestSkinBindingAndAssembly()
     UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset/Geom/M"), TfToken("Mesh"));
     const SdfPath target("/Asset/Geom/M.points");
-    UsdPrim mover = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Skin"), TfToken("RigExecSkinMover"));
+    UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Skin"),
+                                      TfToken("RigExecSkinMover"));
     mover.CreateRelationship(TfToken("rigExec:influences"))
-        .SetTargets({SdfPath("/Asset/Rig/Joints/B"),
-                     SdfPath("/Asset/Rig/Joints/A")});
-    mover.CreateAttribute(TfToken("rigExec:elementSize"),
-                          SdfValueTypeNames->Int).Set(2);
-    mover.CreateAttribute(TfToken("rigExec:jointIndices"),
-                          SdfValueTypeNames->IntArray)
+        .SetTargets(
+            {SdfPath("/Asset/Rig/Joints/B"), SdfPath("/Asset/Rig/Joints/A")});
+    mover
+        .CreateAttribute(TfToken("rigExec:elementSize"), SdfValueTypeNames->Int)
+        .Set(2);
+    mover
+        .CreateAttribute(TfToken("rigExec:jointIndices"),
+                         SdfValueTypeNames->IntArray)
         .Set(VtIntArray({0, 1, 0, 1, 0, 1, 0, 1}));
-    mover.CreateAttribute(TfToken("rigExec:jointWeights"),
-                          SdfValueTypeNames->FloatArray)
+    mover
+        .CreateAttribute(TfToken("rigExec:jointWeights"),
+                         SdfValueTypeNames->FloatArray)
         .Set(VtFloatArray({0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f}));
 
     CHECK(RigExecRevisionOpForSchema(TfToken("RigExecSkinMover"), TfToken()) ==
@@ -341,24 +345,28 @@ TestSkinBindingAndAssembly()
     // No providers, a layout that does not divide by elementSize, and an
     // index past the influence table each fail assembly.
     rigExec::RigExecProviderValues none;
-    CHECK(!RigExecAssembleParameters(
-        mover, RigExecRevisionOp::Skin, binding, none).valid);
+    CHECK(!RigExecAssembleParameters(mover, RigExecRevisionOp::Skin, binding,
+                                     none)
+               .valid);
     mover.GetAttribute(TfToken("rigExec:elementSize")).Set(3);
-    CHECK(!RigExecAssembleParameters(
-        mover, RigExecRevisionOp::Skin, binding, values).valid);
+    CHECK(!RigExecAssembleParameters(mover, RigExecRevisionOp::Skin, binding,
+                                     values)
+               .valid);
     mover.GetAttribute(TfToken("rigExec:elementSize")).Set(2);
     mover.GetAttribute(TfToken("rigExec:jointIndices"))
         .Set(VtIntArray({0, 1, 0, 1, 0, 1, 0, 2}));
-    CHECK(!RigExecAssembleParameters(
-        mover, RigExecRevisionOp::Skin, binding, values).valid);
+    CHECK(!RigExecAssembleParameters(mover, RigExecRevisionOp::Skin, binding,
+                                     values)
+               .valid);
     mover.GetAttribute(TfToken("rigExec:jointIndices"))
         .Set(VtIntArray({0, 1, 0, 1, 0, 1, 0, 1}));
 
     // dualQuaternion assembles (the packet carries the author's intent) and
     // the kernel honours it: two pure translations at 0.5 / 0.5 blend to
     // the same midpoint under either method.
-    mover.CreateAttribute(TfToken("rigExec:skinningMethod"),
-                          SdfValueTypeNames->Token)
+    mover
+        .CreateAttribute(TfToken("rigExec:skinningMethod"),
+                         SdfValueTypeNames->Token)
         .Set(TfToken("dualQuaternion"));
     const RigExecMoverParameters dq = RigExecAssembleParameters(
         mover, RigExecRevisionOp::Skin, binding, values);
@@ -366,9 +374,9 @@ TestSkinBindingAndAssembly()
     CHECK(dq.skinningMethod == TfToken("dualQuaternion"));
     rigExecTest::RevisionProgram dqGraph;
     const auto dqSource = dqGraph.AddPointSource(target, MakePoints());
-    const auto dqHead = dqGraph.AddRevision(
-        RigExecRevisionOp::Skin, dqSource, dq,
-        RigExecStatusForParameters(dq, binding.moverPath));
+    const auto dqHead =
+        dqGraph.AddRevision(RigExecRevisionOp::Skin, dqSource, dq,
+                            RigExecStatusForParameters(dq, binding.moverPath));
     const VtVec3fArray dqOut = dqGraph.Evaluate(dqHead);
     CHECK(dqGraph.GetRevisionStatus(dqHead).state != "moverFailed");
     CHECK(dqOut.size() == 4);
@@ -388,7 +396,8 @@ TestSingleRevision()
     rigExecTest::RevisionProgram graph;
     const SdfPath target("/Asset/Geom/M.points");
 
-    const rigExecTest::RevisionValue base = graph.AddPointSource(target, MakePoints());
+    const rigExecTest::RevisionValue base =
+        graph.AddPointSource(target, MakePoints());
     const rigExecTest::RevisionValue head = graph.AddRevision(
         RigExecRevisionOp::Matrix, base,
         MakeMatrixParams(GfVec3d(0, 2, 0), 1.0f), MakeOkStatus());
@@ -413,13 +422,14 @@ TestChainedRevisions()
     rigExecTest::RevisionProgram graph;
     const SdfPath target("/Asset/Geom/M.points");
 
-    rigExecTest::RevisionValue head = graph.AddPointSource(target, MakePoints());
-    head = graph.AddRevision(
-        RigExecRevisionOp::Matrix, head,
-        MakeMatrixParams(GfVec3d(0, 2, 0), 1.0f), MakeOkStatus());
-    head = graph.AddRevision(
-        RigExecRevisionOp::Matrix, head,
-        MakeMatrixParams(GfVec3d(3, 0, 0), 1.0f), MakeOkStatus());
+    rigExecTest::RevisionValue head =
+        graph.AddPointSource(target, MakePoints());
+    head = graph.AddRevision(RigExecRevisionOp::Matrix, head,
+                             MakeMatrixParams(GfVec3d(0, 2, 0), 1.0f),
+                             MakeOkStatus());
+    head = graph.AddRevision(RigExecRevisionOp::Matrix, head,
+                             MakeMatrixParams(GfVec3d(3, 0, 0), 1.0f),
+                             MakeOkStatus());
 
     CHECK(graph.GetRevisionCount() == 2);
 
@@ -461,9 +471,9 @@ TestStatusPassThrough()
     RigExecMoverStatus failed;
     failed.state = TfToken("failed");
 
-    const rigExecTest::RevisionValue head = graph.AddRevision(
-        RigExecRevisionOp::Matrix, base,
-        MakeMatrixParams(GfVec3d(0, 9, 0), 1.0f), failed);
+    const rigExecTest::RevisionValue head =
+        graph.AddRevision(RigExecRevisionOp::Matrix, base,
+                          MakeMatrixParams(GfVec3d(0, 9, 0), 1.0f), failed);
 
     const VtVec3fArray out = graph.Evaluate(head);
     CHECK(out.size() == 4);
@@ -506,8 +516,8 @@ TestBlendShapeRevision()
     params.valid = true;
     params.kind = TfToken("blendShape");
     params.weights = RigExecWeightPacket::Constant(1.0f);
-    params.blendDeltas = {GfVec3f(0, 1, 0), GfVec3f(0, 1, 0),
-                          GfVec3f(0, 1, 0), GfVec3f(0, 1, 0)};
+    params.blendDeltas = {GfVec3f(0, 1, 0), GfVec3f(0, 1, 0), GfVec3f(0, 1, 0),
+                          GfVec3f(0, 1, 0)};
 
     const rigExecTest::RevisionValue head = graph.AddRevision(
         RigExecRevisionOp::BlendShape, base, params, MakeOkStatus());
@@ -533,7 +543,7 @@ TestBlendCardinalityMismatchPassesThrough()
     params.valid = true;
     params.kind = TfToken("blendShape");
     params.weights = RigExecWeightPacket::Constant(1.0f);
-    params.blendDeltas = {GfVec3f(0, 1, 0)};  // 1 delta for 4 points
+    params.blendDeltas = {GfVec3f(0, 1, 0)}; // 1 delta for 4 points
 
     const rigExecTest::RevisionValue head = graph.AddRevision(
         RigExecRevisionOp::BlendShape, base, params, MakeOkStatus());
@@ -582,18 +592,18 @@ TestMixedOpChain()
     rigExecTest::RevisionValue head =
         graph.AddPointSource(SdfPath("/M.points"), MakePoints());
 
-    head = graph.AddRevision(
-        RigExecRevisionOp::Matrix, head,
-        MakeMatrixParams(GfVec3d(0, 2, 0), 1.0f), MakeOkStatus());
+    head = graph.AddRevision(RigExecRevisionOp::Matrix, head,
+                             MakeMatrixParams(GfVec3d(0, 2, 0), 1.0f),
+                             MakeOkStatus());
 
     RigExecMoverParameters blend;
     blend.valid = true;
     blend.kind = TfToken("blendShape");
     blend.weights = RigExecWeightPacket::Constant(1.0f);
-    blend.blendDeltas = {GfVec3f(1, 0, 0), GfVec3f(1, 0, 0),
-                         GfVec3f(1, 0, 0), GfVec3f(1, 0, 0)};
-    head = graph.AddRevision(
-        RigExecRevisionOp::BlendShape, head, blend, MakeOkStatus());
+    blend.blendDeltas = {GfVec3f(1, 0, 0), GfVec3f(1, 0, 0), GfVec3f(1, 0, 0),
+                         GfVec3f(1, 0, 0)};
+    head = graph.AddRevision(RigExecRevisionOp::BlendShape, head, blend,
+                             MakeOkStatus());
 
     CHECK(graph.GetRevisionCount() == 2);
 
@@ -616,8 +626,8 @@ TestRevisionBindingResolution()
 
     // Matrix: base phase binds the authored provider.
     {
-        UsdPrim mover = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Movers/Skin"), TfToken("RigExecMatrixMover"));
+        UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Skin"),
+                                          TfToken("RigExecMatrixMover"));
         mover.CreateRelationship(TfToken("rigExec:transform"))
             .SetTargets({SdfPath("/Asset/Rig/Joints/J")});
         mover.CreateRelationship(TfToken("rigExec:weightObject"))
@@ -641,20 +651,18 @@ TestRevisionBindingResolution()
 
     // Smooth: fixed adjacency comes from the destination's own topology.
     {
-        UsdPrim mover = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Movers/Relax"), TfToken("RigExecSmoothMover"));
+        UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Relax"),
+                                          TfToken("RigExecSmoothMover"));
         const RigExecRevisionBinding b =
             RigExecResolveRevisionBinding(mover, target, {});
-        CHECK(b.topologyCounts ==
-              SdfPath("/Asset/Geom/M.faceVertexCounts"));
-        CHECK(b.topologyIndices ==
-              SdfPath("/Asset/Geom/M.faceVertexIndices"));
+        CHECK(b.topologyCounts == SdfPath("/Asset/Geom/M.faceVertexCounts"));
+        CHECK(b.topologyIndices == SdfPath("/Asset/Geom/M.faceVertexIndices"));
     }
 
     // Lattice: a cage prim binds to its .points by the standard rule.
     {
-        UsdPrim mover = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Movers/Bulge"), TfToken("RigExecLatticeMover"));
+        UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Bulge"),
+                                          TfToken("RigExecLatticeMover"));
         mover.CreateRelationship(TfToken("rigExec:cage"))
             .SetTargets({SdfPath("/Asset/Rig/Cage")});
         const RigExecRevisionBinding b =
@@ -665,8 +673,8 @@ TestRevisionBindingResolution()
 
     // Surface: driver points and topology from the surface prim.
     {
-        UsdPrim mover = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Movers/Drape"), TfToken("RigExecSurfaceMover"));
+        UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Drape"),
+                                          TfToken("RigExecSurfaceMover"));
         mover.CreateRelationship(TfToken("rigExec:surface"))
             .SetTargets({SdfPath("/Asset/Geom/S")});
         const RigExecRevisionBinding b =
@@ -677,12 +685,11 @@ TestRevisionBindingResolution()
 
     // Blend: channels are sorted (target-list order is non-semantic).
     {
-        UsdPrim mover = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Movers/Face"),
-            TfToken("RigExecBlendShapeMover"));
+        UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Face"),
+                                          TfToken("RigExecBlendShapeMover"));
         mover.CreateRelationship(TfToken("rigExec:blendInputs"))
-            .SetTargets({SdfPath("/Asset/Rig/B/Smile"),
-                         SdfPath("/Asset/Rig/B/Brow")});
+            .SetTargets(
+                {SdfPath("/Asset/Rig/B/Smile"), SdfPath("/Asset/Rig/B/Brow")});
         const RigExecRevisionBinding b =
             RigExecResolveRevisionBinding(mover, target, {});
         CHECK(b.blendInputs.size() == 2);
@@ -723,8 +730,8 @@ TestAssembleAndEvaluateWithoutDerivedStage()
     stage->DefinePrim(SdfPath("/Asset/Geom/M"), TfToken("Mesh"));
     const SdfPath target("/Asset/Geom/M.points");
 
-    UsdPrim mover = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Skin"), TfToken("RigExecMatrixMover"));
+    UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Skin"),
+                                      TfToken("RigExecMatrixMover"));
     mover.CreateRelationship(TfToken("rigExec:transform"))
         .SetTargets({SdfPath("/Asset/Rig/Joints/J")});
 
@@ -751,7 +758,8 @@ TestAssembleAndEvaluateWithoutDerivedStage()
     CHECK(status.AllowsApply());
 
     rigExecTest::RevisionProgram graph;
-    const rigExecTest::RevisionValue base = graph.AddPointSource(target, MakePoints());
+    const rigExecTest::RevisionValue base =
+        graph.AddPointSource(target, MakePoints());
     const rigExecTest::RevisionValue head =
         graph.AddRevision(RigExecRevisionOp::Matrix, base, params, status);
 
@@ -774,8 +782,8 @@ static void
 TestAssembleDisabledAndFailed()
 {
     UsdStageRefPtr stage = UsdStage::CreateInMemory();
-    UsdPrim mover = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Skin"), TfToken("RigExecMatrixMover"));
+    UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Skin"),
+                                      TfToken("RigExecMatrixMover"));
     mover.CreateAttribute(TfToken("inputs:enabled"), SdfValueTypeNames->Bool)
         .Set(false);
 
@@ -791,8 +799,8 @@ TestAssembleDisabledAndFailed()
           TfToken("disabled"));
 
     // A missing provider value fails the application and records the address.
-    UsdPrim enabledMover = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Other"), TfToken("RigExecMatrixMover"));
+    UsdPrim enabledMover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Other"),
+                                             TfToken("RigExecMatrixMover"));
     const RigExecMoverParameters failed =
         RigExecAssembleMatrixParameters(enabledMover, nullptr, &weights);
     CHECK(!failed.valid);
@@ -829,13 +837,14 @@ TestAssembleNonMatrixParameters()
     {
         UsdPrim mover = stage->DefinePrim(SdfPath("/A/Rig/Movers/Relax"),
                                           TfToken("RigExecSmoothMover"));
-        mover.CreateAttribute(TfToken("inputs:defaultWeight"),
-                              SdfValueTypeNames->Float)
+        mover
+            .CreateAttribute(TfToken("inputs:defaultWeight"),
+                             SdfValueTypeNames->Float)
             .Set(0.25f);
         const RigExecRevisionBinding b =
             RigExecResolveRevisionBinding(mover, target, {});
-        const RigExecMoverParameters p = RigExecAssembleParameters(
-            mover, RigExecRevisionOp::Smooth, b, {});
+        const RigExecMoverParameters p =
+            RigExecAssembleParameters(mover, RigExecRevisionOp::Smooth, b, {});
         CHECK(p.valid);
         CHECK(p.kind == TfToken("smooth"));
         CHECK(p.strength == 1.0f);
@@ -871,8 +880,8 @@ TestAssembleNonMatrixParameters()
     {
         UsdPrim mover = stage->DefinePrim(SdfPath("/A/Rig/Movers/Off"),
                                           TfToken("RigExecSmoothMover"));
-        mover.CreateAttribute(TfToken("inputs:enabled"),
-                              SdfValueTypeNames->Bool)
+        mover
+            .CreateAttribute(TfToken("inputs:enabled"), SdfValueTypeNames->Bool)
             .Set(false);
         const RigExecMoverParameters p = RigExecAssembleParameters(
             mover, RigExecRevisionOp::Smooth,
@@ -906,7 +915,8 @@ TestIncrementalRevisionUpdates()
     const rigExecTest::RevisionValue other = graph.AddRevision(
         RigExecRevisionOp::Matrix, otherSource, firstParams, MakeOkStatus());
 
-    auto checkFirst = [&](const rigExecTest::RevisionValue &output, const GfVec3f &expected) {
+    auto checkFirst = [&](const rigExecTest::RevisionValue &output,
+                          const GfVec3f &expected) {
         const VtVec3fArray result = graph.Evaluate(output);
         CHECK(result.size() == initial.size());
         if (!result.empty()) {
@@ -925,8 +935,7 @@ TestIncrementalRevisionUpdates()
     checkFirst(second, GfVec3f(0, 5, 0));
     CHECK(graph.GetRevisionExecutionCount() == 3);
 
-    RigExecMoverParameters changed =
-        MakeMatrixParams(GfVec3d(0, 6, 0), 1.0f);
+    RigExecMoverParameters changed = MakeMatrixParams(GfVec3d(0, 6, 0), 1.0f);
     CHECK(graph.UpdateRevision(second, changed, MakeOkStatus()));
     checkFirst(second, GfVec3f(0, 8, 0));
     CHECK(graph.GetRevisionExecutionCount() == 4);
@@ -972,8 +981,8 @@ TestLongChainDirtySuffix()
     const RigExecMoverParameters step =
         MakeMatrixParams(GfVec3d(0, 1, 0), 1.0f);
     for (size_t i = 0; i < count; ++i) {
-        head = graph.AddRevision(
-            RigExecRevisionOp::Matrix, head, step, MakeOkStatus());
+        head = graph.AddRevision(RigExecRevisionOp::Matrix, head, step,
+                                 MakeOkStatus());
         revisions.push_back(head);
     }
     const VtVec3fArray first = graph.Evaluate(head);
@@ -984,7 +993,8 @@ TestLongChainDirtySuffix()
     CHECK(graph.GetRevisionExecutionCount() == count);
     CHECK(graph.GetScheduleBuildCount() == 1);
     CHECK(graph.UpdateRevision(revisions[count - 2],
-        MakeMatrixParams(GfVec3d(0, 2, 0), 1.0f), MakeOkStatus()));
+                               MakeMatrixParams(GfVec3d(0, 2, 0), 1.0f),
+                               MakeOkStatus()));
     const VtVec3fArray changed = graph.Evaluate(head);
     CHECK(changed.size() == 1);
     if (!changed.empty()) {
@@ -1010,8 +1020,8 @@ TestAppendAfterEvaluation()
     CHECK(graph.Evaluate(first).size() == 1);
     const rigExecTest::RevisionValue second = graph.AddRevision(
         RigExecRevisionOp::Matrix, first, step, MakeOkStatus());
-    CHECK(graph.UpdateRevision(second,
-        MakeMatrixParams(GfVec3d(0, 2, 0), 1.0f), MakeOkStatus()));
+    CHECK(graph.UpdateRevision(second, MakeMatrixParams(GfVec3d(0, 2, 0), 1.0f),
+                               MakeOkStatus()));
     const VtVec3fArray result = graph.Evaluate(second);
     CHECK(result.size() == 1);
     if (!result.empty()) {
@@ -1037,7 +1047,8 @@ TestEveryOperationUpdatesInteractively()
         CHECK(graph.UpdateRevision(head, after, MakeOkStatus()));
         const VtVec3fArray updated = graph.Evaluate(head);
         rigExecTest::RevisionProgram fresh;
-        const auto freshSource = fresh.AddPointSource(SdfPath("/M.points"), base);
+        const auto freshSource =
+            fresh.AddPointSource(SdfPath("/M.points"), base);
         const VtVec3fArray expected = fresh.Evaluate(
             fresh.AddRevision(op, freshSource, after, MakeOkStatus()));
         CHECK(updated.size() == base.size());
@@ -1114,7 +1125,8 @@ TestEveryOperationUpdatesInteractively()
         a.topologyCounts = {3};
         a.topologyIndices = {0, 1, 2};
         auto b = a;
-        for (auto &point : b.auxPoints) point[2] += 2;
+        for (auto &point : b.auxPoints)
+            point[2] += 2;
         check(RigExecRevisionOp::SurfaceProject, tetra, a, b);
     }
     {
@@ -1122,13 +1134,15 @@ TestEveryOperationUpdatesInteractively()
         a.frames.frames.resize(4);
         a.frames.rests.resize(4, a.frames.frames[0].points);
         auto b = a;
-        for (auto &point : b.frames.frames[0].points) point[1] += 3;
+        for (auto &point : b.frames.frames[0].points)
+            point[1] += 3;
         check(RigExecRevisionOp::EmitGuidePoints, tetra, a, b);
         a.kind = b.kind = TfToken("ribbon");
         a.bindCoords.assign(4, GfVec2f(0, 0));
         b = a;
         // A rest-frame edit changes the rest-relative driver transformation.
-        for (auto &point : b.frames.rests[0]) point[1] += 3;
+        for (auto &point : b.frames.rests[0])
+            point[1] += 3;
         check(RigExecRevisionOp::Ribbon, tetra, a, b);
     }
     {
@@ -1174,8 +1188,7 @@ TestRevisionAcceptanceMatchesKernel()
         CHECK(decided == expected);
         rigExec::RigExecWireBasisCache cache;
         for (int run = 0;
-             run < 3 && decided != RigExecRevisionAcceptance::Deferred;
-             ++run) {
+             run < 3 && decided != RigExecRevisionAcceptance::Deferred; ++run) {
             std::vector<GfVec3f> pts = base;
             const bool applied = rigExec::RigExecRunRevisionKernel(
                 op, p, &pts, false, run == 0 ? nullptr : &cache);
@@ -1193,8 +1206,8 @@ TestRevisionAcceptanceMatchesKernel()
         ++compared;
     };
     const auto envelope = [](const char *representation,
-                            std::vector<float> values,
-                            std::vector<int> indices, float defaultWeight) {
+                             std::vector<float> values,
+                             std::vector<int> indices, float defaultWeight) {
         RigExecWeightPacket packet;
         packet.representation = TfToken(representation);
         packet.rangePolicy = TfToken("strict");
@@ -1239,8 +1252,8 @@ TestRevisionAcceptanceMatchesKernel()
         check("matrix, sparse walk", RigExecRevisionOp::Matrix, p, points,
               applies);
         p.weights.indices = {1, 9};
-        check("matrix, sparse walk past the points",
-              RigExecRevisionOp::Matrix, p, points, refuses);
+        check("matrix, sparse walk past the points", RigExecRevisionOp::Matrix,
+              p, points, refuses);
         p.weights.indices = {3, 1};
         check("matrix, sparse walk descending", RigExecRevisionOp::Matrix, p,
               points, refuses);
@@ -1282,12 +1295,12 @@ TestRevisionAcceptanceMatchesKernel()
               RigExecRevisionOp::BlendShape, p, points, refuses);
         p = blend;
         p.blendDeltas.pop_back();
-        check("blend shape, one delta short", RigExecRevisionOp::BlendShape,
-              p, points, refuses);
+        check("blend shape, one delta short", RigExecRevisionOp::BlendShape, p,
+              points, refuses);
         p = blend;
         p.blendSurfaceFrame = true;
-        check("blend shape on the surface frame",
-              RigExecRevisionOp::BlendShape, p, points, deferred);
+        check("blend shape on the surface frame", RigExecRevisionOp::BlendShape,
+              p, points, deferred);
     }
 
     // Wire: a dense walk (one bind coordinate per point, its envelope
@@ -1304,7 +1317,7 @@ TestRevisionAcceptanceMatchesKernel()
         wire.auxPoints = {GfVec3f(0, 0, 0), GfVec3f(1, 1, 0)};
         wire.wireBindCoords =
             VtArray<GfVec2f>{GfVec2f(0.25f, 0.0f), GfVec2f(0.5f, 0.0f),
-                              GfVec2f(0.75f, 0.0f), GfVec2f(1.0f, 0.0f)};
+                             GfVec2f(0.75f, 0.0f), GfVec2f(1.0f, 0.0f)};
         check("wire", RigExecRevisionOp::Wire, wire, points, applies);
         auto p = wire;
         p.weights = RigExecWeightPacket::Constant(0.5f);
@@ -1328,8 +1341,7 @@ TestRevisionAcceptanceMatchesKernel()
         check("wire, order 1", RigExecRevisionOp::Wire, p, points, refuses);
         p = wire;
         p.wireBindCoords = VtArray<GfVec2f>();
-        check("wire over no points", RigExecRevisionOp::Wire, p, {},
-              deferred);
+        check("wire over no points", RigExecRevisionOp::Wire, p, {}, deferred);
 
         auto walk = wire;
         walk.weights = envelope("sparse", {1.0f, 0.5f}, {0, 2}, 0.0f);
@@ -1341,15 +1353,14 @@ TestRevisionAcceptanceMatchesKernel()
         p.wireBindCoords = wire.wireBindCoords;
         check("wire, sparse walk over the mesh's binds",
               RigExecRevisionOp::Wire, p, points, applies);
-        p.wireBindCoords =
-            VtArray<GfVec2f>{GfVec2f(0.25f, 0.0f), GfVec2f(0.5f, 0.0f),
-                              GfVec2f(0.75f, 0.0f)};
-        check("wire, sparse walk with three binds",
-              RigExecRevisionOp::Wire, p, points, refuses);
+        p.wireBindCoords = VtArray<GfVec2f>{
+            GfVec2f(0.25f, 0.0f), GfVec2f(0.5f, 0.0f), GfVec2f(0.75f, 0.0f)};
+        check("wire, sparse walk with three binds", RigExecRevisionOp::Wire, p,
+              points, refuses);
         p = walk;
         p.weights.indices = {0, 9};
-        check("wire, sparse walk past the points", RigExecRevisionOp::Wire,
-              p, points, refuses);
+        check("wire, sparse walk past the points", RigExecRevisionOp::Wire, p,
+              points, refuses);
     }
 
     // Lattice: the kernel refuses only a rest-point count other than the
@@ -1372,18 +1383,17 @@ TestRevisionAcceptanceMatchesKernel()
         }
         lattice.auxPointsB = lattice.auxPoints;
         lattice.auxPointsB[7] += GfVec3f(0, 0, 1);
-        check("lattice", RigExecRevisionOp::Lattice, lattice, points,
-              applies);
+        check("lattice", RigExecRevisionOp::Lattice, lattice, points, applies);
         auto p = lattice;
         p.weights = RigExecWeightPacket::Constant(0.5f);
         check("lattice at half", RigExecRevisionOp::Lattice, p, points,
               applies);
         p.weights = dense;
-        check("lattice, dense envelope", RigExecRevisionOp::Lattice, p,
-              points, applies);
+        check("lattice, dense envelope", RigExecRevisionOp::Lattice, p, points,
+              applies);
         p.weights = shortDense;
-        check("lattice, envelope one weight short",
-              RigExecRevisionOp::Lattice, p, points, refuses);
+        check("lattice, envelope one weight short", RigExecRevisionOp::Lattice,
+              p, points, refuses);
         // RevisionStatic resolves only a wire's envelope before it asks, so
         // a lattice's envelope is validated whatever the caller says.
         const bool resolves = true;
@@ -1396,16 +1406,16 @@ TestRevisionAcceptanceMatchesKernel()
               points, refuses);
         p = lattice;
         p.auxPointsB.pop_back();
-        check("lattice, posed cage one point short",
-              RigExecRevisionOp::Lattice, p, points, applies);
+        check("lattice, posed cage one point short", RigExecRevisionOp::Lattice,
+              p, points, applies);
         p = lattice;
         p.divisions = GfVec3i(1, 2, 2);
         check("lattice, one division", RigExecRevisionOp::Lattice, p, points,
               applies);
         p = lattice;
         p.valid = false;
-        check("lattice, invalid packet", RigExecRevisionOp::Lattice, p,
-              points, refuses);
+        check("lattice, invalid packet", RigExecRevisionOp::Lattice, p, points,
+              refuses);
         check("lattice packet on a wire", RigExecRevisionOp::Wire, lattice,
               points, refuses);
     }
@@ -1424,7 +1434,8 @@ TestRevisionAcceptanceMatchesKernel()
               refuses);
     }
     std::printf("revision acceptance: %zu packet(s) decided as their kernels "
-                "answer\n", compared);
+                "answer\n",
+                compared);
 }
 
 static float
@@ -1467,9 +1478,9 @@ MakeRangeEnteringPoints(size_t count)
     std::vector<GfVec3f> points(count);
     for (size_t i = 0; i < count; ++i) {
         const float t = float(i);
-        points[i] = GfVec3f(3.0f * std::sin(0.37f * t),
-                            2.0f * std::cos(0.11f * t) - 1.0f,
-                            0.01f * t - 4.0f);
+        points[i] =
+            GfVec3f(3.0f * std::sin(0.37f * t),
+                    2.0f * std::cos(0.11f * t) - 1.0f, 0.01f * t - 4.0f);
     }
     const float inf = std::numeric_limits<float>::infinity();
     points[0] = GfVec3f(-0.0f, 0.0f, -0.0f);
@@ -1546,8 +1557,10 @@ struct RangeTestPackets {
         // Indices in [0, 1), [1, 333) and [334, 700), none in [333, 334)
         // or [700, 1001).
         sparseIndices.push_back(0);
-        for (int i = 3; i < 333; i += 7) sparseIndices.push_back(i);
-        for (int i = 340; i < 700; i += 12) sparseIndices.push_back(i);
+        for (int i = 3; i < 333; i += 7)
+            sparseIndices.push_back(i);
+        for (int i = 340; i < 700; i += 12)
+            sparseIndices.push_back(i);
         sparse.representation = TfToken("sparse");
         sparse.rangePolicy = TfToken("strict");
         sparse.indices = sparseIndices;
@@ -1575,9 +1588,8 @@ struct RangeTestPackets {
         wire.weights = RigExecWeightPacket::Constant(1.0f);
         wire.curveOrder = 3;
         wire.curveKnots = {0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 3.0, 3.0};
-        wire.restPoints = {GfVec3f(0, 0, 0), GfVec3f(1, 0, 0),
-                           GfVec3f(2, 0, 0), GfVec3f(3, 0, 0),
-                           GfVec3f(4, 0, 0)};
+        wire.restPoints = {GfVec3f(0, 0, 0), GfVec3f(1, 0, 0), GfVec3f(2, 0, 0),
+                           GfVec3f(3, 0, 0), GfVec3f(4, 0, 0)};
         // The first control point at rest moves nothing.
         wire.auxPoints = {GfVec3f(0, 0, 0), GfVec3f(1, 0.5f, 0),
                           GfVec3f(2, -0.25f, 0.3f), GfVec3f(3, 0.75f, -0.1f),
@@ -1586,8 +1598,8 @@ struct RangeTestPackets {
         // Some binds lie past the dropoff and are skipped.
         VtArray<GfVec2f> binds(count);
         for (size_t i = 0; i < count; ++i) {
-            binds[i] = GfVec2f(3.0f * float(i % 97) / 96.0f,
-                               0.2f * float(i % 13));
+            binds[i] =
+                GfVec2f(3.0f * float(i % 97) / 96.0f, 0.2f * float(i % 13));
         }
         wire.wireBindCoords = binds;
         sparseWire = wire;
@@ -1614,18 +1626,17 @@ struct RangeTestPackets {
         }
         lattice.auxPointsB = lattice.auxPoints;
         for (size_t k = 0; k < lattice.auxPointsB.size(); ++k) {
-            lattice.auxPointsB[k] += GfVec3f(0.1f * float(k % 5),
-                                             -0.05f * float(k % 3), 0.3f);
+            lattice.auxPointsB[k] +=
+                GfVec3f(0.1f * float(k % 5), -0.05f * float(k % 3), 0.3f);
         }
         // Rest points inside and outside the cage's bound, so the nonzero
         // factor spans differ from point to point.
         lattice.restPoints.resize(count);
         for (size_t i = 0; i < count; ++i) {
             const float t = float(i);
-            lattice.restPoints[i] =
-                GfVec3f(1.0f + 1.6f * std::sin(0.7f * t),
-                        2.25f + 3.0f * std::cos(0.3f * t),
-                        0.25f + 0.4f * std::sin(1.3f * t));
+            lattice.restPoints[i] = GfVec3f(1.0f + 1.6f * std::sin(0.7f * t),
+                                            2.25f + 3.0f * std::cos(0.3f * t),
+                                            0.25f + 0.4f * std::sin(1.3f * t));
         }
         lattice.restPoints[500][1] = NanWithPayload(0x5);
     }
@@ -1649,8 +1660,7 @@ TestRevisionRangesMatchTheWholeKernel()
     const std::vector<GfVec3f> entering = MakeRangeEnteringPoints(count);
     const std::vector<std::vector<size_t>> partitions = {
         {0, 1, 333, 334, 700, 1001}, {0, 1001}};
-    const GfVec3f poison(NanWithPayload(0x5a5a5), -0.0f,
-                         NanWithPayload(0x123));
+    const GfVec3f poison(NanWithPayload(0x5a5a5), -0.0f, NanWithPayload(0x123));
     size_t compared = 0;
     // The points every case enters with, unless a case says otherwise.
     const std::vector<GfVec3f> *source = &entering;
@@ -1689,9 +1699,9 @@ TestRevisionRangesMatchTheWholeKernel()
                      (cached && !sparseShape);
         } else {
             ok = ok && (prepared.latticeBasis != nullptr) == cached &&
-                 (!cached || (prepared.latticeBind &&
-                              &prepared.latticeBind->value ==
-                                  prepared.latticeBasis));
+                 (!cached ||
+                  (prepared.latticeBind &&
+                   &prepared.latticeBind->value == prepared.latticeBasis));
         }
         std::vector<float> envelope;
         if (rigExec::RigExecRevisionTakesSeparateBlend(op, p.weights) &&
@@ -1706,8 +1716,8 @@ TestRevisionRangesMatchTheWholeKernel()
                 const size_t b = bounds[k], e = bounds[k + 1];
                 bool untouched = !skips(b, e);
                 ok = rigExec::RigExecRunRevisionRange(
-                         op, p, prepared, in.data(), count, b, e,
-                         separate, &reported, useSimd, &untouched) &&
+                         op, p, prepared, in.data(), count, b, e, separate,
+                         &reported, useSimd, &untouched) &&
                      ok;
                 ok = ok && untouched == skips(b, e);
                 if (untouched) {
@@ -1723,8 +1733,8 @@ TestRevisionRangesMatchTheWholeKernel()
                 // writes nothing else.
                 std::vector<GfVec3f> alone(count, poison);
                 ok = rigExec::RigExecRunRevisionRange(
-                         op, p, prepared, in.data(), count, b, e,
-                         separate, &alone, useSimd) &&
+                         op, p, prepared, in.data(), count, b, e, separate,
+                         &alone, useSimd) &&
                      ok;
                 ok = ok && HoldsBits(alone, 0, b, poison) &&
                      HoldsBits(alone, e, count, poison);
@@ -1735,7 +1745,8 @@ TestRevisionRangesMatchTheWholeKernel()
         }
         if (!ok) {
             std::printf("  %s (simd %d, cached %d): the ranges are not the "
-                        "whole kernel's\n", what, int(useSimd), int(cached));
+                        "whole kernel's\n",
+                        what, int(useSimd), int(cached));
         }
         CHECK(ok);
         ++compared;
@@ -1743,11 +1754,9 @@ TestRevisionRangesMatchTheWholeKernel()
     const auto never = [](size_t, size_t) { return false; };
     const auto always = [](size_t, size_t) { return true; };
     const auto noIndexIn = [&](size_t b, size_t e) {
-        return std::none_of(packets.sparseIndices.begin(),
-                            packets.sparseIndices.end(), [&](int index) {
-                                return size_t(index) >= b &&
-                                       size_t(index) < e;
-                            });
+        return std::none_of(
+            packets.sparseIndices.begin(), packets.sparseIndices.end(),
+            [&](int index) { return size_t(index) >= b && size_t(index) < e; });
     };
     using Op = RigExecRevisionOp;
 
@@ -1762,8 +1771,8 @@ TestRevisionRangesMatchTheWholeKernel()
                          : "matrix full strength",
                   Op::Matrix, p, simd, false, never, true);
             p.weights = packets.denseMatrix;
-            check(radial ? "matrix dense, radial" : "matrix dense",
-                  Op::Matrix, p, simd, false, never, true);
+            check(radial ? "matrix dense, radial" : "matrix dense", Op::Matrix,
+                  p, simd, false, never, true);
         }
         auto p = packets.matrix;
         p.radialWeight = radial;
@@ -1779,10 +1788,9 @@ TestRevisionRangesMatchTheWholeKernel()
     // with and without rest evaluations, and the dense walk blended with a
     // separate envelope.
     for (const bool cached : {false, true}) {
-        check("wire sparse basis", Op::Wire, packets.sparseWire, false,
-              cached, noIndexIn, true);
-        check("wire dense", Op::Wire, packets.wire, false, cached, never,
-              true);
+        check("wire sparse basis", Op::Wire, packets.sparseWire, false, cached,
+              noIndexIn, true);
+        check("wire dense", Op::Wire, packets.wire, false, cached, never, true);
         auto p = packets.wire;
         p.weights = packets.denseWire;
         check("wire dense, separate envelope", Op::Wire, p, false, cached,
@@ -1812,8 +1820,8 @@ TestRevisionRangesMatchTheWholeKernel()
         p.auxPointsB[3][0] = inf;
         p.auxPointsB[5][1] = -inf;
         source = &noPayloads;
-        check("lattice, non-finite cage deltas", Op::Lattice, p, false,
-              cached, never, true);
+        check("lattice, non-finite cage deltas", Op::Lattice, p, false, cached,
+              never, true);
         source = &entering;
     }
 
@@ -1828,9 +1836,8 @@ TestRevisionRangesMatchTheWholeKernel()
                   Op::Lattice, packets.lattice, count, nullptr, &first,
                   &prepared) == RigExecRevisionAcceptance::Applies);
         std::vector<GfVec3f> whole = entering;
-        CHECK(rigExec::RigExecRunRevisionKernel(Op::Lattice, packets.lattice,
-                                                &whole, false, nullptr,
-                                                &second));
+        CHECK(rigExec::RigExecRunRevisionKernel(
+            Op::Lattice, packets.lattice, &whole, false, nullptr, &second));
         const auto held = first.RetainedLatticeBind();
         CHECK(held && prepared.latticeBind == held &&
               second.RetainedLatticeBind() &&
@@ -1842,19 +1849,18 @@ TestRevisionRangesMatchTheWholeKernel()
         }
         CHECK(first.RetainedLatticeBind() == second.RetainedLatticeBind());
         // Only this test's copy and the prepared inputs hold it now.
-        CHECK(held.use_count() == 2 &&
-              &held->value == prepared.latticeBasis);
+        CHECK(held.use_count() == 2 && &held->value == prepared.latticeBasis);
         std::vector<GfVec3f> out(count, poison);
         for (size_t k = 0; k + 1 < partitions[0].size(); ++k) {
             CHECK(rigExec::RigExecRunRevisionRange(
-                Op::Lattice, packets.lattice, prepared, entering.data(),
-                count, partitions[0][k], partitions[0][k + 1], nullptr, &out,
-                false));
+                Op::Lattice, packets.lattice, prepared, entering.data(), count,
+                partitions[0][k], partitions[0][k + 1], nullptr, &out, false));
         }
         CHECK(SameBits(out, whole));
     }
     std::printf("revision ranges: %zu revision(s) matched their whole "
-                "kernels\n", compared);
+                "kernels\n",
+                compared);
 }
 
 // RigExecPrepareRevisionRanges answers RigExecRevisionKernelAcceptance for
@@ -1904,9 +1910,9 @@ TestPrepareRevisionRangesDecidesAsTheKernel()
                 n, p.topologyCounts.data(), p.topologyCounts.size(),
                 p.topologyIndices.data(), p.topologyIndices.size(), &built);
             ok = ok && (prepared.smoothAdjacency != nullptr) == valid &&
-                 (!valid || (prepared.smoothAdjacency->Covers(n) &&
-                             prepared.smoothAdjacency->neighbors ==
-                                 built.neighbors)) &&
+                 (!valid ||
+                  (prepared.smoothAdjacency->Covers(n) &&
+                   prepared.smoothAdjacency->neighbors == built.neighbors)) &&
                  prepared.matrixWeights.empty() && !prepared.latticeBasis &&
                  prepared.blendWeights.empty();
         } else if (op == Op::BlendShape) {
@@ -1925,8 +1931,8 @@ TestPrepareRevisionRangesDecidesAsTheKernel()
                                                           nullptr);
         }
         if (!ok) {
-            std::printf("  %s: prepared %d, expected %d\n", what,
-                        int(decided), int(expected));
+            std::printf("  %s: prepared %d, expected %d\n", what, int(decided),
+                        int(expected));
         }
         CHECK(ok);
     };
@@ -1954,8 +1960,7 @@ TestPrepareRevisionRangesDecidesAsTheKernel()
     p = packets.wire;
     p.weights = packets.denseWire;
     p.weights.values.pop_back();
-    check("wire dense, envelope one weight short", Op::Wire, p, count,
-          refuses);
+    check("wire dense, envelope one weight short", Op::Wire, p, count, refuses);
     p = packets.sparseWire;
     std::swap(p.weights.indices[1], p.weights.indices[2]);
     check("wire sparse walk descending", Op::Wire, p, count, refuses);
@@ -1980,8 +1985,7 @@ TestPrepareRevisionRangesDecidesAsTheKernel()
     check("blend shape, one point more", Op::BlendShape, blend, count + 1,
           refuses);
     blend.weights = packets.denseWire;
-    check("blend shape, dense envelope", Op::BlendShape, blend, count,
-          applies);
+    check("blend shape, dense envelope", Op::BlendShape, blend, count, applies);
     blend.weights = packets.sparse;
     check("blend shape, sparse envelope", Op::BlendShape, blend, count,
           applies);
@@ -1995,9 +1999,8 @@ TestPrepareRevisionRangesDecidesAsTheKernel()
 
     // A skin's answer is the baked program's (SkinAcceptance): the packet
     // check alone here, Deferred, and nothing prepared.
-    check("skin", Op::Skin,
-          MakeSkinParams({GfMatrix4d(1.0)}, {0}, {1.0f}, 1), count,
-          RigExecRevisionAcceptance::Deferred);
+    check("skin", Op::Skin, MakeSkinParams({GfMatrix4d(1.0)}, {0}, {1.0f}, 1),
+          count, RigExecRevisionAcceptance::Deferred);
 
     // Smooth never refuses its points; only its envelope can fail it. An
     // invalid topology applies, with no adjacency (a pass-through).
@@ -2006,8 +2009,7 @@ TestPrepareRevisionRangesDecidesAsTheKernel()
     p.weights = packets.denseWire;
     check("smooth, dense envelope", Op::Smooth, p, count, applies);
     p.weights.values.pop_back();
-    check("smooth, envelope one weight short", Op::Smooth, p, count,
-          refuses);
+    check("smooth, envelope one weight short", Op::Smooth, p, count, refuses);
     p = packets.smooth;
     p.topologyIndices[2] = int(count);
     check("smooth, index past the points", Op::Smooth, p, count, applies);
@@ -2015,14 +2017,22 @@ TestPrepareRevisionRangesDecidesAsTheKernel()
     p.valid = false;
     check("smooth, invalid packet", Op::Smooth, p, count, refuses);
 
-    const Op ops[] = {Op::Matrix,          Op::Skin,
-                      Op::BlendShape,      Op::VolumeCorrect,
-                      Op::Smooth,          Op::Lattice,
-                      Op::SurfaceProject,  Op::Ribbon,
-                      Op::Wire,            Op::EmitGuidePoints,
-                      Op::RecomputeNormals, Op::RecomputeExtent,
-                      Op::DeltaMush,       Op::Wrinkle,
-                      Op::External,        Op::SurfaceProjector,
+    const Op ops[] = {Op::Matrix,
+                      Op::Skin,
+                      Op::BlendShape,
+                      Op::VolumeCorrect,
+                      Op::Smooth,
+                      Op::Lattice,
+                      Op::SurfaceProject,
+                      Op::Ribbon,
+                      Op::Wire,
+                      Op::EmitGuidePoints,
+                      Op::RecomputeNormals,
+                      Op::RecomputeExtent,
+                      Op::DeltaMush,
+                      Op::Wrinkle,
+                      Op::External,
+                      Op::SurfaceProjector,
                       Op::ShaderDials};
     for (const Op op : ops) {
         CHECK(rigExec::RigExecRevisionIsRangeOp(op) ==
@@ -2043,9 +2053,9 @@ MakeRangeSkinPacket(size_t count, const char *method)
     std::vector<GfMatrix4d> transforms;
     for (int t = 0; t < 6; ++t) {
         GfMatrix4d m(1.0);
-        m.SetTransform(GfRotation(GfVec3d(1.0, 0.5 * t, 2.0 - t),
-                                  11.0 + 9.0 * t),
-                       GfVec3d(0.25 * t, -0.5 + 0.1 * t, 0.75));
+        m.SetTransform(
+            GfRotation(GfVec3d(1.0, 0.5 * t, 2.0 - t), 11.0 + 9.0 * t),
+            GfVec3d(0.25 * t, -0.5 + 0.1 * t, 0.75));
         if (t == 4) {
             GfMatrix4d scale(1.0);
             scale.SetScale(GfVec3d(1.5, 0.75, 1.2));
@@ -2063,17 +2073,16 @@ MakeRangeSkinPacket(size_t count, const char *method)
         float a = 0.2f + 0.6f * float(i % 7) / 6.0f;
         float b = 1.0f - a;
         if (i % 11 == 0) {
-            b *= 0.5f;  // a shortfall, held at rest
+            b *= 0.5f; // a shortfall, held at rest
         }
         if (i % 97 == 0) {
-            a = b = 0.0f;  // no weight at all
+            a = b = 0.0f; // no weight at all
         }
         weights.push_back(a);
         weights.push_back(b);
         weights.push_back(0.0f);
     }
-    RigExecMoverParameters p =
-        MakeSkinParams(transforms, indices, weights, 3);
+    RigExecMoverParameters p = MakeSkinParams(transforms, indices, weights, 3);
     p.skinningMethod = TfToken(method);
     return p;
 }
@@ -2101,17 +2110,16 @@ KeyFilledSkinTable(const RigExecMoverParameters &p, size_t b, size_t e)
 // group contributes its entering points). False when a call fails, an
 // untouched group wrote its buffer, a result asked without `untouched` is
 // not the one asked with it, or `untouched` disagrees with \p skips.
-using RigExecTestGroupRun = std::function<bool(
-    const GfVec3f *in, GfVec3f *out, size_t begin, size_t end,
-    bool *untouched)>;
+using RigExecTestGroupRun =
+    std::function<bool(const GfVec3f *in, GfVec3f *out, size_t begin,
+                       size_t end, bool *untouched)>;
 static bool
 RunGroups(const std::vector<GfVec3f> &in, const std::vector<size_t> &bounds,
           const RigExecTestGroupRun &group,
           const std::function<bool(size_t, size_t)> &skips,
           std::vector<GfVec3f> *assembled)
 {
-    const GfVec3f poison(NanWithPayload(0x5a5a5), -0.0f,
-                         NanWithPayload(0x123));
+    const GfVec3f poison(NanWithPayload(0x5a5a5), -0.0f, NanWithPayload(0x123));
     bool ok = true;
     assembled->assign(in.size(), poison);
     for (size_t k = 0; k + 1 < bounds.size(); ++k) {
@@ -2129,8 +2137,7 @@ RunGroups(const std::vector<GfVec3f> &in, const std::vector<size_t> &bounds,
         std::vector<GfVec3f> written(e - b, poison);
         ok = group(entering.data(), written.data(), b, e, nullptr) && ok;
         ok = ok && SameBits(written, reported);
-        std::copy(written.begin(), written.end(),
-                  assembled->begin() + long(b));
+        std::copy(written.begin(), written.end(), assembled->begin() + long(b));
     }
     return ok;
 }
@@ -2183,8 +2190,8 @@ TestRevisionGroupsMatchTheWholeKernel()
             // A skin's decision is SkinAcceptance's, in the baked program.
             ok = ok && rigExec::RigExecPrepareRevisionRanges(
                            op, p, n, cached ? &groupWire : nullptr,
-                           cached ? &groupSurface : nullptr, &prepared) ==
-                           RigExecRevisionAcceptance::Applies;
+                           cached ? &groupSurface : nullptr,
+                           &prepared) == RigExecRevisionAcceptance::Applies;
         }
         std::vector<float> envelope;
         if (rigExec::RigExecRevisionTakesSeparateBlend(op, p.weights) &&
@@ -2194,52 +2201,50 @@ TestRevisionGroupsMatchTheWholeKernel()
         const float *separate = envelope.empty() ? nullptr : envelope.data();
         const bool linear = rigExec::RigExecSkinMethodOf(p) ==
                             rigExec::RigExecSkinMethod::ClassicLinear;
-        const RigExecTestGroupRun group =
-            [&](const GfVec3f *groupIn, GfVec3f *out, size_t b, size_t e,
-                bool *untouched) {
-                std::vector<GfMatrix4d> table;
-                std::vector<float> rows;
-                std::vector<rigExec::RigExecScaledDualQuat> palette;
-                RigExecSkinTransformsView view;
-                const RigExecSkinTransformsView *skin = nullptr;
-                if (op == Op::Skin && skinTable != 0) {
-                    table = skinTable == 1 ? p.skinTransforms
-                                           : KeyFilledSkinTable(p, b, e);
-                    view.transforms = table.data();
-                    view.transformCount = table.size();
-                    if (linear) {
-                        rows.resize(table.size() *
-                                    rigExec::RigExecSkinRowStride);
-                        for (size_t t = 0; t < table.size(); ++t) {
-                            rigExec::RigExecNarrowSkinRows(
-                                table[t],
-                                &rows[t * rigExec::RigExecSkinRowStride]);
-                        }
-                        view.rows = rows.data();
-                    } else {
-                        palette = rigExec::RigExecSkinDualQuatPalette(
-                            rigExec::RigExecSkinLayoutForPacket(p, view, n));
-                        view.palette = palette.data();
-                        view.paletteSize = palette.size();
+        const RigExecTestGroupRun group = [&](const GfVec3f *groupIn,
+                                              GfVec3f *out, size_t b, size_t e,
+                                              bool *untouched) {
+            std::vector<GfMatrix4d> table;
+            std::vector<float> rows;
+            std::vector<rigExec::RigExecScaledDualQuat> palette;
+            RigExecSkinTransformsView view;
+            const RigExecSkinTransformsView *skin = nullptr;
+            if (op == Op::Skin && skinTable != 0) {
+                table = skinTable == 1 ? p.skinTransforms
+                                       : KeyFilledSkinTable(p, b, e);
+                view.transforms = table.data();
+                view.transformCount = table.size();
+                if (linear) {
+                    rows.resize(table.size() * rigExec::RigExecSkinRowStride);
+                    for (size_t t = 0; t < table.size(); ++t) {
+                        rigExec::RigExecNarrowSkinRows(
+                            table[t], &rows[t * rigExec::RigExecSkinRowStride]);
                     }
-                    skin = &view;
+                    view.rows = rows.data();
+                } else {
+                    palette = rigExec::RigExecSkinDualQuatPalette(
+                        rigExec::RigExecSkinLayoutForPacket(p, view, n));
+                    view.palette = palette.data();
+                    view.paletteSize = palette.size();
                 }
-                // A smooth group reads its neighbours through a halo: the
-                // points before the group, its own buffer, the points after.
-                const int haloBounds[4] = {0, int(b), int(e), int(n)};
-                const GfVec3f *const haloPoints[3] = {in.data(), groupIn,
-                                                      in.data() + e};
-                rigExec::RigExecGroupPoints<GfVec3f> halo;
-                halo.bounds = haloBounds;
-                halo.groups = 3;
-                halo.points = haloPoints;
-                rigExec::RigExecDeltaMushGroupState<GfVec3f, GfVec3d> mush;
-                const bool reads = op == Op::Smooth || op == Op::DeltaMush;
-                return rigExec::RigExecRunRevisionGroup(
-                    op, p, prepared, skin, groupIn, out, n, b, e, separate,
-                    useSimd, untouched, nullptr, reads ? &halo : nullptr,
-                    op == Op::DeltaMush ? &mush : nullptr);
-            };
+                skin = &view;
+            }
+            // A smooth group reads its neighbours through a halo: the
+            // points before the group, its own buffer, the points after.
+            const int haloBounds[4] = {0, int(b), int(e), int(n)};
+            const GfVec3f *const haloPoints[3] = {in.data(), groupIn,
+                                                  in.data() + e};
+            rigExec::RigExecGroupPoints<GfVec3f> halo;
+            halo.bounds = haloBounds;
+            halo.groups = 3;
+            halo.points = haloPoints;
+            rigExec::RigExecDeltaMushGroupState<GfVec3f, GfVec3d> mush;
+            const bool reads = op == Op::Smooth || op == Op::DeltaMush;
+            return rigExec::RigExecRunRevisionGroup(
+                op, p, prepared, skin, groupIn, out, n, b, e, separate, useSimd,
+                untouched, nullptr, reads ? &halo : nullptr,
+                op == Op::DeltaMush ? &mush : nullptr);
+        };
         for (const std::vector<size_t> &bounds : *cuts) {
             std::vector<GfVec3f> assembled;
             ok = RunGroups(in, bounds, group, skips, &assembled) && ok;
@@ -2256,11 +2261,9 @@ TestRevisionGroupsMatchTheWholeKernel()
     const auto never = [](size_t, size_t) { return false; };
     const auto always = [](size_t, size_t) { return true; };
     const auto noIndexIn = [&](size_t b, size_t e) {
-        return std::none_of(packets.sparseIndices.begin(),
-                            packets.sparseIndices.end(), [&](int index) {
-                                return size_t(index) >= b &&
-                                       size_t(index) < e;
-                            });
+        return std::none_of(
+            packets.sparseIndices.begin(), packets.sparseIndices.end(),
+            [&](int index) { return size_t(index) >= b && size_t(index) < e; });
     };
 
     // Matrix: full strength (SIMD on and off), a dense envelope and a sparse
@@ -2288,10 +2291,9 @@ TestRevisionGroupsMatchTheWholeKernel()
     // Wire: the sparse basis, the dense walk with rest evaluations (cached)
     // and without, and the dense walk blended with a separate envelope.
     for (const bool cached : {false, true}) {
-        check("wire sparse basis", Op::Wire, packets.sparseWire, false,
-              cached, noIndexIn, true);
-        check("wire dense", Op::Wire, packets.wire, false, cached, never,
-              true);
+        check("wire sparse basis", Op::Wire, packets.sparseWire, false, cached,
+              noIndexIn, true);
+        check("wire dense", Op::Wire, packets.wire, false, cached, never, true);
         auto p = packets.wire;
         p.weights = packets.denseWire;
         check("wire dense, separate envelope", Op::Wire, p, false, cached,
@@ -2330,8 +2332,8 @@ TestRevisionGroupsMatchTheWholeKernel()
     std::vector<GfVec3f> wideIn(25);
     wide.restPoints.resize(25);
     for (size_t i = 0; i < 25; ++i) {
-        wide.restPoints[i] = GfVec3f(float(i) / 20.0f - 0.1f,
-                                     0.3f + 0.02f * float(i), 0.7f);
+        wide.restPoints[i] =
+            GfVec3f(float(i) / 20.0f - 0.1f, 0.3f + 0.02f * float(i), 0.7f);
         wideIn[i] = GfVec3f(float(i), -float(i), 0.25f);
     }
     wideIn[0] = GfVec3f(-0.0f, 0.0f, -0.0f);
@@ -2348,8 +2350,8 @@ TestRevisionGroupsMatchTheWholeKernel()
         p.auxPointsB[3][0] = inf;
         p.auxPointsB[5][1] = -inf;
         source = &noPayloads;
-        check("lattice, non-finite cage deltas", Op::Lattice, p, false,
-              cached, never, true);
+        check("lattice, non-finite cage deltas", Op::Lattice, p, false, cached,
+              never, true);
         source = &wideIn;
         cuts = &wideCuts;
         check("lattice, unbounded basis", Op::Lattice, wide, false, cached,
@@ -2366,8 +2368,7 @@ TestRevisionGroupsMatchTheWholeKernel()
     // strength and under a dense and a sparse envelope, its neighbours read
     // across group bounds; an invalid topology passes through.
     for (const bool cached : {false, true}) {
-        check("smooth", Op::Smooth, packets.smooth, false, cached, never,
-              true);
+        check("smooth", Op::Smooth, packets.smooth, false, cached, never, true);
         auto p = packets.smooth;
         p.weights = packets.denseWire;
         check("smooth, dense envelope", Op::Smooth, p, false, cached, never,
@@ -2389,10 +2390,10 @@ TestRevisionGroupsMatchTheWholeKernel()
     // their entering positions in the groups as in the whole kernel.
     {
         std::vector<GfVec3f> mushIn = entering;
-        for (const size_t i : {size_t(1), size_t(3), size_t(332),
-                               size_t(340), size_t(699), size_t(1000)}) {
-            mushIn[i] = GfVec3f(0.5f * float(i % 7), 0.25f * float(i / 7),
-                                0.05f);
+        for (const size_t i : {size_t(1), size_t(3), size_t(332), size_t(340),
+                               size_t(699), size_t(1000)}) {
+            mushIn[i] =
+                GfVec3f(0.5f * float(i % 7), 0.25f * float(i / 7), 0.05f);
         }
         source = &mushIn;
         for (const bool cached : {false, true}) {
@@ -2405,8 +2406,8 @@ TestRevisionGroupsMatchTheWholeKernel()
                   cached, never, true);
             p = packets.mush;
             p.mushSettings.onlySmooth = true;
-            check("delta mush, smoothing only", Op::DeltaMush, p, false,
-                  cached, never, true);
+            check("delta mush, smoothing only", Op::DeltaMush, p, false, cached,
+                  never, true);
             p = packets.mush;
             p.mushSettings.smoothing =
                 rigExec::RigExecDeltaMushSmoothing::LengthWeighted;
@@ -2419,8 +2420,8 @@ TestRevisionGroupsMatchTheWholeKernel()
                   cached, never, true);
             p = packets.mush;
             p.weights = packets.denseWire;
-            check("delta mush, dense envelope", Op::DeltaMush, p, false,
-                  cached, never, true);
+            check("delta mush, dense envelope", Op::DeltaMush, p, false, cached,
+                  never, true);
             p.weights = packets.sparse;
             check("delta mush, sparse envelope", Op::DeltaMush, p, false,
                   cached, never, true);
@@ -2456,9 +2457,8 @@ TestRevisionGroupsMatchTheWholeKernel()
     blend.weights = RigExecWeightPacket::Constant(1.0f);
     blend.blendDeltas.resize(count);
     for (size_t i = 0; i < count; ++i) {
-        blend.blendDeltas[i] =
-            GfVec3f(0.01f * float(i % 17) - 0.08f, -0.0f,
-                    0.5f * std::sin(0.13f * float(i)));
+        blend.blendDeltas[i] = GfVec3f(0.01f * float(i % 17) - 0.08f, -0.0f,
+                                       0.5f * std::sin(0.13f * float(i)));
     }
     blend.blendDeltas[5] = GfVec3f(0.5f, NanWithPayload(0x77), 0.0f);
     blend.blendDeltas[900] = GfVec3f(inf, 1.0f, -0.0f);
@@ -2479,10 +2479,9 @@ TestRevisionGroupsMatchTheWholeKernel()
         std::vector<GfVec3f> out(10);
         auto p = blend;
         p.blendSurfaceFrame = true;
-        CHECK(!rigExec::RigExecRunRevisionGroup(Op::BlendShape, p, none,
-                                                nullptr, entering.data(),
-                                                out.data(), count, 0, 10,
-                                                nullptr, false));
+        CHECK(!rigExec::RigExecRunRevisionGroup(
+            Op::BlendShape, p, none, nullptr, entering.data(), out.data(),
+            count, 0, 10, nullptr, false));
         // A smooth group reads its neighbours through its halo: refused
         // without one.
         RigExecRevisionRangeInputs adjacent;
@@ -2498,20 +2497,18 @@ TestRevisionGroupsMatchTheWholeKernel()
         adjacent.smoothAdjacency = adjacent.smoothAdjacencyOwned.get();
         p = blend;
         p.kind = TfToken("smooth");
-        CHECK(!rigExec::RigExecRunRevisionGroup(Op::Smooth, p, adjacent,
-                                                nullptr, entering.data(),
-                                                out.data(), count, 0, 10,
-                                                nullptr, false));
+        CHECK(!rigExec::RigExecRunRevisionGroup(
+            Op::Smooth, p, adjacent, nullptr, entering.data(), out.data(),
+            count, 0, 10, nullptr, false));
         std::vector<GfVec3f> same(entering.begin(), entering.begin() + 10);
         CHECK(!rigExec::RigExecRunRevisionGroup(
-            Op::Matrix, packets.matrix, none, nullptr, same.data(),
-            same.data(), count, 0, 10, nullptr, false));
+            Op::Matrix, packets.matrix, none, nullptr, same.data(), same.data(),
+            count, 0, 10, nullptr, false));
         auto unknown = MakeRangeSkinPacket(count, "classicLinear");
         unknown.skinningMethod = TfToken("unknownMethod");
-        CHECK(!rigExec::RigExecRunRevisionGroup(Op::Skin, unknown, none,
-                                                nullptr, entering.data(),
-                                                out.data(), count, 0, 10,
-                                                nullptr, false));
+        CHECK(!rigExec::RigExecRunRevisionGroup(
+            Op::Skin, unknown, none, nullptr, entering.data(), out.data(),
+            count, 0, 10, nullptr, false));
         CHECK(!rigExec::RigExecRunRevisionGroup(
             Op::Wire, packets.sparseWire, none, nullptr, entering.data(),
             out.data(), count, 0, 10, nullptr, false));
@@ -2527,7 +2524,8 @@ TestRevisionGroupsMatchTheWholeKernel()
         CHECK(prepared.latticeBasis && surface.LatticeRestVersion() == 5);
     }
     std::printf("revision groups: %zu revision(s) matched their whole "
-                "kernels\n", compared);
+                "kernels\n",
+                compared);
 }
 
 // A group's sparse matrix walk through its memo (pointBlocks.h). Whatever
@@ -2562,16 +2560,16 @@ TestSparseWalkReuseKeepsTheKernelBits()
         entering[10] = GfVec3f(NanWithPayload(0x51), 1.0f, -2.0f);
         Memo memo;
         const auto walk = [&](Memo *through, size_t b, size_t e,
-                              size_t computed, size_t held,
-                              const char *what) {
+                              size_t computed, size_t held, const char *what) {
             std::vector<GfVec3f> plain(e - b), reused(e - b);
             bool ok = rigExec::RigExecRunRevisionGroup(
-                Op::Matrix, p, none, nullptr, entering.data() + b,
-                plain.data(), count, b, e, nullptr, false);
+                Op::Matrix, p, none, nullptr, entering.data() + b, plain.data(),
+                count, b, e, nullptr, false);
             ok = rigExec::RigExecRunRevisionGroup(
                      Op::Matrix, p, none, nullptr, entering.data() + b,
                      reused.data(), count, b, e, nullptr, false, nullptr,
-                     through) && ok;
+                     through) &&
+                 ok;
             ok = ok && SameBits(plain, reused) &&
                  through->computed == computed && through->reused == held;
             if (!ok) {
@@ -2658,8 +2656,8 @@ TestGatedOpsKeepUnlistedPoints()
     const auto keepsUnlisted = [&](Op op, const RigExecMoverParameters &p,
                                    bool useSimd) {
         std::vector<GfVec3f> whole = entering;
-        bool ok = rigExec::RigExecRunRevisionKernel(op, p, &whole, useSimd,
-                                                    nullptr);
+        bool ok =
+            rigExec::RigExecRunRevisionKernel(op, p, &whole, useSimd, nullptr);
         size_t moved = 0;
         for (size_t i = 0; i < count; ++i) {
             const bool same =
@@ -2771,8 +2769,7 @@ static void
 TestAssemblerLendsDeltasAndRest()
 {
     using Op = RigExecRevisionOp;
-    const std::vector<GfVec3f> deltas = {GfVec3f(0, 1, 0),
-                                         GfVec3f(-0.0f, 2, 0),
+    const std::vector<GfVec3f> deltas = {GfVec3f(0, 1, 0), GfVec3f(-0.0f, 2, 0),
                                          GfVec3f(3, 0, 1)};
     const std::vector<GfVec3f> base = {GfVec3f(1, 1, 1), GfVec3f(2, 2, 2),
                                        GfVec3f(3, 3, 3)};
@@ -2782,15 +2779,14 @@ TestAssemblerLendsDeltasAndRest()
         rigExec::RigExecProviderValues values;
         values.blendDeltas = deltas;
         const RigExecMoverParameters copied =
-            rigExec::RigExecAssembleFromLeaves(Op::BlendShape, binding,
-                                               leaves, values);
+            rigExec::RigExecAssembleFromLeaves(Op::BlendShape, binding, leaves,
+                                               values);
         CHECK(copied.valid && SameBits(copied.blendDeltas, deltas));
         CHECK(SameBits(values.blendDeltas, deltas));
         values.lendBlendDeltas = true;
         const GfVec3f *storage = values.blendDeltas.data();
-        const RigExecMoverParameters lent =
-            rigExec::RigExecAssembleFromLeaves(Op::BlendShape, binding,
-                                               leaves, values);
+        const RigExecMoverParameters lent = rigExec::RigExecAssembleFromLeaves(
+            Op::BlendShape, binding, leaves, values);
         CHECK(lent.valid && SameBits(lent.blendDeltas, deltas));
         CHECK(lent.blendDeltas.data() == storage);
         CHECK(values.blendDeltas.empty());
@@ -2806,24 +2802,21 @@ TestAssemblerLendsDeltasAndRest()
         std::vector<GfVec3f> retained = base;
         const GfVec3f *storage = retained.data();
         values.retainedRest = &retained;
-        const RigExecMoverParameters lent =
-            rigExec::RigExecAssembleFromLeaves(Op::Lattice, binding, leaves,
-                                               values);
+        const RigExecMoverParameters lent = rigExec::RigExecAssembleFromLeaves(
+            Op::Lattice, binding, leaves, values);
         CHECK(SameBits(lent.restPoints, base) &&
               lent.restPoints.data() == storage && retained.empty());
         CHECK(SameBits(values.basePoints, base));
         CHECK(lent == copied);
-        const RigExecMoverParameters again =
-            rigExec::RigExecAssembleFromLeaves(Op::Lattice, binding, leaves,
-                                               values);
+        const RigExecMoverParameters again = rigExec::RigExecAssembleFromLeaves(
+            Op::Lattice, binding, leaves, values);
         CHECK(SameBits(again.restPoints, base) &&
               again.restPoints.data() != storage);
     }
     {
         UsdStageRefPtr stage = UsdStage::CreateInMemory();
-        const UsdPrim blendMover =
-            stage->DefinePrim(SdfPath("/A/Rig/Movers/Blend"),
-                              TfToken("RigExecBlendShapeMover"));
+        const UsdPrim blendMover = stage->DefinePrim(
+            SdfPath("/A/Rig/Movers/Blend"), TfToken("RigExecBlendShapeMover"));
         rigExec::RigExecProviderValues values;
         values.blendDeltas = deltas;
         values.lendBlendDeltas = true;
@@ -2832,16 +2825,15 @@ TestAssemblerLendsDeltasAndRest()
             blendMover, Op::BlendShape, binding, values);
         CHECK(p.valid && SameBits(p.blendDeltas, deltas) &&
               p.blendDeltas.data() == storage && values.blendDeltas.empty());
-        const UsdPrim latticeMover =
-            stage->DefinePrim(SdfPath("/A/Rig/Movers/Cage"),
-                              TfToken("RigExecLatticeMover"));
+        const UsdPrim latticeMover = stage->DefinePrim(
+            SdfPath("/A/Rig/Movers/Cage"), TfToken("RigExecLatticeMover"));
         rigExec::RigExecProviderValues cage;
         cage.basePoints = base;
         std::vector<GfVec3f> retained = base;
         const GfVec3f *rest = retained.data();
         cage.retainedRest = &retained;
-        const RigExecMoverParameters q = RigExecAssembleParameters(
-            latticeMover, Op::Lattice, binding, cage);
+        const RigExecMoverParameters q =
+            RigExecAssembleParameters(latticeMover, Op::Lattice, binding, cage);
         CHECK(SameBits(q.restPoints, base) && q.restPoints.data() == rest &&
               retained.empty());
     }
@@ -2857,7 +2849,8 @@ TestLongResolvedInputConnections()
     for (size_t i = 0; i < count; ++i) {
         chain.push_back(prim.CreateAttribute(
             TfToken("value" + std::to_string(i)), SdfValueTypeNames->Float));
-        if (i > 0) chain[i - 1].SetConnections({chain[i].GetPath()});
+        if (i > 0)
+            chain[i - 1].SetConnections({chain[i].GetPath()});
     }
     chain.front().Set(1.0f);
     chain.back().Set(2.0f);

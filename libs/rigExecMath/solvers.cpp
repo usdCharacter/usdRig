@@ -76,8 +76,7 @@ RigExecScaleFkSegments(const std::vector<RigExecFkChainElement> &elements,
         }
     }
     for (size_t i = 0; i < elements.size(); ++i) {
-        RigExecScaleFrameAlong((*frames)[i].points.data(), dirs[i],
-                               factors[i]);
+        RigExecScaleFrameAlong((*frames)[i].points.data(), dirs[i], factors[i]);
     }
 }
 
@@ -99,21 +98,19 @@ _Rotate(const GfVec3d &v, const GfVec3d &axis, double angle)
 // Builds a posed frame from an origin plus orthonormal aim/up directions,
 // preserving the rest landmark handle lengths (rigid frame).
 RigExecPointFrame
-_FrameFromAxes(
-    const std::array<GfVec3d, 4> &restPoints,
-    const GfVec3d &origin,
-    const GfVec3d &ex,
-    const GfVec3d &eyCandidate)
+_FrameFromAxes(const std::array<GfVec3d, 4> &restPoints, const GfVec3d &origin,
+               const GfVec3d &ex, const GfVec3d &eyCandidate)
 {
     GfVec3d ey = eyCandidate - ex * GfDot(ex, eyCandidate);
     const double eyLen = ey.GetLength();
     if (eyLen < 1e-12) {
         // Deterministic world-axis completion.
-        const GfVec3d axes[3] = {
-            GfVec3d(0, 1, 0), GfVec3d(0, 0, 1), GfVec3d(1, 0, 0)};
+        const GfVec3d axes[3] = {GfVec3d(0, 1, 0), GfVec3d(0, 0, 1),
+                                 GfVec3d(1, 0, 0)};
         for (const GfVec3d &axis : axes) {
             ey = axis - ex * GfDot(ex, axis);
-            if (ey.GetLength() >= 1e-12) break;
+            if (ey.GetLength() >= 1e-12)
+                break;
         }
     }
     ey.Normalize();
@@ -133,18 +130,16 @@ _FrameFromAxes(
     return f;
 }
 
-}  // namespace
+} // namespace
 
 void
-RigExecTwoBoneIkLengths(
-    const std::array<std::array<GfVec3d, 4>, 3> &restPoints,
-    const GfMatrix4d &space, double upperOffset, double lowerOffset,
-    double *upperLength, double *lowerLength)
+RigExecTwoBoneIkLengths(const std::array<std::array<GfVec3d, 4>, 3> &restPoints,
+                        const GfMatrix4d &space, double upperOffset,
+                        double lowerOffset, double *upperLength,
+                        double *lowerLength)
 {
-    const double rawUpper =
-        (restPoints[1][0] - restPoints[0][0]).GetLength();
-    const double rawLower =
-        (restPoints[2][0] - restPoints[1][0]).GetLength();
+    const double rawUpper = (restPoints[1][0] - restPoints[0][0]).GetLength();
+    const double rawLower = (restPoints[2][0] - restPoints[1][0]).GetLength();
     const GfVec3d s0 = space.Transform(restPoints[0][0]);
     const GfVec3d s1 = space.Transform(restPoints[1][0]);
     const GfVec3d s2 = space.Transform(restPoints[2][0]);
@@ -193,12 +188,11 @@ RigExecSetTwoBoneLimbParams(
 }
 
 std::array<RigExecPointFrame, 3>
-RigExecSolveTwoBoneIk(
-    const RigExecPointFrame &rootFrame,
-    const RigExecPointFrame &effectorFrame,
-    const RigExecPointFrame &poleFrame,
-    const std::array<std::array<GfVec3d, 4>, 3> &restPoints,
-    const RigExecTwoBoneIkParams &params)
+RigExecSolveTwoBoneIk(const RigExecPointFrame &rootFrame,
+                      const RigExecPointFrame &effectorFrame,
+                      const RigExecPointFrame &poleFrame,
+                      const std::array<std::array<GfVec3d, 4>, 3> &restPoints,
+                      const RigExecTwoBoneIkParams &params)
 {
     const GfVec3d root = rootFrame.Origin();
     const GfVec3d goal = effectorFrame.Origin();
@@ -220,8 +214,8 @@ RigExecSolveTwoBoneIk(
         // (no silent identity, no NaNs).
         const GfVec3d rootAim = rootFrame.X() - root;
         if (rootAim.GetLength() < 1e-12) {
-            std::array<RigExecPointFrame, 3> failed = {
-                rootFrame, rootFrame, effectorFrame};
+            std::array<RigExecPointFrame, 3> failed = {rootFrame, rootFrame,
+                                                       effectorFrame};
             for (auto &f : failed) {
                 f.flags |= RigExecPointFrameDegenerate;
             }
@@ -237,33 +231,34 @@ RigExecSolveTwoBoneIk(
         // the per-bone scales and the pin, then a plain two-bone solve
         // that reaches as far as those lengths allow.
         RigExecLimbSegmentLengths(l1, l2, dist, (pole - root).GetLength(),
-                                  (goal - pole).GetLength(), params.limb,
-                                  &s1, &s2);
+                                  (goal - pole).GetLength(), params.limb, &s1,
+                                  &s2);
         s1 = std::max(s1, 1e-9);
         s2 = std::max(s2, 1e-9);
         reach = std::min(dist, s1 + s2);
     } else {
-    // Soft clamp near full reach ("clampWithSoftness"): beyond
-    // (chain - softness) the effective distance eases exponentially toward
-    // the chain length instead of hard-clamping.
-    const double soft = std::max(params.softness, 0.0) * chain;
-    if (soft > 1e-12 && dist > chain - soft) {
-        reach = chain - soft * std::exp(-(dist - (chain - soft)) / soft);
-    } else if (dist > chain) {
-        reach = chain;
-    }
-
-    // Uniform-segment stretch: blend segment scaling toward the amount
-    // needed to reach the raw goal distance.
-    if (dist > reach && params.stretch > 0.0) {
-        const double factor = 1.0 + (dist / chain - 1.0) *
-            std::min(std::max(params.stretch, 0.0), 1.0);
-        if (factor > 1.0) {
-            s1 = l1 * factor;
-            s2 = l2 * factor;
-            reach = std::min(dist, s1 + s2);
+        // Soft clamp near full reach ("clampWithSoftness"): beyond
+        // (chain - softness) the effective distance eases exponentially toward
+        // the chain length instead of hard-clamping.
+        const double soft = std::max(params.softness, 0.0) * chain;
+        if (soft > 1e-12 && dist > chain - soft) {
+            reach = chain - soft * std::exp(-(dist - (chain - soft)) / soft);
+        } else if (dist > chain) {
+            reach = chain;
         }
-    }
+
+        // Uniform-segment stretch: blend segment scaling toward the amount
+        // needed to reach the raw goal distance.
+        if (dist > reach && params.stretch > 0.0) {
+            const double factor =
+                1.0 + (dist / chain - 1.0) *
+                          std::min(std::max(params.stretch, 0.0), 1.0);
+            if (factor > 1.0) {
+                s1 = l1 * factor;
+                s2 = l2 * factor;
+                reach = std::min(dist, s1 + s2);
+            }
+        }
     }
     reach = std::min(reach, s1 + s2);
     reach = std::max(reach, std::abs(s1 - s2) + 1e-12);
@@ -276,14 +271,13 @@ RigExecSolveTwoBoneIk(
     if (poleDir.GetLength() > 1e-12) {
         bendUp = poleDir.GetNormalized();
     } else {
-        GfVec3d candidate =
-            restPoints[0][2] - restPoints[0][0];
+        GfVec3d candidate = restPoints[0][2] - restPoints[0][0];
         candidate -= aim * GfDot(aim, candidate);
         if (candidate.GetLength() < 1e-12) {
             // World axis least parallel to the aim always has a nonzero
             // projection: |dot| < 1 for a unit axis, so this terminates.
-            const GfVec3d axes[3] = {
-                GfVec3d(1, 0, 0), GfVec3d(0, 1, 0), GfVec3d(0, 0, 1)};
+            const GfVec3d axes[3] = {GfVec3d(1, 0, 0), GfVec3d(0, 1, 0),
+                                     GfVec3d(0, 0, 1)};
             double best = 2.0;
             for (const GfVec3d &axis : axes) {
                 const double align = std::abs(GfDot(axis, aim));
@@ -293,8 +287,8 @@ RigExecSolveTwoBoneIk(
                 }
             }
         }
-        bendUp = _Rotate(candidate.GetNormalized(),
-                         aim, params.preferredBendRadians);
+        bendUp = _Rotate(candidate.GetNormalized(), aim,
+                         params.preferredBendRadians);
     }
     if (params.twistRadians != 0.0 && std::isfinite(params.twistRadians)) {
         bendUp = _Rotate(bendUp, aim, params.twistRadians);
@@ -360,21 +354,20 @@ RigExecSolveTwoBoneIk(
 }
 
 RigExecPointFrame
-RigExecBlendFrames(
-    const RigExecPointFrame &a,
-    const RigExecPointFrame &b,
-    const std::array<GfVec3d, 4> &restPoints,
-    double weight,
-    RigExecRotationBlend rotationBlend,
-    RigExecScaleBlend scaleBlend,
-    const std::array<GfVec3d, 4> *outRestPoints)
+RigExecBlendFrames(const RigExecPointFrame &a, const RigExecPointFrame &b,
+                   const std::array<GfVec3d, 4> &restPoints, double weight,
+                   RigExecRotationBlend rotationBlend,
+                   RigExecScaleBlend scaleBlend,
+                   const std::array<GfVec3d, 4> *outRestPoints)
 {
     const double w = std::min(std::max(weight, 0.0), 1.0);
     if (!outRestPoints) {
         // At the ends the blend IS the input frame,
         // bit for bit, with no SRT round trip.
-        if (w <= 0.0) return a;
-        if (w >= 1.0) return b;
+        if (w <= 0.0)
+            return a;
+        if (w >= 1.0)
+            return b;
     } else if (w <= 0.0 || w >= 1.0) {
         // Re-based, the end still has to be re-applied to the new basis, so
         // it goes through the map rather than through the frame.
@@ -404,16 +397,17 @@ RigExecBlendFrames(
     GfQuatd qa = pa.rotation, qb = pb.rotation;
     if (rotationBlend == RigExecRotationBlend::ShortestArc &&
         GfDot(qa.GetImaginary(), qb.GetImaginary()) +
-            qa.GetReal() * qb.GetReal() < 0) {
+                qa.GetReal() * qb.GetReal() <
+            0) {
         qb = -qb;
     }
     pr.rotation = GfSlerp(w, qa, qb).GetNormalized();
 
     for (int i = 0; i < 3; ++i) {
-        if (scaleBlend == RigExecScaleBlend::Log &&
-            pa.scale[i] > 0 && pb.scale[i] > 0) {
-            pr.scale[i] = std::exp(
-                std::log(pa.scale[i]) * (1 - w) + std::log(pb.scale[i]) * w);
+        if (scaleBlend == RigExecScaleBlend::Log && pa.scale[i] > 0 &&
+            pb.scale[i] > 0) {
+            pr.scale[i] = std::exp(std::log(pa.scale[i]) * (1 - w) +
+                                   std::log(pb.scale[i]) * w);
         } else {
             pr.scale[i] = pa.scale[i] * (1 - w) + pb.scale[i] * w;
         }
@@ -421,8 +415,8 @@ RigExecBlendFrames(
     }
 
     const GfMatrix4d m = RigExecParamsToMatrix(pr);
-    return RigExecMatrixToPoints(
-        outRestPoints ? *outRestPoints : restPoints, m);
+    return RigExecMatrixToPoints(outRestPoints ? *outRestPoints : restPoints,
+                                 m);
 }
 
 namespace {
@@ -430,15 +424,14 @@ namespace {
 // Swing/twist decomposition of q about unit axis: q = swing * twist,
 // twist a rotation about the axis (Dobrowolski 2015, see docs/references.md).
 void
-_SwingTwist(const GfQuatd &q, const GfVec3d &axis,
-            GfQuatd *swing, GfQuatd *twist)
+_SwingTwist(const GfQuatd &q, const GfVec3d &axis, GfQuatd *swing,
+            GfQuatd *twist)
 {
     const GfVec3d im = q.GetImaginary();
     const double proj = GfDot(im, axis);
     GfQuatd t(q.GetReal(), axis * proj);
-    const double len = std::sqrt(
-        t.GetReal() * t.GetReal() +
-        GfDot(t.GetImaginary(), t.GetImaginary()));
+    const double len = std::sqrt(t.GetReal() * t.GetReal() +
+                                 GfDot(t.GetImaginary(), t.GetImaginary()));
     if (len < 1e-15) {
         *twist = GfQuatd::GetIdentity();
     } else {
@@ -447,19 +440,18 @@ _SwingTwist(const GfQuatd &q, const GfVec3d &axis,
     *swing = q * twist->GetInverse();
 }
 
-}  // namespace
+} // namespace
 
 std::vector<RigExecPointFrame>
-RigExecDistributeTwist(
-    const RigExecPointFrame &start,
-    const RigExecPointFrame &end,
-    const std::array<GfVec3d, 4> &startRest,
-    const std::array<GfVec3d, 4> &endRest,
-    const std::vector<double> &weights,
-    double twistTurns)
+RigExecDistributeTwist(const RigExecPointFrame &start,
+                       const RigExecPointFrame &end,
+                       const std::array<GfVec3d, 4> &startRest,
+                       const std::array<GfVec3d, 4> &endRest,
+                       const std::vector<double> &weights, double twistTurns)
 {
     std::vector<RigExecPointFrame> result;
-    if (!std::isfinite(twistTurns)) return result;
+    if (!std::isfinite(twistTurns))
+        return result;
     result.reserve(weights.size());
 
     RigExecTransformParams ps, pe;
@@ -477,11 +469,11 @@ RigExecDistributeTwist(
     }
 
     // Relative rotation decomposed into swing and unwrapped aim-axis twist.
-    const GfVec3d aim =
-        (start.X() - start.Origin()).GetNormalized();
+    const GfVec3d aim = (start.X() - start.Origin()).GetNormalized();
     GfQuatd qs = ps.rotation, qe = pe.rotation;
     if (GfDot(qs.GetImaginary(), qe.GetImaginary()) +
-            qs.GetReal() * qe.GetReal() < 0) {
+            qs.GetReal() * qe.GetReal() <
+        0) {
         qe = -qe;
     }
     const GfQuatd rel = qs.GetInverse() * qe;
@@ -493,10 +485,11 @@ RigExecDistributeTwist(
     _SwingTwist(rel, localAim, &swing, &twist);
 
     // Unwrapped twist angle about localAim.
-    double twistAngle = 2.0 * std::atan2(
-        GfDot(twist.GetImaginary(), localAim), twist.GetReal());
+    double twistAngle = 2.0 * std::atan2(GfDot(twist.GetImaginary(), localAim),
+                                         twist.GetReal());
     twistAngle += 2.0 * std::acos(-1.0) * twistTurns;
-    if (!std::isfinite(twistAngle)) return result;
+    if (!std::isfinite(twistAngle))
+        return result;
 
     for (size_t k = 0; k < weights.size(); ++k) {
         const double w = std::min(std::max(weights[k], 0.0), 1.0);
@@ -504,13 +497,11 @@ RigExecDistributeTwist(
         const GfQuatd swingK =
             GfSlerp(w, GfQuatd::GetIdentity(), swing).GetNormalized();
         const double angK = twistAngle * w;
-        const GfQuatd twistK(
-            std::cos(angK / 2), localAim * std::sin(angK / 2));
+        const GfQuatd twistK(std::cos(angK / 2), localAim * std::sin(angK / 2));
         const GfQuatd qk = (qs * swingK * twistK).GetNormalized();
 
         RigExecTransformParams pk;
-        pk.translation =
-            ps.translation * (1 - w) + pe.translation * w;
+        pk.translation = ps.translation * (1 - w) + pe.translation * w;
         pk.rotation = qk;
         pk.scale = ps.scale * (1 - w) + pe.scale * w;
         pk.shear = ps.shear * (1 - w) + pe.shear * w;
@@ -520,8 +511,7 @@ RigExecDistributeTwist(
         // rest sets, but samples use start's rest landmarks.
         const GfMatrix4d m = RigExecParamsToMatrix(pk);
         RigExecPointFrame f = RigExecMatrixToPoints(startRest, m);
-        const GfVec3d origin =
-            start.Origin() * (1 - w) + end.Origin() * w;
+        const GfVec3d origin = start.Origin() * (1 - w) + end.Origin() * w;
         const GfVec3d shift = origin - f.Origin();
         for (auto &p : f.points) {
             p += shift;
@@ -532,8 +522,8 @@ RigExecDistributeTwist(
 }
 
 GfVec3d
-RigExecApplyWeightedMatrix(
-    const GfVec3d &point, const GfMatrix4d &transform, double weight)
+RigExecApplyWeightedMatrix(const GfVec3d &point, const GfMatrix4d &transform,
+                           double weight)
 {
     if (weight <= 0.0) {
         return point;
@@ -599,8 +589,8 @@ RigExecSkinLayout::Validate(std::string *error) const
 }
 
 GfVec3d
-RigExecApplyLinearBlendSkin(
-    const GfVec3d &point, const RigExecSkinLayout &layout, size_t i)
+RigExecApplyLinearBlendSkin(const GfVec3d &point,
+                            const RigExecSkinLayout &layout, size_t i)
 {
     GfVec3d sum(0.0);
     double total = 0.0;
@@ -617,12 +607,12 @@ RigExecApplyLinearBlendSkin(
 }
 
 void
-RigExecApplyLinearBlendSkin(
-    const GfVec3f *in, GfVec3f *out, const RigExecSkinLayout &layout)
+RigExecApplyLinearBlendSkin(const GfVec3f *in, GfVec3f *out,
+                            const RigExecSkinLayout &layout)
 {
     for (size_t i = 0; i < layout.pointCount; ++i) {
-        out[i] = GfVec3f(RigExecApplyLinearBlendSkin(
-            GfVec3d(in[i]), layout, i));
+        out[i] =
+            GfVec3f(RigExecApplyLinearBlendSkin(GfVec3d(in[i]), layout, i));
     }
 }
 
@@ -636,14 +626,14 @@ namespace {
 // order, exactly as RigExecApplyLinearBlendSkin accumulates it, so the two
 // kernels see the same complement bit for bit.
 void
-_GatherDualQuatInfluences(
-    const RigExecSkinLayout &layout, size_t i,
-    std::vector<int> *indices, std::vector<double> *weights)
+_GatherDualQuatInfluences(const RigExecSkinLayout &layout, size_t i,
+                          std::vector<int> *indices,
+                          std::vector<double> *weights)
 {
     RigExecGatherDualQuatInfluences(layout, i, indices, weights);
 }
 
-}  // namespace
+} // namespace
 
 std::vector<RigExecScaledDualQuat>
 RigExecSkinDualQuatPalette(const RigExecSkinLayout &layout)
@@ -651,25 +641,25 @@ RigExecSkinDualQuatPalette(const RigExecSkinLayout &layout)
     std::vector<RigExecScaledDualQuat> palette;
     palette.reserve(layout.transformCount + 1);
     for (size_t t = 0; t < layout.transformCount; ++t) {
-        palette.push_back(RigExecScaledDualQuatFromMatrix(layout.transforms[t]));
+        palette.push_back(
+            RigExecScaledDualQuatFromMatrix(layout.transforms[t]));
     }
-    palette.emplace_back();  // identity: the weight complement's influence
+    palette.emplace_back(); // identity: the weight complement's influence
     return palette;
 }
 
 bool
-RigExecApplyDualQuatSkin(
-    const GfVec3d &point, const RigExecScaledDualQuat *palette,
-    size_t paletteSize, const RigExecSkinLayout &layout, size_t i,
-    GfVec3d *out)
+RigExecApplyDualQuatSkin(const GfVec3d &point,
+                         const RigExecScaledDualQuat *palette,
+                         size_t paletteSize, const RigExecSkinLayout &layout,
+                         size_t i, GfVec3d *out)
 {
     std::vector<int> indices;
     std::vector<double> weights;
     _GatherDualQuatInfluences(layout, i, &indices, &weights);
     RigExecScaledDualQuat blend;
-    if (!RigExecBlendScaledDualQuats(
-            palette, paletteSize, indices.data(), weights.data(),
-            indices.size(), &blend)) {
+    if (!RigExecBlendScaledDualQuats(palette, paletteSize, indices.data(),
+                                     weights.data(), indices.size(), &blend)) {
         return false;
     }
     *out = RigExecScaledDualQuatTransformPoint(blend, point);
@@ -677,9 +667,10 @@ RigExecApplyDualQuatSkin(
 }
 
 bool
-RigExecApplyDualQuatSkin(
-    const GfVec3f *in, GfVec3f *out, const RigExecSkinLayout &layout,
-    const RigExecScaledDualQuat *palette, size_t paletteSize)
+RigExecApplyDualQuatSkin(const GfVec3f *in, GfVec3f *out,
+                         const RigExecSkinLayout &layout,
+                         const RigExecScaledDualQuat *palette,
+                         size_t paletteSize)
 {
     std::vector<int> indices;
     std::vector<double> weights;
@@ -688,20 +679,20 @@ RigExecApplyDualQuatSkin(
     for (size_t i = 0; i < layout.pointCount; ++i) {
         _GatherDualQuatInfluences(layout, i, &indices, &weights);
         RigExecScaledDualQuat blend;
-        if (!RigExecBlendScaledDualQuats(
-                palette, paletteSize, indices.data(),
-                weights.data(), indices.size(), &blend)) {
+        if (!RigExecBlendScaledDualQuats(palette, paletteSize, indices.data(),
+                                         weights.data(), indices.size(),
+                                         &blend)) {
             return false;
         }
-        out[i] = GfVec3f(
-            RigExecScaledDualQuatTransformPoint(blend, GfVec3d(in[i])));
+        out[i] =
+            GfVec3f(RigExecScaledDualQuatTransformPoint(blend, GfVec3d(in[i])));
     }
     return true;
 }
 
 bool
-RigExecApplyDualQuatSkin(
-    const GfVec3f *in, GfVec3f *out, const RigExecSkinLayout &layout)
+RigExecApplyDualQuatSkin(const GfVec3f *in, GfVec3f *out,
+                         const RigExecSkinLayout &layout)
 {
     // The split is a pure function of the influence table, so building it
     // here and building it in a caller that skins several ranges against the
@@ -715,8 +706,7 @@ RigExecApplyDualQuatSkin(
 namespace {
 
 const std::array<GfVec3d, 4> kIdentityLandmarks = {
-    GfVec3d(0, 0, 0), GfVec3d(1, 0, 0),
-    GfVec3d(0, 1, 0), GfVec3d(0, 0, 1)};
+    GfVec3d(0, 0, 0), GfVec3d(1, 0, 0), GfVec3d(0, 1, 0), GfVec3d(0, 0, 1)};
 
 const std::array<GfVec3d, 4> &
 _IdentityLandmarks()
@@ -727,8 +717,7 @@ _IdentityLandmarks()
 bool
 _IsFinite(const GfVec3d &v)
 {
-    return std::isfinite(v[0]) && std::isfinite(v[1]) &&
-           std::isfinite(v[2]);
+    return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
 }
 
 bool
@@ -745,8 +734,7 @@ _HasFinitePoints(const RigExecPointFrame &frame)
 bool
 _IsUsableFrame(const RigExecPointFrame &frame)
 {
-    return frame.IsValid() && !frame.IsDegenerate() &&
-           _HasFinitePoints(frame);
+    return frame.IsValid() && !frame.IsDegenerate() && _HasFinitePoints(frame);
 }
 
 RigExecPointFrame
@@ -778,9 +766,9 @@ _NormalizeDirection(GfVec3d *direction, double eps = 1e-12)
     if (!_IsFinite(*direction)) {
         return false;
     }
-    const double largest = std::max(
-        {std::abs((*direction)[0]), std::abs((*direction)[1]),
-         std::abs((*direction)[2])});
+    const double largest =
+        std::max({std::abs((*direction)[0]), std::abs((*direction)[1]),
+                  std::abs((*direction)[2])});
     if (largest < eps) {
         return false;
     }
@@ -797,12 +785,18 @@ std::array<int, 3>
 _OrderIndices(RigExecEulerOrder order)
 {
     switch (order) {
-    case RigExecEulerOrder::XYZ: return {0, 1, 2};
-    case RigExecEulerOrder::XZY: return {0, 2, 1};
-    case RigExecEulerOrder::YXZ: return {1, 0, 2};
-    case RigExecEulerOrder::YZX: return {1, 2, 0};
-    case RigExecEulerOrder::ZXY: return {2, 0, 1};
-    case RigExecEulerOrder::ZYX: return {2, 1, 0};
+    case RigExecEulerOrder::XYZ:
+        return {0, 1, 2};
+    case RigExecEulerOrder::XZY:
+        return {0, 2, 1};
+    case RigExecEulerOrder::YXZ:
+        return {1, 0, 2};
+    case RigExecEulerOrder::YZX:
+        return {1, 2, 0};
+    case RigExecEulerOrder::ZXY:
+        return {2, 0, 1};
+    case RigExecEulerOrder::ZYX:
+        return {2, 1, 0};
     }
     return {0, 1, 2};
 }
@@ -810,13 +804,13 @@ _OrderIndices(RigExecEulerOrder order)
 GfQuatd
 _QuatFromEulerDegrees(const GfVec3d &degrees, RigExecEulerOrder order)
 {
-    const GfVec3d axes[3] = {
-        GfVec3d(1, 0, 0), GfVec3d(0, 1, 0), GfVec3d(0, 0, 1)};
+    const GfVec3d axes[3] = {GfVec3d(1, 0, 0), GfVec3d(0, 1, 0),
+                             GfVec3d(0, 0, 1)};
     GfMatrix4d matrix(1.0);
     const std::array<int, 3> indices = _OrderIndices(order);
     for (const int axis : indices) {
-        matrix = matrix * GfMatrix4d(
-            GfRotation(axes[axis], degrees[axis]), GfVec3d(0));
+        matrix = matrix *
+                 GfMatrix4d(GfRotation(axes[axis], degrees[axis]), GfVec3d(0));
     }
     return matrix.ExtractRotation().GetQuat().GetNormalized();
 }
@@ -824,8 +818,8 @@ _QuatFromEulerDegrees(const GfVec3d &degrees, RigExecEulerOrder order)
 GfVec3d
 _EulerDegreesFromQuat(const GfQuatd &rotation, RigExecEulerOrder order)
 {
-    const GfVec3d axes[3] = {
-        GfVec3d(1, 0, 0), GfVec3d(0, 1, 0), GfVec3d(0, 0, 1)};
+    const GfVec3d axes[3] = {GfVec3d(1, 0, 0), GfVec3d(0, 1, 0),
+                             GfVec3d(0, 0, 1)};
     const std::array<int, 3> indices = _OrderIndices(order);
     // GfRotation::Decompose(a,b,c) describes row-matrix factors in the
     // reverse order Rc * Rb * Ra.  Pass the authored application sequence
@@ -878,12 +872,12 @@ _BlendGovernedShear(const RigExecConstraintAxisMask &scaleMask,
 }
 
 bool
-_DecomposeConstraintFrame(
-    const RigExecPointFrame &frame, RigExecTransformParams *params)
+_DecomposeConstraintFrame(const RigExecPointFrame &frame,
+                          RigExecTransformParams *params)
 {
     if (!_IsUsableFrame(frame) ||
-        !RigExecPointsToParams(
-            _IdentityLandmarks(), frame.points, RigExecAxis::Z, params)) {
+        !RigExecPointsToParams(_IdentityLandmarks(), frame.points,
+                               RigExecAxis::Z, params)) {
         return false;
     }
     return _IsFinite(params->translation) && _IsFinite(params->scale) &&
@@ -893,8 +887,8 @@ _DecomposeConstraintFrame(
 }
 
 RigExecPointFrame
-_FrameFromConstraintParams(
-    const RigExecPointFrame &input, const RigExecTransformParams &params)
+_FrameFromConstraintParams(const RigExecPointFrame &input,
+                           const RigExecTransformParams &params)
 {
     RigExecPointFrame result = RigExecMatrixToPoints(
         _IdentityLandmarks(), RigExecParamsToMatrix(params));
@@ -926,9 +920,8 @@ _ValidateSourceWeight(const RigExecConstraintSource &source)
 }
 
 GfVec3d
-_ApplyEulerDelta(
-    const GfVec3d &inputEuler, const GfVec3d &targetEuler,
-    const RigExecConstraintAxisMask &affect, double weight)
+_ApplyEulerDelta(const GfVec3d &inputEuler, const GfVec3d &targetEuler,
+                 const RigExecConstraintAxisMask &affect, double weight)
 {
     GfVec3d output = inputEuler;
     for (int axis = 0; axis < 3; ++axis) {
@@ -940,15 +933,15 @@ _ApplyEulerDelta(
             if (weight >= 1.0) {
                 output[axis] = targetEuler[axis];
             } else {
-                output[axis] += weight * _ShortestDegrees(
-                    targetEuler[axis] - inputEuler[axis]);
+                output[axis] += weight * _ShortestDegrees(targetEuler[axis] -
+                                                          inputEuler[axis]);
             }
         }
     }
     return output;
 }
 
-}  // namespace
+} // namespace
 
 RigExecPointFrame
 RigExecApplyPositionConstraint(
@@ -1006,8 +999,8 @@ RigExecApplyPositionConstraint(
         // its other landmarks from the preceding linear part instead of
         // translating through another cancellation-prone a + (b - a).
         for (size_t point = 1; point < output.points.size(); ++point) {
-            output.points[point] = constrainedOrigin +
-                (input.points[point] - input.Origin());
+            output.points[point] =
+                constrainedOrigin + (input.points[point] - input.Origin());
         }
         output.points[0] = constrainedOrigin;
     } else {
@@ -1087,7 +1080,8 @@ RigExecApplyRotationConstraint(
             hasSourceAnchor = true;
         }
         for (int axis = 0; axis < 3; ++axis) {
-            weightedDelta[axis] += source.normalizedWeight *
+            weightedDelta[axis] +=
+                source.normalizedWeight *
                 _ShortestDegrees(sourceEuler[axis] - sourceAnchor[axis]);
         }
         totalWeight += source.normalizedWeight;
@@ -1100,8 +1094,8 @@ RigExecApplyRotationConstraint(
     if (!_IsFinite(weightedDelta) || !_IsFinite(targetEuler)) {
         return _ConstraintFailure(input);
     }
-    const GfVec3d outputEuler = _ApplyEulerDelta(
-        inputEuler, targetEuler, params.affect, globalWeight);
+    const GfVec3d outputEuler =
+        _ApplyEulerDelta(inputEuler, targetEuler, params.affect, globalWeight);
     inputParams.rotation =
         _QuatFromEulerDegrees(outputEuler, params.rotationOrder);
     const RigExecPointFrame solved =
@@ -1113,10 +1107,9 @@ RigExecApplyRotationConstraint(
 }
 
 RigExecPointFrame
-RigExecApplyScaleConstraint(
-    const RigExecPointFrame &input,
-    const std::vector<RigExecConstraintSource> &sources,
-    const RigExecScaleConstraintParams &params)
+RigExecApplyScaleConstraint(const RigExecPointFrame &input,
+                            const std::vector<RigExecConstraintSource> &sources,
+                            const RigExecScaleConstraintParams &params)
 {
     double globalWeight = 0.0;
     if (!_ValidateGlobalWeight(params.weight, &globalWeight)) {
@@ -1236,8 +1229,8 @@ RigExecApplyParentConstraint(
             return _ConstraintFailure(input);
         }
         GfMatrix4d sourceMatrix(1.0);
-        if (!RigExecPointsToMatrix(
-                _IdentityLandmarks(), sourceMeasured, &sourceMatrix)) {
+        if (!RigExecPointsToMatrix(_IdentityLandmarks(), sourceMeasured,
+                                   &sourceMatrix)) {
             return _ConstraintFailure(input);
         }
 
@@ -1250,14 +1243,13 @@ RigExecApplyParentConstraint(
             source.rotationOffsetDegrees, params.rotationOrder);
         const GfMatrix4d targetMatrix =
             RigExecParamsToMatrix(offsetParams) * sourceMatrix;
-        const RigExecPointFrame targetFrame = RigExecMatrixToPoints(
-            _IdentityLandmarks(), targetMatrix);
+        const RigExecPointFrame targetFrame =
+            RigExecMatrixToPoints(_IdentityLandmarks(), targetMatrix);
         RigExecTransformParams targetParams;
         if (!_DecomposeConstraintFrame(targetFrame, &targetParams)) {
             return _ConstraintFailure(input);
         }
-        targetTranslation +=
-            targetParams.translation * source.normalizedWeight;
+        targetTranslation += targetParams.translation * source.normalizedWeight;
         targetScale += targetParams.scale * source.normalizedWeight;
         if (params.blendShear) {
             targetShear += targetParams.shear * source.normalizedWeight;
@@ -1273,7 +1265,8 @@ RigExecApplyParentConstraint(
             hasSourceAnchor = true;
         }
         for (int axis = 0; axis < 3; ++axis) {
-            weightedRotationDelta[axis] += source.normalizedWeight *
+            weightedRotationDelta[axis] +=
+                source.normalizedWeight *
                 _ShortestDegrees(sourceEuler[axis] - sourceAnchor[axis]);
         }
         totalWeight += source.normalizedWeight;
@@ -1296,9 +1289,9 @@ RigExecApplyParentConstraint(
 
     for (int axis = 0; axis < 3; ++axis) {
         if (_Affects(params.translationAxes, axis)) {
-            inputParams.translation[axis] = RigExecBlendEnvelope(
-                inputParams.translation[axis], targetTranslation[axis],
-                globalWeight);
+            inputParams.translation[axis] =
+                RigExecBlendEnvelope(inputParams.translation[axis],
+                                     targetTranslation[axis], globalWeight);
         }
         if (_Affects(params.scaleAxes, axis)) {
             inputParams.scale[axis] = RigExecBlendEnvelope(
@@ -1322,9 +1315,9 @@ RigExecApplyParentConstraint(
 }
 
 RigExecPointFrame
-RigExecApplyAimConstraint(
-    const RigExecPointFrame &input, const GfVec3d &targetPoint,
-    const RigExecAimConstraintParams &params)
+RigExecApplyAimConstraint(const RigExecPointFrame &input,
+                          const GfVec3d &targetPoint,
+                          const RigExecAimConstraintParams &params)
 {
     double globalWeight = 0.0;
     if (!_ValidateGlobalWeight(params.weight, &globalWeight)) {
@@ -1335,12 +1328,11 @@ RigExecApplyAimConstraint(
     }
     const bool needsRollCorrection =
         params.worldUpDirection.has_value() || params.preserveInputUp;
-    if (!_IsValidOrder(params.rotationOrder) ||
-        !_IsFinite(targetPoint) || !_IsFinite(params.localAimVector) ||
+    if (!_IsValidOrder(params.rotationOrder) || !_IsFinite(targetPoint) ||
+        !_IsFinite(params.localAimVector) ||
         (needsRollCorrection && !_IsFinite(params.localUpVector)) ||
         !_IsFinite(params.rotationOffsetDegrees) ||
-        (params.worldUpDirection &&
-         !_IsFinite(*params.worldUpDirection))) {
+        (params.worldUpDirection && !_IsFinite(*params.worldUpDirection))) {
         return _ConstraintFailure(input);
     }
 
@@ -1402,8 +1394,7 @@ RigExecApplyAimConstraint(
                 desiredUp = swungUp;
             }
         }
-        twist = GfRotation::RotateOntoProjected(
-            swungUp, desiredUp, targetAim);
+        twist = GfRotation::RotateOntoProjected(swungUp, desiredUp, targetAim);
     }
 
     GfMatrix4d aimedMatrix(1.0);
@@ -1431,9 +1422,9 @@ RigExecApplyAimConstraint(
 }
 
 RigExecPointFrame
-RigExecApplyAimConstraint(
-    const RigExecPointFrame &input, const GfVec3d &targetOrigin,
-    double weight, int aimLandmarkIndex)
+RigExecApplyAimConstraint(const RigExecPointFrame &input,
+                          const GfVec3d &targetOrigin, double weight,
+                          int aimLandmarkIndex)
 {
     if (!std::isfinite(weight)) {
         RigExecPointFrame flagged = input;
@@ -1442,8 +1433,7 @@ RigExecApplyAimConstraint(
     }
     weight = std::min(std::max(weight, 0.0), 1.0);
 
-    const int aimIdx =
-        std::min(std::max(aimLandmarkIndex, 1), 3);
+    const int aimIdx = std::min(std::max(aimLandmarkIndex, 1), 3);
     // Even-permutation role assignment keeps side = aim x up for a
     // right-handed input.
     const int upIdx = (aimIdx % 3) + 1;
@@ -1468,18 +1458,16 @@ RigExecApplyAimConstraint(
 
     const GfRotation full(a0, a1);
     const GfRotation partial(full.GetAxis(), full.GetAngle() * weight);
-    const GfVec3d newAim = weight >= 1.0
-        ? a1
-        : partial.TransformDir(a0).GetNormalized();
+    const GfVec3d newAim =
+        weight >= 1.0 ? a1 : partial.TransformDir(a0).GetNormalized();
 
     const double upLen = inUp.GetLength();
     const double sideLen = inSide.GetLength();
     GfVec3d up = inUp;
     up -= newAim * GfDot(newAim, up);
     if (up.GetLength() < 1e-12) {
-        up = weight >= 1.0
-            ? full.TransformDir(inUp)
-            : partial.TransformDir(inUp);
+        up = weight >= 1.0 ? full.TransformDir(inUp)
+                           : partial.TransformDir(inUp);
         up -= newAim * GfDot(newAim, up);
     }
     if (up.GetLength() < 1e-12) {
@@ -1497,4 +1485,4 @@ RigExecApplyAimConstraint(
     return out;
 }
 
-}  // namespace rigExec
+} // namespace rigExec

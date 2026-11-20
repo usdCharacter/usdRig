@@ -154,13 +154,13 @@ struct RigExecFrameCacheStats {
 uint64_t RigExecUpstreamFoldHash(const VtValue &value);
 
 uint64_t RigExecControlStateDigest(const RigExecFrameInputs &inputs);
-uint64_t RigExecControlStateDigest(
-    const RigExecFrameInputs &inputs,
-    const std::vector<RigExecValueOverride> &overrides);
-uint64_t RigExecControlStateDigest(
-    const RigExecFrameInputs &inputs,
-    const std::vector<RigExecValueOverride> &overrides,
-    const std::vector<RigExecUpstreamValue> &upstream);
+uint64_t
+RigExecControlStateDigest(const RigExecFrameInputs &inputs,
+                          const std::vector<RigExecValueOverride> &overrides);
+uint64_t
+RigExecControlStateDigest(const RigExecFrameInputs &inputs,
+                          const std::vector<RigExecValueOverride> &overrides,
+                          const std::vector<RigExecUpstreamValue> &upstream);
 
 /// Level-1 digest of one sampled input: its path, its valuelessness, and
 /// its value folded exactly as the control digest folds one sample. The
@@ -191,14 +191,15 @@ std::shared_ptr<const RigExecFrameDigestOrder> RigExecRecordFrameDigestOrder(
 
 /// Whether \p order was recorded from \p values' path sequence; false for a
 /// null order.
-bool RigExecFrameDigestOrderMatches(
-    const RigExecFrameDigestOrder *order,
-    const std::vector<RigExecSampledInput> &values);
+bool
+RigExecFrameDigestOrderMatches(const RigExecFrameDigestOrder *order,
+                               const std::vector<RigExecSampledInput> &values);
 
 /// The text bytes of every path in \p order's recorded sequence (the sum of
 /// GetString().size(), duplicates included), computed once when the order
 /// was recorded. 0 for null.
-size_t RigExecFrameDigestOrderPathTextBytes(const RigExecFrameDigestOrder *order);
+size_t
+RigExecFrameDigestOrderPathTextBytes(const RigExecFrameDigestOrder *order);
 
 /// Whether \p path is one of \p order's first-win paths (binary search over
 /// the recorded sorted order). False for null.
@@ -212,7 +213,7 @@ bool RigExecFrameDigestOrderHasPath(const RigExecFrameDigestOrder *order,
 /// passes through it, so a constant patch opens a new key namespace while
 /// the compiled rig half stays standing. Within-process only, like the key hash.
 uint64_t RigExecFoldConstantDigest(uint64_t controlDigest,
-                                  uint64_t constantDigest);
+                                   uint64_t constantDigest);
 
 /// The control half of the cache key with compiled rig constant coverage: the
 /// plain control digest folded with \p constantDigest. Lookup, memoization,
@@ -226,8 +227,7 @@ uint64_t RigExecControlStateDigestWithConstants(
 uint64_t RigExecControlStateDigestWithConstants(
     const RigExecFrameInputs &inputs,
     const std::vector<RigExecValueOverride> &overrides,
-    const std::vector<RigExecUpstreamValue> &upstream,
-    uint64_t constantDigest);
+    const std::vector<RigExecUpstreamValue> &upstream, uint64_t constantDigest);
 
 /// The control-state digest of a burst-cached vector: identical to
 /// RigExecControlStateDigest for the same inputs, but level-1s served
@@ -278,13 +278,13 @@ bool RigExecControlStateDigestible(
 /// dynamic walk reads authored-level.
 ///
 /// Within-process only, like the key hash: never persisted.
-uint64_t RigExecRefusalControlDigest(
-    UsdTimeCode time, uint64_t stageEditSerial,
-    const std::vector<RigExecValueOverride> &overrides);
-uint64_t RigExecRefusalControlDigest(
-    UsdTimeCode time, uint64_t stageEditSerial,
-    const std::vector<RigExecValueOverride> &overrides,
-    const std::vector<RigExecUpstreamValue> &upstream);
+uint64_t
+RigExecRefusalControlDigest(UsdTimeCode time, uint64_t stageEditSerial,
+                            const std::vector<RigExecValueOverride> &overrides);
+uint64_t
+RigExecRefusalControlDigest(UsdTimeCode time, uint64_t stageEditSerial,
+                            const std::vector<RigExecValueOverride> &overrides,
+                            const std::vector<RigExecUpstreamValue> &upstream);
 
 /// Whether every override in \p overrides (and upstream value in
 /// \p upstream) can be digested exactly (time always folds). False bypasses
@@ -424,8 +424,7 @@ public:
     /// that serves many frames. No-op when no entry is held, when the time
     /// is already listed, or past the alias cap. Called on the serving
     /// path (a cache hit); under the shard lock, never across evaluation.
-    void NoteProvenanceAlias(const RigExecFrameCacheKey &key,
-                             UsdTimeCode time);
+    void NoteProvenanceAlias(const RigExecFrameCacheKey &key, UsdTimeCode time);
 
     /// Drops the entry under \p key, if any. Returns whether one was held.
     bool Evict(const RigExecFrameCacheKey &key);
@@ -477,8 +476,10 @@ private:
         // Mutable: Lookup edits through a const handle -- refreshing the
         // LRU position and dropping corrupt entries -- the same way it
         // counts hits and misses through one.
-        mutable std::unordered_map<RigExecFrameCacheKey, std::shared_ptr<_Entry>,
-                                   RigExecFrameCacheKeyHash> map;
+        mutable std::unordered_map<RigExecFrameCacheKey,
+                                   std::shared_ptr<_Entry>,
+                                   RigExecFrameCacheKeyHash>
+            map;
     };
     static constexpr size_t _kShardCount = 16;
 
@@ -500,8 +501,7 @@ private:
     // Reports dropped entries outside every shard lock. \p evicted is
     // moved-from; an empty vector reports nothing. Const so Lookup's
     // corrupt drop (itself const) reports through the same path.
-    void _ReportEvictions(
-        std::vector<RigExecFrameCacheEviction> evicted) const;
+    void _ReportEvictions(std::vector<RigExecFrameCacheEviction> evicted) const;
 
     mutable std::array<_Shard, _kShardCount> _shards;
     mutable std::atomic<uint64_t> _clock{1};
@@ -516,6 +516,6 @@ private:
     RigExecFrameCacheEvictionCallback _evictionCallback;
 };
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_FRAME_CACHE_H
+#endif // RIGEXEC_FRAME_CACHE_H
