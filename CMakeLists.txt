@@ -3027,6 +3027,9 @@ install(FILES
 install(FILES ${_rigexec_schema_icons}
     DESTINATION "${RIGEXEC_INSTALL_PLUGINDIR}/rigExecSchema/resources/icons")
 
+install(FILES plugin/usdRigViewShared/usdRigViewMenu.py
+    DESTINATION "${RIGEXEC_INSTALL_PYTHONDIR}")
+
 install(DIRECTORY plugin/rigExecUsdview/
     DESTINATION "${RIGEXEC_INSTALL_PYTHONDIR}/rigExecUsdview"
     FILES_MATCHING
