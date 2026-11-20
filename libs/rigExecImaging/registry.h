@@ -672,7 +672,7 @@ public:
     /// is still the usdview plugin's re-activation to make: the forced pull
     /// builds its data but EnsureActivated leaves a live activation alone.
     /// Cleared by Activate and Deactivate; a note that outlives a failed
-    /// activation retries on the next resync, like the plugin's own retry.
+    /// activation retries on the next resync.
     ///
     /// Paths only: the context IS the stage (the adapter notes on
     /// ForStage(prim.GetStage())), and the chains that match notes are the

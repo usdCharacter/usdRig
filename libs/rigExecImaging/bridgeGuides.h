@@ -186,7 +186,7 @@ private:
     /// The evaluator's stage-edit serial the guide caches were filled under.
     uint64_t _guideCacheSerial = 0;
     /// True once NoteGuideEdits has run: the registry forwards every notice
-    /// that reaches the rig, so the serial clear is no longer needed.
+    /// that reaches the rig.
     bool _guideNoticesForwarded = false;
     std::vector<_ClothGuideBinding> _clothGuideBindings;
     uint64_t _clothGuideSerial = ~uint64_t(0);

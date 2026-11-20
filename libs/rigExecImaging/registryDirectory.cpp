@@ -287,9 +287,6 @@ RigExecImagingRegistry::RigExecImagingRegistry(_FactoryTag, uint64_t key,
 {
     // RIGEXEC_GPU_DEFORM=readback deforms on the GPU executor; the device
     // starts on its first run, not here.
-    // TODO: investigate whether these runner registrations belong at
-    // activation, so a context that never deforms or solves on the GPU
-    // pays nothing at construction.
     RigExecGpuRegisterDeformRunner();
     // Cloth solves on the GPU by default (RIGEXEC_GPU_CLOTH=0 keeps it on
     // the CPU); the device starts on the first solve.

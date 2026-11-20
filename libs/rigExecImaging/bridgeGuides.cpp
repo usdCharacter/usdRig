@@ -128,7 +128,7 @@ double
 RigExecBridgeGuides::_GuideRadius(_GuideInputs &inputs, UsdTimeCode time)
 {
     // Schema default, so an unauthored joint keeps Hydra's own fallback
-    // radius and every existing rig looks exactly as it did.
+    // radius.
     if (!inputs.prim) {
         return 1.0;
     }

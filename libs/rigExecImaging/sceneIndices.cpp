@@ -655,7 +655,7 @@ struct _FrameSource {
         return frame;
     }
 
-    // True when offset reads go to the table (else the legacy answers).
+    // True when offset reads go to the table.
     bool Live() const
     {
         return table && haveTime;
