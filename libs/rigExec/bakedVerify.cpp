@@ -45,10 +45,7 @@ namespace {
 // Rigs carry non-finite numbers into slots on purpose. A mover whose inputs
 // the kernel rejects still publishes the packet it rejected, NaN and all,
 // which is how the pass-through diagnostic can name the value; an override
-// of inputs:defaultWeight to a NaN is the fixture that drives it. Comparing
-// those with `==` turned a correct cone into three "baked cone mismatch"
-// lines and a failed parity run -- the instrument crying wolf on the one
-// generation a reader most needs to trust it.
+// of inputs:defaultWeight to a NaN is the fixture that drives it.
 // So every floating-point comparison below goes through Same(), which counts
 // two NaNs as the same value and is `==` otherwise. ANY type with a float or
 // a double anywhere in it needs its own overload: the fallback at the end of

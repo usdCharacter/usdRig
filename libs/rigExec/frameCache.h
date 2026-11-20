@@ -334,13 +334,13 @@ struct RigExecEntryProvenance {
     std::vector<uint64_t> constantRegions;
     /// Time values served under the key, in record order starting with the
     /// publishing time: one digest may serve many frames. Bounded (past
-    /// the cap aliases stop recording; retirement iterates the 1.4
+    /// the cap aliases stop recording; retirement iterates the
     /// completed-time set, never this list, so the cap costs nothing).
     std::vector<double> aliasTimes;
     /// The entry's control digest BEFORE the compiled rig constant fold
     /// (RigExecControlStateDigest over the sampled vector and overrides).
     /// A constant patch moves the folded key but not the sampled values,
-    /// so the 2.2 carry-over lane re-keys a clean entry as
+    /// so the carry-over lane re-keys a clean entry as
     /// FoldConstantDigest(unfoldedControlDigest, newConstants) with zero
     /// re-sampling. Zero when the publisher did not record one (pose-only
     /// entries, refusal keys): such entries never carry, they re-warm.

@@ -999,9 +999,8 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
         // override too. What FoldShape does NOT buy is edit-time cheapness:
         // like Fold it puts the property in `rebuild`, so authoring a new
         // weight rebuilds the program even though the run would have re-read
-        // it anyway. Conservative and correct; the day that costs a rigger
-        // scrubbing a blend curve, the fix is a `Name` that indexes without
-        // rebuilding, not a quieter comment here.
+        // it anyway. Conservative and correct: the cheaper shape is a `Name`
+        // that indexes without rebuilding.
         {
             RigExecBakedProgramImpl::ConstraintArrays arrays;
             arrays.prim = prim;
@@ -5785,9 +5784,8 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
         // the three arms above the clause cannot change the answer -- the
         // only constraint that reaches here with a bound geometry weight
         // object has weight == 1.0 -- but the two conditions are kept alike
-        // on purpose: this is the pair that silently disagreed when the
-        // third arm was missing, and the next person to add an arm should
-        // find one shape to compare, not two.
+        // on purpose: an arm added to one shape has to be visible in the
+        // other.
         if (weight <= 0.0 &&
             (c.pointsTarget.IsEmpty() || c.weightObject.IsEmpty())) {
             // A zero envelope is an exact dormant pass-through, decided

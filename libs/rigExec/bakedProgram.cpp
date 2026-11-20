@@ -3094,11 +3094,10 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     for (const auto &[target, writers] : E._frameChains)
         nativeCheckpoints[target].insert(writers.begin(), writers.end());
     // Bound here, ahead of IsBakeable, so the profiler exists before the
-    // refusal walk runs. A rig that refuses still costs whatever
-    // IsBakeable spends deciding why, and with `phases` opened only after
-    // that call the cost had nowhere to attribute to -- it showed up as a
-    // gap between Compile.Bake opening and the first Bake.* mark. Marking
-    // it here costs the one branch per mark every other phase already pays.
+    // refusal walk runs: a rig that refuses still costs whatever
+    // IsBakeable spends deciding why, and marking it here attributes that
+    // cost to this phase at the one branch per mark every other phase
+    // already pays.
     RigExecProfilePhases phases(&E._profiler, "compile");
     // The bakeability walk runs as a task beside the start of the bake --
     // the entry block, the dense provider slots and the ladder's parallel
@@ -3113,7 +3112,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     // dense slots refuse; sharing one vector with the walk would interleave
     // the two lists and race. On a refusal the walk's reasons alone are
     // handed back.
-    // Inline where a task is not allowed or not worth it: with parallel
+    // Inline where a task is not allowed or gains nothing: with parallel
     // evaluation off, inside a frozen run, and on an evaluator that has not
     // compiled, whose tables the slots below have no business reading.
     const bool bakeableBeside = E._compiled &&

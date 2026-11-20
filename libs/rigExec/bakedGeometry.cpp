@@ -385,7 +385,7 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
         }
         // rigExec:space: the rig's carry. Refused on a miss for the same
         // reason the measuring space is -- a carry that quietly resolved to
-        // nothing looks exactly like the bug it was named to fix.
+        // nothing behaves exactly like a revision with no carry at all.
         if (!r.binding.carrySpace.IsEmpty()) {
             out.carrySpaceSlot = slotOf(r.binding.carrySpace);
             if (out.carrySpaceSlot < 0) {
@@ -2328,9 +2328,7 @@ RigExecBakedBuildGeometrySteps(RigExecBakedProgramImpl *program)
                     // declares it too and the fuse waits on the assemble
                     // either way, so this changes no order -- but a step
                     // that touches a slot it did not declare is a bug even
-                    // when a neighbour's declaration happens to cover it,
-                    // and the next reader of either builder would have to
-                    // rediscover why it was safe.
+                    // when a neighbour's declaration happens to cover it.
                     fuse.reads.push_back(
                         RigExecBakedOne(RigExecBakedSlotDomain::WeightPacket,
                                         revision.weightObject));

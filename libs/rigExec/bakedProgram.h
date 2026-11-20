@@ -63,8 +63,8 @@ bool RigExecNoticeIsDisplayOnly(const UsdNotice::ObjectsChanged &notice);
 bool RigExecUpstreamArraySlotType(const SdfValueTypeName &typeName);
 
 /// Whether upstream array values are admitted (the array part of
-/// admission conditions 2 and 3). On by default; tests can temporarily
-/// change it with RigExecSetUpstreamArrayAdmissionForTesting.
+/// admission conditions 2 and 3). On by default; changed only through
+/// RigExecSetUpstreamArrayAdmissionForTesting.
 bool RigExecUpstreamArrayAdmission();
 
 /// Admission condition 4's memo, per array attribute: its stage element

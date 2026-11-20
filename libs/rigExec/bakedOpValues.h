@@ -67,8 +67,8 @@ bool RigExecBakedOpValueKeyIsExact(const RigExecBakedProgramImpl &,
 /// included.
 bool RigExecBakedSamePoints(const PXR_NS::GfVec3f *a, size_t aCount,
     const PXR_NS::GfVec3f *b, size_t bCount);
-/// The key those six domains carried before they were keyed by content
-/// version: the same fields with the points' bytes in place of the version;
+/// The key over those six domains' point bytes: the same fields as their
+/// content-version key, with the points' bytes in place of the version;
 /// likewise a range-pipelined revision's RevisionOut range. False, and an
 /// empty key, for any other domain. Owner thread; for the
 /// RIGEXEC_VERIFY_CHAIN_VERSIONS check and tests.
@@ -80,11 +80,10 @@ bool RigExecBakedChainContentKey(const RigExecBakedProgramImpl &,
 /// `publishedWeightValues` versions move. \p scratch is left unspecified.
 void RigExecBakedNoteFloats(std::vector<float> *field,
     std::vector<float> *scratch, uint64_t *version);
-/// The RevisionPacket key of revision \p slot as it was before its two
-/// float arrays were keyed by content version: the same fields with the
-/// arrays' bytes in place of the versions. False, and an empty key, for a
-/// missing revision. Owner thread; for RIGEXEC_VERIFY_PACKET_VERSIONS and
-/// tests.
+/// The RevisionPacket key of revision \p slot over its two float arrays'
+/// bytes: the same fields as the content-version key, with the arrays' bytes
+/// in place of the versions. False, and an empty key, for a missing
+/// revision. Owner thread; for RIGEXEC_VERIFY_PACKET_VERSIONS and tests.
 bool RigExecBakedPacketContentKey(const RigExecBakedProgramImpl &,
     uint32_t slot, std::string *key);
 /// Whether \p key, the value's stored key, still describes the state it is

@@ -1776,8 +1776,8 @@ struct RigExecBakedCommit {
     std::vector<uint32_t> sourceReads;
     uint32_t worldUpRead = 0;
     uint32_t targetRead = 0;
-    /// Per target, the version live where this commit runs. Used to record
-    /// the target of a commit that declares no candidate for it.
+    /// Per target, the version live where this commit runs. Records the
+    /// target of a commit that declares no candidate for it.
     std::vector<uint32_t> targetReads;
     /// The SingleChainIK bindings' reads, in the same two shapes a source's
     /// are: the version of a slot, and the ancestors of a native Xformable.

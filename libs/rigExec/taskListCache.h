@@ -1,8 +1,8 @@
 // RigExec task-list cache: the affected-cluster set per (control, compiled rig).
-// The brief's task-list cache (pp. 9, 32): computing which clusters an edit
-// reaches means walking the output-affected index, and a drag re-edits ONE
-// control dozens of times. The first edit walks and memoizes; every repeat
-// re-runs the cached selection without rewalking. Multi-control edits union
+// Computing which clusters an edit reaches means walking the output-affected
+// index, and a drag re-edits ONE control dozens of times. The first edit
+// walks and memoizes; every repeat re-runs the cached selection without
+// rewalking. Multi-control edits union
 // one memoized set per control, so each control still walks at most once per
 // compiled rig.
 // Keyed by (compiledRigSignature, control): a topology change is a new compiled rig, which
