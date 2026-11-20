@@ -2547,6 +2547,20 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_gizmo_math.py"
             "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
+    add_test(NAME testGizmoFrames
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_gizmo_frames.py"
+            "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
+    add_test(NAME testGizmoRotation
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_gizmo_rotation.py")
+    add_test(NAME testGizmoTargets
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_gizmo_targets.py"
+            "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
+    add_test(NAME testGizmoModel
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_gizmo_model.py")
     add_test(NAME testPoseReaderViz
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_pose_reader_viz.py"
@@ -2604,6 +2618,13 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
     add_test(NAME testGraphModel
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_graph_model.py"
+            "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
+    add_test(NAME testGraphEditorModel
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_graph_editor_model.py")
+    add_test(NAME testVolumeWeightModel
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_volume_weight_model.py"
             "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
     add_test(NAME testPathCurveModel
         COMMAND ${Python3_EXECUTABLE}
@@ -2673,6 +2694,7 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
                          testRigExecFloatCurveOp
                          testRigExecOpTracePython testRigExecOpTracePython_serial
                          testRigExecUndo testEditorPublications testGizmoMath testGizmoScreen
+                         testGizmoFrames testGizmoRotation testGizmoTargets testGizmoModel
                          testPoseReaderViz
                          testLayerOpinionsModel testCompositionArcsModel
                          testPathSpelling
@@ -2682,7 +2704,8 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
                          testGizmoPreview testGizmoDeferredRelease testGizmoOwnCommit
                          testGizmoSettings testGizmoDrag testGizmoSnap
                          testViewCubeMath testRigExecStageEdits
-                         testGraphModel testPathCurveModel testGraphScreen
+                         testGraphModel testGraphEditorModel testVolumeWeightModel
+                         testPathCurveModel testGraphScreen
                          testCacheStripModel testTimelineModel
                          testPlayblastModel
                          testCacheStripPanel testUsdviewFrameCacheDriver

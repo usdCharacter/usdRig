@@ -20,12 +20,12 @@ if not defined RIGEXEC_BUILD_DIR (
 set "SCHEMA=%_RIGEXEC_BUILD%\usd\rigExecSchema\resources"
 
 set "TESTS=%*"
-if not defined TESTS set "TESTS=test_rigexec_undo test_gizmo_math test_gizmo_screen test_gizmo_settings test_gizmo_drag test_gizmo_snap test_viewcube_math test_rigexec_stage_edits test_graph_model test_graph_screen test_layer_opinions_model test_path_spelling test_composition_arcs_model test_gizmo_preview test_touchpose_model test_gizmo_marquee test_picker_scene test_picker_hover_model test_marking_menu_model test_marking_menu_ui test_pip_picker test_picker_layout test_imaging_handle test_session_state test_editor_extension test_timeline_model test_playblast_model test_assistant"
+if not defined TESTS set "TESTS=test_rigexec_undo test_gizmo_math test_gizmo_screen test_gizmo_frames test_gizmo_rotation test_gizmo_targets test_gizmo_model test_gizmo_settings test_gizmo_drag test_gizmo_snap test_viewcube_math test_rigexec_stage_edits test_graph_model test_graph_editor_model test_volume_weight_model test_graph_screen test_layer_opinions_model test_path_spelling test_composition_arcs_model test_gizmo_preview test_touchpose_model test_gizmo_marquee test_picker_scene test_picker_hover_model test_marking_menu_model test_marking_menu_ui test_pip_picker test_picker_layout test_imaging_handle test_session_state test_editor_extension test_timeline_model test_playblast_model test_assistant"
 
 rem Only the tests listed here read argv[1], to Plug-register the generated
 rem schema. The rest never touch sys.argv -- they need neither a schema nor a
 rem build -- so handing them %SCHEMA% would tell a reader otherwise.
-set "SCHEMA_TESTS= test_rigexec_undo test_gizmo_math test_rigexec_stage_edits test_graph_model test_picker_scene test_pip_picker test_picker_layout "
+set "SCHEMA_TESTS= test_rigexec_undo test_gizmo_math test_gizmo_frames test_gizmo_targets test_volume_weight_model test_rigexec_stage_edits test_graph_model test_picker_scene test_pip_picker test_picker_layout "
 
 for %%T in (%TESTS%) do (
     echo == %%T
