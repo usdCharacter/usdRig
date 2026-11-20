@@ -334,13 +334,14 @@ class ManifestContract(unittest.TestCase):
                               f"{member} escaped the byte comparison")
 
     def test_a_recorded_stale_member_is_a_recorded_difference(self):
-        """The stale members of a shipped archive are checked to still differ
-        from their sources, so the exception stays a record instead of hiding
-        drift or turning a refreshed archive into a false error."""
+        """A stale record is an honored exception: the archived text must
+        still differ from its source, and an archive refreshed back to its
+        source makes the record itself the error. Any stale member the
+        godot archive still records is re-checked live; the exception is
+        also exercised on synthetic copies so the rule survives a refresh."""
         stale = [entry for entry
                  in MANIFEST["distribution"]["godot_zip"]["legal_members"]
                  if "stale" in entry.get("status", "").lower()]
-        self.assertTrue(stale, "the godot archive records stale members")
         with zipfile.ZipFile(ROOT / "docs/examples/godot_rolling_ball.zip") as handle:
             texts = {name: handle.read(name) for name in handle.namelist()}
         for entry in stale:
@@ -350,6 +351,26 @@ class ManifestContract(unittest.TestCase):
                 check_licenses.normalize_line_endings(texts[entry["member"]]),
                 check_licenses.normalize_line_endings(source.read_bytes()),
                 f"{entry['member']} matches its source: refresh the record")
+        member, source = ("godot_rigExec/LICENSE-flatbuffers",
+                          "thirdparty/flatbuffers/LICENSE")
+        source_path = resolve_legal_source(member, source, None, ROOT)
+        with tempfile.TemporaryDirectory() as tmp:
+            temp = Path(tmp) / "godot_rolling_ball.zip"
+            for differing, expect_error in ((True, False), (False, True)):
+                with zipfile.ZipFile(temp, "w") as handle:
+                    handle.writestr(member, source_path.read_bytes() + b"\ndrift\n"
+                                    if differing else source_path.read_bytes())
+                errors = check_licenses.compare_legal_members(
+                    MANIFEST, temp.name,
+                    [{"member": member, "source": source, "status": "STALE: synthetic"}],
+                    [member], temp, None, ROOT)
+                if expect_error:
+                    self.assertTrue(any("recorded stale but now matches" in error
+                                        for error in errors),
+                                    "a refreshed member must flag its stale record")
+                else:
+                    self.assertEqual([], errors,
+                                     "the recorded stale difference must be honored")
 
     def test_the_recorded_legal_counts_of_a_shipped_archive_are_enforced(self):
         """Production inventory records use a repository-relative archive path,

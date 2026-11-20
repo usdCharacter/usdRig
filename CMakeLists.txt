@@ -36,6 +36,11 @@ if (NOT MSVC)
     add_compile_options(-ffp-contract=off)
 endif()
 
+# The exact-FP settings every translation unit that instantiates the kernels
+# must carry; rigexec_apply_exact_fp_flags adds them without repeating the
+# directory option above. Docs: docs/concepts/baked-vs-dynamic.md.
+include(cmake/rigexec_flags.cmake)
+
 set(RIGEXEC_INSTALL_LIBDIR     "lib"
     CACHE STRING "Install directory for libraries, relative to the prefix")
 set(RIGEXEC_INSTALL_INCLUDEDIR "include"
@@ -46,6 +51,8 @@ set(RIGEXEC_INSTALL_PYTHONDIR  "lib/python"
     CACHE STRING "Install directory for Python modules, relative to the prefix")
 set(RIGEXEC_INSTALL_CMAKEDIR   "lib/cmake/rigExec"
     CACHE STRING "Install directory for the CMake package, relative to the prefix")
+set(RIGEXEC_INSTALL_DATADIR    "share/rigExec"
+    CACHE STRING "Install directory for the exported build manifests, relative to the prefix")
 
 if (APPLE)
     set(CMAKE_INSTALL_NAME_DIR "@rpath")
@@ -67,6 +74,23 @@ target_include_directories(rigExecGraph PUBLIC
 set_target_properties(rigExecGraph PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(rigExec::rigExecGraph ALIAS rigExecGraph)
 
+# EvalCore: the step contract the baked program and playback share. The step
+# bodies are templates each front end instantiates, so only the non-templated
+# ordinal table lands in this archive. It links nothing but the scheduler:
+# the rigExecMath archive carries OpenUSD publicly, and EvalCore uses only its
+# USD-free headers. The wire enum it reuses is generated against the vendored
+# FlatBuffers headers.
+add_library(rigExecEvalCore STATIC libs/rigExecEvalCore/kinds.cpp)
+rigexec_apply_exact_fp_flags(rigExecEvalCore)
+target_compile_features(rigExecEvalCore PUBLIC cxx_std_17)
+target_include_directories(rigExecEvalCore PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
+    $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/flatbuffers/include>)
+target_link_libraries(rigExecEvalCore PUBLIC rigExecGraph)
+set_target_properties(rigExecEvalCore PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_library(rigExec::rigExecEvalCore ALIAS rigExecEvalCore)
+
 # rigExecMath: pure point-frame and solver kernels (spec §5).
 add_library(rigExecMath STATIC
     libs/rigExecMath/affineFrameKernels.cpp
@@ -85,6 +109,7 @@ target_include_directories(rigExecMath PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
 target_link_libraries(rigExecMath PUBLIC arch tf gf vt)
+rigexec_apply_exact_fp_flags(rigExecMath)
 set_target_properties(rigExecMath PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Keep value-codec template instantiations private to its archive. Only the
@@ -173,7 +198,10 @@ target_link_libraries(rigExec PUBLIC
 )
 
 target_link_libraries(rigExec PRIVATE
-    rigExecGraph rigExecMath rigExecInputValues ts)
+    rigExecGraph rigExecMath rigExecEvalCore rigExecInputValues ts)
+# Every rigExec translation unit instantiates the pose, geometry and mover
+# kernels, so the whole archive carries the exact-FP settings.
+rigexec_apply_exact_fp_flags(rigExec)
 # On Windows the consumers of rigExec need those two archives as well.
 
 # Scene translation calls back into the evaluator. The evaluator does not
@@ -450,7 +478,7 @@ add_library(rigExecRuntime STATIC
 target_include_directories(rigExecRuntime PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
-target_link_libraries(rigExecRuntime PUBLIC rigExecBinary rigExecGraph)
+target_link_libraries(rigExecRuntime PUBLIC rigExecBinary rigExecGraph rigExecEvalCore)
 set_target_properties(rigExecRuntime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # Installed names, so a mover plugin's tests can export and replay its rigs
 # the same way inside this build and against an installed SDK.
@@ -467,15 +495,29 @@ file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/runtimeSources.txt"
     CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecRuntime,SOURCES>,\n>\n")
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/runtimeIncludes.txt"
     CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecRuntime,INCLUDE_DIRECTORIES>,\n>\n")
-# -ffp-contract=off repeats the global option so the runtime's own flags
-# name everything its bitwise operation order needs; other builds of these
-# sources (the Godot extension) copy this list.
-if (MSVC)
-    target_compile_options(rigExecRuntime PRIVATE /fp:precise)
-else ()
-    target_compile_options(rigExecRuntime PRIVATE -fno-fast-math
-        -ffp-contract=off)
-endif ()
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/evalCoreSources.txt"
+    CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecEvalCore,SOURCES>,\n>\n")
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/evalCoreIncludes.txt"
+    CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecEvalCore,INCLUDE_DIRECTORIES>,\n>\n")
+rigexec_apply_exact_fp_flags(rigExecRuntime)
+
+# What a host that builds these USD-free sources outside CMake needs: the
+# exact-FP flag list and the same source and include manifests this build
+# checks. The installed copies come from the same generated files, with paths
+# made relative to this checkout so a consumer joins them with its own root.
+rigexec_get_exact_fp_flags(_rigexec_exact_fp_flags)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_LIST_DIR}/cmake/rigexec_flags.cmake")
+list(JOIN _rigexec_exact_fp_flags "\n" _rigexec_exact_fp_text)
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/exactFpFlags.txt"
+    CONTENT "${_rigexec_exact_fp_text}\n")
+add_test(NAME testRigExecExactFpFragment
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+        "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+        "-DEXPORT_SCRIPT=${CMAKE_CURRENT_LIST_DIR}/cmake/exportManifests.cmake"
+        "-DINSTALL_DATADIR=${RIGEXEC_INSTALL_DATADIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/checkExactFpFragment.cmake")
 
 # rigExecSampler: hands a .rigexec's Animated inputs the values a stage holds
 # at each new time (RigExecInputSampler), for every consumer that plays the
@@ -1144,6 +1186,10 @@ add_executable(testRigExecCompiledProgram tests/testRigExecCompiledProgram.cpp)
 target_link_libraries(testRigExecCompiledProgram PRIVATE rigExec)
 target_compile_definitions(testRigExecCompiledProgram PRIVATE ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecCompiledProgram COMMAND testRigExecCompiledProgram)
+
+add_executable(testRigExecEvalCoreKinds tests/testRigExecEvalCoreKinds.cpp)
+target_link_libraries(testRigExecEvalCoreKinds PRIVATE rigExec rigExecEvalCore)
+add_test(NAME testRigExecEvalCoreKinds COMMAND testRigExecEvalCoreKinds)
 
 add_executable(testRigExecSurfaceKernelCache tests/testRigExecSurfaceKernelCache.cpp)
 target_link_libraries(testRigExecSurfaceKernelCache PRIVATE rigExecMath)
@@ -2876,7 +2922,7 @@ endforeach()
 # Install
 include(CMakePackageConfigHelpers)
 
-install(TARGETS rigExecLzma rigExecGraph rigExecMath rigExec rigExecScene rigExecOracle rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu rigExecFlatBuffers rigExecBinary rigExecBake rigExecRuntime rigExecSampler
+install(TARGETS rigExecLzma rigExecGraph rigExecEvalCore rigExecMath rigExec rigExecScene rigExecOracle rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu rigExecFlatBuffers rigExecBinary rigExecBake rigExecRuntime rigExecSampler
     EXPORT rigExecTargets
     RUNTIME DESTINATION "${RIGEXEC_INSTALL_LIBDIR}"
     LIBRARY DESTINATION "${RIGEXEC_INSTALL_LIBDIR}"
@@ -2888,7 +2934,7 @@ install(FILES libs/rigExecOracle/registerOracle.h
     DESTINATION "${RIGEXEC_INSTALL_INCLUDEDIR}/rigExecOracle")
 
 # FILES_MATCHING still walks -- and recreates -- every subdirectory it passes
-foreach(_lib rigExecGraph rigExecScene rigExecMath rigExec rigExecSchema rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu rigExecBinary rigExecBake rigExecRuntime rigExecSampler)
+foreach(_lib rigExecGraph rigExecEvalCore rigExecScene rigExecMath rigExec rigExecSchema rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu rigExecBinary rigExecBake rigExecRuntime rigExecSampler)
     install(DIRECTORY "libs/${_lib}/"
         DESTINATION "${RIGEXEC_INSTALL_INCLUDEDIR}/${_lib}"
         FILES_MATCHING
@@ -2995,7 +3041,7 @@ configure_package_config_file(
     "${CMAKE_CURRENT_BINARY_DIR}/rigExecConfig.cmake"
     INSTALL_DESTINATION "${RIGEXEC_INSTALL_CMAKEDIR}"
     PATH_VARS RIGEXEC_INSTALL_PLUGINDIR RIGEXEC_INSTALL_PYTHONDIR
-              RIGEXEC_INSTALL_LIBDIR)
+              RIGEXEC_INSTALL_LIBDIR RIGEXEC_INSTALL_DATADIR)
 
 write_basic_package_version_file(
     "${CMAKE_CURRENT_BINARY_DIR}/rigExecConfigVersion.cmake"
@@ -3007,8 +3053,21 @@ install(FILES
         "${CMAKE_CURRENT_BINARY_DIR}/rigExecConfigVersion.cmake"
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/rigExecMoverPlugin.cmake"
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/rigExecMover.cmake"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/rigexec_flags.cmake"
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/generateMoverSchema.py"
     DESTINATION "${RIGEXEC_INSTALL_CMAKEDIR}")
+
+# The exact-FP flags this tree was built with, and the USD-free file lists
+# relocated to this prefix, for a host that compiles those sources without
+# CMake (the Godot and Unreal extensions).
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/exactFpFlags.txt"
+    DESTINATION "${RIGEXEC_INSTALL_DATADIR}")
+install(CODE "execute_process(COMMAND \"${CMAKE_COMMAND}\"
+    -DSOURCE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}
+    -DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}
+    -DPREFIX=\$<INSTALL_PREFIX>
+    -DDATA_DIR=${RIGEXEC_INSTALL_DATADIR}
+    -P \"${CMAKE_CURRENT_LIST_DIR}/cmake/exportManifests.cmake\")")
 
 install(FILES LICENSE NOTICE THIRD_PARTY_NOTICES.md
     DESTINATION "share/rigExec")

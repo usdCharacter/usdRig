@@ -1,0 +1,60 @@
+// Witness that EvalCore's step kinds are the ordinals the baked program and
+// the wire schema already agree on: same numbers, same spellings, same
+// reserved ordinal.
+#include "rigExec/bakedProgramImpl.h"
+#include "rigExecEvalCore/kinds.h"
+#include "rigExecEvalCore/step.h"
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <cstddef>
+
+using namespace rigExec;
+namespace {
+int failures = 0;
+#define CHECK(value)                                                           \
+    do {                                                                       \
+        if (!(value)) {                                                        \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #value);       \
+        }                                                                      \
+    } while (0)
+
+void
+CheckOrdinals()
+{
+    CHECK(eval::StepKindCount == 29);
+    for (size_t i = 0; i < eval::StepKindCount; ++i) {
+        eval::StepKind kind = static_cast<eval::StepKind>(i);
+        RigExecBakedStepKind baked = static_cast<RigExecBakedStepKind>(i);
+        CHECK(static_cast<uint8_t>(kind) == static_cast<uint8_t>(baked));
+        CHECK(std::strcmp(eval::StepKindName(kind),
+                          RigExecBakedStepKindName(baked)) == 0);
+    }
+    CHECK(eval::IsReservedStepKind(eval::StepKind::SnapshotFinals));
+    CHECK(!eval::IsReservedStepKind(eval::StepKind::ComposeSubtree));
+    CHECK(eval::StepKindName(
+              static_cast<eval::StepKind>(eval::StepKindCount))[0] == '\0');
+    CHECK(static_cast<uint8_t>(eval::StepKind::ChainInputs) == 25);
+    CHECK(static_cast<uint8_t>(eval::StepKind::AvarInputs) == 26);
+    CHECK(static_cast<uint8_t>(eval::StepKind::ProviderRefresh) == 28);
+}
+
+void
+CheckStepShape()
+{
+    eval::StepRef step{static_cast<uint32_t>(eval::StepKind::Solve), 3, 1, 7};
+    eval::StepResult result{eval::Outcome::Held, 0};
+    CHECK(step.kind == static_cast<uint32_t>(eval::StepKind::Solve));
+    CHECK(result.outcome == eval::Outcome::Held);
+    CHECK(result.detail == 0);
+}
+} // namespace
+int
+main()
+{
+    CheckOrdinals();
+    CheckStepShape();
+    std::printf("EvalCoreKinds: %d failures\n", failures);
+    return failures ? 1 : 0;
+}

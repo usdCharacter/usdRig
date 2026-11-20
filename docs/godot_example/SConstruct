@@ -1,0 +1,211 @@
+#!/usr/bin/env python
+"""Builds the rigExec GDExtension against godot-cpp.
+
+The zero-USD runtime (rigExecRuntime, the rigExecEvalCore step table, the
+portable operation graph compiler and executor, and the rigExecBinary
+format reader) compiles from the sibling usdRig checkout straight into the
+extension -- never a shared DLL. The FlatBuffers headers come from usdRig's
+thirdparty/flatbuffers/include. Objects go under build/obj/<suffix>, never
+into either source tree.
+Floating point stays precise, and this file never spells the settings out:
+it reads the exact-FP flags from the SDK's installed
+lib/cmake/rigexec_flags.cmake fragment (rigexec_get_exact_fp_flags), the
+same authority the CMake build and bin/check_runtime_usd_free.sh follow.
+The USD-free source and include lists come from the manifests the SDK
+installs under share/rigExec/ -- runtimeSources.txt, evalCoreSources.txt,
+runtimeIncludes.txt and evalCoreIncludes.txt -- whose relative paths join
+with the usdRig checkout, so the extension compiles the same translation
+units with the same settings as the CMake build.
+
+Usage:
+    scons platform=<windows|linux|macos> target=<template_debug|template_release>
+    scons platform=windows target=template_release api_version=4.7
+    scons platform=windows usdrig_root=<usdRig checkout>
+    scons platform=windows sdk_root=<usdRig install prefix, default ../usd-install>
+"""
+
+import os
+import re
+
+from SCons.Script import ARGUMENTS, Default, SConscript
+
+godot_cpp = os.path.join("thirdparty", "godot-cpp")
+
+MANIFEST_NAMES = ("runtimeSources.txt", "evalCoreSources.txt",
+                  "runtimeIncludes.txt", "evalCoreIncludes.txt")
+
+
+def _godot_cpp_env():
+    scons_script = os.path.join(godot_cpp, "SConstruct")
+    if not os.path.isfile(scons_script):
+        print("godot-cpp not found at thirdparty/godot-cpp")
+        print("pin: master @ 507ed9d840c01a3c5b2a39af8bb4000bfac30bf5")
+        raise SystemExit(1)
+    return SConscript(scons_script)
+
+
+env = _godot_cpp_env()
+
+# The runtime compiles from the sibling usdRig checkout; the flag fragment
+# and the manifests come from the SDK installed from it.
+usdrig_root = os.path.abspath(ARGUMENTS.get("usdrig_root", os.path.join("..", "usdRig")))
+usdrig_libs = os.path.join(usdrig_root, "libs")
+sdk_root = os.path.abspath(ARGUMENTS.get("sdk_root", os.path.join("..", "usd-install")))
+
+
+def _read_lines(path):
+    with open(path, "r", encoding="utf-8") as handle:
+        return [line.strip() for line in handle if line.strip()]
+
+
+def _exact_fp_flags(fragment, msvc):
+    """The flags rigexec_get_exact_fp_flags sets for this compiler."""
+    with open(fragment, "r", encoding="utf-8") as handle:
+        text = handle.read()
+    body = re.search(
+        r"function\s*\(\s*rigexec_get_exact_fp_flags\b.*?\)(.*?)endfunction\s*\(\s*\)",
+        text, re.S)
+    branch = None
+    if body:
+        if msvc:
+            branch = re.search(r"if\s*\(\s*MSVC\s*\)(.*?)else", body.group(1), re.S)
+        else:
+            branch = re.search(r"else\s*\(\s*\)(.*?)endif", body.group(1), re.S)
+    flags = []
+    if branch:
+        assignment = re.search(r"set\(\s*\$\{\w+\}\s+(.*?)\s+PARENT_SCOPE\s*\)",
+                               branch.group(1), re.S)
+        if assignment:
+            flags = assignment.group(1).split()
+    if not flags:
+        print(fragment + " names no exact-FP flags for "
+              + ("MSVC" if msvc else "non-MSVC") + " builds")
+        raise SystemExit(1)
+    return flags
+
+
+def _first_existing(candidates, what):
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+    print("no " + what + " at: " + ", ".join(candidates))
+    raise SystemExit(1)
+
+
+flags_fragment = _first_existing(
+    (os.path.join(sdk_root, "lib", "cmake", "rigExec", "rigexec_flags.cmake"),
+     os.path.join(usdrig_root, "cmake", "rigexec_flags.cmake")),
+    "the cmake/rigexec_flags.cmake exact-FP fragment")
+
+
+def _manifest_dir():
+    """The SDK's share/rigExec, or a configured usdRig build tree."""
+    for directory in (os.path.join(sdk_root, "share", "rigExec"),
+                      os.path.join(usdrig_root, "build")):
+        if all(os.path.isfile(os.path.join(directory, name))
+               for name in MANIFEST_NAMES):
+            return directory
+    print("no manifest set (" + ", ".join(MANIFEST_NAMES) + ") under "
+          + os.path.join(sdk_root, "share", "rigExec") + " or "
+          + os.path.join(usdrig_root, "build")
+          + "; install the usdRig SDK or configure its build")
+    raise SystemExit(1)
+
+
+def _from_checkout(path):
+    # Installed manifest paths are relative to the checkout that holds the
+    # sources; a build tree lists them absolute already.
+    return path if os.path.isabs(path) else os.path.join(usdrig_root, path)
+
+
+manifest_dir = _manifest_dir()
+
+# Bitwise parity with the baked path, from the build's flag authority.
+is_msvc = env.get("is_msvc", False)
+env.Append(CXXFLAGS=_exact_fp_flags(flags_fragment, is_msvc)
+           + ["/std:c++17" if is_msvc else "-std=c++17"])
+
+flatbuffers_include = os.path.join(usdrig_root, "thirdparty", "flatbuffers",
+                                   "include")
+if not os.path.isfile(os.path.join(flatbuffers_include, "flatbuffers",
+                                   "flatbuffers.h")):
+    print(usdrig_root + " has no thirdparty/flatbuffers; check out a usdRig "
+          "with the FlatBuffer .rigexec format")
+    raise SystemExit(1)
+
+# The USD-free translation units and include directories, exactly as the
+# installed manifests list them -- the same lists bin/check_runtime_usd_free.sh
+# compiles. The extension needs them all: the runtime links EvalCore.
+runtime_sources = []
+for name in ("runtimeSources.txt", "evalCoreSources.txt"):
+    runtime_sources.extend(
+        _from_checkout(source)
+        for source in _read_lines(os.path.join(manifest_dir, name))
+        if source.endswith((".cpp", ".c")))
+if not runtime_sources or not all(os.path.isfile(source)
+                                  for source in runtime_sources):
+    print("the source manifests under " + manifest_dir + " name files missing "
+          "under " + usdrig_root + "; the SDK and the usdRig checkout must match")
+    raise SystemExit(1)
+include_dirs = []
+for name in ("runtimeIncludes.txt", "evalCoreIncludes.txt"):
+    include_dirs.extend(_from_checkout(directory)
+                        for directory in _read_lines(os.path.join(manifest_dir, name)))
+
+# The extension's own wiring: the format reader and the portable operation
+# graph. Other rigExecGraph sources require USD and do not enter this
+# extension. These are the same additions bin/check_runtime_usd_free.sh
+# compiles on top of the two source manifests.
+format_source = os.path.join(usdrig_libs, "rigExecBinary", "format.cpp")
+transport_source = os.path.join(usdrig_libs, "rigExecBinary", "transport.cpp")
+graph_source = os.path.join(usdrig_libs, "rigExecGraph", "opGraph.cpp")
+lzma_dir = os.path.join(usdrig_root, "thirdparty", "lzma", "C")
+lzma_sources = [os.path.join(lzma_dir, name) for name in
+                ("LzmaEnc.c", "LzmaDec.c", "LzFind.c", "CpuArch.c")]
+if not all(os.path.isfile(source)
+           for source in (format_source, transport_source, graph_source,
+                          *lzma_sources)):
+    print("missing the format reader, portable operation graph, or LZMA "
+          "sources under " + usdrig_root)
+    raise SystemExit(1)
+runtime_sources.extend((format_source, transport_source, graph_source))
+env.Append(CPPPATH=[usdrig_libs, flatbuffers_include, lzma_dir] + include_dirs)
+addon_dir = os.path.join("addons", "rigexec", "src")
+addon_sources = sorted(os.path.join(addon_dir, name)
+                       for name in os.listdir(addon_dir)
+                       if name.endswith(".cpp"))
+
+# One object dir per build suffix, so debug and release coexist and
+# platforms whose object suffix omits it (.os) do not collide.
+obj_root = os.path.join("build", "obj", env["suffix"].lstrip("."))
+objects = [
+    env.SharedObject(
+        os.path.join(obj_root,
+                     os.path.splitext(os.path.relpath(s, usdrig_libs))[0]), s)
+    for s in runtime_sources
+]
+lzma_env = env.Clone()
+lzma_env.Append(CPPDEFINES=["Z7_ST", "RIGEXEC_LZMA_PORTABLE_SCALAR"])
+objects += [lzma_env.SharedObject(
+    os.path.join(obj_root, "lzma", os.path.splitext(os.path.basename(s))[0]), s)
+    for s in lzma_sources]
+objects += [
+    env.SharedObject(
+        os.path.join(obj_root, "addon",
+                     os.path.splitext(os.path.basename(s))[0]), s)
+    for s in addon_sources
+]
+
+if env["platform"] == "macos":
+    library_path = os.path.join(
+        "addons", "rigexec", "bin",
+        "librigexec{}.framework".format(env["suffix"]),
+        "librigexec{}".format(env["suffix"]),
+    )
+else:
+    library_path = os.path.join(
+        "addons", "rigexec", "bin",
+        "librigexec{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
+    )
+library = env.SharedLibrary(library_path, source=objects)
+Default(library)

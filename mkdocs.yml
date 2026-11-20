@@ -166,4 +166,5 @@ nav:
       - OpenExec notes: specs/exec-api-notes.md
       - ExecUsd notes: specs/execusd-api-notes.md
       - Hydra notes: specs/hydra-integration-notes.md
+      - Evaluation core parity: specs/eval-core-parity.md
   - References: references.md

@@ -1,4 +1,6 @@
-// RigExec dual-quaternion skinning primitives.
+// RigExec dual-quaternion skinning primitives: the Gf instantiation of
+// dualQuatKernel.h, the one numeric definition shared with the zero-USD
+// runtime. Conventions, scale policy and degenerate rules: read here.
 // A unit dual quaternion q^ = qr + eps*qd encodes a rigid motion: the real
 // part qr is a unit quaternion carrying the rotation, and the dual part
 // qd = 1/2 * t * qr carries the translation t (as a pure quaternion, on the
@@ -29,35 +31,81 @@
 #ifndef RIGEXEC_MATH_DUAL_QUAT_H
 #define RIGEXEC_MATH_DUAL_QUAT_H
 
+#include "dualQuatKernel.h"
+#include "pointFrame.h"
+
 #include "pxr/pxr.h"
 #include "pxr/base/gf/vec3d.h"
 #include "pxr/base/gf/matrix3d.h"
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/quatd.h"
+#include "pxr/base/gf/rotation.h"
 
+#include <array>
 #include <cstddef>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace rigExec {
 
+/// The Gf instantiation of the shared dual-quaternion kernel
+/// (dualQuatKernel.h). The polar split reads the same point-frame solve the
+/// pose path runs.
+template <> struct RigExecDualQuatMath<GfVec3f, GfVec3d> {
+    using Mat4 = GfMatrix4d;
+    using Mat3 = GfMatrix3d;
+    using Quat = GfQuatd;
+
+    static bool PointsToMatrix(const std::array<GfVec3d, 4> &restPoints,
+                               const std::array<GfVec3d, 4> &posePoints,
+                               GfMatrix4d *matrix)
+    {
+        return RigExecPointsToMatrix(restPoints, posePoints, matrix);
+    }
+
+    static std::array<GfVec3d, 4>
+    MatrixToPoints(const std::array<GfVec3d, 4> &restPoints,
+                   const GfMatrix4d &matrix)
+    {
+        return RigExecMatrixToPoints(restPoints, matrix).points;
+    }
+
+    static double Dot(const GfVec3d &a, const GfVec3d &b)
+    {
+        return GfDot(a, b);
+    }
+
+    static GfVec3d Cross(const GfVec3d &a, const GfVec3d &b)
+    {
+        return GfCross(a, b);
+    }
+
+    static double QuatDot(const GfQuatd &a, const GfQuatd &b)
+    {
+        return GfDot(a, b);
+    }
+
+    static void SetRotate(GfMatrix3d *m, const GfQuatd &q)
+    {
+        m->SetRotate(q);
+    }
+
+    static void Orthonormalize(GfMatrix3d *m)
+    {
+        m->Orthonormalize();
+    }
+
+    static GfQuatd ExtractRotationQuaternion(const GfMatrix3d &m)
+    {
+        return m.ExtractRotation().GetQuat();
+    }
+};
+
 /// A dual quaternion real + eps*dual. Default-constructed as the identity
 /// motion. Every function below that says "unit" assumes |real| == 1 and
 /// dot(real, dual) == 0; RigExecDualQuatFromMatrix, the blends, and
 /// RigExecDualQuatNormalize all return values satisfying that.
-struct RigExecDualQuat {
-    GfQuatd real{1.0}; ///< rotation (unit quaternion)
-    GfQuatd dual{0.0}; ///< 1/2 * translation * real
-
-    RigExecDualQuat() = default;
-    RigExecDualQuat(const GfQuatd &r, const GfQuatd &d) : real(r), dual(d)
-    {
-    }
-};
-
-/// Tolerance used for orthonormality checks and for declaring a blended
-/// real part too short to normalise.
-constexpr double RigExecDualQuatEpsilon = 1e-9;
+using RigExecDualQuat = RigExecDualQuatKernelT<GfVec3f, GfVec3d>;
 
 /// Builds a unit dual quaternion from a unit rotation and a world-space
 /// translation applied after the rotation (p' = rotate(p) + translation).
@@ -181,11 +229,7 @@ GfVec3d RigExecDualQuatTransformPoint(const RigExecDualQuat &dq,
 /// A rigid input has stretch == exactly the identity and isRigid == true,
 /// which is what makes rigid inputs through the scale-aware path
 /// bit-identical to the rigid-only path.
-struct RigExecScaledDualQuat {
-    RigExecDualQuat rigid;   ///< R_i and t_i
-    GfMatrix3d stretch{1.0}; ///< S_i, row-vector 3x3 applied before rigid
-    bool isRigid = true;     ///< stretch is the identity (nothing dropped)
-};
+using RigExecScaledDualQuat = RigExecScaledDualQuatKernelT<GfVec3f, GfVec3d>;
 
 /// Splits a row-vector GfMatrix4d into RigExecScaledDualQuat. The rigid
 /// part is exactly what RigExecDualQuatFromMatrix returns for the same
