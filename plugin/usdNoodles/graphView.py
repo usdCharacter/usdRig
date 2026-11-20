@@ -54,7 +54,6 @@ from .nodeGraph import (
     createNodeRenderer,
     NodeGraph,
     subscribe_edit_target_warning,
-    unsubscribe_edit_target_warning,
     warn_if_non_persistent_edit_target,
 )
 from .nodeGraphBlueprint import NodeGraphBlueprint
@@ -1634,11 +1633,7 @@ class GraphView(QGLWidget):
         self._valueFitCache.clear()
 
     def closeEvent(self, event):
-        unsubscribe_edit_target_warning(self._showWarningPopup)
-        self._undoHistory = None
-        sync = getattr(self, "_stageSync", None)
-        if isinstance(sync, stage_sync.StageSync):
-            sync.close()
+        stage_sync.closeStageLifecycle(self)
         super().closeEvent(event)
 
     def _onStageReplaced(self):

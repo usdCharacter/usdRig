@@ -166,15 +166,27 @@ break down as:
 
 Later tasks compare against **1289 collected / 46 skipped / 0 failed / 0
 errors**; a count that moves needs an explanation in the change that moved it.
-The stage-sync files raise it to **1331 collected / 46 skipped / 0 failed / 0
-errors** on the same host (measured 2026-11-20), the 42 added cases all in
-`testUsdNoodlesStageSync.py`.
+The stage-sync files raise it to **1333 collected / 47 skipped / 0 failed / 0
+errors** (1286 passed) on this host (measured 2026-11-20): 44 added cases in
+`testUsdNoodlesStageSync.py`, 42 for stage replacement and reload and 2 for
+dock-window close. The one skip above the 46 baseline is
+`RigExecFkChain schema not registered` in `testUsdNoodlesValueModel.py`, which
+depends on `PXR_PLUGINPATH_NAME` reaching the rigExecSchema resources; it is
+present with and without the dock cases, so it is an environment difference,
+not a change in the suite.
 
 The editor drivers on the same tree:
 
 - `run_testusdview_noodles_rename.sh`, `..._icons.sh`, `..._touch.sh`: each
   printed its marker and exited 0, run against a GLX display that reported a
   GL 4.1 context, with `librigExecImaging.so` built.
+- On the current host (aarch64, no GLX display; Qt reports
+  `QOpenGLWidget is not supported on this platform`) `..._touch.sh` prints
+  `RIGEXEC_NOODLES_TOUCH_OK` and exits 0, while `..._rename.sh`, `..._values.sh`
+  and `..._icons.sh` exit 1 with
+  `AttributeError: 'GraphView' object has no attribute '_cppIconRenderer'`.
+  The same three signatures appear on the tree before these changes, so they
+  mark an unusable display rather than the editor.
 - `run_testusdview_noodles_values.sh`: **not verified on that host.** The
   command `bash bin/test/run_testusdview_noodles_values.sh` exits 1 on the
   driver's own precondition —

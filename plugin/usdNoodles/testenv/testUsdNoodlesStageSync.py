@@ -31,6 +31,7 @@ staged package, so it fails the run instead of skipping the coverage.
 from __future__ import annotations
 
 import dataclasses
+import os
 import sys
 import unittest
 from types import SimpleNamespace
@@ -59,6 +60,24 @@ try:
     _has_blueprint = True
 except ImportError:  # pragma: no cover - native module not built
     _has_blueprint = False
+
+try:
+    from pxr.Usdviewq.qt import QtCore, QtWidgets
+    from UsdNoodles._qt_editor import NoodlesEditorWindow
+
+    _has_qt_editor = True
+except Exception as error:  # pragma: no cover - Qt bridge not available
+    print("Qt editor imports failed: %s" % error)
+    _has_qt_editor = False
+
+# A widget needs a live QApplication for its whole life. The headless harness
+# drops its app when the GL check fails, and Qt then aborts on the next widget
+# while QApplication.instance() still hands back the dead wrapper. Holding one
+# from import keeps every widget test in the file on a live app.
+_dock_app = None
+if _has_qt_editor:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    _dock_app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
 
 def _layer_text(stage):
@@ -1202,6 +1221,150 @@ class ProductionAdapterTest(unittest.TestCase):
         self.assertIn("/Keeper", view.nodes)
         # Not one view hook ran: no paint guard, no cache clear, no load.
         self.assertEqual(view._hooks.mock_calls, [])
+
+
+import os
+
+
+if _has_qt_editor:
+
+    class _DockDataModel(QtCore.QObject):
+        """The usdview data model, with only the signal the wiring needs."""
+
+        signalStageReplaced = QtCore.Signal()
+
+    class _DockApi:
+        """A usdviewApi whose stage is off-limits once the editor is closed.
+
+        ``stage`` is a property rather than a plain attribute so a read after
+        close raises instead of quietly returning the replacement.
+        """
+
+        def __init__(self, stage):
+            self.dataModel = _DockDataModel()
+            self.frame = Usd.TimeCode.Default()
+            self._stage = stage
+            self.host_closed = False
+            self.stage_reads = 0
+
+        @property
+        def stage(self):
+            if self.host_closed:
+                raise AssertionError("a closed editor read the stage")
+            self.stage_reads += 1
+            return self._stage
+
+
+@unittest.skipUnless(_has_qt_editor, "Qt editor bridge not available")
+class DockWindowCloseTest(unittest.TestCase):
+    """Closing the dock runs the graph's teardown before the close is reported.
+
+    Qt hides a dock's children without delivering their closeEvent, so the
+    window's handler has to reach through to the graph's teardown. Without it
+    the epoch stays live, the reload finish stays queued, and the notice
+    receiver stays registered for a graph nobody is displaying.
+    """
+
+    def setUp(self):
+        if _dock_app is None:  # pragma: no cover - Qt without a usable platform
+            raise unittest.SkipTest("no QApplication could be created")
+        stage = Usd.Stage.CreateInMemory()
+        UsdGeom.Sphere.Define(stage, "/Alpha")
+        self.api = _DockApi(stage)
+        self.window = NoodlesEditorWindow(self.api, 7)
+        self.view = self.window.graphView
+        self.closes = []
+
+        def note(window_id):
+            # What the close report sees: the teardown must already have run.
+            self.closes.append(
+                (
+                    window_id,
+                    self.view._stageSync.isClosed(),
+                    self.view._undoHistory is None,
+                )
+            )
+
+        self.window.windowClosed.connect(note)
+
+    def tearDown(self):
+        self.window.close()
+
+    def _state(self):
+        view = self.view
+        return (
+            view.initialized,
+            view.updatesEnabled(),
+            len(view.nodes),
+            len(view.links),
+            view._undoHistory,
+            view._noticeHandler.getStage(),
+        )
+
+    def test_close_teardowns_then_ignores_a_later_replace(self):
+        view = self.view
+        service = view._stageSync
+        queued = []
+        ran = []
+
+        # A reload that started and has not finished: the finish is queued,
+        # paint is off and the notice receiver is revoked until it does.
+        with patch(
+            "UsdNoodles.graphView.QtCore.QTimer.singleShot",
+            lambda delay, callback: queued.append(callback),
+        ):
+            view._onStageReplaced()
+        self.assertEqual(len(queued), 1)
+        self.assertFalse(view.initialized)
+        self.assertFalse(view.updatesEnabled())
+        live = service.epoch()
+        reads = self.api.stage_reads
+
+        self.window.close()
+        self.assertEqual(self.closes, [(7, True, True)])
+        self.assertTrue(service.isClosed())
+        self.assertEqual(service.epoch(), live + 1)
+        self.assertIsNone(view._undoHistory)
+        self.assertIsNone(view._noticeHandler.getStage())
+        torn_down = self._state()
+
+        # usdview moves on to another stage and emits through the real signal;
+        # the host is now unreadable, so any read the slot makes is a failure.
+        self.api.host_closed = True
+        self.api.dataModel.signalStageReplaced.emit()
+
+        # Drain what the reload left behind through the body an open editor
+        # would have run, so an unwired finish is visible rather than silent.
+        with patch.object(
+            stage_sync, "_finishReloadOnView", lambda view: ran.append("finish")
+        ):
+            for callback in queued:
+                callback()
+
+        self.assertEqual(ran, [])
+        self.assertEqual(self.api.stage_reads, reads)
+        self.assertEqual(len(queued), 1)  # the late replace queued nothing
+        self.assertEqual(self._state(), torn_down)
+        self.assertEqual(service.epoch(), live + 1)
+
+    def test_both_close_paths_teardown_once(self):
+        view = self.view
+        service = view._stageSync
+        live = service.epoch()
+
+        # The dock path first: Qt never forwards the close to the child.
+        self.window.close()
+        self.assertTrue(service.isClosed())
+        self.assertEqual(self.closes, [(7, True, True)])
+
+        # The widget path on top of it: the closed service is the guard, so the
+        # epoch, the history and the notice receiver are untouched a second time.
+        view.close()
+        self.window.close()
+        self.assertEqual(service.epoch(), live + 1)
+        self.assertEqual(self.closes, [(7, True, True)])
+        self.assertIsNone(view._undoHistory)
+        self.assertIsNone(view._noticeHandler.getStage())
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")

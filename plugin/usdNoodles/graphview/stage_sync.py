@@ -23,6 +23,8 @@ from dataclasses import dataclass
 
 from pxr import Sdf, Tf
 
+from UsdNoodles.nodeGraph import unsubscribe_edit_target_warning
+
 
 # ---------------------------------------------------------------------------
 # The published trace of one lifecycle step.
@@ -757,6 +759,23 @@ def applyStageDelta(view, delta):
         view._undoHistory = None
     elif isinstance(delta, FinishReload):
         _finishReloadOnView(view)
+
+
+def closeStageLifecycle(view):
+    """Close an editor's stage lifecycle, exactly once.
+
+    Both Qt close paths call it: the widget's own closeEvent and the dock
+    window's, which Qt does not forward to the child. The closed service is
+    the guard -- a second call must not move the epoch again or revoke a
+    receiver that is already gone, because every queued delta and notice is
+    dropped by comparing against that epoch.
+    """
+    service = getattr(view, "_stageSync", None)
+    if service is None or service.isClosed():
+        return
+    unsubscribe_edit_target_warning(view._showWarningPopup)
+    view._undoHistory = None
+    service.close()
 
 
 class _ReconcileTrace:
