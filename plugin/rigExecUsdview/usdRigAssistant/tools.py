@@ -228,6 +228,7 @@ class Toolbox(QtCore.QObject):
     :param ask_access: called with (folder, reason) when the assistant
         wants to read somewhere new; gives back ONCE, ALWAYS or DENY.
         Without it, nowhere new can be read.
+    :param document_current: optional owner-thread generation check
     """
     # {'id', 'name', 'kind', 'label', 'state': 'running', 'done' or
     # 'failed', 'detail'}
@@ -235,9 +236,13 @@ class Toolbox(QtCore.QObject):
     _invoke = QtCore.Signal(object)
 
     def __init__(self, session, can_edit=False, can_run=False, parent=None,
-                 memory=None, chat_folders=None, ask_access=None):
+                 memory=None, chat_folders=None, ask_access=None,
+                 document_current=None):
         super(Toolbox, self).__init__(parent)
         self.session = session
+        self._origin_stage = session.stage if session is not None else None
+        self._have_stage = self._origin_stage is not None
+        self._document_current = document_current
         self.can_edit = can_edit
         self.can_run = can_run
         self.memory = memory if memory is not None else Memory()
@@ -262,7 +267,26 @@ class Toolbox(QtCore.QObject):
 
     @property
     def stage(self):
-        return self.session.stage if self.session is not None else None
+        return self._origin_stage
+
+    def _on_owner_thread(self):
+        return QtCore.QThread.currentThread() is self.thread()
+
+    def is_current(self):
+        """Check document identity independently of cancellation."""
+        if not self._on_owner_thread():
+            return False
+        if self._document_current is not None and not self._document_current():
+            return False
+        stage = self.session.stage if self.session is not None else None
+        return stage is self._origin_stage
+
+    def _require_current(self):
+        if self.cancelled.is_set():
+            raise ToolError('The user stopped the reply.')
+        if not self.is_current():
+            raise ToolError('The reply belongs to a document that is no '
+                            'longer current.')
 
     # What is offered
     def available(self):
@@ -271,9 +295,8 @@ class Toolbox(QtCore.QObject):
             allowed.add(EDIT)
         if self.can_run:
             allowed.add(RUN)
-        have_stage = self.stage is not None
         return [t for t in self.tools.values() if t.kind in allowed and
-                (have_stage or not t.needs_stage)]
+                (self._have_stage or not t.needs_stage)]
 
     def anthropic_tools(self):
         return [{'name': t.name, 'description': t.description,
@@ -319,9 +342,12 @@ class Toolbox(QtCore.QObject):
             except ValueError as err:
                 return 'The arguments were not JSON: {}'.format(err), True
         args = args if isinstance(args, dict) else {}
-        app = QtWidgets.QApplication.instance()
-        if app is None or QtCore.QThread.currentThread() is app.thread():
+        if self._on_owner_thread():
             return self._call(name, args)
+        if not isinstance(QtWidgets.QApplication.instance(), QtWidgets.QApplication):
+            return 'The toolbox cannot run off its owner thread without Qt.', True
+        if self.cancelled.is_set():
+            return 'The user stopped the reply.', True
         job = {'name': name, 'args': args, 'event': threading.Event(),
                'result': ('usdview did not answer.', True)}
         self._invoke.emit(job)
@@ -355,23 +381,22 @@ class Toolbox(QtCore.QObject):
                 label = tool.label(args)
             except Exception:
                 label = name
-        if self.cancelled.is_set():
-            return 'The user stopped the reply.', True
-        if not offered:
-            if tool and tool.kind == EDIT:
-                text = ('Changing the stage is turned off. Ask the user to '
-                        'turn on "Edit stage" under the message box.')
-            elif tool and tool.kind == RUN:
-                text = ('Running code is turned off. Ask the user to turn '
-                        'on "Run code" under the message box.')
-            elif self.stage is None and tool and tool.needs_stage:
-                text = 'No stage is open.'
-            else:
-                text = 'There is no tool called {}.'.format(name)
-            self._tell(call_id, tool, label, 'failed', text)
-            return text, True
-        self._tell(call_id, tool, label, 'running')
         try:
+            self._require_current()
+            if not offered:
+                if tool and tool.kind == EDIT:
+                    text = ('Changing the stage is turned off. Ask the user to '
+                            'turn on "Edit stage" under the message box.')
+                elif tool and tool.kind == RUN:
+                    text = ('Running code is turned off. Ask the user to turn '
+                            'on "Run code" under the message box.')
+                elif not self._have_stage and tool and tool.needs_stage:
+                    text = 'No stage is open.'
+                else:
+                    text = 'There is no tool called {}.'.format(name)
+                raise ToolError(text)
+            self._tell(call_id, tool, label, 'running')
+            self._require_current()
             result = tool.handler(args)
         except (ToolError, stage_actions.ActionError) as err:
             self._tell(call_id, tool, label, 'failed', str(err))
@@ -398,11 +423,13 @@ class Toolbox(QtCore.QObject):
 
     def finish(self):
         """End the reply: its changes become one undo step."""
+        if not self._on_owner_thread():
+            return
         edits, self.edits = self.edits, []
-        if not edits or self.session is None:
+        if not edits or self.session is None or not self.is_current():
             return
         stack = self.session.undo_stack()
-        if stack is None:
+        if stack is None or not self.is_current():
             return
         try:
             stack.Push(edits[0] if len(edits) == 1 else
@@ -481,9 +508,11 @@ class Toolbox(QtCore.QObject):
             raise ToolError('The user did not let you read {}.'.format(
                 folder))
         answer = DENY
-        if self.ask_access is not None and not self.cancelled.is_set():
+        if self.ask_access is not None:
             reason = str(args.get('reason') or reason or '').strip()
+            self._require_current()
             answer = self.ask_access(folder, reason)
+        self._require_current()
         if answer == ALWAYS:
             self.memory.allow(folder, str(args.get('about') or ''))
         elif answer == ONCE:
@@ -1154,6 +1183,7 @@ class Toolbox(QtCore.QObject):
         os.makedirs(CAPTURE_DIR, exist_ok=True)
         path = os.path.join(CAPTURE_DIR, 'viewport.png')
         width, height = self.session.grab_viewport(path)
+        self._require_current()
         with open(path, 'rb') as fp:
             png = fp.read()
         return Image('The viewport at frame {:g}, {} by {} pixels, saved '
@@ -1174,12 +1204,21 @@ class Toolbox(QtCore.QObject):
         if isinstance(paths, str):
             paths = [paths]
         paths = [self.path({'path': p}) for p in paths]
-        found = self.session.select(paths, frame=bool(args.get('frame')))
+        found = self._select(paths, frame=bool(args.get('frame')))
         missing = [str(p) for p in paths if str(p) not in found]
         text = 'Selected {}.'.format(_short(found, 10))
         if missing:
             text += ' Not found: {}.'.format(', '.join(missing))
         return text
+
+    def _select(self, paths, frame=False):
+        self._require_current()
+        found = self.session.select(paths)
+        if frame and found:
+            # Selection change signals can reenter the viewer before framing.
+            self._require_current()
+            self.session.frame_selection()
+        return found
 
     def set_frame(self, args):
         if args.get('frame') is None:
@@ -1285,8 +1324,7 @@ class Toolbox(QtCore.QObject):
             raise ToolError('"changes" must be a list of changes')
         specs = _spec_paths(changes,
                             self.stage.GetEditTarget().GetLayer())
-        applier = stage_actions.Applier(
-            self.stage, select=lambda paths: self.session.select(paths))
+        applier = stage_actions.Applier(self.stage, select=self._select)
         if specs:
             with rigExecUndo.SpecScope(self.stage, specs, None,
                                        'AI Assistant changes') as scope:
@@ -1337,7 +1375,7 @@ class Toolbox(QtCore.QObject):
         if not source.strip():
             raise ToolError('Give some code to run')
         if self._namespace is None:
-            self._namespace = _namespace(self.session)
+            self._namespace = _namespace(self.session, self.stage)
         layer = self.stage.GetEditTarget().GetLayer() if self.stage \
             else None
         before = session_module.snapshot(layer) if layer is not None \
@@ -1369,7 +1407,8 @@ class Toolbox(QtCore.QObject):
         errors = [e[2] for e in log.since(mark) if e[1] >= logging.WARNING]
         if errors:
             result['logged'] = errors[-20:]
-        self.session.update_viewport()
+        if self.is_current() and not self.cancelled.is_set():
+            self.session.update_viewport()
         return result
 
     # Files and imports
@@ -1483,11 +1522,11 @@ def _spec_paths(changes, layer=None):
     return sorted(kept)
 
 
-def _namespace(session):
+def _namespace(session, stage):
     from pxr import Gf, Sdf as _Sdf, Usd as _Usd, UsdGeom as _UsdGeom, Vt
     names = {'__name__': '__usdrig_assistant__',
              'usdviewApi': session.api if session else None,
-             'stage': session.stage if session else None,
+             'stage': stage,
              'Gf': Gf, 'Sdf': _Sdf, 'Usd': _Usd, 'UsdGeom': _UsdGeom,
              'Vt': Vt}
     try:

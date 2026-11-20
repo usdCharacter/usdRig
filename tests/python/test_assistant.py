@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import urllib.error
 import urllib.request
 
@@ -190,6 +191,156 @@ def TestChangesAreOneUndoStep():
            "redo makes the changes again")
 
 
+def _SetRotation(box, value):
+    return box.call("change_stage", {"changes": [
+        {"action": "set_attr", "path": "/Char/Ctl", "name": "avars:rx",
+         "value": value}]})
+
+
+def TestToolboxRejectsSilentStageReplacement():
+    a, b = _Stage(), _Stage()
+    container = _Container()
+    fresh, _ = _Toolbox(b, container, can_edit=True)
+    text, failed = _SetRotation(fresh, 10)
+    _Check(not failed, "B can author an edit: %s" % text)
+    fresh.finish()
+    container.stack.Undo()
+
+    box, api = _Toolbox(a, container, can_edit=True)
+    text, failed = _SetRotation(box, 20)
+    _Check(not failed, "A can author an edit: %s" % text)
+    a_before = a.GetRootLayer().ExportToString()
+    b_before = b.GetRootLayer().ExportToString()
+    api.stage = b
+    api.selectedPrims = [b.GetPrimAtPath("/Char/Geo")]
+    text, failed = _SetRotation(box, 30)
+    _Check(failed, "old toolbox cannot author at the matching path: %s" % text)
+    text, failed = box.call("select_prims", {"paths": ["/Char/Ctl"]})
+    _Check(failed and api.selectedPrims == [b.GetPrimAtPath("/Char/Geo")],
+           "old toolbox leaves B's selection alone: %s" % text)
+    box.finish()
+    _Check(a.GetRootLayer().ExportToString() == a_before and
+           b.GetRootLayer().ExportToString() == b_before,
+           "rejected edit leaves both authored layers unchanged")
+    _Check(not container.stack.CanUndo() and container.stack.CanRedo(),
+           "stale finish does not push or clear B's redo")
+    api.stage = a
+    box.finish()
+    _Check(not container.stack.CanUndo() and container.stack.CanRedo(),
+           "stale finish drained the old edits without rolling them back")
+    container.stack.Redo()
+    _Check(b.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 10 and
+           a.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 20,
+           "B's existing redo still affects only B")
+
+
+def TestToolboxGenerationAndRetirement():
+    stage = _Stage()
+    generation = 0
+    container = _Container()
+    box, api = _Toolbox(stage, container, can_edit=True,
+                        document_current=lambda: generation == 0)
+    box.finish()
+    text, failed = _SetRotation(box, 10)
+    _Check(not failed and box.is_current(), "finish allows later calls: %s" % text)
+    box.finish()
+    box.finish()
+    container.stack.Undo()
+    rx = stage.GetAttributeAtPath("/Char/Ctl.avars:rx")
+    _Check(rx.Get() == 0 and not container.stack.CanUndo(),
+           "finish pushes each edit only once")
+    generation += 1
+    text, failed = _SetRotation(box, 30)
+    _Check(failed and api.stage is box.stage and rx.Get() == 0,
+           "generation revokes authority even on the same stage: %s" % text)
+
+    live, _ = _Toolbox(stage, container, can_edit=True)
+    text, failed = _SetRotation(live, 15)
+    _Check(not failed, "the current toolbox can edit: %s" % text)
+    live.cancel()
+    live.cancel()
+    content, failed = live.call_content("select_prims", {"paths": ["/Char/Ctl"]})
+    _Check(live.is_current() and failed and content[0]["type"] == "text" and
+           content[0]["text"], "cancel closes admission, not document identity")
+    live.finish()
+    container.stack.Undo()
+    _Check(rx.Get() == 0, "cancel still lets finish undo a current edit")
+
+
+def TestToolboxSwapDuringActivity():
+    a, b = _Stage(), _Stage()
+    box, api = _Toolbox(a, _Container(), can_edit=True)
+    a_before = a.GetRootLayer().ExportToString()
+    b_before = b.GetRootLayer().ExportToString()
+
+    def on_activity(event):
+        if event["state"] == "running":
+            api.stage = b
+
+    box.activity.connect(on_activity)
+    try:
+        text, failed = _SetRotation(box, 30)
+        _Check(failed and api.stage is b and
+               a.GetRootLayer().ExportToString() == a_before and
+               b.GetRootLayer().ExportToString() == b_before,
+               "swap in running notification prevents authoring: %s" % text)
+    finally:
+        box.activity.disconnect(on_activity)
+
+
+def TestToolboxFolderGrantAfterPrompt():
+    stage, replacement = _Stage(), _Stage()
+    with tempfile.TemporaryDirectory() as folder:
+        path = os.path.join(folder, "note.txt")
+        with open(path, "w", encoding="utf-8") as stream:
+            stream.write("a note to read")
+        for answer in (tools.ONCE, tools.ALWAYS):
+            for swap in (True, False):
+                memory = tools.Memory(prefs={})
+                chat_folders = set()
+                prompts = []
+
+                def ask_access(requested, reason):
+                    prompts.append(requested)
+                    if swap:
+                        api.stage = replacement
+                    return answer
+
+                box, api = _Toolbox(stage, _Container(), memory=memory,
+                                    chat_folders=chat_folders,
+                                    ask_access=ask_access)
+                text, failed = box.call("read_file", {"path": path})
+                granted = (folder in chat_folders if answer == tools.ONCE
+                           else memory.allowed(path))
+                _Check(prompts == [folder] and failed == swap and
+                       ("a note to read" in text) != swap and
+                       granted != swap and
+                       (not swap or not chat_folders and not memory.folders()),
+                       "%s grants access only while current: %s" % (answer, text))
+
+
+def TestToolboxNoStageWithoutApp():
+    box, api = _Toolbox(None, _Container())
+    text, failed = box.call("get_output_log", {})
+    _Check(not failed, "stage-free tools work on owner without an app: %s" % text)
+    results = []
+    worker = threading.Thread(target=lambda: results.append(
+        box.call("get_output_log", {})))
+    worker.start()
+    worker.join(2)
+    _Check(not worker.is_alive() and results and results[0][1] and results[0][0],
+           "off-owner calls without an app get a textual error")
+    api.stage = _Stage()
+    schemas = (box.anthropic_tools(), box.responses_tools(),
+               [t["function"] for t in box.chat_completions_tools()], box.mcp_tools())
+    for schema in schemas:
+        names = {t["name"] for t in schema}
+        _Check("get_output_log" in names and "list_prims" not in names,
+               "schemas use the captured absence of a stage")
+    text, failed = box.call("get_output_log", {})
+    _Check(failed, "even a stage-free tool rejects a stale reply: %s" % text)
+
+
 def TestPosing():
     stage = _Stage()
     container = _Container()
@@ -320,10 +471,14 @@ def TestMcpServer():
 
 
 def main():
-    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    _ = app
-    for test in (TestLooking, TestChangesAreOneUndoStep, TestPosing,
-                 TestRunPython, TestActionBlocks, TestMcpServer):
+    app = QtWidgets.QApplication.instance()
+    for test in (TestToolboxNoStageWithoutApp, TestLooking,
+                 TestChangesAreOneUndoStep, TestToolboxRejectsSilentStageReplacement,
+                 TestToolboxGenerationAndRetirement, TestToolboxSwapDuringActivity,
+                 TestToolboxFolderGrantAfterPrompt, TestPosing, TestRunPython,
+                 TestActionBlocks, TestMcpServer):
+        if app is None and test is not TestToolboxNoStageWithoutApp:
+            app = QtWidgets.QApplication([])
         try:
             test()
         except Exception as err:
