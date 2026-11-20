@@ -304,8 +304,7 @@ RigExecApplyWrinkleWithTopology(
 
     std::vector<Wide> deltas(pointCount);
     for (size_t i = 0; i < pointCount; ++i) deltas[i] = current[i] - incoming[i];
-    // As above: pinned and isolated vertices keep their values
-    // through the else, exactly as the per-iteration copy did.
+    // Pinned and isolated vertices keep their values through the else.
     std::vector<Wide> nextDeltas = deltas;
     for (int iteration = 0; iteration < settings.smoothingIterations; ++iteration) {
         for (size_t i = 0; i < pointCount; ++i) {

@@ -92,9 +92,9 @@ struct RigExecTwoBoneIkParams {
 /// a chain that scales while its offset does not changes proportion as
 /// the rig resizes, which is the one thing scaling must not do.
 ///
-/// Shared so the dynamic computation and the baked program cannot drift:
-/// they measured separately before, and a difference here is an IK that
-/// solves one way in the viewport and another in a bake.
+/// Shared so the dynamic computation and the baked program cannot drift: a
+/// difference here is an IK that solves one way in the viewport and another
+/// in a bake.
 void
 RigExecTwoBoneIkLengths(const std::array<std::array<GfVec3d, 4>, 3> &restPoints,
                         const GfMatrix4d &space, double upperOffset,

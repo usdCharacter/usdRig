@@ -156,7 +156,7 @@ namespace {
 
 // One transform of a point into the volume's local space. GfMatrix4d is
 // row-vector here (see the ribbon transport kernel), so TransformAffine
-// is the correct spelling rather than a hand-rolled multiply.
+// is the correct spelling.
 inline GfVec3f
 _ToLocal(const GfMatrix4d &worldToLocal, const GfVec3f &p)
 {

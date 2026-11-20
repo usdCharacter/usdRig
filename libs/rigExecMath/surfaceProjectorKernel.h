@@ -428,7 +428,7 @@ RigExecSolveSurfaceProjectorT(
     //
     // One fan triangulation serves every cast below: the up-front
     // guard rejects mismatched point counts, so base and posed validate
-    // identically -- exactly as the per-cast validation did.
+    // identically.
     RigExecFanTrisStrict localFan;
     if (!cache)
         localFan = RigExecBuildFanTrisStrict(

@@ -351,11 +351,11 @@ inline RigExecFanTrisStrict RigExecBuildFanTrisStrict(
 // Cached triangle candidate index for surface projection. The legacy
 // float closest-point callback can produce an ill-conditioned result outside
 // its geometric AABB. All triangles therefore remain non-prunable until a
-// callback supplies a certified computed-value bound. Keep the existing API
-// so owner-retained fans and call sites can share one exact fallback.
+// callback supplies a certified computed-value bound. Owner-retained fans
+// and call sites share one exact fallback.
 template <class Vec3>
 struct RigExecTriangleBvh {
-    // Reserved for a future certified traversal; no triangle nodes are built.
+    // Always empty: no triangle nodes are built.
     std::vector<spatialAccelDetail::BvhNode> nodes;
     std::vector<uint32_t> order;
 
