@@ -4,7 +4,7 @@ Headless test for the AI Assistant in plugin/rigExecUsdview/usdRigAssistant:
 the tools on an in-memory stage (looking, posing, changing the stage,
 running Python, and one undo step per reply), the action blocks of models
 without tool calling, and the MCP server Claude Code connects to. A fake
-usdviewApi stands in for usdview; no provider is called.
+usdviewApi stands in for usdview, and replies use a local stub provider.
 
 Usage: test_assistant.py
 """
@@ -31,7 +31,7 @@ from pxr.Usdviewq.qt import QtCore, QtWidgets  # noqa: E402
 
 import rigExecUndo  # noqa: E402
 from usdRigAssistant import mcp_server, session, stage_actions  # noqa: E402
-from usdRigAssistant import tools  # noqa: E402
+from usdRigAssistant import panel, providers, tools  # noqa: E402
 
 _failures = []
 
@@ -646,6 +646,309 @@ def TestMcpServer():
         server.stop()
 
 
+_CTL = '/Char/Ctl'
+_NATIVE_ACTIONS = [
+    {'action': 'set_attr', 'path': _CTL, 'name': 'avars:rx', 'value': 30},
+    {'action': 'bad_native_action'},
+]
+_TEXT_ACTIONS = [
+    {'action': 'set_attr', 'path': _CTL, 'name': 'avars:ty', 'value': 12},
+    {'action': 'bad_text_action'},
+]
+_ACTION_REPLY = ('Here is the translation.\n```usdrig-actions\n' +
+                 json.dumps(_TEXT_ACTIONS) + '\n```')
+_FRESH_TEXT = 'This is the replacement document reply.'
+
+
+def _PumpUntil(predicate, message):
+    app = QtWidgets.QApplication.instance()
+    deadline = time.monotonic() + _QUEUE_BOUND
+    while not predicate():
+        if time.monotonic() >= deadline:
+            raise AssertionError(message)
+        app.processEvents()
+
+
+class _LocalReply:
+    def __init__(self, route, gated=False):
+        self.route = route
+        self.posted = threading.Event()
+        self.release = threading.Event()
+        if not gated:
+            self.release.set()
+        self.passes = []
+        self.job = None
+        self.native_result = None
+
+    def wait_for_release(self):
+        if not self.release.wait(3 * _QUEUE_BOUND):
+            raise AssertionError('provider was not released')
+
+
+class _LocalProvider(providers.Provider):
+    id = 'local-test'
+    label = 'Local test provider'
+
+    def __init__(self, replies, prefs):
+        super().__init__(prefs=prefs)
+        self.replies = replies
+
+    def status(self):
+        return 'Ready locally.'
+
+    def cached_models(self):
+        return ['test-model']
+
+    def stream_chat(self, messages, system, model=None, tools=None):
+        reply = self.replies[messages[-1]['content']]
+        reply.passes.append((model, tools is not None))
+        if reply.route == 'fallback' and tools is not None:
+            raise providers.ToolsUnsupported('Try without native tools')
+        if reply.route in ('native', 'mixed'):
+            if tools is None:
+                raise AssertionError('expected a native toolbox')
+            signal = tools._invoke
+
+            class ObservedSignal:
+                def emit(self, job):
+                    signal.emit(job)
+                    reply.job = (job.name, job.args)
+                    reply.posted.set()
+
+            # Observe actual submission, not merely arrival at stream_chat.
+            with patch.object(tools, '_invoke', ObservedSignal()):
+                reply.native_result = tools.call(
+                    'change_stage', {'changes': _NATIVE_ACTIONS})
+            reply.wait_for_release()
+        if reply.route == 'fresh':
+            yield _FRESH_TEXT
+        elif reply.route == 'native':
+            yield 'Here is the rotation.'
+        else:
+            yield _ACTION_REPLY
+        reply.wait_for_release()
+
+
+@contextmanager
+def _ProviderPanel(api, container, replies, edit=True):
+    prefs = {}
+    provider = _LocalProvider(replies, prefs)
+    with patch.object(providers, 'get_providers', return_value=[provider]), \
+            patch.object(providers, 'get_provider', return_value=provider):
+        ui = panel.AiAssistant(session.Session(api, container), prefs=prefs)
+        try:
+            ui.include_check.setChecked(False)
+            ui.edit_check.setChecked(edit)
+            yield ui
+        finally:
+            for reply in replies.values():
+                reply.release.set()
+            ui.stop()
+            for worker in [ui.thread] + list(ui.left_threads):
+                if worker is not None:
+                    _Check(worker.wait(_QUEUE_BOUND * 1000),
+                           'local provider worker did not stop')
+            ui.close()
+            _PumpUntil(lambda: not ui.left_threads,
+                       'local provider completion deliveries were not drained')
+
+
+def _ProviderFinished(ui):
+    _PumpUntil(lambda: not ui.busy and not ui.left_threads,
+               'local provider reply did not complete')
+
+
+def _Values(stage):
+    return tuple(stage.GetAttributeAtPath(_CTL + '.' + name).Get()
+                 for name in ('avars:rx', 'avars:ty'))
+
+
+def _UndoState(stack):
+    return (stack.CanUndo(), stack.UndoText(), stack.CanRedo(), stack.RedoText())
+
+
+def _DocumentState(stage):
+    return (stage.GetEditTarget(), tuple(
+        (layer.identifier, layer.ExportToString())
+        for layer in stage.GetLayerStack()))
+
+
+def TestProviderCompletion():
+    for route, values, done, failed in (
+            ('native', (30, 0), ['avars:rx'], ['bad_native_action']),
+            ('text', (0, 12), ['avars:ty'], ['bad_text_action']),
+            ('fallback', (0, 12), ['avars:ty'], ['bad_text_action']),
+            ('mixed', (30, 12), ['avars:rx', 'avars:ty'],
+             ['bad_native_action', 'bad_text_action'])):
+        stage = _Stage()
+        baseline = _DocumentState(stage)
+        api, container = _Api(stage), _Container()
+        reply = _LocalReply(route)
+        with _ProviderPanel(api, container, {'edit': reply}) as ui:
+            ui.send('edit')
+            box = ui.toolbox
+            _ProviderFinished(ui)
+            _Check(_Values(stage) == values, route + ': authored values')
+            assert [m['role'] for m in ui.messages] == ['user', 'assistant'], route
+            message = ui.messages[-1]
+            expected_done = [f'Set {_CTL}.{name} to {value}'
+                             for name, value in zip(('avars:rx', 'avars:ty'), values)
+                             if name in done]
+            _Check(message.get('done') == expected_done and
+                   message.get('failed') == ['There is no action ' + name
+                                             for name in failed],
+                   route + ': each action outcome is recorded once: ' + str(message))
+            passes = [('test-model', True)]
+            if route == 'fallback':
+                passes.append(('test-model', False))
+            _Check(reply.passes == passes,
+                   route + ': actual provider passes: ' + str(reply.passes))
+            if route in ('native', 'mixed'):
+                _Check(reply.native_result is not None and not reply.native_result[1],
+                       route + ': native tool returned successfully')
+            if route == 'fallback':
+                _Check([entry['state'] for entry in message['tools']] == ['note', 'done'],
+                       'fallback records the unsupported-tools note and final dispatch')
+            stack = container.stack
+            _Check(stack.UndoText() == 'AI Assistant changes', route + ': undo label')
+            stack.Undo()
+            _Check(_Values(stage) == (0, 0) and _DocumentState(stage) == baseline and
+                   not stack.CanUndo() and stack.CanRedo(),
+                   route + ': a single undo restores all authored edits')
+            _Check(_SetRotation(box, 99)[1] and _DocumentState(stage) == baseline,
+                   route + ': a retained toolbox cannot edit after normal completion')
+
+
+def _WaitForAttempt(ui, reply):
+    if reply.route == 'native':
+        # Do not pump: emit must have posted a real change_stage job to Qt.
+        posted = reply.posted.wait(_QUEUE_BOUND)
+        assert posted, 'native edit was not queued'
+        assert reply.job == ('change_stage', {'changes': _NATIVE_ACTIONS})
+        assert reply.native_result is None, 'queued edit returned before owner delivery'
+    else:
+        _PumpUntil(lambda: ui.reply == _ACTION_REPLY, 'action chunk was not delivered')
+        assert ui.thread.isRunning(), 'provider finished before the swap barrier'
+        assert stage_actions.find_actions(ui.reply) == (_TEXT_ACTIONS, [])
+
+
+def _TestProviderSwap(route, replacement):
+    a, b = _Stage(), _Stage()
+    assert a is not b and a.GetRootLayer() != b.GetRootLayer()
+    assert _Values(a) == _Values(b) == (0, 0), 'both documents have the target attributes'
+    api, container = _Api(a), _Container()
+    seed, _ = _Toolbox(b, container, can_edit=True)
+    text, failed = _SetRotation(seed, 10)
+    assert not failed, text
+    seed.finish()
+    container.stack.Undo()
+    b.SetEditTarget(Usd.EditTarget(b.GetSessionLayer()))
+    baseline_a, baseline_b = _DocumentState(a), _DocumentState(b)
+    stack = container.stack
+    baseline_undo = _UndoState(stack)
+    assert baseline_undo == (False, '', True, 'AI Assistant changes')
+    old = _LocalReply(route, gated=True)
+    fresh = _LocalReply('fresh', gated=True)
+    with _ProviderPanel(api, container, {'old': old, 'fresh': fresh}) as ui:
+        ui.send('old')
+        old_worker, old_box = ui.thread, ui.toolbox
+        _WaitForAttempt(ui, old)
+        assert _DocumentState(a) == baseline_a, 'old edit ran before replacement'
+        api.stage = b
+        if replacement != 'silent':
+            ui.set_session(session.Session(api, container))
+            if replacement == 'reopen':
+                api.stage = a
+                ui.set_session(session.Session(api, container))
+                assert old_box.stage is api.stage, 'A→B→A must use the same A object'
+            assert not old_box.is_current(), 'old authority survived replacement'
+            assert old_worker in ui.left_threads, 'old completion is still outstanding'
+            ui.send('fresh')
+            assert ui.thread is not None and ui.thread is not old_worker
+            assert ui.send_button.text() == 'Stop', 'fresh Send is active'
+            status = ui.status_label.text()
+            assert status.endswith('is answering...')
+        else:
+            assert ui.thread is old_worker and not old_box.cancelled.is_set()
+            assert not old_box.is_current(), 'live stage identity changed without notification'
+
+        old.release.set()
+        if replacement != 'silent' or route != 'native':
+            # Let finished queue up without allowing owner delivery yet.
+            joined = old_worker.wait(_QUEUE_BOUND * 1000)
+            assert joined, 'old provider did not return'
+        if replacement != 'silent':
+            _PumpUntil(lambda: ui.reply == _FRESH_TEXT and not ui.left_threads,
+                       'old completion did not drain while fresh reply was active')
+            assert ui.busy and ui.status_label.text() == status
+            assert [m['shown'] for m in ui.messages] == ['old', 'fresh']
+            fresh.release.set()
+        _ProviderFinished(ui)
+        if route == 'native':
+            _Check(old.native_result is not None and old.native_result[1] and
+                   old.native_result not in (_PENDING_EXPIRY, _RUNNING_EXPIRY),
+                   replacement + ': stale native edit was refused, not timed out')
+        elif route == 'fallback':
+            _Check(old.passes == [('test-model', True), ('test-model', False)],
+                   'delayed text was delivered by the tools-unsupported retry')
+        if replacement != 'silent':
+            assert [(m['role'], m.get('shown', m['content'])) for m in ui.messages] == [
+                ('user', 'old'), ('user', 'fresh'), ('assistant', _FRESH_TEXT)]
+            _Check(ui.chat_store.load(ui.chat_id)['messages'] == ui.messages and
+                   ui.status_label.text() == '' and not ui.status_label.property('error') and
+                   ui.send_button.text() == 'Send', 'fresh reply history and status survive')
+        else:
+            _Check([m['role'] for m in ui.messages] == ['user'],
+                   'silent swap ignores the old assistant reply')
+        _Check(_DocumentState(a) == baseline_a and _DocumentState(b) == baseline_b and
+               _UndoState(stack) == baseline_undo,
+               f'{replacement}/{route}: A and B layers/edit targets and undo are unchanged')
+        stack.Redo()
+        _Check(_Values(a) == (0, 0) and _Values(b) == (10, 0),
+               'the preexisting redo still targets only B')
+
+
+def TestProviderSwapNative():
+    _TestProviderSwap('native', 'notify')
+
+
+def TestProviderSwapFinalText():
+    _TestProviderSwap('fallback', 'notify')
+
+
+def TestProviderSilentSwapAndReopen():
+    for replacement in ('silent', 'reopen'):
+        for route in ('native', 'text'):
+            _TestProviderSwap(route, replacement)
+
+
+def TestProviderFinalTextPermissionsAndStop():
+    for send_edit, finish_edit, stop in ((False, True, False),
+                                         (True, False, False),
+                                         (True, True, True)):
+        stage = _Stage()
+        baseline = _DocumentState(stage)
+        api, container = _Api(stage), _Container()
+        reply = _LocalReply('text', gated=True)
+        with _ProviderPanel(api, container, {'edit': reply}, edit=send_edit) as ui:
+            ui.send('edit')
+            _WaitForAttempt(ui, reply)
+            ui.edit_check.setChecked(finish_edit)
+            if stop:
+                ui.stop()
+            reply.release.set()
+            _ProviderFinished(ui)
+            message = ui.messages[-1]
+            _Check(message['role'] == 'assistant' and message['content'] == _ACTION_REPLY and
+                   not message.get('done') and not message.get('failed'),
+                   'disallowed final text stays in history without tool outcomes')
+            if not stop:
+                note = 'was off when you sent' if not send_edit else 'to allow them'
+                _Check(note in message.get('note', ''), 'show why the edit was disallowed')
+            _Check(_DocumentState(stage) == baseline and not container.stack.CanUndo(),
+                   'permission changes or Stop leave final text inert')
+
+
 def main():
     app = QtWidgets.QApplication.instance()
     for test in (TestToolboxNoStageWithoutApp, TestLooking,
@@ -654,7 +957,10 @@ def main():
                  TestToolboxFolderGrantAfterPrompt, TestPosing, TestRunPython,
                  TestActionBlocks, TestQueuedEditExpiresBeforeDelivery,
                  TestQueuedEditExpiresBeforeBusyRetry, TestCancelWakesQueuedEdit,
-                 TestRunningEditCanCompleteAfterCallerDeadline, TestMcpServer):
+                 TestRunningEditCanCompleteAfterCallerDeadline, TestMcpServer,
+                 TestProviderCompletion, TestProviderSwapNative,
+                 TestProviderSwapFinalText, TestProviderSilentSwapAndReopen,
+                 TestProviderFinalTextPermissionsAndStop):
         if app is None and test is not TestToolboxNoStageWithoutApp:
             app = QtWidgets.QApplication([])
         try:
