@@ -227,12 +227,14 @@ class StageSync:
     """
 
     def __init__(
-        self, read, notice, apply, post, listen, warn=None, sink=None, *, reconcile,
-        on_owner=None, post_notice=None
+        self, read, notice, apply, post, listen, warn=None, sink=None, *, reconcile=None, prepare=None, reset=None, defer=None
     ):
         self._read = read
         self._notice = notice
         self._reconcile = reconcile
+        self._prepare = prepare
+        self._reset = reset
+        self._defer = defer
         self._apply = apply
         self._post = post
         self._on_owner = on_owner
@@ -240,24 +242,12 @@ class StageSync:
         self._warn = warn
         self._sink = sink
         self._epoch = 0
-        self._boundStage = None
+        self._finishPending = False
         self._closed = False
         self._receiver = _NoticeReceiver(self)
         self._handler = listen(self._receiver)
         self._suppressionTokens = set()
         self._enabledBeforeSuppression = None
-
-    # -- the editor's notice handler -------------------------------------
-
-    def handler(self):
-        """The UsdNoticeHandler built by ``listen``.
-
-        The view keeps it as ``view._noticeHandler``: the authoring sites
-        suppress through that object, and the loaders register the stage on it
-        (``register`` unregisters first), so this service never registers a
-        second listener.
-        """
-        return self._handler
 
     def epoch(self):
         return self._epoch
@@ -295,61 +285,73 @@ class StageSync:
     # -- replace / reload -------------------------------------------------
 
     def replace(self, stage, mode, prim_path, frame):
-        """usdview replaced the stage: tear the graph down, rebuild it.
-
-        The epoch moves first, so every callback an earlier replace queued --
-        and the notice receiver stamped with the old stage -- is stale before
-        any teardown work starts.
-
-        A closed editor ignores the delivery entirely: the widget can outlive
-        its close event, and a replacement that got through would re-arm the
-        notice receiver and reload a graph nobody is displaying.
-        """
+        """Reload after usdview has replaced its stage, deferring GL work."""
         if self._closed:
             return
-        node_ids = self._read().node_ids
-        self._epoch += 1
-        epoch = self._epoch
+        ctx = self._read()
+        reset = self._reset
 
-        begin = BeginReload(epoch, frame)
-        self._publish(begin)
-        self._apply(begin)
-        self.bind(stage)
+        def begin():
+            self._dispatch(BeginReload(self._epoch, frame))
 
-        if stage is None:
-            clear = ClearHistory(epoch)
-            self._publish(clear)
-            self._apply(clear)
-            self._scheduleFinish(epoch)
-            return
-
-        # The loaders build a whole new nodeGraph, so every id in the graph
-        # read above is gone; recorded rather than applied.
-        self._publish(Remove(epoch, node_ids))
-        load = Load(epoch, stage, mode, prim_path)
-        self._publish(load)
+        def populate():
+            if stage is None:
+                reset()
+                self._dispatch(ClearHistory(self._epoch))
+            else:
+                self._publish(Remove(self._epoch, ctx.node_ids))
+                self._dispatch(Load(self._epoch, stage, mode, prim_path))
 
         try:
-            self._apply(load)
+            self._transition(stage, populate, reset, begin)
         except Exception as error:
             if self._warn is not None:
-                self._warn(
-                    "Failed to reload graph after stage replace: %s" % error
-                )
-        self._scheduleFinish(epoch)
+                self._warn("Failed to reload graph after stage replace: %s" % error)
+
+    def loadGraph(self, stage, populate, reset):
+        """Switch graphs synchronously; a successful sample can stay unbound."""
+        if not self._closed:
+            self._transition(stage, populate, reset)
+
+    def _transition(self, stage, populate, reset, begin=None):
+        self._epoch += 1
+        epoch = self._epoch
+        if begin is not None:
+            self._finishPending = True
+        defer = self._defer(True) if self._finishPending and self._defer else None
+        try:
+            self.bind(None)
+            if begin is not None:
+                begin()
+            if self._prepare:
+                self._prepare()
+            populate()
+            if stage is not None:
+                self.bind(stage)
+        except Exception:
+            reset()
+            raise
+        finally:
+            if defer is not None:
+                self._defer(defer)
+            if not self._closed and epoch == self._epoch and self._finishPending:
+                self._scheduleFinish(epoch)
+
+    def boundStage(self):
+        """The stage that actually owns the adapter's live notice key."""
+        return self._handler.getStage()
 
     def bind(self, stage):
-        """Record the stage this generation listens to, and stamp the receiver.
-
-        The loaders call ``register`` on the UsdNoticeHandler themselves, so
-        nothing here registers -- that would double-register. Re-binding
-        replaces whatever epoch the receiver carried, which is what revokes
-        the previous binding: a notice from a replaced stage cannot reach the
-        model.
-        """
-        self._boundStage = stage
-        self._receiver.rebind(self._epoch)
-        return stage
+        """Change the sender within this epoch and stamp its receiver."""
+        if self._closed:
+            return None
+        self._receiver.revoke()
+        if stage is None:
+            self._handler.unregister()
+        else:
+            self._handler.register(stage)
+            self._receiver.rebind(self._epoch)
+        return self.boundStage()
 
     def finish(self, epoch):
         """Bring one generation's rendering back up -- the latest live one only.
@@ -358,36 +360,32 @@ class StageSync:
         that no longer exists, and re-enabling paint would let the widget touch
         a GL surface the newer replace has already torn down.
         """
-        if self._closed or epoch != self._epoch:
+        if self._closed or epoch != self._epoch or not self._finishPending:
             return
-        delta = FinishReload(epoch)
-        self._publish(delta)
-        self._apply(delta)
+        self._finishPending = False
+        self._dispatch(FinishReload(epoch))
 
     def close(self):
         """Revoke the notice receiver and invalidate anything still queued."""
+        if self._closed:
+            return
         self._closed = True
+        self._finishPending = False
+        for token in self._suppressionTokens:
+            token._owner = None
         self._suppressionTokens.clear()
         # Past every queued finish and every receiver stamp: the epoch moving
         # is what makes the deferred callbacks return without touching the
         # model.
         self._epoch += 1
-        self._boundStage = None
         self._receiver.revoke()
-        if self._handler is not None:
-            self._handler.unregister()
+        self._handler.unregister()
 
     # -- USD notices ------------------------------------------------------
 
     def changed(self, epoch, resyncedPaths, infoChangedPaths, movedPaths=None):
-        """One USD notice, delivered under the epoch that bound its stage.
-
-        ``movedPaths`` is the notice's own classification --
-        ``{oldPrimPath: newPrimPath}`` for prims USD reports as moved --
-        which reconciliation uses to rebuild displayed nodes from their
-        live destinations. It is never inferred from deletes and creates.
-        """
-        if self._closed or epoch != self._epoch:
+        """One USD notice, delivered under the epoch that bound its stage."""
+        if self._closed or epoch != self._epoch or self.boundStage() is None:
             return
         if self._on_owner is not None and not self._on_owner():
             self._post_notice(
@@ -414,20 +412,24 @@ class StageSync:
         if self._sink is not None:
             self._sink(delta)
 
+    def _dispatch(self, delta):
+        self._publish(delta)
+        self._apply(delta)
+
     def _scheduleFinish(self, epoch):
-        """One finish per replace, on the widget owner thread.
+        """Post a finish for the transition that now owns the pending reload.
 
         The callback carries its epoch and the binding it was queued under:
         a replace or a close since then makes it stale, and a stale finish
         must not re-enable paint on a graph that has moved on.
         """
-        binding = self._boundStage
+        binding = self.boundStage()
 
         def _run():
             if (
                 self._closed
                 or epoch != self._epoch
-                or binding is not self._boundStage
+                or binding is not self.boundStage()
             ):
                 return
             self.finish(epoch)

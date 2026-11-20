@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 try:
     from pxr import Gf
-    from UsdNoodles.graphView import GraphView
+    from UsdNoodles.graphView import GraphView, _makeStageSync
     from UsdNoodles.nodeGraphBlueprint import (
         _append_relationship_links as append_blueprint_relationship_links,
     )
@@ -514,7 +514,7 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
             nodes={"/A": output_node, "/B": input_node},
             nodeGraph=SimpleNamespace(getStage=MagicMock(return_value=stage)),
             _findLibraryForPrim=MagicMock(return_value=library),
-            _noticeHandler=SimpleNamespace(setEnabled=MagicMock()),
+            _stageSync=_makeStageSync(None),
             _removeLinkFromGraph=MagicMock(),
             _invalidateBackReferenceLinkDataCache=MagicMock(),
         )

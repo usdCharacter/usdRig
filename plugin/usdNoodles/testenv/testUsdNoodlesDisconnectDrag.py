@@ -27,7 +27,7 @@ Controller methods run directly against view doubles with rendering mocked.
 import unittest
 from unittest.mock import MagicMock, patch
 
-from UsdNoodles.graphView import GraphView
+from UsdNoodles.graphView import GraphView, _makeStageSync
 
 
 def _make_connection_edit(gv, *args, **kwargs):
@@ -120,6 +120,7 @@ def _make_node(node_id, has_prim=True, prim_type="NoodleSoupNode"):
 def _make_view(nodes=None, links=None):
     """Create a duck-typed GraphView stand-in for disconnect-drag tests."""
     view = MagicMock()
+    view._stageSync = _makeStageSync(view)
     view.nodes = nodes or {}
     view.links = links or []
     view._reconnectingLink = False
@@ -352,13 +353,6 @@ class TestFinishReconnectDisconnect(unittest.TestCase):
         # it no longer forces root and therefore makes no SetEditTarget call.
         stage.SetEditTarget.assert_not_called()
 
-    def test_success_re_enables_notice_handler(self):
-        view, push = self._setup()
-        _finish_reconnect_disconnect(view, push)
-
-        view._noticeHandler.setEnabled.assert_any_call(False)
-        view._noticeHandler.setEnabled.assert_called_with(True)
-
     def test_success_rebuilds_links_from_usd(self):
         # Regression: a successful disconnect must re-derive links from USD so
         # the disconnected pin's port highlight (the relationship "arrow") stops
@@ -412,14 +406,14 @@ class TestFinishReconnectDisconnect(unittest.TestCase):
         self.assertFalse(view._reconnectingLink)
         self.assertEqual(len(self.push_calls), 0)
 
-    def test_notice_handler_re_enabled_even_on_exception(self):
+    def test_failed_disconnect_does_not_push_undo(self):
         view, push = self._setup()
         view._library.delete_connection.side_effect = RuntimeError("boom")
 
         with self.assertRaises(RuntimeError):
             _finish_reconnect_disconnect(view, push)
 
-        view._noticeHandler.setEnabled.assert_called_with(True)
+        self.assertEqual(self.push_calls, [])
 
 
 class TestAbortConnection(unittest.TestCase):
