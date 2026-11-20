@@ -472,11 +472,14 @@ jobs:
 
       # The build-release set, plus python3-dev for the _rigexec bindings that
       # -DRIGEXEC_BUILD_PYTHON=ON configures, plus xvfb for the editor drivers.
+      # libxcb-cursor0 is required by the Qt xcb platform plugin; without it the
+      # headless drivers abort before reaching their markers.
       - name: Install build and test dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            ninja-build ccache libgl1-mesa-dev xorg-dev python3-dev xvfb
+            ninja-build ccache libgl1-mesa-dev xorg-dev python3-dev xvfb \
+            libxcb-cursor0
 
       - name: ccache
         uses: actions/cache@v4

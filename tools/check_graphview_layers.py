@@ -1,17 +1,4 @@
 #!/usr/bin/env python3
-"""Fail when a GraphView definition carries no layer, a non-UI module under
-plugin/usdNoodles/graphview/ imports Qt, OpenGL or pxr.Usdviewq, or a module
-outgrows the line ceiling recorded with its layer.
-
-usage: tools/check_graphview_layers.py [--root DIR] [--write-inventory] [--self-test]
-
-Reads the layer assignments and ceilings in tools/graphViewLayers.json.
-Standard library only: no build tree, no OpenUSD, no Qt. Ceilings ratchet
-downward -- lower them in the inventory, never raise them. --write-inventory
-marks newly appearing definitions "unassigned" and never rewrites an existing
-assignment, so a reviewer still has to choose the layer. --self-test runs the
-rules over synthetic sources. Exit 0 when clean, 1 with one line per violation.
-"""
 import argparse
 import ast
 import json
