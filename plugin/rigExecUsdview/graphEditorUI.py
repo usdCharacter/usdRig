@@ -1,52 +1,16 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+#
+# RigExec graph editor: the usdview window. Host wiring -- session
+# registration, hotkeys, the graph edit hook, undo actions and the
+# editor-extension takeover -- over graphEditorModel, which owns
+# selection, drag and edit lifecycle, and graphCanvas, which owns the
+# plot widget. Each host event maps to ONE model operation; the model
+# answers through the callables this window gives it.
+#
 import math
 import os
 import sys
 
-from pxr import Sdf, Tf, Ts, Usd
+from pxr import Tf, Usd
 from pxr.Usdviewq.qt import QtCore, QtGui, QtWidgets
 
 try:
@@ -60,56 +24,31 @@ try:
     import editorExtension
     import gizmoMath
     import gizmoPreview
+    import graphCanvas
+    import graphEditorModel
     import graphModel
     import graphScreen
     import rigExecUndo
     import sessionRegistry
+    # The canvas widget and the pixel helpers readers address here.
+    from graphCanvas import GraphCanvas, _Color, _Position
 except ImportError:                    # loader that did not add our dir
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import editorExtension
     import gizmoMath
     import gizmoPreview
+    import graphCanvas
+    import graphEditorModel
     import graphModel
     import graphScreen
     import rigExecUndo
     import sessionRegistry
+    from graphCanvas import GraphCanvas, _Color, _Position
 
 
 SIDE_IN = graphModel.SIDE_IN
 SIDE_OUT = graphModel.SIDE_OUT
 SIDE_BOTH = graphModel.SIDE_BOTH
-
-# graph editor palette, dark enough that a saturated curve colour
-# carries on its own (spec section 2.2).
-COLOR_BACKGROUND = QtGui.QColor(43, 43, 43)
-COLOR_RULER = QtGui.QColor(56, 56, 56)
-COLOR_RULER_EDGE = QtGui.QColor(28, 28, 28)
-COLOR_GRID = QtGui.QColor(62, 62, 62)
-COLOR_AXIS = QtGui.QColor(96, 96, 96)
-COLOR_TEXT = QtGui.QColor(178, 178, 178)
-COLOR_SELECTED = QtGui.QColor(255, 214, 51)
-COLOR_HOVER = QtGui.QColor(255, 246, 196)
-COLOR_TANGENT = QtGui.QColor(196, 196, 196)
-COLOR_PLAYHEAD = QtGui.QColor(90, 190, 255)
-COLOR_PLAYHEAD_TEXT = QtGui.QColor(20, 20, 20)
-COLOR_MARQUEE = QtGui.QColor(210, 210, 210)
-# Painted OVER the plot outside usdview's start/end frames, so the shot
-# range reads without hiding the curve that leaves it.
-COLOR_OUTSIDE = QtGui.QColor(0, 0, 0, 70)
-
-CURVE_WIDTH = 1.6
-GRID_WIDTH = 1.0
-PLAYHEAD_WIDTH = 1.4
-
-# One wheel notch is 120 eighths of a degree; this is the magnification
-# per notch, matching the pace of usdview's own viewport dolly.
-WHEEL_ZOOM = 1.15
-# Pixels of Alt+right drag per doubling of the visible range.
-ZOOM_DRAG_PIXELS = 220.0
-
-# How far a press may travel and still count as a click rather than a
-# marquee, in logical pixels.
-CLICK_SLOP = 3.0
 
 # Infinity menu, in menu order, as (label, graphModel name).
 INFINITY_CHOICES = (
@@ -147,41 +86,6 @@ TANGENT_BUTTONS = (
 # typed into a spin box never reaches the canvas.
 _TEXT_WIDGETS = (QtWidgets.QLineEdit, QtWidgets.QAbstractSpinBox,
                  QtWidgets.QTextEdit, QtWidgets.QPlainTextEdit)
-
-
-def _Color(rgb, alpha=255):
-    """A graphModel 0..1 curve colour as a QColor."""
-    return QtGui.QColor(int(round(rgb[0] * 255)), int(round(rgb[1] * 255)),
-                        int(round(rgb[2] * 255)), alpha)
-
-
-def _Position(event):
-    """
-    The cursor in the canvas's LOGICAL pixels.
-
-    No devicePixelRatioF here, unlike gizmoUI._Position: gizmoScreen
-    works in the physical pixels computeWindowViewport reports, while
-    graphScreen is handed the widget's logical size and QPainter draws
-    in logical pixels too. Multiplying would put every pick at twice the
-    cursor's position on a HiDPI display.
-    """
-    try:
-        point = event.position()
-        return (float(point.x()), float(point.y()))
-    except AttributeError:                                # Qt 5
-        return (float(event.x()), float(event.y()))
-
-
-def _IsFinite(value):
-    return not (math.isnan(value) or math.isinf(value))
-
-
-def _FormatTick(value, step):
-    """A grid label: whole numbers while the step is whole."""
-    if step >= 1.0:
-        return "%d" % int(round(value))
-    decimals = max(0, int(math.ceil(-math.log10(step))) + 1)
-    return "%.*f" % (decimals, value)
 
 
 # Small widgets
@@ -266,808 +170,8 @@ class CurveListWidget(QtWidgets.QTreeWidget):
             "curve; select rows to isolate them.")
 
 
-# Canvas
 
-class GraphCanvas(QtWidgets.QWidget):
-    """
-    The plot: grid, rulers, curves, keys, tangent handles, playhead --
-    and every mouse gesture that edits them.
-
-    Geometry is graphScreen's; this class only paints what graphScreen
-    computes and turns Qt events into the panel's edit calls, so the
-    hit-testing and the drag mappings stay headlessly testable.
-    """
-
-    def __init__(self, panel):
-        super(GraphCanvas, self).__init__(panel)
-        self._panel = panel
-        self.transform = graphScreen.ViewTransform(
-            600, 400, graphScreen.RULER_MARGINS)
-        self.setMinimumSize(320, 200)
-        self.setFocusPolicy(QtCore.Qt.StrongFocus)
-        self.setMouseTracking(True)
-        self.setAutoFillBackground(False)
-        self.setAttribute(QtCore.Qt.WA_OpaquePaintEvent, True)
-
-        self._hover = None          # (curveIndex, time) under the cursor
-        self._marquee = None        # (x, y, w, h) while a marquee drags
-        # pan / zoom / scrub / scrubHold / marquee / keys / tangent
-        self._mode = None
-        self._scrubHeld = False     # K is down
-        self._axis = None           # a Shift+Alt drag's locked axis
-        self._press = None
-        self._last = None
-        self._pressRanges = None
-        self._pressModifiers = None  # modifiers at press, for marquee add
-
-    # -- geometry -------------------------------------------------------
-
-    def resizeEvent(self, event):
-        super(GraphCanvas, self).resizeEvent(event)
-        self.transform.Resize(self.width(), self.height())
-
-    def PlotRectF(self):
-        x, y, w, h = self.transform.PlotRect()
-        return QtCore.QRectF(x, y, w, h)
-
-    def _Splines(self):
-        """The spline drawn per curve, None where the curve is hidden."""
-        return self._panel.DrawSplines()
-
-    def _Glyphs(self):
-        """(key glyphs, tangent glyphs) for the visible curves: from the
-        KEY splines, so knots an edit hook filters out are never squares
-        or handles (GraphEditHook.KeySpline)."""
-        curves = self._panel.Curves()
-        splines = self._panel.KeySplines()
-        selection = self._panel.SelectionPairs()
-        return (graphScreen.KeyGlyphs(curves, splines, self.transform,
-                                      selection),
-                graphScreen.TangentGlyphs(curves, splines, self.transform,
-                                          selection))
-
-    def _Polylines(self):
-        """Pixel polylines per curve, indexed by curve; [] when hidden."""
-        result = []
-        for spline in self._Splines():
-            if spline is None:
-                result.append([])
-            else:
-                result.append(graphScreen.SamplePolylines(spline,
-                                                          self.transform))
-        return result
-
-    def KeyPixels(self):
-        """
-        {curve label: [(x, y, time)]} in LOGICAL pixels.
-
-        One entry per KNOT, at the value square; a dual-valued knot's
-        pre-value square is drawn as well but is the same key, so it
-        would only make the map ambiguous.
-        """
-        curves = self._panel.Curves()
-        result = {}
-        for glyph in self._Glyphs()[0]:
-            label = curves[glyph.curveIndex].Label()
-            result.setdefault(label, []).append(
-                (glyph.x, glyph.y, glyph.time))
-        return result
-
-    def TangentPixels(self):
-        """{curve label: [(x, y, time, side)]} in LOGICAL pixels."""
-        curves = self._panel.Curves()
-        result = {}
-        for glyph in self._Glyphs()[1]:
-            label = curves[glyph.curveIndex].Label()
-            result.setdefault(label, []).append(
-                (glyph.x, glyph.y, glyph.time, glyph.side))
-        return result
-
-    # -- framing --------------------------------------------------------
-
-    def FrameAll(self):
-        self._Frame(self._panel.KeyExtents(selectedOnly=False))
-
-    def FrameSelected(self):
-        extents = self._panel.KeyExtents(selectedOnly=True)
-        if extents is None:
-            extents = self._panel.KeyExtents(selectedOnly=False)
-        self._Frame(extents)
-
-    def FrameStageRange(self):
-        """Home: back to usdview's own frame range, values framed."""
-        start, end = self._panel.StageRange()
-        extents = self._panel.KeyExtents(selectedOnly=False)
-        if start is None or end is None:
-            self._Frame(extents)
-            return
-        vMin, vMax = (extents[2], extents[3]) if extents else (-1.0, 1.0)
-        self.transform.Frame(start, end, vMin, vMax)
-        self.update()
-
-    def _Frame(self, extents):
-        if extents is None:
-            start, end = self._panel.StageRange()
-            extents = (start if start is not None else 0.0,
-                       end if end is not None else 24.0, -1.0, 1.0)
-        self.transform.Frame(*extents)
-        self.update()
-
-    # -- painting -------------------------------------------------------
-
-    def paintEvent(self, event):
-        del event
-        painter = QtGui.QPainter(self)
-        try:
-            painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
-            keys, tangents = self._Glyphs()
-            self._DrawBackground(painter)
-            painter.save()
-            painter.setClipRect(self.PlotRectF())
-            self._DrawGrid(painter)
-            self._DrawOutsideRange(painter)
-            self._DrawCurves(painter)
-            self._DrawTangents(painter, keys, tangents)
-            self._DrawKeys(painter, keys)
-            self._DrawPlayhead(painter)
-            self._DrawMarquee(painter)
-            painter.restore()
-            self._DrawRulers(painter)
-            self._DrawPlayheadTab(painter)
-        finally:
-            painter.end()
-
-    def _DrawBackground(self, painter):
-        painter.fillRect(self.rect(), COLOR_BACKGROUND)
-        plot = self.PlotRectF()
-        painter.fillRect(QtCore.QRectF(0.0, 0.0, self.width(), plot.top()),
-                         COLOR_RULER)
-        painter.fillRect(QtCore.QRectF(0.0, 0.0, plot.left(), self.height()),
-                         COLOR_RULER)
-
-    def _DrawOutsideRange(self, painter):
-        """usdview's start / end frames, shaded outside (spec 2.2)."""
-        start, end = self._panel.StageRange()
-        if start is None or end is None:
-            return
-        plot = self.PlotRectF()
-        left = self.transform.TimeToX(start)
-        right = self.transform.TimeToX(end)
-        if left > plot.left():
-            painter.fillRect(
-                QtCore.QRectF(plot.left(), plot.top(),
-                              min(left, plot.right()) - plot.left(),
-                              plot.height()), COLOR_OUTSIDE)
-        if right < plot.right():
-            painter.fillRect(
-                QtCore.QRectF(max(right, plot.left()), plot.top(),
-                              plot.right() - max(right, plot.left()),
-                              plot.height()), COLOR_OUTSIDE)
-
-    def _DrawGrid(self, painter):
-        plot = self.PlotRectF()
-        timeTicks, valueTicks = graphScreen.GridLines(self.transform)
-        pen = QtGui.QPen(COLOR_GRID)
-        pen.setWidthF(GRID_WIDTH)
-        axisPen = QtGui.QPen(COLOR_AXIS)
-        axisPen.setWidthF(GRID_WIDTH)
-        for time in timeTicks:
-            x = self.transform.TimeToX(time)
-            painter.setPen(axisPen if abs(time) < 1e-9 else pen)
-            painter.drawLine(QtCore.QPointF(x, plot.top()),
-                             QtCore.QPointF(x, plot.bottom()))
-        for value in valueTicks:
-            y = self.transform.ValueToY(value)
-            painter.setPen(axisPen if abs(value) < 1e-9 else pen)
-            painter.drawLine(QtCore.QPointF(plot.left(), y),
-                             QtCore.QPointF(plot.right(), y))
-
-    def _DrawCurves(self, painter):
-        """
-        Each visible curve as polylines, with the EXTRAPOLATED tails
-        dashed (spec 2.2).
-
-        The split at the first and last knot's pixel column is
-        graphScreen.SplitExtrapolation, so it is covered headlessly by
-        tests/python/test_graph_screen.py -- it used to live here and
-        cut the PRE tail at the wrong bound, painting a solid run at the
-        first key's value clean across the knot range.
-
-        Non-finite samples are dropped first: linear extrapolation off a
-        knot whose tangent algorithm is None samples as NaN in this Ts
-        build, and a NaN point poisons the whole polyline.
-        """
-        curves = self._panel.Curves()
-        splines = self._Splines()
-        for index, spline in enumerate(splines):
-            if spline is None or spline.IsEmpty():
-                continue
-            times = graphModel.KeyTimes(spline)
-            if not times:
-                continue
-            xLow = self.transform.TimeToX(times[0])
-            xHigh = self.transform.TimeToX(times[-1])
-            color = _Color(curves[index].color)
-            solidPen = QtGui.QPen(color)
-            solidPen.setWidthF(CURVE_WIDTH)
-            dashedPen = QtGui.QPen(color)
-            dashedPen.setWidthF(CURVE_WIDTH)
-            dashedPen.setStyle(QtCore.Qt.DashLine)
-            for polyline in graphScreen.SamplePolylines(spline,
-                                                        self.transform):
-                for run in _FinitePolylines(polyline):
-                    inside, outside = graphScreen.SplitExtrapolation(
-                        run, xLow, xHigh)
-                    painter.setPen(solidPen)
-                    self._Strokes(painter, inside)
-                    painter.setPen(dashedPen)
-                    self._Strokes(painter, outside)
-
-    @staticmethod
-    def _Strokes(painter, runs):
-        for points in runs:
-            if len(points) > 1:
-                painter.drawPolyline(QtGui.QPolygonF(
-                    [QtCore.QPointF(p[0], p[1]) for p in points]))
-
-    def _DrawKeys(self, painter, keys):
-        curves = self._panel.Curves()
-        half = graphScreen.KEY_PIXELS * 0.5
-        painter.setPen(QtCore.Qt.NoPen)
-        for glyph in keys:
-            if glyph.selected:
-                color = COLOR_SELECTED
-            elif self._hover == (glyph.curveIndex, glyph.time):
-                color = COLOR_HOVER
-            else:
-                color = _Color(curves[glyph.curveIndex].color)
-            painter.setBrush(QtGui.QBrush(color))
-            painter.drawRect(QtCore.QRectF(glyph.x - half, glyph.y - half,
-                                           half * 2.0, half * 2.0))
-            if glyph.IsDualValued():
-                painter.drawRect(QtCore.QRectF(
-                    glyph.x - half, glyph.preY - half, half * 2.0,
-                    half * 2.0))
-
-    def _DrawTangents(self, painter, keys, tangents):
-        """
-        The selected keys' handles: a line from the key to the end box,
-        hollow when the tangent is produced by an algorithm rather than
-        authored (spec 2.2).
-        """
-        anchors = {}
-        for glyph in keys:
-            anchors[(glyph.curveIndex, glyph.time)] = glyph
-        half = graphScreen.TANGENT_PIXELS * 0.5
-        pen = QtGui.QPen(COLOR_TANGENT)
-        pen.setWidthF(1.0)
-        for glyph in tangents:
-            key = anchors.get((glyph.curveIndex, glyph.time))
-            if key is None:
-                continue
-            y = key.y
-            if glyph.side == SIDE_IN and key.IsDualValued():
-                y = key.preY
-            painter.setPen(pen)
-            painter.setBrush(QtCore.Qt.NoBrush)
-            painter.drawLine(QtCore.QPointF(key.x, y),
-                             QtCore.QPointF(glyph.x, glyph.y))
-            box = QtCore.QRectF(glyph.x - half, glyph.y - half,
-                                half * 2.0, half * 2.0)
-            if glyph.locked:
-                painter.drawRect(box)
-            else:
-                painter.setPen(QtCore.Qt.NoPen)
-                painter.setBrush(QtGui.QBrush(COLOR_TANGENT))
-                painter.drawRect(box)
-
-    def _DrawPlayhead(self, painter):
-        plot = self.PlotRectF()
-        x = self.transform.TimeToX(self._panel.CurrentFrame())
-        pen = QtGui.QPen(COLOR_PLAYHEAD)
-        pen.setWidthF(PLAYHEAD_WIDTH)
-        painter.setPen(pen)
-        painter.setBrush(QtCore.Qt.NoBrush)
-        painter.drawLine(QtCore.QPointF(x, plot.top()),
-                         QtCore.QPointF(x, plot.bottom()))
-
-    def PlayheadTab(self, metrics=None):
-        """The current-time tab in the frame ruler as (QRectF, text), or
-        None while the playhead is outside the plot."""
-        plot = self.PlotRectF()
-        x = self.transform.TimeToX(self._panel.CurrentFrame())
-        if x < plot.left() or x > plot.right():
-            return None
-        if metrics is None:
-            metrics = QtGui.QFontMetrics(self.font())
-        text = "%g" % self._panel.CurrentFrame()
-        width = metrics.horizontalAdvance(text) + 10.0
-        return (QtCore.QRectF(x - width * 0.5, 3.0, width,
-                              plot.top() - 4.0), text)
-
-    def _DrawPlayheadTab(self, painter):
-        tab = self.PlayheadTab(QtGui.QFontMetrics(painter.font()))
-        if tab is None:
-            return
-        rect, text = tab
-        painter.setPen(QtCore.Qt.NoPen)
-        painter.setBrush(COLOR_PLAYHEAD)
-        painter.drawRoundedRect(rect, 3.0, 3.0)
-        painter.setPen(QtGui.QPen(COLOR_PLAYHEAD_TEXT))
-        painter.drawText(rect, QtCore.Qt.AlignCenter, text)
-
-    def _DrawMarquee(self, painter):
-        if self._marquee is None:
-            return
-        x, y, w, h = self._marquee
-        pen = QtGui.QPen(COLOR_MARQUEE)
-        pen.setStyle(QtCore.Qt.DashLine)
-        painter.setPen(pen)
-        painter.setBrush(QtCore.Qt.NoBrush)
-        painter.drawRect(QtCore.QRectF(x, y, w, h).normalized())
-
-    def _DrawRulers(self, painter):
-        """The frame ruler along the top and the value ruler down the
-        left, labelled from the same ticks the grid was drawn from."""
-        plot = self.PlotRectF()
-        timeTicks, valueTicks = graphScreen.GridLines(self.transform)
-        _, _, w, h = self.transform.PlotRect()
-        timeStep = graphScreen.NiceStep(self.transform.TimeSpan(), w)
-        valueStep = graphScreen.NiceStep(self.transform.ValueSpan(), h)
-        font = painter.font()
-        font.setPointSizeF(max(7.0, font.pointSizeF() * 0.85))
-        painter.setFont(font)
-        metrics = QtGui.QFontMetrics(font)
-        painter.setPen(QtGui.QPen(COLOR_RULER_EDGE))
-        painter.drawLine(QtCore.QPointF(plot.left(), plot.top()),
-                         QtCore.QPointF(plot.right(), plot.top()))
-        painter.drawLine(QtCore.QPointF(plot.left(), plot.top()),
-                         QtCore.QPointF(plot.left(), plot.bottom()))
-        painter.setPen(QtGui.QPen(COLOR_TEXT))
-        for time in timeTicks:
-            x = self.transform.TimeToX(time)
-            text = _FormatTick(time, timeStep)
-            painter.drawText(
-                QtCore.QPointF(x - metrics.horizontalAdvance(text) * 0.5,
-                               plot.top() - metrics.descent() - 5.0), text)
-        for value in valueTicks:
-            y = self.transform.ValueToY(value)
-            text = _FormatTick(value, valueStep)
-            painter.drawText(
-                QtCore.QPointF(
-                    max(2.0, plot.left() - 6.0
-                        - metrics.horizontalAdvance(text)),
-                    y + metrics.ascent() * 0.5 - 1.0), text)
-
-    # -- events ---------------------------------------------------------
-
-    def _OnRuler(self, point):
-        return graphScreen.OnTimeRuler(self.transform, point[1])
-
-    def SetScrubHeld(self, held):
-        self._scrubHeld = bool(held)
-
-    def ScrubHeld(self):
-        return self._scrubHeld
-
-    def mousePressEvent(self, event):
-        self._panel.FlushPendingCommit()
-        point = _Position(event)
-        modifiers = event.modifiers()
-        button = event.button()
-        self._press = point
-        self._last = point
-        self._pressModifiers = modifiers
-        if modifiers & QtCore.Qt.AltModifier:
-            if button in (QtCore.Qt.MiddleButton, QtCore.Qt.RightButton):
-                self._mode = ("pan" if button == QtCore.Qt.MiddleButton
-                              else "zoom")
-                self._axis = None
-                self._pressRanges = (self.transform.timeRange,
-                                     self.transform.valueRange)
-                event.accept()
-                return
-            # Alt + other button: no graph gesture; clear stale state and
-            # stop propagation so usdview's viewport doesn't also pan.
-            self._pressRanges = None
-            event.accept()
-            return
-        if self._scrubHeld and button in (QtCore.Qt.LeftButton,
-                                          QtCore.Qt.MiddleButton):
-            # K + middle moves the playhead alone; the frame follows at
-            # the release.
-            self._mode = ("scrub" if button == QtCore.Qt.LeftButton
-                          else "scrubHold")
-            self._Scrub(point)
-            event.accept()
-            return
-        if button == QtCore.Qt.LeftButton and self._OnRuler(point):
-            self._mode = "scrub"
-            self._Scrub(point)
-            event.accept()
-            return
-        if button == QtCore.Qt.LeftButton:
-            self._PressLeft(point, modifiers)
-            if self._mode is not None:
-                event.accept()
-            return
-        if button == QtCore.Qt.MiddleButton:
-            # "move the picked keys from anywhere": the selection
-            # is not touched, so a middle drag never loses it.
-            if self._panel.BeginKeyDrag(point):
-                self._mode = "keys"
-                event.accept()
-                return
-        event.ignore()
-
-    def _PressLeft(self, point, modifiers):
-        keys, tangents = self._Glyphs()
-        tangent = graphScreen.HitTangent(tangents, point[0], point[1])
-        key = graphScreen.HitKey(keys, point[0], point[1])
-        # A tangent of zero width has its end box ON its own key, and
-        # both pick radii are 6 px, so "handle first" would make such a
-        # key ungrabbable. Whichever glyph the cursor is actually nearer
-        # wins, and a tie goes to the key: an artist aiming at a handle
-        # aims OUT along it, away from the key.
-        if tangent is not None and (
-                key is None
-                or _Distance(point, tangent) < _KeyDistance(point, key)):
-            anchor = self._Anchor(keys, tangent)
-            if self._panel.BeginTangentDrag(tangent, anchor, point):
-                self._mode = "tangent"
-            return
-        toggle = bool(modifiers & (QtCore.Qt.ShiftModifier
-                                   | QtCore.Qt.ControlModifier))
-        if key is not None:
-            if toggle:
-                self._panel.ToggleKey(key.curveIndex, key.time)
-                return
-            if not key.selected:
-                self._panel.SetSelection([(key.curveIndex, key.time)])
-            preOnly = _GrabbedPreSquare(point, key)
-            if self._panel.BeginKeyDrag(point, preOnly=preOnly):
-                self._mode = "keys"
-            return
-        self._mode = "marquee"
-        self._marquee = (point[0], point[1], 0.0, 0.0)
-        if not toggle:
-            self._panel.SetSelection([])
-
-    @staticmethod
-    def _Anchor(keys, tangent):
-        """
-        The pixel the tangent handle hangs off: the key's value square,
-        or its PRE-value square for the in side of a dual-valued knot,
-        which is where TangentGlyphs measured the handle from.
-        """
-        for glyph in keys:
-            if (glyph.curveIndex == tangent.curveIndex
-                    and glyph.time == tangent.time):
-                if tangent.side == SIDE_IN and glyph.IsDualValued():
-                    return (glyph.x, glyph.preY)
-                return (glyph.x, glyph.y)
-        return (tangent.x, tangent.y)
-
-    def mouseMoveEvent(self, event):
-        point = _Position(event)
-        mode = self._mode
-        if mode is None:
-            self._UpdateHover(point)
-            return
-        shift = bool(event.modifiers() & QtCore.Qt.ShiftModifier)
-        if mode == "pan":
-            self.transform.timeRange, self.transform.valueRange = \
-                self._pressRanges
-            self.transform.Pan(*self._Travel(point, shift))
-            self.update()
-        elif mode == "zoom":
-            self._Zoom(point, shift)
-        elif mode in ("scrub", "scrubHold"):
-            self._Scrub(point)
-        elif mode == "marquee":
-            self._marquee = (self._press[0], self._press[1],
-                             point[0] - self._press[0],
-                             point[1] - self._press[1])
-            self.update()
-        elif mode == "keys":
-            self._panel.UpdateKeyDrag(
-                point, bool(event.modifiers() & QtCore.Qt.ShiftModifier))
-        elif mode == "tangent":
-            self._panel.UpdateTangentDrag(point)
-        self._last = point
-
-    def _Scrub(self, point):
-        self._panel.ScrubTo(self.transform.XToTime(point[0]),
-                            apply=self._mode != "scrubHold")
-
-    def _Travel(self, point, shift):
-        """
-        The pixel travel since the press. With Shift it is held to the
-        axis the drag first moved along, until Shift is let go.
-        """
-        if not shift:
-            self._axis = None
-        elif self._axis is None and _Separation(
-                point, self._press) > CLICK_SLOP:
-            self._axis = graphScreen.DominantAxis(self._press, point)
-        return graphScreen.ConstrainDelta(
-            point[0] - self._press[0], point[1] - self._press[1],
-            self._axis)
-
-    def _Zoom(self, point, shift=False):
-        """
-        Alt+right drag: rightward magnifies time, upward
-        magnifies value, both about the press point so the frame under
-        the cursor when the drag started stays there.
-        """
-        self.transform.timeRange, self.transform.valueRange = \
-            self._pressRanges
-        dx, dy = self._Travel(point, shift)
-        factorX = 2.0 ** (dx / ZOOM_DRAG_PIXELS)
-        factorY = 2.0 ** (-dy / ZOOM_DRAG_PIXELS)
-        self.transform.ZoomAbout(self._press[0], self._press[1],
-                                 factorX, factorY)
-        self.update()
-
-    def mouseReleaseEvent(self, event):
-        point = _Position(event)
-        mode = self._mode
-        self._mode = None
-        # Press ranges are only for zoom; clear them whenever the gesture
-        # ends so a stale range cannot leak to the next Alt+right drag.
-        pressMods = self._pressModifiers
-        self._pressRanges = None
-        self._pressModifiers = None
-        self._axis = None
-        if mode == "scrubHold":
-            self._panel.ScrubTo(self.transform.XToTime(point[0]))
-        if mode == "marquee":
-            rect = self._marquee
-            self._marquee = None
-            if rect is not None and (abs(rect[2]) > CLICK_SLOP
-                                     or abs(rect[3]) > CLICK_SLOP):
-                keys = graphScreen.KeysInRect(self._Glyphs()[0], rect)
-                # Use the modifiers that were held at press, not at release.
-                # Releasing Shift before mouse-up would otherwise flip
-                # add/remove (bug #4).
-                mods = pressMods if pressMods is not None else event.modifiers()
-                add = bool(mods & (QtCore.Qt.ShiftModifier
-                                   | QtCore.Qt.ControlModifier))
-                self._panel.SelectGlyphs(keys, add=add)
-            self.update()
-            event.accept()
-        elif mode in ("keys", "tangent"):
-            self._panel.ReleaseGesture()
-            event.accept()
-        elif mode in ("pan", "zoom", "scrub", "scrubHold"):
-            event.accept()
-        self._UpdateHover(point)
-
-    def mouseDoubleClickEvent(self, event):
-        if event.button() != QtCore.Qt.LeftButton:
-            return
-        point = _Position(event)
-        self._mode = None
-        self._marquee = None
-        self._pressRanges = None
-        self._pressModifiers = None
-        index = graphScreen.HitCurve(self._Polylines(), point[0], point[1])
-        if index is None:
-            return
-        self._panel.InsertKeyOnCurve(
-            index, graphScreen.CurveTimeAtX(self.transform, point[0]))
-        event.accept()
-
-    def wheelEvent(self, event):
-        try:
-            delta = event.angleDelta().y()
-            point = event.position()
-            x, y = point.x(), point.y()
-        except AttributeError:                            # Qt 5
-            delta = event.delta()
-            x, y = float(event.x()), float(event.y())
-        if not delta:
-            return
-        factor = WHEEL_ZOOM ** (delta / 120.0)
-        self.transform.ZoomAbout(x, y, factor, factor)
-        self.update()
-        event.accept()
-
-    def leaveEvent(self, event):
-        super(GraphCanvas, self).leaveEvent(event)
-        # An active drag keeps the mouse grab, so leaveEvent normally
-        # fires only when no button is held. Clearing hover is enough;
-        # cancelling the drag here would leave the panel's gesture open
-        # but the canvas idle, and the next press would start a new
-        # gesture while the old one still holds the EditRecorder.
-        self._UpdateHover(None)
-
-    def _UpdateHover(self, point):
-        name = None
-        if point is not None and (self._OnRuler(point) or self._scrubHeld):
-            self.setCursor(QtCore.Qt.SizeHorCursor)
-        else:
-            self.unsetCursor()
-        if point is not None:
-            glyph = graphScreen.HitKey(self._Glyphs()[0], point[0], point[1])
-            if glyph is not None:
-                name = (glyph.curveIndex, glyph.time)
-        if name != self._hover:
-            self._hover = name
-            self.update()
-
-    def keyPressEvent(self, event):
-        # The application filter normally gets here first; this is the
-        # path for a key event posted straight at the canvas, which is
-        # what a test does and a real keyboard never does.
-        if not self._panel.HandleKey(event.key(), event.modifiers()):
-            super(GraphCanvas, self).keyPressEvent(event)
-
-    def keyReleaseEvent(self, event):
-        if event.isAutoRepeat() \
-                or not self._panel.HandleKeyRelease(event.key()):
-            super(GraphCanvas, self).keyReleaseEvent(event)
-
-    def focusOutEvent(self, event):
-        # The K release may land on another widget.
-        self._scrubHeld = False
-        super(GraphCanvas, self).focusOutEvent(event)
-
-
-def _Separation(a, b):
-    return math.hypot(a[0] - b[0], a[1] - b[1])
-
-
-def _Distance(point, glyph):
-    return math.hypot(point[0] - glyph.x, point[1] - glyph.y)
-
-
-def _KeyDistance(point, glyph):
-    """A key is aimed at by EITHER square of a dual-valued knot."""
-    distance = _Distance(point, glyph)
-    if glyph.preY is not None:
-        distance = min(distance,
-                       math.hypot(point[0] - glyph.x, point[1] - glyph.preY))
-    return distance
-
-
-def _GrabbedPreSquare(point, glyph):
-    """
-    Whether a press on `glyph` grabbed its arrival (pre) square.
-
-    Single knots have only the departure square, so this is False.
-    On a dual knot the nearer square wins; a tie goes to the departure,
-    matching the key-over-handle tie-break above (an artist aiming at a
-    handle aims OUT along it, away from the key).
-    """
-    if glyph.preY is None:
-        return False
-    distValue = math.hypot(point[0] - glyph.x, point[1] - glyph.y)
-    distPre = math.hypot(point[0] - glyph.x, point[1] - glyph.preY)
-    return distPre < distValue
-
-
-def _FinitePolylines(points):
-    """
-    `points` split at any non-finite sample, dropping it.
-
-    Ts samples an extrapolated tail as NaN when the end knot has no
-    tangent algorithm (verified in this build for ExtrapLinear off a
-    TangentAlgorithmNone knot), and QPainter draws a polyline containing
-    one NaN as a stray line across the whole widget.
-    """
-    runs = []
-    current = []
-    for point in points:
-        if _IsFinite(point[0]) and _IsFinite(point[1]):
-            current.append(point)
-        elif current:
-            runs.append(current)
-            current = []
-    if current:
-        runs.append(current)
-    return runs
-
-
-# Gestures
-
-class _Refused(Exception):
-    """
-    A model operation declined to change the spline.
-
-    Raised through _Apply so the EditRecorder rolls the whole command
-    back: several curves are edited in one pass, and a command that one
-    of them refuses must not be half-applied to the rest.
-    """
-
-    def __init__(self, time=None):
-        super(_Refused, self).__init__("refused")
-        self.time = time
-
-
-class _Gesture(object):
-    """
-    One undo step's worth of editing.
-
-    Holds the spline every affected curve started with, the
-    EditRecorder bracketing the whole gesture, and the live writes that
-    make the viewport follow a drag. Every move recomputes from
-    `origin`, never from the last write, so a drag cannot accumulate its
-    own rounding or re-clamp an already clamped key.
-    """
-
-    def __init__(self, panel, indices, label, preview=False):
-        self.panel = panel
-        self.indices = list(indices)
-        self.label = label
-        self.origin = {}
-        self.press = (0.0, 0.0)
-        self.times = {}
-        self.preOnly = False
-        self.tangent = None
-        self.anchor = (0.0, 0.0)
-        self.grab = (0.0, 0.0)
-        self.width = 0.0
-        # A drag previews: the moves stay here, one key spline per edited
-        # curve, and nothing is authored until Flush at the commit. The
-        # recorder then begins right before that one write, so a drag
-        # that is abandoned has nothing to restore.
-        self.preview = {} if preview else None
-        self.pushed = False           # a sample reached gizmoPreview
-        self.stage = panel.Stage()
-        # The queued commit authors where the press would have.
-        self.target = self.stage.GetEditTarget()
-        self.token = None             # the edit hook's BeginEdit result
-        paths = []
-        curves = panel.Curves()
-        for index in self.indices:
-            self.origin[index] = panel.SplineCopy(index)
-            paths.append(curves[index].attrPath)
-        self.recorder = rigExecUndo.EditRecorder(panel.Stage(), paths)
-        self._begun = False
-        if self.preview is None:
-            self._Begin()
-
-    def _Begin(self):
-        self.recorder.Begin()
-        self._begun = True
-
-    def TargetContext(self):
-        return Usd.EditContext(self.stage, self.target)
-
-    def Origin(self, index):
-        return Ts.Spline(self.origin[index])
-
-    def Write(self, index, spline):
-        """A live write (no preview), or the move kept as the preview."""
-        if self.preview is not None:
-            self.panel._SetPreview(index, spline)
-            return
-        self.panel.WriteSpline(index, spline, self.label)
-
-    def Flush(self):
-        """Author the previewed splines, once, in one change block."""
-        if self.preview is None:
-            return
-        self._Begin()
-        with Sdf.ChangeBlock():
-            for index in sorted(self.preview):
-                self.panel.WriteSpline(index, self.preview[index],
-                                       self.label)
-
-    def Commit(self):
-        if not self._begun:
-            return None
-        edit = self.recorder.Commit(self.label)
-        if edit is not None and self.panel.undoStack is not None:
-            self.panel.undoStack.Push(edit)
-        return edit
-
-    def Abort(self):
-        if self._begun:
-            self.recorder.Abort()
-            self._begun = False
-
+# Edit hook
 
 class _NullContext(object):
     def __enter__(self):
@@ -1075,6 +179,7 @@ class _NullContext(object):
 
     def __exit__(self, *exc):
         return False
+
 
 
 class GraphEditHook(object):
@@ -1156,6 +261,7 @@ class GraphEditHook(object):
         del panel, additive
 
 
+
 # Hotkeys
 
 class GraphHotkeyFilter(QtCore.QObject):
@@ -1230,6 +336,7 @@ def _TypingFocus():
     return (isinstance(focus, QtWidgets.QComboBox) and focus.isEditable())
 
 
+
 # Panel
 
 class GraphEditorPanel(QtWidgets.QWidget):
@@ -1273,26 +380,48 @@ class GraphEditorPanel(QtWidgets.QWidget):
         self.usdviewApi = usdviewApi
         self.undoStack = undoStack
 
-        self._curves = []
-        self._splines = []            # what each attribute resolves to
-        self._keySplines = []         # its keys (GraphEditHook.KeySpline)
-        self._curveSplines = []       # what is drawn (CurveSpline)
         self._hook = None             # GraphEditHook, or None
         self._hookWarned = set()
-        self._refused = False         # the last _Apply was the hook's no
         self._hidden = set()          # curve labels unticked
         self._isolated = set()        # curve labels selected in the list
-        self._selection = set()       # (curveIndex, time)
-        self._tangentSide = SIDE_BOTH
-        self._snapFrames = True
-        self._weighted = True
-        self._gesture = None
-        self._queued = None           # the released gesture awaiting commit
+        self._dragPress = None        # the key drag's press, in pixels
+        # A tangent drag's (anchor, grab offset, weighted, width, side).
+        self._tangentDrag = None
         self._updating = False
         self._notice = ""
         self._framed = False
         self._noticeKey = None
         self._frame = _FrameValue(usdviewApi.frame)
+        # Curves, selection, drags and edits; every host read and write
+        # below is a callable, so the model never touches a widget or
+        # this window's usdviewApi object directly.
+        self._model = graphEditorModel.GraphEditorModel(
+            stage=self.Stage,
+            discover=self._DiscoverCurves,
+            undo_stack=undoStack,
+            document_edit=lambda: editorExtension.DocumentEdit(
+                self.usdviewApi),
+            begin_edit=lambda label, indices, drag: self._BeginEdit(
+                label, indices, drag),
+            edit_context=self._EditContext,
+            finish_edit=lambda token, changed: self._FinishEdit(
+                token, changed),
+            abort_edit=self._AbortEdit,
+            key_spline=self._KeySplineThroughHook,
+            curve_spline=self._CurveSplineThroughHook,
+            selection_changed=self._SelectionChanged,
+            after_hook=self._AfterHook,
+            is_visible=self._CurveVisible,
+            frame=self.CurrentFrame,
+            notify=self._Notify,
+            canvas_update=lambda: self.canvas.update(),
+            sync_widgets=self._Sync,
+            update_viewport=lambda: self.usdviewApi.UpdateViewport(),
+            preview_push=self._PreviewPush,
+            preview_end=self._PreviewEnd,
+            preview_republish=self._PreviewRepublish,
+            commit_soon=lambda callback: QtCore.QTimer.singleShot(
+                0, callback))
 
         self.setWindowTitle("RigExec: Graph Editor")
         # A floor, not a size: below it a QHBoxLayout stops clipping the
@@ -1446,7 +575,7 @@ class GraphEditorPanel(QtWidgets.QWidget):
         row.addWidget(self.snapBox)
 
         self.weightedBox = QtWidgets.QCheckBox("Weighted")
-        self.weightedBox.setChecked(self._weighted)
+        self.weightedBox.setChecked(self._model.Weighted())
         self.weightedBox.setToolTip(WEIGHTED_TIP)
         self.weightedBox.toggled.connect(self._onWeighted)
         row.addWidget(self.weightedBox)
@@ -1481,7 +610,7 @@ class GraphEditorPanel(QtWidgets.QWidget):
             button = QtWidgets.QRadioButton(label)
             button.setToolTip(
                 "Which side of the key the tangent buttons apply to.")
-            button.setChecked(side == self._tangentSide)
+            button.setChecked(side == self._model.TangentSide())
             button.toggled.connect(
                 lambda checked, s=side: self._onSide(checked, s))
             group.addButton(button)
@@ -1597,7 +726,7 @@ class GraphEditorPanel(QtWidgets.QWidget):
 
     def Curves(self):
         """The CurveRefs the editor is showing, in list order."""
-        return list(self._curves)
+        return self._model.Curves()
 
     def CurrentFrame(self):
         return self._frame
@@ -1612,82 +741,11 @@ class GraphEditorPanel(QtWidgets.QWidget):
         except Exception:
             return (None, None)
 
-    def _Attribute(self, index):
-        stage = self.Stage()
-        if not stage or index >= len(self._curves):
-            return None
-        return stage.GetAttributeAtPath(self._curves[index].attrPath)
-
     def SplineCopy(self, index):
-        """
-        A private copy of curve `index`'s KEY spline, always TYPED: what
-        an edit starts from. That is the resolved spline itself unless an
-        edit hook filters knots out (GraphEditHook.KeySpline), and the
-        live preview while a previewing drag runs.
-
-        graphModel.SplineFor is what makes an unanimated channel
-        keyable: Usd hands back an untyped spline for an attribute that
-        has none, and Ts.Knot(typeName="") raises.
-        """
-        spline = (self._keySplines[index]
-                  if index < len(self._keySplines) else None)
-        if spline is None:
-            attr = self._Attribute(index)
-            spline = (graphModel.SplineFor(attr) if attr is not None
-                      else Ts.Spline("double"))
-        copy = Ts.Spline(spline)
-        if not copy.GetValueTypeName():
-            attr = self._Attribute(index)
-            if attr is not None:
-                copy = graphModel.SplineFor(attr)
-        return copy
+        return self._model.SplineCopy(index)
 
     def WriteSpline(self, index, spline, label="Graph Edit"):
-        """
-        Author `spline` onto curve `index`, through the model.
-
-        graphModel.ApplySpline is the editor's ONLY writer, so the rule
-        that an EMPTY spline clears the opinion rather than authoring an
-        empty curve (graphModel.ClearSpline: an empty spline still wins
-        value resolution and resolves to no value, which reads back as
-        None) holds on every path -- deleting a curve's last key, a live
-        drag, a tangent button -- without this file restating it.
-
-        The undo stack argument is None ON PURPOSE. The gesture around
-        this write is what pushes, once, at its release; ApplySpline's
-        own recorder then only measures this one write and its Edit is
-        dropped, which is what lets a drag author on EVERY mouse move
-        without leaving a hundred entries in the history.
-
-        What is CACHED afterwards is what the attribute now RESOLVES to,
-        not the spline handed in. Since an empty spline clears the edit
-        target's opinion instead of authoring an empty curve, the two
-        stopped being the same thing: delete a root-animated curve's
-        last key with the session layer as the edit target and the root
-        layer's spline reappears, so caching the empty spline would draw
-        a curve with no keys while the viewport kept animating it. The
-        ObjectsChanged notice that would otherwise correct this is
-        discarded, correctly, because the gesture still holds _gesture.
-        """
-        if index >= len(self._curves) or not self.Stage():
-            return False
-        attr = self._Attribute(index)
-        if attr is None or not attr:
-            return False
-        try:
-            with self._EditContext():
-                graphModel.ApplySpline(self.Stage(),
-                                       self._curves[index].attrPath,
-                                       spline, None, label)
-        except Exception as error:
-            Tf.Warn("rigExecUsdview: graph editor could not author %s: %s"
-                    % (self._curves[index].attrPath, error))
-            return False
-        self._splines[index] = graphModel.SplineFor(attr)
-        self._RefreshDerived([index])
-        self.canvas.update()
-        self.usdviewApi.UpdateViewport()
-        return True
+        return self._model.WriteSpline(index, spline, label)
 
     # -- edit hook (GraphEditHook) -----------------
 
@@ -1704,12 +762,11 @@ class GraphEditorPanel(QtWidgets.QWidget):
                 raise TypeError("an edit hook needs %s"
                                 % ", ".join(missing))
         self.FlushPendingCommit()
-        if self._gesture is not None:
-            self.AbortGesture()
+        self.AbortGesture()
         self._hook = hook
         self._hookWarned = set()
-        self._ReadSplines()
-        self._PruneSelection()
+        self._model.RefreshSplines()
+        self._model.PruneSelection()
         self.canvas.update()
         self._Sync()
 
@@ -1723,13 +780,12 @@ class GraphEditorPanel(QtWidgets.QWidget):
     def KeySplines(self):
         """The KEY spline per curve (squares, hit tests, selection), None
         where the curve is not drawn."""
-        return [self._keySplines[i] if self.IsVisibleCurve(i) else None
-                for i in range(len(self._curves))]
+        return self._model.KeySplines()
 
     def AuthoredSpline(self, index):
         """What curve `index`'s attribute resolves to (knots the hook
         filters out included), or None."""
-        return self._splines[index] if index < len(self._splines) else None
+        return self._model.AuthoredSpline(index)
 
     def _HookCall(self, name, fallback, *args):
         """hook.name(self, *args); `fallback()` when there is no hook or
@@ -1773,55 +829,22 @@ class GraphEditorPanel(QtWidgets.QWidget):
         if self._hook is not None:
             self._HookCall("AbortEdit", lambda: None, token)
 
+    def _KeySplineThroughHook(self, index, authored):
+        return self._HookCall("KeySpline", lambda: authored,
+                              index, authored)
+
+    def _CurveSplineThroughHook(self, index, authored, edited):
+        return self._HookCall(
+            "CurveSpline",
+            lambda: edited if edited is not None else authored,
+            index, authored, edited)
+
     def _AfterHook(self):
         """The hook may have rewritten (or rolled back) the curves."""
         if self._hook is None:
             return
-        self._ReadSplines()
-        self._PruneSelection()
-
-    def _DerivedFor(self, index):
-        """(key spline, curve spline) of curve `index`."""
-        authored = self._splines[index] if index < len(self._splines) \
-            else None
-        gesture = self._gesture
-        edited = None
-        if gesture is not None and gesture.preview is not None:
-            edited = gesture.preview.get(index)
-        if self._hook is None or authored is None:
-            key = edited if edited is not None else authored
-            return key, key
-        if edited is not None:
-            key = edited
-        else:
-            key = self._HookCall("KeySpline", lambda: authored, index,
-                                 authored)
-        curve = self._HookCall(
-            "CurveSpline",
-            lambda: edited if edited is not None else authored,
-            index, authored, edited)
-        return key, curve
-
-    def _RefreshDerived(self, indices=None):
-        count = len(self._splines)
-        while len(self._keySplines) < count:
-            self._keySplines.append(None)
-            self._curveSplines.append(None)
-        del self._keySplines[count:]
-        del self._curveSplines[count:]
-        for index in (range(count) if indices is None else indices):
-            if index < count:
-                self._keySplines[index], self._curveSplines[index] = \
-                    self._DerivedFor(index)
-
-    def _SetPreview(self, index, spline):
-        """A previewing gesture's move: drawn, nothing authored."""
-        gesture = self._gesture
-        if gesture is None or gesture.preview is None:
-            return
-        gesture.preview[index] = spline
-        self._RefreshDerived([index])
-        self.canvas.update()
+        self._model.RefreshSplines()
+        self._model.PruneSelection()
 
     def RefreshCurves(self):
         """
@@ -1829,72 +852,33 @@ class GraphEditorPanel(QtWidgets.QWidget):
         (spec 1.3), keeping the visibility and the key selection of any
         curve that survives.
         """
-        self.FlushPendingCommit()
-        stage = self.Stage()
-        previous = list(self._curves)
-        if not stage:
-            self._curves = []
-        else:
-            selection = self.usdviewApi.dataModel.selection
-            try:
-                propPaths = selection.getPropPaths()
-            except Exception:
-                propPaths = []
-            try:
-                primPaths = selection.getPrimPaths()
-            except Exception:
-                primPaths = []
-            self._curves = graphModel.DiscoverCurves(stage, propPaths,
-                                                     primPaths)
+        previous = self._model.RefreshCurves()
         # Prune visibility sets for curves that no longer exist:
         # without this, re-selecting the same prim re-hides curves that
         # were hidden before the rebuild.
-        labels = set(ref.Label() for ref in self._curves)
+        labels = set(ref.Label() for ref in self._model.Curves())
         self._hidden &= labels
         self._isolated &= labels
-        self._ReadSplines()
-        self._RemapSelection(previous)
         self._RebuildCurveList()
-        if self._curves and (not previous or not self._framed):
+        if self._model.Curves() and (not previous or not self._framed):
             self.FrameAll()
         self._Sync()
 
-    def _ReadSplines(self):
+    def _DiscoverCurves(self):
+        """The CurveRefs usdview's selection calls for (spec 1.3)."""
         stage = self.Stage()
-        self._splines = []
-        for ref in self._curves:
-            attr = stage.GetAttributeAtPath(ref.attrPath) if stage else None
-            if attr is None or not attr:
-                self._splines.append(None)
-                continue
-            try:
-                self._splines.append(graphModel.SplineFor(attr))
-            except Exception:
-                self._splines.append(None)
-        self._RefreshDerived()
-
-    def _RemapSelection(self, previous):
-        """
-        Carry the key selection across a curve-set rebuild by LABEL: the
-        indices are positions in the new list and mean nothing in the
-        old one.
-        """
-        if not self._selection:
-            return
-        labels = {}
-        for index, ref in enumerate(self._curves):
-            labels[ref.Label()] = index
-        remapped = set()
-        for index, time in self._selection:
-            if index >= len(previous):
-                continue
-            target = labels.get(previous[index].Label())
-            if target is None:
-                continue
-            spline = self._keySplines[target]
-            if spline is not None and spline.GetKnot(time) is not None:
-                remapped.add((target, time))
-        self._selection = remapped
+        if not stage:
+            return []
+        selection = self.usdviewApi.dataModel.selection
+        try:
+            propPaths = selection.getPropPaths()
+        except Exception:
+            propPaths = []
+        try:
+            primPaths = selection.getPrimPaths()
+        except Exception:
+            primPaths = []
+        return graphModel.DiscoverCurves(stage, propPaths, primPaths)
 
     # -- curve list -----------------------------------------------------
 
@@ -1907,7 +891,7 @@ class GraphEditorPanel(QtWidgets.QWidget):
         self.curveList.blockSignals(True)
         try:
             self.curveList.clear()
-            for index, ref in enumerate(self._curves):
+            for index, ref in enumerate(self._model.Curves()):
                 sampled = self.IsSampled(index)
                 item = QtWidgets.QTreeWidgetItem(
                     [ref.primPath.name,
@@ -1968,41 +952,29 @@ class GraphEditorPanel(QtWidgets.QWidget):
 
     def IsSampled(self, index):
         """Whether curve `index` is animated by time samples, not a spline."""
-        return graphModel.IsSampledCurve(self._Attribute(index))
-
-    def _SplineIndices(self, indices, what):
-        """
-        `indices` without the time-sampled curves, which have no tangents,
-        infinities, curve type or arrival values to set: written back as
-        samples, such an edit would change nothing. Says so when nothing
-        is left.
-        """
-        kept = [index for index in indices if not self.IsSampled(index)]
-        if not kept and indices:
-            self._Notify("%s does not apply to time samples." % what)
-        return kept
+        return self._model.IsSampled(index)
 
     def IsVisibleCurve(self, index):
-        label = self._curves[index].Label()
+        return self._model.IsVisibleCurve(index)
+
+    def _CurveVisible(self, index):
+        label = self._model.Curves()[index].Label()
         if label in self._hidden:
             return False
         return not self._isolated or label in self._isolated
 
     def VisibleIndices(self):
-        return [i for i in range(len(self._curves))
-                if self.IsVisibleCurve(i)]
+        return self._model.VisibleIndices()
 
     def DrawSplines(self):
-        """The spline the canvas strokes per curve (GraphEditHook
-        .CurveSpline; the resolved spline without a hook), None where the
+        """The spline the canvas strokes per curve, None where the
         curve is not drawn."""
-        return [self._curveSplines[i] if self.IsVisibleCurve(i) else None
-                for i in range(len(self._curves))]
+        return self._model.DrawSplines()
 
     def SetVisibleCurves(self, labels):
         """Show exactly these curves, by CurveRef.Label(), and no others."""
         wanted = set(labels)
-        self._hidden = set(ref.Label() for ref in self._curves
+        self._hidden = set(ref.Label() for ref in self._model.Curves()
                            if ref.Label() not in wanted)
         self._isolated = set()
         self._RebuildCurveList()
@@ -2013,55 +985,24 @@ class GraphEditorPanel(QtWidgets.QWidget):
 
     def SelectionPairs(self):
         """The raw (curveIndex, time) selection graphScreen wants."""
-        return self._selection
+        return self._model.SelectionPairs()
 
     def SelectedKeys(self):
         """[(curve label, time)] for the selected keys, in list order."""
-        return [(self._curves[index].Label(), time)
-                for index, time in sorted(self._selection)]
+        return self._model.SelectedKeys()
 
     def SelectKeys(self, pairs):
         """Select exactly these (curve label, time) keys."""
-        labels = dict((ref.Label(), index)
-                      for index, ref in enumerate(self._curves))
-        selection = set()
-        for label, time in pairs:
-            index = labels.get(label)
-            if index is None:
-                continue
-            spline = self._keySplines[index]
-            if spline is None:
-                continue
-            knot = spline.GetKnot(float(time))
-            if knot is not None:
-                selection.add((index, knot.GetTime()))
-        self._selection = selection
-        self.canvas.update()
-        self._Sync()
-        self._SelectionChanged(False)
+        self._model.SelectKeys(pairs)
 
     def SetSelection(self, pairs):
-        self._selection = set(pairs)
-        self.canvas.update()
-        self._Sync()
-        self._SelectionChanged(False)
+        self._model.SetSelection(pairs)
 
     def ToggleKey(self, index, time):
-        pair = (index, time)
-        if pair in self._selection:
-            self._selection.discard(pair)
-        else:
-            self._selection.add(pair)
-        self.canvas.update()
-        self._Sync()
-        self._SelectionChanged(True)
+        self._model.ToggleKey(index, time)
 
     def SelectGlyphs(self, glyphs, add=False):
-        pairs = set((g.curveIndex, g.time) for g in glyphs)
-        self._selection = (self._selection | pairs) if add else pairs
-        self.canvas.update()
-        self._Sync()
-        self._SelectionChanged(bool(add))
+        self._model.SelectGlyphs(glyphs, add=add)
 
     def _SelectionChanged(self, additive):
         if self._hook is not None:
@@ -2069,40 +1010,10 @@ class GraphEditorPanel(QtWidgets.QWidget):
 
     def SelectedTimes(self):
         """{curve index: [time, ...]} for the selected keys."""
-        times = {}
-        for index, time in sorted(self._selection):
-            times.setdefault(index, []).append(time)
-        return times
+        return self._model.SelectedTimes()
 
     def KeyExtents(self, selectedOnly=False):
-        """
-        (tMin, tMax, vMin, vMax) over the keys, or None when there are
-        none. Values come from the knots, not from the sampled curve: a
-        Bezier can overshoot its keys and the editor frames the keys.
-        When an edit hook draws a curve with knots of its own (derived
-        knots it filtered out of the keys), framing everything takes
-        their values too: those are values the attribute really takes.
-        """
-        times, values = [], []
-        for index in self.VisibleIndices():
-            spline = self._keySplines[index]
-            if spline is None or spline.IsEmpty():
-                continue
-            for knot in spline.GetKnots().values():
-                time = knot.GetTime()
-                if selectedOnly and (index, time) not in self._selection:
-                    continue
-                times.append(time)
-                values.append(float(knot.GetValue()))
-                if knot.IsDualValued():
-                    values.append(float(knot.GetPreValue()))
-            curve = self._curveSplines[index]
-            if not selectedOnly and curve is not None and curve is not spline:
-                for knot in curve.GetKnots().values():
-                    values.append(float(knot.GetValue()))
-        if not times:
-            return None
-        return (min(times), max(times), min(values), max(values))
+        return self._model.KeyExtents(selectedOnly=selectedOnly)
 
     # -- gestures -------------------------------------------------------
 
@@ -2115,85 +1026,32 @@ class GraphEditorPanel(QtWidgets.QWidget):
         but adjusts only preValues in value, so grabbing a dual knot's
         pre square sculpts the step without moving the departure.
         """
-        self.FlushPendingCommit()
-        times = self.SelectedTimes()
-        if not times or self._gesture is not None or not self.Stage():
-            return False
-        label = "Move Pre Values" if preOnly else "Move Keys"
-        gesture = self._StartGesture(sorted(times), label)
-        if gesture is None:
-            return False
-        gesture.press = press
-        gesture.times = times
-        gesture.preOnly = bool(preOnly)
-        return True
-
-    def _StartGesture(self, indices, label):
-        """A new drag gesture, bracketed by the edit hook; None when the
-        hook refuses or the gesture cannot start."""
-        token = self._BeginEdit(label, indices, True)
-        if token is None:
-            return None
-        try:
-            with self._EditContext():
-                gesture = _Gesture(self, indices, label, preview=True)
-        except Exception as error:
-            Tf.Warn("rigExecUsdview: graph editor could not start %s: %s"
-                    % (label, error))
-            self._AbortEdit(token)
-            return None
-        gesture.token = token
-        self._gesture = gesture
-        return gesture
+        self._dragPress = press
+        return self._model.BeginKeyDrag(preOnly=preOnly)
 
     def UpdateKeyDrag(self, current, shift=False):
-        gesture = self._gesture
-        if gesture is None or gesture is self._queued:
+        press = self._dragPress
+        if press is None:
             return
-        axis = (graphScreen.DominantAxis(gesture.press, current)
+        axis = (graphScreen.DominantAxis(press, current)
                 if shift else None)
         dt, dv = graphScreen.ResolveKeyDrag(self.canvas.transform,
-                                            gesture.press, current, axis)
-        selection = set()
-        for index in gesture.indices:
-            spline = gesture.Origin(index)
-            if gesture.preOnly:
-                # Time moves the whole key (shared time), value shapes
-                # arrivals only: MoveKeys with dv=0 keeps departures,
-                # then each moved arrival += dv.
-                moved = graphModel.MoveKeys(
-                    spline, gesture.times[index], dt, 0.0,
-                    self._snapFrames)
-                for newTime in moved:
-                    knot = spline.GetKnot(newTime)
-                    if knot is not None and knot.IsDualValued():
-                        knot.SetPreValue(knot.GetPreValue() + dv)
-                        spline.SetKnot(knot)
-            else:
-                moved = graphModel.MoveKeys(
-                    spline, gesture.times[index], dt, dv,
-                    self._snapFrames)
-            gesture.Write(index, spline)
-            for time in moved:
-                selection.add((index, time))
-        self._selection = selection
-        self._PushPreview()
-        self._Sync()
+                                            press, current, axis)
+        self._model.DragKeys(dt, dv)
 
     def BeginTangentDrag(self, glyph, anchor, press=None):
-        self.FlushPendingCommit()
-        if self._gesture is not None or not self.Stage():
+        started = self._model.BeginTangentDrag(
+            glyph.curveIndex, glyph.time, glyph.side, glyph.width)
+        if not started:
             return False
-        gesture = self._StartGesture([glyph.curveIndex], "Edit Tangent")
-        if gesture is None:
-            return False
-        gesture.tangent = glyph
-        gesture.anchor = anchor
         # The handle end keeps its offset from the cursor, so a press
         # that lands off its centre does not move it.
-        if press is not None:
-            gesture.grab = (glyph.x - press[0], glyph.y - press[1])
-        gesture.width = glyph.width
+        grab = ((glyph.x - press[0], glyph.y - press[1])
+                if press is not None else (0.0, 0.0))
+        self._tangentDrag = (
+            anchor, grab,
+            self._model.TangentDragWeighted(glyph.curveIndex),
+            glyph.width, glyph.side)
         return True
 
     def UpdateTangentDrag(self, current):
@@ -2207,620 +1065,120 @@ class GraphEditorPanel(QtWidgets.QWidget):
         authored there even when Weighted is on: Ts would clamp them
         back and the drag would promise what the spline will not keep.
         """
-        gesture = self._gesture
-        if (gesture is None or gesture.tangent is None
-                or gesture is self._queued):
+        drag = self._tangentDrag
+        if drag is None:
             return
-        glyph = gesture.tangent
-        spline = gesture.Origin(glyph.curveIndex)
-        hermite = (graphModel.CurveTypeName(spline)
-                   == graphModel.CURVE_HERMITE)
-        weighted = self._weighted and not hermite
-        current = (current[0] + gesture.grab[0],
-                   current[1] + gesture.grab[1])
-        slope, width = graphScreen.ResolveTangentDrag(
-            self.canvas.transform, gesture.anchor, current, weighted,
-            gesture.width, side=glyph.side)
-        unified = graphModel.IsUnified(spline.GetKnot(glyph.time))
-        graphModel.SetTangent(spline, glyph.time, glyph.side, slope,
-                              width if weighted else None)
-        if unified:
-            other = SIDE_IN if glyph.side == SIDE_OUT else SIDE_OUT
-            # Slope only: unified tangents share an angle, not a
-            # length, so the far handle keeps the weight it had.
-            graphModel.SetTangent(spline, glyph.time, other, slope)
-        gesture.Write(glyph.curveIndex, spline)
-        self._PushPreview()
-        self._Sync()
-
-    def _PushPreview(self):
-        """Send the dragged curves' current-frame values to Hydra."""
-        gesture = self._gesture
-        if gesture is None or not gesture.preview \
-                or gesture is self._queued:
-            return
-        pending = {}
-        for index in gesture.preview:
-            if index >= len(self._curveSplines):
-                continue
-            spline = self._curveSplines[index]
-            try:
-                value = spline.Eval(self._frame) if spline else None
-            except Exception:
-                value = None
-            if value is not None:
-                pending[self._curves[index].attrPath] = float(value)
-        if not pending:
-            return
-        gizmoMath.SetPreviewValues(pending, stage=gesture.stage)
-        gizmoPreview.Push(pending, session=self.usdviewApi,
-                          stage=gesture.stage)
-        gesture.pushed = True
-        self.usdviewApi.UpdateViewport()
-
-    def _EndPreview(self, gesture, publish):
-        if gesture.pushed:
-            gesture.pushed = False
-            gizmoPreview.End(session=self.usdviewApi, stage=gesture.stage,
-                             publish=publish)
+        anchor, grab, weighted, width, side = drag
+        current = (current[0] + grab[0], current[1] + grab[1])
+        slope, resolved = graphScreen.ResolveTangentDrag(
+            self.canvas.transform, anchor, current, weighted, width,
+            side=side)
+        self._model.DragTangent(slope, resolved if weighted else None)
 
     def ReleaseGesture(self):
-        """
-        The drag was released: queue its commit for the next event-loop
-        turn. The preview stays drawn, and in Hydra, until then.
-        """
-        gesture = self._gesture
-        if gesture is None or gesture is self._queued:
-            return False
-        self._queued = gesture
-        QtCore.QTimer.singleShot(0, lambda: self._FlushQueued(gesture))
-        return True
-
-    def _FlushQueued(self, gesture):
-        if self._queued is not gesture:
-            return
-        try:
-            self.EndGesture()
-        except Exception as error:
-            Tf.Warn("rigExecUsdview: queued graph edit failed: %s" % error)
+        return self._model.ReleaseGesture()
 
     def HasPendingCommit(self):
-        return self._queued is not None
+        return self._model.HasPendingCommit()
 
     def FlushPendingCommit(self):
         """Commit a released drag now; EndGesture's result."""
-        if self._queued is None:
-            return False
-        return self.EndGesture()
+        return self._model.FlushPendingCommit()
 
     def EndGesture(self):
-        """
-        Commit the live gesture; True when it changed the edit target.
-
-        The drag's previewed moves are authored here, once, in one change
-        block and in the edit target captured at the press; the edit hook
-        then finishes the edit (and may roll it back: False, the curves
-        re-read).
-
-        A drag that ends where it started, or on a curve a weaker layer
-        owns, commits nothing -- the recorder compares the spec before
-        and after -- and there is then no undo entry to offer.
-        """
-        gesture = self._gesture
-        self._queued = None
-        if gesture is None:
-            return False
-        changed = False
-        failed = False
-        previewed = bool(gesture.preview) and gesture.pushed
-        # Ended first and without a republish when there is something to
-        # author: the commit's own stage notice publishes the result.
-        self._EndPreview(gesture, publish=False)
-        try:
-            with gesture.TargetContext(), \
-                    editorExtension.DocumentEdit(self.usdviewApi), \
-                    self._EditContext():
-                gesture.Flush()
-                self._gesture = None
-                changed = gesture.Commit() is not None
-        except Exception as error:
-            failed = True
-            Tf.Warn("rigExecUsdview: graph editor could not record the "
-                    "edit: %s" % error)
-        finally:
-            self._gesture = None
-        if failed:
-            try:
-                with self._EditContext():
-                    gesture.Abort()
-            except Exception:
-                pass
-            self._AbortEdit(gesture.token)
-            self._ReadSplines()
-            self._PruneSelection()
-            changed = False
-            refusal = None
-        else:
-            refusal = self._FinishEdit(gesture.token, changed)
-            self._RefreshDerived()
-            self._AfterHook()
-        self._Sync()
-        if refusal:
-            self._Notify(refusal)
-            changed = False
-        if previewed and not changed:
-            # No stage notice will publish: put the authored rig back.
-            gizmoPreview.Republish(session=self.usdviewApi)
-        self.canvas.update()
-        return changed
+        return self._model.EndGesture()
 
     def AbortGesture(self):
-        gesture = self._gesture
-        self._gesture = None
-        self._queued = None
-        if gesture is None:
-            return False
-        self._EndPreview(gesture, publish=True)
-        try:
-            with self._EditContext():
-                gesture.Abort()
-        except Exception as error:
-            Tf.Warn("rigExecUsdview: graph editor could not abort the "
-                    "edit: %s" % error)
-        self._AbortEdit(gesture.token)
-        self._ReadSplines()
-        self._PruneSelection()
-        self._Sync()
-        self.canvas.update()
+        return self._model.AbortGesture()
+
+    def _PreviewPush(self, pending, stage):
+        gizmoMath.SetPreviewValues(pending, stage=stage)
+        gizmoPreview.Push(pending, session=self.usdviewApi, stage=stage)
         self.usdviewApi.UpdateViewport()
-        return True
 
-    def _Apply(self, indices, label, operation):
-        """
-        Run `operation(index, spline)` on a copy of each curve's spline
-        and write them all as ONE undo step.
+    def _PreviewEnd(self, stage, publish):
+        gizmoPreview.End(session=self.usdviewApi, stage=stage,
+                         publish=publish)
 
-        This is the non-drag half of the same bracket _Gesture gives a
-        drag: a tangent button pressed with three curves selected is one
-        step, not three. The edit hook brackets it the same way (it may
-        refuse it up front, or roll it back afterwards: False).
-
-        An operation that RAISES aborts the whole command: the recorder
-        puts every curve back, so a command that cannot be applied to
-        one curve is not half-applied to the others. `_Refused` is how
-        the Time field says "this would consume another key" (see
-        SetKeyTime); anything else propagates.
-
-        Returns True only when the edit target actually CHANGED -- when
-        the recorder produced an Edit and it went on the undo stack.
-        A command can run through cleanly and change nothing: deleting
-        keys that a weaker layer owns clears an opinion the edit target
-        never held. Reporting that as success would clear the selection
-        and offer a Ctrl+Z for an edit that is not there.
-        """
-        self._refused = False
-        self.FlushPendingCommit()
-        indices = [i for i in indices if i < len(self._curves)]
-        if not indices or not self.Stage() or self._gesture is not None:
-            return False
-        token = self._BeginEdit(label, indices, False)
-        if token is None:
-            self._refused = True
-            return False
-        try:
-            with self._EditContext():
-                gesture = _Gesture(self, indices, label)
-                # Held while the writes land so the ObjectsChanged
-                # handler does not re-read the very splines this call
-                # is authoring.
-                self._gesture = gesture
-                try:
-                    with Sdf.ChangeBlock():
-                        for index in indices:
-                            spline = gesture.Origin(index)
-                            if operation(index, spline) is False:
-                                continue
-                            gesture.Write(index, spline)
-                    changed = gesture.Commit() is not None
-                except Exception:
-                    gesture.Abort()
-                    raise
-                finally:
-                    self._gesture = None
-        except Exception:
-            self._AbortEdit(token)
-            # The layer is back but the panel's cached splines are the
-            # half-applied ones it wrote on the way to the failure.
-            self._ReadSplines()
-            self._PruneSelection()
-            raise
-        refusal = self._FinishEdit(token, changed)
-        self._AfterHook()
-        self._Sync()
-        self.canvas.update()
-        if refusal:
-            self._refused = True
-            self._Notify(refusal)
-            return False
-        return changed
+    def _PreviewRepublish(self):
+        gizmoPreview.Republish(session=self.usdviewApi)
 
     # -- edit commands --------------------------------------------------
 
     def SetTangentType(self, mode):
         """tangent buttons, on the selected keys (spec 2.4)."""
-        times = self.SelectedTimes()
-        indices = self._SplineIndices(sorted(times), "Tangent type")
-        if not indices:
-            return False
-        return self._Apply(
-            indices, "Tangent %s" % mode.capitalize(),
-            lambda index, spline: graphModel.SetTangentType(
-                spline, times[index], mode, self._tangentSide))
+        return self._model.SetTangentType(mode)
 
     def SetTangentSide(self, side):
         """Narrow the tangent buttons to the In or Out side, or Both."""
-        if side not in (SIDE_IN, SIDE_OUT, SIDE_BOTH):
-            raise ValueError("unknown tangent side %r" % (side,))
-        self._tangentSide = side
+        self._model.SetTangentSide(side)
         button = self._sideButtons.get(side)
         if button is not None and not button.isChecked():
             button.setChecked(True)
         self._Sync()
 
     def TangentSide(self):
-        return self._tangentSide
+        return self._model.TangentSide()
 
     def Break(self):
-        times = self.SelectedTimes()
-        indices = self._SplineIndices(sorted(times), "Break tangents")
-        if not indices:
-            return False
-        return self._Apply(
-            indices, "Break Tangents",
-            lambda index, spline: graphModel.BreakTangents(
-                spline, times[index]))
+        return self._model.Break()
 
     def Unify(self):
-        times = self.SelectedTimes()
-        indices = self._SplineIndices(sorted(times), "Unify tangents")
-        if not indices:
-            return False
-        return self._Apply(
-            indices, "Unify Tangents",
-            lambda index, spline: graphModel.UnifyTangents(
-                spline, times[index]))
+        return self._model.Unify()
 
     def InsertKeyAtCurrentFrame(self):
-        """
-        Key every visible curve at the current frame (spec 2.4).
-
-        A curve with no knots at all cannot be evaluated, so it is keyed
-        from the attribute's RESOLVED value instead -- which is how an
-        unanimated avar gets its first key from the graph editor.
-        """
-        frame = graphModel.SnapTime(self._frame)
-        indices = self.VisibleIndices()
-        if not indices:
-            return False
-        applied = self._Apply(indices, "Insert Key",
-                              lambda index, spline: self._InsertOne(
-                                  index, spline, frame))
-        if applied:
-            self._selection = set((i, frame) for i in indices)
-            self._Sync()
-            self.canvas.update()
-        return applied
-
-    def _InsertOne(self, index, spline, frame):
-        authored = self.AuthoredSpline(index)
-        if (self._hook is not None and authored is not None
-                and not authored.IsEmpty()
-                and spline.GetKnot(float(frame)) is None):
-            # `spline` is the KEY spline: with knots filtered out (a
-            # baked segment held between its keys there) it no longer
-            # evaluates to what the stage shows. The new key takes the
-            # value the curve has on the stage, as without a hook.
-            if not math.isfinite(float(frame)):
-                raise ValueError("InsertKey requires a finite time: %r"
-                                 % (frame,))
-            value = authored.Eval(float(frame))
-            if value is not None:
-                graphModel.AuthorKnot(spline, float(frame), value)
-                return True
-        if graphModel.InsertKey(spline, frame) is not None:
-            return True
-        attr = self._Attribute(index)
-        value = attr.Get(Usd.TimeCode(frame)) if attr is not None else None
-        try:
-            numeric = float(value if value is not None else 0.0)
-        except (TypeError, ValueError):
-            numeric = 0.0
-        if not math.isfinite(numeric):
-            numeric = 0.0
-        graphModel.AuthorKnot(spline, frame, numeric)
-        return True
+        return self._model.InsertKeyAtCurrentFrame()
 
     def InsertKeyOnCurve(self, index, time):
         """A double-click on a curve: one key, on that curve, there."""
-        try:
-            frame = (graphModel.SnapTime(time)
-                     if self._snapFrames else float(time))
-            if not math.isfinite(frame):
-                return False
-        except (ValueError, TypeError):
-            return False
-        try:
-            applied = self._Apply([index], "Insert Key",
-                                  lambda i, spline: self._InsertOne(i, spline,
-                                                                    frame))
-        except ValueError:
-            return False
-        if applied:
-            self._selection = set([(index, frame)])
-            self._Sync()
-            self.canvas.update()
-        return applied
+        return self._model.InsertKeyOnCurve(index, time)
 
     def DeleteSelectedKeys(self):
-        """
-        Remove the selected keys from the EDIT TARGET; True when the
-        layer changed.
-
-        Deleting is a clear, not an erasure, so a key can survive it:
-        the editor draws the curve the stage RESOLVES, and a key that
-        belongs to a weaker layer than the edit target is still there
-        afterwards. Two outcomes get a status line rather than a silent
-        surprise.
-
-        Nothing changed at all -- the edit target held no opinion on
-        those keys -- keeps the selection, because the keys the artist
-        picked are still on screen and still theirs to pick.
-        """
-        times = self.SelectedTimes()
-        if not times:
-            return False
-        applied = self._Apply(
-            sorted(times), "Delete Keys",
-            lambda index, spline: graphModel.DeleteKeys(spline,
-                                                        times[index]))
-        survivors = self._SurvivingKeys(times)
-        if not applied:
-            if not self._refused:       # the edit hook said why already
-                self._Notify("Nothing deleted: those keys come from a "
-                             "weaker layer, not the edit target.")
-            return False
-        self._selection = set()
-        self._Sync()
-        self.canvas.update()
-        if survivors:
-            self._Notify("Session keys cleared; file animation shows "
-                         "through.")
-        return True
-
-    def _SurvivingKeys(self, times):
-        """
-        The curves among `times` still holding one of those keys after
-        a delete, read off the RESOLVED spline the write cached.
-        """
-        survivors = []
-        for index, group in times.items():
-            spline = (self._keySplines[index]
-                      if index < len(self._keySplines) else None)
-            if spline is None:
-                continue
-            if any(spline.GetKnot(time) is not None for time in group):
-                survivors.append(index)
-        return survivors
+        return self._model.DeleteSelectedKeys()
 
     def AnimatedIndices(self):
-        """
-        The visible curves that actually HAVE keys.
-
-        The editor lists a control's unanimated rig channels too, so an
-        artist can key one from the graph (spec 1.3). They are not
-        curves yet: extrapolation on a knotless spline means nothing,
-        and authoring one would replace the channel's resolved value
-        with an empty spline.
-        """
-        return [i for i in self.VisibleIndices()
-                if self._splines[i] is not None
-                and not self._splines[i].IsEmpty()]
+        return self._model.AnimatedIndices()
 
     def SetInfinity(self, pre=None, post=None):
-        """
-        Infinity combos, on the visible curves that have keys.
-
-        The visible set IS the selected set here: picking rows in the
-        curve list isolates them, so what is drawn is what an artist
-        would call selected. Knotless channels are skipped -- see
-        AnimatedIndices.
-
-        `pre` / `post` are independent: each combo passes only its own
-        side and leaves the other None, so changing the post infinity
-        cannot quietly rewrite every curve's pre infinity from whatever
-        the other combo happened to be displaying.
-        """
-        indices = self.AnimatedIndices()
-        if not indices:
-            self._Notify("Infinity needs a curve with keys.")
-            return False
-        indices = self._SplineIndices(indices, "Infinity")
-        if not indices:
-            return False
-        return self._Apply(
-            indices, "Set Infinity",
-            lambda index, spline: graphModel.SetExtrapolation(spline, pre,
-                                                              post))
+        return self._model.SetInfinity(pre=pre, post=post)
 
     def SetCurveType(self, name):
-        """
-        Ts curve type for the visible curves that have keys.
-
-        Like SetInfinity, the visible set IS the selected set, and
-        knotless channels are skipped: authoring an empty spline just to
-        remember a curve type would win value resolution and resolve to
-        no value (graphModel.ApplySpline: empty clears). Key first (the
-        new key inherits the curve's current type), then switch.
-        """
-        if name not in graphModel.CURVE_TYPES:
-            raise ValueError("unknown curve type %r" % (name,))
-        indices = self.AnimatedIndices()
-        if not indices:
-            self._Notify("Curve type needs a curve with keys.")
-            return False
-        indices = self._SplineIndices(indices, "Curve type")
-        if not indices:
-            return False
-        return self._Apply(
-            indices, "Set Curve Type",
-            lambda index, spline: graphModel.SetCurveType(spline, name))
+        return self._model.SetCurveType(name)
 
     def CurveType(self):
         """Our name for the focus curve's Ts curve type, or None."""
-        index = self.FocusCurveIndex()
-        spline = (self._splines[index]
-                  if index is not None and index < len(self._splines)
-                  else None)
-        return graphModel.CurveTypeName(spline)
+        return self._model.CurveType()
 
     def SetSnapFrames(self, enabled):
-        self._snapFrames = bool(enabled)
-        if self.snapBox.isChecked() != self._snapFrames:
-            self.snapBox.setChecked(self._snapFrames)
+        self._model.SetSnapFrames(enabled)
+        if self.snapBox.isChecked() != self._model.SnapFrames():
+            self.snapBox.setChecked(self._model.SnapFrames())
 
     def SnapFrames(self):
-        return self._snapFrames
+        return self._model.SnapFrames()
 
     def SetWeighted(self, enabled):
-        self._weighted = bool(enabled)
-        if self.weightedBox.isChecked() != self._weighted:
-            self.weightedBox.setChecked(self._weighted)
+        self._model.SetWeighted(enabled)
+        if self.weightedBox.isChecked() != self._model.Weighted():
+            self.weightedBox.setChecked(self._model.Weighted())
 
     def Weighted(self):
-        return self._weighted
+        return self._model.Weighted()
 
     def SetKeyTime(self, time):
-        """
-        Put the selection at `time`: Time field (spec 2.4).
-
-        graphModel.SetKeyTimes does the move per spline, refusing when
-        the frame is already held by a key OUTSIDE the selection. Across
-        several curves the selection has to stay RIGID, so each curve is
-        asked for its own target -- the earliest selected key of ALL of
-        them lands on `time` and the rest keep their offsets -- and one
-        curve's refusal aborts the whole command rather than shearing
-        the selection apart.
-        """
-        try:
-            target = float(time)
-            if not math.isfinite(target):
-                self._Notify("Frame must be a finite number: %r" % (time,))
-                return False
-        except (TypeError, ValueError):
-            self._Notify("Frame must be a finite number: %r" % (time,))
-            return False
-        times = self.SelectedTimes()
-        if not times:
-            return False
-        earliest = min(t for group in times.values() for t in group)
-        if abs(target - earliest) < 1e-12:
-            return False
-
-        def Move(index, spline):
-            offset = min(times[index]) - earliest
-            if not graphModel.SetKeyTimes(spline, times[index],
-                                          target + offset):
-                raise _Refused(target + offset)
-            return True
-
-        try:
-            applied = self._Apply(sorted(times), "Move Keys", Move)
-        except _Refused as refusal:
-            self._Notify("Frame %g already has a key; nothing moved."
-                         % refusal.time)
-            return False
-        except ValueError as error:
-            self._Notify(str(error))
-            return False
-        if applied:
-            self._SelectMovedKeys(times, target - earliest)
-        return applied
-
-    def _SelectMovedKeys(self, times, delta):
-        """
-        Follow the keys the Time field just moved.
-
-        Their new times are read back off the stage rather than assumed:
-        graphModel clamps a key that has no room, so the shift asked for
-        is not always the shift applied.
-        """
-        selection = set()
-        for index, group in times.items():
-            spline = self._keySplines[index]
-            if spline is None:
-                continue
-            for time in group:
-                for candidate in (time + delta, time):
-                    knot = spline.GetKnot(candidate)
-                    if knot is not None:
-                        selection.add((index, knot.GetTime()))
-                        break
-        self._selection = selection
-        self._Sync()
-        self.canvas.update()
+        return self._model.SetKeyTime(time)
 
     def SetKeyValue(self, value):
         """Set every selected key's departure to `value` (Value)."""
-        try:
-            if not math.isfinite(float(value)):
-                self._Notify("Value must be a finite number: %r" % (value,))
-                return False
-        except (TypeError, ValueError):
-            self._Notify("Value must be a finite number: %r" % (value,))
-            return False
-        times = self.SelectedTimes()
-        if not times:
-            return False
-        try:
-            return self._Apply(
-                sorted(times), "Set Key Value",
-                lambda index, spline: graphModel.SetKeyValues(
-                    spline, times[index], value))
-        except ValueError as error:
-            self._Notify(str(error))
-            return False
+        return self._model.SetKeyValue(value)
 
     def SetKeyPreValue(self, preValue):
         """Set every selected key's arrival; makes the selection dual."""
-        try:
-            if not math.isfinite(float(preValue)):
-                self._Notify("Pre must be a finite number: %r" % (preValue,))
-                return False
-        except (TypeError, ValueError):
-            self._Notify("Pre must be a finite number: %r" % (preValue,))
-            return False
-        times = self.SelectedTimes()
-        indices = self._SplineIndices(sorted(times), "An arrival value")
-        if not indices:
-            return False
-        try:
-            return self._Apply(
-                indices, "Set Key Pre Value",
-                lambda index, spline: graphModel.SetKeyPreValues(
-                    spline, times[index], preValue))
-        except ValueError as error:
-            self._Notify(str(error))
-            return False
+        return self._model.SetKeyPreValue(preValue)
 
     def MakeSingle(self):
         """Drop the arrival squares: dual keys back to single-valued."""
-        times = self.SelectedTimes()
-        if not times:
-            return False
-        return self._Apply(
-            sorted(times), "Make Single",
-            lambda index, spline: graphModel.ClearDualKnots(
-                spline, times[index]))
+        return self._model.MakeSingle()
 
     def FrameAll(self):
         self.canvas.FrameAll()
@@ -2904,7 +1262,7 @@ class GraphEditorPanel(QtWidgets.QWidget):
         if key == QtCore.Qt.Key_Escape:
             if self.AbortGesture():
                 return True
-            if self._selection:
+            if self._model.SelectionPairs():
                 self.SetSelection([])
             return True
         if key == QtCore.Qt.Key_K:
@@ -2957,13 +1315,13 @@ class GraphEditorPanel(QtWidgets.QWidget):
 
     def _onSide(self, checked, side):
         if checked and not self._updating:
-            self._tangentSide = side
+            self._model.SetTangentSide(side)
 
     def _onWeighted(self, checked):
-        self._weighted = bool(checked)
+        self._model.SetWeighted(checked)
 
     def _onSnapFrames(self, checked):
-        self._snapFrames = bool(checked)
+        self._model.SetSnapFrames(checked)
 
     def _onPreInfinityChanged(self, index):
         # ONLY the pre side. Passing both combos' values would push the
@@ -3010,10 +1368,7 @@ class GraphEditorPanel(QtWidgets.QWidget):
 
     def _onStageReplaced(self):
         self.AbortGesture()
-        self._curves = []
-        self._splines = []
-        self._RefreshDerived()
-        self._selection = set()
+        self._model.ClearCurves()
         self._hidden = set()
         self._isolated = set()
         self._framed = False
@@ -3027,17 +1382,15 @@ class GraphEditorPanel(QtWidgets.QWidget):
         # leave the playhead a scrub behind (rigExecUsdview._FrameValue).
         self.FlushPendingCommit()
         self._frame = _FrameValue(frame)
-        self._PushPreview()
+        self._model.PushPreview()
         self.canvas.update()
         self._Sync()
 
     def _onUndoStackChanged(self):
-        # An undo restores layer specs behind our back; the panel's
+        # An undo restores layer specs behind our back; the cached
         # splines are stale until they are read again.
-        if self._gesture is not None:
+        if not self._model.RefreshAfterUndo():
             return
-        self._ReadSplines()
-        self._PruneSelection()
         self.canvas.update()
         self._Sync()
         self.usdviewApi.UpdateViewport()
@@ -3062,32 +1415,11 @@ class GraphEditorPanel(QtWidgets.QWidget):
         spline, and re-reading mid-drag would fight it.
         """
         del stage
-        if self._gesture is not None or not self._curves:
-            return
         paths = set(notice.GetChangedInfoOnlyPaths())
         paths.update(notice.GetResyncedPaths())
-        if not paths:
-            return
-        for ref in self._curves:
-            attrPath = ref.attrPath
-            for path in paths:
-                if path == attrPath or attrPath.HasPrefix(path):
-                    self._ReadSplines()
-                    self._PruneSelection()
-                    self.canvas.update()
-                    self._Sync()
-                    return
-
-    def _PruneSelection(self):
-        """Drop selected keys that no longer exist on the stage."""
-        kept = set()
-        for index, time in self._selection:
-            if index >= len(self._keySplines):
-                continue
-            spline = self._keySplines[index]
-            if spline is not None and spline.GetKnot(time) is not None:
-                kept.add((index, time))
-        self._selection = kept
+        if self._model.NoteExternalChange(paths):
+            self.canvas.update()
+            self._Sync()
 
     # -- status ---------------------------------------------------------
 
@@ -3095,23 +1427,25 @@ class GraphEditorPanel(QtWidgets.QWidget):
         """One line about what the editor is showing (spec 2.1)."""
         if not self.Stage():
             return "No stage."
-        if not self._curves:
+        curves = self._model.Curves()
+        if not curves:
             return ("No spline-capable attributes in the selection. "
                     "Select a rig control, or a scalar attribute in the "
                     "property browser.")
-        visible = len(self.VisibleIndices())
-        text = "%d curve%s (%d shown)" % (len(self._curves),
-                                          "" if len(self._curves) == 1
+        visible = len(self._model.VisibleIndices())
+        text = "%d curve%s (%d shown)" % (len(curves),
+                                          "" if len(curves) == 1
                                           else "s", visible)
-        if self._selection:
+        selected = len(self._model.SelectionPairs())
+        if selected:
             text += ", %d key%s selected" % (
-                len(self._selection), "" if len(self._selection) == 1
-                else "s")
+                selected, "" if selected == 1 else "s")
         else:
             text += ", no keys selected"
         text += "  frame %g" % self._frame
-        if self._gesture is not None:
-            text += "  [%s]" % self._gesture.label
+        label = self._model.ActiveGestureLabel()
+        if label is not None:
+            text += "  [%s]" % label
         if self._notice:
             text += "  --  %s" % self._notice
         return text
@@ -3148,10 +1482,9 @@ class GraphEditorPanel(QtWidgets.QWidget):
 
     def _SyncKeyStats(self):
         times, values, pres = [], [], []
-        for index, time in self._selection:
+        for index, time in self._model.SelectionPairs():
             times.append(time)
-            spline = self._keySplines[index] \
-                if index < len(self._keySplines) else None
+            spline = self._model.KeySpline(index)
             knot = spline.GetKnot(time) if spline is not None else None
             if knot is not None:
                 values.append(float(knot.GetValue()))
@@ -3169,9 +1502,8 @@ class GraphEditorPanel(QtWidgets.QWidget):
         # agree: a single-valued selection has no arrival to show, and
         # typing into a blank Pre makes the selection dual.
         selectedCount = 0
-        for index, time in self._selection:
-            spline = (self._keySplines[index]
-                      if index < len(self._keySplines) else None)
+        for index, time in self._model.SelectionPairs():
+            spline = self._model.KeySpline(index)
             knot = spline.GetKnot(time) if spline is not None else None
             if knot is not None:
                 selectedCount += 1
@@ -3182,20 +1514,7 @@ class GraphEditorPanel(QtWidgets.QWidget):
             self.preValueBox.SetBlank()
 
     def FocusCurveIndex(self):
-        """
-        The curve the key stats and the Infinity combos DISPLAY.
-
-        The lowest-indexed curve holding a selected key, else the first
-        visible curve with keys. A knotless channel is never the focus:
-        its extrapolation is Held by construction and showing that would
-        say the artist's cycle had been lost.
-        """
-        animated = self.AnimatedIndices()
-        if not animated:
-            return None
-        selected = sorted(index for index, _ in self._selection
-                          if index in animated)
-        return selected[0] if selected else animated[0]
+        return self._model.FocusCurveIndex()
 
     def _SyncInfinityCombos(self):
         """
@@ -3207,7 +1526,8 @@ class GraphEditorPanel(QtWidgets.QWidget):
         onto it.
         """
         index = self.FocusCurveIndex()
-        spline = self._splines[index] if index is not None else None
+        spline = (self._model.AuthoredSpline(index)
+                  if index is not None else None)
         if spline is None:
             return
         for combo, getter in ((self.preInfinity, spline.GetPreExtrapolation),
