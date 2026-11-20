@@ -41,10 +41,8 @@ from ._schema_pin_names import (
     resolve_property_name_for_display_pin,
 )
 
-# The stage reconciliation algorithms live in graphview/stage_sync; the two
-# path helpers are re-exported here for the existing callers and tests that
-# import them from this module.
-from .graphview import stage_sync
+from .graphview import stage_adapter, stage_sync
+# Re-export the legacy path helpers.
 from .graphview.stage_sync import _isPathRelated, _nodeIdPrimPath
 from .constants import MAX_RENDER_DEPTH, node_content_depth
 from .linkRenderer import computeLinkCurveBounds, LinkRenderer, sampleLinkCurve
@@ -225,17 +223,18 @@ def _frameOf(value):
 def _makeStageSync(view):
     """This editor's stage-lifecycle service, bound to *view*.
 
-    Policy lives in graphview/stage_sync, which imports no Qt or GL; the
-    widget-owned post and warn resolve this module's ``QtCore`` and ``Tf``
-    at call time, so the StageReload patch points keep intercepting them.
+    Resolve adapter effects and Qt/Tf patch points at call time.
     """
     return stage_sync.StageSync(
-        read=lambda: stage_sync.readStageContext(view),
-        notice=lambda: stage_sync.readNoticeContext(view),
-        apply=lambda delta: stage_sync.applyStageDelta(view, delta),
+        read=lambda: stage_adapter.readStageContext(view),
+        notice=lambda: stage_adapter.readNoticeContext(view),
+        apply=lambda delta: stage_adapter.applyStageDelta(view, delta),
         post=lambda callback: QtCore.QTimer.singleShot(0, callback),
         listen=lambda receiver: UsdNoticeHandler(receiver),
         warn=lambda message: Tf.Warn(message),
+        reconcile=lambda resynced, info, moved, trace: stage_adapter.applyUsdChanges(
+            view, resynced, info, moved, trace=trace
+        ),
     )
 
 
@@ -1633,7 +1632,7 @@ class GraphView(QGLWidget):
         self._valueFitCache.clear()
 
     def closeEvent(self, event):
-        stage_sync.closeStageLifecycle(self)
+        stage_adapter.closeStageLifecycle(self)
         super().closeEvent(event)
 
     def _onStageReplaced(self):
@@ -1653,7 +1652,7 @@ class GraphView(QGLWidget):
         )
         stage = self._usdviewApi.stage if self._usdviewApi else None
         sync.replace(
-            stage, stage_sync.stageLoadMode(self), self._currentPrimPath, frame
+            stage, stage_adapter.stageLoadMode(self), self._currentPrimPath, frame
         )
 
     def _finishStageReload(self, epoch=None):
@@ -1779,19 +1778,19 @@ class GraphView(QGLWidget):
             self._syncingSelection = False
 
     def _graphScopeParentPath(self):
-        return stage_sync.graphScopeParentPath(self)
+        return stage_adapter.graphScopeParentPath(self)
 
     def _validateNodesAgainstStage(self):
-        return stage_sync.validateNodesAgainstStage(self)
+        return stage_adapter.validateNodesAgainstStage(self)
 
     def _adoptPrimsNewToScope(self, resyncedPaths):
-        return stage_sync.adoptPrimsNewToScope(self, resyncedPaths)
+        return stage_adapter.adoptPrimsNewToScope(self, resyncedPaths)
 
     def _remapMovedNodes(self, movedPaths):
-        return stage_sync.remapMovedNodes(self, movedPaths)
+        return stage_adapter.remapMovedNodes(self, movedPaths)
 
     def _handleUsdChanges(self, resyncedPaths, infoChangedPaths, movedPaths=None):
-        stage_sync.applyUsdChanges(
+        stage_adapter.applyUsdChanges(
             self, resyncedPaths, infoChangedPaths, movedPaths
         )
 

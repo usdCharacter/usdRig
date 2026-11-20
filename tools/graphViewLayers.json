@@ -4,6 +4,9 @@
     "plugin/usdNoodles/graphview/__init__.py": {
       "layer": "coordinator"
     },
+    "plugin/usdNoodles/graphview/stage_adapter.py": {
+      "layer": "stage_sync"
+    },
     "plugin/usdNoodles/graphview/stage_sync.py": {
       "layer": "stage_sync"
     },
