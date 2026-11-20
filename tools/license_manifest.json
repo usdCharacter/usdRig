@@ -27,7 +27,7 @@
         "archive": "docs/examples/usdview_rolling_ball.zip",
         "members": 25,
         "legal_members": 14,
-        "refresh_note": "not repacked on this boundary: its members and payload digest are those of the last repack, which gained the root LICENSE, NOTICE and THIRD_PARTY_NOTICES.md, the source-relative copies and tools/license_manifest.json, and was refreshed again when the owner recorded the art families as MIT",
+        "refresh_note": "repacked on this boundary: NOTICE and THIRD_PARTY_NOTICES.md now name volumeWeightModel.py alongside volumeWeightUI.py, and tools/license_manifest.json was refreshed with them; members and payload digest are otherwise those of the last repack, which gained the root LICENSE, NOTICE and THIRD_PARTY_NOTICES.md, the source-relative copies and tools/license_manifest.json, and was refreshed again when the owner recorded the art families as MIT",
         "blob_before_repack": "0b6b85d3c383fab0c7524c24027ffddb92a0ffad",
         "payload_members": 9,
         "payload_digest": "d1078b784f090d4ca81815f397cc3f8e81fd869e3a78f8b880a73e49a0bd6c80",
@@ -172,7 +172,8 @@
       "precedence": 1,
       "category": "derived",
       "globs": [
-        "plugin/rigExecUsdview/volumeWeightUI.py"
+        "plugin/rigExecUsdview/volumeWeightUI.py",
+        "plugin/rigExecUsdview/volumeWeightModel.py"
       ],
       "carve_outs": [],
       "spdx": "TOST-1.0",
@@ -180,7 +181,7 @@
       "holder_status": "established by the in-file notice (Copyright 2026 Pixar)",
       "provenance": [
         "file header: 'Copyright 2026 Pixar, licensed under the terms set forth in the ...' OpenUSD notice",
-        "NOTICE: 'The adapted attribute widgets in plugin/rigExecUsdview/volumeWeightUI.py retain their existing Copyright 2026 Pixar and OpenUSD license notice'"
+        "NOTICE: 'The adapted attribute widgets in plugin/rigExecUsdview/volumeWeightUI.py and plugin/rigExecUsdview/volumeWeightModel.py retain their existing Copyright 2026 Pixar and OpenUSD license notice'"
       ],
       "required_texts": [
         {
@@ -188,8 +189,8 @@
         }
       ],
       "generator": null,
-      "exception_scope": "Mixed file: usdRig integration code inside it is project work, but the file's notice and TOST terms must not be replaced with MIT.",
-      "matched_files": 1
+      "exception_scope": "Mixed files: usdRig integration code inside them is project work, but each file's notice and TOST terms must not be replaced with MIT.",
+      "matched_files": 2
     },
     {
       "id": "openriglogic-ports",
@@ -612,6 +613,10 @@
         },
         {
           "glob": "plugin/rigExecUsdview/volumeWeightUI.py",
+          "handled_by": "openusd-derived-usdview-ui"
+        },
+        {
+          "glob": "plugin/rigExecUsdview/volumeWeightModel.py",
           "handled_by": "openusd-derived-usdview-ui"
         },
         {
