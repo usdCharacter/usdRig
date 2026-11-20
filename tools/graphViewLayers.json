@@ -149,28 +149,12 @@
         "_saveLayerAsSpelled": "editing",
         "_saveStage": "editing",
         "_deleteAllSelected": "editing",
-        "_collectSelectedLinkData": "intents",
-        "_collectIncidentLinkKeys": "intents",
-        "_makeSerializedLinkRecord": "intents",
-        "_deserializeLinkRecord": "intents",
-        "_linkMatchesRecord": "intents",
-        "_expandSdfListOpItems": "intents",
-        "_buildAttrSearchPaths": "intents",
-        "_buildRelSearchEntries": "intents",
-        "_layerAuthorsAttrConnection": "intents",
-        "_layerAuthorsRelTarget": "intents",
-        "_findConnectionAuthoringLayer": "intents",
         "_deleteLinksInUsd": "editing",
         "_deactivateNodesInUsd": "editing",
         "_pushDeleteSelectedUndo": "editing",
-        "_editOnLayer": "intents",
-        "_buildConnectionKwargs": "intents",
-        "_groupLinksByLayer": "intents",
-        "_runLinkOperationOnLayer": "intents",
         "_applyRestoreDeleted": "editing",
         "_applyDeleteSelected": "editing",
         "deleteSelectedNodes": "editing",
-        "_findLibraryForPrim": "intents",
         "_abortConnection": "editing",
         "_resolveConnectionEndpoints": "editing",
         "_deleteOldConnection": "editing",
@@ -237,14 +221,18 @@
         "_commitRename": "editing",
         "_afterUsdviewRefresh": "coordinator",
         "_paintNodeRename": "render",
-        "_onNodeCreated": "editing"
+        "_onNodeCreated": "editing",
+        "_makeCommandRegistry": "coordinator"
       }
     },
     "plugin/usdNoodles/graphview/selection.py": {
       "layer": "selection"
+    },
+    "plugin/usdNoodles/graphview/intents.py": {
+      "layer": "intents"
     }
   },
   "line_ceilings": {
-    "plugin/usdNoodles/graphView.py": 8597
+    "plugin/usdNoodles/graphView.py": 8334
   }
 }
