@@ -1,5 +1,6 @@
 include_guard(GLOBAL)
 include(CMakeParseArguments)
+include("${CMAKE_CURRENT_LIST_DIR}/rigexec_flags.cmake")
 
 # One module declaration supplies the USD-free definition, the USD adapter,
 # and the authoritative schema. Generated factories retain static objects.
@@ -98,11 +99,7 @@ function(rigexec_add_mover name)
             $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}/rigExecMovers/${name}>)
         target_link_libraries(${name}Kernel PUBLIC rigExec::rigExecBinary ${M_KERNEL_LIBRARIES})
         set_target_properties(${name}Kernel PROPERTIES POSITION_INDEPENDENT_CODE ON)
-        if(MSVC)
-            target_compile_options(${name}Kernel PRIVATE /fp:precise)
-        else()
-            target_compile_options(${name}Kernel PRIVATE -fno-fast-math -ffp-contract=off)
-        endif()
+        rigexec_apply_exact_fp_flags(${name}Kernel)
         set(_plugin_options SCHEMA_INCLUDE)
         if(M_NO_INSTALL)
             list(APPEND _plugin_options NO_INSTALL)

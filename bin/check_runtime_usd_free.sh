@@ -11,11 +11,34 @@ if [[ ! -f "$BUILD/runtimeSources.txt" || ! -f "$BUILD/runtimeIncludes.txt" ||
     echo "configure and build rigExecRuntime first (missing source manifest in $BUILD)" >&2
     exit 1
 fi
+if [[ ! -s "$BUILD/exactFpFlags.txt" ]]; then
+    echo "configure first: $BUILD/exactFpFlags.txt names the exact-FP flags" >&2
+    exit 1
+fi
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# cmake/rigexec_flags.cmake writes this list at configure time, so the flags
+# here cannot drift from the ones the build compiles these sources with.
+fp_flags=()
+while IFS= read -r flag; do
+    flag="${flag%$'\r'}"
+    [[ -z "$flag" ]] && continue
+    fp_flags+=("$flag")
+done < "$BUILD/exactFpFlags.txt"
+if [[ ${#fp_flags[@]} -eq 0 ]]; then
+    echo "no exact-FP flags in $BUILD/exactFpFlags.txt" >&2
+    exit 1
+fi
+for flag in "${fp_flags[@]}"; do
+    if [[ "$flag" == *fast-math* && "$flag" != -fno-fast-math ]]; then
+        echo "cmake/rigexec_flags.cmake must not name fast math: $flag" >&2
+        exit 1
+    fi
+done
+
 CXXFLAGS=(
-    -std=c++17 -O2 -fno-fast-math -ffp-contract=off -pthread
+    -std=c++17 -O2 "${fp_flags[@]}" -pthread
     -I "$ROOT/libs"
     -I "$ROOT/thirdparty/flatbuffers/include"
     -I "$ROOT/thirdparty/lzma/C"
@@ -27,11 +50,13 @@ CFLAGS=(
 for manifest in runtimeIncludes.txt evalCoreIncludes.txt; do
     while IFS= read -r include_dir; do
         include_dir="${include_dir%$'\r'}"
+        [[ -z "$include_dir" ]] && continue
+        [[ "$include_dir" = /* ]] || include_dir="$ROOT/$include_dir"
         if [[ -d "$include_dir/pxr" ]]; then
             echo "runtime/EvalCore include directories expose OpenUSD: $include_dir" >&2
             exit 1
         fi
-        [[ -z "$include_dir" ]] || CXXFLAGS+=(-I "$include_dir")
+        CXXFLAGS+=(-I "$include_dir")
     done < "$BUILD/$manifest"
 done
 

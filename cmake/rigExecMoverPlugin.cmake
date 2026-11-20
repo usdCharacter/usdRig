@@ -1,5 +1,6 @@
 include_guard(GLOBAL)
 include(CMakeParseArguments)
+include("${CMAKE_CURRENT_LIST_DIR}/rigexec_flags.cmake")
 
 # Must equal RigExecMoverPluginApiVersion in rigExec/movers/moverRegistry.h:
 # the loader refuses a library whose metadata names another version.
@@ -21,9 +22,8 @@ function(rigexec_add_mover_plugin name)
     if (MSVC)
         target_compile_options(${name} PRIVATE /permissive- /Zc:__cplusplus /bigobj)
         target_compile_definitions(${name} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
-    else()
-        target_compile_options(${name} PRIVATE -ffp-contract=off)
     endif()
+    rigexec_apply_exact_fp_flags(${name})
 
     if (P_PLUGIN_ROOT)
         get_filename_component(_plugin_root "${P_PLUGIN_ROOT}" ABSOLUTE
