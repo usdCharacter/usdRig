@@ -6,8 +6,8 @@
 # RigExec -> Viewport -> View Axis.
 #
 # The numbers live in viewAxisMath (no Qt). The camera side -- the free
-# camera, the animated orbit, tumbling, following the frustum, install
-# timing -- is the view cube's controller, reused through its widget
+# camera, the animated orbit, tumbling, following the frustum --
+# is the view cube's controller, reused through its widget
 # factory, so the two gizmos move the camera identically.
 #
 import math
@@ -17,11 +17,13 @@ import sys
 from pxr.Usdviewq.qt import QtCore, QtGui, QtWidgets
 
 try:
+    import stageViewReady
     import viewAxisMath
     import viewCubeMath
     import viewCubeUI
 except ImportError:                    # loader that did not add our dir
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import stageViewReady
     import viewAxisMath
     import viewCubeMath
     import viewCubeUI
@@ -317,31 +319,19 @@ class ViewAxisController(viewCubeUI.ViewCubeController):
                 return
 
 
-_controller = None
-_installPending = False
+def InstallViewAxis(usdviewApi, retries=stageViewReady.DEFAULT_RETRIES):
+    """Return this session's view axis controller once ready, else None."""
+    return stageViewReady.Register(
+        usdviewApi, "viewAxis", lambda: ViewAxisController(usdviewApi),
+        retries=retries).controller
 
 
-def InstallViewAxis(usdviewApi, retries=viewCubeUI._INSTALL_RETRIES):
-    """Put the view axis on usdview's stage view once; see InstallViewCube.
-    """
-    global _controller, _installPending
-    if _controller is not None:
-        return _controller
-    if viewCubeUI.StageView(usdviewApi) is None:
-        if retries > 0 and not _installPending:
-            _installPending = True
-
-            def _Retry():
-                global _installPending
-                _installPending = False
-                InstallViewAxis(usdviewApi, retries - 1)
-
-            QtCore.QTimer.singleShot(0, _Retry)
-        return None
-    _controller = ViewAxisController(usdviewApi)
-    return _controller
+def GetController(usdviewApi=None):
+    """Return the controller for the explicit or current session, if ready."""
+    return stageViewReady.Controller(usdviewApi, "viewAxis")
 
 
-def GetController():
-    """The installed controller, or None."""
-    return _controller
+def __getattr__(name):
+    if name == "_controller":
+        return GetController()
+    raise AttributeError(name)
