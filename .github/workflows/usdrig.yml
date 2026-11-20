@@ -472,14 +472,18 @@ jobs:
 
       # The build-release set, plus python3-dev for the _rigexec bindings that
       # -DRIGEXEC_BUILD_PYTHON=ON configures, plus xvfb for the editor drivers.
-      # libxcb-cursor0 is required by the Qt xcb platform plugin; without it the
-      # headless drivers abort before reaching their markers.
+      # The PySide6 wheel carries its own Qt but links the system's XCB and
+      # xkbcommon libraries, so the xcb platform plugin is unloadable -- and
+      # every driver aborts before usdview starts -- without this set. They are
+      # what `ldd` reports unresolved for that plugin on this image.
       - name: Install build and test dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             ninja-build ccache libgl1-mesa-dev xorg-dev python3-dev xvfb \
-            libxcb-cursor0
+            libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \
+            libxcb-xkb1 libxkbcommon0 libxkbcommon-x11-0 libglib2.0-0t64 \
+            libdbus-1-3
 
       - name: ccache
         uses: actions/cache@v4
@@ -496,6 +500,23 @@ jobs:
           python3 -m venv noodles-venv
           noodles-venv/bin/python -m pip install --disable-pip-version-check \
             PySide6 PyOpenGL numpy pybind11
+
+      # One X session is shared by the four drivers, so prove it exists before
+      # the editor build: an unresolvable plugin library is named here instead
+      # of four drivers aborting on Qt's generic "xcb-cursor0 is needed" hint.
+      - name: Probe the Qt session the drivers need
+        run: |
+          py="${GITHUB_WORKSPACE}/noodles-venv/bin/python"
+          plugins="$("$py" -c 'import os, PySide6; print(os.path.join(os.path.dirname(PySide6.__file__), "Qt", "plugins", "platforms"))')"
+          missing="$(ldd "$plugins/libqxcb.so" \
+            | sed -n 's/[[:space:]]*\(.*\.so[^ ]*\) => not found$/\1/p' | sort -u)"
+          if [ -n "$missing" ]; then
+            echo "FAIL: the Qt xcb platform plugin cannot resolve:"
+            echo "$missing"
+            exit 1
+          fi
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            "$py" -c 'import sys; from PySide6.QtWidgets import QApplication; app = QApplication([]); print("qt platform:", app.platformName()); sys.exit(app.platformName() != "xcb")'
 
       - name: Download OpenUSD prefix
         uses: actions/download-artifact@v4
