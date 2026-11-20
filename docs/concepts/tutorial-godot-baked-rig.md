@@ -165,6 +165,18 @@ Building needs a C++ compiler, the existing usdRig build, its matching USD
 Python bindings with numpy, and OpenSubdiv. The tested Windows toolchain uses
 MSVC. If needed, append `--godot "C:/path/to/godot_console.exe"` to setup.
 
+The packaged `SConstruct` spells out no compiler flags and no runtime file
+list. It reads the exact-FP settings from the SDK's installed
+`lib/cmake/rigExec/rigexec_flags.cmake` fragment
+(`rigexec_get_exact_fp_flags`) and the USD-free source and include lists
+from the installed `share/rigExec/runtimeSources.txt`, `evalCoreSources.txt`,
+`runtimeIncludes.txt` and `evalCoreIncludes.txt` manifests, whose relative
+paths join with the usdRig checkout. The extension therefore compiles the
+same translation units with the same settings as the CMake build; see
+[Evaluation and independent checks](../concepts/baked-vs-dynamic.md). Point
+scons at another install prefix with `sdk_root=<path>`; the default is the
+sibling `usd-install`.
+
 Setup exports the presentation, then compiles the execution program with it
 embedded, installs the addon, imports the project and runs the checks. The
 game-facing output is **`demo/rolling_ball.rigexec`**. Intermediate mesh and

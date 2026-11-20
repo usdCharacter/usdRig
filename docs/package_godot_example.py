@@ -1,4 +1,10 @@
-"""Package the sibling Godot tutorial for docs; omit caches and stale binaries."""
+"""Package the sibling Godot tutorial for docs; omit caches and stale binaries.
+
+The packaged SConstruct ships from this checkout (docs/godot_example/SConstruct):
+it consumes the SDK's installed cmake/rigexec_flags.cmake fragment and the
+share/rigExec source and include manifests, which this repository owns, so the
+build-surface contract stays with the build it describes.
+"""
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 import argparse
@@ -11,6 +17,7 @@ from legal_members import (archive_member_name, legal_member_status,
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT.parent / "godot_rigExec"
 OUT = ROOT / "docs/examples/godot_rolling_ball.zip"
+SCONSTRUCT = ROOT / "docs/godot_example/SConstruct"
 SOURCE = "godot_rigExec"
 START_HERE = """Godot rolling-ball tutorial
 Windows x86-64 binaries, Godot 4.7+. Open demo/project.godot and press F5.
@@ -25,6 +32,11 @@ git clone https://github.com/godotengine/godot-cpp.git thirdparty/godot-cpp
 git -C thirdparty/godot-cpp checkout 507ed9d840c01a3c5b2a39af8bb4000bfac30bf5
 git -C thirdparty/godot-cpp submodule update --init --recursive
 python demo/setup_rolling.py --build
+The SConstruct takes its exact-FP flags and its USD-free source and include
+lists from the installed SDK (lib/cmake/rigExec/rigexec_flags.cmake and
+share/rigExec/runtimeSources.txt, evalCoreSources.txt, runtimeIncludes.txt
+and evalCoreIncludes.txt); pass sdk_root=<usd-install> if it is not the
+sibling usd-install.
 
 No Godot cache, editor state, credentials, or platform binaries other than
 the tested Windows x86-64 pair are included. Source is included; other
@@ -60,7 +72,7 @@ def main():
         raise SystemExit(f"Godot add-on checkout not found: {PLUGIN} "
                          "(build it, or pass --addon-root)")
 
-    files = [PLUGIN / "SConstruct"]
+    files = []
     files += list((PLUGIN / "addons/rigexec").glob("*.gd"))
     files += list((PLUGIN / "addons/rigexec").glob("*.cfg"))
     files += list((PLUGIN / "addons/rigexec").glob("*.gdextension"))
@@ -86,6 +98,9 @@ def main():
     legal = legal_members("godot_zip", addon_root=PLUGIN)
     members = {name: path for name, path, _ in legal}
     members.update({_member(path.relative_to(PLUGIN).as_posix()): path for path in payload})
+    # The packer ships the SConstruct owned by this checkout; it reads the SDK's
+    # flag fragment and manifests instead of spelling flags or file lists out.
+    members[_member("SConstruct")] = SCONSTRUCT
     # The demo folder ships the add-on again so the demo opens standalone;
     # the manifest already names the legal copies it needs.
     for member, source in list(members.items()):
