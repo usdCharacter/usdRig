@@ -1,12 +1,10 @@
 #
 # TOUCHPOSE LATENCY BENCHMARK, in a real usdview.
 #
-# Not a pass/fail test: it prints the numbers the TouchPose rewrite is
-# judged by, measured the same way for any implementation of the
-# controller. It touches only the controller surface both the overlay-mesh
-# version and the Storm-shader version share -- `Hover`, `RegionAt`,
-# `SyncSelection`, `SyncPose`, `SetActive`, `model.regions` -- plus real
-# Qt events, so a before/after pair is the same script run on two builds.
+# Not a pass/fail test: it prints latency numbers, measured the same way for
+# any implementation of the controller. It touches only the controller
+# surface -- `Hover`, `RegionAt`, `SyncSelection`, `SyncPose`, `SetActive`,
+# `model.regions` -- plus real Qt events.
 #
 # WHAT IS MEASURED, and why each is split in two:
 #

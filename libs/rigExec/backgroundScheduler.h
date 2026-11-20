@@ -73,9 +73,6 @@ constexpr size_t kRigExecBackgroundSchedulerDefaultPerRigJobs = 96;
 /// A rig's edit generation. Bumped by CancelGeneration on every rig-affecting
 /// edit; a job enqueued under an older one is stale and its result is
 /// dropped. Starts at zero for a rig the scheduler has never seen.
-/// A rig's edit generation. Bumped by CancelGeneration on every rig-affecting
-/// edit; a job enqueued under an older one is stale and its result is
-/// dropped. Starts at zero for a rig the scheduler has never seen.
 using RigExecFrameGeneration = uint64_t;
 
 /// A per-time publish fence token. Scoped cancellation
@@ -222,7 +219,7 @@ using RigExecWarmWork =
 
 /// Why a factory built no work for a frame. Reasoned skips count the
 /// aggregate declined plus their per-reason breakout; unreasoned skips
-/// (trigger shape, not warmability) skip silently, as before.
+/// (trigger shape, not warmability) skip silently.
 enum class RigExecWarmSkipReason {
     /// Work was built, or the skip carries no warmability verdict.
     None,
@@ -777,9 +774,6 @@ private:
     const RigExecSchedulerClock _clock;
     std::map<SdfPath, RigExecFrameGeneration> _generations;
     std::map<_QueueKey, _QueuedJob> _queue;
-    // Coalescing index: (rig, time value) -> queue key. Queued jobs only;
-    // a popped job leaves the index, so a re-enqueue while it runs queues
-    // honestly beside it (idempotent warming, not a duplicate run).
     // Coalescing index: (rig, time value) -> queue key. Queued jobs only;
     // a popped job leaves the index, so a re-enqueue while it runs queues
     // honestly beside it (idempotent warming, not a duplicate run).

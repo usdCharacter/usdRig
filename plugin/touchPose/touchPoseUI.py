@@ -99,9 +99,7 @@ except Exception:                                   # pragma: no cover
 # The authored file says 0.478 (`touchpose:alpha`), drawn over an
 # UNSHADED viewport; this is the value asked for over the shaded body.
 #
-# It is the opening value only. `Load` used to assign it on every load,
-# so switching layer -- or any reload at all -- threw the slider's value
-# away and snapped back to the default.
+# It is the opening value only: a reload keeps whatever the slider is at.
 HIGHLIGHT_OPACITY = 0.30
 
 
@@ -450,11 +448,7 @@ class TouchPoseController(QtCore.QObject,
 
     # `mesh_path` PINS the controller to one mesh and is None by default,
     # which means "every mesh the stage carries regions for". It is only
-    # ever read, never written back: writing the resolved mesh back onto
-    # it is what used to pin the whole panel to body_geo after the first
-    # load, and with it the layer switch -- measured on Biped_stack.usda,
-    # the switch listed one entry ("Body") and hid itself, so the two eye
-    # sets could not be reached from the panel at all.
+    # ever read, never written back.
     def __init__(self, usdviewApi, mesh_path=None):
         super(TouchPoseController, self).__init__()
         self._api = usdviewApi
@@ -468,15 +462,11 @@ class TouchPoseController(QtCore.QObject,
         #
         # WHY ALL OF THEM. A set states the mesh its faces index, so the
         # body set indexes body_geo and the two eye sets index l_eye_geo
-        # and r_eye_geo. With one model open, the hover cast only ever
-        # reached the live set's mesh: measured at the pixel over the
-        # front of the left eyeball, the eyeball is hit at t = 332.45 and
-        # body_geo at t = 337.57 -- the eye is 5.1 units IN FRONT of the
-        # skin there -- and the hover still answered the body's face 489,
-        # which is unpainted, so hovering an eye lit nothing. The sets do
-        # not have to agree about anything to coexist: each owns its own
-        # mesh, its own BVH and its own highlight, and the pick simply
-        # takes the nearest hit across all of them.
+        # and r_eye_geo: a cast against one set's mesh misses the skin
+        # behind the others. The sets do not have to agree about anything
+        # to coexist: each owns its own mesh, its own BVH and its own
+        # highlight, and the pick simply takes the nearest hit across all
+        # of them.
         self._models = []
         self._highlights = []       # parallel to _models
         self._model = None
@@ -506,10 +496,6 @@ class TouchPoseController(QtCore.QObject,
         self._suspended = False
         self._band = None
         self._rubber = None
-        # POLLED, not event-driven. The gizmo exposes no drag signal, and
-        # while a button is held Qt sends MouseMove, not HoverMove -- and
-        # the gizmo's own filter may consume those first. A boolean read on
-        # a timer does not care who wins the event.
         self._dragPoll = QtCore.QTimer(self)
         self._dragPoll.setInterval(DRAG_POLL_MS)
         self._dragPoll.timeout.connect(self._PollDrag)
@@ -614,13 +600,9 @@ class TouchPoseController(QtCore.QObject,
             return ("No touch regions on this stage (%s). Import them with "
                     "`bin\\run_touchpose.bat import_touch <rig>.usda` and "
                     "open <rig>_touch.usda." % exc)
-        # THE OPACITY SURVIVES A LOAD. It used to be put back to
-        # HIGHLIGHT_OPACITY here, which is why changing layer snapped the
-        # highlight back to 85%: measured, a session set to 0.300 came
-        # back from the next Load at 0.850 while the slider still read
-        # 30%, so the panel and what was drawn disagreed as well. The
-        # slider is the only thing that sets it, so the value it is at IS
-        # the answer; `__init__` supplies the default for the first load.
+        # THE OPACITY SURVIVES A LOAD: the slider is the only thing that
+        # sets it, so the value it is at IS the answer, and `__init__`
+        # supplies the default for the first load.
         self._highlights = [Highlight(m, self._opacity) for m in self._models]
         self._highlight = self._highlights[index]
         time = self._Time()
@@ -666,9 +648,7 @@ class TouchPoseController(QtCore.QObject,
             try:
                 # The mesh is taken off the scope ROW rather than left to
                 # `FromStage` to re-derive: deriving it walks the whole
-                # stage again per set, measured at 72.3 ms for the
-                # biped's three against 49.9 ms when each scope is
-                # simply asked.
+                # stage again per set.
                 models.append(touchPoseModel.TouchModel.FromStage(
                     stage,
                     self._mesh_path or touchPoseModel.MeshOfScope(scope),
@@ -2079,13 +2059,9 @@ class TouchPosePanel(QtWidgets.QDialog):
         # appearing, and so a failure to start cannot fail the
         # constructor. The checkbox stays, because turning it OFF is a
         # real thing to want: it gives N and the microphone back.
-        # OFF BY DEFAULT. It used to switch itself on once the panel was
-        # up, on the reasoning that a feature nobody has to enable is one
-        # nobody has to find. In practice it claims a hotkey and opens the
-        # microphone for everyone who opens TouchPose, including the many
-        # sessions that never say a word -- so it waits to be asked. The
-        # checkbox is the way in, and TOUCHPOSE_VOICE_AUTOSTART=1 brings
-        # the old behaviour back for anyone who wants it.
+        # OFF BY DEFAULT: it claims a hotkey and opens the microphone, so
+        # it waits to be asked. The checkbox is the way in, and
+        # TOUCHPOSE_VOICE_AUTOSTART=1 starts it by itself.
         if os.environ.get("TOUCHPOSE_VOICE_AUTOSTART", "").strip() not in (
                 "", "0", "false", "False"):
             QtCore.QTimer.singleShot(0, self._AutoStartVoice)
@@ -2372,10 +2348,9 @@ class TouchPosePanel(QtWidgets.QDialog):
         self._list.clear()
         model = self._controller.model
         self._SyncLayers()
-        # A new stage is a new vocabulary. Cheap enough to do on every
-        # reload -- the grammar took 0.12 s to load at 474 phrases -- and
-        # leaving it stale would have the recogniser answering with prim
-        # paths that are no longer on the stage.
+        # A new stage is a new vocabulary, so the recogniser refreshes on
+        # every reload: a stale one answers with prim paths that are no
+        # longer on the stage.
         if self._voice is not None:
             self._voice.Refresh()
         if model is None:
@@ -2449,20 +2424,13 @@ class TouchPosePanel(QtWidgets.QDialog):
                                           for p in paths)))
 
     def closeEvent(self, event):
-        # THE MODE OUTLIVES THE WINDOW, deliberately, and this used to be
-        # the other way round. The old rule was that closing the window
-        # turned the mode off, on the grounds that a mode with no visible
-        # control which still eats every click is the worst version of
-        # this feature. The animator's answer is that the toggle IS the
-        # control: highlighting, clicking, dragging and moving controls
-        # in the viewport should keep working for as long as TouchPose is
-        # set active in the editor, panel open or not. So the toggle
-        # alone decides, and closing the window changes nothing.
+        # THE MODE OUTLIVES THE WINDOW, deliberately: the toggle alone
+        # decides, and closing the window changes nothing.
         #
-        # VOICE IS NOT INCLUDED and the old rule still holds for it: it
-        # owns a live microphone, an application-wide event filter and a
-        # subprocess, none of which may outlive the window that started
-        # them. None of the three is viewport interaction.
+        # VOICE IS NOT INCLUDED: it owns a live microphone, an
+        # application-wide event filter and a subprocess, none of which
+        # may outlive the window that started them. None of the three is
+        # viewport interaction.
         if self._voice is not None:
             self._voice.SetEnabled(False)
             self._SetChecked(self._voiceToggle, False)

@@ -272,9 +272,8 @@ public:
     // reason, and nothing changes, for an unknown name, a value of another
     // type (a Double sets a Float input through static_cast<float>), a
     // non-finite component, or a Token id that names no text.
-    // One gap against the USD evaluators remains: a plugin mover applies
-    // the payload its bake assembled, so an input it reads does not reach
-    // that mover's output.
+    // A plugin mover applies the payload its bake assembled, so an input
+    // it reads does not reach that mover's output.
     bool SetInput(const std::string &name, const RrInputValue &value,
                   std::string *error);
     // A Double input, or a Float input through static_cast<float>.
@@ -399,8 +398,7 @@ public:
     std::vector<std::string> GetMissingExternalKernels() const;
 
     // Test-only family mask (bit 0 pose, 1 weights, 2 geometry, all set
-    // by default). A masked family's steps are skipped, which is how
-    // one family's outputs are compared while another is still landing.
+    // by default). A masked family's steps are skipped.
 
     // Test-only: the label error text names step \p step by, as the baked
     // program spells it; the step's number past the steps.

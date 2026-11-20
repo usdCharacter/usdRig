@@ -131,8 +131,7 @@ jobs:
         # --usd-imaging     -> PXR_BUILD_IMAGING=ON + PXR_BUILD_USD_IMAGING=ON
         # --no-usdview      -> skip PySide/PyOpenGL
         # --no-python       -> first-gate prefix: C++ tests do not need pxr
-        #                      Python bindings. Python + usdNoodles return
-        #                      when that job is added.
+        #                      Python bindings.
         # --no-materialx    -> drop MaterialX
         # --build-args USD  -> keep OpenExec on even if a later OpenUSD
         #                      default flips (PXR_BUILD_EXEC is ON in 26.08)

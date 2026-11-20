@@ -896,9 +896,7 @@ def _section(ident, title, inner):
 # Restores the table of contents' own scroll position across page loads.
 # It is emitted inline immediately after the #toc markup -- the element is
 # fully parsed by then, and the assignment lands before the browser paints,
-# so the list does not visibly jump back to the top.  sessionStorage can
-# throw outright (file:// in some browsers, blocked site data), so every
-# access is guarded and a failure just means the page behaves as before.
+# so the list does not visibly jump back to the top.
 TOC_JS = """\
 <script>
 (function () {

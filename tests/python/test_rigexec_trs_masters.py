@@ -49,9 +49,8 @@ _JNT = _AUX + "/Joints"
 _ROOT_JOINT = _JNT + "/hips_def"
 _HEAD = _CTL + "/M_Body/M_Torso/M_Chest/M_ChestTop/M_Neck/M_Head"
 _TORSO = _CTL + "/M_Body/M_Torso"
-# The squetch clusters hang off this one. A torso turn does not
-# reach them, so a scale guard that poses only the torso passes
-# while they are out by 25 units.
+# The squetch clusters hang off this one. A torso turn does not reach
+# them.
 _HEADWIRE = _CTL + "/headwire_top_follow/M_HeadwireTop"
 # The skinned body. Absent from the standalone assemblies, which carry
 # the rig without the model -- the mesh check skips itself there rather
@@ -66,7 +65,7 @@ _BODY = "/Biped/Geom/body_geo.points"
 # double-precision drift -- measured, with the carry otherwise exact.
 # 1e-5 on a rig whose joints sit ~150 units from the origin is about
 # 1e-7 relative, which still catches anything real by four orders of
-# magnitude: the bug this file was written for missed by 3.8 UNITS.
+# magnitude.
 _EPS = 1e-5
 
 
@@ -269,9 +268,7 @@ def _check_file(path, mode):
     #     Two poses, because the two deformer families that get this
     #     wrong are reached by different controls. A torso turn drives
     #     the curve wires; a headwire control drives the squetch
-    #     CLUSTERS, which the torso turn leaves at the floor -- so a
-    #     guard with only the first one passes while the second is out
-    #     by 25 units.
+    #     CLUSTERS, which the torso turn leaves at the floor.
     for label, control, avar, value in (
             ("wires", _TORSO, "rz", 15.0),
             ("clusters", _HEADWIRE, "tx", 2.0)):
@@ -288,9 +285,7 @@ def _check_file(path, mode):
             two = _points(rig, stage)
             worst = max(max(abs(b - 2.0 * a) for a, b in zip(pa, pb))
                         for pa, pb in zip(one, two))
-            # 1e-4 on a mesh whose points sit ~150 units out. The two
-            # bugs this guards missed by 1.54 and 3.62 units (wires) and
-            # 25.02 (clusters).
+            # 1e-4 on a mesh whose points sit ~150 units out.
             assert worst < 1e-4, ("skinned mesh under master scale",
                                   label, worst)
             print("    %-28s %d points scale exactly (worst %.2e)"
@@ -300,13 +295,10 @@ def _check_file(path, mode):
         _set_avar(stage, control, avar, 0.0)
 
     # 3c. The skinned MESH rides the master's carry under a TRANSLATION,
-    #     not only under a scale. 3b above measures scale alone, and
-    #     scale is the one case the old half-fix already handled: a
-    #     cluster whose points are already posed conjugated by its
-    #     space's SCALE and by nothing else, so a translated master left
-    #     head_top_aim_cluster dragging body_geo 5.70 units out of shape
-    #     while every joint above it stayed exactly right and every
-    #     scale check here passed.
+    #     not only under a scale. 3b above measures scale alone: a
+    #     cluster whose points are already posed is conjugated by its
+    #     space's SCALE and by nothing else, so a translated master must
+    #     carry the mesh too.
     #
     #     Posed first and across EVERY mesh, for the reasons 3b gives.
     #     The map comes from the joints, so this asserts the mesh and the
@@ -341,8 +333,7 @@ def _check_file(path, mode):
                 # 2e-4 on points ~150 units out. The composed carry is a
                 # product of matrices and the three-axis case accumulates
                 # 4.8e-05 of pure double-precision drift, measured with it
-                # otherwise exact; the two bugs this guards missed by 5.70
-                # units (clusters) and 1.10 (wires), four orders clear.
+                # otherwise exact.
                 _rides(before_pts, _all_points(rig),
                        s, "skin follows: " + label, 2e-4)
                 _zero(stage, _MAIN, [n for n, _ in avars])

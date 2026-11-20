@@ -3323,8 +3323,7 @@ RrGeoFrameScale(const RrMat4d &frame)
 // normally a TRS master's -- and conjugating by it is what makes a
 // post-skin cluster ride a moved master instead of shearing the mesh by
 // T*R - T. A null \p carry falls back to conjugating by the space's own
-// SCALE, which is all the correction there was before a carry could be
-// named; the two never compose, because a named carry already holds the
+// SCALE; the two never compose, because a named carry already holds the
 // master's scale. A rig naming no space under an unscaled master measures
 // (1, 1, 1) and \p m comes back untouched.
 RrMat4d
@@ -6472,9 +6471,7 @@ RrGeoAssembleBlendShape(const RrGeoAssembleInputs &in,
 {
     RrGeoAssembleBlendDeltas(in, base, &params->blendDeltas);
     // rigExec:deltaSpace reads at Default and is never recorded, so the
-    // runtime cannot replay it; no shipped rig authors anything but the
-    // "target" default the bake therefore always saw. (Framework need:
-    // record the token or carry it on the wire.)
+    // runtime cannot replay it.
     params->blendSurfaceFrame = false;
     params->valid = !params->blendDeltas.empty();
 }
@@ -10286,7 +10283,6 @@ RrGeoCompareSkinSplitForTesting(std::string *error, double *linearSerialUs,
                nullptr)) {
         return false;
     }
-    // The measured body is the 26,276-point mesh the baked split was timed on.
     constexpr size_t kBodyPoints = 26276;
     if (!check("linear", kBodyPoints, "classicLinear", true, false, nullptr,
                nullptr) ||

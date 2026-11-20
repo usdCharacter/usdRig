@@ -32,12 +32,12 @@ static int failures = 0;
 // (it needs _USE_MATH_DEFINES on MSVC and a non-strict mode on glibc).
 static const double kPi = std::acos(-1);
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 static bool
@@ -61,13 +61,11 @@ SameBits(float a, float b)
 static bool
 SameVec3fBits(const GfVec3f &a, const GfVec3f &b)
 {
-    return SameBits(a[0], b[0]) && SameBits(a[1], b[1]) &&
-           SameBits(a[2], b[2]);
+    return SameBits(a[0], b[0]) && SameBits(a[1], b[1]) && SameBits(a[2], b[2]);
 }
 
 static bool
-SameVec3fArrayBits(const std::vector<GfVec3f> &a,
-                   const std::vector<GfVec3f> &b)
+SameVec3fArrayBits(const std::vector<GfVec3f> &a, const std::vector<GfVec3f> &b)
 {
     if (a.size() != b.size()) {
         return false;
@@ -129,12 +127,18 @@ static std::array<int, 3>
 EulerOrderIndices(RigExecEulerOrder order)
 {
     switch (order) {
-    case RigExecEulerOrder::XYZ: return {0, 1, 2};
-    case RigExecEulerOrder::XZY: return {0, 2, 1};
-    case RigExecEulerOrder::YXZ: return {1, 0, 2};
-    case RigExecEulerOrder::YZX: return {1, 2, 0};
-    case RigExecEulerOrder::ZXY: return {2, 0, 1};
-    case RigExecEulerOrder::ZYX: return {2, 1, 0};
+    case RigExecEulerOrder::XYZ:
+        return {0, 1, 2};
+    case RigExecEulerOrder::XZY:
+        return {0, 2, 1};
+    case RigExecEulerOrder::YXZ:
+        return {1, 0, 2};
+    case RigExecEulerOrder::YZX:
+        return {1, 2, 0};
+    case RigExecEulerOrder::ZXY:
+        return {2, 0, 1};
+    case RigExecEulerOrder::ZYX:
+        return {2, 1, 0};
     }
     return {0, 1, 2};
 }
@@ -142,49 +146,48 @@ EulerOrderIndices(RigExecEulerOrder order)
 static GfMatrix4d
 EulerMatrix(const GfVec3d &degrees, RigExecEulerOrder order)
 {
-    static const GfVec3d axes[3] = {
-        GfVec3d(1, 0, 0), GfVec3d(0, 1, 0), GfVec3d(0, 0, 1)};
+    static const GfVec3d axes[3] = {GfVec3d(1, 0, 0), GfVec3d(0, 1, 0),
+                                    GfVec3d(0, 0, 1)};
     GfMatrix4d result(1.0);
     for (const int axis : EulerOrderIndices(order)) {
-        result = result * GfMatrix4d(
-            GfRotation(axes[axis], degrees[axis]), GfVec3d(0));
+        result = result *
+                 GfMatrix4d(GfRotation(axes[axis], degrees[axis]), GfVec3d(0));
     }
     return result;
 }
 
 static RigExecPointFrame
-ConstraintFrame(
-    const GfVec3d &translation = GfVec3d(0),
-    const GfVec3d &rotationDegrees = GfVec3d(0),
-    const GfVec3d &scale = GfVec3d(1),
-    const GfVec3d &shear = GfVec3d(0),
-    RigExecEulerOrder order = RigExecEulerOrder::XYZ)
+ConstraintFrame(const GfVec3d &translation = GfVec3d(0),
+                const GfVec3d &rotationDegrees = GfVec3d(0),
+                const GfVec3d &scale = GfVec3d(1),
+                const GfVec3d &shear = GfVec3d(0),
+                RigExecEulerOrder order = RigExecEulerOrder::XYZ)
 {
     RigExecTransformParams params;
     params.translation = translation;
     params.rotation = EulerMatrix(rotationDegrees, order)
-                          .ExtractRotation().GetQuat().GetNormalized();
+                          .ExtractRotation()
+                          .GetQuat()
+                          .GetNormalized();
     params.scale = scale;
     params.shear = shear;
     return RigExecMatrixToPoints(kUnitRest, RigExecParamsToMatrix(params));
 }
 
 static bool
-ConstraintParams(
-    const RigExecPointFrame &frame, RigExecTransformParams *params)
+ConstraintParams(const RigExecPointFrame &frame, RigExecTransformParams *params)
 {
-    return RigExecPointsToParams(
-        kUnitRest, frame.points, RigExecAxis::Z, params);
+    return RigExecPointsToParams(kUnitRest, frame.points, RigExecAxis::Z,
+                                 params);
 }
 
 static bool
-SameLinearPart(
-    const RigExecPointFrame &a, const RigExecPointFrame &b,
-    double tolerance = 1e-10)
+SameLinearPart(const RigExecPointFrame &a, const RigExecPointFrame &b,
+               double tolerance = 1e-10)
 {
     for (int i = 1; i < 4; ++i) {
-        if (!Near(a.points[i] - a.Origin(),
-                  b.points[i] - b.Origin(), tolerance)) {
+        if (!Near(a.points[i] - a.Origin(), b.points[i] - b.Origin(),
+                  tolerance)) {
             return false;
         }
     }
@@ -215,10 +218,10 @@ TestPointsToMatrixRoundTrip()
     // translation: transform the rest landmarks, then verify the derived
     // matrix reproduces them (conformance by transforming points, spec §5.1).
     GfMatrix4d shear(1.0);
-    shear[1][0] = 0.35;  // row-vector storage: y contributes to x
-    GfMatrix4d m = GfMatrix4d(1.0).SetScale(GfVec3d(2, 3, 0.5)) * shear *
-                   GfMatrix4d(GfRotation(GfVec3d(1, 2, 3), 41.0),
-                              GfVec3d(5, -2, 7));
+    shear[1][0] = 0.35; // row-vector storage: y contributes to x
+    GfMatrix4d m =
+        GfMatrix4d(1.0).SetScale(GfVec3d(2, 3, 0.5)) * shear *
+        GfMatrix4d(GfRotation(GfVec3d(1, 2, 3), 41.0), GfVec3d(5, -2, 7));
 
     std::array<GfVec3d, 4> pose;
     for (size_t i = 0; i < 4; ++i) {
@@ -236,8 +239,8 @@ TestPointsToMatrixRoundTrip()
     GfMatrix4d again;
     CHECK(RigExecPointsToMatrix(kShoulderRest, frame, &again));
     // Compare by action on probe points.
-    const GfVec3d probes[3] = {
-        GfVec3d(1, 2, 3), GfVec3d(-4, 0.5, 2), GfVec3d(10, 10, 10)};
+    const GfVec3d probes[3] = {GfVec3d(1, 2, 3), GfVec3d(-4, 0.5, 2),
+                               GfVec3d(10, 10, 10)};
     for (const GfVec3d &p : probes) {
         CHECK(Near(again.TransformAffine(p), m.TransformAffine(p), 1e-8));
     }
@@ -271,8 +274,8 @@ static void
 TestSingularReference()
 {
     // Collapsed reference frame: no derivable map.
-    std::array<GfVec3d, 4> collapsed = {
-        GfVec3d(0, 0, 0), GfVec3d(0, 0, 0), GfVec3d(0, 0, 0), GfVec3d(0, 0, 0)};
+    std::array<GfVec3d, 4> collapsed = {GfVec3d(0, 0, 0), GfVec3d(0, 0, 0),
+                                        GfVec3d(0, 0, 0), GfVec3d(0, 0, 0)};
     GfMatrix4d m;
     CHECK(!RigExecPointsToMatrix(collapsed, kUnitRest, &m));
 }
@@ -284,11 +287,9 @@ TestOrthogonalReconstruction()
     args.policy = RigExecFramePolicy::Orthogonal;
 
     // Pose: aim rotated into +Y with doubled aim length and skewed up.
-    std::array<GfVec3d, 4> pose = {
-        GfVec3d(0, 0, 0), GfVec3d(0, 2, 0), GfVec3d(-0.9, 0.1, 0),
-        GfVec3d(0, 0, 1)};
-    const RigExecPointFrame f =
-        RigExecReconstructFrame(kUnitRest, pose, args);
+    std::array<GfVec3d, 4> pose = {GfVec3d(0, 0, 0), GfVec3d(0, 2, 0),
+                                   GfVec3d(-0.9, 0.1, 0), GfVec3d(0, 0, 1)};
+    const RigExecPointFrame f = RigExecReconstructFrame(kUnitRest, pose, args);
     CHECK(f.IsValid());
     CHECK(!f.IsDegenerate());
     // Aim preserved with sx = 2.
@@ -304,8 +305,7 @@ TestOrthogonalReconstruction()
 
     // Rigid forces unit handles.
     args.policy = RigExecFramePolicy::Rigid;
-    const RigExecPointFrame r =
-        RigExecReconstructFrame(kUnitRest, pose, args);
+    const RigExecPointFrame r = RigExecReconstructFrame(kUnitRest, pose, args);
     CHECK(std::abs((r.X() - r.Origin()).GetLength() - 1.0) < 1e-9);
     CHECK(std::abs((r.Y() - r.Origin()).GetLength() - 1.0) < 1e-9);
 
@@ -325,8 +325,8 @@ TestDegenerateFallbacks()
 
     // Coincident aim landmark: degenerate, points preserved (no silent
     // identity).
-    std::array<GfVec3d, 4> collapsedAim = {
-        GfVec3d(1, 2, 3), GfVec3d(1, 2, 3), GfVec3d(1, 3, 3), GfVec3d(1, 2, 4)};
+    std::array<GfVec3d, 4> collapsedAim = {GfVec3d(1, 2, 3), GfVec3d(1, 2, 3),
+                                           GfVec3d(1, 3, 3), GfVec3d(1, 2, 4)};
     const RigExecPointFrame f =
         RigExecReconstructFrame(kUnitRest, collapsedAim, args);
     CHECK(f.IsDegenerate());
@@ -334,8 +334,8 @@ TestDegenerateFallbacks()
 
     // Up parallel to aim: twist underdetermined; deterministic fallback
     // still produces an orthonormal frame, flagged degenerate.
-    std::array<GfVec3d, 4> upOnAim = {
-        GfVec3d(0, 0, 0), GfVec3d(2, 0, 0), GfVec3d(1, 0, 0), GfVec3d(0, 0, 1)};
+    std::array<GfVec3d, 4> upOnAim = {GfVec3d(0, 0, 0), GfVec3d(2, 0, 0),
+                                      GfVec3d(1, 0, 0), GfVec3d(0, 0, 1)};
     const RigExecPointFrame g =
         RigExecReconstructFrame(kUnitRest, upOnAim, args);
     CHECK(g.IsDegenerate());
@@ -411,8 +411,7 @@ TestTwoBoneIk()
     RigExecPointFrame effector;
     effector.points = {GfVec3d(6, 10, 0), GfVec3d(8, 10, 0), GfVec3d(6, 11, 0),
                        GfVec3d(6, 10, 1)};
-    auto frames =
-        RigExecSolveTwoBoneIk(root, effector, pole, rests, params);
+    auto frames = RigExecSolveTwoBoneIk(root, effector, pole, rests, params);
     CHECK(Near(frames[0].Origin(), GfVec3d(0, 10, 0)));
     CHECK(Near(frames[2].Origin(), GfVec3d(6, 10, 0), 1e-9));
     const double upper = (frames[1].Origin() - frames[0].Origin()).GetLength();
@@ -433,7 +432,7 @@ TestTwoBoneIk()
     CHECK(Near(frames[2].Origin(), GfVec3d(12, 10, 0), 1e-9));
     const double su = (frames[1].Origin() - frames[0].Origin()).GetLength();
     const double sl = (frames[2].Origin() - frames[1].Origin()).GetLength();
-    CHECK(std::abs(su - sl) < 1e-9);  // uniformSegments
+    CHECK(std::abs(su - sl) < 1e-9); // uniformSegments
 }
 
 static void
@@ -478,8 +477,7 @@ TestTwistDistribution()
     CHECK(frames.size() == 3);
     CHECK(Near(frames[0].Y() - frames[0].Origin(), GfVec3d(0, 1, 0), 1e-9));
     // Half twist: up rotated 45 degrees about X.
-    const GfVec3d halfUp =
-        (frames[1].Y() - frames[1].Origin()).GetNormalized();
+    const GfVec3d halfUp = (frames[1].Y() - frames[1].Origin()).GetNormalized();
     CHECK(Near(halfUp, GfVec3d(0, std::sqrt(0.5), std::sqrt(0.5)), 1e-8));
     // Origins lerp along the segment.
     CHECK(Near(frames[1].Origin(), GfVec3d(2, 0, 0), 1e-9));
@@ -492,8 +490,7 @@ static void
 TestParamsRoundTrip()
 {
     // Matrix -> points -> params -> matrix must round trip for rotated
-    // nonuniform scale and every shear component (spec §5.4; regression
-    // for the upper-triangular stretch-rebuild defect).
+    // nonuniform scale and every shear component (spec §5.4).
     GfMatrix4d shearXY(1.0), shearXZ(1.0), shearYZ(1.0);
     shearXY[1][0] = 0.4;
     shearXZ[2][0] = -0.3;
@@ -508,8 +505,8 @@ TestParamsRoundTrip()
         GfMatrix4d(1.0).SetScale(GfVec3d(2, -1.5, 1)) * shearXY *
             GfMatrix4d(GfRotation(GfVec3d(0, 1, 0), 63.0), GfVec3d(0, 2, 0)),
     };
-    const GfVec3d probes[3] = {
-        GfVec3d(1, 2, 3), GfVec3d(-4, 0.5, 2), GfVec3d(0.3, -7, 1.1)};
+    const GfVec3d probes[3] = {GfVec3d(1, 2, 3), GfVec3d(-4, 0.5, 2),
+                               GfVec3d(0.3, -7, 1.1)};
     for (const GfMatrix4d &m : cases) {
         const RigExecPointFrame frame = RigExecMatrixToPoints(kUnitRest, m);
         RigExecTransformParams params;
@@ -517,8 +514,7 @@ TestParamsRoundTrip()
                                     &params));
         const GfMatrix4d rebuilt = RigExecParamsToMatrix(params);
         for (const GfVec3d &p : probes) {
-            CHECK(Near(rebuilt.TransformAffine(p), m.TransformAffine(p),
-                       1e-8));
+            CHECK(Near(rebuilt.TransformAffine(p), m.TransformAffine(p), 1e-8));
         }
     }
 
@@ -541,8 +537,7 @@ TestParamsRoundTrip()
         }
         const GfMatrix4d rebuilt = RigExecParamsToMatrix(params);
         for (const GfVec3d &p : probes) {
-            CHECK(Near(rebuilt.TransformAffine(p), m.TransformAffine(p),
-                       1e-8));
+            CHECK(Near(rebuilt.TransformAffine(p), m.TransformAffine(p), 1e-8));
         }
     }
 }
@@ -556,9 +551,8 @@ TestTwistSideScaleInteraction()
     args.policy = RigExecFramePolicy::Orthogonal;
     args.twist = kPi / 2;
 
-    std::array<GfVec3d, 4> mirrored = {
-        GfVec3d(0, 0, 0), GfVec3d(1, 0, 0), GfVec3d(0, 1, 0),
-        GfVec3d(0, 0, -1)};
+    std::array<GfVec3d, 4> mirrored = {GfVec3d(0, 0, 0), GfVec3d(1, 0, 0),
+                                       GfVec3d(0, 1, 0), GfVec3d(0, 0, -1)};
     const RigExecPointFrame f =
         RigExecReconstructFrame(kUnitRest, mirrored, args);
     CHECK(f.flags & RigExecPointFrameReflected);
@@ -577,9 +571,9 @@ TestTwistSideScaleInteraction()
     CHECK(Near(r.Z() - r.Origin(), GfVec3d(0, 0, -1), 1e-9));
 
     // Zero side determinant follows the authored policy sign.
-    std::array<GfVec3d, 4> planarSide = {
-        GfVec3d(0, 0, 0), GfVec3d(1, 0, 0), GfVec3d(0, 1, 0),
-        GfVec3d(0.5, 0.5, 0)};
+    std::array<GfVec3d, 4> planarSide = {GfVec3d(0, 0, 0), GfVec3d(1, 0, 0),
+                                         GfVec3d(0, 1, 0),
+                                         GfVec3d(0.5, 0.5, 0)};
     args.policy = RigExecFramePolicy::Orthogonal;
     args.zeroSideSign = -1.0;
     const RigExecPointFrame z =
@@ -598,7 +592,7 @@ TestAimUpAxisSelection()
     args.upAxis = RigExecAxis::Z;
 
     std::array<GfVec3d, 4> pose = kUnitRest;
-    pose[2] = GfVec3d(0, 2, 0);  // doubled aim (Y landmark)
+    pose[2] = GfVec3d(0, 2, 0); // doubled aim (Y landmark)
     const RigExecPointFrame f = RigExecReconstructFrame(kUnitRest, pose, args);
     CHECK(!f.IsDegenerate());
     CHECK(Near(f.Y() - f.Origin(), GfVec3d(0, 2, 0), 1e-9));
@@ -619,15 +613,16 @@ TestIkDegeneracies()
         for (const RigExecPointFrame &f : frames) {
             for (const GfVec3d &p : f.points) {
                 for (int i = 0; i < 3; ++i) {
-                    if (!std::isfinite(p[i])) return false;
+                    if (!std::isfinite(p[i]))
+                        return false;
                 }
             }
         }
         return true;
     };
 
-    std::array<std::array<GfVec3d, 4>, 3> rests = {
-        kUnitRest, kUnitRest, kUnitRest};
+    std::array<std::array<GfVec3d, 4>, 3> rests = {kUnitRest, kUnitRest,
+                                                   kUnitRest};
 
     // Coincident goal with a degenerate root aim handle: atomic
     // pass-through flagged degenerate, never NaN.
@@ -637,8 +632,8 @@ TestIkDegeneracies()
     RigExecPointFrame goalAtRoot;
     goalAtRoot.points = kUnitRest;
     goalAtRoot.points[0] = GfVec3d(0, 0, 0);
-    auto frames = RigExecSolveTwoBoneIk(
-        collapsedRoot, collapsedRoot, goalAtRoot, rests, params);
+    auto frames = RigExecSolveTwoBoneIk(collapsedRoot, collapsedRoot,
+                                        goalAtRoot, rests, params);
     CHECK(allFinite(frames));
     CHECK(frames[0].IsDegenerate());
 
@@ -657,8 +652,8 @@ TestIkDegeneracies()
     frames = RigExecSolveTwoBoneIk(root, goal, poleOnAim, degRests, params);
     CHECK(allFinite(frames));
     // Bone lengths preserved.
-    CHECK(std::abs((frames[1].Origin() - frames[0].Origin()).GetLength() - 4)
-          < 1e-9);
+    CHECK(std::abs((frames[1].Origin() - frames[0].Origin()).GetLength() - 4) <
+          1e-9);
 }
 
 static void
@@ -698,29 +693,29 @@ TestAimConstraintKernel()
     // Reflected input keeps its handedness through the rebuild.
     RigExecPointFrame mirrored;
     mirrored.points = kUnitRest;
-    mirrored.points[1] = GfVec3d(-1, 0, 0);  // side landmark flipped
-    const RigExecPointFrame aimedMirrored = RigExecApplyAimConstraint(
-        mirrored, GfVec3d(5, 0, 0), 1.0, 2);
-    CHECK(Near(aimedMirrored.X() - aimedMirrored.Origin(),
-               GfVec3d(0, 1, 0), 1e-9));
+    mirrored.points[1] = GfVec3d(-1, 0, 0); // side landmark flipped
+    const RigExecPointFrame aimedMirrored =
+        RigExecApplyAimConstraint(mirrored, GfVec3d(5, 0, 0), 1.0, 2);
+    CHECK(Near(aimedMirrored.X() - aimedMirrored.Origin(), GfVec3d(0, 1, 0),
+               1e-9));
 
     // Non-finite weight fails atomically with a degenerate flag.
-    const RigExecPointFrame bad = RigExecApplyAimConstraint(
-        input, GfVec3d(5, 0, 0), std::nan(""), 1);
+    const RigExecPointFrame bad =
+        RigExecApplyAimConstraint(input, GfVec3d(5, 0, 0), std::nan(""), 1);
     CHECK(bad.IsDegenerate());
 
     // Overshooting weight clamps to the target direction.
-    const RigExecPointFrame clamped = RigExecApplyAimConstraint(
-        input, GfVec3d(0, 5, 0), 2.0, 1);
+    const RigExecPointFrame clamped =
+        RigExecApplyAimConstraint(input, GfVec3d(0, 5, 0), 2.0, 1);
     CHECK(Near(clamped.X() - clamped.Origin(), GfVec3d(0, 1, 0), 1e-9));
 }
 
 static void
 TestFbxPositionConstraintKernel()
 {
-    const RigExecPointFrame input = ConstraintFrame(
-        GfVec3d(2, 3, 4), GfVec3d(12, -8, 23),
-        GfVec3d(2, 3, 4), GfVec3d(0.1, -0.05, 0.07));
+    const RigExecPointFrame input =
+        ConstraintFrame(GfVec3d(2, 3, 4), GfVec3d(12, -8, 23), GfVec3d(2, 3, 4),
+                        GfVec3d(0.1, -0.05, 0.07));
     RigExecConstraintSource a, b;
     a.frame = ConstraintFrame(GfVec3d(10, 20, 30));
     a.normalizedWeight = 1.0;
@@ -754,8 +749,8 @@ TestFbxPositionConstraintKernel()
 static void
 TestFbxRotationConstraintKernel()
 {
-    const RigExecPointFrame input = ConstraintFrame(
-        GfVec3d(3, 4, 5), GfVec3d(0, 0, 170));
+    const RigExecPointFrame input =
+        ConstraintFrame(GfVec3d(3, 4, 5), GfVec3d(0, 0, 170));
     RigExecConstraintSource a, b;
     a.frame = ConstraintFrame(GfVec3d(0), GfVec3d(0, 0, -170));
     a.normalizedWeight = 1.0;
@@ -775,10 +770,9 @@ TestFbxRotationConstraintKernel()
     // weighted mean is -10; the global +20 offset makes +10, and global
     // weight 0.5 lands at 175 degrees rather than crossing the long arc.
     const double radians = 175.0 * kPi / 180.0;
-    const GfVec3d outputX =
-        (output.X() - output.Origin()).GetNormalized();
-    CHECK(Near(outputX, GfVec3d(std::cos(radians), std::sin(radians), 0),
-               1e-8));
+    const GfVec3d outputX = (output.X() - output.Origin()).GetNormalized();
+    CHECK(
+        Near(outputX, GfVec3d(std::cos(radians), std::sin(radians), 0), 1e-8));
     RigExecTransformParams before, after;
     CHECK(ConstraintParams(input, &before));
     CHECK(ConstraintParams(output, &after));
@@ -790,26 +784,23 @@ TestFbxRotationConstraintKernel()
     // constrained object's prior rotation. The source-anchored average of
     // +170 and -170 degrees is the shared half-turn, not zero degrees.
     RigExecConstraintSource branchA, branchB;
-    branchA.frame = ConstraintFrame(
-        GfVec3d(0), GfVec3d(0, 0, 170));
-    branchB.frame = ConstraintFrame(
-        GfVec3d(0), GfVec3d(0, 0, -170));
+    branchA.frame = ConstraintFrame(GfVec3d(0), GfVec3d(0, 0, 170));
+    branchB.frame = ConstraintFrame(GfVec3d(0), GfVec3d(0, 0, -170));
     RigExecRotationConstraintParams branchParams;
     const RigExecPointFrame fromZero = RigExecApplyRotationConstraint(
         ConstraintFrame(), {branchA, branchB}, branchParams);
     const RigExecPointFrame fromNearBranch = RigExecApplyRotationConstraint(
-        ConstraintFrame(GfVec3d(0), GfVec3d(0, 0, 170)),
-        {branchA, branchB}, branchParams);
+        ConstraintFrame(GfVec3d(0), GfVec3d(0, 0, 170)), {branchA, branchB},
+        branchParams);
     CHECK(SameLinearPart(fromZero, fromNearBranch, 1e-8));
-    CHECK(Near(
-        (fromZero.X() - fromZero.Origin()).GetNormalized(),
-        GfVec3d(-1, 0, 0), 1e-8));
+    CHECK(Near((fromZero.X() - fromZero.Origin()).GetNormalized(),
+               GfVec3d(-1, 0, 0), 1e-8));
 
-    const RigExecPointFrame affineInput = ConstraintFrame(
-        GfVec3d(-2, 7, 1), GfVec3d(12, -8, 23),
-        GfVec3d(2, 3, 4), GfVec3d(0.08, -0.03, 0.04));
-    const RigExecPointFrame affineOutput = RigExecApplyRotationConstraint(
-        affineInput, {a, b}, params);
+    const RigExecPointFrame affineInput =
+        ConstraintFrame(GfVec3d(-2, 7, 1), GfVec3d(12, -8, 23),
+                        GfVec3d(2, 3, 4), GfVec3d(0.08, -0.03, 0.04));
+    const RigExecPointFrame affineOutput =
+        RigExecApplyRotationConstraint(affineInput, {a, b}, params);
     CHECK(ConstraintParams(affineInput, &before));
     CHECK(ConstraintParams(affineOutput, &after));
     CHECK(Near(after.translation, before.translation, 1e-8));
@@ -818,14 +809,12 @@ TestFbxRotationConstraintKernel()
 
     // Every FBX Euler order round-trips a nontrivial source orientation.
     const RigExecEulerOrder orders[] = {
-        RigExecEulerOrder::XYZ, RigExecEulerOrder::XZY,
-        RigExecEulerOrder::YXZ, RigExecEulerOrder::YZX,
-        RigExecEulerOrder::ZXY, RigExecEulerOrder::ZYX};
+        RigExecEulerOrder::XYZ, RigExecEulerOrder::XZY, RigExecEulerOrder::YXZ,
+        RigExecEulerOrder::YZX, RigExecEulerOrder::ZXY, RigExecEulerOrder::ZYX};
     for (const RigExecEulerOrder order : orders) {
         RigExecConstraintSource source;
-        source.frame = ConstraintFrame(
-            GfVec3d(0), GfVec3d(20, -30, 40), GfVec3d(1),
-            GfVec3d(0), order);
+        source.frame = ConstraintFrame(GfVec3d(0), GfVec3d(20, -30, 40),
+                                       GfVec3d(1), GfVec3d(0), order);
         RigExecRotationConstraintParams orderParams;
         orderParams.rotationOrder = order;
         const RigExecPointFrame ordered = RigExecApplyRotationConstraint(
@@ -835,32 +824,29 @@ TestFbxRotationConstraintKernel()
 
     // Axis masks operate on Euler components in the selected order.
     RigExecConstraintSource maskedSource;
-    maskedSource.frame = ConstraintFrame(
-        GfVec3d(0), GfVec3d(35, 45, 55));
+    maskedSource.frame = ConstraintFrame(GfVec3d(0), GfVec3d(35, 45, 55));
     RigExecRotationConstraintParams maskedParams;
     maskedParams.affect = {false, true, false};
     const RigExecPointFrame masked = RigExecApplyRotationConstraint(
         ConstraintFrame(), {maskedSource}, maskedParams);
-    CHECK(SameLinearPart(
-        masked, ConstraintFrame(GfVec3d(0), GfVec3d(0, 45, 0)), 1e-8));
+    CHECK(SameLinearPart(masked, ConstraintFrame(GfVec3d(0), GfVec3d(0, 45, 0)),
+                         1e-8));
 }
 
 static void
 TestFbxScaleConstraintKernel()
 {
-    const RigExecPointFrame input = ConstraintFrame(
-        GfVec3d(2, -3, 4), GfVec3d(10, 20, -15),
-        GfVec3d(2, 3, 4), GfVec3d(0.1, -0.04, 0.06));
+    const RigExecPointFrame input =
+        ConstraintFrame(GfVec3d(2, -3, 4), GfVec3d(10, 20, -15),
+                        GfVec3d(2, 3, 4), GfVec3d(0.1, -0.04, 0.06));
     RigExecConstraintSource a, b;
-    a.frame = ConstraintFrame(
-        GfVec3d(0), GfVec3d(0), GfVec3d(4, 6, 8));
+    a.frame = ConstraintFrame(GfVec3d(0), GfVec3d(0), GfVec3d(4, 6, 8));
     a.normalizedWeight = 1.0;
-    b.frame = ConstraintFrame(
-        GfVec3d(0), GfVec3d(0), GfVec3d(8, 10, 12));
+    b.frame = ConstraintFrame(GfVec3d(0), GfVec3d(0), GfVec3d(8, 10, 12));
     b.normalizedWeight = 3.0;
 
     RigExecScaleConstraintParams params;
-    params.offset = GfVec3d(1, -1, 2);  // additive; FBX default is zero
+    params.offset = GfVec3d(1, -1, 2); // additive; FBX default is zero
     params.affect = {true, false, true};
     params.weight = 0.5;
     const RigExecPointFrame output =
@@ -879,8 +865,7 @@ TestFbxScaleConstraintKernel()
 
     RigExecScaleConstraintParams defaults;
     RigExecConstraintSource four;
-    four.frame = ConstraintFrame(
-        GfVec3d(0), GfVec3d(0), GfVec3d(4));
+    four.frame = ConstraintFrame(GfVec3d(0), GfVec3d(0), GfVec3d(4));
     const RigExecPointFrame defaultOffset =
         RigExecApplyScaleConstraint(ConstraintFrame(), {four}, defaults);
     CHECK(std::abs((defaultOffset.X() - defaultOffset.Origin()).GetLength() -
@@ -905,44 +890,42 @@ TestConstraintShearBlendIsOptIn()
     RigExecScaleConstraintParams scale;
     scale.affect = {true, true, true};
     RigExecTransformParams kept, blended, partial;
-    CHECK(ConstraintParams(
-        RigExecApplyScaleConstraint(input, {clean}, scale), &kept));
+    CHECK(ConstraintParams(RigExecApplyScaleConstraint(input, {clean}, scale),
+                           &kept));
     CHECK(Near(kept.shear, inputShear, 1e-8));
     scale.blendShear = true;
-    CHECK(ConstraintParams(
-        RigExecApplyScaleConstraint(input, {clean}, scale), &blended));
+    CHECK(ConstraintParams(RigExecApplyScaleConstraint(input, {clean}, scale),
+                           &blended));
     CHECK(Near(blended.shear, GfVec3d(0), 1e-8));
     CHECK(Near(blended.scale, kept.scale, 1e-8));
     scale.affect = {true, false, true};
-    CHECK(ConstraintParams(
-        RigExecApplyScaleConstraint(input, {clean}, scale), &partial));
+    CHECK(ConstraintParams(RigExecApplyScaleConstraint(input, {clean}, scale),
+                           &partial));
     CHECK(Near(partial.shear, inputShear, 1e-8));
 
     RigExecParentConstraintParams parent;
     parent.scaleAxes = {true, true, true};
-    CHECK(ConstraintParams(
-        RigExecApplyParentConstraint(input, {clean}, parent), &kept));
+    CHECK(ConstraintParams(RigExecApplyParentConstraint(input, {clean}, parent),
+                           &kept));
     CHECK(Near(kept.shear, inputShear, 1e-8));
     parent.blendShear = true;
-    CHECK(ConstraintParams(
-        RigExecApplyParentConstraint(input, {clean}, parent), &blended));
+    CHECK(ConstraintParams(RigExecApplyParentConstraint(input, {clean}, parent),
+                           &blended));
     CHECK(Near(blended.shear, GfVec3d(0), 1e-8));
 }
 
 static void
 TestFbxParentConstraintKernel()
 {
-    const RigExecPointFrame input = ConstraintFrame(
-        GfVec3d(2, 4, 6), GfVec3d(0), GfVec3d(2, 3, 4),
-        GfVec3d(0.09, -0.03, 0.05));
+    const RigExecPointFrame input =
+        ConstraintFrame(GfVec3d(2, 4, 6), GfVec3d(0), GfVec3d(2, 3, 4),
+                        GfVec3d(0.09, -0.03, 0.05));
     RigExecConstraintSource a, b;
-    a.frame = ConstraintFrame(
-        GfVec3d(10, 20, 30), GfVec3d(0, 0, 10),
-        GfVec3d(4, 5, 6));
+    a.frame = ConstraintFrame(GfVec3d(10, 20, 30), GfVec3d(0, 0, 10),
+                              GfVec3d(4, 5, 6));
     a.normalizedWeight = 1.0;
-    b.frame = ConstraintFrame(
-        GfVec3d(20, 30, 40), GfVec3d(0, 0, 30),
-        GfVec3d(8, 9, 10));
+    b.frame = ConstraintFrame(GfVec3d(20, 30, 40), GfVec3d(0, 0, 30),
+                              GfVec3d(8, 9, 10));
     b.normalizedWeight = 3.0;
 
     RigExecParentConstraintParams params;
@@ -967,8 +950,7 @@ TestFbxParentConstraintKernel()
     // +X translation under a +90-degree Z source lands on world +Y, and the
     // non-commuting rotations compose as offset * source.
     RigExecConstraintSource localOffset;
-    localOffset.frame = ConstraintFrame(
-        GfVec3d(10, 0, 0), GfVec3d(0, 0, 90));
+    localOffset.frame = ConstraintFrame(GfVec3d(10, 0, 0), GfVec3d(0, 0, 90));
     localOffset.translationOffset = GfVec3d(2, 0, 0);
     localOffset.rotationOffsetDegrees = GfVec3d(30, 0, 0);
     RigExecParentConstraintParams localParams;
@@ -977,25 +959,22 @@ TestFbxParentConstraintKernel()
     CHECK(Near(locallyComposed.Origin(), GfVec3d(10, 2, 0), 1e-8));
     const GfMatrix4d expectedLocal =
         EulerMatrix(GfVec3d(30, 0, 0), RigExecEulerOrder::XYZ) *
-        GfMatrix4d(
-            GfRotation(GfVec3d(0, 0, 1), 90), GfVec3d(10, 0, 0));
-    CHECK(SameLinearPart(
-        locallyComposed,
-        RigExecMatrixToPoints(kUnitRest, expectedLocal), 1e-8));
+        GfMatrix4d(GfRotation(GfVec3d(0, 0, 1), 90), GfVec3d(10, 0, 0));
+    CHECK(SameLinearPart(locallyComposed,
+                         RigExecMatrixToPoints(kUnitRest, expectedLocal),
+                         1e-8));
 
     // Parent rotation aggregation has the same full-weight independence from
     // the constrained input as RotationConstraint.
     RigExecConstraintSource branchA, branchB;
-    branchA.frame = ConstraintFrame(
-        GfVec3d(0), GfVec3d(0, 0, 170));
-    branchB.frame = ConstraintFrame(
-        GfVec3d(0), GfVec3d(0, 0, -170));
+    branchA.frame = ConstraintFrame(GfVec3d(0), GfVec3d(0, 0, 170));
+    branchB.frame = ConstraintFrame(GfVec3d(0), GfVec3d(0, 0, -170));
     RigExecParentConstraintParams branchParams;
     const RigExecPointFrame fromZero = RigExecApplyParentConstraint(
         ConstraintFrame(), {branchA, branchB}, branchParams);
     const RigExecPointFrame fromNearBranch = RigExecApplyParentConstraint(
-        ConstraintFrame(GfVec3d(0), GfVec3d(0, 0, 170)),
-        {branchA, branchB}, branchParams);
+        ConstraintFrame(GfVec3d(0), GfVec3d(0, 0, 170)), {branchA, branchB},
+        branchParams);
     CHECK(SameLinearPart(fromZero, fromNearBranch, 1e-8));
 }
 
@@ -1008,8 +987,8 @@ TestFbxAimConstraintKernel()
     params.localAimVector = GfVec3d(0, 1, 0);
     params.localUpVector = GfVec3d(0, 0, 1);
     params.worldUpDirection = GfVec3d(0, 0, 1);
-    const RigExecPointFrame aimed = RigExecApplyAimConstraint(
-        ConstraintFrame(), GfVec3d(5, 0, 0), params);
+    const RigExecPointFrame aimed =
+        RigExecApplyAimConstraint(ConstraintFrame(), GfVec3d(5, 0, 0), params);
     CHECK(Near(aimed.Y() - aimed.Origin(), GfVec3d(1, 0, 0), 1e-8));
     CHECK(Near(aimed.Z() - aimed.Origin(), GfVec3d(0, 0, 1), 1e-8));
     CHECK(Near(aimed.X() - aimed.Origin(), GfVec3d(0, -1, 0), 1e-8));
@@ -1018,8 +997,8 @@ TestFbxAimConstraintKernel()
     // is independent and yields the halfway orientation.
     params = RigExecAimConstraintParams{};
     params.weight = 0.5;
-    const RigExecPointFrame half = RigExecApplyAimConstraint(
-        ConstraintFrame(), GfVec3d(0, 5, 0), params);
+    const RigExecPointFrame half =
+        RigExecApplyAimConstraint(ConstraintFrame(), GfVec3d(0, 5, 0), params);
     CHECK(Near(half.X() - half.Origin(),
                GfVec3d(std::sqrt(0.5), std::sqrt(0.5), 0), 1e-8));
 
@@ -1029,33 +1008,31 @@ TestFbxAimConstraintKernel()
     const GfVec3d diagonalTarget(4, 3, 2);
     params = RigExecAimConstraintParams{};
     params.preserveInputUp = false;
-    params.localUpVector = params.localAimVector;  // dormant for None
-    const RigExecPointFrame minimumSwing = RigExecApplyAimConstraint(
-        ConstraintFrame(), diagonalTarget, params);
-    const GfRotation expectedSwing(
-        GfVec3d(1, 0, 0), diagonalTarget.GetNormalized());
-    CHECK(Near(
-        (minimumSwing.X() - minimumSwing.Origin()).GetNormalized(),
-        diagonalTarget.GetNormalized(), 1e-8));
-    CHECK(Near(
-        (minimumSwing.Y() - minimumSwing.Origin()).GetNormalized(),
-        expectedSwing.TransformDir(GfVec3d(0, 1, 0)), 1e-8));
+    params.localUpVector = params.localAimVector; // dormant for None
+    const RigExecPointFrame minimumSwing =
+        RigExecApplyAimConstraint(ConstraintFrame(), diagonalTarget, params);
+    const GfRotation expectedSwing(GfVec3d(1, 0, 0),
+                                   diagonalTarget.GetNormalized());
+    CHECK(Near((minimumSwing.X() - minimumSwing.Origin()).GetNormalized(),
+               diagonalTarget.GetNormalized(), 1e-8));
+    CHECK(Near((minimumSwing.Y() - minimumSwing.Origin()).GetNormalized(),
+               expectedSwing.TransformDir(GfVec3d(0, 1, 0)), 1e-8));
     params = RigExecAimConstraintParams{};
-    const RigExecPointFrame preservedUp = RigExecApplyAimConstraint(
-        ConstraintFrame(), diagonalTarget, params);
-    CHECK(!Near(
-        (minimumSwing.Y() - minimumSwing.Origin()).GetNormalized(),
-        (preservedUp.Y() - preservedUp.Origin()).GetNormalized(), 1e-4));
+    const RigExecPointFrame preservedUp =
+        RigExecApplyAimConstraint(ConstraintFrame(), diagonalTarget, params);
+    CHECK(!Near((minimumSwing.Y() - minimumSwing.Origin()).GetNormalized(),
+                (preservedUp.Y() - preservedUp.Origin()).GetNormalized(),
+                1e-4));
 
     // Rotation offset is applied after aiming and respects the Euler mask.
     params = RigExecAimConstraintParams{};
     params.rotationOffsetDegrees = GfVec3d(0, 0, 90);
-    const RigExecPointFrame offset = RigExecApplyAimConstraint(
-        ConstraintFrame(), GfVec3d(5, 0, 0), params);
+    const RigExecPointFrame offset =
+        RigExecApplyAimConstraint(ConstraintFrame(), GfVec3d(5, 0, 0), params);
     CHECK(Near(offset.X() - offset.Origin(), GfVec3d(0, 1, 0), 1e-8));
     params.affectRotation = {true, true, false};
-    const RigExecPointFrame masked = RigExecApplyAimConstraint(
-        ConstraintFrame(), GfVec3d(5, 0, 0), params);
+    const RigExecPointFrame masked =
+        RigExecApplyAimConstraint(ConstraintFrame(), GfVec3d(5, 0, 0), params);
     CHECK(SameLinearPart(masked, ConstraintFrame(), 1e-8));
 
     // Changing rotation preserves all other decomposed components, including
@@ -1065,8 +1042,8 @@ TestFbxAimConstraintKernel()
         GfVec3d(0.08, -0.03, 0.05), RigExecEulerOrder::ZYX);
     params = RigExecAimConstraintParams{};
     params.rotationOrder = RigExecEulerOrder::ZYX;
-    const RigExecPointFrame affineOutput = RigExecApplyAimConstraint(
-        affineInput, GfVec3d(2, 8, 4), params);
+    const RigExecPointFrame affineOutput =
+        RigExecApplyAimConstraint(affineInput, GfVec3d(2, 8, 4), params);
     RigExecTransformParams before, after;
     CHECK(ConstraintParams(affineInput, &before));
     CHECK(ConstraintParams(affineOutput, &after));
@@ -1080,8 +1057,7 @@ TestFbxConstraintFailures()
 {
     const RigExecPointFrame input = ConstraintFrame();
     RigExecConstraintSource source;
-    source.frame = ConstraintFrame(GfVec3d(5), GfVec3d(10, 20, 30),
-                                   GfVec3d(2));
+    source.frame = ConstraintFrame(GfVec3d(5), GfVec3d(10, 20, 30), GfVec3d(2));
 
     RigExecPositionConstraintParams position;
     source.normalizedWeight = std::nan("");
@@ -1093,14 +1069,12 @@ TestFbxConstraintFailures()
     failed = RigExecApplyPositionConstraint(input, {source}, position);
     CHECK(failed.IsDegenerate() && AllFinite(failed));
 
-    source.frame = ConstraintFrame(GfVec3d(5), GfVec3d(10, 20, 30),
-                                   GfVec3d(2));
+    source.frame = ConstraintFrame(GfVec3d(5), GfVec3d(10, 20, 30), GfVec3d(2));
     source.frame.flags |= RigExecPointFrameDegenerate;
     RigExecRotationConstraintParams rotation;
     failed = RigExecApplyRotationConstraint(input, {source}, rotation);
     CHECK(failed.IsDegenerate() && AllFinite(failed));
-    source.frame = ConstraintFrame(GfVec3d(5), GfVec3d(10, 20, 30),
-                                   GfVec3d(2));
+    source.frame = ConstraintFrame(GfVec3d(5), GfVec3d(10, 20, 30), GfVec3d(2));
     rotation.weight = std::nan("");
     failed = RigExecApplyRotationConstraint(input, {source}, rotation);
     CHECK(failed.IsDegenerate() && AllFinite(failed));
@@ -1136,8 +1110,7 @@ TestFbxConstraintFailures()
     failed = RigExecApplyAimConstraint(input, GfVec3d(1, 0, 0), aim);
     CHECK(failed.IsDegenerate() && AllFinite(failed));
     aim = RigExecAimConstraintParams{};
-    failed = RigExecApplyAimConstraint(
-        input, GfVec3d(std::nan(""), 0, 0), aim);
+    failed = RigExecApplyAimConstraint(input, GfVec3d(std::nan(""), 0, 0), aim);
     CHECK(failed.IsDegenerate() && AllFinite(failed));
 
     // Enable is intentionally evaluator-side: the pure kernels have no
@@ -1154,8 +1127,8 @@ TestFbxConstraintFailures()
     CHECK(RigExecApplyParentConstraint(input, {source}, parent) == input);
     aim = RigExecAimConstraintParams{};
     aim.weight = 0.0;
-    CHECK(RigExecApplyAimConstraint(
-              input, GfVec3d(std::nan(""), 0, 0), aim) == input);
+    CHECK(RigExecApplyAimConstraint(input, GfVec3d(std::nan(""), 0, 0), aim) ==
+          input);
 }
 
 static void
@@ -1183,8 +1156,7 @@ TestConstraintEnvelopeExactEndpoints()
     RigExecScaleConstraintParams scale;
     scale.weight = 0.0;
     CHECK(SameFrameBits(
-        RigExecApplyScaleConstraint(preceding, {malformed}, scale),
-        preceding));
+        RigExecApplyScaleConstraint(preceding, {malformed}, scale), preceding));
     RigExecParentConstraintParams parent;
     parent.weight = 0.0;
     CHECK(SameFrameBits(
@@ -1193,13 +1165,11 @@ TestConstraintEnvelopeExactEndpoints()
     RigExecAimConstraintParams aim;
     aim.weight = 0.0;
     CHECK(SameFrameBits(
-        RigExecApplyAimConstraint(
-            preceding, GfVec3d(std::nan(""), 0, 0), aim),
+        RigExecApplyAimConstraint(preceding, GfVec3d(std::nan(""), 0, 0), aim),
         preceding));
-    CHECK(SameFrameBits(
-        RigExecApplyAimConstraint(
-            preceding, GfVec3d(std::nan(""), 0, 0), 0.0, 1),
-        preceding));
+    CHECK(SameFrameBits(RigExecApplyAimConstraint(
+                            preceding, GfVec3d(std::nan(""), 0, 0), 0.0, 1),
+                        preceding));
 
     // These exactly representable inputs make a + 1*(b-a) round away from b.
     // Full-strength Position and Parent must select b itself.
@@ -1208,8 +1178,7 @@ TestConstraintEnvelopeExactEndpoints()
     const RigExecPointFrame translatedInput =
         ConstraintFrame(GfVec3d(inputTranslation, 0, 0));
     RigExecConstraintSource translatedSource;
-    translatedSource.frame =
-        ConstraintFrame(GfVec3d(targetTranslation, 0, 0));
+    translatedSource.frame = ConstraintFrame(GfVec3d(targetTranslation, 0, 0));
     position = RigExecPositionConstraintParams{};
     const RigExecPointFrame positioned = RigExecApplyPositionConstraint(
         translatedInput, {translatedSource}, position);
@@ -1223,49 +1192,44 @@ TestConstraintEnvelopeExactEndpoints()
     // The same cancellation exists in pose scale channels.
     constexpr double inputScale = 0x1.8e6763ad2707ap-4;
     constexpr double targetScale = 0x1.dd56d4ae13c38p-8;
-    const RigExecPointFrame scaledInput = ConstraintFrame(
-        GfVec3d(0), GfVec3d(0), GfVec3d(inputScale, 2, 3));
+    const RigExecPointFrame scaledInput =
+        ConstraintFrame(GfVec3d(0), GfVec3d(0), GfVec3d(inputScale, 2, 3));
     RigExecConstraintSource scaledSource;
-    scaledSource.frame = ConstraintFrame(
-        GfVec3d(0), GfVec3d(0), GfVec3d(targetScale, 4, 5));
+    scaledSource.frame =
+        ConstraintFrame(GfVec3d(0), GfVec3d(0), GfVec3d(targetScale, 4, 5));
     scale = RigExecScaleConstraintParams{};
-    const RigExecPointFrame scaled = RigExecApplyScaleConstraint(
-        scaledInput, {scaledSource}, scale);
+    const RigExecPointFrame scaled =
+        RigExecApplyScaleConstraint(scaledInput, {scaledSource}, scale);
     CHECK(SameBits(scaled.X()[0], targetScale));
 
     parent = RigExecParentConstraintParams{};
     parent.scaleAxes = {true, true, true};
-    const RigExecPointFrame parentScaled = RigExecApplyParentConstraint(
-        scaledInput, {scaledSource}, parent);
+    const RigExecPointFrame parentScaled =
+        RigExecApplyParentConstraint(scaledInput, {scaledSource}, parent);
     CHECK(SameBits(parentScaled.X()[0], targetScale));
 
     // A full shortest-arc rotation selects the source Euler candidate, not the
     // equivalent input+delta representation (+190 degrees in this case). Its
     // constrained X axis therefore carries the source candidate's exact bits.
     RigExecConstraintSource rotationSource;
-    rotationSource.frame = ConstraintFrame(
-        GfVec3d(0), GfVec3d(0, 0, -170));
+    rotationSource.frame = ConstraintFrame(GfVec3d(0), GfVec3d(0, 0, -170));
     rotation = RigExecRotationConstraintParams{};
-    const RigExecPointFrame fromOppositeBranch =
-        RigExecApplyRotationConstraint(
-            ConstraintFrame(GfVec3d(0), GfVec3d(0, 0, 170)),
-            {rotationSource}, rotation);
-    CHECK(SameBits(
-        fromOppositeBranch.X()[0], rotationSource.frame.X()[0]));
-    CHECK(SameBits(
-        fromOppositeBranch.X()[1], rotationSource.frame.X()[1]));
+    const RigExecPointFrame fromOppositeBranch = RigExecApplyRotationConstraint(
+        ConstraintFrame(GfVec3d(0), GfVec3d(0, 0, 170)), {rotationSource},
+        rotation);
+    CHECK(SameBits(fromOppositeBranch.X()[0], rotationSource.frame.X()[0]));
+    CHECK(SameBits(fromOppositeBranch.X()[1], rotationSource.frame.X()[1]));
 
     // Aim uses the same masked Euler envelope after constructing its fully
     // aimed candidate. Keep the aim itself dormant here and use an offset to
     // cross the same Euler branch, so this pins Aim's endpoint as well.
-    const RigExecPointFrame aimInput = ConstraintFrame(
-        GfVec3d(0), GfVec3d(0, 0, 170));
+    const RigExecPointFrame aimInput =
+        ConstraintFrame(GfVec3d(0), GfVec3d(0, 0, 170));
     aim = RigExecAimConstraintParams{};
     aim.preserveInputUp = false;
     aim.rotationOffsetDegrees = GfVec3d(0, 0, -340);
     const RigExecPointFrame aimOffset = RigExecApplyAimConstraint(
-        aimInput, aimInput.Origin() +
-            (aimInput.X() - aimInput.Origin()) * 5.0,
+        aimInput, aimInput.Origin() + (aimInput.X() - aimInput.Origin()) * 5.0,
         aim);
     CHECK(SameBits(aimOffset.X()[0], rotationSource.frame.X()[0]));
     CHECK(SameBits(aimOffset.X()[1], rotationSource.frame.X()[1]));
@@ -1273,8 +1237,8 @@ TestConstraintEnvelopeExactEndpoints()
     // The legacy aim overload has the same endpoint rule: its authored aim
     // landmark selects the normalized target direction without rotating that
     // direction through a numerically approximate full-angle operation.
-    const RigExecPointFrame legacyAimed = RigExecApplyAimConstraint(
-        ConstraintFrame(), GfVec3d(0, 5, 0), 1.0, 1);
+    const RigExecPointFrame legacyAimed =
+        RigExecApplyAimConstraint(ConstraintFrame(), GfVec3d(0, 5, 0), 1.0, 1);
     CHECK(legacyAimed.X() - legacyAimed.Origin() == GfVec3d(0, 1, 0));
 }
 
@@ -1285,11 +1249,12 @@ TestGeometryKernels()
     // at strength 1 and half-way (by volume ratio) at intermediate
     // strengths; planar sets (zero volume) are untouched.
     {
-        std::vector<GfVec3f> cube = {
-            {0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, 0, 1},
-            {1, 1, 0}, {1, 0, 1}, {0, 1, 1}, {1, 1, 1}};
+        std::vector<GfVec3f> cube = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0},
+                                     {0, 0, 1}, {1, 1, 0}, {1, 0, 1},
+                                     {0, 1, 1}, {1, 1, 1}};
         const double reference = RigExecBoundVolume(cube.data(), cube.size());
-        for (GfVec3f &p : cube) p *= 2.0f;
+        for (GfVec3f &p : cube)
+            p *= 2.0f;
         RigExecApplyVolumeCorrect(&cube, reference, 1.0);
         CHECK(std::abs(RigExecBoundVolume(cube.data(), cube.size()) -
                        reference) < 1e-5);
@@ -1323,21 +1288,21 @@ TestGeometryKernels()
         CHECK(Near(GfVec3d(identity[0]), GfVec3d(rest[0]), 1e-6));
         std::vector<GfVec3f> moved = pts;
         std::vector<GfVec3f> posedCage = cage;
-        for (GfVec3f &c : posedCage) c += GfVec3f(0, 3, 0);
+        for (GfVec3f &c : posedCage)
+            c += GfVec3f(0, 3, 0);
         RigExecApplyLattice(&moved, rest, cage, posedCage, GfVec3i(2, 2, 2));
-        CHECK(Near(GfVec3d(moved[0]), GfVec3d(rest[0]) + GfVec3d(0, 3, 0),
-                   1e-5));
-        CHECK(Near(GfVec3d(moved[1]), GfVec3d(rest[1]) + GfVec3d(0, 3, 0),
-                   1e-5));
+        CHECK(
+            Near(GfVec3d(moved[0]), GfVec3d(rest[0]) + GfVec3d(0, 3, 0), 1e-5));
+        CHECK(
+            Near(GfVec3d(moved[1]), GfVec3d(rest[1]) + GfVec3d(0, 3, 0), 1e-5));
     }
 
     // Surface projection: a point above a unit quad lands on it.
     {
         std::vector<GfVec3f> pts = {{0.25f, 0.25f, 2.0f}};
-        RigExecApplySurfaceProject(
-            &pts,
-            {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}},
-            {4}, {0, 1, 2, 3}, 1.0);
+        RigExecApplySurfaceProject(&pts,
+                                   {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}},
+                                   {4}, {0, 1, 2, 3}, 1.0);
         CHECK(Near(GfVec3d(pts[0]), GfVec3d(0.25, 0.25, 0), 1e-5));
     }
 
@@ -1345,8 +1310,7 @@ TestGeometryKernels()
     // colinear, equally spaced in arc length, and frames orthonormal.
     {
         // Zero- and one-point drivers have no segment to sample.  They must
-        // fail closed rather than entering the linear interpolation branch
-        // (the one-point case previously indexed controlPoints[-1]).
+        // fail closed rather than entering the linear interpolation branch.
         CHECK(RigExecSampleCurveRMF({}, 5).GetSize() == 0);
         CHECK(RigExecSampleCurveRMF({{1, 2, 3}}, 5).GetSize() == 0);
 
@@ -1355,15 +1319,15 @@ TestGeometryKernels()
         CHECK(samples.GetSize() == 5);
         for (size_t k = 0; k < samples.GetSize(); ++k) {
             CHECK(std::abs(samples.positions[k][1]) < 1e-5);
-            CHECK(std::abs(GfDot(samples.tangents[k],
-                                 samples.normals[k])) < 1e-5);
+            CHECK(std::abs(GfDot(samples.tangents[k], samples.normals[k])) <
+                  1e-5);
             CHECK(std::abs(samples.normals[k].GetLength() - 1) < 1e-5);
         }
         // Ribbon transport with posed == rest is identity.
         std::vector<GfVec3f> pts = {{4, 1, 0}, {5, -1, 2}};
         const std::vector<GfVec3f> before = pts;
-        RigExecApplyRibbonTransport(
-            &pts, {{0.3f, 0.0f}, {0.7f, 0.0f}}, samples, samples);
+        RigExecApplyRibbonTransport(&pts, {{0.3f, 0.0f}, {0.7f, 0.0f}}, samples,
+                                    samples);
         CHECK(Near(GfVec3d(pts[0]), GfVec3d(before[0]), 1e-5));
         CHECK(Near(GfVec3d(pts[1]), GfVec3d(before[1]), 1e-5));
     }
@@ -1378,24 +1342,26 @@ TestGeometryKernels()
         // Two pentagons meeting along a seam, both flat in z = 0 and both
         // wound counter-clockwise, so every vertex normal is unambiguously
         // +Z. Vertex 2 is the seam's middle, and in BOTH faces it lands
-        // next to the fan anchor: a per-triangle kernel -- which this one
-        // used to be -- therefore gives it exactly one sliver triangle from
-        // each face, the two are mirror images, and they cancel to a zero
-        // normal on a perfectly valid manifold vertex. puppetA
-        // (chars/puppetA) has one such vertex on its face.
-        const auto seam = RigExecComputeVertexNormals(
-            {{0, 0, 0}, {0, 1, 0}, {0.05f, 0.5f, 0},      // the seam
-             {1, 0.2f, 0}, {1, 0.8f, 0},                  // +x side
-             {-1, 0.2f, 0}, {-1, 0.8f, 0}},               // -x side
-            {5, 5},
-            {0, 3, 4, 1, 2,
-             0, 2, 1, 6, 5});
+        // next to the fan anchor: a per-triangle kernel therefore gives it
+        // exactly one sliver triangle from each face, the two are mirror
+        // images, and they cancel to a zero normal on a perfectly valid
+        // manifold vertex. puppetA (chars/puppetA) has one such vertex on
+        // its face.
+        const auto seam =
+            RigExecComputeVertexNormals({{0, 0, 0},
+                                         {0, 1, 0},
+                                         {0.05f, 0.5f, 0}, // the seam
+                                         {1, 0.2f, 0},
+                                         {1, 0.8f, 0}, // +x side
+                                         {-1, 0.2f, 0},
+                                         {-1, 0.8f, 0}}, // -x side
+                                        {5, 5}, {0, 3, 4, 1, 2, 0, 2, 1, 6, 5});
         CHECK(seam.size() == 7);
         for (size_t i = 0; i < seam.size(); ++i) {
             CHECK(Near(GfVec3d(seam[i]), GfVec3d(0, 0, 1), 1e-6));
         }
-        const auto extent = RigExecComputeExtent(
-            {{0, 0, 0}, {1, 2, 3}}, {1.0f, 1.0f});
+        const auto extent =
+            RigExecComputeExtent({{0, 0, 0}, {1, 2, 3}}, {1.0f, 1.0f});
         CHECK(extent.size() == 2);
         CHECK(Near(GfVec3d(extent[0]), GfVec3d(-0.5, -0.5, -0.5), 1e-6));
         CHECK(Near(GfVec3d(extent[1]), GfVec3d(1.5, 2.5, 3.5), 1e-6));
@@ -1405,61 +1371,83 @@ TestGeometryKernels()
 static void
 TestSurfaceOffsets()
 {
-    const std::vector<GfVec3f> rest = {{0,0,0}, {4,0,0}, {4,1,0}, {0,1,0}};
-    const std::vector<int> counts = {4}, indices = {0,1,2,3};
-    const std::vector<GfVec3f> deltas = {{1,2,3}, {0,0,2}, {-3,1,0}, {0,2,0}};
+    const std::vector<GfVec3f> rest = {
+        {0, 0, 0}, {4, 0, 0}, {4, 1, 0}, {0, 1, 0}};
+    const std::vector<int> counts = {4}, indices = {0, 1, 2, 3};
+    const std::vector<GfVec3f> deltas = {
+        {1, 2, 3}, {0, 0, 2}, {-3, 1, 0}, {0, 2, 0}};
     GfMatrix4d rotation(1.0);
-    rotation.SetRotate(GfRotation(GfVec3d(1,0,0), 90));
+    rotation.SetRotate(GfRotation(GfVec3d(1, 0, 0), 90));
     GfMatrix4d scale(1.0);
-    scale.SetScale(GfVec3d(0.25,9,2));
+    scale.SetScale(GfVec3d(0.25, 9, 2));
     GfMatrix4d transform = scale * rotation;
-    transform.SetTranslateOnly(GfVec3d(30,-20,10));
+    transform.SetTranslateOnly(GfVec3d(30, -20, 10));
     std::vector<GfVec3f> posed, result;
-    for (const auto &p : rest) posed.push_back(GfVec3f(transform.TransformAffine(GfVec3d(p))));
-    CHECK(RigExecTransportSurfaceOffsets(rest, posed, counts, indices, deltas, &result));
+    for (const auto &p : rest)
+        posed.push_back(GfVec3f(transform.TransformAffine(GfVec3d(p))));
+    CHECK(RigExecTransportSurfaceOffsets(rest, posed, counts, indices, deltas,
+                                         &result));
     CHECK(result.size() == deltas.size());
     for (size_t i = 0; i < result.size(); ++i) {
-        CHECK(Near(GfVec3d(result[i]), rotation.TransformDir(GfVec3d(deltas[i])), 1e-5));
+        CHECK(Near(GfVec3d(result[i]),
+                   rotation.TransformDir(GfVec3d(deltas[i])), 1e-5));
         CHECK(std::abs(result[i].GetLength() - deltas[i].GetLength()) < 1e-5);
     }
     // The posed longest edge switches from X to Y after nonuniform scaling;
     // correspondence must still use the edge selected on the REST surface.
-    CHECK(Near(GfVec3d(result[3]), GfVec3d(0,0,2), 1e-5));
-    CHECK(RigExecTransportSurfaceOffsets(rest, rest, counts, indices, deltas, &result));
-    for (size_t i = 0; i < result.size(); ++i) CHECK(Near(GfVec3d(result[i]), GfVec3d(deltas[i]), 1e-6));
+    CHECK(Near(GfVec3d(result[3]), GfVec3d(0, 0, 2), 1e-5));
+    CHECK(RigExecTransportSurfaceOffsets(rest, rest, counts, indices, deltas,
+                                         &result));
+    for (size_t i = 0; i < result.size(); ++i)
+        CHECK(Near(GfVec3d(result[i]), GfVec3d(deltas[i]), 1e-6));
 
-    const std::vector<GfVec3f> square = {{0,0,0},{1,0,0},{1,1,0},{0,1,0}};
-    const std::vector<GfVec3f> skewed = {{0,0,0},{1,1,0},{1,2,0},{0,1,0}};
-    const std::vector<GfVec3f> one = {{1,0,0},{0,0,0},{0,0,0},{0,0,0}};
-    CHECK(RigExecTransportSurfaceOffsets(square, skewed, counts, indices, one, &result));
-    CHECK(Near(GfVec3d(result[0]), GfVec3d(std::sqrt(0.5),std::sqrt(0.5),0), 1e-6));
+    const std::vector<GfVec3f> square = {
+        {0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}};
+    const std::vector<GfVec3f> skewed = {
+        {0, 0, 0}, {1, 1, 0}, {1, 2, 0}, {0, 1, 0}};
+    const std::vector<GfVec3f> one = {
+        {1, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    CHECK(RigExecTransportSurfaceOffsets(square, skewed, counts, indices, one,
+                                         &result));
+    CHECK(Near(GfVec3d(result[0]), GfVec3d(std::sqrt(0.5), std::sqrt(0.5), 0),
+               1e-6));
     std::vector<GfVec3f> reordered;
-    CHECK(RigExecTransportSurfaceOffsets(square, skewed, counts, {1,2,3,0}, one, &reordered));
+    CHECK(RigExecTransportSurfaceOffsets(square, skewed, counts, {1, 2, 3, 0},
+                                         one, &reordered));
     CHECK(result == reordered);
 
     auto isolatedRest = rest, isolatedPosed = posed, isolatedDeltas = deltas;
-    isolatedRest.push_back(GfVec3f(7)); isolatedPosed.push_back(GfVec3f(9));
+    isolatedRest.push_back(GfVec3f(7));
+    isolatedPosed.push_back(GfVec3f(9));
     isolatedDeltas.push_back(GfVec3f(0));
-    CHECK(RigExecTransportSurfaceOffsets(isolatedRest, isolatedPosed, counts, indices,
-                                         isolatedDeltas, &result));
+    CHECK(RigExecTransportSurfaceOffsets(isolatedRest, isolatedPosed, counts,
+                                         indices, isolatedDeltas, &result));
     CHECK(result.back() == GfVec3f(0));
-    const std::vector<GfVec3f> sentinel = {{123,456,789}};
+    const std::vector<GfVec3f> sentinel = {{123, 456, 789}};
     result = sentinel;
-    isolatedDeltas.back() = GfVec3f(1,0,0);
-    CHECK(!RigExecTransportSurfaceOffsets(isolatedRest, isolatedPosed, counts, indices,
-                                          isolatedDeltas, &result));
-    CHECK(result == sentinel); // failure after other vertices never partially writes
-    CHECK(!RigExecTransportSurfaceOffsets(rest, std::vector<GfVec3f>(4,GfVec3f(0)),
+    isolatedDeltas.back() = GfVec3f(1, 0, 0);
+    CHECK(!RigExecTransportSurfaceOffsets(isolatedRest, isolatedPosed, counts,
+                                          indices, isolatedDeltas, &result));
+    CHECK(result ==
+          sentinel); // failure after other vertices never partially writes
+    CHECK(!RigExecTransportSurfaceOffsets(rest,
+                                          std::vector<GfVec3f>(4, GfVec3f(0)),
                                           counts, indices, deltas, &result));
-    CHECK(!RigExecTransportSurfaceOffsets(rest, posed, {3}, indices, deltas, &result));
-    CHECK(!RigExecTransportSurfaceOffsets(rest, posed, counts, {0,1,2,8}, deltas, &result));
-    CHECK(!RigExecTransportSurfaceOffsets(rest, posed, {-1}, {}, deltas, &result));
-    CHECK(!RigExecTransportSurfaceOffsets(rest, posed, counts, indices, {}, &result));
+    CHECK(!RigExecTransportSurfaceOffsets(rest, posed, {3}, indices, deltas,
+                                          &result));
+    CHECK(!RigExecTransportSurfaceOffsets(rest, posed, counts, {0, 1, 2, 8},
+                                          deltas, &result));
+    CHECK(!RigExecTransportSurfaceOffsets(rest, posed, {-1}, {}, deltas,
+                                          &result));
+    CHECK(!RigExecTransportSurfaceOffsets(rest, posed, counts, indices, {},
+                                          &result));
     auto invalid = deltas;
     invalid[0][1] = std::numeric_limits<float>::quiet_NaN();
-    CHECK(!RigExecTransportSurfaceOffsets(rest, posed, counts, indices, invalid, &result));
+    CHECK(!RigExecTransportSurfaceOffsets(rest, posed, counts, indices, invalid,
+                                          &result));
     CHECK(result == sentinel);
-    CHECK(RigExecTransportSurfaceOffsets({}, {}, {}, {}, {}, &result) && result.empty());
+    CHECK(RigExecTransportSurfaceOffsets({}, {}, {}, {}, {}, &result) &&
+          result.empty());
 }
 
 static void
@@ -1476,17 +1464,17 @@ TestSimdParity()
     std::vector<GfVec3f> in;
     std::vector<float> weights;
     for (int i = 0; i < 257; ++i) {
-        in.push_back(GfVec3f(
-            float(i % 17) - 8.0f, float(i % 5) * 2.0f, float(i % 11)));
+        in.push_back(
+            GfVec3f(float(i % 17) - 8.0f, float(i % 5) * 2.0f, float(i % 11)));
         weights.push_back(float(i % 101) / 100.0f);
     }
     std::vector<GfVec3f> simd(in.size());
-    RigExecApplyWeightedMatrixSimd(
-        in.data(), simd.data(), weights.data(), in.size(), m);
-    const double scale = 20.0;  // point-set extent
+    RigExecApplyWeightedMatrixSimd(in.data(), simd.data(), weights.data(),
+                                   in.size(), m);
+    const double scale = 20.0; // point-set extent
     for (size_t i = 0; i < in.size(); ++i) {
-        const GfVec3d scalar = RigExecApplyWeightedMatrix(
-            GfVec3d(in[i]), m, weights[i]);
+        const GfVec3d scalar =
+            RigExecApplyWeightedMatrix(GfVec3d(in[i]), m, weights[i]);
         CHECK((GfVec3d(simd[i]) - scalar).GetLength() <= 1e-6 * scale);
     }
 
@@ -1498,13 +1486,12 @@ TestSimdParity()
     collapse[3][1] = -2.0;
     collapse[3][2] = 3.0;
     collapse[3][3] = 1.0;
-    const GfVec3f endpointIn[] = {
-        GfVec3f(1.0e20f, -1.0e20f, 1.0e20f),
-        GfVec3f(1.0e20f, -1.0e20f, 1.0e20f)};
+    const GfVec3f endpointIn[] = {GfVec3f(1.0e20f, -1.0e20f, 1.0e20f),
+                                  GfVec3f(1.0e20f, -1.0e20f, 1.0e20f)};
     GfVec3f endpointOut[2];
     const float endpointWeights[] = {0.0f, 1.0f};
-    RigExecApplyWeightedMatrixSimd(
-        endpointIn, endpointOut, endpointWeights, 2, collapse);
+    RigExecApplyWeightedMatrixSimd(endpointIn, endpointOut, endpointWeights, 2,
+                                   collapse);
     CHECK(SameVec3fBits(endpointOut[0], endpointIn[0]));
     CHECK(SameVec3fBits(endpointOut[1], GfVec3f(1.0f, -2.0f, 3.0f)));
 }
@@ -1522,28 +1509,28 @@ TestSimdScalarWeightMatchesArray()
         GfMatrix4d(GfRotation(GfVec3d(1, 1, 0), 33.0), GfVec3d(2, -1, 4));
     std::vector<GfVec3f> in;
     for (int i = 0; i < 257; ++i) {
-        in.push_back(GfVec3f(
-            float(i % 17) - 8.0f, float(i % 5) * 2.0f, float(i % 11)));
+        in.push_back(
+            GfVec3f(float(i % 17) - 8.0f, float(i % 5) * 2.0f, float(i % 11)));
     }
     for (const float weight : {0.0f, 0.5f, 1.0f}) {
         const std::vector<float> uniform(in.size(), weight);
         std::vector<GfVec3f> byArray(in.size()), byScalar(in.size());
-        RigExecApplyWeightedMatrixSimd(
-            in.data(), byArray.data(), uniform.data(), in.size(), m);
-        RigExecApplyWeightedMatrixSimd(
-            in.data(), byScalar.data(), weight, in.size(), m);
+        RigExecApplyWeightedMatrixSimd(in.data(), byArray.data(),
+                                       uniform.data(), in.size(), m);
+        RigExecApplyWeightedMatrixSimd(in.data(), byScalar.data(), weight,
+                                       in.size(), m);
         for (size_t i = 0; i < in.size(); ++i) {
             CHECK(SameVec3fBits(byArray[i], byScalar[i]));
         }
     }
     for (const float weight : {0.0f, 0.5f, 1.0f}) {
         std::vector<GfVec3f> inPlace = in;
-        RigExecApplyWeightedMatrixSimd(
-            inPlace.data(), inPlace.data(), weight, inPlace.size(), m);
+        RigExecApplyWeightedMatrixSimd(inPlace.data(), inPlace.data(), weight,
+                                       inPlace.size(), m);
         const std::vector<float> uniform(in.size(), weight);
         std::vector<GfVec3f> byArray(in.size());
-        RigExecApplyWeightedMatrixSimd(
-            in.data(), byArray.data(), uniform.data(), in.size(), m);
+        RigExecApplyWeightedMatrixSimd(in.data(), byArray.data(),
+                                       uniform.data(), in.size(), m);
         CHECK(SameVec3fArrayBits(inPlace, byArray));
     }
     // Endpoints through the scalar form: the collapse the old
@@ -1585,27 +1572,26 @@ TestWireRestEvalsMatchDirectEvaluation()
     }
     std::vector<GfVec3f> byTable = points;
     CHECK(RigExecApplyWire(&byTable, restCurve, posedCurve, binds.data(),
-                           binds.size(), 1.0, 0, points.size(),
-                           table.data(), table.size()));
+                           binds.size(), 1.0, 0, points.size(), table.data(),
+                           table.size()));
     CHECK(SameVec3fArrayBits(byTable, byNull));
     CHECK(byTable != points);
     std::vector<GfVec3f> chunked = points;
     CHECK(RigExecApplyWire(&chunked, restCurve, posedCurve, binds.data(),
-                           binds.size(), 1.0, 0, 2,
-                           table.data(), table.size()));
+                           binds.size(), 1.0, 0, 2, table.data(),
+                           table.size()));
     CHECK(RigExecApplyWire(&chunked, restCurve, posedCurve, binds.data(),
-                           binds.size(), 1.0, 2, points.size(),
-                           table.data(), table.size()));
+                           binds.size(), 1.0, 2, points.size(), table.data(),
+                           table.size()));
     CHECK(SameVec3fArrayBits(chunked, byNull));
     std::vector<GfVec3f> shorted = points;
     CHECK(!RigExecApplyWire(&shorted, restCurve, posedCurve, binds.data(),
-                            binds.size(), 1.0, 0, points.size(),
-                            table.data(), table.size() - 1));
+                            binds.size(), 1.0, 0, points.size(), table.data(),
+                            table.size() - 1));
     CHECK(shorted == points);
     std::vector<GfVec3f> nullCount = points;
     CHECK(RigExecApplyWire(&nullCount, restCurve, posedCurve, binds.data(),
-                           binds.size(), 1.0, 0, points.size(),
-                           nullptr, 37));
+                           binds.size(), 1.0, 0, points.size(), nullptr, 37));
     CHECK(SameVec3fArrayBits(nullCount, byNull));
 }
 
@@ -1625,14 +1611,12 @@ TestPartialDecompositionMatchesOneShot()
     GfMatrix4d slide(1.0);
     slide.SetTranslateOnly(GfVec3d(2, -1, 4));
     const GfMatrix4d scale = GfMatrix4d(1.0).SetScale(GfVec3d(2, 3, 4));
-    for (const GfMatrix4d &m :
-         {spin, screw, slide, scale, GfMatrix4d(1.0)}) {
+    for (const GfMatrix4d &m : {spin, screw, slide, scale, GfMatrix4d(1.0)}) {
         const RigExecPartialDecomposition d =
             RigExecDecomposePartialTransform(m);
         for (const double w : {0.125, 0.5, 0.9}) {
-            CHECK(SameMatrix4dBits(
-                RigExecApplyPartialDecomposition(d, w),
-                RigExecPartialTransform(m, w)));
+            CHECK(SameMatrix4dBits(RigExecApplyPartialDecomposition(d, w),
+                                   RigExecPartialTransform(m, w)));
         }
     }
     // Fixed pin: the screw at w=0.5, frozen from the oracle-validated
@@ -1695,10 +1679,10 @@ TestSurfaceProjectorBaseNormalsMemo()
     const std::vector<GfVec3f> posedB = {
         {0, 2, 5}, {1, 2, 5}, {1, 2.8660254f, 5.5f}, {0, 2.8660254f, 5.5f}};
     int baseACalls = 0, baseBCalls = 0, posedCalls = 0;
-    RigExecSurfaceKernelCache<GfVec3f,GfVec3d> cacheA,cacheB;
+    RigExecSurfaceKernelCache<GfVec3f, GfVec3d> cacheA, cacheB;
     auto compute = [&](const std::vector<GfVec3f> &points,
-                        const std::vector<int> &faceCounts,
-                        const std::vector<int> &faceIndices) {
+                       const std::vector<int> &faceCounts,
+                       const std::vector<int> &faceIndices) {
         if (&points == &baseA) {
             ++baseACalls;
         } else if (&points == &baseB) {
@@ -1713,24 +1697,24 @@ TestSurfaceProjectorBaseNormalsMemo()
     auto counting = [&](const std::vector<GfVec3f> &points,
                         const std::vector<int> &faceCounts,
                         const std::vector<int> &faceIndices) {
-        if(&points==&baseA)return cacheA.VertexNormals(false,points,faceCounts,faceIndices,compute);
-        if(&points==&baseB)return cacheB.VertexNormals(false,points,faceCounts,faceIndices,compute);
-        return compute(points,faceCounts,faceIndices);
+        if (&points == &baseA)
+            return cacheA.VertexNormals(false, points, faceCounts, faceIndices,
+                                        compute);
+        if (&points == &baseB)
+            return cacheB.VertexNormals(false, points, faceCounts, faceIndices,
+                                        compute);
+        return compute(points, faceCounts, faceIndices);
     };
     GfMatrix4d a1, b1, a2, b2;
     std::vector<std::string> diagnostics;
-    CHECK(RigExecSolveSurfaceProjectorT(
-        in, baseA, posedA, counts, indices,
-        counting, "a1", &a1, &diagnostics));
-    CHECK(RigExecSolveSurfaceProjectorT(
-        in, baseB, posedB, counts, indices,
-        counting, "b1", &b1, &diagnostics));
-    CHECK(RigExecSolveSurfaceProjectorT(
-        in, baseA, posedA, counts, indices,
-        counting, "a2", &a2, &diagnostics));
-    CHECK(RigExecSolveSurfaceProjectorT(
-        in, baseB, posedB, counts, indices,
-        counting, "b2", &b2, &diagnostics));
+    CHECK(RigExecSolveSurfaceProjectorT(in, baseA, posedA, counts, indices,
+                                        counting, "a1", &a1, &diagnostics));
+    CHECK(RigExecSolveSurfaceProjectorT(in, baseB, posedB, counts, indices,
+                                        counting, "b1", &b1, &diagnostics));
+    CHECK(RigExecSolveSurfaceProjectorT(in, baseA, posedA, counts, indices,
+                                        counting, "a2", &a2, &diagnostics));
+    CHECK(RigExecSolveSurfaceProjectorT(in, baseB, posedB, counts, indices,
+                                        counting, "b2", &b2, &diagnostics));
     CHECK(SameMatrix4dBits(a1, a2));
     CHECK(SameMatrix4dBits(b1, b2));
     CHECK(!SameMatrix4dBits(a1, b1));
@@ -1747,14 +1731,14 @@ TestLaplacianSmoothBorrowMatchesCopy()
     const std::vector<GfVec3f> quad = {
         {0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}};
     std::vector<GfVec3f> borrowed = quad, owned = quad;
-    RigExecApplyLaplacianSmooth(
-        &borrowed, {4}, {0, 1, 2, 3}, 1.0, quad.data(), quad.size());
+    RigExecApplyLaplacianSmooth(&borrowed, {4}, {0, 1, 2, 3}, 1.0, quad.data(),
+                                quad.size());
     RigExecApplyLaplacianSmooth(&owned, {4}, {0, 1, 2, 3}, 1.0);
     CHECK(SameVec3fArrayBits(borrowed, owned));
     CHECK(borrowed != quad);
     std::vector<GfVec3f> shorted = quad;
-    RigExecApplyLaplacianSmooth(
-        &shorted, {4}, {0, 1, 2, 3}, 1.0, quad.data(), quad.size() - 1);
+    RigExecApplyLaplacianSmooth(&shorted, {4}, {0, 1, 2, 3}, 1.0, quad.data(),
+                                quad.size() - 1);
     CHECK(SameVec3fArrayBits(shorted, quad));
 }
 
@@ -1767,12 +1751,13 @@ TestLinearBlendSkin()
     GfMatrix4d t1(1.0), t2(1.0);
     t1.SetTranslate(GfVec3d(10, 0, 0));
     t2.SetTranslate(GfVec3d(0, 10, 0));
-    const GfMatrix4d rt = GfMatrix4d(GfRotation(GfVec3d(0, 0, 1), 90.0),
-                                     GfVec3d(1, 2, 3));
+    const GfMatrix4d rt =
+        GfMatrix4d(GfRotation(GfVec3d(0, 0, 1), 90.0), GfVec3d(1, 2, 3));
     const std::vector<GfMatrix4d> transforms = {t1, t2, rt};
 
     auto layoutFor = [&](const std::vector<int> &indices,
-                         const std::vector<float> &weights, size_t elementSize) {
+                         const std::vector<float> &weights,
+                         size_t elementSize) {
         RigExecSkinLayout layout;
         layout.transforms = transforms.data();
         layout.transformCount = transforms.size();
@@ -1845,10 +1830,12 @@ TestLinearBlendSkin()
     // SIMD parity against the scalar reference over a mixed layout of
     // rotations, shears and scales (spec 13.4: within 1e-6 x extent).
     {
-        const GfMatrix4d shear(1, 0, 0, 0, 0.3, 1, 0, 0, 0, 0.2, 1, 0, 0, 0, 0, 1);
+        const GfMatrix4d shear(1, 0, 0, 0, 0.3, 1, 0, 0, 0, 0.2, 1, 0, 0, 0, 0,
+                               1);
         std::vector<GfMatrix4d> many = {
             GfMatrix4d(1.0).SetScale(GfVec3d(1.5, 0.8, 2.0)) * shear *
-                GfMatrix4d(GfRotation(GfVec3d(1, 1, 0), 33.0), GfVec3d(2, -1, 4)),
+                GfMatrix4d(GfRotation(GfVec3d(1, 1, 0), 33.0),
+                           GfVec3d(2, -1, 4)),
             GfMatrix4d(GfRotation(GfVec3d(0, 1, 0), -70.0), GfVec3d(-3, 5, 1)),
             GfMatrix4d(1.0).SetTranslate(GfVec3d(7, 7, 7)),
             GfMatrix4d(GfRotation(GfVec3d(1, 0, 0), 120.0), GfVec3d(0, 0, 0))};
@@ -1857,8 +1844,8 @@ TestLinearBlendSkin()
         std::vector<float> weights;
         const size_t elementSize = 3;
         for (int i = 0; i < 257; ++i) {
-            in.push_back(GfVec3f(
-                float(i % 17) - 8.0f, float(i % 5) * 2.0f, float(i % 11)));
+            in.push_back(GfVec3f(float(i % 17) - 8.0f, float(i % 5) * 2.0f,
+                                 float(i % 11)));
             for (size_t k = 0; k < elementSize; ++k) {
                 indices.push_back(int((i + k) % many.size()));
                 // Sums vary above and below one on purpose.
@@ -1878,7 +1865,7 @@ TestLinearBlendSkin()
         RigExecApplyLinearBlendSkinSimd(in.data(), simd.data(), layout);
         std::vector<GfVec3f> scalar(in.size());
         RigExecApplyLinearBlendSkin(in.data(), scalar.data(), layout);
-        const double scale = 20.0;  // point-set extent
+        const double scale = 20.0; // point-set extent
         for (size_t i = 0; i < in.size(); ++i) {
             CHECK((GfVec3d(simd[i]) - GfVec3d(scalar[i])).GetLength() <=
                   1e-6 * scale);
@@ -1921,8 +1908,8 @@ TestPropertyMath()
     CHECK(!RigExecParsePropertyOp(TfToken("smoothstep"), &parsed));
     CHECK(!RigExecParsePropertyOp(TfToken(), &parsed));
 
-    auto floatParams = [](RigExecPropertyOp op, float value, float lo,
-                          float hi, float w) {
+    auto floatParams = [](RigExecPropertyOp op, float value, float lo, float hi,
+                          float w) {
         RigExecPropertyMathParams<float> p;
         p.op = op;
         p.value = value;
@@ -1933,30 +1920,33 @@ TestPropertyMath()
     };
 
     CHECK(std::abs(RigExecApplyFloatMath(
-              2.0f, floatParams(RigExecPropertyOp::Add, 3, 0, 1, 1)) -
+                       2.0f, floatParams(RigExecPropertyOp::Add, 3, 0, 1, 1)) -
                    5.0f) < 1e-6f);
-    CHECK(std::abs(RigExecApplyFloatMath(
-              2.0f, floatParams(RigExecPropertyOp::Multiply, 3, 0, 1, 1)) -
-                   6.0f) < 1e-6f);
-    CHECK(std::abs(RigExecApplyFloatMath(
-              2.5f, floatParams(RigExecPropertyOp::Clamp, 0, 0, 1, 1)) -
-                   1.0f) < 1e-6f);
+    CHECK(std::abs(
+              RigExecApplyFloatMath(
+                  2.0f, floatParams(RigExecPropertyOp::Multiply, 3, 0, 1, 1)) -
+              6.0f) < 1e-6f);
+    CHECK(
+        std::abs(RigExecApplyFloatMath(
+                     2.5f, floatParams(RigExecPropertyOp::Clamp, 0, 0, 1, 1)) -
+                 1.0f) < 1e-6f);
     CHECK(std::abs(RigExecApplyFloatMath(
               -0.25f, floatParams(RigExecPropertyOp::Clamp, 0, 0, 1, 1))) <
           1e-6f);
-    CHECK(std::abs(RigExecApplyFloatMath(
-              0.5f, floatParams(RigExecPropertyOp::Blend, 1, 0, 1, 1)) -
-                   1.0f) < 1e-6f);
+    CHECK(
+        std::abs(RigExecApplyFloatMath(
+                     0.5f, floatParams(RigExecPropertyOp::Blend, 1, 0, 1, 1)) -
+                 1.0f) < 1e-6f);
 
     // remap normalizes [min, max] -> [0, 1] and deliberately does NOT clamp:
     // an out-of-range input stays out of range so a following clamp mover is
     // the thing that bounds it, and the two operations stay distinguishable.
-    CHECK(std::abs(RigExecApplyFloatMath(
-              5.0f, floatParams(RigExecPropertyOp::Remap, 0, 0, 10, 1)) -
-                   0.5f) < 1e-6f);
-    CHECK(RigExecApplyFloatMath(
-              20.0f, floatParams(RigExecPropertyOp::Remap, 0, 0, 10, 1)) >
-          1.5f);
+    CHECK(
+        std::abs(RigExecApplyFloatMath(
+                     5.0f, floatParams(RigExecPropertyOp::Remap, 0, 0, 10, 1)) -
+                 0.5f) < 1e-6f);
+    CHECK(RigExecApplyFloatMath(20.0f, floatParams(RigExecPropertyOp::Remap, 0,
+                                                   0, 10, 1)) > 1.5f);
     // A zero span has no meaningful normalization; 0 rather than an infinity.
     CHECK(std::abs(RigExecApplyFloatMath(
               5.0f, floatParams(RigExecPropertyOp::Remap, 0, 3, 3, 1))) <
@@ -1965,11 +1955,12 @@ TestPropertyMath()
     // The weight is the uniform mover blend: 0 is a pass-through, 1 is the
     // operation outright, and the midpoint is halfway between them.
     CHECK(std::abs(RigExecApplyFloatMath(
-              2.0f, floatParams(RigExecPropertyOp::Add, 4, 0, 1, 0)) -
+                       2.0f, floatParams(RigExecPropertyOp::Add, 4, 0, 1, 0)) -
                    2.0f) < 1e-6f);
-    CHECK(std::abs(RigExecApplyFloatMath(
-              2.0f, floatParams(RigExecPropertyOp::Add, 4, 0, 1, 0.5f)) -
-                   4.0f) < 1e-6f);
+    CHECK(
+        std::abs(RigExecApplyFloatMath(
+                     2.0f, floatParams(RigExecPropertyOp::Add, 4, 0, 1, 0.5f)) -
+                 4.0f) < 1e-6f);
 
     // Vec3f is component-wise in every operation, bounds included.
     RigExecPropertyMathParams<GfVec3f> v;
@@ -2012,18 +2003,36 @@ TestPropertyMath()
 namespace {
 struct KernelVec2 {
     float v[2];
-    float operator[](size_t i) const { return v[i]; }
-    float &operator[](size_t i) { return v[i]; }
+    float operator[](size_t i) const
+    {
+        return v[i];
+    }
+    float &operator[](size_t i)
+    {
+        return v[i];
+    }
 };
 struct KernelVec3 {
     float v[3];
-    float operator[](size_t i) const { return v[i]; }
-    float &operator[](size_t i) { return v[i]; }
+    float operator[](size_t i) const
+    {
+        return v[i];
+    }
+    float &operator[](size_t i)
+    {
+        return v[i];
+    }
 };
 struct KernelMat4 {
     double m[4][4];
-    const double *operator[](size_t r) const { return m[r]; }
-    double *operator[](size_t r) { return m[r]; }
+    const double *operator[](size_t r) const
+    {
+        return m[r];
+    }
+    double *operator[](size_t r)
+    {
+        return m[r];
+    }
     // Each element summed left to right, as GfMatrix4d::operator*= does.
     friend KernelMat4 operator*(const KernelMat4 &a, const KernelMat4 &b)
     {
@@ -2037,20 +2046,20 @@ struct KernelMat4 {
         return out;
     }
 };
-}  // namespace
+} // namespace
 
 static void
 TestPropertyMathKernelTypes()
 {
     const float inf = std::numeric_limits<float>::infinity();
     const float nan = std::numeric_limits<float>::quiet_NaN();
-    const std::vector<float> scalars = {0.0f, -0.0f, 0.5f, 1.0f, -1.5f,
-                                        0.3f, 2.75f, 1e30f, -inf, inf, nan,
-                                        1e-40f};
-    const std::vector<float> weights = {-0.5f, 0.0f, 0.25f, 0.5f, 0.7f,
-                                        1.0f, 1.5f, nan};
+    const std::vector<float> scalars = {0.0f,  -0.0f, 0.5f,  1.0f,
+                                        -1.5f, 0.3f,  2.75f, 1e30f,
+                                        -inf,  inf,   nan,   1e-40f};
+    const std::vector<float> weights = {-0.5f, 0.0f, 0.25f, 0.5f,
+                                        0.7f,  1.0f, 1.5f,  nan};
     const RigExecPropertyOp ops[] = {
-        RigExecPropertyOp::Add, RigExecPropertyOp::Multiply,
+        RigExecPropertyOp::Add,   RigExecPropertyOp::Multiply,
         RigExecPropertyOp::Clamp, RigExecPropertyOp::Remap,
         RigExecPropertyOp::Blend, RigExecPropertyOp::Curve};
     // One key, a short table (linear scan) and a long one (binary search),
@@ -2100,14 +2109,12 @@ TestPropertyMathKernelTypes()
                             gf.tangentCount = plain.tangentCount =
                                 tangents.size();
                         }
-                        CHECK(SameBits(
-                            RigExecApplyFloatMath(x, gf),
-                            RigExecApplyFloatMathKernel(x, plain)));
+                        CHECK(SameBits(RigExecApplyFloatMath(x, gf),
+                                       RigExecApplyFloatMathKernel(x, plain)));
                         ++compared;
 
                         RigExecPropertyMathParams<GfVec3f> gf3;
-                        RigExecPropertyMathKernelParams<KernelVec3,
-                                                        KernelVec2>
+                        RigExecPropertyMathKernelParams<KernelVec3, KernelVec2>
                             plain3;
                         gf3.op = plain3.op = op;
                         gf3.value = GfVec3f(0.75f, x, -2.0f);
@@ -2191,12 +2198,12 @@ TestAvarScaleNormalization()
     CHECK(SameBits(RigExecNormalizeAvarScale(-0.5 * floor), -floor));
     CHECK(SameBits(RigExecNormalizeAvarScale(0.0), floor));
     CHECK(SameBits(RigExecNormalizeAvarScale(-0.0), -floor));
-    CHECK(RigExecNormalizeAvarScale(
-              std::numeric_limits<double>::infinity()) == 1.0);
-    CHECK(RigExecNormalizeAvarScale(
-              -std::numeric_limits<double>::infinity()) == 1.0);
-    CHECK(RigExecNormalizeAvarScale(
-              std::numeric_limits<double>::quiet_NaN()) == 1.0);
+    CHECK(RigExecNormalizeAvarScale(std::numeric_limits<double>::infinity()) ==
+          1.0);
+    CHECK(RigExecNormalizeAvarScale(-std::numeric_limits<double>::infinity()) ==
+          1.0);
+    CHECK(RigExecNormalizeAvarScale(std::numeric_limits<double>::quiet_NaN()) ==
+          1.0);
 }
 
 // ---- Batch 8: spatial acceleration (H7/M41/M49) ----
@@ -2206,8 +2213,8 @@ static float
 _AccelRandFloat(float lo, float hi)
 {
     _AccelRandState = _AccelRandState * 1664525u + 1013904223u;
-    return lo + (hi - lo) *
-                 (float(_AccelRandState >> 8) * (1.0f / 16777216.0f));
+    return lo +
+           (hi - lo) * (float(_AccelRandState >> 8) * (1.0f / 16777216.0f));
 }
 
 // Closest-point-on-triangle transcribed from Ericson, Real-Time
@@ -2215,15 +2222,17 @@ _AccelRandFloat(float lo, float hi)
 // brute-force oracle for traversal equivalence. The known-answer pins
 // in TestTriangleBvhMatchesBruteForce validate the transcription.
 static GfVec3f
-_OracleClosestPointOnTriangle(
-    const GfVec3f &p, const GfVec3f &a, const GfVec3f &b, const GfVec3f &c)
+_OracleClosestPointOnTriangle(const GfVec3f &p, const GfVec3f &a,
+                              const GfVec3f &b, const GfVec3f &c)
 {
     const GfVec3f ab = b - a, ac = c - a, ap = p - a;
     const float d1 = GfDot(ab, ap), d2 = GfDot(ac, ap);
-    if (d1 <= 0 && d2 <= 0) return a;
+    if (d1 <= 0 && d2 <= 0)
+        return a;
     const GfVec3f bp = p - b;
     const float d3 = GfDot(ab, bp), d4 = GfDot(ac, bp);
-    if (d3 >= 0 && d4 <= d3) return b;
+    if (d3 >= 0 && d4 <= d3)
+        return b;
     const float vc = d1 * d4 - d3 * d2;
     if (vc <= 0 && d1 >= 0 && d3 <= 0) {
         const float v = d1 / (d1 - d3);
@@ -2231,7 +2240,8 @@ _OracleClosestPointOnTriangle(
     }
     const GfVec3f cp = p - c;
     const float d5 = GfDot(ab, cp), d6 = GfDot(ac, cp);
-    if (d6 >= 0 && d5 <= d6) return c;
+    if (d6 >= 0 && d5 <= d6)
+        return c;
     const float vb = d5 * d2 - d1 * d6;
     if (vb <= 0 && d2 >= 0 && d6 <= 0) {
         const float w = d2 / (d2 - d6);
@@ -2253,14 +2263,11 @@ TestFanTriangulationBuilders()
     // H7/M41: quad fan, skip, truncation, and the flavor split.
     {
         const std::vector<int> counts = {4}, indices = {0, 1, 2, 3};
-        const RigExecFanTrisH7 h7 =
-            RigExecBuildFanTrisH7(counts, indices, 4);
+        const RigExecFanTrisH7 h7 = RigExecBuildFanTrisH7(counts, indices, 4);
         CHECK(!h7.truncated);
         CHECK(h7.tris.size() == 2);
-        CHECK(h7.tris[0].a == 0 && h7.tris[0].b == 1 &&
-              h7.tris[0].c == 2);
-        CHECK(h7.tris[1].a == 0 && h7.tris[1].b == 2 &&
-              h7.tris[1].c == 3);
+        CHECK(h7.tris[0].a == 0 && h7.tris[0].b == 1 && h7.tris[0].c == 2);
+        CHECK(h7.tris[1].a == 0 && h7.tris[1].b == 2 && h7.tris[1].c == 3);
         const RigExecFanTrisStrict strict =
             RigExecBuildFanTrisStrict(counts, indices, 4);
         CHECK(strict.valid);
@@ -2270,8 +2277,7 @@ TestFanTriangulationBuilders()
     {
         const std::vector<int> counts = {3, 3};
         const std::vector<int> indices = {0, 1, 2, 0, 1, 9};
-        const RigExecFanTrisH7 h7 =
-            RigExecBuildFanTrisH7(counts, indices, 4);
+        const RigExecFanTrisH7 h7 = RigExecBuildFanTrisH7(counts, indices, 4);
         CHECK(!h7.truncated);
         CHECK(h7.tris.size() == 1);
         const RigExecFanTrisStrict strict =
@@ -2282,8 +2288,7 @@ TestFanTriangulationBuilders()
     {
         const std::vector<int> counts = {4};
         const std::vector<int> indices = {0, 1, 2};
-        const RigExecFanTrisH7 h7 =
-            RigExecBuildFanTrisH7(counts, indices, 4);
+        const RigExecFanTrisH7 h7 = RigExecBuildFanTrisH7(counts, indices, 4);
         CHECK(h7.truncated);
         CHECK(h7.tris.size() == 1);
         const RigExecFanTrisStrict strict =
@@ -2294,8 +2299,7 @@ TestFanTriangulationBuilders()
     {
         const std::vector<int> counts = {3};
         const std::vector<int> indices = {0, 1, 2, 0};
-        const RigExecFanTrisH7 h7 =
-            RigExecBuildFanTrisH7(counts, indices, 4);
+        const RigExecFanTrisH7 h7 = RigExecBuildFanTrisH7(counts, indices, 4);
         CHECK(!h7.truncated);
         CHECK(h7.tris.size() == 1);
         const RigExecFanTrisStrict strict =
@@ -2316,8 +2320,7 @@ TestFanTriangulationBuilders()
         const std::vector<int> counts = {2};
         const std::vector<int> indices = {0, 1};
         CHECK(!RigExecBuildFanTrisStrict(counts, indices, 4).valid);
-        const RigExecFanTrisH7 h7 =
-            RigExecBuildFanTrisH7(counts, indices, 4);
+        const RigExecFanTrisH7 h7 = RigExecBuildFanTrisH7(counts, indices, 4);
         CHECK(!h7.truncated);
         CHECK(h7.tris.empty());
         const std::vector<int> negative = {-1, 3};
@@ -2335,68 +2338,99 @@ TestTriangleCandidatesCannotUseGeometricPruning()
     // A closest-point callback has no certified computed-value AABB. This
     // deliberately outside-box result models an unsafe numerical branch:
     // even a very distant candidate must be evaluated after a nearer hit.
-    std::vector<GfVec3f> points{
-        GfVec3f(-1,-1,1), GfVec3f(1,-1,1), GfVec3f(0,1,1)};
-    std::vector<RigExecFanTri> tris{{0,1,2}};
-    for(int i=0;i<80;++i) {
-        const int base=int(points.size()); const float x=1000.0f+float(i)*8.0f;
-        points.push_back(GfVec3f(x,0,0)); points.push_back(GfVec3f(x+1,0,0));
-        points.push_back(GfVec3f(x,1,0)); tris.push_back({base,base+1,base+2});
+    std::vector<GfVec3f> points{GfVec3f(-1, -1, 1), GfVec3f(1, -1, 1),
+                                GfVec3f(0, 1, 1)};
+    std::vector<RigExecFanTri> tris{{0, 1, 2}};
+    for (int i = 0; i < 80; ++i) {
+        const int base = int(points.size());
+        const float x = 1000.0f + float(i) * 8.0f;
+        points.push_back(GfVec3f(x, 0, 0));
+        points.push_back(GfVec3f(x + 1, 0, 0));
+        points.push_back(GfVec3f(x, 1, 0));
+        tris.push_back({base, base + 1, base + 2});
     }
     RigExecTriangleBvh<GfVec3f> index;
-    CHECK(index.Build(points.data(),points.size(),tris.data(),tris.size()));
-    size_t calls=0; bool ordinalOrder=true;
+    CHECK(index.Build(points.data(), points.size(), tris.data(), tris.size()));
+    size_t calls = 0;
+    bool ordinalOrder = true;
     const GfVec3f query(0.0f);
-    const auto result=index.QueryNearest(query,points.data(),tris.data(),
-        [&](const GfVec3f &p,const GfVec3f &a,const GfVec3f &b,const GfVec3f &c) {
-            ordinalOrder = ordinalOrder && size_t(&a-points.data())/3 == calls;
+    const auto result = index.QueryNearest(
+        query, points.data(), tris.data(),
+        [&](const GfVec3f &p, const GfVec3f &a, const GfVec3f &b,
+            const GfVec3f &c) {
+            ordinalOrder =
+                ordinalOrder && size_t(&a - points.data()) / 3 == calls;
             ++calls;
-            return a[0]>100.0f ? p : _OracleClosestPointOnTriangle(p,a,b,c);
+            return a[0] > 100.0f ? p
+                                 : _OracleClosestPointOnTriangle(p, a, b, c);
         });
-    CHECK(calls==tris.size() && ordinalOrder);
-    CHECK(SameVec3fBits(result,query));
+    CHECK(calls == tris.size() && ordinalOrder);
+    CHECK(SameVec3fBits(result, query));
 }
 
 static void
 TestTrianglePathologicalFloatCandidates()
 {
-    const float tiny=std::numeric_limits<float>::denorm_min();
-    const float huge=std::numeric_limits<float>::max()/4.0f;
-    const float translated=std::ldexp(1.0f,60);
-    const float translatedStep=std::ldexp(1.0f,38);
+    const float tiny = std::numeric_limits<float>::denorm_min();
+    const float huge = std::numeric_limits<float>::max() / 4.0f;
+    const float translated = std::ldexp(1.0f, 60);
+    const float translatedStep = std::ldexp(1.0f, 38);
     const std::vector<GfVec3f> points{
-        GfVec3f(0,0,0),GfVec3f(1,0,0),GfVec3f(2,tiny,0),
-        GfVec3f(0,0,0),GfVec3f(tiny,0,0),GfVec3f(0,tiny,0),
-        GfVec3f(-huge,0,0),GfVec3f(huge,0,0),GfVec3f(0,huge,0),
-        GfVec3f(translated,translated,0),
-        GfVec3f(translated+translatedStep,translated,0),
-        GfVec3f(translated+2*translatedStep,translated+translatedStep,0),
-        GfVec3f(1,1,1),GfVec3f(1,1,1),GfVec3f(1,1,1),
-        GfVec3f(-0.0f,0,0),GfVec3f(-0.0f,1,0),GfVec3f(-0.0f,0,1)};
+        GfVec3f(0, 0, 0),
+        GfVec3f(1, 0, 0),
+        GfVec3f(2, tiny, 0),
+        GfVec3f(0, 0, 0),
+        GfVec3f(tiny, 0, 0),
+        GfVec3f(0, tiny, 0),
+        GfVec3f(-huge, 0, 0),
+        GfVec3f(huge, 0, 0),
+        GfVec3f(0, huge, 0),
+        GfVec3f(translated, translated, 0),
+        GfVec3f(translated + translatedStep, translated, 0),
+        GfVec3f(translated + 2 * translatedStep, translated + translatedStep,
+                0),
+        GfVec3f(1, 1, 1),
+        GfVec3f(1, 1, 1),
+        GfVec3f(1, 1, 1),
+        GfVec3f(-0.0f, 0, 0),
+        GfVec3f(-0.0f, 1, 0),
+        GfVec3f(-0.0f, 0, 1)};
     std::vector<RigExecFanTri> tris;
-    for(size_t i=0;i<points.size();i+=3) tris.push_back({int(i),int(i+1),int(i+2)});
+    for (size_t i = 0; i < points.size(); i += 3)
+        tris.push_back({int(i), int(i + 1), int(i + 2)});
     RigExecTriangleBvh<GfVec3f> index;
-    CHECK(index.Build(points.data(),points.size(),tris.data(),tris.size()));
+    CHECK(index.Build(points.data(), points.size(), tris.data(), tris.size()));
     const std::vector<GfVec3f> queries{
-        GfVec3f(0.5f,tiny,1),GfVec3f(tiny,tiny,tiny),GfVec3f(huge,huge,huge),
-        GfVec3f(translated,translated,translatedStep),GfVec3f(-0.0f,0,0),
-        GfVec3f(std::numeric_limits<float>::infinity(),0,0),
-        GfVec3f(std::numeric_limits<float>::quiet_NaN(),0,0)};
-    for(const auto &query:queries) {
-        float bestDistance=std::numeric_limits<float>::max(); GfVec3f best=query;
-        for(const auto &tri:tris) {
-            const auto candidate=_OracleClosestPointOnTriangle(query,
-                points[size_t(tri.a)],points[size_t(tri.b)],points[size_t(tri.c)]);
-            const float distance=(candidate-query).GetLengthSq();
-            if(distance<bestDistance) { bestDistance=distance; best=candidate; }
+        GfVec3f(0.5f, tiny, 1),
+        GfVec3f(tiny, tiny, tiny),
+        GfVec3f(huge, huge, huge),
+        GfVec3f(translated, translated, translatedStep),
+        GfVec3f(-0.0f, 0, 0),
+        GfVec3f(std::numeric_limits<float>::infinity(), 0, 0),
+        GfVec3f(std::numeric_limits<float>::quiet_NaN(), 0, 0)};
+    for (const auto &query : queries) {
+        float bestDistance = std::numeric_limits<float>::max();
+        GfVec3f best = query;
+        for (const auto &tri : tris) {
+            const auto candidate = _OracleClosestPointOnTriangle(
+                query, points[size_t(tri.a)], points[size_t(tri.b)],
+                points[size_t(tri.c)]);
+            const float distance = (candidate - query).GetLengthSq();
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = candidate;
+            }
         }
-        size_t calls=0;
-        const auto result=index.QueryNearest(query,points.data(),tris.data(),
-            [&](const GfVec3f &p,const GfVec3f &a,const GfVec3f &b,const GfVec3f &c) {
-                ++calls; return _OracleClosestPointOnTriangle(p,a,b,c);
+        size_t calls = 0;
+        const auto result = index.QueryNearest(
+            query, points.data(), tris.data(),
+            [&](const GfVec3f &p, const GfVec3f &a, const GfVec3f &b,
+                const GfVec3f &c) {
+                ++calls;
+                return _OracleClosestPointOnTriangle(p, a, b, c);
             });
-        CHECK(calls==tris.size());
-        CHECK(SameVec3fBits(result,best));
+        CHECK(calls == tris.size());
+        CHECK(SameVec3fBits(result, best));
     }
 }
 
@@ -2408,8 +2442,8 @@ TestTriangleBvhMatchesBruteForce()
     // the face, the vertex region, and an edge region. All dyadic, so
     // every intermediate is exact.
     const GfVec3f a(0, 0, 0), b(1, 0, 0), c(0, 1, 0);
-    CHECK(SameVec3fBits(_OracleClosestPointOnTriangle(
-        GfVec3f(0.25f, 0.25f, 1.0f), a, b, c),
+    CHECK(SameVec3fBits(
+        _OracleClosestPointOnTriangle(GfVec3f(0.25f, 0.25f, 1.0f), a, b, c),
         GfVec3f(0.25f, 0.25f, 0.0f)));
     CHECK(SameVec3fBits(
         _OracleClosestPointOnTriangle(GfVec3f(-1, 0, 0), a, b, c), a));
@@ -2430,10 +2464,10 @@ TestTriangleBvhMatchesBruteForce()
         RigExecTriangleBvh<GfVec3f> bvh;
         CHECK(bvh.Build(surface.data(), surface.size(), fan.tris.data(),
                         fan.tris.size()));
-        const GfVec3f q = bvh.QueryNearest(
-            GfVec3f(0.5f, 0.5f, 1.0f), surface.data(), fan.tris.data(),
-            _OracleClosestPointOnTriangle);
-        CHECK(SameBits(q[2], 0.0f));  // first triangle's plane
+        const GfVec3f q =
+            bvh.QueryNearest(GfVec3f(0.5f, 0.5f, 1.0f), surface.data(),
+                             fan.tris.data(), _OracleClosestPointOnTriangle);
+        CHECK(SameBits(q[2], 0.0f)); // first triangle's plane
     }
     // Random soup: BVH with the oracle kernel vs the nested oracle loop.
     {
@@ -2442,8 +2476,8 @@ TestTriangleBvhMatchesBruteForce()
         std::vector<GfVec3f> surface;
         for (int y = 0; y <= grid; ++y) {
             for (int x = 0; x <= grid; ++x) {
-                surface.push_back(GfVec3f(float(x), float(y),
-                                          _AccelRandFloat(-0.5f, 0.5f)));
+                surface.push_back(
+                    GfVec3f(float(x), float(y), _AccelRandFloat(-0.5f, 0.5f)));
             }
         }
         std::vector<int> counts;
@@ -2486,16 +2520,16 @@ TestTriangleBvhMatchesBruteForce()
                     best = q;
                 }
             }
-            const GfVec3f got = bvh.QueryNearest(
-                p, surface.data(), fan.tris.data(),
-                _OracleClosestPointOnTriangle);
+            const GfVec3f got =
+                bvh.QueryNearest(p, surface.data(), fan.tris.data(),
+                                 _OracleClosestPointOnTriangle);
             CHECK(SameVec3fBits(got, best));
         }
         // A non-finite query prunes nothing and wins nothing: identity.
         const float nan = std::numeric_limits<float>::quiet_NaN();
-        const GfVec3f nanQ = bvh.QueryNearest(
-            GfVec3f(nan, 0.0f, 0.0f), surface.data(), fan.tris.data(),
-            _OracleClosestPointOnTriangle);
+        const GfVec3f nanQ =
+            bvh.QueryNearest(GfVec3f(nan, 0.0f, 0.0f), surface.data(),
+                             fan.tris.data(), _OracleClosestPointOnTriangle);
         CHECK(SameBits(nanQ[0], nan) && SameBits(nanQ[1], 0.0f) &&
               SameBits(nanQ[2], 0.0f));
     }
@@ -2504,12 +2538,12 @@ TestTriangleBvhMatchesBruteForce()
     {
         RigExecTriangleBvh<GfVec3f> bvh;
         const float nan = std::numeric_limits<float>::quiet_NaN();
-        const std::vector<GfVec3f> bad = {
-            GfVec3f(0, 0, 0), GfVec3f(1, 0, 0), GfVec3f(nan, 0, 0)};
+        const std::vector<GfVec3f> bad = {GfVec3f(0, 0, 0), GfVec3f(1, 0, 0),
+                                          GfVec3f(nan, 0, 0)};
         const RigExecFanTri tri{0, 1, 2};
         CHECK(!bvh.Build(bad.data(), bad.size(), &tri, 1));
-        const std::vector<GfVec3f> good = {
-            GfVec3f(0, 0, 0), GfVec3f(1, 0, 0), GfVec3f(0, 1, 0)};
+        const std::vector<GfVec3f> good = {GfVec3f(0, 0, 0), GfVec3f(1, 0, 0),
+                                           GfVec3f(0, 1, 0)};
         CHECK(!bvh.Build(good.data(), good.size(), &tri, 0));
         const RigExecFanTri oob{0, 1, 9};
         CHECK(!bvh.Build(good.data(), good.size(), &oob, 1));
@@ -2519,12 +2553,11 @@ TestTriangleBvhMatchesBruteForce()
 // Full H7 loop transcribed from the pre-acceleration kernel as the
 // entry-point oracle: truncation, skips, clamp, and blend included.
 static void
-_OracleApplySurfaceProject(
-    std::vector<GfVec3f> *points,
-    const std::vector<GfVec3f> &surfacePoints,
-    const std::vector<int> &faceVertexCounts,
-    const std::vector<int> &faceVertexIndices,
-    double weight)
+_OracleApplySurfaceProject(std::vector<GfVec3f> *points,
+                           const std::vector<GfVec3f> &surfacePoints,
+                           const std::vector<int> &faceVertexCounts,
+                           const std::vector<int> &faceVertexIndices,
+                           double weight)
 {
     const double w = std::min(std::max(weight, 0.0), 1.0);
     if (points->empty() || surfacePoints.empty() || w <= 0.0) {
@@ -2550,8 +2583,7 @@ _OracleApplySurfaceProject(
                     continue;
                 }
                 const GfVec3f q = _OracleClosestPointOnTriangle(
-                    p, surfacePoints[ia], surfacePoints[ib],
-                    surfacePoints[ic]);
+                    p, surfacePoints[ia], surfacePoints[ib], surfacePoints[ic]);
                 const float distSq = (q - p).GetLengthSq();
                 if (distSq < bestDistSq) {
                     bestDistSq = distSq;
@@ -2571,12 +2603,12 @@ TestSurfaceProjectEntryPaths()
     // (small soups), the BVH path (large soups), both sides of each
     // gate, and every defined edge.
     _AccelRandState = 0xBEEF01u;
-    const int grid = 6;  // 72 fan tris: over the BVH gate.
+    const int grid = 6; // 72 fan tris: over the BVH gate.
     std::vector<GfVec3f> surface;
     for (int y = 0; y <= grid; ++y) {
         for (int x = 0; x <= grid; ++x) {
-            surface.push_back(GfVec3f(float(x), float(y),
-                                      _AccelRandFloat(-1.0f, 1.0f)));
+            surface.push_back(
+                GfVec3f(float(x), float(y), _AccelRandFloat(-1.0f, 1.0f)));
         }
     }
     std::vector<int> counts;
@@ -2601,28 +2633,24 @@ TestSurfaceProjectEntryPaths()
                          const std::vector<int> &faceCounts,
                          const std::vector<int> &faceIndices, double w) {
         std::vector<GfVec3f> got = in, want = in;
-        RigExecApplySurfaceProject(&got, surface, faceCounts, faceIndices,
-                                   w);
-        _OracleApplySurfaceProject(&want, surface, faceCounts, faceIndices,
-                                   w);
+        RigExecApplySurfaceProject(&got, surface, faceCounts, faceIndices, w);
+        _OracleApplySurfaceProject(&want, surface, faceCounts, faceIndices, w);
         CHECK(SameVec3fArrayBits(got, want));
     };
     // BVH path: 72 tris, 24 queries.
     checkBoth(queries, counts, indices, 0.5);
     checkBoth(queries, counts, indices, 1.0);
-    checkBoth(queries, counts, indices, 2.0);  // clamped to 1
+    checkBoth(queries, counts, indices, 2.0); // clamped to 1
     // Fallback path: few tris.
     {
-        const std::vector<int> fewCounts(counts.begin(),
-                                         counts.begin() + 4);
+        const std::vector<int> fewCounts(counts.begin(), counts.begin() + 4);
         const std::vector<int> fewIndices(indices.begin(),
                                           indices.begin() + 16);
-        checkBoth(queries, fewCounts, fewIndices, 0.5);  // 8 tris
+        checkBoth(queries, fewCounts, fewIndices, 0.5); // 8 tris
     }
     // Both sides of each gate: 63/64 tris x 3/4 queries.
     for (size_t tris : {size_t(63), size_t(64)}) {
-        std::vector<int> gateCounts(counts.begin(),
-                                    counts.begin() + tris / 2);
+        std::vector<int> gateCounts(counts.begin(), counts.begin() + tris / 2);
         std::vector<int> gateIndices(indices.begin(),
                                      indices.begin() + tris / 2 * 4);
         if (tris % 2) {
@@ -2643,8 +2671,8 @@ TestSurfaceProjectEntryPaths()
         const std::vector<int> badIndices = {0, 1, 2};
         checkBoth(queries, badCounts, badIndices, 0.5);
         std::vector<GfVec3f> untouched = queries;
-        RigExecApplySurfaceProject(&untouched, surface, badCounts,
-                                   badIndices, 0.5);
+        RigExecApplySurfaceProject(&untouched, surface, badCounts, badIndices,
+                                   0.5);
         CHECK(SameVec3fArrayBits(untouched, queries));
     }
     // Skipped triples and empty counts.
@@ -2657,8 +2685,8 @@ TestSurfaceProjectEntryPaths()
     // Non-finite surface points take the verbatim fallback.
     {
         std::vector<GfVec3f> nanSurface = surface;
-        nanSurface[10] = GfVec3f(
-            std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f);
+        nanSurface[10] =
+            GfVec3f(std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f);
         std::vector<GfVec3f> got = queries, want = queries;
         RigExecApplySurfaceProject(&got, nanSurface, counts, indices, 0.5);
         _OracleApplySurfaceProject(&want, nanSurface, counts, indices, 0.5);
@@ -2667,8 +2695,8 @@ TestSurfaceProjectEntryPaths()
     // Non-finite queries on the BVH path: identity per point.
     {
         std::vector<GfVec3f> nanQueries = queries;
-        nanQueries[3] = GfVec3f(
-            std::numeric_limits<float>::quiet_NaN(), 1.0f, 2.0f);
+        nanQueries[3] =
+            GfVec3f(std::numeric_limits<float>::quiet_NaN(), 1.0f, 2.0f);
         checkBoth(nanQueries, counts, indices, 0.5);
     }
     // Weight edges: zero and negative leave points alone.
@@ -2691,8 +2719,8 @@ TestTriangleBvhRoundingTies()
     const float posX = float(43.74845504760742);
     const float negX = float(-29.79381561279297);
     const float qx = float(6.977319717407227);
-    const std::vector<GfVec3f> surface = {
-        GfVec3f(posX, 0, 0), GfVec3f(negX, 0, 0)};
+    const std::vector<GfVec3f> surface = {GfVec3f(posX, 0, 0),
+                                          GfVec3f(negX, 0, 0)};
     std::vector<int> counts;
     std::vector<int> indices;
     for (int i = 0; i < 32; ++i) {
@@ -2707,9 +2735,8 @@ TestTriangleBvhRoundingTies()
         indices.push_back(1);
         indices.push_back(1);
     }
-    const std::vector<GfVec3f> queries = {
-        GfVec3f(qx, 0, 0), GfVec3f(qx, 0, 0), GfVec3f(qx, 0, 0),
-        GfVec3f(qx, 0, 0)};
+    const std::vector<GfVec3f> queries = {GfVec3f(qx, 0, 0), GfVec3f(qx, 0, 0),
+                                          GfVec3f(qx, 0, 0), GfVec3f(qx, 0, 0)};
     std::vector<GfVec3f> got = queries, want = queries;
     RigExecApplySurfaceProject(&got, surface, counts, indices, 1.0);
     _OracleApplySurfaceProject(&want, surface, counts, indices, 1.0);
@@ -2751,7 +2778,8 @@ TestSegmentBvhNearestFirst()
     for (int ix = -40; ix <= 40; ++ix) {
         for (int iz = -30; iz <= 30; ++iz) {
             for (float y : {-0.05f, 0.0f, 0.02f}) {
-                const GfVec3f p(0.004f * float(ix), y, 0.75f + 0.003f * float(iz));
+                const GfVec3f p(0.004f * float(ix), y,
+                                0.75f + 0.003f * float(iz));
                 const float want =
                     RigExecCurveDistance(p, curve.data(), curve.size());
                 const float got = bvh.QueryNearest(p, curve.data(), counted);
@@ -2800,8 +2828,8 @@ _OracleVertexNormals(const std::vector<GfVec3f> &pointsIn,
     size_t offset = 0;
     for (size_t f = 0; f < faceVertexCounts.size(); ++f) {
         const int faceCount = faceVertexCounts[f];
-        if (faceCount < 3 ||
-            offset + static_cast<size_t>(faceCount) > faceVertexIndices.size()) {
+        if (faceCount < 3 || offset + static_cast<size_t>(faceCount) >
+                                 faceVertexIndices.size()) {
             return normals;
         }
         ring.clear();
@@ -2861,15 +2889,16 @@ TestRangedKernelsMatchSerial()
     std::vector<GfVec3f> points;
     for (int y = 0; y <= H; ++y) {
         for (int x = 0; x <= W; ++x) {
-            points.emplace_back(0.1f * x + 0.013f * std::sin(1.3f * float(x * y)),
-                                0.1f * y,
-                                0.05f * std::sin(0.4f * x) * std::cos(0.3f * y));
+            points.emplace_back(
+                0.1f * x + 0.013f * std::sin(1.3f * float(x * y)), 0.1f * y,
+                0.05f * std::sin(0.4f * x) * std::cos(0.3f * y));
         }
     }
     std::vector<int> counts, indices;
     for (int y = 0; y < H; ++y) {
         for (int x = 0; x < W; ++x) {
-            const int a = y * (W + 1) + x, b = a + 1, c = a + W + 2, d = a + W + 1;
+            const int a = y * (W + 1) + x, b = a + 1, c = a + W + 2,
+                      d = a + W + 1;
             if ((x + y) % 5 == 0) {
                 counts.insert(counts.end(), {3, 3});
                 indices.insert(indices.end(), {a, b, c, a, c, d});
@@ -2885,17 +2914,22 @@ TestRangedKernelsMatchSerial()
     points.emplace_back(2.0f, 2.0f, 2.0f);
     const int lone = int(points.size()) - 1;
     counts.insert(counts.end(), {4, 3, 4});
-    indices.insert(indices.end(), {lone, lone, lone, lone,       // collapsed
-                                   0, 1, int(points.size()) + 5, // missing point
-                                   2, 3, 3, W + 3});             // corner twice
-    const std::vector<GfVec3f> want = _OracleVertexNormals(points, counts, indices);
-    const auto normals = [&](const std::vector<int> &c, const std::vector<int> &i,
+    indices.insert(indices.end(),
+                   {lone, lone, lone, lone,       // collapsed
+                    0, 1, int(points.size()) + 5, // missing point
+                    2, 3, 3, W + 3});             // corner twice
+    const std::vector<GfVec3f> want =
+        _OracleVertexNormals(points, counts, indices);
+    const auto normals = [&](const std::vector<int> &c,
+                             const std::vector<int> &i,
                              const RigExecRangeRunner *ranges) {
-        return RigExecComputeVertexNormals(points.data(), points.size(), c.data(),
-                                           c.size(), i.data(), i.size(), ranges);
+        return RigExecComputeVertexNormals(points.data(), points.size(),
+                                           c.data(), c.size(), i.data(),
+                                           i.size(), ranges);
     };
     CHECK(SameVec3fArrayBits(normals(counts, indices, nullptr), want));
-    CHECK(SameVec3fArrayBits(normals(counts, indices, &kInterleavedRanges), want));
+    CHECK(SameVec3fArrayBits(normals(counts, indices, &kInterleavedRanges),
+                             want));
     // A malformed face ends the walk with the sums so far, unnormalized.
     std::vector<int> cut = counts;
     cut.insert(cut.begin() + 200, 2);
@@ -2904,7 +2938,8 @@ TestRangedKernelsMatchSerial()
     const std::vector<GfVec3f> wantCut =
         _OracleVertexNormals(points, cut, cutIndices);
     CHECK(SameVec3fArrayBits(normals(cut, cutIndices, nullptr), wantCut));
-    CHECK(SameVec3fArrayBits(normals(cut, cutIndices, &kInterleavedRanges), wantCut));
+    CHECK(SameVec3fArrayBits(normals(cut, cutIndices, &kInterleavedRanges),
+                             wantCut));
 
     // The volume fields, unbounded and bounded, over the same points.
     const GfMatrix4d worldToLocal =
@@ -2921,17 +2956,23 @@ TestRangedKernelsMatchSerial()
         RigExecSphereWeightField(view, worldToLocal, params, &serial,
                                  GfVec3f(1.0f, 0.5f, 2.0f), GfVec3f(0.7f));
         RigExecSphereWeightField(view, worldToLocal, params, &split,
-                                 GfVec3f(1.0f, 0.5f, 2.0f), GfVec3f(0.7f), ranges);
+                                 GfVec3f(1.0f, 0.5f, 2.0f), GfVec3f(0.7f),
+                                 ranges);
         CHECK(serial.size() == points.size() &&
-              !std::memcmp(serial.data(), split.data(), serial.size() * sizeof(float)));
+              !std::memcmp(serial.data(), split.data(),
+                           serial.size() * sizeof(float)));
         RigExecPlaneBounds bounds;
         bounds.extentU = 0.6f;
         bounds.extentV = 0.9f;
-        for (const RigExecPlaneBounds *clip : {(const RigExecPlaneBounds *)nullptr,
-                                               (const RigExecPlaneBounds *)&bounds}) {
-            RigExecPlaneWeightField(view, worldToLocal, 2, params, &serial, clip);
-            RigExecPlaneWeightField(view, worldToLocal, 2, params, &split, clip, ranges);
-            CHECK(!std::memcmp(serial.data(), split.data(), serial.size() * sizeof(float)));
+        for (const RigExecPlaneBounds *clip :
+             {(const RigExecPlaneBounds *)nullptr,
+              (const RigExecPlaneBounds *)&bounds}) {
+            RigExecPlaneWeightField(view, worldToLocal, 2, params, &serial,
+                                    clip);
+            RigExecPlaneWeightField(view, worldToLocal, 2, params, &split, clip,
+                                    ranges);
+            CHECK(!std::memcmp(serial.data(), split.data(),
+                               serial.size() * sizeof(float)));
         }
         // A curve long enough for the BVH, and one short enough for the
         // verbatim loop.
@@ -2939,13 +2980,17 @@ TestRangedKernelsMatchSerial()
             std::vector<GfVec3f> curve;
             for (int k = 0; k <= segments; ++k) {
                 const float t = float(k) / float(segments);
-                curve.emplace_back(3.1f * t, 1.2f + 0.4f * std::sin(6.0f * t), 0.1f * t);
+                curve.emplace_back(3.1f * t, 1.2f + 0.4f * std::sin(6.0f * t),
+                                   0.1f * t);
             }
             std::vector<GfVec3f> scratchA, scratchB;
             const RigExecWeightPointView curveView{curve.data(), curve.size()};
-            RigExecCurveWeightField(view, curveView, worldToLocal, params, &serial, &scratchA);
-            RigExecCurveWeightField(view, curveView, worldToLocal, params, &split, &scratchB, ranges);
-            CHECK(!std::memcmp(serial.data(), split.data(), serial.size() * sizeof(float)));
+            RigExecCurveWeightField(view, curveView, worldToLocal, params,
+                                    &serial, &scratchA);
+            RigExecCurveWeightField(view, curveView, worldToLocal, params,
+                                    &split, &scratchB, ranges);
+            CHECK(!std::memcmp(serial.data(), split.data(),
+                               serial.size() * sizeof(float)));
         }
     }
 
@@ -2976,7 +3021,8 @@ TestRangedKernelsMatchSerial()
     CHECK(patch.IsValid());
     std::vector<GfVec3f> uv;
     for (size_t i = 0; i < 997; ++i) {
-        uv.emplace_back(float((i * 37) % 101) / 100.0f, float((i * 53) % 89) / 88.0f, 0.0f);
+        uv.emplace_back(float((i * 37) % 101) / 100.0f,
+                        float((i * 53) % 89) / 88.0f, 0.0f);
     }
     std::vector<GfVec3f> serialPatch(uv.size()), splitPatch(uv.size());
     CHECK(RigExecApplyPatchMover(&serialPatch, patch, uv.data(), uv.size()));
@@ -2988,7 +3034,8 @@ TestRangedKernelsMatchSerial()
     // one thread and matches the single loop.
     std::vector<GfVec3f> aliasedSerial(8192, GfVec3f(0.25f, 0.25f, 0.0f));
     std::vector<GfVec3f> aliasedSplit = aliasedSerial;
-    CHECK(RigExecApplyPatchMover(&aliasedSerial, patch, aliasedSerial.data(), 1));
+    CHECK(
+        RigExecApplyPatchMover(&aliasedSerial, patch, aliasedSerial.data(), 1));
     CHECK(RigExecApplyPatchMover(&aliasedSplit, patch, aliasedSplit.data(), 1,
                                  &kInterleavedRanges));
     CHECK(SameVec3fArrayBits(aliasedSerial, aliasedSplit));
@@ -3011,15 +3058,17 @@ TestIdentityTransformKeepsFiniteBits()
     // returns every finite coordinate unchanged except -0, which the
     // translation row's "+ 0" turns into +0.
     const GfMatrix4d identity(1.0);
-    const float specials[] = {0.0f, -0.0f, 1.0f, -1.0f, 1e-40f, -1e-40f,
-                              3.4e38f, -3.4e38f, 0.1f, -0.7f, 1e-7f, 123456.79f};
+    const float specials[] = {0.0f,   -0.0f,   1.0f,    -1.0f,
+                              1e-40f, -1e-40f, 3.4e38f, -3.4e38f,
+                              0.1f,   -0.7f,   1e-7f,   123456.79f};
     bool same = true;
     for (float x : specials) {
         for (float y : specials) {
             for (float z : specials) {
                 const GfVec3f p(x, y, z);
                 const GfVec3f transformed(identity.TransformAffine(GfVec3d(p)));
-                const GfVec3f shortcut(x == 0.0f ? 0.0f : x, y == 0.0f ? 0.0f : y,
+                const GfVec3f shortcut(x == 0.0f ? 0.0f : x,
+                                       y == 0.0f ? 0.0f : y,
                                        z == 0.0f ? 0.0f : z);
                 same = same && SameVec3fBits(transformed, shortcut);
             }
@@ -3031,9 +3080,8 @@ TestIdentityTransformKeepsFiniteBits()
 static bool
 _SameHit(const RigExecSurfaceHit &a, const RigExecSurfaceHit &b)
 {
-    return a.a == b.a && a.b == b.b && a.c == b.c &&
-           SameBits(a.u, b.u) && SameBits(a.v, b.v) &&
-           SameBits(a.distance, b.distance);
+    return a.a == b.a && a.b == b.b && a.c == b.c && SameBits(a.u, b.u) &&
+           SameBits(a.v, b.v) && SameBits(a.distance, b.distance);
 }
 
 // Pre-change per-face raycast transcribed as the independent oracle
@@ -3041,20 +3089,22 @@ _SameHit(const RigExecSurfaceHit &a, const RigExecSurfaceHit &b)
 // test, so agreement between the two alone would be circular. The exact
 // pin below validates the transcription.
 static bool
-_OracleRaycastSurface(
-    const std::vector<GfVec3f> &points,
-    const std::vector<int> &faceVertexCounts,
-    const std::vector<int> &faceVertexIndices,
-    const GfVec3d &origin, const GfVec3d &direction,
-    RigExecSurfaceHit *hit)
+_OracleRaycastSurface(const std::vector<GfVec3f> &points,
+                      const std::vector<int> &faceVertexCounts,
+                      const std::vector<int> &faceVertexIndices,
+                      const GfVec3d &origin, const GfVec3d &direction,
+                      RigExecSurfaceHit *hit)
 {
-    if (!hit || points.empty() || faceVertexCounts.empty()) return false;
+    if (!hit || points.empty() || faceVertexCounts.empty())
+        return false;
     GfVec3d dir = direction;
     const double dirLength = dir.GetLength();
-    if (!(dirLength > 0) || !std::isfinite(dirLength)) return false;
+    if (!(dirLength > 0) || !std::isfinite(dirLength))
+        return false;
     dir /= dirLength;
     for (int axis = 0; axis < 3; ++axis) {
-        if (!std::isfinite(origin[axis])) return false;
+        if (!std::isfinite(origin[axis]))
+            return false;
     }
 
     auto toDouble = [](const GfVec3f &v) {
@@ -3087,27 +3137,39 @@ _OracleRaycastSurface(
             const GfVec3d e1 = b - a, e2 = c - a;
             const GfVec3d p = dir ^ e2;
             const double det = e1 * p;
-            if (std::abs(det) < 1e-16) continue;
+            if (std::abs(det) < 1e-16)
+                continue;
             const double inv = 1.0 / det;
             const GfVec3d t = origin - a;
             const double u = (t * p) * inv;
-            if (u < 0.0 || u > 1.0) continue;
+            if (u < 0.0 || u > 1.0)
+                continue;
             const GfVec3d q = t ^ e1;
             const double v = (dir * q) * inv;
-            if (v < 0.0 || u + v > 1.0) continue;
+            if (v < 0.0 || u + v > 1.0)
+                continue;
             const double distance = (e2 * q) * inv;
-            if (distance <= 1e-9 || distance >= nearest) continue;
+            if (distance <= 1e-9 || distance >= nearest)
+                continue;
             nearest = distance;
-            hitA = ia; hitB = ib; hitC = ic;
-            hitU = u; hitV = v;
+            hitA = ia;
+            hitB = ib;
+            hitC = ic;
+            hitU = u;
+            hitV = v;
         }
         offset += static_cast<size_t>(count);
     }
-    if (offset != faceVertexIndices.size()) return false;
-    if (hitA < 0 || !std::isfinite(nearest)) return false;
+    if (offset != faceVertexIndices.size())
+        return false;
+    if (hitA < 0 || !std::isfinite(nearest))
+        return false;
 
-    hit->a = hitA; hit->b = hitB; hit->c = hitC;
-    hit->u = hitU; hit->v = hitV;
+    hit->a = hitA;
+    hit->b = hitB;
+    hit->c = hitC;
+    hit->u = hitU;
+    hit->v = hitV;
     hit->distance = nearest;
     return true;
 }
@@ -3118,22 +3180,21 @@ TestRaycastSharedTriangulation()
     // M41: the shared-triangle loop answers the per-face loop exactly,
     // and the strict builder reproduces every validation verdict.
     // Exact pin: hand-computed Moller-Trumbore through (0.5, 0.5).
-    const std::vector<GfVec3f> tri = {
-        GfVec3f(0, 0, 0), GfVec3f(2, 0, 0), GfVec3f(0, 2, 0)};
+    const std::vector<GfVec3f> tri = {GfVec3f(0, 0, 0), GfVec3f(2, 0, 0),
+                                      GfVec3f(0, 2, 0)};
     const std::vector<int> counts = {3}, indices = {0, 1, 2};
     const RigExecFanTrisStrict fan =
         RigExecBuildFanTrisStrict(counts, indices, tri.size());
     CHECK(fan.valid && fan.tris.size() == 1);
     const GfVec3d origin(0.5, 0.5, 4.0), direction(0, 0, -1);
     RigExecSurfaceHit hit;
-    CHECK(RigExecRaycastSurfaceT(tri, counts, indices, origin, direction,
-                                 &hit));
+    CHECK(
+        RigExecRaycastSurfaceT(tri, counts, indices, origin, direction, &hit));
     CHECK(hit.a == 0 && hit.b == 1 && hit.c == 2);
     CHECK(SameBits(hit.u, 0.25) && SameBits(hit.v, 0.25) &&
           SameBits(hit.distance, 4.0));
     RigExecSurfaceHit shared;
-    CHECK(RigExecRaycastSurfaceTrisT(tri, fan, origin, direction,
-                                     &shared));
+    CHECK(RigExecRaycastSurfaceTrisT(tri, fan, origin, direction, &shared));
     CHECK(_SameHit(shared, hit));
     RigExecSurfaceHit oracle;
     CHECK(_OracleRaycastSurface(tri, counts, indices, origin, direction,
@@ -3145,8 +3206,8 @@ TestRaycastSharedTriangulation()
     std::vector<GfVec3f> surface;
     for (int y = 0; y <= grid; ++y) {
         for (int x = 0; x <= grid; ++x) {
-            surface.push_back(GfVec3f(float(x), float(y),
-                                      _AccelRandFloat(-1.0f, 1.0f)));
+            surface.push_back(
+                GfVec3f(float(x), float(y), _AccelRandFloat(-1.0f, 1.0f)));
         }
     }
     std::vector<int> gridCounts;
@@ -3166,28 +3227,26 @@ TestRaycastSharedTriangulation()
     gridIndices.push_back(0);
     gridIndices.push_back(0);
     gridIndices.push_back(0);
-    const RigExecFanTrisStrict gridFan = RigExecBuildFanTrisStrict(
-        gridCounts, gridIndices, surface.size());
+    const RigExecFanTrisStrict gridFan =
+        RigExecBuildFanTrisStrict(gridCounts, gridIndices, surface.size());
     CHECK(gridFan.valid);
     for (int i = 0; i < 120; ++i) {
         const GfVec3d o(_AccelRandFloat(-2.0f, 10.0f),
                         _AccelRandFloat(-2.0f, 10.0f),
                         _AccelRandFloat(-4.0f, 6.0f));
-        GfVec3d d(_AccelRandFloat(-1.0f, 1.0f),
-                  _AccelRandFloat(-1.0f, 1.0f),
+        GfVec3d d(_AccelRandFloat(-1.0f, 1.0f), _AccelRandFloat(-1.0f, 1.0f),
                   _AccelRandFloat(-1.0f, 1.0f));
         if (i % 10 == 0) {
-            d = GfVec3d(0, 0, 0);  // degenerate direction
+            d = GfVec3d(0, 0, 0); // degenerate direction
         }
         RigExecSurfaceHit h0{-1, -1, -1, -1.0, -1.0, -1.0};
         RigExecSurfaceHit h1{-1, -1, -1, -1.0, -1.0, -1.0};
         RigExecSurfaceHit h2{-1, -1, -1, -1.0, -1.0, -1.0};
-        const bool r0 = _OracleRaycastSurface(surface, gridCounts,
-                                              gridIndices, o, d, &h0);
-        const bool r1 = RigExecRaycastSurfaceT(surface, gridCounts,
-                                               gridIndices, o, d, &h1);
-        const bool r2 = RigExecRaycastSurfaceTrisT(surface, gridFan, o, d,
-                                                   &h2);
+        const bool r0 =
+            _OracleRaycastSurface(surface, gridCounts, gridIndices, o, d, &h0);
+        const bool r1 =
+            RigExecRaycastSurfaceT(surface, gridCounts, gridIndices, o, d, &h1);
+        const bool r2 = RigExecRaycastSurfaceTrisT(surface, gridFan, o, d, &h2);
         CHECK(r0 == r1 && r1 == r2);
         CHECK(_SameHit(h0, h1));
         CHECK(_SameHit(h1, h2));
@@ -3200,14 +3259,14 @@ TestRaycastSharedTriangulation()
         CHECK(!RigExecRaycastSurfaceT(tri, counts, indices, origin,
                                       GfVec3d(nan, 0, 0), &h));
         CHECK(_SameHit(h, sentinel));
-        CHECK(!RigExecRaycastSurfaceTrisT(tri, fan, origin,
-                                          GfVec3d(nan, 0, 0), &h));
+        CHECK(!RigExecRaycastSurfaceTrisT(tri, fan, origin, GfVec3d(nan, 0, 0),
+                                          &h));
         CHECK(_SameHit(h, sentinel));
-        CHECK(!RigExecRaycastSurfaceT(tri, counts, indices,
-                                      GfVec3d(nan, 0, 0), direction, &h));
+        CHECK(!RigExecRaycastSurfaceT(tri, counts, indices, GfVec3d(nan, 0, 0),
+                                      direction, &h));
         CHECK(_SameHit(h, sentinel));
-        CHECK(!RigExecRaycastSurfaceT(tri, counts, indices, origin,
-                                      direction, nullptr));
+        CHECK(!RigExecRaycastSurfaceT(tri, counts, indices, origin, direction,
+                                      nullptr));
     }
     // Every invalid flavor: false with the hit untouched, on both paths.
     {
@@ -3216,21 +3275,20 @@ TestRaycastSharedTriangulation()
         const std::vector<std::vector<int>> badIndicesList = {
             {0, 1}, {0, 1, 2}, {0, 1, 9}, {0, 1, 2, 0}};
         for (size_t k = 0; k < badCountsList.size(); ++k) {
-            const RigExecFanTrisStrict badFan =
-                RigExecBuildFanTrisStrict(badCountsList[k],
-                                          badIndicesList[k], tri.size());
+            const RigExecFanTrisStrict badFan = RigExecBuildFanTrisStrict(
+                badCountsList[k], badIndicesList[k], tri.size());
             CHECK(!badFan.valid);
             RigExecSurfaceHit h0{1, 2, 3, 4.0, 5.0, 6.0};
             RigExecSurfaceHit h1{1, 2, 3, 4.0, 5.0, 6.0};
             RigExecSurfaceHit h2{1, 2, 3, 4.0, 5.0, 6.0};
             CHECK(!_OracleRaycastSurface(tri, badCountsList[k],
-                                         badIndicesList[k], origin,
-                                         direction, &h0));
+                                         badIndicesList[k], origin, direction,
+                                         &h0));
             CHECK(!RigExecRaycastSurfaceT(tri, badCountsList[k],
-                                          badIndicesList[k], origin,
-                                          direction, &h1));
-            CHECK(!RigExecRaycastSurfaceTrisT(tri, badFan, origin,
-                                              direction, &h2));
+                                          badIndicesList[k], origin, direction,
+                                          &h1));
+            CHECK(!RigExecRaycastSurfaceTrisT(tri, badFan, origin, direction,
+                                              &h2));
             CHECK(h0.a == 1 && h1.a == 1 && h2.a == 1);
         }
         // Empty counts: the wrapper rejects before delegating, while the
@@ -3241,12 +3299,10 @@ TestRaycastSharedTriangulation()
         RigExecSurfaceHit h0{1, 2, 3, 4.0, 5.0, 6.0};
         RigExecSurfaceHit h1{1, 2, 3, 4.0, 5.0, 6.0};
         RigExecSurfaceHit h2{1, 2, 3, 4.0, 5.0, 6.0};
-        CHECK(!_OracleRaycastSurface(tri, {}, {}, origin, direction,
-                                     &h0));
-        CHECK(!RigExecRaycastSurfaceT(tri, {}, {}, origin, direction,
-                                      &h1));
-        CHECK(!RigExecRaycastSurfaceTrisT(tri, emptyFan, origin,
-                                          direction, &h2));
+        CHECK(!_OracleRaycastSurface(tri, {}, {}, origin, direction, &h0));
+        CHECK(!RigExecRaycastSurfaceT(tri, {}, {}, origin, direction, &h1));
+        CHECK(
+            !RigExecRaycastSurfaceTrisT(tri, emptyFan, origin, direction, &h2));
         CHECK(h0.a == 1 && h1.a == 1 && h2.a == 1);
     }
 }
@@ -3279,24 +3335,22 @@ TestSolverSharedTriangulation()
     // The guard: mismatched counts fail before any cast, in both
     // directions. The shared triangulation relies on it.
     {
-        const std::vector<GfVec3f> shortBase(quad.begin(),
-                                             quad.begin() + 3);
+        const std::vector<GfVec3f> shortBase(quad.begin(), quad.begin() + 3);
         std::vector<GfVec3f> longPosed = posed;
         longPosed.push_back(GfVec3f(9, 9, 9));
         GfMatrix4d ignored;
         std::vector<std::string> diags;
         CHECK(!RigExecSolveSurfaceProjectorT(
             reproject, shortBase, posed, counts, indices,
-            static_cast<RigExecVertexNormalsFn>(
-            &RigExecComputeVertexNormals), "guard", &ignored, &diags));
+            static_cast<RigExecVertexNormalsFn>(&RigExecComputeVertexNormals),
+            "guard", &ignored, &diags));
         CHECK(!RigExecSolveSurfaceProjectorT(
             reproject, quad, longPosed, counts, indices,
-            static_cast<RigExecVertexNormalsFn>(
-            &RigExecComputeVertexNormals), "guard", &ignored, &diags));
+            static_cast<RigExecVertexNormalsFn>(&RigExecComputeVertexNormals),
+            "guard", &ignored, &diags));
         CHECK(diags.size() == 2);
         for (const std::string &d : diags) {
-            CHECK(d.find("no usable points or topology") !=
-                  std::string::npos);
+            CHECK(d.find("no usable points or topology") != std::string::npos);
         }
     }
     // Reproject through the shared fan: a hittable posed surface
@@ -3316,14 +3370,13 @@ TestSolverSharedTriangulation()
         std::vector<std::string> hitDiags, fallbackDiags;
         CHECK(RigExecSolveSurfaceProjectorT(
             reproject, quad, liftedPosed, counts, indices,
-            static_cast<RigExecVertexNormalsFn>(
-            &RigExecComputeVertexNormals), "hit", &viaHit, &hitDiags));
+            static_cast<RigExecVertexNormalsFn>(&RigExecComputeVertexNormals),
+            "hit", &viaHit, &hitDiags));
         CHECK(!hasMissMessage(hitDiags));
         CHECK(RigExecSolveSurfaceProjectorT(
             reproject, quad, posed, counts, indices,
-            static_cast<RigExecVertexNormalsFn>(
-            &RigExecComputeVertexNormals), "miss", &viaFallback,
-            &fallbackDiags));
+            static_cast<RigExecVertexNormalsFn>(&RigExecComputeVertexNormals),
+            "miss", &viaFallback, &fallbackDiags));
         CHECK(hasMissMessage(fallbackDiags));
     }
 }
@@ -3331,12 +3384,10 @@ TestSolverSharedTriangulation()
 static void
 TestMeshAdjacencyBuild()
 {
-    // H1: the sorted-vector adjacency answers the legacy set-based
-    // verdicts: sorted unique neighbors, a repeated corner once, and
-    // the same invalid-topology failures with the output untouched.
+    // H1: sorted unique neighbors, a repeated corner once, and
+    // invalid-topology failures with the output untouched.
     RigExecMeshAdjacency adjacency;
-    CHECK(RigExecBuildMeshAdjacency(
-        4, {4}, {0, 1, 2, 3}, &adjacency));
+    CHECK(RigExecBuildMeshAdjacency(4, {4}, {0, 1, 2, 3}, &adjacency));
     CHECK(adjacency.valid);
     CHECK(adjacency.pointCount == 4);
     CHECK((adjacency.neighbors[0] == std::vector<int>{1, 3}));
@@ -3346,19 +3397,15 @@ TestMeshAdjacencyBuild()
     CHECK(adjacency.Covers(4));
     CHECK(!adjacency.Covers(3));
     // A repeated corner contributes once, as the set insert did.
-    CHECK(RigExecBuildMeshAdjacency(
-        3, {3}, {0, 0, 1}, &adjacency));
+    CHECK(RigExecBuildMeshAdjacency(3, {3}, {0, 0, 1}, &adjacency));
     CHECK((adjacency.neighbors[0] == std::vector<int>{0, 1}));
     CHECK((adjacency.neighbors[1] == std::vector<int>{0}));
     CHECK(adjacency.neighbors[2].empty());
     // Invalid inputs fail with the output untouched.
     const RigExecMeshAdjacency before = adjacency;
-    CHECK(!RigExecBuildMeshAdjacency(
-        4, {4}, {0, 1, 2, 9}, &adjacency));
-    CHECK(!RigExecBuildMeshAdjacency(
-        4, {4}, {0, 1}, &adjacency));
-    CHECK(!RigExecBuildMeshAdjacency(
-        4, {4}, {0, 1, 2, 3}, nullptr));
+    CHECK(!RigExecBuildMeshAdjacency(4, {4}, {0, 1, 2, 9}, &adjacency));
+    CHECK(!RigExecBuildMeshAdjacency(4, {4}, {0, 1}, &adjacency));
+    CHECK(!RigExecBuildMeshAdjacency(4, {4}, {0, 1, 2, 3}, nullptr));
     CHECK(adjacency.valid == before.valid &&
           adjacency.pointCount == before.pointCount &&
           adjacency.neighbors == before.neighbors);
@@ -3376,8 +3423,7 @@ TestLaplacianSmoothCachedMatchesDirect()
     const std::vector<GfVec3f> quad = {
         {0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}};
     RigExecMeshAdjacency adjacency;
-    CHECK(RigExecBuildMeshAdjacency(
-        4, {4}, {0, 1, 2, 3}, &adjacency));
+    CHECK(RigExecBuildMeshAdjacency(4, {4}, {0, 1, 2, 3}, &adjacency));
     std::vector<GfVec3f> cached = quad, direct = quad;
     RigExecApplyLaplacianSmoothWithAdjacency(&cached, adjacency, 1.0);
     RigExecApplyLaplacianSmooth(&direct, {4}, {0, 1, 2, 3}, 1.0);
@@ -3385,18 +3431,15 @@ TestLaplacianSmoothCachedMatchesDirect()
     CHECK(cached != quad);
     // The borrowed read side through the cached form.
     std::vector<GfVec3f> borrowed = quad;
-    RigExecApplyLaplacianSmoothWithAdjacency(
-        &borrowed, adjacency, 1.0, quad.data(), quad.size());
+    RigExecApplyLaplacianSmoothWithAdjacency(&borrowed, adjacency, 1.0,
+                                             quad.data(), quad.size());
     CHECK(SameVec3fArrayBits(borrowed, direct));
     // Invalid topology passes through on both paths.
     RigExecMeshAdjacency invalid;
-    CHECK(!RigExecBuildMeshAdjacency(
-        4, {4}, {0, 1, 2, 9}, &invalid));
+    CHECK(!RigExecBuildMeshAdjacency(4, {4}, {0, 1, 2, 9}, &invalid));
     std::vector<GfVec3f> cachedInvalid = quad, directInvalid = quad;
-    RigExecApplyLaplacianSmoothWithAdjacency(
-        &cachedInvalid, invalid, 1.0);
-    RigExecApplyLaplacianSmooth(
-        &directInvalid, {4}, {0, 1, 2, 9}, 1.0);
+    RigExecApplyLaplacianSmoothWithAdjacency(&cachedInvalid, invalid, 1.0);
+    RigExecApplyLaplacianSmooth(&directInvalid, {4}, {0, 1, 2, 9}, 1.0);
     CHECK(SameVec3fArrayBits(cachedInvalid, quad));
     CHECK(SameVec3fArrayBits(directInvalid, quad));
     // An entry covering another point count passes through.
@@ -3413,16 +3456,17 @@ TestSurfaceProjectCachedAccelMatchesDirect()
     // bit-identically across the gate sides and the fallback edges.
     const std::vector<GfVec3f> quad = {
         {0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}};
-    const std::vector<GfVec3f> dest = {
-        {0.25f, 0.25f, 1}, {0.75f, 0.75f, -1}, {2, 2, 2},
-        {-1, -1, -1}, {0.5f, 0.5f, 0.25f}};
+    const std::vector<GfVec3f> dest = {{0.25f, 0.25f, 1},
+                                       {0.75f, 0.75f, -1},
+                                       {2, 2, 2},
+                                       {-1, -1, -1},
+                                       {0.5f, 0.5f, 0.25f}};
     // Small fan: the verbatim loop on both paths.
     RigExecSurfaceAccel accel;
     RigExecBuildSurfaceAccel({4}, {0, 1, 2, 3}, quad, &accel);
     CHECK(accel.fan && !accel.bvh);
     std::vector<GfVec3f> cached = dest, direct = dest;
-    RigExecApplySurfaceProject(
-        &cached, quad, {4}, {0, 1, 2, 3}, 1.0, &accel);
+    RigExecApplySurfaceProject(&cached, quad, {4}, {0, 1, 2, 3}, 1.0, &accel);
     RigExecApplySurfaceProject(&direct, quad, {4}, {0, 1, 2, 3}, 1.0);
     CHECK(SameVec3fArrayBits(cached, direct));
     CHECK(cached != dest);
@@ -3431,8 +3475,8 @@ TestSurfaceProjectCachedAccelMatchesDirect()
     RigExecBuildSurfaceAccel({4}, {0, 1}, quad, &truncated);
     CHECK(truncated.fan && truncated.fan->truncated);
     std::vector<GfVec3f> cachedTrunc = dest, directTrunc = dest;
-    RigExecApplySurfaceProject(
-        &cachedTrunc, quad, {4}, {0, 1}, 1.0, &truncated);
+    RigExecApplySurfaceProject(&cachedTrunc, quad, {4}, {0, 1}, 1.0,
+                               &truncated);
     RigExecApplySurfaceProject(&directTrunc, quad, {4}, {0, 1}, 1.0);
     CHECK(SameVec3fArrayBits(cachedTrunc, dest));
     CHECK(SameVec3fArrayBits(directTrunc, dest));
@@ -3455,10 +3499,8 @@ TestSurfaceProjectCachedAccelMatchesDirect()
     RigExecBuildSurfaceAccel(counts, indices, surface, &big);
     CHECK(big.fan && big.bvh);
     std::vector<GfVec3f> bigCached = dest, bigDirect = dest;
-    RigExecApplySurfaceProject(
-        &bigCached, surface, counts, indices, 0.5, &big);
-    RigExecApplySurfaceProject(
-        &bigDirect, surface, counts, indices, 0.5);
+    RigExecApplySurfaceProject(&bigCached, surface, counts, indices, 0.5, &big);
+    RigExecApplySurfaceProject(&bigDirect, surface, counts, indices, 0.5);
     CHECK(SameVec3fArrayBits(bigCached, bigDirect));
     CHECK(bigCached != dest);
     // Non-finite surface: the BVH stays null and the verbatim
@@ -3469,37 +3511,32 @@ TestSurfaceProjectCachedAccelMatchesDirect()
     RigExecBuildSurfaceAccel(counts, indices, nanSurface, &nanAccel);
     CHECK(nanAccel.fan && !nanAccel.bvh);
     std::vector<GfVec3f> nanCached = dest, nanDirect = dest;
-    RigExecApplySurfaceProject(
-        &nanCached, nanSurface, counts, indices, 1.0, &nanAccel);
-    RigExecApplySurfaceProject(
-        &nanDirect, nanSurface, counts, indices, 1.0);
+    RigExecApplySurfaceProject(&nanCached, nanSurface, counts, indices, 1.0,
+                               &nanAccel);
+    RigExecApplySurfaceProject(&nanDirect, nanSurface, counts, indices, 1.0);
     CHECK(SameVec3fArrayBits(nanCached, nanDirect));
     // An entry built for another surface falls back to the per-call
     // build rather than answering wrong.
     std::vector<GfVec3f> other = quad;
     other.emplace_back(2, 2, 2);
     std::vector<GfVec3f> fellBack = dest, fellDirect = dest;
-    RigExecApplySurfaceProject(
-        &fellBack, other, {4}, {0, 1, 2, 3}, 1.0, &accel);
-    RigExecApplySurfaceProject(
-        &fellDirect, other, {4}, {0, 1, 2, 3}, 1.0);
+    RigExecApplySurfaceProject(&fellBack, other, {4}, {0, 1, 2, 3}, 1.0,
+                               &accel);
+    RigExecApplySurfaceProject(&fellDirect, other, {4}, {0, 1, 2, 3}, 1.0);
     CHECK(SameVec3fArrayBits(fellBack, fellDirect));
     // Same cardinality, stale truncation verdict: the truncated entry
     // must not suppress projection onto the valid topology.
     std::vector<GfVec3f> staleBack = dest, staleDirect = dest;
-    RigExecApplySurfaceProject(
-        &staleBack, quad, {4}, {0, 1, 2, 3}, 1.0, &truncated);
-    RigExecApplySurfaceProject(
-        &staleDirect, quad, {4}, {0, 1, 2, 3}, 1.0);
+    RigExecApplySurfaceProject(&staleBack, quad, {4}, {0, 1, 2, 3}, 1.0,
+                               &truncated);
+    RigExecApplySurfaceProject(&staleDirect, quad, {4}, {0, 1, 2, 3}, 1.0);
     CHECK(SameVec3fArrayBits(staleBack, staleDirect));
     CHECK(staleBack != dest);
     // The other direction: a stale valid entry must not mask a
     // truncated current topology.
     std::vector<GfVec3f> maskBack = dest, maskDirect = dest;
-    RigExecApplySurfaceProject(
-        &maskBack, quad, {4}, {0, 1}, 1.0, &accel);
-    RigExecApplySurfaceProject(
-        &maskDirect, quad, {4}, {0, 1}, 1.0);
+    RigExecApplySurfaceProject(&maskBack, quad, {4}, {0, 1}, 1.0, &accel);
+    RigExecApplySurfaceProject(&maskDirect, quad, {4}, {0, 1}, 1.0);
     CHECK(SameVec3fArrayBits(maskBack, dest));
     CHECK(SameVec3fArrayBits(maskDirect, dest));
     // Same cardinality, animated points on the BVH path: the stale
@@ -3509,10 +3546,8 @@ TestSurfaceProjectCachedAccelMatchesDirect()
         p[2] += 10.0f;
     }
     std::vector<GfVec3f> movedBack = dest, movedDirect = dest;
-    RigExecApplySurfaceProject(
-        &movedBack, moved, counts, indices, 0.5, &big);
-    RigExecApplySurfaceProject(
-        &movedDirect, moved, counts, indices, 0.5);
+    RigExecApplySurfaceProject(&movedBack, moved, counts, indices, 0.5, &big);
+    RigExecApplySurfaceProject(&movedDirect, moved, counts, indices, 0.5);
     CHECK(SameVec3fArrayBits(movedBack, movedDirect));
     CHECK(movedDirect != bigCached);
     // Same cardinality, degenerate topology on the BVH path: the stale
@@ -3520,12 +3555,10 @@ TestSurfaceProjectCachedAccelMatchesDirect()
     const std::vector<int> collapsedCounts(counts.size(), 4);
     const std::vector<int> collapsedIndices(indices.size(), 0);
     std::vector<GfVec3f> collapsedBack = dest, collapsedDirect = dest;
-    RigExecApplySurfaceProject(
-        &collapsedBack, surface, collapsedCounts, collapsedIndices,
-        0.5, &big);
-    RigExecApplySurfaceProject(
-        &collapsedDirect, surface, collapsedCounts, collapsedIndices,
-        0.5);
+    RigExecApplySurfaceProject(&collapsedBack, surface, collapsedCounts,
+                               collapsedIndices, 0.5, &big);
+    RigExecApplySurfaceProject(&collapsedDirect, surface, collapsedCounts,
+                               collapsedIndices, 0.5);
     CHECK(SameVec3fArrayBits(collapsedBack, collapsedDirect));
     CHECK(collapsedDirect != bigCached);
 }
@@ -3543,31 +3576,30 @@ TestSpanOverloadsMatchVectorForms()
     // Adjacency.
     {
         RigExecMeshAdjacency viaSpan, viaVector;
-        CHECK(RigExecBuildMeshAdjacency(
-            4, counts.data(), counts.size(), indices.data(),
-            indices.size(), &viaSpan));
+        CHECK(RigExecBuildMeshAdjacency(4, counts.data(), counts.size(),
+                                        indices.data(), indices.size(),
+                                        &viaSpan));
         CHECK(RigExecBuildMeshAdjacency(4, counts, indices, &viaVector));
         CHECK(viaSpan.valid == viaVector.valid &&
               viaSpan.pointCount == viaVector.pointCount &&
               viaSpan.neighbors == viaVector.neighbors);
         // Invalid topology fails on both paths with the output untouched.
         RigExecMeshAdjacency bad = viaSpan;
-        CHECK(!RigExecBuildMeshAdjacency(
-            4, counts.data(), counts.size(), indices.data(), 2, &bad));
+        CHECK(!RigExecBuildMeshAdjacency(4, counts.data(), counts.size(),
+                                         indices.data(), 2, &bad));
         CHECK(bad.neighbors == viaSpan.neighbors);
         // A null range with a nonzero size fails closed; with size zero
         // it is the empty range.
-        CHECK(!RigExecBuildMeshAdjacency(
-            4, nullptr, 1, indices.data(), indices.size(), &bad));
-        CHECK(RigExecBuildMeshAdjacency(
-            0, nullptr, 0, nullptr, 0, &bad));
+        CHECK(!RigExecBuildMeshAdjacency(4, nullptr, 1, indices.data(),
+                                         indices.size(), &bad));
+        CHECK(RigExecBuildMeshAdjacency(0, nullptr, 0, nullptr, 0, &bad));
         CHECK(bad.valid && bad.Covers(0));
     }
     // Fan triangulation, span-vs-vector directly.
     {
-        const RigExecFanTrisH7 spanFan = RigExecBuildFanTrisH7(
-            counts.data(), counts.size(), indices.data(),
-            indices.size(), quad.size());
+        const RigExecFanTrisH7 spanFan =
+            RigExecBuildFanTrisH7(counts.data(), counts.size(), indices.data(),
+                                  indices.size(), quad.size());
         const RigExecFanTrisH7 vectorFan =
             RigExecBuildFanTrisH7(counts, indices, quad.size());
         CHECK(spanFan.truncated == vectorFan.truncated);
@@ -3580,7 +3612,7 @@ TestSpanOverloadsMatchVectorForms()
         }
         // The overrun truncation matches too.
         const std::vector<int> shortIndices(indices.begin(),
-                                             indices.begin() + 2);
+                                            indices.begin() + 2);
         const RigExecFanTrisH7 spanTrunc = RigExecBuildFanTrisH7(
             counts.data(), counts.size(), shortIndices.data(),
             shortIndices.size(), quad.size());
@@ -3596,31 +3628,29 @@ TestSpanOverloadsMatchVectorForms()
         const RigExecFanTrisH7 nullIndices = RigExecBuildFanTrisH7(
             counts.data(), counts.size(), nullptr, 4, quad.size());
         CHECK(nullIndices.truncated && nullIndices.tris.empty());
-        const RigExecFanTrisH7 emptyRange = RigExecBuildFanTrisH7(
-            nullptr, 0, nullptr, 0, 0);
+        const RigExecFanTrisH7 emptyRange =
+            RigExecBuildFanTrisH7(nullptr, 0, nullptr, 0, 0);
         CHECK(!emptyRange.truncated && emptyRange.tris.empty());
     }
     // Smooth.
     {
         std::vector<GfVec3f> span = quad, vector = quad;
-        RigExecApplyLaplacianSmooth(
-            &span, counts.data(), counts.size(), indices.data(),
-            indices.size(), 1.0);
+        RigExecApplyLaplacianSmooth(&span, counts.data(), counts.size(),
+                                    indices.data(), indices.size(), 1.0);
         RigExecApplyLaplacianSmooth(&vector, counts, indices, 1.0);
         CHECK(SameVec3fArrayBits(span, vector));
         CHECK(span != quad);
         // The borrowed read side through the span form.
         std::vector<GfVec3f> borrowed = quad;
-        RigExecApplyLaplacianSmooth(
-            &borrowed, counts.data(), counts.size(), indices.data(),
-            indices.size(), 1.0, quad.data(), quad.size());
+        RigExecApplyLaplacianSmooth(&borrowed, counts.data(), counts.size(),
+                                    indices.data(), indices.size(), 1.0,
+                                    quad.data(), quad.size());
         CHECK(SameVec3fArrayBits(borrowed, vector));
         // Invalid topology passes through on both paths.
         const std::vector<int> badIndices = {0, 1, 2, 9};
         std::vector<GfVec3f> spanBad = quad, vectorBad = quad;
-        RigExecApplyLaplacianSmooth(
-            &spanBad, counts.data(), counts.size(), badIndices.data(),
-            badIndices.size(), 1.0);
+        RigExecApplyLaplacianSmooth(&spanBad, counts.data(), counts.size(),
+                                    badIndices.data(), badIndices.size(), 1.0);
         RigExecApplyLaplacianSmooth(&vectorBad, counts, badIndices, 1.0);
         CHECK(SameVec3fArrayBits(spanBad, quad));
         CHECK(SameVec3fArrayBits(vectorBad, quad));
@@ -3636,7 +3666,7 @@ TestSpanOverloadsMatchVectorForms()
         CHECK(!span.empty());
         // The invalid-topology verdict (zero normals) matches too.
         const std::vector<int> shortIndices(indices.begin(),
-                                             indices.begin() + 2);
+                                            indices.begin() + 2);
         const std::vector<GfVec3f> spanBad = RigExecComputeVertexNormals(
             quad.data(), quad.size(), counts.data(), counts.size(),
             shortIndices.data(), shortIndices.size());
@@ -3652,63 +3682,59 @@ TestSpanOverloadsMatchVectorForms()
         for (const std::vector<float> *w : {&perPoint, &one, &none}) {
             const std::vector<GfVec3f> span = RigExecComputeExtent(
                 quad.data(), quad.size(), w->data(), w->size());
-            const std::vector<GfVec3f> vector =
-                RigExecComputeExtent(quad, *w);
+            const std::vector<GfVec3f> vector = RigExecComputeExtent(quad, *w);
             CHECK(SameVec3fArrayBits(span, vector));
             CHECK(span.size() == 2);
         }
-        const std::vector<GfVec3f> spanEmpty = RigExecComputeExtent(
-            nullptr, 0, nullptr, 0);
-        const std::vector<GfVec3f> vectorEmpty = RigExecComputeExtent(
-            std::vector<GfVec3f>(), std::vector<float>());
+        const std::vector<GfVec3f> spanEmpty =
+            RigExecComputeExtent(nullptr, 0, nullptr, 0);
+        const std::vector<GfVec3f> vectorEmpty =
+            RigExecComputeExtent(std::vector<GfVec3f>(), std::vector<float>());
         CHECK(spanEmpty.empty() && vectorEmpty.empty());
     }
     // Lattice.
     {
         const GfVec3i divisions(2, 2, 2);
-        const std::vector<GfVec3f> restCage = {
-            {0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {1, 1, 0},
-            {0, 0, 1}, {1, 0, 1}, {0, 1, 1}, {1, 1, 1}};
+        const std::vector<GfVec3f> restCage = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0},
+                                               {1, 1, 0}, {0, 0, 1}, {1, 0, 1},
+                                               {0, 1, 1}, {1, 1, 1}};
         std::vector<GfVec3f> posedCage = restCage;
         posedCage[7] = GfVec3f(2, 2, 2);
-        const std::vector<GfVec3f> rest = {
-            {0.25f, 0.25f, 0.25f}, {0.75f, 0.75f, 0.75f}};
+        const std::vector<GfVec3f> rest = {{0.25f, 0.25f, 0.25f},
+                                           {0.75f, 0.75f, 0.75f}};
         std::vector<GfVec3f> span = rest, vector = rest;
-        RigExecApplyLattice(
-            &span, rest.data(), rest.size(), restCage.data(),
-            restCage.size(), posedCage.data(), posedCage.size(),
-            divisions);
-        RigExecApplyLattice(
-            &vector, rest, restCage, posedCage, divisions);
+        RigExecApplyLattice(&span, rest.data(), rest.size(), restCage.data(),
+                            restCage.size(), posedCage.data(), posedCage.size(),
+                            divisions);
+        RigExecApplyLattice(&vector, rest, restCage, posedCage, divisions);
         CHECK(SameVec3fArrayBits(span, vector));
         CHECK(span != rest);
         // A cage mismatch passes through on both paths.
         const std::vector<GfVec3f> shortCage(restCage.begin(),
                                              restCage.end() - 1);
         std::vector<GfVec3f> spanBad = rest, vectorBad = rest;
-        RigExecApplyLattice(
-            &spanBad, rest.data(), rest.size(), shortCage.data(),
-            shortCage.size(), posedCage.data(), posedCage.size(),
-            divisions);
-        RigExecApplyLattice(
-            &vectorBad, rest, shortCage, posedCage, divisions);
+        RigExecApplyLattice(&spanBad, rest.data(), rest.size(),
+                            shortCage.data(), shortCage.size(),
+                            posedCage.data(), posedCage.size(), divisions);
+        RigExecApplyLattice(&vectorBad, rest, shortCage, posedCage, divisions);
         CHECK(SameVec3fArrayBits(spanBad, rest));
         CHECK(SameVec3fArrayBits(vectorBad, rest));
     }
     // Surface accel + project, both gate sides and the truncation edge.
     {
-        const std::vector<GfVec3f> dest = {
-            {0.25f, 0.25f, 1}, {0.75f, 0.75f, -1}, {2, 2, 2},
-            {-1, -1, -1}, {0.5f, 0.5f, 0.25f}};
+        const std::vector<GfVec3f> dest = {{0.25f, 0.25f, 1},
+                                           {0.75f, 0.75f, -1},
+                                           {2, 2, 2},
+                                           {-1, -1, -1},
+                                           {0.5f, 0.5f, 0.25f}};
         RigExecSurfaceAccel spanAccel, vectorAccel;
-        RigExecBuildSurfaceAccel(
-            counts.data(), counts.size(), indices.data(), indices.size(),
-            quad.data(), quad.size(), &spanAccel);
+        RigExecBuildSurfaceAccel(counts.data(), counts.size(), indices.data(),
+                                 indices.size(), quad.data(), quad.size(),
+                                 &spanAccel);
         RigExecBuildSurfaceAccel(counts, indices, quad, &vectorAccel);
         CHECK(spanAccel.fan && vectorAccel.fan);
         CHECK(spanAccel.fan->truncated == vectorAccel.fan->truncated);
-        CHECK(spanAccel.fan->tris.size() ==
-              vectorAccel.fan->tris.size());
+        CHECK(spanAccel.fan->tris.size() == vectorAccel.fan->tris.size());
         for (size_t i = 0; i < spanAccel.fan->tris.size(); ++i) {
             const RigExecFanTri &a = spanAccel.fan->tris[i];
             const RigExecFanTri &b = vectorAccel.fan->tris[i];
@@ -3719,42 +3745,38 @@ TestSpanOverloadsMatchVectorForms()
               spanAccel.indices == vectorAccel.indices &&
               spanAccel.points == vectorAccel.points);
         std::vector<GfVec3f> span = dest, vector = dest;
-        RigExecApplySurfaceProject(
-            &span, quad.data(), quad.size(), counts.data(), counts.size(),
-            indices.data(), indices.size(), 1.0, &spanAccel);
-        RigExecApplySurfaceProject(
-            &vector, quad, counts, indices, 1.0, &vectorAccel);
+        RigExecApplySurfaceProject(&span, quad.data(), quad.size(),
+                                   counts.data(), counts.size(), indices.data(),
+                                   indices.size(), 1.0, &spanAccel);
+        RigExecApplySurfaceProject(&vector, quad, counts, indices, 1.0,
+                                   &vectorAccel);
         CHECK(SameVec3fArrayBits(span, vector));
         CHECK(span != dest);
         // The unretained path matches too.
         std::vector<GfVec3f> spanDirect = dest, vectorDirect = dest;
-        RigExecApplySurfaceProject(
-            &spanDirect, quad.data(), quad.size(), counts.data(),
-            counts.size(), indices.data(), indices.size(), 1.0);
-        RigExecApplySurfaceProject(
-            &vectorDirect, quad, counts, indices, 1.0);
+        RigExecApplySurfaceProject(&spanDirect, quad.data(), quad.size(),
+                                   counts.data(), counts.size(), indices.data(),
+                                   indices.size(), 1.0);
+        RigExecApplySurfaceProject(&vectorDirect, quad, counts, indices, 1.0);
         CHECK(SameVec3fArrayBits(spanDirect, vectorDirect));
         CHECK(SameVec3fArrayBits(spanDirect, span));
         // Truncated: no point modified on either path.
         const std::vector<int> shortIndices(indices.begin(),
-                                             indices.begin() + 2);
+                                            indices.begin() + 2);
         std::vector<GfVec3f> spanTrunc = dest, vectorTrunc = dest;
         RigExecApplySurfaceProject(
-            &spanTrunc, quad.data(), quad.size(), counts.data(),
-            counts.size(), shortIndices.data(), shortIndices.size(),
-            1.0);
-        RigExecApplySurfaceProject(
-            &vectorTrunc, quad, counts, shortIndices, 1.0);
+            &spanTrunc, quad.data(), quad.size(), counts.data(), counts.size(),
+            shortIndices.data(), shortIndices.size(), 1.0);
+        RigExecApplySurfaceProject(&vectorTrunc, quad, counts, shortIndices,
+                                   1.0);
         CHECK(SameVec3fArrayBits(spanTrunc, dest));
         CHECK(SameVec3fArrayBits(vectorTrunc, dest));
         // Truncated builds match too: same verdict, no BVH, same keys.
         RigExecSurfaceAccel spanTruncAccel, vectorTruncAccel;
-        RigExecBuildSurfaceAccel(
-            counts.data(), counts.size(), shortIndices.data(),
-            shortIndices.size(), quad.data(), quad.size(),
-            &spanTruncAccel);
-        RigExecBuildSurfaceAccel(
-            counts, shortIndices, quad, &vectorTruncAccel);
+        RigExecBuildSurfaceAccel(counts.data(), counts.size(),
+                                 shortIndices.data(), shortIndices.size(),
+                                 quad.data(), quad.size(), &spanTruncAccel);
+        RigExecBuildSurfaceAccel(counts, shortIndices, quad, &vectorTruncAccel);
         CHECK(spanTruncAccel.fan && vectorTruncAccel.fan);
         CHECK(spanTruncAccel.fan->truncated);
         CHECK(vectorTruncAccel.fan->truncated);
@@ -3763,47 +3785,42 @@ TestSpanOverloadsMatchVectorForms()
               spanTruncAccel.indices == vectorTruncAccel.indices &&
               spanTruncAccel.points == vectorTruncAccel.points);
         // A null accel is a no-op (span-only verdict).
-        RigExecBuildSurfaceAccel(
-            counts.data(), counts.size(), indices.data(),
-            indices.size(), quad.data(), quad.size(), nullptr);
+        RigExecBuildSurfaceAccel(counts.data(), counts.size(), indices.data(),
+                                 indices.size(), quad.data(), quad.size(),
+                                 nullptr);
         // Above the BVH gate the span path projects through the BVH
         // bit-identically to the vector path.
         std::vector<GfVec3f> bigSurface;
         std::vector<int> bigCounts, bigIndices;
         for (int y = 0; y < 9; ++y) {
             for (int x = 0; x < 9; ++x) {
-                bigSurface.emplace_back(
-                    float(x), float(y), 0.1f * (x + y));
+                bigSurface.emplace_back(float(x), float(y), 0.1f * (x + y));
             }
         }
         for (int y = 0; y < 8; ++y) {
             for (int x = 0; x < 8; ++x) {
                 const int a = y * 9 + x;
                 bigCounts.push_back(4);
-                bigIndices.insert(
-                    bigIndices.end(), {a, a + 1, a + 10, a + 9});
+                bigIndices.insert(bigIndices.end(), {a, a + 1, a + 10, a + 9});
             }
         }
         RigExecSurfaceAccel spanBig, vectorBig;
         RigExecBuildSurfaceAccel(
             bigCounts.data(), bigCounts.size(), bigIndices.data(),
-            bigIndices.size(), bigSurface.data(), bigSurface.size(),
-            &spanBig);
-        RigExecBuildSurfaceAccel(
-            bigCounts, bigIndices, bigSurface, &vectorBig);
+            bigIndices.size(), bigSurface.data(), bigSurface.size(), &spanBig);
+        RigExecBuildSurfaceAccel(bigCounts, bigIndices, bigSurface, &vectorBig);
         CHECK(spanBig.fan && spanBig.bvh);
         CHECK(vectorBig.fan && vectorBig.bvh);
         CHECK(spanBig.counts == vectorBig.counts &&
               spanBig.indices == vectorBig.indices &&
               spanBig.points == vectorBig.points);
         std::vector<GfVec3f> spanProj = dest, vectorProj = dest;
-        RigExecApplySurfaceProject(
-            &spanProj, bigSurface.data(), bigSurface.size(),
-            bigCounts.data(), bigCounts.size(), bigIndices.data(),
-            bigIndices.size(), 0.5, &spanBig);
-        RigExecApplySurfaceProject(
-            &vectorProj, bigSurface, bigCounts, bigIndices, 0.5,
-            &vectorBig);
+        RigExecApplySurfaceProject(&spanProj, bigSurface.data(),
+                                   bigSurface.size(), bigCounts.data(),
+                                   bigCounts.size(), bigIndices.data(),
+                                   bigIndices.size(), 0.5, &spanBig);
+        RigExecApplySurfaceProject(&vectorProj, bigSurface, bigCounts,
+                                   bigIndices, 0.5, &vectorBig);
         CHECK(SameVec3fArrayBits(spanProj, vectorProj));
         CHECK(spanProj != dest);
     }
@@ -3816,14 +3833,12 @@ TestSpanOverloadsMatchVectorForms()
         const RigExecCurveFrameSamples vectorSamples =
             RigExecSampleCurveRMF(cvs, 9);
         CHECK(spanSamples.GetSize() == 9);
-        CHECK(SameVec3fArrayBits(
-            spanSamples.positions, vectorSamples.positions));
-        CHECK(SameVec3fArrayBits(
-            spanSamples.tangents, vectorSamples.tangents));
-        CHECK(SameVec3fArrayBits(
-            spanSamples.normals, vectorSamples.normals));
-        CHECK(SameVec3fArrayBits(
-            spanSamples.binormals, vectorSamples.binormals));
+        CHECK(
+            SameVec3fArrayBits(spanSamples.positions, vectorSamples.positions));
+        CHECK(SameVec3fArrayBits(spanSamples.tangents, vectorSamples.tangents));
+        CHECK(SameVec3fArrayBits(spanSamples.normals, vectorSamples.normals));
+        CHECK(
+            SameVec3fArrayBits(spanSamples.binormals, vectorSamples.binormals));
         CHECK(spanSamples.parameters == vectorSamples.parameters);
         // The short-curve linear rule matches too.
         const std::vector<GfVec3f> two = {cvs[0], cvs[1]};
@@ -3831,8 +3846,7 @@ TestSpanOverloadsMatchVectorForms()
             RigExecSampleCurveRMF(two.data(), two.size(), 5);
         const RigExecCurveFrameSamples vectorTwo =
             RigExecSampleCurveRMF(two, 5);
-        CHECK(SameVec3fArrayBits(
-            spanTwo.positions, vectorTwo.positions));
+        CHECK(SameVec3fArrayBits(spanTwo.positions, vectorTwo.positions));
         // Invalid inputs publish no frames on either path.
         const RigExecCurveFrameSamples spanFew =
             RigExecSampleCurveRMF(cvs.data(), cvs.size(), 1);
@@ -3856,25 +3870,22 @@ TestSpanOverloadsMatchVectorForms()
         }
         const std::vector<GfVec2f> binds = {
             {0.0f, 0.0f}, {0.5f, 0.0f}, {1.0f, 0.0f}};
-        const std::vector<GfVec3f> pts = {
-            {0, 1, 0}, {2, 2, 0}, {4, 1, 0}};
+        const std::vector<GfVec3f> pts = {{0, 1, 0}, {2, 2, 0}, {4, 1, 0}};
         std::vector<GfVec3f> span = pts, vector = pts;
-        RigExecApplyRibbonTransport(
-            &span, binds.data(), binds.size(), vectorSamples,
-            posedSamples);
-        RigExecApplyRibbonTransport(
-            &vector, binds, vectorSamples, posedSamples);
+        RigExecApplyRibbonTransport(&span, binds.data(), binds.size(),
+                                    vectorSamples, posedSamples);
+        RigExecApplyRibbonTransport(&vector, binds, vectorSamples,
+                                    posedSamples);
         CHECK(SameVec3fArrayBits(span, vector));
         CHECK(span != pts);
         // A bind mismatch passes through on both paths.
-        const std::vector<GfVec2f> shortBinds(binds.begin(),
-                                              binds.begin() + 2);
+        const std::vector<GfVec2f> shortBinds(binds.begin(), binds.begin() + 2);
         std::vector<GfVec3f> spanBad = pts, vectorBad = pts;
-        RigExecApplyRibbonTransport(
-            &spanBad, shortBinds.data(), shortBinds.size(),
-            vectorSamples, posedSamples);
-        RigExecApplyRibbonTransport(
-            &vectorBad, shortBinds, vectorSamples, posedSamples);
+        RigExecApplyRibbonTransport(&spanBad, shortBinds.data(),
+                                    shortBinds.size(), vectorSamples,
+                                    posedSamples);
+        RigExecApplyRibbonTransport(&vectorBad, shortBinds, vectorSamples,
+                                    posedSamples);
         CHECK(SameVec3fArrayBits(spanBad, pts));
         CHECK(SameVec3fArrayBits(vectorBad, pts));
     }

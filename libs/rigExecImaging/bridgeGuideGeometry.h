@@ -74,9 +74,8 @@ extern const TfToken _volumeInputsScaleZ;
 extern const TfToken _volumeInputsScaleZNeg;
 extern const TfToken _volumeInputsScaleZPos;
 
-// The schema fallback for guide:displayOpacityMin, restated for the same
-// reason _FillControlGuides restates its own: a stage composed without the
-// codeless schema plugin has no fallback to resolve.
+// The schema fallback for guide:displayOpacityMin: a stage composed without
+// the codeless schema plugin has no fallback to resolve.
 constexpr double _kDefaultGuideOpacityMin = 0.15;
 
 // Opacity of the max-weight interior fill. Half translucent, independent

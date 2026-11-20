@@ -183,7 +183,7 @@ def _Read(pose, path):
 
 ANGLES = [-10.0, 0.0, 5.0, 7.5, 7.6, 15.0, 22.5, 22.6, 30.0, 37.5, 45.0,
           52.5, 52.6, 60.0, 100.0, 1e30]
-# The old rule's frames at those angles (earlier ties; s_0 and below: 0;
+# The rule's frames at those angles (earlier ties; s_0 and below: 0;
 # past 60 the last frame holds).
 FRAMES = [0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 4, 4, 4]
 

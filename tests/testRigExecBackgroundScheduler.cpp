@@ -1,10 +1,7 @@
 // RigExecBackgroundScheduler, Stream C: the frame-job queue behind the
 // generation fence.
-// The fence tests from the Stream 0 skeleton stand unchanged -- per-rig
-// tokens, monotonic bumps, independence, staleness -- and the stub's "a
-// current job declines" test is replaced by the pool's own contract, one rule
-// per test in the testRigExecStaticInputCache style:
-//   * FENCE. Tokens, bumps, independence, stale refusal (kept from Stream 0).
+// One rule per test in the testRigExecStaticInputCache style:
+//   * FENCE. Tokens, bumps, independence, stale refusal.
 //   * SWITCH. RIGEXEC_FRAME_CACHE parses to on/off/warm-off, the fill gate is
 //     the mode AND parallel-eval, and a closed gate declines warming while the
 //     fence keeps working.

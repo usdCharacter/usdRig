@@ -84,9 +84,8 @@ using RigExecTouchPoseSceneIndexRefPtr = TfRefPtr<RigExecTouchPoseSceneIndex>;
 /// (through the rig adapter's rigExec/stageKey leaf, like the rig's own
 /// chains) light it: the same mesh path in another stage's viewport stays
 /// dark. Key 0 is UNSCOPED -- a topology-only handle, or a caller that
-/// names no stage -- and lights every chain, which is the behaviour every
-/// key-less caller always had. A keyed mesh wins over an unscoped one of
-/// the same path.
+/// names no stage -- and lights every chain. A keyed mesh wins over an
+/// unscoped one of the same path.
 class RigExecTouchPoseHighlights {
 public:
     static RigExecTouchPoseHighlights &GetInstance();

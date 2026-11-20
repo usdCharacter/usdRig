@@ -293,7 +293,7 @@ RigExecTranslateSceneConstraint(const RigExecSceneDescriptors &scene,
         match.limbJoints = relation(_tokens->rigExecLimbJoints);
         match.moves = relation(_tokens->rigExecMoves);
         match.space = relation(_tokens->rigExecSpace);
-        // A space that cannot supply a frame is dropped, as the compile drops it.
+        // A space that cannot supply a frame is dropped.
         if (const auto *space =
                 result.space.IsEmpty() ? nullptr : source.Node(result.space);
             !space || (space->fact.type != SchemaTypeName::RigExecControl &&

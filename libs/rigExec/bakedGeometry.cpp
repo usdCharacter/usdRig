@@ -2652,11 +2652,6 @@ CopyMovedPoints(const std::vector<GfVec3f> &staging,
 
 /// The influence matrices of \p revision, out of the tables the pose half's
 /// ProviderMatrix steps published. Returns whether the table MOVED.
-///
-/// The compare is here rather than in the packet comparison because a skin
-/// revision's packet no longer carries the table: the half of the executed
-/// decision that used to read `skinTransforms == o.skinTransforms` reads this
-/// instead, and it is the same comparison over the same values.
 bool
 FoldInfluences(const RigExecBakedProgramImpl &B,
                RigExecBakedProgramImpl::GeomRevision *revision)
@@ -2951,7 +2946,7 @@ SkinAcceptance(const RigExecBakedProgramImpl::GeomRevision &revision)
 ///
 /// \p whole runs the full-range kernel instead, which is the same body
 /// inside the kernel's own parallel loop; a revision cut into one chunk uses
-/// it so that an unpartitioned mesh keeps the threading it has today.
+/// it so that an unpartitioned mesh keeps the same threading.
 /// \p target is the buffer written, at the full count: staging for a chunk.
 bool
 SkinRange(RigExecBakedProgramImpl::GeomRevision *revision,
@@ -2974,7 +2969,7 @@ SkinRange(RigExecBakedProgramImpl::GeomRevision *revision,
     // full count by RevisionStatic, because resolving it is atomic over the
     // whole array, and every array here is indexed absolutely. The whole
     // array goes through the kernel's own split for the reason the skinning
-    // above does: an unpartitioned mesh keeps the threading it has today.
+    // above does: an unpartitioned mesh keeps the same threading.
     if (!revision->fullStrength) {
         if (whole) {
             // `whole` means the whole array -- the full-range kernel above
@@ -3167,9 +3162,9 @@ RevisionValues(RigExecBakedProgramImpl &B,
     }
     // A skin revision's packet carries the IDENTITY table and never the
     // folded one: it is assembled before the matrices are folded, which is
-    // what lets its chunks start on their own joints. Every other operation's
-    // packet carries what the fold wrote -- which is nothing today, because a
-    // skin is the only operation that binds influences at all.
+    // what lets its chunks start on their own joints. Skin is the only
+    // operation that binds influences at all, so every other operation's
+    // packet carries the identity table the fold writes it.
     const std::vector<GfMatrix4d> &table =
         revision->op == RigExecRevisionOp::Skin ? revision->packetInfluences
                                                 : revision->influences;
@@ -3188,8 +3183,7 @@ RevisionValues(RigExecBakedProgramImpl &B,
                              : &B.weightPackets[size_t(revision->weightObject)];
     }
     // Only the operations that measure against the authored base read it; a
-    // matrix, skin or wire revision never does, and copying a whole body's
-    // points per revision per frame was most of what such a step cost.
+    // matrix, skin or wire revision never does.
     if (revision->op != RigExecRevisionOp::Matrix &&
         revision->op != RigExecRevisionOp::Skin &&
         revision->op != RigExecRevisionOp::Wire) {
@@ -5418,8 +5412,7 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
         if (revision.gpuOwned)
             revision.gpuTouched = true;
         // The finite/affine check the dynamic path's assembler makes over the
-        // same matrices. It is the fold's because the packet no longer
-        // carries them, and the fuse ANDs it in where the assembler's answer
+        // same matrices. The fuse ANDs it in where the assembler's answer
         // would have landed: a revision with one bad influence passes its
         // preceding value through and reports MoverFailed.
         revision.influencesValid =

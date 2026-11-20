@@ -54,11 +54,11 @@ the stage when the picker names none (`pickerModel.py:107-116`,
 implements is live on its own (`pickerModel.py:107-108`). A button that
 resolves to nothing is not drawn at all, though `coverage()` still counts
 it for the panel's status line (`pickerModel.py:241-242`, `:344-354`,
-`pickerUI.py:1087-1100`). A click selects the targets in order, or steps
+`pickerUI.py:1072-1085`). A click selects the targets in order, or steps
 the switch's attribute to its next label and writes it back as a float,
 matching the pose first when the switch drives an IK/FK limb or a space
 switch; a switch with more than two labels opens a menu of them instead
-(`pickerUI.py:1102-1160`, `:1302-1338`, `:1439-1464`); the hit test is
+(`pickerUI.py:1087-1145`, `:1287-1323`, `:1424-1449`); the hit test is
 the button's bounding box rather than its drawn outline, and `ui:size` is
 clamped up to 4 units so a fingertip button is still catchable
 (`pickerModel.py:23`, `:57-58`, `:288-310`).
@@ -317,7 +317,7 @@ bin\launch_usdview.bat docs\examples\picker.usda
 
 - Leave `ui:text` unauthored on a command button. The panel falls back to the command's own title (`Zero Ctrls`) and then dispatches on that LABEL, so a friendlier caption makes the button inert (`pickerScene.py:154-155`, `pickerModel.py:28`, `:94-97`).
 - Author a switch's attribute on a control or a joint — a custom `avars:ikfk` on a params control, connected onward to the blend — because an attribute on a solver prim fails the liveness test and the button is never drawn (`pickerModel.py:109-111`, `:241-242`).
-- `rigExec:picker:mode` is ignored without `rigExec:picker:modeDial`, and a dial resting between 0.001 and 0.999 counts as neither mode, so both halves stay reachable mid-handover (`pickerScene.py:164-166`, `pickerUI.py:1239-1245`).
+- `rigExec:picker:mode` is ignored without `rigExec:picker:modeDial`, and a dial resting between 0.001 and 0.999 counts as neither mode, so both halves stay reachable mid-handover (`pickerScene.py:164-166`, `pickerUI.py:1224-1230`).
 
 ## See also
 

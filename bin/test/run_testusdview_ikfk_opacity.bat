@@ -3,10 +3,9 @@ rem Headless end-to-end test that the IK/FK switch fades the inactive
 rem control set (tests\testUsdviewIkFkOpacity.py) on biped_rig_v3.usda.
 rem The Windows twin of run_testusdview_ikfk_opacity.sh.
 rem
-rem Why it exists: `guide:displayOpacity.connect = <dial>` compiled and
-rem changed nothing, because UsdAttribute::Get never follows a connection.
-rem The imaging bridge now does, and this asserts the DRAWN opacity from
-rem the terminal Hydra scene index -- never the authored attribute -- as
+rem Why it exists: UsdAttribute::Get never follows a connection, so this
+rem asserts the DRAWN opacity from the terminal Hydra scene index -- never
+rem the authored attribute -- as
 rem the builder wires each limb's controls (into the session
 rem layer; the file is never written) and the limb's avars:ikfk is driven
 rem on the param node, a different prim from every guide it fades. The IK

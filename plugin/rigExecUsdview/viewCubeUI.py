@@ -806,14 +806,7 @@ class ViewCubeController(QtCore.QObject):
 # window.
 _controllers = sessionRegistry.SessionRegistry("view cube controllers")
 
-# usdview builds its stage view LONG after it loads plugins
-# (appController.py configures plugins at ~432 and constructs the
-# StageView at ~1863), so the first stage-replaced callback a container
-# gets has no viewport to attach to. Rather than make every caller guess
-# at that ordering, an install that arrives too early re-tries itself
-# once the event loop turns. Bounded, so a genuinely headless session
-# stops asking instead of posting timers forever. Per session, like the
-# controller.
+# The pending install flag is per session, like the controller.
 _INSTALL_RETRIES = 20
 _installPending = sessionRegistry.SessionRegistry("view cube pending installs")
 
@@ -854,8 +847,8 @@ def GetController(usdviewApi=None):
 
 
 def __getattr__(name):
-    # `_controller` was the process's single cube; now a view onto the
-    # per-session registry for scripts that read it.
+    # `_controller` is a view onto the per-session registry for scripts
+    # that read it.
     if name == "_controller":
         return _controllers.Current()
     raise AttributeError("module %r has no attribute %r" % (__name__, name))

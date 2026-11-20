@@ -177,8 +177,8 @@ def _check_the_cranium_does_not_change(rig, hip):
             was = math.dist(rest[i], rest[j])
             now = math.dist(moved[i], moved[j])
             change = abs(now - was) / was
-            # 6.56% and 1.64% measured before the fix; 0.1% is the floor
-            # that separates those from the arithmetic.
+            # 0.1% is the floor that separates the rig's real change from
+            # arithmetic noise.
             assert change < 1e-3, (
                 "cranium %s changes %.3f%% at ty=%g"
                 % (label, 100 * change, value))

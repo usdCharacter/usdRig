@@ -438,8 +438,7 @@ RigExecBridgeFrameCache::_LookupCachedPose(const RigExecCacheCall &call,
     // no proof cannot hit whatever its digest says, and a cold frame is the
     // common case on a first scrub. Sampling and digesting it here would
     // make every miss pay the full vector twice (once here, once in the
-    // memoization after the live run), which is exactly the cold-frame
-    // latency the cache-off path never pays. A time with no proof but WITH
+    // memoization after the live run). A time with no proof but WITH
     // a retained base still samples when publishing: the sparse plan may
     // serve it with zero pulls, which is worth one sample.
     RigExecFrameCacheKey baseKey{0, 0};

@@ -16,11 +16,7 @@
 # OVERLAY APPROACH: a transparent, mouse-transparent CHILD WIDGET of the
 # StageView, raised above it. usdview's StageView is a QOpenGLWidget,
 # whose contents Qt 6 composites through the backing store, so ordinary
-# child widgets do paint on top of it -- verified by the testusdview
-# smoke grabs in .superpowers/sdd/2026-09-01-viewport-gizmo-toolbar/.
-# The fallback of wrapping view.paintGL and drawing with a QPainter on
-# the GL widget was NOT needed and is not implemented; if a future Qt or
-# driver breaks the composite, that is where to go.
+# child widgets do paint on top of it.
 #
 # HOTKEYS AND usdview (design spec 8.5). The viewport keys are read from
 # an APPLICATION-level event filter (ViewportHotkeyFilter), not from the
@@ -505,37 +501,19 @@ class ViewportToolbar(QtWidgets.QToolBar):
         self.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
         self.setMovable(False)
         self.setFloatable(False)
-        # Two things this stylesheet buys. The checked state, because
-        # the default style barely distinguishes it and "which tool am I
-        # in" is the one thing this bar must say. And tight padding,
-        # because the row has to FIT: at usdview's default split the
-        # viewport is around 600 logical px and the default padding put
-        # the bar over that, which sends the trailing items into
+        # Two things this stylesheet buys: the checked state, which the
+        # default style barely distinguishes ("which tool am I in" is the
+        # one thing this bar must say), and tight padding, because the row
+        # has to FIT usdview's default viewport -- items past it go into
         # QToolBar's overflow chevron where nobody finds them.
-        # ICONS, NOT WORDS (gizmoIcons). A row of text buttons is as wide as
-        # the platform's UI font makes it, and QToolBar folds what does not fit
-        # into an overflow chevron from the end: on Windows at 10pt the row
-        # wanted 856 px against usdview's ~600 and put Snap, Undo, Redo,
-        # Settings and Graph where nobody finds them. Glyphs are the width we
-        # choose, so the row is the same on every platform, and the space that
-        # buys is why the checked highlight can afford real padding again.
-        #
-        # The stylesheet still earns its keep for the checked state, which the
-        # default style barely distinguishes -- and "which tool am I in" is the
-        # one thing this bar must say.
+        # ICONS, NOT WORDS (gizmoIcons): glyphs are the width we choose, so
+        # the row is the same on every platform.
         self.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
         self.setIconSize(QtCore.QSize(18, 18))
-        # 3px of side padding, not 4. MEASURED inside usdview at its
-        # default layout, where the viewport frame is 601 logical px:
-        # the row is 575 px at 4px and 545 at 3px, and the difference is
-        # 15 buttons x 2 px. That 30 px is the whole margin of safety
-        # this row has -- the one remaining text button (Snap) is pinned
-        # to the width of "Snap: Surface" in the PLATFORM's UI font, and
-        # a font wider than this one is what would otherwise push the
-        # Settings gear back into the overflow chevron. Shrinking the
-        # glyphs from 18 px would have bought the same 26 px and made
-        # every button harder to read; a pixel of padding costs nothing
-        # anyone can see.
+        # 3px of side padding. Snap's width is pinned to the width of
+        # "Snap: Surface" in the PLATFORM's UI font; a font wider than
+        # this one is what pushes the Settings gear into the overflow
+        # chevron.
         self.setStyleSheet(
             "QToolBar { padding: 0px; spacing: 1px; }"
             " QToolButton { padding: 2px 3px; margin: 0px; }"
@@ -650,8 +628,7 @@ class ViewportToolbar(QtWidgets.QToolBar):
     def _BuildChannels(self):
         # No section label: the row already overflows at usdview's
         # default viewport width (glFrame 598 logical px), and the
-        # Pose/Pivot tooltips below name the group already. The two
-        # labels cost ~78 px that pushed Undo/Redo into the chevron.
+        # Pose/Pivot tooltips below name the group already.
         group = QtActionWidgets.QActionGroup(self)
         group.setExclusive(True)
         tips = {
@@ -2101,9 +2078,7 @@ class GizmoController(QtCore.QObject):
             # that is what lets the drag push all of their previewed
             # values to Hydra in a single UpdatePreview per mouse sample
             # (gizmoPreview.Push takes writer.Pending()) and author them
-            # in a single change block on release. N writers would mean
-            # N pushes and N commits, and an authored edit costs ~150 ms
-            # on the next evaluate where a preview costs nothing.
+            # in a single change block on release.
             self._target, self._reason = gizmoMath.MakeGroupTarget(
                 stage, prims, self._channels, self._Writer(),
                 self._solverPosed)
@@ -4487,15 +4462,9 @@ def _WriterStage(drag):
 # An entry goes away with its window.
 _controllers = sessionRegistry.SessionRegistry("gizmo controllers")
 
-# usdview builds its stage view LONG after it loads plugins
-# (appController.py configures plugins at ~432 and constructs the
-# StageView at ~1863), so the first stage-replaced callback a container
-# gets has no viewport to attach to. Rather than make every caller guess
-# at that ordering, an install that arrives too early re-tries itself
-# once the event loop turns. Bounded, so a genuinely headless session
-# stops asking instead of posting timers forever. The pending flag is per
-# session, like the controller: one session's queued retry must not stop
-# another session from queueing its own.
+# The pending install flag is per session, like the controller: one
+# session's pending install must not stop another session from queueing
+# its own.
 _INSTALL_RETRIES = 20
 _installPending = sessionRegistry.SessionRegistry("gizmo pending installs")
 
@@ -4555,9 +4524,9 @@ def GetController(usdviewApi=None):
 
 
 def __getattr__(name):
-    # `_controller` was the process's single controller. It is now a view
-    # onto the per-session registry for the scripts that read it (the
-    # testusdview harness): in a plain usdview, the one controller.
+    # `_controller` is a view onto the per-session registry for the
+    # scripts that read it (the testusdview harness): in a plain
+    # usdview, the one controller.
     if name == "_controller":
         return _controllers.Current()
     raise AttributeError("module %r has no attribute %r" % (__name__, name))

@@ -4705,8 +4705,7 @@ TestDragReleaseRewarmsAffected()
     CHECK(registry->GetFrameCacheStats(rig).published == publishedBeforeDrag);
 
     // Warming under the drag admits the override identity with its exact
-    // seeds (mirroring SetOverrides placement), instead of leaving it
-    // foreign.
+    // seeds, instead of leaving it foreign.
     const RigExecFrameGeneration gen = registry->CurrentFrameGeneration(rig);
     RigExecWarmFactoryResult dragged =
         registry->BuildWarmWork(rig, UsdTimeCode(4.0), gen, _TestKernel);
@@ -5302,9 +5301,8 @@ TestInSessionWeightSamplesKeyFramesApart()
 } // namespace
 
 // The live sampler's chain bindings are bound once per compiled rig and kept
-// current by stage notices rather than re-verified on every sample (which on
-// the full biped stack cost 60 ms per call, twice per viewport release). The
-// contract that replaces the check: a chain mover's constant edited
+// current by stage notices, not re-verified on every sample. The contract: a
+// chain mover's constant edited
 // mid-compiled rig -- which moves no compiled rig signature -- rebinds them; an edit to a
 // control that no chain reads does not; and the trusted sample always
 // digests exactly as the self-binding sampler's. Since the frozen worker runs
