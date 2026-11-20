@@ -383,19 +383,6 @@ pointer, or a passkey gate that is really an aggregate.
 sources of every form above; extend `_SELF_CASES` when the extractor changes.
 Keep the exceptions above in sync with the code they describe.
 
-`tools/check_graphview_layers.py` runs in CI and keeps the noodle editor's
-layer plan honest: every direct definition of `class GraphView` in
-`plugin/usdNoodles/graphView.py` needs a layer in `tools/graphViewLayers.json`
-(vocabulary: model, intents, editing, interaction, selection, render,
-stage_sync, coordinator, compat), a module under
-`plugin/usdNoodles/graphview/` may not import Qt, OpenGL or `pxr.Usdviewq`
-unless its recorded layer is interaction or render, and no such module exceeds
-3000 lines while `line_ceilings` ratchets downward. Run it with
-`python3 tools/check_graphview_layers.py`; `--self-test` checks the rules
-themselves. `--write-inventory` only marks a newly appearing definition
-`unassigned` and never rewrites an existing layer, so the check still fails
-until a reviewer picks one.
-
 ### Build and test
 
 Use an unchanged OpenUSD 26.08 install with OpenExec, CMake 3.26+, Ninja,

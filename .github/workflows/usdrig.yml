@@ -459,9 +459,7 @@ jobs:
   # The usdNoodles scenario suite (plugin/usdNoodles/testenv) plus the four
   # headless editor drivers. plugin/ is pruned from the change selector, so no
   # other job reaches this code: --no-tests=error turns a missing testUsdNoodles
-  # registration into a failure instead of a silent skip. See
-  # plugin/usdNoodles/testenv/README.md for the local twin of this job and for
-  # the recorded baseline case and skip counts.
+  # registration into a failure instead of a silent skip.
   # --------------------------------------------------------------------------
   usdnoodles-suite:
     name: usdNoodles scenario suite

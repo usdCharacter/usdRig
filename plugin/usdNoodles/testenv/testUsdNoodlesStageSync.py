@@ -38,7 +38,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 try:
-    from pxr import Sdf, Usd, UsdGeom
+    from pxr import Sdf, Usd, UsdGeom, UsdUI
 
     _has_usd = True
 except ImportError as error:  # pragma: no cover - OpenUSD not installed
@@ -61,21 +61,26 @@ try:
 except ImportError:  # pragma: no cover - native module not built
     _has_blueprint = False
 
+# The Qt bridge is the only optional piece here; the editor module that uses
+# it is product code, so its import is not guarded -- a broken staged package
+# fails the run instead of quietly skipping the dock coverage.
 try:
     from pxr.Usdviewq.qt import QtCore, QtWidgets
-    from UsdNoodles._qt_editor import NoodlesEditorWindow
 
-    _has_qt_editor = True
-except Exception as error:  # pragma: no cover - Qt bridge not available
-    print("Qt editor imports failed: %s" % error)
-    _has_qt_editor = False
+    _has_qt = True
+except ImportError as error:  # pragma: no cover - Qt bridge not installed
+    print("Qt bridge imports failed: %s" % error)
+    _has_qt = False
+
+if _has_qt:
+    from UsdNoodles._qt_editor import NoodlesEditorWindow
 
 # A widget needs a live QApplication for its whole life. The headless harness
 # drops its app when the GL check fails, and Qt then aborts on the next widget
 # while QApplication.instance() still hands back the dead wrapper. Holding one
 # from import keeps every widget test in the file on a live app.
 _dock_app = None
-if _has_qt_editor:
+if _has_qt:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     _dock_app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
@@ -743,6 +748,54 @@ class ApplyUsdChangesTest(unittest.TestCase):
         view._hooks.clearRenderCache.assert_not_called()
         view._hooks.update.assert_called_once()
 
+    def test_an_expansion_change_collapses_and_relayouts(self) -> None:
+        """A collapse repaints, relayouts and re-derives the links: the pins
+        under the header move with it."""
+        view = _StubView(self.stage, ["/Alpha"])
+        api = UsdUI.NodeGraphNodeAPI(self.stage.GetPrimAtPath("/Alpha"))
+        api.CreateExpansionStateAttr().Set("closed")
+        before = _layer_text(self.stage)
+
+        stage_sync.applyUsdChanges(
+            view, set(), {"/Alpha.ui:nodegraph:node:expansionState"}
+        )
+
+        self.assertTrue(view.nodes["/Alpha"]._title_collapsed)
+        self.assertTrue(view.nodes["/Alpha"].titleCollapsed)
+        self.assertTrue(view.linksChanged)
+        self.assertTrue(view.textChanged)
+        self.assertEqual(_layer_text(self.stage), before)
+
+    def test_an_expansion_notice_without_an_authored_value_is_silent(
+        self,
+    ) -> None:
+        """No authored state means no collapse change: nothing repaints."""
+        view = _StubView(self.stage, ["/Alpha"])
+        before = _layer_text(self.stage)
+
+        stage_sync.applyUsdChanges(
+            view, set(), {"/Alpha.ui:nodegraph:node:expansionState"}
+        )
+
+        self.assertFalse(view.nodes["/Alpha"]._title_collapsed)
+        self.assertFalse(view.linksChanged)
+        self.assertFalse(view.textChanged)
+        view._hooks.update.assert_not_called()
+        self.assertEqual(_layer_text(self.stage), before)
+
+    def test_a_node_type_change_drops_the_cached_type(self) -> None:
+        view = _StubView(self.stage, ["/Alpha"])
+        view.nodes["/Alpha"]._cachedType = "Sphere"
+
+        stage_sync.applyUsdChanges(
+            view, set(), {"/Alpha.info:implementationSource"}
+        )
+
+        self.assertIsNone(view.nodes["/Alpha"]._cachedType)
+        self.assertFalse(view.linksChanged)
+        self.assertTrue(view.textChanged)
+        view.nodes["/Alpha"].invalidateCache.assert_not_called()
+
     def test_a_bare_prim_info_change_never_asks_for_the_empty_attribute(
         self,
     ) -> None:
@@ -1223,10 +1276,7 @@ class ProductionAdapterTest(unittest.TestCase):
         self.assertEqual(view._hooks.mock_calls, [])
 
 
-import os
-
-
-if _has_qt_editor:
+if _has_qt:
 
     class _DockDataModel(QtCore.QObject):
         """The usdview data model, with only the signal the wiring needs."""
@@ -1234,35 +1284,49 @@ if _has_qt_editor:
         signalStageReplaced = QtCore.Signal()
 
     class _DockApi:
-        """A usdviewApi whose stage is off-limits once the editor is closed.
+        """A usdviewApi whose stage and frame are off-limits once it is closed.
 
-        ``stage`` is a property rather than a plain attribute so a read after
-        close raises instead of quietly returning the replacement.
+        Both are properties rather than plain attributes so a read after close
+        raises instead of quietly returning the replacement, and the count is
+        bumped BEFORE the raise: PySide reports a slot exception instead of
+        propagating it through ``emit()``, so the counters asserted from the
+        test body are what make a forbidden read visible.
         """
 
         def __init__(self, stage):
             self.dataModel = _DockDataModel()
-            self.frame = Usd.TimeCode.Default()
+            self._frame = Usd.TimeCode.Default()
             self._stage = stage
             self.host_closed = False
-            self.stage_reads = 0
+            self.api_reads = 0
+            self.post_close_reads = []
+
+        def _borrow(self, name, value):
+            self.api_reads += 1
+            if self.host_closed:
+                self.post_close_reads.append(name)
+                raise AssertionError("a closed editor read the %s" % name)
+            return value
 
         @property
         def stage(self):
-            if self.host_closed:
-                raise AssertionError("a closed editor read the stage")
-            self.stage_reads += 1
-            return self._stage
+            return self._borrow("stage", self._stage)
+
+        @property
+        def frame(self):
+            return self._borrow("frame", self._frame)
 
 
-@unittest.skipUnless(_has_qt_editor, "Qt editor bridge not available")
+@unittest.skipUnless(_has_qt, "Qt bridge not available")
 class DockWindowCloseTest(unittest.TestCase):
     """Closing the dock runs the graph's teardown before the close is reported.
 
     Qt hides a dock's children without delivering their closeEvent, so the
     window's handler has to reach through to the graph's teardown. Without it
     the epoch stays live, the reload finish stays queued, and the notice
-    receiver stays registered for a graph nobody is displaying.
+    receiver stays registered for a graph nobody is displaying. Neither close
+    path reads the host api, and a replacement arriving after the close is
+    refused before the api or the closed graph is touched.
     """
 
     def setUp(self):
@@ -1307,42 +1371,53 @@ class DockWindowCloseTest(unittest.TestCase):
         queued = []
         ran = []
 
-        # A reload that started and has not finished: the finish is queued,
-        # paint is off and the notice receiver is revoked until it does.
         with patch(
             "UsdNoodles.graphView.QtCore.QTimer.singleShot",
             lambda delay, callback: queued.append(callback),
         ):
-            view._onStageReplaced()
-        self.assertEqual(len(queued), 1)
-        self.assertFalse(view.initialized)
-        self.assertFalse(view.updatesEnabled())
-        live = service.epoch()
-        reads = self.api.stage_reads
+            # A reload started through the real signal and not yet finished:
+            # the finish is queued, paint is off and the notice receiver is
+            # revoked until it does. Emitting while the editor is open also
+            # proves the wiring is live, so the zero-count assertion after the
+            # close measures a refused read rather than an unconnected slot.
+            self.api.dataModel.signalStageReplaced.emit()
+            self.assertEqual(len(queued), 1)
+            self.assertFalse(view.initialized)
+            self.assertFalse(view.updatesEnabled())
+            live = service.epoch()
+            reads = self.api.api_reads
+            self.assertGreater(reads, 0)
 
-        self.window.close()
-        self.assertEqual(self.closes, [(7, True, True)])
-        self.assertTrue(service.isClosed())
-        self.assertEqual(service.epoch(), live + 1)
-        self.assertIsNone(view._undoHistory)
-        self.assertIsNone(view._noticeHandler.getStage())
-        torn_down = self._state()
+            self.window.close()
+            self.assertEqual(self.closes, [(7, True, True)])
+            self.assertTrue(service.isClosed())
+            self.assertEqual(service.epoch(), live + 1)
+            self.assertIsNone(view._undoHistory)
+            self.assertIsNone(view._noticeHandler.getStage())
+            torn_down = self._state()
 
-        # usdview moves on to another stage and emits through the real signal;
-        # the host is now unreadable, so any read the slot makes is a failure.
-        self.api.host_closed = True
-        self.api.dataModel.signalStageReplaced.emit()
+            # usdview moves on to another stage and emits through the same
+            # signal; the host is now off-limits, so any read the slot makes
+            # is recorded by the api before it raises. PySide reports a slot
+            # exception instead of raising it back through emit(), so the
+            # assertion lives out here, not in the slot.
+            self.api.host_closed = True
+            self.api.dataModel.signalStageReplaced.emit()
 
-        # Drain what the reload left behind through the body an open editor
-        # would have run, so an unwired finish is visible rather than silent.
-        with patch.object(
-            stage_sync, "_finishReloadOnView", lambda view: ran.append("finish")
-        ):
-            for callback in queued:
-                callback()
+            # Drain what the reload left behind through the body an open
+            # editor would have run, so an unwired finish is visible rather
+            # than silent.
+            with patch.object(
+                stage_sync,
+                "_finishReloadOnView",
+                lambda view: ran.append("finish"),
+            ):
+                for callback in queued:
+                    callback()
 
         self.assertEqual(ran, [])
-        self.assertEqual(self.api.stage_reads, reads)
+        self.assertEqual(self.api.post_close_reads, [])
+        self.assertEqual(self.api.api_reads, reads)
         self.assertEqual(len(queued), 1)  # the late replace queued nothing
         self.assertEqual(self._state(), torn_down)
         self.assertEqual(service.epoch(), live + 1)
@@ -1351,6 +1426,11 @@ class DockWindowCloseTest(unittest.TestCase):
         view = self.view
         service = view._stageSync
         live = service.epoch()
+        reads = self.api.api_reads
+
+        # Neither close handler may consult the host: the teardown works from
+        # the view and its stage service alone.
+        self.api.host_closed = True
 
         # The dock path first: Qt never forwards the close to the child.
         self.window.close()
@@ -1365,6 +1445,8 @@ class DockWindowCloseTest(unittest.TestCase):
         self.assertEqual(self.closes, [(7, True, True)])
         self.assertIsNone(view._undoHistory)
         self.assertIsNone(view._noticeHandler.getStage())
+        self.assertEqual(self.api.post_close_reads, [])
+        self.assertEqual(self.api.api_reads, reads)
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")

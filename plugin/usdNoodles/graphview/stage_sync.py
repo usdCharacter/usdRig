@@ -441,6 +441,92 @@ def remapMovedNodes(view, movedPaths):
     return remap
 
 
+def _nodePositionChange(node):
+    """An authored position moved: only the cached position is stale."""
+    node._position = None
+    return (True, False, False)
+
+
+def _nodeExpansionChange(node):
+    """Expansion state decides the title collapse, which repaints, relayouts
+    and re-derives the links that hang off the collapsed header."""
+    try:
+        from pxr import UsdUI
+
+        exp_attr = UsdUI.NodeGraphNodeAPI(node._prim).GetExpansionStateAttr()
+        if exp_attr.IsValid() and exp_attr.HasAuthoredValue():
+            state = str(exp_attr.Get())
+            collapsed = state in ("closed", "minimized")
+        else:
+            collapsed = False
+        if node._title_collapsed != collapsed:
+            node._title_collapsed = collapsed
+            node.titleCollapsed = collapsed
+            return (True, True, True)
+    except Exception:
+        pass
+    return (False, False, False)
+
+
+def _nodeValueRowChange(node, propName):
+    """A value the node already shows inline changed: refresh only that node's
+    cells. Not textChanged -- that re-lays out every node, and nothing
+    structural changed here; a row-set change arrives as a resync."""
+    node.invalidate_value_row(propName)
+    return (True, False, False)
+
+
+def _nodePinChange(node):
+    """Pin or connection changed: the graph's links are derived from USD."""
+    node.invalidateCache()
+    return (True, True, True)
+
+
+def _nodeTypeChange(node):
+    """Node type changed."""
+    node._cachedType = None
+    return (True, False, True)
+
+
+def _otherPropertyChange(node, propName):
+    """Any other property: invalidate the whole cache to be safe.
+
+    Bare attributes may have connections, so they trigger a link rebuild.
+    ``propName`` is empty when the notice named the prim rather than a
+    property, and ``GetAttribute("")`` is not a miss -- it raises a USD coding
+    error -- so an empty name must never be queried.
+    """
+    node.invalidateCache()
+    if propName and ":" not in propName and node._prim:
+        attr = node._prim.GetAttribute(propName)
+        if attr and attr.IsValid() and attr.HasAuthoredConnections():
+            return (True, True, False)
+    return (True, False, False)
+
+
+def _applyPropertyChange(view, node, propName):
+    """Classify one property notice on an existing node.
+
+    Returns ``(needsRepaint, needsLinkRebuild, needsTextUpdate)``.
+    """
+    if "ui:nodegraph:node:pos" in propName:
+        return _nodePositionChange(node)
+    if "ui:nodegraph:node:expansionState" in propName:
+        return _nodeExpansionChange(node)
+    # The feature flag gates the probe FIRST: with values hidden the row cache
+    # is cold, and asking it would build every row (a full schema walk plus a
+    # USD read per pin) only to throw them away.
+    if view._cachedShowAttributeValues and view._valueRowOnlyChange(
+        node, propName
+    ):
+        return _nodeValueRowChange(node, propName)
+    if view._isPinPropertyChange(propName):
+        return _nodePinChange(node)
+    if "info:implementationSource" in propName:
+        return _nodeTypeChange(node)
+    return _otherPropertyChange(node, propName)
+
+
 def applyUsdChanges(
     view, resyncedPaths, infoChangedPaths, movedPaths=None, trace=None
 ):
@@ -518,82 +604,12 @@ def applyUsdChanges(
             propName = ""
 
         if primPath in view.nodes:
-            node = view.nodes[primPath]
-
-            # Check what kind of property changed
-            if "ui:nodegraph:node:pos" in propName:
-                node._position = None
-                needsRepaint = True
-            elif "ui:nodegraph:node:expansionState" in propName:
-                # Expansion state changed - update title collapse
-                try:
-                    from pxr import UsdUI
-
-                    exp_attr = UsdUI.NodeGraphNodeAPI(
-                        node._prim
-                    ).GetExpansionStateAttr()
-                    if exp_attr.IsValid() and exp_attr.HasAuthoredValue():
-                        state = str(exp_attr.Get())
-                        collapsed = state in ("closed", "minimized")
-                    else:
-                        collapsed = False
-                    if node._title_collapsed != collapsed:
-                        node._title_collapsed = collapsed
-                        node.titleCollapsed = collapsed
-                        needsRepaint = True
-                        needsTextUpdate = True
-                        needsLinkRebuild = True
-                except Exception:
-                    pass
-            elif view._cachedShowAttributeValues and view._valueRowOnlyChange(
-                node, propName
-            ):
-                # A value the node already shows in an inline cell changed.
-                # Refresh that ONE node's cells and stop. Guarded by the
-                # feature flag FIRST: with values hidden the row cache is
-                # cold, and asking it would build every row (a full schema
-                # walk plus a USD read per pin) only to throw them away.
-                #
-                # Deliberately not textChanged: that re-lays out EVERY node
-                # in the graph (paintNodes, whose own comment records ~2s
-                # for a dozen nodes). A namespaced attribute like
-                # rigExec:controlSpace matches _isPinPropertyChange below,
-                # so without this branch a value drag would pay a full
-                # graph relayout per mouse-move. Nothing structural can
-                # have changed here: a type or row-set change is a resync,
-                # and the resync loop above already invalidated the node.
-                node.invalidate_value_row(propName)
-                needsRepaint = True
-            elif view._isPinPropertyChange(propName):
-                # Pin or connection changed (direction-hint, relationship,
-                # or any other namespaced pin such as rig1:space)
-                node.invalidateCache()
-                needsLinkRebuild = True
-                needsRepaint = True
-                needsTextUpdate = True
-            elif "info:implementationSource" in propName:
-                # Node type changed
-                node._cachedType = None
-                needsRepaint = True
-                needsTextUpdate = True
-            else:
-                # Some other property - do a full cache invalidation to be safe
-                node.invalidateCache()
-                needsRepaint = True
-                # Bare attributes may have connections - trigger link rebuild.
-                #
-                # ``propName`` is empty when the notice named the PRIM and
-                # not a property (pathStr had no '.'), and
-                # ``GetAttribute("")`` is not a miss -- it raises a USD
-                # coding error from _GetDefiningSpecType. Harmless while
-                # nothing was watching, but an edit authored inside an
-                # Sdf.ChangeBlock dispatches its notices at the block's
-                # close, so the error came back out of attr.Set and made a
-                # write that had ALREADY landed report failure.
-                if propName and ":" not in propName and node._prim:
-                    attr = node._prim.GetAttribute(propName)
-                    if attr and attr.IsValid() and attr.HasAuthoredConnections():
-                        needsLinkRebuild = True
+            repaint, rebuildLinks, updateText = _applyPropertyChange(
+                view, view.nodes[primPath], propName
+            )
+            needsRepaint |= repaint
+            needsLinkRebuild |= rebuildLinks
+            needsTextUpdate |= updateText
 
     # Reconcile the graph with the stage. The loops above only touch paths
     # that are already nodes, so neither of them can notice that a prim was

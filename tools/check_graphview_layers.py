@@ -1,53 +1,16 @@
 #!/usr/bin/env python3
-"""Fail when a GraphView definition carries no layer, a non-UI module
-imports Qt, OpenGL or pxr.Usdviewq, or a module outgrows its ceiling.
+"""Fail when a GraphView definition carries no layer, a non-UI module under
+plugin/usdNoodles/graphview/ imports Qt, OpenGL or pxr.Usdviewq, or a module
+outgrows the line ceiling recorded with its layer.
 
 usage: tools/check_graphview_layers.py [--root DIR] [--write-inventory] [--self-test]
 
-Reads tools/graphViewLayers.json, the inventory of the noodle editor's
-layers, and checks three rules against the checkout. Needs no build tree,
-no OpenUSD and no Qt: only the standard library.
-
-Layer vocabulary (fixed): model (the graph's node/link records, positions,
-bounds and layout), intents (frozen operation payloads and their dispatch),
-editing (prim authoring and the undo records it pushes), interaction (Qt
-events, gestures, hit testing, shortcuts, tooltips and hotboxes), selection
-(node/link selection and its prim-tree sync), render (GL resources, painters
-and projection), stage_sync (USD notice reconciliation, scope validation and
-stage reload policy), coordinator (initialization, settings and update
-glue), compat (legacy entry points kept for existing callers).
-
-R1 assignment: every direct definition inside class GraphView has a layer in
-the inventory, and every inventory entry still matches a definition. A new
-method with no layer, a removed method left in the inventory, an unknown
-layer name and a still-"unassigned" layer all fail. A property getter and
-its setter share one entry under their common name.
-
-R2 import boundary: a module under plugin/usdNoodles/graphview/ whose
-recorded layer is not interaction or render may not import Qt (PySide2,
-PySide6, QtCore, QtGui, QtWidgets, QtOpenGL), OpenGL (import OpenGL, from
-OpenGL..., from OpenGL.error ...) or pxr.Usdviewq, at module level or inside
-a function. The native re-export packages UsdNoodles.core, UsdNoodles.render
-and UsdNoodles.spatial are allowed in the non-UI layers: they carry the C++
-graph and render bindings, not Qt or GL, which is why _graphScopeParentPath
-can still test against nodeGraphBlueprint and nodeGraphBpContainer. A module
-under that package with no inventory entry fails too.
-
-R3 size ratchet: every module under plugin/usdNoodles/graphview/ is at most
-3000 physical lines, and every file named in line_ceilings fails if its
-current physical line count exceeds the recorded ceiling. The ceiling is
-downward-only: lower it in the inventory after moving code out, never raise
-it. The plugin-wide 3,000-LOC gate over all plugin Python, including
-rigExecUsdview and the testenv files, lands with the final milestone; this
-check stages the rule on the extracted package plus a ceiling on
-graphView.py.
-
---write-inventory adds every newly appearing definition (and every new
-module under plugin/usdNoodles/graphview/) as "unassigned"; it never
-rewrites or deletes an existing assignment, so a reviewer still has to
-choose the layer. --self-test runs all three rules over synthetic sources
-and prints a one-line verdict. Exit 0 when clean, 1 with one line per
-violation.
+Reads the layer assignments and ceilings in tools/graphViewLayers.json.
+Standard library only: no build tree, no OpenUSD, no Qt. Ceilings ratchet
+downward -- lower them in the inventory, never raise them. --write-inventory
+marks newly appearing definitions "unassigned" and never rewrites an existing
+assignment, so a reviewer still has to choose the layer. --self-test runs the
+rules over synthetic sources. Exit 0 when clean, 1 with one line per violation.
 """
 import argparse
 import ast
@@ -301,11 +264,6 @@ def _write_inventory(root, inventory):
     return added
 
 
-# Each case is (label, files, expected): files maps a checkout-relative path
-# to its source, expected lists a fragment each reported violation must
-# contain. An empty expectation means the rules must stay silent: a Qt import
-# in interaction or render, a native UsdNoodles.core re-export in a non-UI
-# layer, and a getter/setter pair sharing one assignment are all legal.
 _SELF_CASES = [
     (
         "unassigned new method",
