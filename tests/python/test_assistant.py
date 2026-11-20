@@ -13,8 +13,11 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ["USDRIG_USER_DIR"] = tempfile.mkdtemp(prefix="usdrig_assistant_")
@@ -24,7 +27,7 @@ import rigexec_test_env
 rigexec_test_env.SetupPluginTest()
 
 from pxr import Sdf, Usd  # noqa: E402
-from pxr.Usdviewq.qt import QtWidgets  # noqa: E402
+from pxr.Usdviewq.qt import QtCore, QtWidgets  # noqa: E402
 
 import rigExecUndo  # noqa: E402
 from usdRigAssistant import mcp_server, session, stage_actions  # noqa: E402
@@ -195,6 +198,179 @@ def _SetRotation(box, value):
     return box.call("change_stage", {"changes": [
         {"action": "set_attr", "path": "/Char/Ctl", "name": "avars:rx",
          "value": value}]})
+
+
+_PENDING_EXPIRY = ("The tool expired before it started; it did not run.", True)
+_RUNNING_EXPIRY = ("The tool already started; its outcome is unknown. "
+                   "Do not retry automatically.", True)
+_QUEUE_BOUND = 3
+
+
+def _PumpToolQueue(seconds, until=lambda: False):
+    app = QtWidgets.QApplication.instance()
+    end = time.monotonic() + seconds
+    while not until() and time.monotonic() < end:
+        app.processEvents()
+        time.sleep(0.001)
+
+
+def _DrainToolQueue():
+    # Leave time for the 30 ms busy retry as well as posted deliveries.
+    _PumpToolQueue(0.06)
+
+
+@contextmanager
+def _QueuedCalls(box):
+    workers = []
+    emitted = threading.Event()
+
+    signal = box._invoke
+
+    class ObservedSignal:
+        def emit(self, job):
+            signal.emit(job)
+            emitted.set()
+
+    def submit(fn):
+        result = []
+        emitted.clear()
+        worker = threading.Thread(target=lambda: result.append(fn()), daemon=True)
+        workers.append(worker)
+        worker.start()
+        if not emitted.wait(_QUEUE_BOUND):
+            raise AssertionError("worker did not post its queued tool")
+        return worker, result
+
+    with patch.object(box, "_invoke", ObservedSignal()):
+        try:
+            yield submit
+        finally:
+            box.cancel()
+            try:
+                _DrainToolQueue()
+            finally:
+                for worker in workers:
+                    worker.join(_QUEUE_BOUND)
+                    _Check(not worker.is_alive(), "queued caller did not stop")
+
+
+def TestQueuedEditExpiresBeforeDelivery():
+    stage = _Stage()
+    box, _ = _Toolbox(stage, _Container(), can_edit=True)
+    with patch.object(tools, "CALL_TIMEOUT", 0.25), _QueuedCalls(box) as submit:
+        worker, result = submit(lambda: _SetRotation(box, 20))
+        worker.join(_QUEUE_BOUND)  # No Qt delivery before the caller returns.
+        _Check(not worker.is_alive() and result == [_PENDING_EXPIRY],
+               "undelivered edit expires pending: %s" % result)
+        _DrainToolQueue()
+        _Check(stage.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 0,
+               "late initial delivery does not author the expired edit")
+
+
+def TestQueuedEditExpiresBeforeBusyRetry():
+    stage = _Stage()
+    entered = []
+    retried = threading.Event()
+    with tempfile.TemporaryDirectory() as folder:
+        path = os.path.join(folder, "note.txt")
+        with open(path, "w", encoding="utf-8") as stream:
+            stream.write("a note to read")
+
+        def ask_access(_folder, _reason):
+            entered.append(True)
+            single_shot = QtCore.QTimer.singleShot
+            retries = []
+
+            def busy_retry(delay, delivery):
+                def retry():
+                    delivery()
+                    retried.set()
+
+                retries.append(True)
+                single_shot(delay, retry)
+
+            with patch.object(tools, "CALL_TIMEOUT", 0.5):
+                worker, result = submit(lambda: _SetRotation(box, 20))
+                # Stop delivering Qt events at the first retry scheduling.
+                with patch.object(QtCore.QTimer, "singleShot", busy_retry):
+                    _PumpToolQueue(_QUEUE_BOUND, until=lambda: bool(retries))
+                worker.join(_QUEUE_BOUND)
+                _Check(retries == [True] and not worker.is_alive() and
+                       result == [_PENDING_EXPIRY],
+                       "second edit expires pending after busy delivery: %s" % result)
+            return tools.ONCE
+
+        box, _ = _Toolbox(stage, _Container(), can_edit=True,
+                          memory=tools.Memory(prefs={}), ask_access=ask_access)
+        with patch.object(tools, "CALL_TIMEOUT", 10), _QueuedCalls(box) as submit:
+            first, result = submit(lambda: box.call("read_file", {"path": path}))
+            _DrainToolQueue()
+            first.join(_QUEUE_BOUND)
+            _Check(entered == [True] and result and not result[0][1] and
+                   "a note to read" in result[0][0], "the first tool completes its prompt")
+            _PumpToolQueue(_QUEUE_BOUND, until=retried.is_set)
+            _Check(retried.is_set() and
+                   stage.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 0,
+                   "the delivered busy retry does not author the expired edit")
+
+
+def TestCancelWakesQueuedEdit():
+    stage = _Stage()
+    box, _ = _Toolbox(stage, _Container(), can_edit=True)
+    with patch.object(tools, "CALL_TIMEOUT", 10), _QueuedCalls(box) as submit:
+        worker, result = submit(lambda: _SetRotation(box, 20))
+        box.cancel()
+        worker.join(_QUEUE_BOUND)  # Neither queue delivery nor deadline can wake it.
+        _Check(not worker.is_alive() and result == [("The user stopped the reply.", True)],
+               "cancel wakes the pending caller with a stopped error: %s" % result)
+        _DrainToolQueue()
+        _Check(_SetRotation(box, 30) == ("The user stopped the reply.", True) and
+               stage.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 0,
+               "cancelled pending and subsequent edits are never authored")
+
+
+def TestRunningEditCanCompleteAfterCallerDeadline():
+    stage = _Stage()
+    box, _ = _Toolbox(stage, _Container(), can_edit=True)
+    tool = box.tools["change_stage"]
+    handler = tool.handler
+    entered = threading.Event()
+    release = threading.Event()
+    completions = []
+    activity = []
+
+    def gated_handler(args):
+        entered.set()
+        if not release.wait(_QUEUE_BOUND):
+            raise AssertionError("running caller did not release the handler")
+        result = handler(args)
+        completions.append(result)
+        return result
+
+    tool.handler = gated_handler
+    box.activity.connect(lambda event: activity.append(event["state"]))
+
+    def request():
+        try:
+            result = _SetRotation(box, 20)
+            _Check(entered.is_set(), "caller timed out after actual handler entry")
+            return result
+        finally:
+            release.set()
+
+    with patch.object(tools, "CALL_TIMEOUT", 0.5), _QueuedCalls(box) as submit:
+        try:
+            worker, result = submit(request)
+            _DrainToolQueue()
+            worker.join(_QUEUE_BOUND)
+            _Check(not worker.is_alive() and result == [_RUNNING_EXPIRY],
+                   "running edit reports unknown outcome: %s" % result)
+            _DrainToolQueue()
+            _Check(len(completions) == 1 and activity == ["running", "done"] and
+                   stage.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 20,
+                   "the running edit completes and authors exactly once")
+        finally:
+            release.set()
 
 
 def TestToolboxRejectsSilentStageReplacement():
@@ -476,7 +652,9 @@ def main():
                  TestChangesAreOneUndoStep, TestToolboxRejectsSilentStageReplacement,
                  TestToolboxGenerationAndRetirement, TestToolboxSwapDuringActivity,
                  TestToolboxFolderGrantAfterPrompt, TestPosing, TestRunPython,
-                 TestActionBlocks, TestMcpServer):
+                 TestActionBlocks, TestQueuedEditExpiresBeforeDelivery,
+                 TestQueuedEditExpiresBeforeBusyRetry, TestCancelWakesQueuedEdit,
+                 TestRunningEditCanCompleteAfterCallerDeadline, TestMcpServer):
         if app is None and test is not TestToolboxNoStageWithoutApp:
             app = QtWidgets.QApplication([])
         try:

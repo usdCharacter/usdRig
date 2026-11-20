@@ -18,6 +18,7 @@ import base64
 import collections
 import contextlib
 import ctypes
+import enum
 import fnmatch
 import io
 import json
@@ -41,6 +42,11 @@ ONCE, ALWAYS, DENY = 'once', 'always', 'deny'
 MAX_TEXT = 20000
 MAX_LOG_LINES = 400
 CALL_TIMEOUT = 600
+_STOPPED = 'The user stopped the reply.'
+_STALE = 'The reply belongs to a document that is no longer current.'
+_PENDING_EXPIRY = ('The tool expired before it started; it did not run.', True)
+_RUNNING_EXPIRY = ('The tool already started; its outcome is unknown. '
+                   'Do not retry automatically.', True)
 RIG_ROOT = 'RigExecRoot'
 CAPTURE_DIR = os.path.join(host.PREF_DIR, 'captures')
 
@@ -216,6 +222,24 @@ class ToolError(Exception):
     pass
 
 
+class _JobState(enum.Enum):
+    PENDING = enum.auto()
+    RUNNING = enum.auto()
+    DONE = enum.auto()
+    EXPIRED = enum.auto()
+    CANCELLED = enum.auto()
+
+
+class _Job:
+    def __init__(self, name, args, lock):
+        self.name = name
+        self.args = args
+        self.deadline = time.monotonic() + CALL_TIMEOUT
+        self.state = _JobState.PENDING
+        self.result = None
+        self.ready = threading.Condition(lock)
+
+
 class Toolbox(QtCore.QObject):
     """The tools for one reply.
 
@@ -253,6 +277,8 @@ class Toolbox(QtCore.QObject):
         # again and again.
         self.denied = set()
         self.cancelled = threading.Event()
+        self._job_lock = threading.Lock()
+        self._jobs = set()
         self.done = []
         self.failed = []
         # This reply's undoable edits, pushed as one step by finish().
@@ -283,10 +309,9 @@ class Toolbox(QtCore.QObject):
 
     def _require_current(self):
         if self.cancelled.is_set():
-            raise ToolError('The user stopped the reply.')
+            raise ToolError(_STOPPED)
         if not self.is_current():
-            raise ToolError('The reply belongs to a document that is no '
-                            'longer current.')
+            raise ToolError(_STALE)
 
     # What is offered
     def available(self):
@@ -343,32 +368,90 @@ class Toolbox(QtCore.QObject):
                 return 'The arguments were not JSON: {}'.format(err), True
         args = args if isinstance(args, dict) else {}
         if self._on_owner_thread():
-            return self._call(name, args)
+            was_running = self._running
+            self._running = True
+            try:
+                return self._call(name, args)
+            finally:
+                self._running = was_running
         if not isinstance(QtWidgets.QApplication.instance(), QtWidgets.QApplication):
             return 'The toolbox cannot run off its owner thread without Qt.', True
-        if self.cancelled.is_set():
-            return 'The user stopped the reply.', True
-        job = {'name': name, 'args': args, 'event': threading.Event(),
-               'result': ('usdview did not answer.', True)}
-        self._invoke.emit(job)
-        end = time.time() + CALL_TIMEOUT
-        while not job['event'].wait(0.1):
-            if time.time() > end:
-                return 'usdview took too long to answer.', True
-        return job['result']
-
-    def _run_job(self, job):
-        if self._running:
-            # A tool is waiting on the user. One at a time, so this one
-            # goes after it rather than inside it.
-            QtCore.QTimer.singleShot(30, lambda: self._run_job(job))
-            return
-        self._running = True
+        job = _Job(name, args, self._job_lock)
+        with self._job_lock:
+            if self.cancelled.is_set():
+                return _STOPPED, True
+            self._jobs.add(job)
         try:
-            job['result'] = self._call(job['name'], job['args'])
+            self._invoke.emit(job)
+        except Exception as err:
+            self._fail_pending_job(job, ('Could not queue the tool: {}'.format(err), True))
+        with job.ready:
+            while job.state in (_JobState.PENDING, _JobState.RUNNING):
+                remaining = job.deadline - time.monotonic()
+                if remaining <= 0:
+                    if job.state is _JobState.RUNNING:
+                        return _RUNNING_EXPIRY
+                    self._complete_job_locked(job, _JobState.EXPIRED, _PENDING_EXPIRY)
+                    break
+                job.ready.wait(remaining)
+            return job.result
+
+    def _complete_job_locked(self, job, state, result):
+        job.state, job.result = state, result
+        self._jobs.remove(job)
+        job.ready.notify_all()
+
+    def _eligible_locked(self, job):
+        if job.state is not _JobState.PENDING:
+            return False
+        if self.cancelled.is_set():
+            self._complete_job_locked(job, _JobState.CANCELLED, (_STOPPED, True))
+            return False
+        if time.monotonic() >= job.deadline:
+            self._complete_job_locked(job, _JobState.EXPIRED, _PENDING_EXPIRY)
+            return False
+        return True
+
+    def _fail_pending_job(self, job, result):
+        with self._job_lock:
+            if self._eligible_locked(job):
+                self._complete_job_locked(job, _JobState.DONE, result)
+
+    @QtCore.Slot(object)
+    def _run_job(self, job):
+        with self._job_lock:
+            if not self._eligible_locked(job):
+                return
+        try:
+            if self._running:
+                # A nested prompt can deliver another job on the owner thread.
+                QtCore.QTimer.singleShot(30, lambda: self._run_job(job))
+                return
+            current = self.is_current()
+        except Exception as err:
+            self._fail_pending_job(job, self._job_error(job, err))
+            return
+        with self._job_lock:
+            if not self._eligible_locked(job):
+                return
+            if not current:
+                self._complete_job_locked(job, _JobState.DONE, (_STALE, True))
+                return
+            job.state = _JobState.RUNNING
+        self._running = True
+        result = ('The tool did not complete.', True)
+        try:
+            result = self._call(job.name, job.args)
+        except Exception as err:
+            result = self._job_error(job, err)
         finally:
             self._running = False
-            job['event'].set()
+            with self._job_lock:
+                self._complete_job_locked(job, _JobState.DONE, result)
+
+    def _job_error(self, job, err):
+        logger.exception('Assistant tool %s failed', job.name)
+        return '{} failed: {}'.format(job.name, err), True
 
     def _call(self, name, args):
         tool = self.tools.get(name)
@@ -440,7 +523,11 @@ class Toolbox(QtCore.QObject):
                            'undo stack', exc_info=True)
 
     def cancel(self):
-        self.cancelled.set()
+        with self._job_lock:
+            self.cancelled.set()
+            for job in tuple(self._jobs):
+                if job.state is _JobState.PENDING:
+                    self._complete_job_locked(job, _JobState.CANCELLED, (_STOPPED, True))
 
     # Helpers
     def path(self, args, key='path', required=True):
