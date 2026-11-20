@@ -3785,11 +3785,12 @@ RigExecSurfaceProjectorFrames RigExecBakedProjectorFrames(
 /// final points over the reads its path leaves hold
 /// (RigExecReadProjectorTargetFromLeaves): what the live and frozen Derived
 /// steps do for a matrix target. Reads no stage.
-bool RigExecBakedRunProjectorTarget(
-    const RigExecBakedProgramImpl &B,
-    const RigExecBakedProgramImpl::GeomChain &chain,
-    const RigExecBakedProgramImpl::GeomRevision &revision, GfMatrix4d *matrix,
-    std::vector<std::string> *diagnostics);
+bool
+RigExecBakedRunProjectorTarget(const RigExecBakedProgramImpl &B,
+                               const RigExecBakedProgramImpl::GeomChain &chain,
+                               RigExecBakedProgramImpl::GeomRevision &revision,
+                               GfMatrix4d *matrix,
+                               std::vector<std::string> *diagnostics);
 
 /// Test-only access to evaluator state a baked run must not touch.
 struct RigExecBakedProgramTesting {
