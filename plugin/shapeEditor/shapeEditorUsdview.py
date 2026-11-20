@@ -1,12 +1,6 @@
 #
 # The Shape Editor's usdview plugin container.
 #
-# A container of its own, for the same reason `plugin/touchPose` has one:
-# `findOrCreateMenu("RigExec")` is the seam that lets a self-contained
-# plugin directory add a menu item without the two directories having to
-# import each other. Whichever container loads first creates the menu; the
-# rest find it.
-#
 # The panel is imported lazily inside the callback so this module stays
 # importable with no Qt.
 #
@@ -15,34 +9,7 @@ import sys
 
 from pxr import Tf
 from pxr.Usdviewq.plugin import PluginContainer
-
-
-# RigExec -> submenu placement by rank.
-_SUBMENU_RANKS = {"Viewport": 10, "General Editors": 20,
-                  "Animation Editors": 30}
-_MENU_RANK = "rigExecMenuRank"
-
-
-def _PlaceByRank(qMenu, action, rank):
-    action.setProperty(_MENU_RANK, rank)
-    for other in qMenu.actions():
-        if other == action:
-            return
-        otherRank = other.property(_MENU_RANK)
-        if otherRank is not None and otherRank > rank:
-            qMenu.removeAction(action)
-            qMenu.insertAction(other, action)
-            return
-
-
-def _AddToRigExecMenu(plugUIBuilder, submenu, commandPlugin, rank):
-    menu = plugUIBuilder.findOrCreateMenu("RigExec").findOrCreateSubmenu(
-        submenu)
-    action = menu.addItem(commandPlugin)
-    qMenu = action.parent()
-    _PlaceByRank(qMenu, action, rank)
-    _PlaceByRank(qMenu.parent(), qMenu.menuAction(), _SUBMENU_RANKS[submenu])
-    return action
+from usdRigViewMenu import AddToRigExecMenu as _AddToRigExecMenu
 
 
 # usdview does not retain a container that registers no commands, and a
