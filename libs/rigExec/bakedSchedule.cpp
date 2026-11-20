@@ -4,6 +4,7 @@
 // See bakedSchedule.h for what belongs here and what belongs with a domain.
 #include "bakedSchedule.h"
 #include "bakedOpGraph.h"
+#include "rigExecEvalCore/closure.h"
 #include "rigExecScene/solverProgram.h"
 #include "bakedExecCrossCheckRows.h"
 
@@ -2383,24 +2384,12 @@ RigExecVolatileRead::~RigExecVolatileRead()
 
 namespace {
 
-/// Runs one step's body and checks what it produced against what it declared.
+/// The baked adapter's routing switch: the head/body split and the
+/// domain bodies it selects for one scheduled step.
 void
-RunStepBody(RigExecBakedProgramImpl *B, RigExecBakedStep *step,
-            UsdTimeCode time)
+RouteBakedStepBody(RigExecBakedProgramImpl *B, RigExecBakedStep *step,
+                   UsdTimeCode time)
 {
-    // Every domain body is dispatched through the shared executor.
-    const RigExecOpBodyScope body(B->purityAudit ? &B->purityViolations.count
-                                                 : nullptr);
-    // A run's output is cleared HERE rather than in the body, so that the
-    // clearing is the executor's promise and not something fifteen bodies
-    // each have to remember.
-    step->BeginRun();
-    // A declared semantic input controls this operation's admission. The
-    // shared memo/scheduler still executes its ordinary pure outcome; no
-    // arithmetic or owned post-refusal state is changed on refusal.
-    if (RigExecBakedRequiresStageFramesAdmission(*step) &&
-        !B->requiredStageFramesAdmission.admitted)
-        return;
     if (step->isHead) {
         switch (step->kind) {
         case RigExecBakedStepKind::WeightField:
@@ -2456,6 +2445,29 @@ RunStepBody(RigExecBakedProgramImpl *B, RigExecBakedStep *step,
     } else {
         RigExecBakedRunPoseStep(B, step, time);
     }
+}
+
+/// Runs one step's body and checks what it produced against what it declared.
+void
+RunStepBody(RigExecBakedProgramImpl *B, RigExecBakedStep *step,
+            UsdTimeCode time)
+{
+    // Every domain body is dispatched through the shared executor. The
+    // prologue (the run framing and the RequiredStageFramesAdmission
+    // refusal) and the epilogue shape live in rigExecEvalCore/closure.h;
+    // the routing switch and the diagnostics-size guard stay here.
+    const RigExecOpBodyScope body(B->purityAudit ? &B->purityViolations.count
+                                                 : nullptr);
+    const eval::StepRun ran = eval::RunScheduledStep(
+        *step, B->requiredStageFramesAdmission.admitted,
+        [step] { return RigExecBakedRequiresStageFramesAdmission(*step); },
+        [&] {
+            RouteBakedStepBody(B, step, time);
+            return true;
+        },
+        [] {});
+    if (ran == eval::StepRun::AdmissionRefused)
+        return;
     // Bodies size their own lists at Build; a body that grew past what it
     // declared is a step allocating inside the region, which is the thing
     // the declaration exists to prevent.
