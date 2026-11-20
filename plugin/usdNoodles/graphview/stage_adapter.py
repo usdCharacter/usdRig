@@ -522,23 +522,13 @@ def stageLoadMode(view):
 
 
 def readStageContext(view):
-    """One owner-thread read of everything a reload decides from."""
-    api = view._usdviewApi
-    return StageContext(
-        view=view,
-        stage=api.stage if api else None,
-        mode=stageLoadMode(view),
-        prim_path=view._currentPrimPath,
-        node_ids=tuple(view.nodes),
-        syncing_selection=view._syncingSelection,
-    )
+    """Snapshot the old graph's IDs on the owner thread."""
+    return StageContext(node_ids=tuple(view.nodes))
 
 
 def readNoticeContext(view):
     """One owner-thread read for a USD notice -- no whole-graph snapshot."""
-    return NoticeContext(
-        view=view, syncing_selection=view._syncingSelection
-    )
+    return NoticeContext(syncing_selection=view._syncingSelection)
 
 
 def _beginReloadOnView(view, frame):
@@ -576,11 +566,20 @@ def _beginReloadOnView(view, frame):
 
 def _loadOnView(view, delta):
     if delta.mode == MODE_CONTAINER:
-        view.loadContainer(delta.stage, delta.prim_path)
+        loader, args = view.loadContainer, (delta.stage, delta.prim_path)
     elif delta.mode == MODE_BLUEPRINT:
-        view.loadBlueprint(delta.stage, delta.prim_path)
+        loader, args = view.loadBlueprint, (delta.stage, delta.prim_path)
     else:
-        view.loadStage(delta.stage)
+        loader, args = view.loadStage, (delta.stage,)
+
+    # Defer GL deletion until the host renderer has finished teardown.
+    view._deferRenderCacheClear = True
+    try:
+        loader(*args)
+    finally:
+        view._deferRenderCacheClear = False
+        # A loader can initialize GL; only FinishReload should resume paint.
+        view.initialized = False
 
 
 def _finishReloadOnView(view):

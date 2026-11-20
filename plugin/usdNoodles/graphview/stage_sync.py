@@ -105,32 +105,15 @@ class FinishReload:
 
 @dataclass(frozen=True, slots=True)
 class StageContext:
-    """The view's state as one owner-thread read, for one reload decision.
+    """IDs in the graph before reload, including synthetic nodes."""
 
-    ``view`` is used by the loader's render-cache deferral bracket. This is
-    the reload path's read: it names every node the graph is about to lose,
-    so it is the all-node snapshot and costs what the graph costs.
-    """
-
-    view: object
-    stage: object
-    mode: str
-    prim_path: object
     node_ids: tuple
-    syncing_selection: bool
 
 
 @dataclass(frozen=True, slots=True)
 class NoticeContext:
-    """What one USD notice reads from the view: the view and its mute flag.
+    """Selection mute flag, without a whole-graph read for each notice."""
 
-    Deliberately not ``StageContext``: a notice reaches at most the nodes its
-    own paths name, so copying every node id -- or asking which loader a
-    rebuild would re-run -- per notice would make a single-property edit scale
-    with the size of the graph.
-    """
-
-    view: object
     syncing_selection: bool
 
 
@@ -309,8 +292,7 @@ class StageSync:
         """
         if self._closed:
             return
-        ctx = self._read()
-        view = ctx.view
+        node_ids = self._read().node_ids
         self._epoch += 1
         epoch = self._epoch
 
@@ -328,14 +310,10 @@ class StageSync:
 
         # The loaders build a whole new nodeGraph, so every id in the graph
         # read above is gone; recorded rather than applied.
-        self._publish(Remove(epoch, ctx.node_ids))
+        self._publish(Remove(epoch, node_ids))
         load = Load(epoch, stage, mode, prim_path)
         self._publish(load)
 
-        # While this is set, the _clearRenderCache the loaders run only marks
-        # the clear pending: the glDelete* calls wait for the finish, when the
-        # NVIDIA driver is out of its non-functional window.
-        view._deferRenderCacheClear = True
         try:
             self._apply(load)
         except Exception as error:
@@ -343,12 +321,6 @@ class StageSync:
                 self._warn(
                     "Failed to reload graph after stage replace: %s" % error
                 )
-        finally:
-            view._deferRenderCacheClear = False
-
-        # A loader can bring the widget back up through initializeGL; the
-        # finish below is what decides the generation is live again.
-        view.initialized = False
         self._scheduleFinish(epoch)
 
     def bind(self, stage):

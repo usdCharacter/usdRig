@@ -277,85 +277,77 @@ class _ClosedHostReads(_StubView):
         return object.__getattribute__(self, name)
 
 
-class _LifecycleView:
-    """A headless editor: the model a reload mutates, recorded.
+class _RecordingHandler:
+    __slots__ = ("events", "enabled")
 
-    The service's ``read``/``apply`` contract against plain state -- no Qt,
-    no GL -- so the lifecycle cases below see exactly the epoch gating,
-    scheduling and suppression the shipped editor gets.
-    """
+    def __init__(self, events):
+        self.events = events
+        self.enabled = True
+
+    def register(self, stage):
+        self.events.append(("register", stage))
+
+    def unregister(self):
+        self.events.append(("unregister",))
+
+    def isEnabled(self):
+        return self.enabled
+
+    def setEnabled(self, enabled):
+        self.events.append(("setEnabled", enabled))
+        self.enabled = enabled
+
+
+class _RecordingHooks:
+    """Record the service boundary without emulating an editor."""
+
+    __slots__ = (
+        "stage_context", "notice_context", "events", "queued", "load_error",
+        "receiver", "handler", "sync",
+    )
 
     def __init__(self, node_ids=()):
-        self.nodes = {node_id: object() for node_id in node_ids}
-        self.stage = None
-        self.mode = "stage"
-        self.prim_path = None
-        self.syncing = False
-        self._deferRenderCacheClear = False
-        self.initialized = True
-        self.updates_enabled = True
-        self.history = ["undo-record"]
-        self.loaded = None
-        self.fail_loads = False
-        self.frames = []
-        self.applied = []
-        self.finishes = 0
+        self.stage_context = stage_sync.StageContext(node_ids)
+        self.notice_context = stage_sync.NoticeContext(False)
+        self.events = []
+        self.queued = []
+        self.load_error = None
+        self.handler = _RecordingHandler(self.events)
+        self.sync = stage_sync.StageSync(
+            self.read, self.notice, self.apply, self.post, self.listen,
+            warn=self.warn, sink=self.publish, reconcile=self.reconcile,
+        )
 
     def read(self):
-        return stage_sync.StageContext(
-            view=self,
-            stage=self.stage,
-            mode=self.mode,
-            prim_path=self.prim_path,
-            node_ids=tuple(self.nodes),
-            syncing_selection=self.syncing,
-        )
+        self.events.append(("read", self.stage_context))
+        return self.stage_context
 
-    def readNotice(self):
-        return stage_sync.NoticeContext(
-            view=self, syncing_selection=self.syncing
-        )
+    def notice(self):
+        self.events.append(("notice", self.notice_context))
+        return self.notice_context
 
     def apply(self, delta):
-        self.applied.append(delta)
-        if isinstance(delta, stage_sync.BeginReload):
-            self.updates_enabled = False
-            self.frames.append(delta.frame)
-        elif isinstance(delta, stage_sync.Load):
-            if self.fail_loads:
-                raise RuntimeError("load boom")
-            self.loaded = (delta.stage, delta.mode, delta.prim_path)
-        elif isinstance(delta, stage_sync.ClearHistory):
-            self.history = None
-        elif isinstance(delta, stage_sync.FinishReload):
-            self.finishes += 1
-            self.updates_enabled = True
+        self.events.append(("apply", delta))
+        if isinstance(delta, stage_sync.Load) and self.load_error is not None:
+            raise self.load_error
 
+    def post(self, callback):
+        self.events.append(("post", callback))
+        self.queued.append(callback)
 
-class _LifecycleHarness:
-    """A StageSync over a _LifecycleView with recording sink and scheduler."""
+    def listen(self, receiver):
+        self.events.append(("listen", receiver))
+        self.receiver = receiver
+        return self.handler
 
-    def __init__(self, view):
-        self.view = view
-        self.deltas = []
-        self.reconciled = []
-        self.queued = []
-        self.warnings = []
-        self.sync = stage_sync.StageSync(
-            read=view.read,
-            notice=view.readNotice,
-            apply=view.apply,
-            post=lambda callback: self.queued.append(callback),
-            listen=lambda receiver: UsdNoticeHandler(receiver),
-            warn=self.warnings.append,
-            sink=self.deltas.append,
-            reconcile=lambda *args: self.reconciled.append(args),
-        )
+    def warn(self, message):
+        self.events.append(("warn", message))
 
-    def run_queued(self):
-        queued, self.queued = self.queued, []
-        for callback in queued:
-            callback()
+    def publish(self, delta):
+        self.events.append(("publish", delta))
+
+    def reconcile(self, resynced, info, moved, trace):
+        self.events.append(("reconcile", resynced, info, moved, trace))
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
@@ -820,168 +812,147 @@ class ReplaceStalenessTest(unittest.TestCase):
     """Only the latest generation's deferred work may touch the model."""
 
     def test_replace_a_b_none_before_any_callback_runs(self) -> None:
-        stageA = Usd.Stage.CreateInMemory()
-        stageB = Usd.Stage.CreateInMemory()
-        view = _LifecycleView(["/Alpha", "/Bp#input:drive"])
-        env = _LifecycleHarness(view)
+        stageA, stageB = object(), object()
+        idsA = ("/Alpha", "/Bp#input:drive")
+        idsB = ("/Beta",)
+        hooks = _RecordingHooks(idsA)
+        snapshotA = hooks.stage_context
+        sync = hooks.sync
 
-        env.sync.replace(stageA, "stage", None, "frame-A")
-        env.sync.replace(stageB, "stage", None, "frame-B")
-        env.sync.replace(None, "stage", None, "frame-None")
+        sync.replace(stageA, "stage", None, "frame-A")
+        hooks.stage_context = snapshotB = stage_sync.StageContext(idsB)
+        sync.replace(stageB, "blueprint", "/Beta", "frame-B")
+        sync.replace(None, "stage", None, "frame-None")
 
-        # Nothing deferred has run yet: three finishes are queued, and every
-        # emitted delta carries the epoch that produced it.
-        self.assertEqual(len(env.queued), 3)
-        self.assertEqual(
-            [type(delta).__name__ for delta in env.deltas],
-            [
-                "BeginReload",
-                "Remove",
-                "Load",
-                "BeginReload",
-                "Remove",
-                "Load",
-                "BeginReload",
-                "ClearHistory",
-            ],
-        )
-        self.assertEqual(
-            [delta.epoch for delta in env.deltas], [1, 1, 1, 2, 2, 2, 3, 3]
-        )
-        self.assertEqual(view.frames, ["frame-A", "frame-B", "frame-None"])
-        # The reload records the whole graph it tore down, synthetic ids
-        # included.
-        self.assertEqual(env.deltas[1].ids, ("/Alpha", "/Bp#input:drive"))
+        finishA, finishB, finishNone = hooks.queued
+        beginA = stage_sync.BeginReload(1, "frame-A")
+        beginB = stage_sync.BeginReload(2, "frame-B")
+        beginNone = stage_sync.BeginReload(3, "frame-None")
+        loadA = stage_sync.Load(1, stageA, "stage", None)
+        loadB = stage_sync.Load(2, stageB, "blueprint", "/Beta")
+        clear = stage_sync.ClearHistory(3)
+        self.assertEqual(hooks.events, [
+            ("listen", hooks.receiver),
+            ("read", snapshotA),
+            ("publish", beginA), ("apply", beginA),
+            ("publish", stage_sync.Remove(1, idsA)),
+            ("publish", loadA), ("apply", loadA), ("post", finishA),
+            ("read", snapshotB),
+            ("publish", beginB), ("apply", beginB),
+            ("publish", stage_sync.Remove(2, idsB)),
+            ("publish", loadB), ("apply", loadB), ("post", finishB),
+            ("read", snapshotB),
+            ("publish", beginNone), ("apply", beginNone),
+            ("publish", clear), ("apply", clear), ("post", finishNone),
+        ])
+        self.assertEqual(sync.epoch(), 3)
+        self.assertIs(sync.handler(), hooks.handler)
 
-        # A notice stamped with an older generation never reaches the model.
-        applied = list(view.applied)
-        env.sync.changed(1, {"/Alpha"}, set())
-        env.sync.changed(2, {"/Alpha"}, set())
-        self.assertEqual(view.applied, applied)
-        self.assertEqual(len(env.deltas), 8)
-        self.assertEqual(env.reconciled, [])
+        events = hooks.events[:]
+        sync.changed(1, {"/Alpha"}, set())
+        sync.changed(2, {"/Beta"}, set())
+        finishA()
+        finishB()
+        self.assertEqual(hooks.events, events)
 
-        env.run_queued()
-
-        # The two stale finishes did nothing at all; the null-stage finish
-        # ran exactly once.
-        finishes = [
-            delta
-            for delta in env.deltas
-            if isinstance(delta, stage_sync.FinishReload)
-        ]
-        self.assertEqual(finishes, [stage_sync.FinishReload(3)])
-        self.assertEqual(view.finishes, 1)
-        self.assertTrue(view.updates_enabled)
-        # No third load ran; the null stage cleared the history instead.
-        self.assertEqual(view.loaded[0], stageB)
-        self.assertIsNone(view.history)
+        finishNone()
+        finish = stage_sync.FinishReload(3)
+        self.assertEqual(hooks.events, events + [
+            ("publish", finish), ("apply", finish),
+        ])
 
     def test_finish_from_a_rebound_stage_is_dropped(self) -> None:
-        """The queued callback checks its source binding, not just its
-        epoch."""
-        stageA = Usd.Stage.CreateInMemory()
-        stageB = Usd.Stage.CreateInMemory()
-        env = _LifecycleHarness(_LifecycleView())
-
-        env.sync.replace(stageA, "stage", None, "frame")
-        env.sync.bind(stageB)
-        env.run_queued()
-
-        self.assertEqual(env.view.finishes, 0)
-        self.assertEqual(
-            [
-                delta
-                for delta in env.deltas
-                if isinstance(delta, stage_sync.FinishReload)
-            ],
-            [],
-        )
+        # Equal but distinct bindings distinguish identity from equality.
+        stageA, stageB = [], []
+        hooks = _RecordingHooks()
+        hooks.sync.replace(stageA, "stage", None, "frame")
+        hooks.sync.bind(stageB)
+        events = hooks.events[:]
+        hooks.queued[0]()
+        self.assertEqual(hooks.events, events)
 
     def test_selection_sync_suppresses_a_live_notice(self) -> None:
-        stageA = Usd.Stage.CreateInMemory()
-        view = _LifecycleView()
-        view.syncing = True
-        env = _LifecycleHarness(view)
-        env.sync.replace(stageA, "stage", None, "frame")
+        hooks = _RecordingHooks()
+        hooks.sync.replace(object(), "stage", None, "frame")
+        hooks.events.clear()
+        paths = ({"/Alpha"}, {"/Keeper.radius"}, {"/Alpha": "/Renamed"})
+        hooks.notice_context = muted = stage_sync.NoticeContext(True)
+        hooks.receiver._handleUsdChanges(*paths)
+        self.assertEqual(hooks.events, [("notice", muted)])
 
-        applied = list(view.applied)
-        env.sync.changed(1, {"/Alpha"}, set())
-
-        self.assertEqual(view.applied, applied)
-        self.assertEqual(len(env.deltas), 3)
-        self.assertEqual(env.reconciled, [])
-
-        view.syncing = False
-        paths = ({"/Alpha"}, set(), {})
-        env.sync.changed(1, *paths)
-
-        self.assertEqual(len(env.reconciled), 1)
-        resynced, info, moved, trace = env.reconciled[0]
+        hooks.notice_context = admitted = stage_sync.NoticeContext(False)
+        hooks.receiver._handleUsdChanges(*paths)
+        self.assertEqual(hooks.events[:2], [("notice", muted), ("notice", admitted)])
+        self.assertEqual(len(hooks.events), 3)
+        kind, resynced, info, moved, trace = hooks.events[2]
+        self.assertEqual(kind, "reconcile")
         for original, received in zip(paths, (resynced, info, moved)):
             self.assertIs(received, original)
         self.assertIsNotNone(trace)
-        self.assertEqual(len(env.deltas), 3)
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
 class LoadFailureTest(unittest.TestCase):
     """A failing load must not strand the editor or the next replace."""
 
-    def test_a_failing_load_warns_restores_and_still_finishes(self) -> None:
-        stageA = Usd.Stage.CreateInMemory()
-        stageB = Usd.Stage.CreateInMemory()
-        view = _LifecycleView()
-        view.fail_loads = True
-        env = _LifecycleHarness(view)
+    def test_a_failing_load_warns_and_still_finishes_then_recovers(self) -> None:
+        stageA, stageB = object(), object()
+        hooks = _RecordingHooks()
+        hooks.load_error = RuntimeError("load boom")
+        hooks.sync.replace(stageA, "stage", None, "frame-A")
 
-        env.sync.replace(stageA, "stage", None, "frame")
+        (finishA,) = hooks.queued
+        self.assertEqual(hooks.events[-3:], [
+            ("apply", stage_sync.Load(1, stageA, "stage", None)),
+            ("warn", "Failed to reload graph after stage replace: load boom"),
+            ("post", finishA),
+        ])
+        finishA()
+        self.assertEqual(hooks.events[-2:], [
+            ("publish", stage_sync.FinishReload(1)),
+            ("apply", stage_sync.FinishReload(1)),
+        ])
 
-        self.assertEqual(len(env.warnings), 1)
-        self.assertIn("load boom", env.warnings[0])
-        self.assertFalse(view._deferRenderCacheClear)
-        self.assertEqual(len(env.queued), 1)
-
-        env.run_queued()
-        self.assertEqual(view.finishes, 1)
-
-        view.fail_loads = False
-        env.sync.replace(stageB, "stage", None, "frame")
-        env.run_queued()
-
-        self.assertEqual(view.loaded[0], stageB)
-        self.assertEqual(view.finishes, 2)
-        self.assertEqual(
-            [delta.epoch for delta in env.deltas], [1, 1, 1, 1, 2, 2, 2, 2]
-        )
+        hooks.events.clear()
+        hooks.load_error = None
+        hooks.sync.replace(stageB, "container", "/Box", "frame-B")
+        _, finishB = hooks.queued
+        finishB()
+        begin = stage_sync.BeginReload(2, "frame-B")
+        load = stage_sync.Load(2, stageB, "container", "/Box")
+        finish = stage_sync.FinishReload(2)
+        self.assertEqual(hooks.events, [
+            ("read", hooks.stage_context),
+            ("publish", begin), ("apply", begin),
+            ("publish", stage_sync.Remove(2, ())),
+            ("publish", load), ("apply", load), ("post", finishB),
+            ("publish", finish), ("apply", finish),
+        ])
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
 class ReloadModeTest(unittest.TestCase):
-    """Each mode reaches the loader it names."""
-
-    def test_each_mode_reaches_the_loader_it_names(self) -> None:
+    def test_each_mode_emits_a_successful_load_and_finish(self) -> None:
         for mode, prim_path in (
             ("stage", None),
             ("blueprint", "/Bp"),
             ("container", "/Box"),
         ):
             with self.subTest(mode=mode):
-                stage = Usd.Stage.CreateInMemory()
-                view = _LifecycleView()
-                env = _LifecycleHarness(view)
+                stage, frame = object(), object()
+                hooks = _RecordingHooks()
+                hooks.sync.replace(stage, mode, prim_path, frame)
+                (callback,) = hooks.queued
+                callback()
 
-                env.sync.replace(stage, mode, prim_path, "frame")
-
-                loads = [
-                    delta
-                    for delta in env.deltas
-                    if isinstance(delta, stage_sync.Load)
-                ]
-                self.assertEqual(len(loads), 1)
-                self.assertIs(loads[0].stage, stage)
-                self.assertEqual(loads[0].mode, mode)
-                self.assertEqual(view.loaded, (stage, mode, prim_path))
+                effects = [event[1] for event in hooks.events if event[0] == "apply"]
+                self.assertEqual(effects, [
+                    stage_sync.BeginReload(1, frame),
+                    stage_sync.Load(1, stage, mode, prim_path),
+                    stage_sync.FinishReload(1),
+                ])
+                self.assertIs(effects[1].stage, stage)
+                self.assertFalse(any(event[0] == "warn" for event in hooks.events))
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
@@ -989,33 +960,32 @@ class SuppressionTest(unittest.TestCase):
     """Suppression lives on the editor's handler and always restores."""
 
     def test_suppression_restores_on_the_normal_path(self) -> None:
-        env = _LifecycleHarness(_LifecycleView())
-        handler = env.sync.handler()
-
+        hooks = _RecordingHooks()
+        handler = hooks.sync.handler()
         self.assertTrue(handler.isEnabled())
-        with env.sync.suppressed():
+        with hooks.sync.suppressed():
             self.assertFalse(handler.isEnabled())
         self.assertTrue(handler.isEnabled())
 
     def test_suppression_restores_on_exception(self) -> None:
-        env = _LifecycleHarness(_LifecycleView())
-        handler = env.sync.handler()
-
-        with self.assertRaises(RuntimeError):
-            with env.sync.suppressed():
+        hooks = _RecordingHooks()
+        with self.assertRaisesRegex(RuntimeError, "edit boom"):
+            with hooks.sync.suppressed():
                 raise RuntimeError("edit boom")
-        self.assertTrue(handler.isEnabled())
+        self.assertTrue(hooks.handler.isEnabled())
 
     def test_nested_suppression_restores_the_outer_state(self) -> None:
-        env = _LifecycleHarness(_LifecycleView())
-        handler = env.sync.handler()
-
-        with env.sync.suppressed():
-            with self.assertRaises(RuntimeError):
-                with env.sync.suppressed():
+        hooks = _RecordingHooks()
+        with hooks.sync.suppressed():
+            with self.assertRaisesRegex(RuntimeError, "inner boom"):
+                with hooks.sync.suppressed():
                     raise RuntimeError("inner boom")
-            self.assertFalse(handler.isEnabled())
-        self.assertTrue(handler.isEnabled())
+            self.assertFalse(hooks.handler.isEnabled())
+        self.assertTrue(hooks.handler.isEnabled())
+        self.assertEqual(hooks.events[1:], [
+            ("setEnabled", False), ("setEnabled", False),
+            ("setEnabled", False), ("setEnabled", True),
+        ])
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
@@ -1023,35 +993,24 @@ class CloseTest(unittest.TestCase):
     """Close revokes the receiver and invalidates anything still queued."""
 
     def test_close_drops_queued_finishes_and_later_notices(self) -> None:
-        stageA = Usd.Stage.CreateInMemory()
-        stageB = Usd.Stage.CreateInMemory()
-        view = _LifecycleView()
-        env = _LifecycleHarness(view)
-        env.sync.replace(stageA, "stage", None, "frame")
-        env.run_queued()
-        self.assertEqual(view.finishes, 1)
-
-        env.sync.replace(stageB, "stage", None, "frame")
-        live = env.sync.epoch()
-        env.sync.handler().register(stageB)
-        self.assertIs(env.sync.handler().getStage(), stageB)
-        env.sync.close()
-
-        self.assertTrue(env.sync.isClosed())
-        self.assertIsNone(env.sync.handler().getStage())
-        env.run_queued()
-        self.assertEqual(view.finishes, 1)
-        applied = list(view.applied)
-        env.sync.changed(live, {"/Alpha"}, set())
-        self.assertEqual(view.applied, applied)
-        self.assertEqual(
-            [
-                delta
-                for delta in env.deltas
-                if isinstance(delta, stage_sync.FinishReload)
-            ],
-            [stage_sync.FinishReload(1)],
-        )
+        hooks = _RecordingHooks()
+        stage = object()
+        hooks.sync.replace(stage, "stage", None, "frame")
+        handler = hooks.sync.handler()
+        self.assertIs(handler, hooks.handler)
+        self.assertFalse(any(event[0] == "register" for event in hooks.events))
+        handler.register(stage)
+        live = hooks.sync.epoch()
+        hooks.sync.close()
+        self.assertTrue(hooks.sync.isClosed())
+        self.assertEqual(hooks.sync.epoch(), live + 1)
+        self.assertEqual(hooks.events[-2:], [("register", stage), ("unregister",)])
+        events = hooks.events[:]
+        hooks.queued[0]()
+        hooks.receiver._handleUsdChanges({"/Alpha"}, set())
+        hooks.sync.changed(live, {"/Alpha"}, set())
+        hooks.sync.changed(live + 1, {"/Alpha"}, set())
+        self.assertEqual(hooks.events, events)
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
@@ -1078,17 +1037,8 @@ class NoticeRegistrationTest(unittest.TestCase):
         view = _StubView(stage, ["/Alpha", "/Keeper"])
         deltas = []
         service = stage_sync.StageSync(
-            read=lambda: stage_sync.StageContext(
-                view=view,
-                stage=stage,
-                mode="stage",
-                prim_path=None,
-                node_ids=tuple(view.nodes),
-                syncing_selection=view._syncingSelection,
-            ),
-            notice=lambda: stage_sync.NoticeContext(
-                view=view, syncing_selection=view._syncingSelection
-            ),
+            read=lambda: stage_sync.StageContext(tuple(view.nodes)),
+            notice=lambda: stage_sync.NoticeContext(view._syncingSelection),
             apply=lambda delta: None,
             post=lambda callback: None,
             listen=lambda receiver: UsdNoticeHandler(receiver),
@@ -1135,42 +1085,18 @@ class ReplaceAfterCloseTest(unittest.TestCase):
     """
 
     def test_close_then_replace_touches_nothing(self) -> None:
-        stageA = Usd.Stage.CreateInMemory()
-        stageB = Usd.Stage.CreateInMemory()
-        view = _LifecycleView(["/Alpha"])
-        env = _LifecycleHarness(view)
-        env.sync.replace(stageA, "stage", None, "frame")
-        env.run_queued()
-        handler = env.sync.handler()
-        handler.register(stageA)
-        self.assertIs(handler.getStage(), stageA)
+        hooks = _RecordingHooks(("/Alpha",))
+        hooks.sync.replace(object(), "stage", None, "frame")
+        (callback,) = hooks.queued
+        callback()
+        hooks.sync.close()
+        closed_epoch = hooks.sync.epoch()
+        events = hooks.events[:]
 
-        live = env.sync.epoch()
-        applied = list(view.applied)
-        published = list(env.deltas)
+        hooks.sync.replace(object(), "blueprint", "/Bp", "late-frame")
 
-        env.sync.close()
-        env.sync.replace(stageB, "blueprint", "/Bp", "late-frame")
-
-        # No delta published, no delta applied: the view was not read, so no
-        # BeginReload tore down its state and no Load replaced its graph.
-        self.assertEqual(env.deltas, published)
-        self.assertEqual(view.applied, applied)
-        self.assertEqual(view.frames, ["frame"])
-        self.assertEqual(view.loaded, (stageA, "stage", None))
-        self.assertEqual(list(view.nodes), ["/Alpha"])
-        # No listener on the late stage, and the editor's own is gone.
-        self.assertIsNone(handler.getStage())
-        # Nothing queued for the owner thread, and the live finish is the
-        # only one that ever ran.
-        self.assertEqual(env.queued, [])
-        self.assertEqual(view.finishes, 1)
-        # close() moved the epoch; the late replace did not, and its epoch is
-        # stale with it -- so a notice stamped with the live generation still
-        # cannot reach the model.
-        self.assertEqual(env.sync.epoch(), live + 1)
-        env.sync.changed(live, {"/Alpha"}, set())
-        self.assertEqual(view.applied, applied)
+        self.assertEqual(hooks.events, events)
+        self.assertEqual(hooks.sync.epoch(), closed_epoch)
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
@@ -1183,15 +1109,58 @@ class ProductionAdapterTest(unittest.TestCase):
     """
 
     def _view(self, stage, paths, view_class=_StubView):
-        """A stub view whose node map refuses to be walked (see
-        ``_KeyedOnlyNodes``), plus the usdview api ``readStageContext`` reads.
-        """
+        """A keyed-only node map plus the host API used by the slot."""
         view = view_class(stage, paths)
         view.nodeGraph.nodes = _KeyedOnlyNodes(view.nodeGraph.nodes)
         view._usdviewApi = SimpleNamespace(
             stage=stage, frame=Usd.TimeCode.Default()
         )
         return view
+
+    def test_snapshot_readers_borrow_only_their_input(self) -> None:
+        stage = stage_adapter.readStageContext(SimpleNamespace(nodes={"/Alpha": None}))
+        notice = stage_adapter.readNoticeContext(SimpleNamespace(_syncingSelection=True))
+        for snapshot, fields, values in (
+            (stage, ("node_ids",), (("/Alpha",),)),
+            (notice, ("syncing_selection",), (True,)),
+        ):
+            with self.subTest(snapshot=type(snapshot).__name__):
+                self.assertEqual(tuple(field.name for field in dataclasses.fields(snapshot)), fields)
+                self.assertEqual(dataclasses.astuple(snapshot), values)
+                self.assertFalse(hasattr(snapshot, "__dict__"))
+                with self.assertRaises(dataclasses.FrozenInstanceError):
+                    setattr(snapshot, fields[0], None)
+
+    def test_load_effect_brackets_the_selected_loader_even_on_failure(self) -> None:
+        for mode, loader, args in (
+            ("stage", "loadStage", ()),
+            ("blueprint", "loadBlueprint", ("/Bp",)),
+            ("container", "loadContainer", ("/Box",)),
+        ):
+            for fail in (False, True):
+                with self.subTest(mode=mode, fail=fail):
+                    stage = Usd.Stage.CreateInMemory()
+                    view = _StubView(stage)
+                    view._deferRenderCacheClear = False
+                    view.initialized = False
+                    calls = []
+
+                    def load(*received):
+                        calls.append((received, view._deferRenderCacheClear))
+                        view.initialized = True  # Loader may initialize GL.
+                        if fail:
+                            raise RuntimeError("loader boom")
+
+                    setattr(view, loader, load)
+                    delta = stage_sync.Load(1, stage, mode, args[0] if args else None)
+                    if fail:
+                        with self.assertRaisesRegex(RuntimeError, "loader boom"):
+                            stage_adapter.applyStageDelta(view, delta)
+                    else:
+                        stage_adapter.applyStageDelta(view, delta)
+                    self.assertEqual(calls, [((stage, *args), True)])
+                    self.assertFalse(view._deferRenderCacheClear)
+                    self.assertFalse(view.initialized)
 
     def test_a_single_property_notice_never_walks_the_graph(self) -> None:
         """The notice path reads the view for the notice, not for a reload.
