@@ -598,8 +598,7 @@ RigExecSkinTransformsOf(const RigExecMoverParameters &p);
 ///
 /// One definition of "where are the indices, the weights and the element
 /// size", because the answer depends on whether the packet carries a
-/// compiled rig layout by handle, and a second copy of that rule is a second
-/// chance to read the wrong array.
+/// compiled rig layout by handle.
 RigExecSkinLayout
 RigExecSkinLayoutForPacket(const RigExecMoverParameters &p,
                            const RigExecSkinTransformsView &transforms,
@@ -653,10 +652,7 @@ bool RigExecApplySkinKernelWithTransforms(
 /// revision and blended back against it in one pass.
 ///
 /// ONE definition, called by the mover-graph revision node and by the baked
-/// program, which runs the same operation with no VdfNetwork around it: a
-/// second copy of the blend would have to agree about where the envelope is
-/// folded in, and the rigs that would show a disagreement are the ones no
-/// fixture happened to have.
+/// program, which runs the same operation with no VdfNetwork around it.
 bool RigExecApplyBlendShapeKernel(
     const RigExecMoverParameters &p, std::vector<GfVec3f> *pts,
     RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache = nullptr);
@@ -670,9 +666,7 @@ bool RigExecApplyBlendShapeKernel(
 /// and blend-shape kernels.
 ///
 /// ONE definition, called by the mover-graph revision node and by the baked
-/// program, which maintains the same property with no VdfNetwork around it:
-/// two copies would have to keep agreeing about the cardinality rules that
-/// decide when a recomputation fails instead of truncating.
+/// program, which maintains the same property with no VdfNetwork around it.
 bool RigExecApplyDerivedKernel(RigExecRevisionOp op,
                                const RigExecMoverParameters &p,
                                std::vector<GfVec3f> *pts);
@@ -709,8 +703,7 @@ void RigExecAttachNormalsTopology(RigExecRevisionBinding *binding,
 /// envelope into their own arithmetic and are routed to the kernels above.
 ///
 /// ONE definition, called by the mover-graph revision node and by the baked
-/// program: a second copy of a deformation agrees on the fixtures that exist
-/// and drifts on the ones that do not.
+/// program.
 ///
 /// \p wireBasis is the caller's own memo for a sparse-envelope wire; null
 /// builds the basis for this call only.
@@ -767,9 +760,7 @@ bool RunDiscardableRevisionKernel(RigExecRevisionOp,
 /// because it is what inputs:defaultWeight synthesizes.
 ///
 /// ONE definition, called by the mover-graph revision node and by the baked
-/// geometry loop: two hand-copied predicates could disagree about when the
-/// skip is safe, and the only rigs that would show it are the ones no
-/// fixture happened to have (a partial constant envelope on a skin mover).
+/// geometry loop.
 inline bool
 RigExecEnvelopeIsFullStrength(const RigExecWeightPacket &envelope)
 {

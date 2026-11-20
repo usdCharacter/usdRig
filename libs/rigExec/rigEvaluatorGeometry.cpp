@@ -220,7 +220,7 @@ RigExecRigEvaluator::GetSkinTopologyCacheSize() const
         return 0;
     const auto &program = _bakedProgram->GetStepGraph();
     // Cache size counts retained answers, including invalid/dynamic layouts,
-    // once per mover, as the original cache did for remembered refusals.
+    // once per mover.
     std::set<SdfPath> answered;
     const auto count = [&](const auto &revision) {
         if ((revision.layoutFixed || revision.layoutRan) &&

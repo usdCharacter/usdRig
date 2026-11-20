@@ -252,9 +252,8 @@ _ValidateMatrixMover(const rigExec::RigExecMoverValidateContext &ctx,
         }
     }
     // rigExec:space, the rig's carry, held to the same two rules: at most
-    // one, and a catalogued provider. Refused rather than dropped, because
-    // a carry that silently resolved to nothing is exactly the bug it was
-    // added to fix, reappearing as a typo nobody is told about.
+    // one, and a catalogued provider. Refused rather than dropped: a carry
+    // that silently resolved to nothing is a typo nobody is told about.
     SdfPathVector carries;
     if (UsdRelationship rel = prim.GetRelationship(_matrixTokens->space)) {
         rel.GetTargets(&carries);

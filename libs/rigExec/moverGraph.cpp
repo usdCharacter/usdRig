@@ -1209,11 +1209,9 @@ RigExecApplyDerivedKernel(RigExecRevisionOp op, const RigExecMoverParameters &p,
            RigExecApplyDerivedKernel(op, p, pts->data(), pts->size(), pts);
 }
 
-// Every revision operation, over the same kernels the revision node ran when
-// they were lambdas inside its VdfContext callback.
-// ONE definition, called by the mover-graph revision node and by the baked
-// program: a second copy of a deformation agrees on the fixtures that exist
-// and drifts on the ones that do not.
+// Every revision operation, over the same kernels the mover-graph
+// revision node runs. ONE definition, called by that node and by the
+// baked program.
 // The envelope is NOT applied here for the ops that take a separate blend --
 // RigExecRunRevisionKernel wraps this, which is where the "apply once" rule
 // lives; matrix, blendShape and the two derived recomputations fold it into

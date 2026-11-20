@@ -1039,11 +1039,8 @@ RigExecRigEvaluator::_DiscoverMovers(
             const _ConstraintHandler *orderHandler =
                 _FindConstraintHandler(record.schemaType);
 
-            // No authored constraint property is ever silently ignored. The
-            // family's recurring defect was the opposite: rigExec:rotationOrder
-            // on a Position constraint compiled and did nothing, and
-            // inputs:affectX meant a different channel on each operator. Every
-            // channel property is now checked against what the operator
+            // No authored constraint property is silently ignored: every
+            // channel property is checked against what the operator
             // actually honors.
             if (orderHandler) {
                 // Spelled only when a message needs it: this runs for every
@@ -1057,10 +1054,9 @@ RigExecRigEvaluator::_DiscoverMovers(
                     return a && a.HasAuthoredValue();
                 };
 
-                // Renamed when the envelope and the per-element weight field
-                // collapsed into one concept. The old name is no longer part
-                // of the schema, so an authored opinion would compose as a
-                // custom property and be ignored.
+                // inputs:weight is not part of the schema, so an authored
+                // opinion would compose as a custom property and be
+                // ignored.
                 if (authored(_tokens->inputsWeight)) {
                     return fail(
                         who() + " authors inputs:weight, which a constraint no"

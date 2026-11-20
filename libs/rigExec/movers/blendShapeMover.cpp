@@ -420,10 +420,9 @@ _OracleBlendShapeMover(const rigExec::RigExecMoverOracleContext &ctx)
                 // The oracle is a SCALAR REFERENCE, so it reads the
                 // blend shape straight off the stage and expands it
                 // to a full moved-points array -- deliberately not
-                // through RigExecBlendSampleCache. An oracle that
+                // through RigExecBlendSampleCache: an oracle that
                 // shared the fast path's cache would agree with it
-                // about a stale layout, which is precisely the class
-                // of bug this exists to catch.
+                // about a stale layout.
                 rigExec::RigExecBlendSampleLayout layout;
                 rigExec::RigExecResolveBlendSampleLayout(
                     stage, sparseTargets[0], basePoints.size(), &layout);

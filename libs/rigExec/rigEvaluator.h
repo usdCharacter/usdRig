@@ -177,11 +177,8 @@ struct RigExecRigPose {
     /// also has to DRAW the volume, and a falloff iso-surface can only be
     /// drawn in the space the field was measured in. Taken from the
     /// volume's own computeMatrix tap rather than left to the consumer to
-    /// re-derive, because a second hand-rolled composition of
-    /// posed:space + rest offsets + avars + rotation order is exactly the
-    /// drift frameExtraction.h exists to prevent -- the same reasoning
-    /// that made _ResolveVolumeWeights read this map instead of
-    /// recomputing it.
+    /// re-derive: one composition of posed:space + rest offsets + avars +
+    /// rotation order, so a second caller cannot drift.
     std::map<SdfPath, GfMatrix4d> weightFrames;
 
     /// Pass-through, failure, and unimplemented-operation reports
@@ -363,8 +360,7 @@ public:
     /// The handler table is the one authority on which operators exist. Any
     /// second enumeration of them -- the baked program's list of the ones it
     /// can express, a test asserting the table and the schema agree -- asks
-    /// here instead of keeping a private copy, because a private copy is a
-    /// list that silently stops naming an operator somebody added.
+    /// here instead of keeping a private copy.
     static const std::vector<TfToken> &GetConstraintOperatorTypeNames();
 
     /// Whether \p schemaType names one of them.
@@ -885,7 +881,7 @@ private:
     ///
     /// The baked program runs the chains itself and needs the overrides at
     /// exactly that point; it calls this rather than carrying a second copy
-    /// of the ordering rule, because a second copy is a second answer.
+    /// of the ordering rule.
     void
     _ApplyInteractiveOverridesToResolved(RigExecResolvedInputs *resolved) const;
     /// The same for the admitted source input values.

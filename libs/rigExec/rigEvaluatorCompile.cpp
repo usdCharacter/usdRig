@@ -875,12 +875,11 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             // a hint; reject samples explicitly.
             for (const UsdPrim &solver : solvers) {
                 const TfToken t = solver.GetTypeName();
-                // rigExec:upperLength/rigExec:lowerLength no longer exist
-                // in the schema -- bone lengths are measured from the bound
-                // joints' rests. An asset saved against the old schema can
-                // still carry one as a custom property, where it would be
-                // silently inert. Fail loudly instead and name the knob
-                // that replaced it.
+                // rigExec:upperLength/rigExec:lowerLength are not schema
+                // attributes -- bone lengths are measured from the bound
+                // joints' rests. An asset can still carry one as a custom
+                // property, where it would be silently inert. Fail loudly
+                // instead.
                 if (t == SchemaTypeName::RigExecTwoBoneIk) {
                     const TfToken lengthAttrs[2] = {
                         _tokens->rigExecUpperLength,
@@ -1847,8 +1846,9 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 getTargets(moverPrim, _tokens->rigExecSources);
             if (sources.empty() &&
                 mover.schemaType == SchemaTypeName::RigExecAimConstraint) {
-                // Backward-compatible spelling used by every existing Aim
-                // asset. New assets use the ordered FBX-style sources list.
+                // rigExecAimTarget is an older Aim spelling, still accepted
+                // for backward compatibility; the ordered FBX-style sources
+                // list is the current spelling.
                 sources = getTargets(moverPrim, _tokens->rigExecAimTarget);
             }
             if (sources.empty()) {
@@ -4138,7 +4138,7 @@ RigExecRigEvaluator::_CompileUnlessKnownBroken(
     // in the same order, where the compile would have put them, at the cost
     // of a key compare instead of a full compile (plus, at the structural
     // site, the digest ahead of it) on every frame of a scrub over a stage
-    // somebody left broken.
+    // that fails to compile.
     // The documented difference is what the compile says OUTSIDE the vector:
     // its TF_WARNs -- a derived start-frame note, the transform-authority
     // pass -- go to the host once, on the compile that failed, rather than

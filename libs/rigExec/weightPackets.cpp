@@ -715,9 +715,8 @@ RigExecBuildCombineWeightPacket(
     // Reading the target here is not belt-and-braces: without it a
     // constant-only combine publishes an invalid packet and the mover
     // passes through, while the CPU oracle resolves every constant to
-    // `count` values and moves the points. That divergence is a parity
-    // mismatch, and it is reachable the first time someone multiplies
-    // two freshly created static weights together.
+    // `count` values and moves the points -- a parity mismatch, reachable
+    // whenever two constant weights combine.
     size_t elementCount = 0;
     for (const RigExecWeightPacket *in : inputs) {
         if (!in || !in->valid) {

@@ -200,9 +200,7 @@ _OracleLatticeMover(const rigExec::RigExecMoverOracleContext &ctx)
     std::vector<std::string> *diagnostics = ctx.diagnostics;
     VtVec3fArray &points = *ctx.points;
     // Independent of RigExecAssembleParameters on purpose: this is the
-    // parity oracle, so it resolves its own inputs off the stage. A
-    // reference that called the assembler would have agreed with the
-    // SurfaceProject strength bug instead of catching it.
+    // parity oracle, so it resolves its own inputs off the stage.
     // The rest cage is the cage at Default time, read directly.
     SdfPathVector cages;
     if (rigExec::RigExecOracleRelationship rel =
