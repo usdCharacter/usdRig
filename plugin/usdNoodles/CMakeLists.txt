@@ -34,9 +34,14 @@ else()
     FetchContent_MakeAvailable(noodles)
     # noodles builds GLEW from source, which includes <GL/glu.h> unless
     # GLEW_NO_GLU is defined. Nothing here calls a GLU function, and hosts
-    # without the GLU development headers cannot build it otherwise.
+    # without the GLU development headers cannot build it otherwise. Its
+    # objects are archived statically and linked into the shared libnoodles.so,
+    # so they need -fPIC: x86-64 rejects the PC-relative relocations against
+    # the exported __glew* globals when producing a shared object.
     if (TARGET glew_static)
         target_compile_definitions(glew_static PUBLIC GLEW_NO_GLU)
+        set_target_properties(glew_static PROPERTIES
+            POSITION_INDEPENDENT_CODE ON)
     endif()
 endif()
 

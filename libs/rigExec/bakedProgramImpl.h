@@ -3,13 +3,7 @@
 // bakedProgram.cpp is the only translation unit the evaluator declares a
 // friend, so everything the frame path needs out of RigExecRigEvaluator is
 // captured ONCE, at Build, into the pointers below; bakedPose.cpp and
-// bakedGeometry.cpp then read the program rather than the evaluator. That is
-// what lets the program be split by domain without widening the evaluator's
-// friendship -- and the capture is also the list of exactly what a running
-// frame reads from outside itself, which Phase 2's step graph needs stated
-// rather than discovered.
-// Nothing here is a second expression of semantics: the helpers are the ones
-// bakedProgram.cpp already had, moved so more than one file can call them.
+// bakedGeometry.cpp then read the program rather than the evaluator.
 #ifndef RIGEXEC_BAKED_PROGRAM_IMPL_H
 #define RIGEXEC_BAKED_PROGRAM_IMPL_H
 
@@ -188,7 +182,7 @@ RigExecBakedAnimatedOrConnected(const UsdAttribute &attribute)
 }
 
 // The attribute GetAttribute would end up reading, plus why it cannot be
-// captured. Mirrors that function's loop exactly.
+// captured.
 template <class T>
 inline void
 RigExecBakedClassifyInput(const UsdAttribute &attribute, UsdTimeCode time,
@@ -853,10 +847,9 @@ struct RigExecBakedProgramImpl {
     // because BOTH halves of a frame read them, the geometry half must see
     // exactly the matrix the pose half published, and a 267 KB zero-fill per
     // frame is work that belongs at Build.
-    // One ProviderMatrix step writes each entry the program can read -- the
-    // set today's lazy finalMatrixOf/baseMatrixOf computed, no larger -- so
-    // there is no on-demand fill and no per-frame reset: an entry no step
-    // writes simply keeps a value nothing reads.
+    // One ProviderMatrix step writes each entry the program can read, and
+    // no larger, so there is no on-demand fill and no per-frame reset: an
+    // entry no step writes simply keeps a value nothing reads.
     std::vector<GfMatrix4d> finalMatrix, baseMatrix;
     /// Whether some step or the epilogue reads this slot's final / base
     /// matrix, which is what decides that a ProviderMatrix step exists for
@@ -913,8 +906,7 @@ struct RigExecBakedProgramImpl {
     std::vector<WalkStep> walkSteps;
 
     // Built from the tables above, once, at the end of Build. `steps` is in
-    // program order -- the order today's straight-line Run visited the same
-    // work in -- and every edge points forward in it.
+    // program order, and every edge points forward in it.
     std::vector<RigExecBakedStep> steps;
     std::vector<RigExecBakedStep> excludedSteps;
     struct SpaceCheckpoint {
@@ -1387,10 +1379,9 @@ struct RigExecBakedProgramImpl {
     /// Every volumetric weight object's baked falloff remap, by prim path.
     ///
     /// Copied out of the evaluator's own _falloffLutOverrides at Build, not
-    /// recomputed: a falloff curve is structural (exec has no accessor
-    /// for an attribute's spline, so the curve is resampled once at Compile
-    /// and replayed unchanged), and these are literally the bytes exec
-    /// receives.
+    /// recomputed: a falloff curve is structural -- it is resampled once at
+    /// Compile and replayed unchanged -- and these are literally the bytes
+    /// exec receives.
     std::map<SdfPath, std::vector<float>> falloffLuts;
     /// This frame's packet per weight object -- the WeightPacket slot
     /// domain's storage. Sized at Build and never resized in a run, like
@@ -1413,8 +1404,8 @@ struct RigExecBakedProgramImpl {
     //  * `prims` -- every prim the bake read anything from, for a resync
     //    that names a whole subtree rather than one property.
     //  * `xformPrims` -- the Xforms between an intervening-Xform candidate
-    //    and its anchor. Bakeability accepted those BECAUSE they compose to
-    //    the identity today, which is a judgement about their composed
+    //    and its anchor. Bakeability accepted those because they compose to
+    //    the identity, which is a judgement about their composed
     //    transform and not about one attribute, so any property of theirs
     //    counts.
     // A changed-info notice that misses all of them is a value edit on an
@@ -2652,8 +2643,7 @@ struct RigExecBakedBuildContext {
     /// kinds are LIVE -- the prologue seeds an xform-derived slot from the
     /// stage and a constraint revises it like any other target. So a
     /// `SlotOf(x) < 0` refusal reads "is no provider slot at all", NOT "is
-    /// not a pose provider", and there is no longer a refusal standing
-    /// between the two meanings. A caller that means "publishes
+    /// not a pose provider". A caller that means "publishes
     /// computeRestFrame" or "is composed from avars" must test
     /// slotKind[slot] == FirstFramePose itself, as the solver rest binding does.
     int SlotOf(const SdfPath &path) const;
@@ -3134,7 +3124,7 @@ void RigExecBakedRunLayoutOp(const RigExecBakedProgramImpl &,
 /// The pose half of the epilogue: the joint and control publication, the
 /// solver guides and the property-domain results.
 ///
-/// Returns false where today's walk returns false from the same line: a
+/// Returns false where the walk returns false from the same line: a
 /// joint with a valid, non-degenerate final frame whose rest or frame is
 /// not usable needs exec.
 bool RigExecBakedPublishPose(RigExecBakedProgramImpl *program,
@@ -3294,9 +3284,7 @@ RigExecBakedAdoptPartition(RigExecBakedProgramImpl::GeomRevision *revision);
 ///
 /// Per revision: how many chunks, how many vertices each holds, the key
 /// sizes, how many chunks depend on half the influences or more, and each
-/// chunk's influence positions -- which is what makes "the arm vertices no
-/// longer wait for the leg constraints" a measured claim per asset rather
-/// than a design intention.
+/// chunk's influence positions.
 std::string RigExecBakedGeometryReport(const RigExecBakedProgramImpl &program);
 
 /// Records \p input against \p step: what a frame can move it with.

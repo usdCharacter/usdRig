@@ -680,8 +680,6 @@ void
 RigExecTwistDistributionHandle::SetJointElements(
     const std::vector<int> &elements)
 {
-    // Explicit VtIntArray payload: a raw std::vector is not accepted by this
-    // USD build's VtValue for array attributes.
     _AuthorAttr(GetPrim(), SchemaAttrText::rigExecJointElements,
                 SdfValueTypeNames->IntArray,
                 VtValue(VtIntArray(elements.begin(), elements.end())));
@@ -758,7 +756,6 @@ RigExecRibbonHandle::SetParameterization(const TfToken &mode)
 void
 RigExecRibbonHandle::SetJointElements(const std::vector<int> &elements)
 {
-    // Explicit VtIntArray payload (see TwistDistribution above).
     _AuthorAttr(GetPrim(), SchemaAttrText::rigExecJointElements,
                 SdfValueTypeNames->IntArray,
                 VtValue(VtIntArray(elements.begin(), elements.end())));
@@ -840,7 +837,6 @@ RigExecSplineIkHandle::SetRootTangent(const TfToken &mode)
 void
 RigExecSplineIkHandle::SetJointElements(const std::vector<int> &elements)
 {
-    // Explicit VtIntArray payload (see TwistDistribution above).
     _AuthorAttr(GetPrim(), SchemaAttrText::rigExecJointElements,
                 SdfValueTypeNames->IntArray,
                 VtValue(VtIntArray(elements.begin(), elements.end())));
@@ -1647,9 +1643,7 @@ RigExecBlendSampleHandle::SetBlendShape(const SdfPath &path)
         throw std::invalid_argument("blend sample needs a blend shape prim");
     }
     // Clears the dense relationship rather than leaving both authored: the
-    // compiler refuses a sample that names two shapes, and a builder that
-    // silently produced one would be handing the caller a rig that does not
-    // compile for a reason nothing in the calling code mentions.
+    // compiler refuses a sample that names two shapes.
     if (UsdRelationship dense = GetPrim().GetRelationship(
             TfToken(SchemaAttrText::rigExecTargetPoints))) {
         dense.ClearTargets(false);
@@ -1671,11 +1665,9 @@ RigExecBlendSampleHandle::SetReadPhase(const TfToken &phase)
 void
 RigExecBlendInputHandle::ConnectWeight(const SdfPath &output)
 {
-    // The attribute has to exist before it can carry a connection, and
-    // authoring the schema default is the cheapest way to make it exist. The
-    // number it holds is then ignored while the connection stands, which is
-    // the right fallback: a stage read without the interpolator compiled
-    // shows the channel at rest rather than at some stale weight.
+    // The attribute has to exist before it can carry a connection. While a
+    // connection stands, the authored number it holds is not read: a stage
+    // read without the interpolator compiled shows the channel at rest.
     _AuthorAttr(GetPrim(), SchemaAttrText::inputsWeight,
                 SdfValueTypeNames->Float, VtValue(0.f));
     UsdAttribute attr =
@@ -1694,11 +1686,10 @@ RigExecBlendInputHandle::ConnectWeight(const SdfPath &output)
 
 // Pose interpolators
 // a pose interpolator. The maths is libs/rigExecMath/rbf.h; this is only
-// the authoring side, and it deliberately stores no solved matrix: the
-// inverse is a function of the poses, the per-pose radii, the kernel and the
-// regularization, every one of which is authored here, so re-deriving it at
-// compile time is exact and a stored copy would be a second thing to keep in
-// step.
+// the authoring side, and it stores no solved matrix: the inverse is a
+// function of the poses, the per-pose radii, the kernel and the
+// regularization, every one of which is authored here, so it is re-derived
+// at compile time.
 
 void
 RigExecPoseInterpolatorHandle::SetDriver(const SdfPath &path)

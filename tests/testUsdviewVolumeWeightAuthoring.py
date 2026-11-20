@@ -163,9 +163,8 @@ def TestPrimCreation(ui):
     print("  falloff seeded from bbox: sphere 0..%s, plane %s..%s"
           % (falloffMax, planeMin, planeMax))
 
-    # A plane's drawn size now comes from the extents alone -- the guide
-    # no longer derives a half-size from the band -- so a new plane whose
-    # extents were left at the unit schema fallback would be an
+    # A plane's drawn size comes from the extents alone, so a new plane
+    # whose extents were left at the unit schema fallback would be an
     # invisible speck on anything bigger than a unit cube. Largest bbox
     # axis is 8, so the half-extents are 4 and the square spans it.
     planeU = plane.GetAttribute("inputs:extentU").Get()

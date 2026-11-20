@@ -2286,12 +2286,7 @@ class Performance(object):
                     # The side curve is the only thing that may swing a hose
                     # through.  Everything stays IN THE PICTURE PLANE: the
                     # hose straightens and re-curves as the side curve eases
-                    # through zero.  (Rolling the bend plane toward the
-                    # camera instead -- an earlier try -- tilts the hose
-                    # segments out of the plane, and a segment aimed nearly
-                    # opposite its rest direction then has its minimal-
-                    # rotation frame turned edge-on: the strip thins to a
-                    # line for a frame or two.)
+                    # through zero.
                     sd = max(-1.0, min(1.0, bd["side"](f)))
                     # the drag never flips a hose on its own: it is bounded
                     # by the bow, and it fades out smoothly (as sd^2) near a

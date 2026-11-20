@@ -124,14 +124,7 @@ case "$(uname -s 2>/dev/null || echo unknown)" in
 esac
 
 # macOS only: fall back to an older SDK when the default one cannot link.
-#
-# The selected toolchain and the default SDK drift independently: a Command
-# Line Tools update can install a MacOSX27 SDK whose .tbd files name an
-# architecture the Xcode-selected linker's TAPI cannot parse, and every
-# link then fails with "unknown architecture" / tapi errors. When that is
-# the state of this machine, point SDKROOT at the newest SDK the toolchain
-# CAN link against, so the helpers build instead of failing. An explicit
-# SDKROOT is always respected and never overridden.
+# An explicit SDKROOT is always respected and never overridden.
 #
 # This costs one trivial link on a healthy machine and does nothing at all
 # when the default links: the fallback search runs only after the default
@@ -286,12 +279,9 @@ rigexec_require_usd() {
 # runners leave it unloaded. Call it after building, so a first build has
 # already produced the plugInfo.json it looks for.
 #
-# An OpenUSD built from PR #4156 with noodles -- where this copy came from --
-# also installs the older editor as pxr.UsdNoodles. Registering both used to
-# stop usdview loading any plugin (the two register the same command names);
-# the in-repo copy now takes the installed one's place instead
-# (UsdNoodles/__init__.py, _supersedeInstalledCopy), so it is always
-# registered.
+# The in-repo copy supersedes an installed pxr.UsdNoodles
+# (UsdNoodles/__init__.py, _supersedeInstalledCopy): both register the same
+# command names, so it is always registered.
 rigexec_register_usdnoodles() {
     if [ -f "$_RIGEXEC_BUILD/python/UsdNoodles/plugInfo.json" ]; then
         export PXR_PLUGINPATH_NAME="$PXR_PLUGINPATH_NAME:$_RIGEXEC_BUILD/python/UsdNoodles"

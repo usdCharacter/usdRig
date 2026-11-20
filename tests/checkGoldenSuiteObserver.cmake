@@ -1,4 +1,4 @@
-# Supported protocol regression. DRIVER is the observer-only fixture binary;
+# Supported protocol. DRIVER is the observer-only fixture binary;
 # BINARY_DIR is writable test output. No repository judge is created or edited.
 if(NOT DEFINED DRIVER OR NOT DEFINED BINARY_DIR)
     message(FATAL_ERROR "DRIVER and BINARY_DIR are required")

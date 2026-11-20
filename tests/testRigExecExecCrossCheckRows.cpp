@@ -88,7 +88,7 @@ static_assert(!_BraceConstructible<RigExecBakedExecCheckRows,
                                    const UsdStageRefPtr &>::value,
               "factory gate: brace-init must be rejected");
 
-// A stage path and reporting frame make this a supported fixture regression,
+// A stage path and reporting frame make this a supported fixture row,
 // using the native program's real bound inputs and stored outputs.
 int
 main(int argc, char **argv)

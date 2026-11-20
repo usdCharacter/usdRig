@@ -682,10 +682,10 @@ _ComputeFkChain(const VdfContext &ctx)
     // positional contract rigExec:joints[N] <- element N already has. A
     // chain with no joints (a guide-only solver), or one whose targets do
     // not all publish a rest, keeps the control's own rest as the basis and
-    // is bit-identical to what it was.
+    // stays bit-identical to it.
     // A rest carrying RigExecPointFrameLiveRest is one a step BELOW this
     // chain wrote; an ordinary authored rest is not, and the chain then keeps
-    // composing onto its control's own rest exactly as it always did. That
+    // composing onto its control's own rest. That
     // gate is the bit-identity guarantee: it is not a performance trick, it
     // is what stops the rule silently re-basing every FK rig whose controls
     // do not sit exactly on their joints.

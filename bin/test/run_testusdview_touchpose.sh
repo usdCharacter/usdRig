@@ -7,7 +7,7 @@
 # In short, three of TouchPose's claims cannot be checked from a script:
 # the HIGHLIGHT has to be seen (a displayColor on this mesh is perfectly
 # correct at the terminal scene index and moves zero pixels, because
-# body_geo is bound to UsdPreviewSurface -- spike R2), the PICK has to
+# body_geo is bound to UsdPreviewSurface), the PICK has to
 # follow the DEFORMED points that live in Hydra rather than on the stage,
 # and the EVENT FILTER has to be reached the way Qt reaches it.
 #

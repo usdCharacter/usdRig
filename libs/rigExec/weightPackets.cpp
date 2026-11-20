@@ -611,8 +611,8 @@ _ResolveCombineInput(const RigExecWeightPacket &in, size_t elementCount,
     scratch->assign(elementCount, in.defaultWeight);
     if (!std::is_sorted(in.indices.begin(), in.indices.end())) {
         // Unsorted support: no producer writes it (the static builder
-        // canonicalizes), but a hand-built packet still resolves exactly
-        // as before rather than through a merge that assumes order.
+        // canonicalizes), but a hand-built packet still resolves
+        // element by element rather than through a merge that assumes order.
         for (size_t i = 0; i < elementCount; ++i) {
             (*scratch)[i] = in.Resolve(i, elementCount);
             if ((*scratch)[i] < 0.0f) {
@@ -641,7 +641,7 @@ _ResolveCombineInput(const RigExecWeightPacket &in, size_t elementCount,
     }
     // The per-point loop rejected negative resolved values: one scan
     // over the merged field, so a negative default under full coverage
-    // (which no point reads) still passes, exactly as before.
+    // (which no point reads) still passes.
     for (size_t i = 0; i < elementCount; ++i) {
         if ((*scratch)[i] < 0.0f) {
             return false;

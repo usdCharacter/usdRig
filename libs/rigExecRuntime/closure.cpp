@@ -1385,11 +1385,14 @@ RrCompileOpGraph(RrProgram *p, std::string *error)
     auto &state = p->store.opAdapter;
     state.constantSource.assign(p->opGraph.ops.size(), 0);
     state.sourceVisits.clear();
+    p->store.sourceAlways.clear();
     for (uint32_t c = 0; c < p->opGraph.ops.size(); ++c) {
         const auto &step = (*p->steps)[p->opGraph.ops[c].originalIndex];
         state.constantSource[c] = _RrInputMemoIsConstant(step) ? 1 : 0;
         if (!state.constantSource[c] || step.headAlwaysRuns)
             state.sourceVisits.push_back(c);
+        if (step.headAlwaysRuns)
+            p->store.sourceAlways.push_back(c);
     }
     _RrIndexSlotLeaves(p);
     RrIndexEpilogue(p);
@@ -1554,12 +1557,18 @@ RrExecuteOpGraph(RrProgram *p, bool force, std::string *error)
         p->slotSourceBegin.size() == inputs.slotHasValue.size() + 1;
     auto &sourceDirty = s.sourceDirty;
     sourceDirty.assign(p->opGraph.ops.size(), 0);
+    auto &sparseVisits = s.sourceSparse;
+    sparseVisits.clear();
     if (sparseSources)
         for (const uint32_t slot : inputs.written)
             if (size_t(slot) + 1 < p->slotSourceBegin.size())
                 for (uint32_t k = p->slotSourceBegin[slot];
-                     k < p->slotSourceBegin[slot + 1]; ++k)
-                    sourceDirty[p->slotSourceOps[k]] = 1;
+                     k < p->slotSourceBegin[slot + 1]; ++k) {
+                    const uint32_t c = p->slotSourceOps[k];
+                    if (!sourceDirty[c])
+                        sparseVisits.push_back(c);
+                    sourceDirty[c] = 1;
+                }
     // A history tick keeps the slots written for the next full run, whose
     // ops outside the mask have not read them yet.
     if (!history) {
@@ -1626,7 +1635,25 @@ RrExecuteOpGraph(RrProgram *p, bool force, std::string *error)
     if (first || verify || state.constantSource.size() != p->opGraph.ops.size())
         for (uint32_t c = 0; c < p->opGraph.ops.size(); ++c)
             source(c);
-    else
+    else if (sparseSources && !p->verifySourceKeys) {
+        // Of the visits below, only the written ones and those that run on
+        // every Execute do anything: those, in the same order.
+        sparseVisits.erase(
+            std::remove_if(sparseVisits.begin(), sparseVisits.end(),
+                           [&](uint32_t c) {
+                               return c < state.constantSource.size() &&
+                                      state.constantSource[c];
+                           }),
+            sparseVisits.end());
+        sparseVisits.insert(sparseVisits.end(), s.sourceAlways.begin(),
+                            s.sourceAlways.end());
+        std::sort(sparseVisits.begin(), sparseVisits.end());
+        sparseVisits.erase(
+            std::unique(sparseVisits.begin(), sparseVisits.end()),
+            sparseVisits.end());
+        for (const uint32_t c : sparseVisits)
+            source(c);
+    } else
         for (const uint32_t c : state.sourceVisits)
             source(c);
     if (moved >= 0) {

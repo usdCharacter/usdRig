@@ -20,6 +20,7 @@ from pxr.Usdviewq import plugin
 from pxr.Usdviewq.qt import QtCore, QtGui, QtWidgets
 
 from .graphView import GraphView
+from .graphview import stage_sync
 from .noodlesConfig import NoodlesConfig
 from .utils import M, MenuBuilder
 from .widgets.keyBindingDialog import KeyBindingDialog
@@ -539,7 +540,12 @@ class NoodlesEditorWindow(QtWidgets.QDockWidget):
             if app:
                 app.removeEventFilter(self._clickFilter)
             self._clickFilter = None
-        self.graphView._initUndoTracking(None)
+        # Qt hides a dock's children without delivering their closeEvent, so
+        # the graph's teardown has to run here, before the close is reported:
+        # a queued reload finish or a live notice receiver left behind keeps
+        # writing to an editor nobody is displaying. The closed stage service
+        # is the guard, so the widget's own close later changes nothing.
+        stage_sync.closeStageLifecycle(self.graphView)
         self.windowClosed.emit(self._windowId)
         super().closeEvent(event)
 

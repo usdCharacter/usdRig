@@ -40,6 +40,12 @@ from ._schema_pin_names import (
     get_display_pin_name_for_property_name,
     resolve_property_name_for_display_pin,
 )
+
+# The stage reconciliation algorithms live in graphview/stage_sync; the two
+# path helpers are re-exported here for the existing callers and tests that
+# import them from this module.
+from .graphview import stage_sync
+from .graphview.stage_sync import _isPathRelated, _nodeIdPrimPath
 from .constants import MAX_RENDER_DEPTH, node_content_depth
 from .linkRenderer import computeLinkCurveBounds, LinkRenderer, sampleLinkCurve
 from .nodeFactory import NodeFactory
@@ -48,7 +54,6 @@ from .nodeGraph import (
     createNodeRenderer,
     NodeGraph,
     subscribe_edit_target_warning,
-    unsubscribe_edit_target_warning,
     warn_if_non_persistent_edit_target,
 )
 from .nodeGraphBlueprint import NodeGraphBlueprint
@@ -128,40 +133,6 @@ def _nodeRect(node):
         float(node.size[0]),
         float(node.size[1]),
     )
-
-
-def _nodeIdPrimPath(nodeId):
-    """The prim-path half of a node id.
-
-    Most node ids ARE prim paths. Blueprint / Container I/O nodes are
-    synthesized rather than prim-backed and carry their pin in a ``#`` suffix
-    (``/Bp#input:foo:bar``); the part before the ``#`` is still the prim path
-    they hang off, which is what makes them follow that prim when it moves.
-    """
-    return nodeId.split("#", 1)[0]
-
-
-def _isPathRelated(pathA, pathB):
-    """Whether one path is the other, or contains the other.
-
-    "Contains" spans both separators USD uses: ``/`` for a child prim and ``.``
-    for a property, so ``/World/Cube`` is related to ``/World/Cube/Leg`` and to
-    ``/World/Cube.inputs:x`` alike -- a resync can name either, and both mean
-    "the node at /World/Cube is stale".
-
-    The boundary is the point. Plain ``startswith`` reads ``/World/Cube`` as an
-    ancestor of ``/World/CubeTwo``, so editing one prim invalidates unrelated
-    siblings whose names merely share a prefix.
-    """
-    if pathA == pathB:
-        return True
-    longer, shorter = (pathA, pathB) if len(pathA) > len(pathB) else (pathB, pathA)
-    if not longer.startswith(shorter):
-        return False
-    # The pseudo-root is the one path that already ends in its own separator.
-    if shorter.endswith("/"):
-        return True
-    return longer[len(shorter)] in "/."
 
 
 def _push_undo_command(description, do_func, undo_func, *, view):
@@ -249,6 +220,23 @@ def _frameOf(value):
         return Usd.TimeCode(float(value))
     except (TypeError, ValueError):
         return Usd.TimeCode.Default()
+
+
+def _makeStageSync(view):
+    """This editor's stage-lifecycle service, bound to *view*.
+
+    Policy lives in graphview/stage_sync, which imports no Qt or GL; the
+    widget-owned post and warn resolve this module's ``QtCore`` and ``Tf``
+    at call time, so the StageReload patch points keep intercepting them.
+    """
+    return stage_sync.StageSync(
+        read=lambda: stage_sync.readStageContext(view),
+        notice=lambda: stage_sync.readNoticeContext(view),
+        apply=lambda delta: stage_sync.applyStageDelta(view, delta),
+        post=lambda callback: QtCore.QTimer.singleShot(0, callback),
+        listen=lambda receiver: UsdNoticeHandler(receiver),
+        warn=lambda message: Tf.Warn(message),
+    )
 
 
 def _make_value_edit(prim_path, property_name, components, time_code, mode):
@@ -448,13 +436,10 @@ class GraphView(QGLWidget):
     # re-register on the new instance.
     nodeGraphReplaced = QtCore.Signal()
 
-
-
-
-
-
-
-
+    # The stage-lifecycle service, built in __init__. Views that never ran
+    # it (test doubles) see None; the reload entry points below run the
+    # same policy for those through a transient service.
+    _stageSync = None
 
     _worldProjCacheKey = None
     _worldProjCache = None
@@ -797,8 +782,11 @@ class GraphView(QGLWidget):
         # Z-order counter for node layering (bring-to-front on selection)
         self._nextZOrder = 0
 
-        # USD Notice handler for responding to external USD changes
-        self._noticeHandler = UsdNoticeHandler(self)
+        # The stage-lifecycle service owns the notice receiver; the handler
+        # object stays on the view because the loaders register through it
+        # and the authoring sites suppress through it.
+        self._stageSync = _makeStageSync(self)
+        self._noticeHandler = self._stageSync.handler()
 
         # Register Ctrl+S shortcut for saving using QAction
         self._saveAction = QtGui.QAction("Save Stage", self)
@@ -1645,113 +1633,37 @@ class GraphView(QGLWidget):
         self._valueFitCache.clear()
 
     def closeEvent(self, event):
-        unsubscribe_edit_target_warning(self._showWarningPopup)
-        self._undoHistory = None
+        stage_sync.closeStageLifecycle(self)
         super().closeEvent(event)
 
     def _onStageReplaced(self):
-        # Block paint events at the Qt level.  Python-level guards
-        # (self.initialized) are insufficient because QGLWidget's
-        # internal event handling still touches the GL surface before
-        # paintGL() runs, and on NVIDIA Windows drivers this can crash
-        # if the stageView's context was just destroyed/recreated on
-        # the same thread.
-        self.setUpdatesEnabled(False)
-        self.initialized = False
-
-        self._noticeHandler.unregister()
-        self._invalidateBackReferenceLinkDataCache()
-
-        # A value drag / editor / popup pinned to the old stage must not
-        # survive into the new one.
-        self._clearValueInteractionState()
-        self._currentTimeCode = _frameOf(
+        sync = getattr(self, "_stageSync", None)
+        if not isinstance(sync, stage_sync.StageSync):
+            # Test doubles never ran __init__: same policy, transient service.
+            sync = _makeStageSync(self)
+            self._stageSync = sync
+        if sync.isClosed():
+            # usdview keeps this signal connected and a closed widget is not
+            # a destroyed one: decide before the api or graph is read.
+            return
+        frame = _frameOf(
             getattr(self._usdviewApi, "frame", Usd.TimeCode.Default())
             if self._usdviewApi
             else Usd.TimeCode.Default()
         )
-
-        # Clear state that holds dead Usd.Prim / Usd.Stage references
-        self._lastPrimTreeSelection = []
-        self._lastSelectedNode = None
-        self._selectedNodes.clear()
-        self._selectedLinks.clear()
-        self._linkUnderCursor = -1
-        # Drop per-node position watermarks for the torn-down graph; the next
-        # graph's nodes reconcile fresh (and this bounds the map's growth).
-        self._reconciledPositionVersions.clear()
-        self._lastPinIndex = -1
-        self._lastLinkCycleIndex = 0
-        self._lastInputLinkIndex = -1
-        self._lastOutputLinkIndex = -1
-        self._lastDanglingLinkIndex = -1
-
         stage = self._usdviewApi.stage if self._usdviewApi else None
-        if stage is None:
-            self._undoHistory = None
-            QtCore.QTimer.singleShot(0, self._finishStageReload)
-            return
+        sync.replace(
+            stage, stage_sync.stageLoadMode(self), self._currentPrimPath, frame
+        )
 
-        # Reload the graph from the new stage using the same load path
-        # that was used originally.  loadBlueprint/loadContainer/loadStage
-        # replace the nodeGraph, re-register the notice handler, and
-        # clear all render caches.
-        #
-        # We set _deferRenderCacheClear so that _clearRenderCache (called
-        # from inside loadStage/loadBlueprint/loadContainer) skips its GL
-        # work and only marks the clear as pending.  _finishStageReload
-        # runs the real glDelete* calls after the QTimer tick, when the
-        # NVIDIA driver is no longer in its non-functional window.
-        from .nodeGraphBpContainer import NodeGraphBpContainer
-
-        self._deferRenderCacheClear = True
-        try:
-            if (
-                isinstance(self.nodeGraph, NodeGraphBpContainer)
-                and self._currentPrimPath
-            ):
-                self.loadContainer(stage, self._currentPrimPath)
-            elif self._currentPrimPath is not None:
-                self.loadBlueprint(stage, self._currentPrimPath)
-            else:
-                self.loadStage(stage)
-        except Exception as e:
-            Tf.Warn(f"Failed to reload graph after stage replace: {e}")
-        finally:
-            self._deferRenderCacheClear = False
-
-        # Defer re-enabling rendering to the next event-loop iteration.
-        # On NVIDIA Windows drivers, the legacy QGLWidget context is
-        # temporarily non-functional while the stageView's renderer is
-        # being torn down and recreated on the same thread.  By the
-        # time the event loop runs the deferred callback, the driver's
-        # internal state has stabilized and makeCurrent() works again.
-        self.initialized = False
-        QtCore.QTimer.singleShot(0, self._finishStageReload)
-
-    def _finishStageReload(self):
-        # Do NOT set self.fontAtlas/self.shaderLibrary to None here.
-        # CPython's refcounting would immediately call their C++
-        # destructors (which call glDelete*) with no GL context
-        # current, corrupting the NVIDIA driver state.  Instead let
-        # initializeGL() replace them while the context IS current —
-        # the old destructors then run safely.
-
-        # If _onStageReplaced deferred the render-cache clear, run it
-        # now that the driver state has stabilized.  Doing this inside
-        # _onStageReplaced would race with the stageView's renderer
-        # teardown and crash the NVIDIA driver on its worker thread.
-        if self._renderCacheClearPending:
-            self._renderCacheClearPending = False
-            self.makeCurrent()
-            self._nodeRenderManager.clearCache()
-            self.doneCurrent()
-
-        self.linksChanged = True
-        self.textChanged = True
-        self.initialized = True
-        self.setUpdatesEnabled(True)
-        self.update()
+    def _finishStageReload(self, epoch=None):
+        sync = getattr(self, "_stageSync", None)
+        if not isinstance(sync, stage_sync.StageSync):
+            # Test doubles never ran __init__: run the same policy through a
+            # transient service rather than a second copy of it.
+            sync = _makeStageSync(self)
+            self._stageSync = sync
+        sync.finish(sync.epoch() if epoch is None else epoch)
 
     def _onPropSelectionChanged(self):
         if self._syncingSelection:
@@ -1867,436 +1779,21 @@ class GraphView(QGLWidget):
             self._syncingSelection = False
 
     def _graphScopeParentPath(self):
-        """The prim whose children this graph shows.
-
-        NodeGraphStage walks the pseudo-root's children; the blueprint and
-        container graphs walk the children of the prim they were opened on.
-        Reconciling against the stage has to use the same rule the loaders
-        use, or a resync deep in the hierarchy would add a node this view was
-        never meant to show.
-        """
-        from .nodeGraphBlueprint import NodeGraphBlueprint
-        from .nodeGraphBpContainer import NodeGraphBpContainer
-
-        if isinstance(self.nodeGraph, (NodeGraphBlueprint, NodeGraphBpContainer)):
-            return str(self._currentPrimPath) if self._currentPrimPath else None
-        return "/"
+        return stage_sync.graphScopeParentPath(self)
 
     def _validateNodesAgainstStage(self):
-        """Drop every node whose prim is no longer on the stage.
-
-        As far as USD notices are concerned a rename is a delete plus an add:
-        the old path resyncs with nothing behind it any more. The resync loop
-        above only invalidates caches for paths still present in self.nodes,
-        so without this the old node keeps drawing from its cached name while
-        everything that goes through the stage — selection, framing,
-        connecting — silently does nothing, because the prim it names is gone.
-        That is the "node stuck under the old name that will not select".
-
-        Deactivated prims count as gone: the loaders skip inactive children,
-        so keeping their nodes would leave the view disagreeing with what a
-        reload would produce.
-
-        Returns:
-            list[str]: node ids removed.
-        """
-        stale = []
-        for nodeId, node in list(self.nodes.items()):
-            # Blueprint I/O nodes are synthesized, not backed by a prim.
-            if "#" in nodeId:
-                continue
-            try:
-                prim = node.getUsdPrim()
-            except Exception:
-                prim = None
-            if prim and prim.IsValid() and prim.IsActive():
-                continue
-            stale.append(nodeId)
-
-        for nodeId in stale:
-            self.nodes.pop(nodeId, None)
-            self._selectedNodes.discard(nodeId)
-            self._marqueeBaseSelectedNodes.discard(nodeId)
-            self._marqueePrevSelectedNodes.discard(nodeId)
-            # _rebuildLinks rebuilds the whole index, but that is deferred to
-            # the next paint; drop it now so a click landing first cannot hit
-            # a node that no longer exists.
-            try:
-                self._spatialIndex.removeNode(nodeId)
-            except Exception:
-                pass
-
-        if stale:
-            Tf.Status("Graph validation dropped %d node(s) whose prims are "
-                      "gone: %s" % (len(stale), ", ".join(sorted(stale))))
-        return stale
+        return stage_sync.validateNodesAgainstStage(self)
 
     def _adoptPrimsNewToScope(self, resyncedPaths):
-        """Add nodes for prims that appeared in this graph's scope.
-
-        The other half of a rename: the new path resyncs with a real prim
-        behind it and nothing in the graph pointing at it, so without this a
-        renamed node disappears from the editor until a manual reload.
-
-        Only paths in this notice are considered, and only direct children of
-        the scope this graph loads. Note this can re-add a node the user hid
-        with 'D' (which removes from the view without touching USD) if that
-        same prim is later edited — the view follows the stage, which is the
-        contract being asked for here.
-
-        Returns:
-            list[str]: node ids added.
-        """
-        stage = self.nodeGraph.getStage()
-        scope = self._graphScopeParentPath()
-        if not stage or scope is None:
-            return []
-
-        added = []
-        for pathStr in sorted(resyncedPaths):
-            if "." in pathStr or pathStr in self.nodes:
-                continue
-            prim = stage.GetPrimAtPath(pathStr)
-            if not prim or not prim.IsValid() or not prim.IsActive():
-                continue
-            if str(prim.GetPath().GetParentPath()) != scope:
-                continue
-            try:
-                nodeId = self._addNewNodeFast(prim, stage)
-            except Exception as error:
-                Tf.Warn("Graph validation could not add %s: %s" % (pathStr, error))
-                continue
-            if nodeId:
-                added.append(nodeId)
-        return added
+        return stage_sync.adoptPrimsNewToScope(self, resyncedPaths)
 
     def _remapMovedNodes(self, movedPaths):
-        """Carry nodes across a namespace move instead of dropping them.
-
-        A node id IS a prim path, so a rename or reparent changes the identity
-        of every node at or under the moved prim. The alternative -- rebuilding
-        the graph from a loader -- cannot work here, because graph membership
-        is not derivable from the stage: 'A' (``addNodesFromPrimTreeSelection``)
-        puts prims at ANY depth on the canvas and 'D' takes them off again
-        without touching USD, so the set of nodes on screen is the user's, not
-        the loader's. Re-keying is the only operation that preserves it.
-
-        Everything keyed by the old id moves with it: the node dict, the
-        NodeModel's own identity and its expired ``Usd.Prim``, the selection and
-        marquee sets, the spatial index, and the scattered cursor / drag / hover
-        ids. Links are NOT re-keyed -- ``_rebuildLinks`` re-derives every one of
-        them from USD, which is also what picks up the relationship targets and
-        connections USD retargeted as part of the move.
-
-        Idempotent: paths with no node behind them are skipped, so it is safe to
-        call from the authoring site as well as from the notice, whichever gets
-        there first.
-
-        Args:
-            movedPaths: ``{oldPrimPath: newPrimPath}`` as strings.
-
-        Returns:
-            dict[str, str]: the ``{oldNodeId: newNodeId}`` actually applied.
-        """
-        if not movedPaths:
-            return {}
-
-        stage = self.nodeGraph.getStage()
-
-        # A move of /A implies a move of everything under it, but USD reports
-        # only the prim that actually moved -- descendants are not enumerated in
-        # the notice. Walk the graph instead and rewrite every id that sits at
-        # or under a moved path.
-        remap = {}
-        for nodeId in self.nodes:
-            primPath = _nodeIdPrimPath(nodeId)
-            for oldPath, newPath in movedPaths.items():
-                if not _isPathRelated(primPath, oldPath) or len(primPath) < len(
-                    oldPath
-                ):
-                    continue
-                newId = newPath + nodeId[len(oldPath):]
-                if newId != nodeId:
-                    remap[nodeId] = newId
-                break
-
-        if not remap:
-            return {}
-
-        for oldId, newId in remap.items():
-            node = self.nodes[oldId]
-            node.id = newId
-            # Synthesized Blueprint I/O nodes are not prim-backed: their id only
-            # borrows the blueprint's path, and their title is a pin name. Move
-            # the id and leave the rest of the model alone.
-            if "#" not in newId:
-                # Repoint the model at the prim's new home. The Usd.Prim
-                # captured at construction expired the moment the namespace edit
-                # landed -- left in place it reads as "this node's prim is
-                # gone", and the next resync would have
-                # _validateNodesAgainstStage drop the node we just rescued.
-                node._primPath = Sdf.Path(newId)
-                if stage is not None:
-                    node._prim = stage.GetPrimAtPath(newId)
-                # The title is the prim's name, and the name changed.
-                node.name = Sdf.Path(newId).name
-            # Hit-testing resolves through the spatial index, and the link
-            # rebuild that refills it is deferred to the next paint -- drop the
-            # dead key now so a click landing first cannot hit it.
-            try:
-                self._spatialIndex.removeNode(oldId)
-            except Exception:
-                pass
-
-        # Re-key the node dict in one pass, preserving insertion order: it is
-        # the draw and iteration order, and a pop/re-insert would send every
-        # renamed node to the back.
-        self.nodeGraph.nodes = {
-            remap.get(nodeId, nodeId): node for nodeId, node in self.nodes.items()
-        }
-
-        def _remapId(value):
-            return remap.get(value, value)
-
-        def _remapIdInTuple(value, index=0):
-            if not value:
-                return value
-            asList = list(value)
-            asList[index] = _remapId(asList[index])
-            return tuple(asList)
-
-        self._selectedNodes = {_remapId(n) for n in self._selectedNodes}
-        self._marqueeBaseSelectedNodes = {
-            _remapId(n) for n in self._marqueeBaseSelectedNodes
-        }
-        self._marqueePrevSelectedNodes = {
-            _remapId(n) for n in self._marqueePrevSelectedNodes
-        }
-        self._reconciledPositionVersions = {
-            _remapId(n): v for n, v in self._reconciledPositionVersions.items()
-        }
-        self.nodeIdUnderCursor = _remapId(self.nodeIdUnderCursor)
-        self._renamingNodeId = _remapId(self._renamingNodeId)
-        # An open value editor / drag / popup follows the prim it is editing,
-        # for the same reason the rename does: the node is still on screen and
-        # still the one being typed into, only its id changed.
-        self._valueEditTarget = _remapIdInTuple(self._valueEditTarget)
-        for _state in (self._mungState, self._tokenPopup):
-            if _state and _state.get("nodeId") in remap:
-                _state["nodeId"] = remap[_state["nodeId"]]
-                _state["primPath"] = _nodeIdPrimPath(_state["nodeId"])
-        self._hoveredPort = _remapIdInTuple(self._hoveredPort)
-        self._tooltipProperty = _remapIdInTuple(self._tooltipProperty)
-        self._dragLinkSourceNode = _remapId(self._dragLinkSourceNode)
-        self._dragLinkSyntheticTarget = _remapIdInTuple(self._dragLinkSyntheticTarget)
-        self._dragLinkResolvedTarget = _remapIdInTuple(self._dragLinkResolvedTarget)
-        self._reconnectOldSourceNodeId = _remapId(self._reconnectOldSourceNodeId)
-        self._reconnectOldTargetNodeId = _remapId(self._reconnectOldTargetNodeId)
-
-        # The blueprint / container graphs scope themselves to the prim they were
-        # opened on (see _graphScopeParentPath). If that prim moved, the scope
-        # has to move with it or reconciliation starts measuring against a path
-        # that no longer resolves and empties the graph.
-        if self._currentPrimPath is not None:
-            currentStr = str(self._currentPrimPath)
-            for oldPath, newPath in movedPaths.items():
-                if _isPathRelated(currentStr, oldPath) and len(currentStr) >= len(
-                    oldPath
-                ):
-                    self._currentPrimPath = Sdf.Path(
-                        newPath + currentStr[len(oldPath):]
-                    )
-                    break
-
-        # Node ids are baked into the vertex, text and icon caches, so the old
-        # id's geometry would linger while the new id drew nothing. Links are
-        # re-derived from USD by the rebuild this schedules, which is also what
-        # refills the spatial index.
-        self._invalidateBackReferenceLinkDataCache()
-        self._nodeRenderManager.invalidateAll()
-        self._resetRenderCachesAfterBulkMove()
-
-        Tf.Status(
-            "Graph followed %d node(s) across a namespace move: %s"
-            % (len(remap), ", ".join(f"{o} -> {n}" for o, n in sorted(remap.items())))
-        )
-        return remap
+        return stage_sync.remapMovedNodes(self, movedPaths)
 
     def _handleUsdChanges(self, resyncedPaths, infoChangedPaths, movedPaths=None):
-        """Handle USD changes detected via the Notice system.
-
-        This method is called by UsdNoticeHandler when USD prims/properties
-        change. It invalidates caches and triggers redraws as needed.
-
-        Args:
-            resyncedPaths: Set of path strings that had structural changes
-                          (prims added/removed, connections changed)
-            infoChangedPaths: Set of path strings that had property value changes
-                             (positions, metadata)
-            movedPaths: Optional ``{oldPath: newPath}`` for prims USD reports as
-                        renamed or reparented rather than deleted and recreated.
-        """
-        # Ignore changes if we're in the middle of syncing selection
-        # (those are likely our own edits)
-        if self._syncingSelection:
-            return
-
-        # Follow moved prims FIRST. Both loops below, and the reconciliation
-        # that follows them, ask "is this path one of my nodes?" -- so the
-        # nodes have to be sitting under their new paths before any of that
-        # runs, or the move reads as a delete of the old path plus an
-        # unrelated create of the new one.
-        movedNodes = self._remapMovedNodes(movedPaths) if movedPaths else {}
-
-        needsLinkRebuild = False
-        needsRepaint = False
-        needsTextUpdate = False
-        if movedNodes:
-            needsLinkRebuild = True
-            needsRepaint = True
-            needsTextUpdate = True
-
-        # Resynced paths represent structural USD changes (prims added/removed,
-        # connection authored/cleared). Drop the cached per-prim back-reference
-        # scan so _addBackReferenceDanglingLinks re-traverses the stage on the
-        # next _rebuildLinks. Info-only changes (positions, metadata) do not
-        # affect what USD authored, so they leave the cache intact.
-        if resyncedPaths:
-            self._invalidateBackReferenceLinkDataCache()
-
-        # Process resynced paths (structural changes - more expensive)
-        for pathStr in resyncedPaths:
-            # Check if this is a node we have in our graph
-            if pathStr in self.nodes:
-                node = self.nodes[pathStr]
-                node.invalidateCache()
-                needsLinkRebuild = True
-                needsRepaint = True
-                needsTextUpdate = True
-            else:
-
-
-                for nodeId in self.nodes:
-                    if _isPathRelated(pathStr, nodeId):
-                        self.nodes[nodeId].invalidateCache()
-                        needsLinkRebuild = True
-                        needsRepaint = True
-                        needsTextUpdate = True
-                        break
-
-        # Process info-only changes (property value changes - cheaper)
-        for pathStr in infoChangedPaths:
-            # Property paths look like: /Prim.property or /Prim.inputs:foo
-            if "." in pathStr:
-                primPath, propName = pathStr.rsplit(".", 1)
-            else:
-                primPath = pathStr
-                propName = ""
-
-            if primPath in self.nodes:
-                node = self.nodes[primPath]
-
-                # Check what kind of property changed
-                if "ui:nodegraph:node:pos" in propName:
-
-
-
-
-
-                    node._position = None
-                    needsRepaint = True
-                elif "ui:nodegraph:node:expansionState" in propName:
-                    # Expansion state changed - update title collapse
-                    try:
-                        from pxr import UsdUI
-
-                        exp_attr = UsdUI.NodeGraphNodeAPI(
-                            node._prim
-                        ).GetExpansionStateAttr()
-                        if exp_attr.IsValid() and exp_attr.HasAuthoredValue():
-                            state = str(exp_attr.Get())
-                            collapsed = state in ("closed", "minimized")
-                        else:
-                            collapsed = False
-                        if node._title_collapsed != collapsed:
-                            node._title_collapsed = collapsed
-                            node.titleCollapsed = collapsed
-                            needsRepaint = True
-                            needsTextUpdate = True
-                            needsLinkRebuild = True
-                    except Exception:
-                        pass
-                elif self._cachedShowAttributeValues and self._valueRowOnlyChange(
-                    node, propName
-                ):
-                    # A value the node already shows in an inline cell changed.
-                    # Refresh that ONE node's cells and stop. Guarded by the
-                    # feature flag FIRST: with values hidden the row cache is
-                    # cold, and asking it would build every row (a full schema
-                    # walk plus a USD read per pin) only to throw them away.
-                    #
-                    # Deliberately not textChanged: that re-lays out EVERY node
-                    # in the graph (paintNodes, whose own comment records ~2s
-                    # for a dozen nodes). A namespaced attribute like
-                    # rigExec:controlSpace matches _isPinPropertyChange below,
-                    # so without this branch a value drag would pay a full
-                    # graph relayout per mouse-move. Nothing structural can
-                    # have changed here: a type or row-set change is a resync,
-                    # and the resync loop above already invalidated the node.
-                    node.invalidate_value_row(propName)
-                    needsRepaint = True
-                elif self._isPinPropertyChange(propName):
-                    # Pin or connection changed (direction-hint, relationship,
-                    # or any other namespaced pin such as rig1:space)
-                    node.invalidateCache()
-                    needsLinkRebuild = True
-                    needsRepaint = True
-                    needsTextUpdate = True
-                elif "info:implementationSource" in propName:
-                    # Node type changed
-                    node._cachedType = None
-                    needsRepaint = True
-                    needsTextUpdate = True
-                else:
-                    # Some other property - do a full cache invalidation to be safe
-                    node.invalidateCache()
-                    needsRepaint = True
-                    # Bare attributes may have connections - trigger link rebuild.
-                    #
-                    # ``propName`` is empty when the notice named the PRIM and
-                    # not a property (pathStr had no '.'), and
-                    # ``GetAttribute("")`` is not a miss -- it raises a USD
-                    # coding error from _GetDefiningSpecType. Harmless while
-                    # nothing was watching, but an edit authored inside an
-                    # Sdf.ChangeBlock dispatches its notices at the block's
-                    # close, so the error came back out of attr.Set and made a
-                    # write that had ALREADY landed report failure.
-                    if propName and ":" not in propName and node._prim:
-                        attr = node._prim.GetAttribute(propName)
-                        if attr and attr.IsValid() and attr.HasAuthoredConnections():
-                            needsLinkRebuild = True
-
-        # Reconcile the graph with the stage. The loops above only touch paths
-        # that are already nodes, so neither of them can notice that a prim was
-        # deleted, deactivated or renamed out from under one.
-        if resyncedPaths:
-            removed = self._validateNodesAgainstStage()
-            adopted = self._adoptPrimsNewToScope(resyncedPaths)
-            if removed or adopted:
-                needsLinkRebuild = True
-                needsRepaint = True
-                needsTextUpdate = True
-
-        # Apply the updates
-        if needsLinkRebuild:
-            self.linksChanged = True
-            self._clearRenderCache()
-
-        if needsTextUpdate:
-            self.textChanged = True
-
-        if needsRepaint:
-            self.update()
+        stage_sync.applyUsdChanges(
+            self, resyncedPaths, infoChangedPaths, movedPaths
+        )
 
     def _syncSelectionToPrimtree(self):
         with _ProfileSection(self._profiler, "Sync Selection to Primtree"):

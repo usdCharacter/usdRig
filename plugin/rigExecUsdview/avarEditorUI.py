@@ -404,11 +404,6 @@ class ChannelRow(QtCore.QObject):
             #
             # Into THIS STAGE's bucket, which is the one the release
             # clears (gizmoPreview.End -> SetPreviewValues({}, stage=...)).
-            # Written without a stage it landed in the keyless bucket
-            # instead, so the release popped an empty one and the dragged
-            # number stayed in the map: Channel.Value prefers a pending
-            # value, so every later refresh of every row on that channel
-            # went on showing it.
             values = dict(gizmoMath.PreviewValues(previewStage))
             values.update(pushes)
             gizmoMath.SetPreviewValues(values, stage=previewStage)
@@ -417,11 +412,6 @@ class ChannelRow(QtCore.QObject):
         # that depends on it. The uncommitted values above are placed
         # whatever it answers, because the manipulators and this panel both
         # read them; so previewing is what was PLACED, not what Hydra took.
-        # Reporting the sink's answer instead left the values in the map
-        # with nobody to clear them: the release took the no-preview branch,
-        # never called _EndPreview, and every later refresh went on showing
-        # the dragged number -- a typed value landed on the stage and the
-        # field snapped back to the drag.
         taken = bool(preview.Push(pushes))
         if taken:
             _FollowPreviewInViewport(api, path.GetPrimPath())

@@ -4,8 +4,8 @@
 // source). Order-independent: chains read their context's snapshot store
 // atomically, so activation may happen before or after chain construction.
 // PER-STAGE CONTEXTS (docs/multistage-imaging.md). One
-// RigExecImagingRegistry object is one IMAGING CONTEXT: everything that
-// used to be process-global -- the snapshot store, the bound chains, the
+// RigExecImagingRegistry object is one IMAGING CONTEXT: everything the
+// context holds -- the snapshot store, the bound chains, the
 // rig sessions and their stage, noted roots, generated scopes, asset and
 // read roots, the last time, preview slots and deltas, the weight overlay,
 // the generation and published compiled rig, the warming scheduler, warm index
@@ -331,9 +331,9 @@ public:
     /// the cached route: no per-frame snapshot refresh, pin
     /// re-verification, or compiled rig constant table walks, and static reads
     /// and digests served from the burst maps. Anything else falls back
-    /// to the plain per-frame route, which re-derives everything exactly
-    /// as before -- including a null cache, which is what the direct
-    /// test drivers pass.
+    /// to the plain per-frame route, which re-derives everything,
+    /// including a null cache, which is what the direct test drivers
+    /// pass.
     /// Instance-only testing observer of an actual valid default-worker
     /// publication. Copied when building work; called after all publication
     /// locks are released. Install/remove on the owner thread with no factory
@@ -638,7 +638,7 @@ public:
     /// root (UsdImaging traverses the old stage while a stage scene index
     /// announces a SetStage) would re-activate a closed stage, and its
     /// context would then hold that stage alive for the life of the
-    /// process: nothing replaces it the way the old singleton was replaced.
+    /// process.
     ///
     /// An activation made HERE is automatic, and the library owns its
     /// lifetime: when the last chain bound to this context goes away (its
@@ -1454,9 +1454,8 @@ RIGEXEC_IMAGING_C_API int RigExecImaging_GetMovedDoublesForStage(
 /// and never authored, and the RigExec prim types are not UsdGeomImageable,
 /// so UsdGeomBBoxCache -- which is what usdview's frame-selection goes
 /// through -- correctly reports an empty box for every joint, control, and
-/// solver on the stage. Framing a control therefore moved the camera
-/// nowhere. The snapshot is the only place the drawn extent exists, so the
-/// answer has to come from here.
+/// solver on the stage. The snapshot is the only place the drawn extent
+/// exists, so the answer has to come from here.
 ///
 /// Asset space, not world: guide frames carry no stage placement (see
 /// RigExecImagingSnapshot::assetRoot), so the caller composes the asset

@@ -1298,8 +1298,8 @@ struct RigExecBakedCones {
 struct RigExecBakedComposeGroup {
     int begin = 0, end = 0;
     /// The PosedM slots below `begin` that slots inside the group inherit
-    /// from. One entry on any rig that bakes today; more only once a plain
-    /// Xformable can sit between a provider and its compose ancestor.
+    /// from. More than one entry needs a plain
+    /// Xformable between a provider and its compose ancestor.
     std::vector<int> parentSlots;
 };
 
@@ -1309,7 +1309,7 @@ struct RigExecBakedComposeGroup {
 /// the commit walk it in slot order: the usability sweep and the write-back.
 /// Which position each producer writes is decided at Build, so the merge is
 /// an indexed store rather than a map insertion, and "last writer wins on a
-/// duplicate slot" stays what it is today.
+/// duplicate slot" is the rule.
 ///
 /// A solver STACK is two commits on one slot, never two producers inside one
 /// commit: each solver batch holds exactly one solver, so each write of a
@@ -1431,8 +1431,7 @@ struct RigExecBakedCommit {
 };
 
 /// What a staged propagation pair turned into. Ordered so that the first
-/// non-Staged, non-Skipped outcome in pair order decides the commit, which is
-/// where today's loop returns.
+/// non-Staged, non-Skipped outcome in pair order decides the commit.
 using RigExecBakedPropagateOutcome = RigExecPosePropagateOutcome;
 
 /// A revision's place in its chain (Build state).
@@ -2476,7 +2475,7 @@ struct RigExecBakedGeomRevision {
     /// assembler would have failed the packet.
     bool influencesValid = false;
     /// The table moved since the last run, which is the half of the
-    /// executed decision the packet comparison no longer carries.
+    /// executed decision the packet comparison does not carry.
     bool influencesChanged = false;
     /// The table in the two forms the kernels want it in, written by
     /// the fold for every skin revision: an unchunked one's single
@@ -2489,8 +2488,6 @@ struct RigExecBakedGeomRevision {
     /// Which buffer holds the chain's points AFTER this revision: this
     /// revision's index when its own output was kept, the index of an
     /// earlier revision when it was not, and -1 for the chain's base.
-    /// The indirection is what replaces today's `revision.output =
-    /// current` copy of a revision that applied nothing.
     int currentSource = -1;
     /// An unchunked revision's chunk wrote `stagingOutput` and no fuse
     /// has applied it yet; while false, `output` holds the chunk's
@@ -2661,8 +2658,7 @@ struct RigExecBakedGeomChain {
     VtVec3fArray spare;
     bool haveResult = false;
     /// The base attribute read at this time, by the prologue. False
-    /// skips every step of the chain, exactly as today's `continue`
-    /// skips the chain and its counters.
+    /// skips every step of the chain, including its counters.
     bool haveBase = false;
     /// Whether the chain's points moved before its first revision, which
     /// is where the sticky chain-dirty bit starts.
@@ -2753,10 +2749,7 @@ struct RigExecBakedGeomChain {
 // The sharing matters as much as the order: exec's
 // Relationship().TargetedObjects<RigExecWeightPacket>() accessor gives
 // one packet per weight object per generation no matter how many movers
-// bind it. Building one per REVISION would be numerically identical and
-// would recompute a volume field over a whole mesh once per mover, which
-// is a performance regression rather than a parity one -- so the table is
-// keyed by the object, not by the consumer.
+// bind it, so the table is keyed by the object, not by the consumer.
 struct RigExecBakedWeightObject {
     SdfPath path;
     TfToken type;
@@ -2820,7 +2813,7 @@ struct RigExecBakedWeightObject {
     /// list holds exactly the properties exec would have reached. No
     /// shipped rig authors the prim form -- every weightTarget in the
     /// tree and in the fixtures names `.points` -- so the two readings
-    /// agree everywhere today, and where they would not, this is the
+    /// agree, and where they would not, this is the
     /// one that is a mover's answer.
     std::vector<UsdAttribute> targetPoints, samplePoints, curvePoints;
     /// The compiled rig's resampled falloff remap, copied from falloffLuts.

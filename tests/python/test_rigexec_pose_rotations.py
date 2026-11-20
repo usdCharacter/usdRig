@@ -37,9 +37,9 @@ _RIG = "/Biped/Rig"
 _INTERPS = _RIG + "/PoseInterpolators"
 
 # The character is not perfectly symmetric: up_0 sits 3.6 degrees off its
-# mirror with everything working. The faults were 89-91 out.
+# mirror with everything working.
 _ANGLE_TOL = 15.0
-# Coincident samples are the degenerate case. shoulder_r_up_45 was 1.1.
+# Coincident samples are the degenerate case.
 _NEUTRAL_TOL = 5.0
 _WEIGHT_MAX = 1.5
 

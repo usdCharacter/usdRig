@@ -47,6 +47,16 @@ struct RigExecRuntimeJointMatrix {
     RrMat4d matrix;
 };
 
+// What a change to one input alone can move, at most (GetInputReach).
+struct RigExecRuntimeInputReach {
+    // GetPoints paths.
+    std::vector<std::string> points;
+    // GetMatrixPrimvars paths.
+    std::vector<std::string> matrixPrimvars;
+    // GetProviderFinalFrame slots.
+    std::vector<uint32_t> frameSlots;
+};
+
 // One provider's current Base/Final SSA frames and stable path metadata.
 struct RigExecRuntimeProviderFrames {
     std::string path;
@@ -262,9 +272,8 @@ public:
     // reason, and nothing changes, for an unknown name, a value of another
     // type (a Double sets a Float input through static_cast<float>), a
     // non-finite component, or a Token id that names no text.
-    // One gap against the USD evaluators remains: a plugin mover applies
-    // the payload its bake assembled, so an input it reads does not reach
-    // that mover's output.
+    // A plugin mover applies the payload its bake assembled, so an input
+    // it reads does not reach that mover's output.
     bool SetInput(const std::string &name, const RrInputValue &value,
                   std::string *error);
     // A Double input, or a Float input through static_cast<float>.
@@ -389,8 +398,7 @@ public:
     std::vector<std::string> GetMissingExternalKernels() const;
 
     // Test-only family mask (bit 0 pose, 1 weights, 2 geometry, all set
-    // by default). A masked family's steps are skipped, which is how
-    // one family's outputs are compared while another is still landing.
+    // by default). A masked family's steps are skipped.
 
     // Test-only: the label error text names step \p step by, as the baked
     // program spells it; the step's number past the steps.
@@ -547,6 +555,15 @@ public:
     // One slot of that list without building it: the publication role and
     // the final frame it reports. Slots are fixed per file; false when
     // \p slot is out of range.
+    // What a change to input \p index alone can move, whatever its value:
+    // the published points, matrix primvars and provider frames of every
+    // step the input can reach. A host can redraw only these, and
+    // GetAlwaysReach's, when just this input changes. False past the
+    // inputs, or before the first Execute.
+    bool GetInputReach(size_t index, RigExecRuntimeInputReach *reach) const;
+    // The same for the steps that run on every Execute whatever changed:
+    // what may move on any run.
+    bool GetAlwaysReach(RigExecRuntimeInputReach *reach) const;
     bool GetProviderFinalFrame(size_t slot, uint8_t *publicationRole,
                                RrPointFrame *final) const;
     // Empty when solver guides were disabled in the captured export context.
@@ -572,6 +589,8 @@ public:
 private:
     friend class RigExecRuntimeStageArrayInputs;
     RigExecRuntimeReader();
+    // GetInputReach, or GetAlwaysReach for index size_t(-1).
+    bool _Reach(size_t index, RigExecRuntimeInputReach *reach) const;
 
     std::unique_ptr<RrProgram> _program;
 

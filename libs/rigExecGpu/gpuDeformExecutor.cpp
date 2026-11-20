@@ -426,8 +426,7 @@ struct RigExecGpuDeformExecutor::Impl {
                 continue;
             }
             const RigExecClothMesh &mesh = *job.mesh;
-            // Relationship profiles use the shared CPU solve until the
-            // device implements these constraint types too.
+            // Relationship profiles use the shared CPU solve.
             if (!mesh.model.Empty())
                 continue;
             const RigExecClothColliders &colliders = *job.colliders;

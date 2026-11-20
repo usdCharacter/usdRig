@@ -55,9 +55,8 @@ using RigExecTapId = int;
 /// provider through a relationship authored on the consuming prim, and the
 /// authored direction here is the wrong way round: a solver names its joints,
 /// not the reverse (there is no reverse-relationship accessor -- see the
-/// accessor list in exec/computationBuilders.h). Authoring the reverse link
-/// per joint is what the derived evaluation stage existed to hold. Supplying
-/// the frame as an override instead keeps the binding in the compiled graph
+/// accessor list in exec/computationBuilders.h). Supplying
+/// the frame as an override keeps the binding in the compiled graph
 /// where it belongs, and exec's own consumers -- computeMatrix, frame-chain
 /// applications, and the NamespaceAncestor fallback that unbound descendants
 /// follow -- all read the overridden value with nothing authored anywhere.

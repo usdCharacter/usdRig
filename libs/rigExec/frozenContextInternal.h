@@ -247,8 +247,7 @@ _VisitWeightInputs(Obj &object, Fn &&fn)
     fn(object.extentV);
 }
 
-// The weight-object schema types the frozen packet build mirrors
-// (bakedWeights.cpp names the same set).
+// The weight-object schema types.
 TF_DEFINE_PRIVATE_TOKENS(
     _frozenWeightTokens,
     ((staticWeight, SchemaTypeName::RigExecStaticWeight))

@@ -20,11 +20,9 @@
 # copied or paraphrased: that code is GPL and this repository is not, so the
 # behaviour was written from what the UI does, not from how it does it.
 #
-# WHY NO SLIDER. The previous row was a label, a spin box, a slider, a
-# unit, a badge and a reset button: six widgets and about 420 px of width
-# for one number. A slider is the wrong instrument for a rig channel
-# anyway -- an animator types 30, or -12.5, and a drag that lands on
-# 29.8 is a wrong answer that looks right.
+# WHY NO SLIDER. A slider is the wrong instrument for a rig channel:
+# an animator types 30, or -12.5, and a drag that lands on 29.8 is a
+# wrong answer that looks right.
 #
 import os
 import sys

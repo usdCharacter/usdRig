@@ -528,13 +528,10 @@ struct _Rig {
     // importing the library's Python module, which takes the GIL
     // (TfScriptModuleLoader::LoadModules -> TfPyLock). When that first
     // task lands on a worker thread while this thread holds the GIL and
-    // spins in WorkDispatcher::Wait for the worker, neither can move --
-    // one in five runs of the evaluator tests hung exactly there, and
-    // PXR_WORK_THREAD_LIMIT=1 made it go away because the task then ran
-    // on this thread. usdview never saw it: ctypes drops the GIL around
-    // every foreign call. Nothing the evaluator does needs the GIL held,
-    // so the two entry points that dispatch work give it up for the
-    // duration; the exception below is thrown with it held again.
+    // spins in WorkDispatcher::Wait for the worker, neither can move.
+    // Nothing the evaluator does needs the GIL held, so the two entry
+    // points that dispatch work give it up for the duration; the
+    // exception below is thrown with it held again.
     void Compile()
     {
         std::vector<std::string> errors;

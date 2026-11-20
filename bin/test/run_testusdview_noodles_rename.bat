@@ -2,13 +2,10 @@
 rem Headless end-to-end test of RENAMING A PRIM FROM THE NODE GRAPH
 rem (tests\testUsdviewNoodlesRename.py) on tests\fixtures\noodles_rename.usda.
 rem
-rem Why it exists: double-clicking a node in the Noodles Editor did nothing
-rem in usdview although the in-repo editor implements it. The USD install
-rem carried an older copy as pxr.UsdNoodles, and the launcher ran that one
-rem instead. Once the right editor ran, the rename worked but usdview's prim
-rem browser did not follow: selecting the new path before usdview rebuilt
-rem the browser raised inside usdview's own slot. Neither is visible to the
-rem unit tests, which never start usdview.
+rem Why it exists: the USD install can carry an older copy as
+rem pxr.UsdNoodles that the launcher runs instead of the in-repo editor,
+rem and usdview's prim browser only follows a rename once it is rebuilt.
+rem Neither is visible to the unit tests, which never start usdview.
 rem
 rem So this registers the in-repo editor exactly as launch_usdview.bat does
 rem -- both copies present if the install has one -- opens the editor, and

@@ -154,6 +154,8 @@ starting its workflow, and keep this list current when adding or changing skills
   `usdview` tools with the same split. A host application can take over the
   editors' input, undo and edit target through `editorExtension.py`
   ([spec](docs/specs/editor-extensions.md)).
+  `plugin/rigExecUsdview/usdRigAssistant` is the AI Assistant panel and its
+  local MCP server ([guide](docs/tools/ai-assistant.md)).
 - `plugin/usdNoodles`: bundled third-party node editor; preserve its license.
 - `tools`: the `rigExecPose`, `rigExecBake`, and `rigExecReplayInputs`
   command-line programs, and the test selector behind `bin/test_changed.sh`.
@@ -435,8 +437,15 @@ scripts; their defaults look for a sibling dependency install.
 
 CI runs Release builds, `ctest -R '^testRigExec' -E 'Cones_|ExampleParity'`,
 and installed-consumer checks on Linux, Windows and macOS. Linux also runs
-the USD-free runtime compilation check. CI does not run the Python bindings
-or the `usdview` helpers; run those yourself when a change touches them.
+the USD-free runtime compilation check. The usdNoodles job runs
+`ctest --test-dir build -R '^testUsdNoodles$'` and the four editor drivers
+`bin/test/run_testusdview_noodles_rename.sh`,
+`bin/test/run_testusdview_noodles_values.sh`,
+`bin/test/run_testusdview_noodles_icons.sh` and
+`bin/test/run_testusdview_noodles_touch.sh` under xvfb with Mesa software
+rendering. Every other `bin/test/run_testusdview*` helper and the rigExec
+Python bindings are local-only; run those yourself when a change touches
+them.
 Fixed floating-point captures have an explicit reference configuration; see
 [fixture checks](tests/fixtures/README.md). Every platform runs exact backend
 parity in both scalar and SIMD modes, plus the numerical-reference suites.

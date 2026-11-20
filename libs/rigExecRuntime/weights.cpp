@@ -20,10 +20,8 @@
 // the attribute carries no connections and no overlay entry -- the
 // overlay holds scalars only during capture, so arrays never hit it --
 // and the parity test proves it per fixture by comparing every packet
-// bit for bit. A connected weight target is a known residual risk: the
-// rows come from the bake's path-read enumeration of the gather
-// (RigExecBakeEnumerateWeightReads), so a gap there is a capture hole
-// to close in the enumeration, not a runtime approximation.
+// bit for bit. The rows come from the bake's path-read enumeration of
+// the gather (RigExecBakeEnumerateWeightReads).
 // Unknown weight object TYPES and unknown structural tokens stay
 // exactly what the baked builders return for them: invalid packets
 // (bare for an unknown type, carrying the object's tokens

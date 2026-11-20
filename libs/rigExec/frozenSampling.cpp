@@ -157,11 +157,6 @@ TF_DEFINE_PRIVATE_TOKENS(
     (surfaceFrame)
 );
 
-// The sampler below mirrors the binding walk the frame-cache bench measures
-// (tests/benchFrameCache.cpp MeasureSampling): the same tables, in the same
-// order, through the same read route the baked frame path takes. The bench
-// is the timing; this is the values.
-
 // Reads a chain-resolved attribute exactly as RigExecResolvedInputs::
 // GetAttribute does -- an in-memory property value wins, otherwise a single
 // authored connection is followed, otherwise the attribute's own value is
@@ -696,8 +691,8 @@ _BurstInterpolatorNeedsVisit(
 }
 
 // Samples one binding under the job's overrides. Unoverridden bindings
-// sample exactly as before; an overridden binding is read the long way --
-// the resolved walk from its head, which is what RigExecBakedRead's
+// sample straight from their binding; an overridden binding is read the long
+// way -- the resolved walk from its head, which is what RigExecBakedRead's
 // overridden arm answers -- through the refreshed inputs (job overrides
 // placed, stage reads at the job's time). The sample then carries the value
 // the frame consumes, and the worker patches it as a constant; no separate
@@ -1610,8 +1605,7 @@ _AttachDigestOrder(const RigExecBakedProgramImpl &B,
 // Samples one dense blend sample's target points: the refreshed inputs
 // first -- R.GetAttribute follows single authored connections, so an
 // override standing on the target is what live reads -- else the stage at
-// the job's time.
-// Mirrors the dense arm's R.GetAttribute exactly (miss reads as empty);
+// the job's time (miss reads as empty);
 // a dangling handle samples nothing, which the worker answers as empty.
 void
 _SampleBlendPoints(const SdfPath &key, const UsdAttribute &attribute,
@@ -1909,8 +1903,7 @@ _SampleUpstreamBase(const SdfPath &target,
 
 // Samples one mover scalar input the packet assembly reads: the resolved
 // walk first (an override standing on it), else the stage
-// at the job's time, else the fallback. Mirrors moverGraph.cpp's _Float /
-// _Enabled / skinningMethod arms exactly (no sample when the attribute does
+// at the job's time, else the fallback (no sample when the attribute does
 // not exist; the worker falls back the same way). \p layer defaults to null
 // (declared above).
 template <class T>
@@ -1989,7 +1982,7 @@ _SampleProjectorInputs(const RigExecBakedProgramImpl::GeomRevision &revision,
 
 // Samples one derived-topology array: the resolved memory first (an
 // override standing on the mesh attributes), else the stage at the job's
-// time. Mirrors _Array's two arms; a dangling path or a failed read samples
+// time; a dangling path or a failed read samples
 // valueless, which the worker answers as the empty array.
 template <class T>
 void
@@ -3525,11 +3518,10 @@ RigExecSampleFrameInputsWithBurstCache(
     };
     // No currency re-verification (verified at prepare), no decline checks
     // (the build failed on them), no override placement (cached flags).
-    // Everything below mirrors the plain sampler above: the same tables,
-    // in the same order, through the same routes -- struct tables through
-    // the prepared site lists, stage-direct and resolved reads through the
-    // static maps -- so the vector is elementwise identical plus the route
-    // marks.
+    // The same tables, in the same order, through the same routes --
+    // struct tables through the prepared site lists, stage-direct and
+    // resolved reads through the static maps -- keep the vector
+    // elementwise identical plus the route marks.
     RigExecResolvedInputs refreshed;
     _PlaceOverridesIntoResolved(overrides, &refreshed);
 

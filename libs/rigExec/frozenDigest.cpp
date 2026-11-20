@@ -31,7 +31,7 @@ _HashBytes(uint64_t hash, const void *data, size_t size)
     if (size > 0) {
         // Zero-padded, with the length mixed in so a short tail cannot
         // equal a longer stream's shared prefix. An empty hash stays a
-        // no-op, as before.
+        // no-op.
         uint64_t tail = 0;
         std::memcpy(&tail, bytes, size);
         hash = _MixWord(hash, tail + size);

@@ -2,13 +2,7 @@
 # bin/test/run_testusdview_noodles_icons.sh -- headless end-to-end test of NODE
 # TITLE-BAR ICONS (tests/testUsdviewNoodlesIcons.py) on
 # tests/fixtures/noodles_icons.usda. The POSIX twin of
-# run_testusdview_noodles_icons.bat, which carries the full rationale.
-#
-# In short: every docs example authors
-# `uniform asset ui:nodegraph:node:icon = @../../icons/<node>.png@`, and the
-# editor drew the built-in box on every node instead. The node factory set a
-# Python-side attribute AFTER the last sync to the C++ NodeData, so
-# titleIconPath -- the only field the C++ icon producer reads -- stayed empty.
+# run_testusdview_noodles_icons.bat.
 #
 # Asserts the authored icon reaches titleIconPath, that a relative asset path
 # anchors to the LAYER and not the working directory, that the resolved file

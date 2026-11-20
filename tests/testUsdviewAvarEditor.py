@@ -26,8 +26,7 @@ import os
 
 from pxr import Gf, Sdf, Usd, UsdUtils
 
-# The DELIVERED paths. The FK arm hangs off the body in namespace -- the
-# scratch stage this was written against had it flat under Controls -- and
+# The DELIVERED paths. The FK arm hangs off the body in namespace, and
 # the IK handles and the per-limb ikfk dials sit at the top.
 RIG = "/Biped/Rig"
 CONTROLS = RIG + "/Main/Shot/Aux/Controls"

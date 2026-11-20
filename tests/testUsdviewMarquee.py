@@ -197,9 +197,7 @@ def testUsdviewInputFunction(appController):
 
     # --- 6. AND IT STILL WORKS WITH TOUCHPOSE ON ------------------------
     # TouchPose owns the drag while it is active, and its regions only
-    # cover the mesh. Before this, turning TouchPose on silently took
-    # box selection of the controls away -- a box round the IK controls
-    # caught nothing, and nothing said why.
+    # cover the mesh.
     touch = None
     try:
         import touchPoseUI

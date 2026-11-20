@@ -760,14 +760,14 @@ RigExecBlendEnvelopeAll(const GfVec3f *preceding, const float *envelope,
 // baked program, which runs the same operation with no VdfNetwork around
 // it. One definition, so a second caller cannot drift into a different
 // deformation.
-// It is now three pieces rather than one, because a chunked caller needs the
+// The skin kernel comes in three pieces, because a chunked caller needs the
 // per-vertex body without the decisions AROUND it -- and every one of those
 // decisions is a statement about the WHOLE array, not about a vertex:
 // the layout's element shape, index range and weights; the influence table's
 // finite/affine check; the method token. So the validation splits in two by
 // what it reads (RigExecSkinLayoutIsUsable, RigExecSkinTransformsAreUsable),
 // the per-vertex body becomes RigExecApplySkinKernelRange, and this function
-// is what it always was: validate, then run every vertex.
+// is validate, then run every vertex.
 
 RigExecSkinMethod
 RigExecSkinMethodOf(const RigExecMoverParameters &p)

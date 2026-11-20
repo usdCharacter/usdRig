@@ -74,10 +74,7 @@ Near(const GfVec3d &a, const GfVec3d &b, double tolerance = 1e-5)
 
 // GfRotation's default constructor has an EMPTY body and its members are
 // uninitialized (gf/rotation.h:42, GfVec3d() = default), so `GfRotation()` is
-// whatever was on the stack. Defaulting the parameter to it made every
-// Matrix() call that omits a rotation inherit the previous call's leftovers --
-// silently, and only when a caller happened to look at the rotation.
-// Identity has to be spelled out.
+// whatever was on the stack. Identity has to be spelled out.
 static GfMatrix4d
 Matrix(const GfVec3d &translation = GfVec3d(0),
        const GfRotation &rotation = GfRotation(GfVec3d(0, 0, 1), 0.0),
@@ -494,10 +491,9 @@ TestEvaluatorSemantics()
                    GfVec3d(1, 1, 5)));
     }
 
-    // An ANIMATED blend between two parents. The bake used to refuse the rig
-    // outright for this; now the table is re-read per frame, so the two
-    // frames below have to differ -- and differ from each other by the
-    // weights alone, since nothing else on the stage moves.
+    // An ANIMATED blend between two parents. The table is re-read per
+    // frame, so the two frames below have to differ -- and differ from each
+    // other by the weights alone, since nothing else on the stage moves.
     position.GetAttribute(TfToken("inputs:sourceWeights"))
         .Set(VtFloatArray{1, 0}, UsdTimeCode(1.0));
     position.GetAttribute(TfToken("inputs:sourceWeights"))
@@ -1278,10 +1274,9 @@ TestTransformProviderPredicate()
 }
 
 // With write-path inference gone, a point-domain mover handed a bare mesh
-// prim is an error -- and it must carry the fix, because the old behaviour
-// silently rewrote it and that silence is what this change removes. Both
-// validator families must say so: the typed geometry movers and MatrixMover,
-// which validates separately.
+// prim is an error -- and it must carry the fix. Both validator families
+// must say so: the typed geometry movers and MatrixMover, which validates
+// separately.
 static void
 TestPointDomainMoverNamesTheFix()
 {
@@ -1410,10 +1405,9 @@ TestConstraintRegistryCoversTheSchema()
     CHECK(RigExecConstraintHandlerTotal() == 8);
 }
 
-// No authored constraint property is silently ignored. rigExec:rotationOrder
-// on a Position constraint used to compile and do nothing; it is now
-// rejected, and so is any mask or offset naming a channel group the operator
-// does not write.
+// No authored constraint property is silently ignored.
+// rigExec:rotationOrder on a Position constraint is rejected, and so is any
+// mask or offset naming a channel group the operator does not write.
 static void
 TestRotationOrderCapabilityIsRecorded()
 {
@@ -1524,11 +1518,9 @@ TestRotationOrderCapabilityIsRecorded()
     }
 }
 
-// inputs:weight became inputs:defaultWeight. The old name is no longer part
-// of the constraint schema, so an authored opinion would compose as a custom
-// property and be silently ignored -- which is exactly the class of defect
-// this family is being cleaned of. It must fail closed and name the new
-// spelling.
+// inputs:weight is not part of the constraint schema: an authored opinion
+// would compose as a custom property and be silently ignored. It must fail
+// closed and name the new spelling.
 static void
 TestLegacyWeightSpellingIsRejected()
 {
@@ -2273,9 +2265,9 @@ TestSolverBindsJointsUnderAnyScope()
 
     stage->DefinePrim(SdfPath("/Asset/Rig/Joints/Shoulder"),
                       TfToken("RigExecJoint"));
-    // Parent-local rests of 3 and 3: the bones the solve measures. They
-    // used to be authored as absolute rigExec:upperLength/lowerLength,
-    // which is now a compile error -- the lengths come from these rests.
+    // Parent-local rests of 3 and 3: the bones the solve measures.
+    // Absolute rigExec:upperLength/lowerLength is a compile error -- the
+    // lengths come from these rests.
     stage
         ->DefinePrim(SdfPath("/Asset/Rig/Joints/Shoulder/Elbow"),
                      TfToken("RigExecJoint"))
@@ -2577,12 +2569,8 @@ TestTwoBoneIkImpliedLengths(bool throughBlend)
     CHECK(std::abs((offset[1] - offset[0]).GetLength() - 3.0) < 1e-4);
     CHECK(std::abs((offset[2] - offset[1]).GetLength() - 5.0) < 1e-4);
 
-    // An absolute length cannot be authored at all. It used to be an
-    // opt-out that froze the bone against rest edits, which read as a
-    // broken middle joint rather than as a mode switch -- and it could
-    // not be discovered from the property editor either, which showed
-    // the schema fallback of 1 while the solve ran on the measured
-    // value. Compilation skips the solver and names the supported knob.
+    // An absolute length cannot be authored at all. Compilation skips the
+    // solver and names the supported knob.
     ik.CreateAttribute(TfToken("rigExec:upperLength"),
                        SdfValueTypeNames->Double)
         .Set(2.5);
@@ -2686,8 +2674,7 @@ TestTwoBoneIkRestFrameInputs()
         CHECK(Near(edited.rests[0][2] - edited.rests[0][0], GfVec3d(0, 0, 1)));
         CHECK(Near(edited.rests[1][0], GfVec3d(4, 0, 0)));
         // Moving the mid rest RE-PROPORTIONS the upper bone: lengths are
-        // measured from the rests on every evaluation, and there is no
-        // longer an authored absolute that could hold the old 3.0.
+        // measured from the rests on every evaluation.
         CHECK(std::abs((edited.frames[1].Origin() - edited.frames[0].Origin())
                            .GetLength() -
                        4.0) < 1e-6);
@@ -2912,7 +2899,7 @@ TestDeepSolverDependencySchedule()
     // and a frame read is positional under the unified pose stack (spec 4.2):
     // S0 stands at the bottom, so it reads J95 as it was BEFORE S95 wrote it,
     // and there is one well-defined order rather than two contradicting
-    // demands. It is no longer a cycle and no longer refused.
+    // demands.
     const UsdPrim first =
         stage->GetPrimAtPath(SdfPath("/Asset/Rig/Solvers/S0"));
     first.GetRelationship(TfToken("rigExec:start"))
@@ -3032,8 +3019,7 @@ TestConstraintSolverDependencySchedule()
         prim.GetAttribute(TfToken("rest:ty")).Set(rest[1]);
         return prim;
     };
-    // rest:tx 0/5/10 so the IK's bones MEASURE 5 and 5. These tests
-    // used to author absolute lengths, which Compile now rejects.
+    // rest:tx 0/5/10 so the IK's bones MEASURE 5 and 5.
     const auto joint = [&](const char *name, double tx = 0.0) {
         const UsdPrim prim =
             stage->DefinePrim(SdfPath(std::string("/Asset/Rig/Joints/") + name),
@@ -3135,7 +3121,6 @@ TestConstraintSolverDependencySchedule()
     // BELOW that writer, which the unified pose stack resolves positionally
     // (spec 4.2): DriveGoal stands before the IK, so it reads the end joint
     // as the steps before IT left it, and the IK is not fed its own output.
-    // That used to be a pose cycle; it is now an ordinary, ordered read.
     driveConstraint.GetRelationship(TfToken("rigExec:sources"))
         .SetTargets({endJoint.GetPath()});
     errors.clear();
@@ -3169,8 +3154,7 @@ TestConstrainedSolverInputAncestor()
     goal.GetAttribute(TfToken("purpose")).Set(TfToken("guide"));
     const UsdPrim root = control("/Asset/Rig/Controls/Root", 0, 0);
     const UsdPrim pole = control("/Asset/Rig/Controls/Pole", 0, 5);
-    // rest:tx 0/5/10 so the IK's bones MEASURE 5 and 5. These tests
-    // used to author absolute lengths, which Compile now rejects.
+    // rest:tx 0/5/10 so the IK's bones MEASURE 5 and 5.
     SdfPathVector joints;
     {
         double tx = 0.0;

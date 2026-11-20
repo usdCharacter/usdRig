@@ -2,16 +2,7 @@
 rem Headless end-to-end test of NODE TITLE-BAR ICONS
 rem (tests\testUsdviewNoodlesIcons.py) on tests\fixtures\noodles_icons.usda.
 rem
-rem Why it exists: every docs example authors
-rem `uniform asset ui:nodegraph:node:icon = @../../icons/<node>.png@` on its
-rem prims, and the Noodles Editor drew the built-in box on every node anyway.
-rem The node factory set a PYTHON attribute on the node after the pin setters
-rem had run their last sync to the C++ NodeData, so titleIconPath -- the only
-rem field the C++ icon producer reads -- stayed empty. Nothing raised and
-rem nothing was missing on screen, which is why no test caught it: the fallback
-rem icon looks like an icon.
-rem
-rem The second half is path resolution. The authored path is relative to the
+rem Path resolution. The authored path is relative to the
 rem LAYER, so handing the renderer the authored string would make the icon
 rem depend on where usdview was started, and a file that does not resolve must
 rem still anchor and then fall back silently.

@@ -228,7 +228,7 @@ def testUsdviewInputFunction(appController):
     appController._processEvents()
 
     # --- 6. the IK/FK buttons actually switch ---------------------------
-    # Attribute buttons are no longer only the limb switches: the space
+    # Attribute buttons are not only the limb switches: the space
     # switches are bound the same way (twelve of them, on spaces:active),
     # so the four this section is about are picked out by the channel
     # they drive rather than by being all there is.
@@ -238,11 +238,7 @@ def testUsdviewInputFunction(appController):
     _Check(len(switches) == 4,
            "all four limb IK/FK switches are bound, got %d of %d attribute "
            "buttons" % (len(switches), len(bound)))
-    # avars:space is the eye look-at's weight. It was called face:lookAt
-    # until it was renamed to the name every other control uses for the
-    # same kind of channel, and this list was not moved with it -- which
-    # nothing caught, because this test runs from bin/run_testusdview_
-    # picker and is not one of the 198 in ctest.
+    # avars:space is the eye look-at's weight.
     _Check(all(b.attr_target["attr"] in ("avars:ikfk", "avars:space",
                                          "spaces:active")
                for b in bound),
@@ -501,16 +497,9 @@ def testUsdviewInputFunction(appController):
            % (len(with_modes), len(after)))
 
     # ...and the panel must notice a dial moved from OUTSIDE it -- the
-    # Avar Editor, a gizmo on `avars:ikfk`, an undo, a scrub. It used to
-    # refresh only on its own switch click, so measured on Biped_stack,
-    # setting L_Arm back to 0 (FK) from outside still drew L_ArmIK and
-    # L_ArmPV and still hid L_UpArm/L_LoArm/L_Hand until the panel was
-    # reopened. That is the "the IK controls are always on" report.
+    # Avar Editor, a gizmo on `avars:ikfk`, an undo, a scrub.
     #
-    # L_Arm, the DELIVERED name. This said "arm_l", the build name, and
-    # matched nothing once the controls were renamed -- the generator
-    # raised StopIteration rather than failing an assertion, which is
-    # why it read as a crash and not as a stale test.
+    # L_Arm, the DELIVERED name.
     dial = next(p for p in modes if "L_Arm" in p)
     was = modes[dial]
     attr = stage.GetAttributeAtPath(Sdf.Path(dial))
@@ -702,12 +691,8 @@ def testUsdviewInputFunction(appController):
 
     # --- 9. and it is undoable -----------------------------------------
     #
-    # This is the assertion the bug needed. The panel always LOOKED like
-    # it recorded -- it opened an undo scope around the clear -- but the
-    # scope covered an empty list of paths, which snapshots nothing and
-    # pushes nothing, and OpenPickerPanel threw away the stack it was
-    # handed on top of that. So zeroing was a one-way door, and zeroing
-    # with nothing selected took the whole rig through it.
+    # An undo scope over an empty path list snapshots nothing: the panel
+    # needs the stack and must push the paths it cleared.
     undo = getattr(panel, "_undo", None)
     _Check(undo is not None, "the picker panel was handed the undo stack")
     _Check(undo.CanUndo(), "zeroing pushed an undo entry")

@@ -651,8 +651,7 @@ private:
     /// even a universal one. So turning the overlay on while the mesh is
     /// already synced leaves Storm drawing the mesh grey forever: the
     /// value is right there in the scene index, and nothing ever asks for
-    /// it. Verified against a real usdview: the dirty-notice path leaves
-    /// the mesh grey, a cold renderer rebuild draws it red.
+    /// it.
     ///
     /// Kept as our own record for the same reason _announcedDrivenXforms
     /// is: by the time the overlay is turned OFF the snapshot no longer

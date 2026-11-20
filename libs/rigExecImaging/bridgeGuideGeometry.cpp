@@ -394,9 +394,7 @@ _ReadGuidePurpose(const UsdPrim &prim)
 // time, or nothing when the attribute has no connection or the source
 // cannot supply one (dangling path, a relationship, no value).
 // UsdAttribute::Get() does NOT follow connections: they are a
-// shading-graph concept, not value resolution. So a rig that authored
-// `guide:displayOpacity.connect = </limb_params.avars:ikfk>` compiled,
-// drew nothing different, and gave no hint why. This is the read-through.
+// shading-graph concept, not value resolution. This is the read-through.
 // A property-mover result for the source wins over its authored value,
 // exactly as the volume guides read their driven dimensions: a dial that
 // is itself computed must fade the guide by what it computed. A value the
@@ -699,7 +697,7 @@ _AppendSphereVolumeGuide(double radius, const GfVec3d &axisScale,
 // well as slide it when the band is scrubbed. The band and the extents are different
 // directions and different quantities: the band is a distance ALONG the
 // axis and is the only thing \p distance carries, the extents are the size
-// ACROSS it. Keeping them apart is bug (2) of this change.
+// ACROSS it.
 // BOUNDED vs UNBOUNDED has to be readable at a glance, because it decides
 // whether the rectangle is the field's edge or just a label. Bounded draws
 // the closed rectangle alone: what you see is exactly what the field

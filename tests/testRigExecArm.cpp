@@ -738,14 +738,11 @@ TestGeometryMovers(const std::string &examplesDir)
     CHECK(pose.valid);
 
     // NOTHING IS AUTHORED, anywhere (spec §7.2 revised).
-    // This used to assert the opposite of the last two checks: that a
-    // private derived stage existed and carried a __RigExecGenerated scope,
-    // because compilation authored translated property applications there. The
-    // engine has no compiler now -- solver->joint bindings, frame revisions,
-    // point chains and the ribbon's driver points all reach exec as value
-    // overrides or through the in-memory mover graph -- so there is nothing
-    // to author and no stage to derive. The evaluation stage IS the source
-    // stage, and the generated scope must not exist on it.
+    // The engine has no compiler now -- solver->joint bindings, frame
+    // revisions, point chains and the ribbon's driver points all reach exec
+    // as value overrides or through the in-memory mover graph -- so there is
+    // nothing to author and no stage to derive. The evaluation stage IS the
+    // source stage, and the generated scope must not exist on it.
     CHECK(!stage->GetPrimAtPath(SdfPath("/ArmAsset/Rig/__RigExecGenerated")));
     CHECK(stage->GetSessionLayer() &&
           stage->GetSessionLayer()->GetNumSubLayerPaths() == 0);
@@ -868,7 +865,7 @@ TestGeometryMovers(const std::string &examplesDir)
     }
 }
 
-// Regression for spec §7.3: blend-shape deltas derive against the BASE
+// Spec §7.3: blend-shape deltas derive against the BASE
 // points even when a preceding mover already moved the destination. The
 // mover hierarchy nests the matrix mover under the blend mover, so the
 // matrix mover's revision precedes the blend application.
@@ -1427,9 +1424,9 @@ MakeEnvelopeWeight(const UsdStageRefPtr &stage, const SdfPath &path,
     return weight;
 }
 
-// MatrixMover is the critical regression: a uniform move no longer needs a
-// boilerplate constant RigExecStaticWeight.  When a spatial object is bound,
-// its total field replaces the uniform fallback point by point.
+// A uniform move needs no boilerplate constant RigExecStaticWeight.
+// When a spatial object is bound, its total field replaces the uniform
+// fallback point by point.
 static void
 TestMatrixMoverUniversalEnvelope()
 {
@@ -1967,8 +1964,8 @@ TestBlendShapeUniversalEnvelope()
     }
 }
 
-// A mover that formerly called its envelope inputs:strength now uses exactly
-// the same scalar/field contract as Matrix and BlendShape.
+// Smooth uses exactly the same scalar/field envelope contract as Matrix and
+// BlendShape.
 static void
 TestSmoothMoverUniversalEnvelope()
 {
@@ -2109,8 +2106,8 @@ TestPropertyMoverUniversalEnvelope()
     const float field = 0.75f;
     CHECK(std::abs(valueAt(makeStage(0.25f, &field)) - 8.0f) < 1e-6f);
 
-    // inputs:weight used to be the property-mover envelope.  It is not an
-    // alias: only BlendInput keeps that spelling for channel amplitude.
+    // It is not an alias: only BlendInput keeps that spelling for channel
+    // amplitude.
     const UsdStageRefPtr legacy = makeStage(1.0f, nullptr);
     legacy->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/Add"))
         .CreateAttribute(TfToken("inputs:weight"), SdfValueTypeNames->Float,
@@ -2361,8 +2358,7 @@ TestPointReferenceKernels(const std::string &examplesDir)
 
         // Counts, not diagnostic text: zero mismatches AND non-zero
         // agreements. Asserting only "no mismatch" would pass a rig whose
-        // chains were never compared at all -- which is how the
-        // SurfaceProject regression reached usdview.
+        // chains were never compared at all.
         if (pose.referenceMismatches != 0 || pose.referenceAgreements == 0) {
             std::printf("  (%s @%s parity diagnostics:)\n", c.file,
                         c.useTime ? std::to_string(c.time).c_str() : "default");
@@ -2383,9 +2379,7 @@ TestPointReferenceKernels(const std::string &examplesDir)
         // authored base. 07's stickers project onto the ground plane at rest;
         // 06's cage bulges at 1024.
         // This catches a total pass-through (a packet that fails validation
-        // and silently preserves the previous revision). It would NOT have
-        // caught the SurfaceProject strength bug, which produced a half
-        // projection -- wrong, but still moved. The two checks are
+        // and silently preserves the previous revision). The two checks are
         // complementary: parity catches wrong-but-nonzero, this catches
         // nothing-happened.
         const bool mustDeform =
@@ -2499,9 +2493,8 @@ TestSolverCycleRejected(const std::string &examplesDir)
 // what SpineTwist reads). RigExecBlendPointFrames takes rigExec:inputA/inputB
 // as SOLVER paths, so a cycle can also run purely solver -> solver: 03 already
 // has IKFKBlend.inputA = ArmFK, so pointing ArmFK's controls back at IKFKBlend
-// closes it with no joint in the path. Deriving only the joint-mediated edges
-// would miss this entirely, which is why the direct edge rule exists -- and
-// why it needs its own regression.
+// closes it with no joint in the path. Deriving only the joint-mediated
+// edges would miss this entirely, which is why the direct edge rule exists.
 static void
 TestPureSolverToSolverCycleRejected(const std::string &examplesDir)
 {
@@ -2719,11 +2712,10 @@ TestAimConstraintRevisesJointFrame(const std::string &examplesDir)
 // A TwoBoneIk that leaves its bone lengths unauthored measures them from the
 // bound joints' rest frames on EVERY Evaluate, so moving a joint's rest
 // recalibrates the solve with no recompile (rigEvaluator.h:298-304).
-// The shipped examples are the regression that matters. Authoring an absolute
-// length -- as a measure-then-bake repair session once did to spider_leg_ik --
-// opts the solver out of that measurement entirely, and the pose silently
-// stops answering to the skeleton it is supposed to follow. The symptom is
-// not a wrong number anywhere; it is an edit that does nothing at all.
+// Authoring an absolute length opts the solver out of that measurement
+// entirely, and the pose silently stops answering to the skeleton it is
+// supposed to follow. The symptom is not a wrong number anywhere; it is an
+// edit that does nothing at all.
 // Every TwoBoneIk names the three joints it solves for, so every rig can
 // be checked. 03_IkFkBlendClamp and ArmRig route POSING through a
 // RigExecBlendPointFrames, but their IKs still name the same chain as a
@@ -2803,8 +2795,7 @@ TestShippedTwoBoneIksRecalibrateOnRestEdit(const std::string &examplesDir)
 // Each target is an ordinary authored attribute of a different type, and each
 // mover revises it with the operation it authors. Asserting the VALUES, not
 // just presence: a chain that published its own authored base unchanged would
-// pass an existence check while doing nothing, which is precisely the state
-// this file used to document.
+// pass an existence check while doing nothing.
 static void
 TestPropertyMathMoversAreEvaluated(const std::string &examplesDir)
 {
@@ -3030,10 +3021,6 @@ TestPropertyMoverTypeMismatchRejected(const std::string &examplesDir)
 
 // A constraint driving a plain UsdGeomXform publishes a transform, and the
 // geometry parented under it is left alone.
-// This is the path that had no writer at all: RigExecSnapshotPrim::hasXform
-// was plumbed to HdXformSchema and never populated, so a constraint on an
-// Xform computed a correct frame that never reached Hydra. Asserting the
-// published matrix here is what keeps it from silently reverting to that.
 static void
 TestAimConstraintDrivesXform(const std::string &examplesDir)
 {
@@ -3104,12 +3091,6 @@ TestAimConstraintDrivesXform(const std::string &examplesDir)
 
 // The smallest rig that exists: one constraint, no joints, both ends plain
 // UsdGeomXformables.
-// Two rules used to reject this and neither was about the rig being wrong. A
-// joint was required because the compile gate read "a rig publishes joints",
-// when in fact a mover publishes whatever its target is; and an aim target
-// was always tapped for computePointFrame, which a plain Xformable does not
-// publish -- a HARD exec failure that took the whole snapshot down rather
-// than leaving one value missing.
 // rigexec_flat.usda is a flattened stage of the shape an interactive session
 // produces, so it is the exact case a user hits first.
 static void
@@ -5383,9 +5364,7 @@ TestOutsideNamedAttributeReadPhase(const std::string &examplesDir)
 }
 
 // A property result that drives a DynamicWeight input must reach both Exec's
-// tapped weight packet and the evaluator's independent CPU resolver. Before
-// this regression the tap saw driver=1 while _ResolveWeights reread authored
-// driver=0, so the otherwise correct deformation was rejected by parity.
+// tapped weight packet and the evaluator's independent CPU resolver.
 static void
 TestPropertyMoverDrivesDynamicWeight()
 {
@@ -5462,8 +5441,7 @@ TestPropertyMoverDrivesDynamicWeight()
 }
 
 // Property-chain dependencies, not path order, decide the prepass order. The
-// driver target sorts after /Asset/Channels.value, which is the adversarial
-// order that formerly left Consumer at its authored zero envelope.
+// driver target sorts after /Asset/Channels.value.
 static void
 TestPropertyChainDependencyOrderAndExactEndpoint()
 {
@@ -5521,8 +5499,7 @@ TestPropertyChainDependencyOrderAndExactEndpoint()
         CHECK(result->second.Get<float>() == 10.0f);
     }
 
-    // Full envelope selects the candidate directly. Arithmetic lerp used to
-    // cancel 1e20 + (1 - 1e20) to zero at w=1.
+    // Full envelope selects the candidate directly.
     channels.GetAttribute(TfToken("value")).Set(1e20f);
     consumer.GetAttribute(TfToken("rigExec:operation")).Set(TfToken("blend"));
     consumer.GetAttribute(TfToken("inputs:value")).Set(1.0f);

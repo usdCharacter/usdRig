@@ -1,22 +1,8 @@
 #include "rigExec/weightField.h"
 // The baked program: build and run. See bakedProgram.h for what it is and
-// why it is a request rather than a promise.
-// Everything here is a second expression of semantics that live elsewhere --
-// the provider compose and the default-space ladder in computations.cpp, the
-// pose walk in rigEvaluator.cpp, the geometry revision in moverGraph.cpp --
-// so every piece is written against the one it mirrors and nothing is
-// re-derived from first principles. Where a kernel can simply be CALLED
-// instead of mirrored (the constraint operators, the skin kernel, the
-// extent/normal kernels, the packet assembler, the property chains) it is,
-// because a shared call cannot drift and a copy can.
-// Phase 2 split this file by domain: the pose walk lives in bakedPose.cpp and
-// the geometry chains in bakedGeometry.cpp, both over the state declared in
-// bakedProgramImpl.h. What stays here is the public surface, the bakeability
-// judgement, the Build skeleton that hands each domain its share, and the
-// parity comparator -- plus the one thing neither half may do, which is read
-// the evaluator's private state. This is the only translation unit the
-// evaluator declares a friend, so Build captures what a frame needs of it
-// once and the halves read the program instead.
+// why it is a request rather than a promise. This is the only translation
+// unit the evaluator declares a friend, so Build captures what a frame needs
+// of it once and the pose and geometry halves read the program instead.
 #include "bakedProgram.h"
 #include "inputReplay.h"
 
@@ -232,10 +218,7 @@ _IsBakedSolverType(const TfToken &type)
            type == SchemaType::RigExecSkeleton2d;
 }
 
-// The three placeable weight shapes, which the evaluator spells the same way
-// in its own file-static _IsVolumeWeightType. Three tokens, and duplicating
-// them here is cheaper than widening a header for a predicate neither side
-// would ever change without the other.
+// The three placeable weight shapes.
 bool
 _IsVolumeWeightTypeName(const TfToken &type)
 {
@@ -370,8 +353,7 @@ const char *const kComputedSpaces[] = {
 bool
 _ConnectionReachesComputedSpace(const UsdAttribute &attribute)
 {
-    // Mirrors RigExecBakedClassifyInput's loop, and stops on the same two
-    // conditions it does: a cycle, or a fan-out the walk cannot follow.
+    // Stops on two conditions: a cycle, or a fan-out the walk cannot follow.
     std::set<SdfPath> visiting;
     UsdAttribute a = attribute;
     bool first = true;
@@ -985,7 +967,7 @@ RigExecBakedProgram::AdoptGeometryStateFrom(RigExecBakedProgram &previous)
                              &revision);
         }
         // The first position at which the two identity sequences disagree:
-        // everything before it reads the same point stream as before and
+        // everything before it reads the same point stream and
         // everything from it on does not.
         size_t divergence = 0;
         while (divergence < chain.revisions.size() &&
@@ -3258,10 +3240,6 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     }
     B.chainTargets = ctx.chainTargets;
     // Each ribbon's driver-points attribute, resolved once by the compiler.
-    // Restated here because bakedPose.cpp cannot name the evaluator's
-    // private map, and re-deriving the resolution (a prim target becomes its
-    // .points, a property target is taken verbatim) would be a second
-    // expression of a rule the compiler already applied.
     ctx.ribbonDriverPoints = E._ribbonDriverPoints;
     // _solverDependencies holds every discovered solver as a key, which is
     // the test "is an aggregate solver" uses below too.
@@ -4040,8 +4018,6 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     B.jointMatrixPublished.assign(B.jointPaths.size(), 0);
 
     phases.Next("Bake.geometry");
-    // Restated for the same reason the walk was: _GraphRevision is private to
-    // the evaluator.
     phases.Next("Bake.pose_interpolators");
     // Geometry readers bind these compiled weight output identities.
     RigExecPathText interpolatorText;

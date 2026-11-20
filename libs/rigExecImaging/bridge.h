@@ -76,11 +76,11 @@ public:
 
     /// Evaluate-then-publish without notifying any scene index; the
     /// caller forwards the result to its chains.
-    /// With RIGEXEC_FRAME_CACHE=off this is exactly the historical path:
-    /// live evaluation, then publication into the snapshot store. Otherwise
+    /// With RIGEXEC_FRAME_CACHE=off this is live evaluation, then
+    /// publication into the snapshot store. Otherwise
     /// a frame whose inputs digest to a cached entry publishes the stored
     /// pose through the same atomic snapshot without evaluating
-    /// (result.cacheHit), and a miss evaluates live as today and memoizes
+    /// (result.cacheHit), and a miss evaluates live and memoizes
     /// the result into both the snapshot and the cache. While interactive
     /// overrides stand (an active drag), the cache is bypassed entirely:
     /// live evaluation with neither lookup nor memoization. The multi-sample
@@ -258,7 +258,7 @@ public:
     /// program and compiled rig: control IDs to dirty-cluster closures, the
     /// notice adapter's oracle for path-scoped retirement. Null with no
     /// baked program; empty when the program's cones were never built (a
-    /// caller that finds it empty retires conservatively, as before).
+    /// caller that finds it empty retires conservatively).
     /// UI thread only, like the bridge itself: no worker consults it.
     const RigExecOutputAffectedIndex *GetAffectedIndex();
 

@@ -174,8 +174,7 @@ _RrAffects(const _RrConstraintAxisMask &mask, int axis)
 // all three scale axes governs it too. The twin of _BlendGovernedShear in
 // libs/rigExecMath/solvers.cpp -- see the reasoning there. Without it an
 // inherited shear survives a constraint that has just replaced translation,
-// rotation and scale, which is how the biped's spine squash reached
-// skull_def and face_upper_def at 0.157 and scaled the head.
+// rotation and scale.
 void
 _RrBlendGovernedShear(const _RrConstraintAxisMask &scaleMask,
                       const RrVec3d &targetShear, double weight,

@@ -7,10 +7,8 @@
 // scrub ends with the routes production samples through (the pinned
 // samplers, the digest and the lookup apart, and a sample after a stage
 // edit); its self-binding rows time the fallback route. Prints
-// human-readable numbers; asserts nothing, so it is built but deliberately
-// NOT registered with ctest (like benchFrameCache): wall-clock comparisons
-// flake on shared CI runners, so the benches report and the gate stays
-// deterministic.
+// human-readable numbers; asserts nothing, so it is built but NOT
+// registered with ctest (like benchFrameCache).
 //   benchFrameCacheWarm [examplesDir] [mode] [seconds] [stage] [frames]
 //   mode: all (default), scrub, edit, latency, memory, stress, trace.
 //   seconds: the stress duration (default 5).

@@ -157,7 +157,7 @@ def main():
         )
 
     # Test the art construction and the final evaluated lip, including the
-    # exaggerated corner that previously inflated the lower lip.
+    # exaggerated corner.
     def thickness(pts):
         pts = pts.reshape(len(AF.LLIP_V), -1, 2)
         return float(np.mean(np.linalg.norm(pts[0] - pts[-1], axis=1)))

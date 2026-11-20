@@ -4826,10 +4826,9 @@ namespace {
 
 /// The hierarchy delta each candidate of \p commit carries, once.
 ///
-/// Today's loop computes this inside the descendant walk; it depends only on
-/// the candidate's frame and the ancestor's frame before the commit, neither
-/// of which the walk touches, so hoisting it changes no number and lets the
-/// descendants be staged in any order.
+/// It depends only on the candidate's frame and the ancestor's frame before
+/// the commit, neither of which the descendant walk touches, so it can be
+/// hoisted out of the walk and the descendants staged in any order.
 void
 ComputeCommitDeltas(const RigExecBakedProgramImpl &B,
                     RigExecBakedCommit *commit)
@@ -4850,9 +4849,9 @@ ComputeCommitDeltas(const RigExecBakedProgramImpl &B,
 
 /// Stages descendants [\p begin, \p end) of \p commit.
 ///
-/// Each pair is decided exactly where today's loop decides it and in the same
-/// order of tests; what it does with the answer is recorded rather than
-/// returned, because the pair that decides the commit is the LOWEST-indexed
+/// Each pair is decided in the same order of tests as the pairs it
+/// replaces; what it does with the answer is recorded rather than returned,
+/// because the pair that decides the commit is the LOWEST-indexed
 /// failing one and a chunk cannot know whether an earlier chunk failed.
 void
 StageCommitPairs(const RigExecBakedProgramImpl &B, RigExecBakedCommit *commit,
@@ -4887,9 +4886,9 @@ StageCommitPairs(const RigExecBakedProgramImpl &B, RigExecBakedCommit *commit,
 
 /// Decides \p commit and writes it back, or says why it passed through.
 ///
-/// The first pair that neither staged nor was stepped over decides, which is
-/// where today's loop returns; everything after it was staged for nothing and
-/// is dropped. A commit that passes through writes NOTHING -- not even its
+/// The first pair that neither staged nor was stepped over decides;
+/// everything after it was staged for nothing and is dropped. A commit that
+/// passes through writes NOTHING -- not even its
 /// candidates -- which is what makes it atomic.
 void
 FinishCommit(RigExecBakedProgramImpl *program, RigExecBakedStep *step,

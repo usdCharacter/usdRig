@@ -1,5 +1,5 @@
 // Native evaluator cache/history, independent scalar references, literal
-// provider arithmetic and exact pose comparator regression coverage.
+// provider arithmetic and exact pose comparator coverage.
 #include "rigExecFrameRecordCheck.h"
 #include "rigExecPoseCompare.h"
 
@@ -34,12 +34,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 static SdfPath
@@ -65,7 +65,6 @@ CompareMaps(const char *what, const std::string &where, const Map &reference,
     rigExecTest::CompareMaps(&failures, what, where, reference, baked, equal);
 }
 
-
 // A consumer that disabled the observational guides gets none from either
 // path: the dynamic walk skips the guide request, and the program must skip
 // its publication too, or the parity check reports one mismatch per solver.
@@ -84,8 +83,7 @@ FirstControlWithAvar(const UsdStageRefPtr &stage, const SdfPath &rigPath,
                      const TfToken &avar)
 {
     for (const UsdPrim &prim : UsdPrimRange(stage->GetPrimAtPath(rigPath))) {
-        if (prim.GetTypeName() == "RigExecControl" &&
-            prim.GetAttribute(avar)) {
+        if (prim.GetTypeName() == "RigExecControl" && prim.GetAttribute(avar)) {
             return prim.GetPath();
         }
     }
@@ -97,13 +95,18 @@ TestAnEditAfterTheBakeIsFollowed(const std::string &examplesDir)
 {
     UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/biped/Biped.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     const SdfPath rigPath = FindRig(stage);
-    if (rigPath.IsEmpty()) { ++failures; return; }
+    if (rigPath.IsEmpty()) {
+        ++failures;
+        return;
+    }
     const TfToken avar("avars:tx");
     const SdfPath control = FirstControlWithAvar(stage, rigPath, avar);
     CHECK(!control.IsEmpty());
-    if (control.IsEmpty()) return;
+    if (control.IsEmpty())
+        return;
 
     RigExecRigEvaluator rig(stage, rigPath);
     std::vector<std::string> errors;
@@ -116,8 +119,7 @@ TestAnEditAfterTheBakeIsFollowed(const std::string &examplesDir)
     // hashes it, but a program that captured the old value would not notice
     // on its own.
     stage->SetEditTarget(UsdEditTarget(stage->GetSessionLayer()));
-    UsdAttribute attribute =
-        stage->GetPrimAtPath(control).GetAttribute(avar);
+    UsdAttribute attribute = stage->GetPrimAtPath(control).GetAttribute(avar);
     double authored = 0;
     attribute.Get(&authored);
     CHECK(attribute.Set(authored + 3.0));
@@ -130,21 +132,22 @@ TestAnEditAfterTheBakeIsFollowed(const std::string &examplesDir)
         UsdStage::Open(examplesDir + "/biped/Biped.usda");
     referenceStage->SetEditTarget(
         UsdEditTarget(referenceStage->GetSessionLayer()));
-    CHECK(referenceStage->GetPrimAtPath(control)
-              .GetAttribute(avar)
-              .Set(authored + 3.0));
+    CHECK(referenceStage->GetPrimAtPath(control).GetAttribute(avar).Set(
+        authored + 3.0));
     RigExecRigEvaluator referenceRig(referenceStage, rigPath);
     CHECK(referenceRig.Compile(&errors));
     const RigExecRigPose reference = referenceRig.Evaluate(UsdTimeCode(1.0));
 
     CompareMaps("final joint frame after an edit", "Biped.usda",
-                reference.jointFramesFinal, after.jointFramesFinal,
-                SameFrame);
+                reference.jointFramesFinal, after.jointFramesFinal, SameFrame);
     // And the edit actually moved something, so the comparison above is not
     // passing because nothing happened.
     bool moved = false;
     for (const auto &[path, frame] : after.jointFramesFinal) {
-        if (!SameFrame(frame, JointFrame(before, path))) { moved = true; break; }
+        if (!SameFrame(frame, JointFrame(before, path))) {
+            moved = true;
+            break;
+        }
     }
     CHECK(moved);
 }
@@ -169,18 +172,22 @@ static void
 TestASolverInputEditIsRoutedAfterADeferredCompile(
     const std::string &examplesDir)
 {
-    const SdfPath knee(
-        "/Biped/Rig/Main/Shot/Aux/Joints/hips_def/pelvis_l_def/"
-        "thigh_l_def/knee_l_def");
+    const SdfPath knee("/Biped/Rig/Main/Shot/Aux/Joints/hips_def/pelvis_l_def/"
+                       "thigh_l_def/knee_l_def");
     const SdfPath ankle = knee.AppendChild(TfToken("ankle_l_def"));
     const TfToken restTx("rest:tx");
     UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/biped/Biped.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     const SdfPath rigPath = FindRig(stage);
-    if (rigPath.IsEmpty()) { ++failures; return; }
+    if (rigPath.IsEmpty()) {
+        ++failures;
+        return;
+    }
     CHECK(stage->GetPrimAtPath(knee) && stage->GetPrimAtPath(ankle));
-    if (!stage->GetPrimAtPath(knee) || !stage->GetPrimAtPath(ankle)) return;
+    if (!stage->GetPrimAtPath(knee) || !stage->GetPrimAtPath(ankle))
+        return;
     double kneeRest = 0, ankleRest = 0;
     stage->GetPrimAtPath(knee).GetAttribute(restTx).Get(&kneeRest);
     stage->GetPrimAtPath(ankle).GetAttribute(restTx).Get(&ankleRest);
@@ -191,10 +198,10 @@ TestASolverInputEditIsRoutedAfterADeferredCompile(
             UsdStage::Open(examplesDir + "/biped/Biped.usda");
         referenceStage->SetEditTarget(
             UsdEditTarget(referenceStage->GetSessionLayer()));
-        CHECK(referenceStage->GetPrimAtPath(knee).GetAttribute(restTx)
-                  .Set(kneeRest + kneeDelta));
-        CHECK(referenceStage->GetPrimAtPath(ankle).GetAttribute(restTx)
-                  .Set(ankleRest + ankleDelta));
+        CHECK(referenceStage->GetPrimAtPath(knee).GetAttribute(restTx).Set(
+            kneeRest + kneeDelta));
+        CHECK(referenceStage->GetPrimAtPath(ankle).GetAttribute(restTx).Set(
+            ankleRest + ankleDelta));
         RigExecRigEvaluator referenceRig(referenceStage, rigPath);
         std::vector<std::string> errors;
         CHECK(referenceRig.Compile(&errors));
@@ -208,16 +215,15 @@ TestASolverInputEditIsRoutedAfterADeferredCompile(
     CHECK(baked.valid);
 
     stage->SetEditTarget(UsdEditTarget(stage->GetSessionLayer()));
-    CHECK(stage->GetPrimAtPath(knee).GetAttribute(restTx)
-              .Set(kneeRest + 1.5));
+    CHECK(stage->GetPrimAtPath(knee).GetAttribute(restTx).Set(kneeRest + 1.5));
     const RigExecRigPose first = rig.Evaluate(UsdTimeCode(1.0));
     CHECK(first.valid);
     CompareMaps("final joint frame, edit before the index", "Biped.usda",
                 reference(1.5, 0.0).jointFramesFinal, first.jointFramesFinal,
                 SameFrame);
 
-    CHECK(stage->GetPrimAtPath(ankle).GetAttribute(restTx)
-              .Set(ankleRest + 1.0));
+    CHECK(
+        stage->GetPrimAtPath(ankle).GetAttribute(restTx).Set(ankleRest + 1.0));
     const RigExecRigPose second = rig.Evaluate(UsdTimeCode(1.0));
     CHECK(second.valid);
     CompareMaps("final joint frame, edit after the index", "Biped.usda",
@@ -228,7 +234,8 @@ TestASolverInputEditIsRoutedAfterADeferredCompile(
     const auto movedFrom = [](const RigExecRigPose &a,
                               const RigExecRigPose &b) {
         for (const auto &[path, frame] : b.jointFramesFinal) {
-            if (!SameFrame(frame, JointFrame(a, path))) return true;
+            if (!SameFrame(frame, JointFrame(a, path)))
+                return true;
         }
         return false;
     };
@@ -241,13 +248,18 @@ TestAnInteractiveOverrideAfterTheBakeIsFollowed(const std::string &examplesDir)
 {
     UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/biped/Biped.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     const SdfPath rigPath = FindRig(stage);
-    if (rigPath.IsEmpty()) { ++failures; return; }
+    if (rigPath.IsEmpty()) {
+        ++failures;
+        return;
+    }
     const TfToken avar("avars:tx");
     const SdfPath control = FirstControlWithAvar(stage, rigPath, avar);
     CHECK(!control.IsEmpty());
-    if (control.IsEmpty()) return;
+    if (control.IsEmpty())
+        return;
 
     RigExecRigEvaluator rig(stage, rigPath);
     std::vector<std::string> errors;
@@ -257,9 +269,8 @@ TestAnInteractiveOverrideAfterTheBakeIsFollowed(const std::string &examplesDir)
 
     double authored = 0;
     stage->GetPrimAtPath(control).GetAttribute(avar).Get(&authored);
-    rig.SetInteractiveOverrides(
-        {RigExecValueOverride{control, TfToken(), avar,
-                              VtValue(authored + 3.0)}});
+    rig.SetInteractiveOverrides({RigExecValueOverride{
+        control, TfToken(), avar, VtValue(authored + 3.0)}});
     const RigExecRigPose dragged = rig.Evaluate(UsdTimeCode(1.0));
     CHECK(dragged.valid);
 
@@ -267,9 +278,8 @@ TestAnInteractiveOverrideAfterTheBakeIsFollowed(const std::string &examplesDir)
         UsdStage::Open(examplesDir + "/biped/Biped.usda");
     RigExecRigEvaluator referenceRig(referenceStage, rigPath);
     CHECK(referenceRig.Compile(&errors));
-    referenceRig.SetInteractiveOverrides(
-        {RigExecValueOverride{control, TfToken(), avar,
-                              VtValue(authored + 3.0)}});
+    referenceRig.SetInteractiveOverrides({RigExecValueOverride{
+        control, TfToken(), avar, VtValue(authored + 3.0)}});
     const RigExecRigPose reference = referenceRig.Evaluate(UsdTimeCode(1.0));
 
     CompareMaps("final joint frame under an override", "Biped.usda",
@@ -277,7 +287,10 @@ TestAnInteractiveOverrideAfterTheBakeIsFollowed(const std::string &examplesDir)
                 SameFrame);
     bool moved = false;
     for (const auto &[path, frame] : dragged.jointFramesFinal) {
-        if (!SameFrame(frame, JointFrame(before, path))) { moved = true; break; }
+        if (!SameFrame(frame, JointFrame(before, path))) {
+            moved = true;
+            break;
+        }
     }
     CHECK(moved);
 
@@ -285,8 +298,7 @@ TestAnInteractiveOverrideAfterTheBakeIsFollowed(const std::string &examplesDir)
     rig.ClearInteractiveOverrides();
     const RigExecRigPose released = rig.Evaluate(UsdTimeCode(1.0));
     CompareMaps("final joint frame after release", "Biped.usda",
-                before.jointFramesFinal, released.jointFramesFinal,
-                SameFrame);
+                before.jointFramesFinal, released.jointFramesFinal, SameFrame);
 }
 
 // Invalidation: the index, and the two answers it has to give.
@@ -343,9 +355,13 @@ TestEditAfterTheBake(const std::string &examplesDir, const char *stageName,
     const std::string where = std::string(what) + " on " + stageName;
     UsdStageRefPtr stage = UsdStage::Open(stagePath);
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     const SdfPath rigPath = FindRig(stage);
-    if (rigPath.IsEmpty()) { ++failures; return; }
+    if (rigPath.IsEmpty()) {
+        ++failures;
+        return;
+    }
 
     RigExecRigEvaluator rig(stage, rigPath);
     std::vector<std::string> errors;
@@ -373,7 +389,8 @@ TestEditAfterTheBake(const std::string &examplesDir, const char *stageName,
         const RigExecRigPose baked = rig.Evaluate(UsdTimeCode(frame));
         CHECK(reference.valid);
         CHECK(baked.valid);
-        if (!reference.valid || !baked.valid) continue;
+        if (!reference.valid || !baked.valid)
+            continue;
         CompareEveryMap(where + " frame " + std::to_string(int(frame)),
                         reference, baked);
         for (const auto &[path, frames] : baked.jointFramesFinal) {
@@ -404,8 +421,7 @@ TestEditAfterTheBake(const std::string &examplesDir, const char *stageName,
         ++failures;
         std::printf("FAIL %s: the program was rebuilt for an edit that "
                     "touched nothing it captured (digest %zu -> %zu)\n",
-                    where.c_str(), digestBefore,
-                    rig.GetCompiledRigSignature());
+                    where.c_str(), digestBefore, rig.GetCompiledRigSignature());
     }
 }
 
@@ -442,7 +458,6 @@ EditInSession(const UsdStageRefPtr &stage)
     stage->SetEditTarget(UsdEditTarget(stage->GetSessionLayer()));
 }
 
-
 // The same comparison with the edit in place BEFORE the bake, which is the
 // other thing a keyed overlay has to work under: the bake classifies an input
 // that is ALREADY animated, rather than reclassifying one that became so.
@@ -455,9 +470,13 @@ TestEditBeforeTheBake(const std::string &examplesDir, const char *stageName,
     UsdStageRefPtr bakedStage = UsdStage::Open(stagePath);
     UsdStageRefPtr dynamicStage = UsdStage::Open(stagePath);
     CHECK(bakedStage && dynamicStage);
-    if (!bakedStage || !dynamicStage) return;
+    if (!bakedStage || !dynamicStage)
+        return;
     const SdfPath rigPath = FindRig(bakedStage);
-    if (rigPath.IsEmpty()) { ++failures; return; }
+    if (rigPath.IsEmpty()) {
+        ++failures;
+        return;
+    }
     edit(bakedStage, rigPath);
     edit(dynamicStage, rigPath);
 
@@ -476,11 +495,13 @@ TestEditBeforeTheBake(const std::string &examplesDir, const char *stageName,
         return;
     }
     for (double frame = 1; frame <= 8; ++frame) {
-        const RigExecRigPose reference = dynamicRig.Evaluate(UsdTimeCode(frame));
+        const RigExecRigPose reference =
+            dynamicRig.Evaluate(UsdTimeCode(frame));
         const RigExecRigPose baked = bakedRig.Evaluate(UsdTimeCode(frame));
         CHECK(reference.valid);
         CHECK(baked.valid);
-        if (!reference.valid || !baked.valid) continue;
+        if (!reference.valid || !baked.valid)
+            continue;
         CompareEveryMap(where + " frame " + std::to_string(int(frame)),
                         reference, baked);
     }
@@ -524,8 +545,7 @@ EditKeyedBlendDisabledConstraintAndRest(const UsdStageRefPtr &stage,
     CHECK(constraint);
     if (constraint) {
         constraint
-            .CreateAttribute(TfToken("inputs:enabled"),
-                             SdfValueTypeNames->Bool)
+            .CreateAttribute(TfToken("inputs:enabled"), SdfValueTypeNames->Bool)
             .Set(false);
     }
     const UsdPrim joint = FirstPrimOfType(stage, rigPath, "RigExecJoint");
@@ -556,14 +576,10 @@ EditKeyedFootRoll(const UsdStageRefPtr &stage, const SdfPath &rigPath)
     EditInSession(stage);
     size_t keyed = 0;
     for (const UsdPrim &prim : UsdPrimRange(stage->GetPrimAtPath(rigPath))) {
-        // `avars:footRoll` since the foot dials moved onto the per-limb
-        // param node: the dial
-        // was `bank_?.foot:roll`, and params.py now MIGRATES it -- the
-        // connections are re-pointed and the original deleted, so the
-        // old name resolves to nothing and this test silently found no
-        // attribute to key.
-        const UsdAttribute roll =
-            prim.GetAttribute(TfToken("avars:footRoll"));
+        // `avars:footRoll`: params.py MIGRATES the old
+        // `bank_?.foot:roll` -- the connections are re-pointed and the
+        // original deleted, so the old name resolves to nothing.
+        const UsdAttribute roll = prim.GetAttribute(TfToken("avars:footRoll"));
         if (!roll) {
             continue;
         }
@@ -581,14 +597,10 @@ EditFootRollValue(const UsdStageRefPtr &stage, const SdfPath &rigPath)
     EditInSession(stage);
     size_t edited = 0;
     for (const UsdPrim &prim : UsdPrimRange(stage->GetPrimAtPath(rigPath))) {
-        // `avars:footRoll` since the foot dials moved onto the per-limb
-        // param node: the dial
-        // was `bank_?.foot:roll`, and params.py now MIGRATES it -- the
-        // connections are re-pointed and the original deleted, so the
-        // old name resolves to nothing and this test silently found no
-        // attribute to key.
-        const UsdAttribute roll =
-            prim.GetAttribute(TfToken("avars:footRoll"));
+        // `avars:footRoll`: params.py MIGRATES the old
+        // `bank_?.foot:roll` -- the connections are re-pointed and the
+        // original deleted, so the old name resolves to nothing.
+        const UsdAttribute roll = prim.GetAttribute(TfToken("avars:footRoll"));
         if (!roll) {
             continue;
         }
@@ -632,9 +644,13 @@ TestAnUnrelatedEditLeavesTheProgramStanding(const std::string &examplesDir)
 {
     UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/biped/Biped.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     const SdfPath rigPath = FindRig(stage);
-    if (rigPath.IsEmpty()) { ++failures; return; }
+    if (rigPath.IsEmpty()) {
+        ++failures;
+        return;
+    }
     RigExecRigEvaluator rig(stage, rigPath);
     std::vector<std::string> errors;
     CHECK(rig.Compile(&errors));
@@ -657,7 +673,8 @@ TestAnUnrelatedEditLeavesTheProgramStanding(const std::string &examplesDir)
     if (rig.GetBakedProgramBuildCount() != builds) {
         ++failures;
         std::printf("FAIL unrelated edit: the program was rebuilt (%zu -> "
-                    "%zu)\n", builds, rig.GetBakedProgramBuildCount());
+                    "%zu)\n",
+                    builds, rig.GetBakedProgramBuildCount());
     }
     CompareEveryMap("an unrelated edit on Biped.usda", before, after);
 }
@@ -672,15 +689,20 @@ TestAnOverrideOnAConstraintWeightIsFollowed(const std::string &examplesDir)
     const std::string stagePath = examplesDir + "/biped/Biped.usda";
     UsdStageRefPtr stage = UsdStage::Open(stagePath);
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     const SdfPath rigPath = FindRig(stage);
-    if (rigPath.IsEmpty()) { ++failures; return; }
+    if (rigPath.IsEmpty()) {
+        ++failures;
+        return;
+    }
     const UsdPrim constraint = FirstConstraint(stage, rigPath);
     CHECK(constraint);
-    if (!constraint) return;
-    const std::vector<RigExecValueOverride> overrides{RigExecValueOverride{
-        constraint.GetPath(), TfToken(), TfToken("inputs:defaultWeight"),
-        VtValue(0.25f)}};
+    if (!constraint)
+        return;
+    const std::vector<RigExecValueOverride> overrides{
+        RigExecValueOverride{constraint.GetPath(), TfToken(),
+                             TfToken("inputs:defaultWeight"), VtValue(0.25f)}};
 
     RigExecRigEvaluator rig(stage, rigPath);
     std::vector<std::string> errors;
@@ -706,7 +728,10 @@ TestAnOverrideOnAConstraintWeightIsFollowed(const std::string &examplesDir)
     // domains count: what matters is that the override reached the walk.
     bool moved = false;
     for (const auto &[path, frame] : dragged.jointFramesFinal) {
-        if (!SameFrame(frame, JointFrame(before, path))) { moved = true; break; }
+        if (!SameFrame(frame, JointFrame(before, path))) {
+            moved = true;
+            break;
+        }
     }
     for (const auto &[path, frame] : dragged.controlFrames) {
         const auto found = before.controlFrames.find(path);
@@ -734,8 +759,8 @@ MakeAConnectedSpaceRig()
     const UsdPrim root = stage->DefinePrim(SdfPath("/Asset/Rig/Root"),
                                            TfToken("RigExecControl"));
     root.GetAttribute(TfToken("avars:tx")).Set(3.0);
-    const UsdPrim joint = stage->DefinePrim(SdfPath("/Asset/Rig/Bone"),
-                                            TfToken("RigExecJoint"));
+    const UsdPrim joint =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Bone"), TfToken("RigExecJoint"));
     joint.GetAttribute(TfToken("avars:ty")).Set(2.0);
 
     // Explicit phases are required to select a produced pose frame.
@@ -743,22 +768,23 @@ MakeAConnectedSpaceRig()
         .AddConnection(root.GetPath().AppendProperty(TfToken("posed:space")));
 
     stage->DefinePrim(SdfPath("/Asset/Geom"), TfToken("Scope"));
-    const UsdPrim mesh = stage->DefinePrim(SdfPath("/Asset/Geom/Slab"),
-                                           TfToken("Mesh"));
+    const UsdPrim mesh =
+        stage->DefinePrim(SdfPath("/Asset/Geom/Slab"), TfToken("Mesh"));
     VtVec3fArray points{GfVec3f(0, 0, 0), GfVec3f(1, 0, 0), GfVec3f(0, 1, 0)};
     mesh.GetAttribute(TfToken("points")).Set(points);
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
-    const UsdPrim skin = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Skin"), TfToken("RigExecSkinMover"));
+    const UsdPrim skin = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Skin"),
+                                           TfToken("RigExecSkinMover"));
     skin.ApplyAPI(TfToken("RigExecMoverAPI"));
     skin.GetRelationship(TfToken("rigExec:moves"))
         .SetTargets({mesh.GetPath().AppendProperty(TfToken("points"))});
     skin.CreateRelationship(TfToken("rigExec:influences"))
         .SetTargets({joint.GetPath()});
-    skin.CreateAttribute(TfToken("rigExec:elementSize"),
-                         SdfValueTypeNames->Int).Set(1);
+    skin.CreateAttribute(TfToken("rigExec:elementSize"), SdfValueTypeNames->Int)
+        .Set(1);
     skin.CreateAttribute(TfToken("rigExec:jointIndices"),
-                         SdfValueTypeNames->IntArray).Set(VtIntArray{0, 0, 0});
+                         SdfValueTypeNames->IntArray)
+        .Set(VtIntArray{0, 0, 0});
     skin.CreateAttribute(TfToken("rigExec:jointWeights"),
                          SdfValueTypeNames->FloatArray)
         .Set(VtFloatArray{1.0f, 1.0f, 1.0f});
@@ -780,7 +806,10 @@ EditOneKeyOnAControlAvar(const UsdStageRefPtr &stage, const SdfPath &rigPath)
     EditInSession(stage);
     const SdfPath control =
         FirstControlWithAvar(stage, rigPath, TfToken("avars:tx"));
-    if (control.IsEmpty()) { ++failures; return; }
+    if (control.IsEmpty()) {
+        ++failures;
+        return;
+    }
     const UsdAttribute avar =
         stage->GetPrimAtPath(control).GetAttribute(TfToken("avars:tx"));
     // One sample and no default opinion underneath it in the session layer.
@@ -820,7 +849,8 @@ EditHalfStrengthSkinEnvelope(const UsdStageRefPtr &stage,
     EditInSession(stage);
     const UsdPrim skin = FirstPrimOfType(stage, rigPath, "RigExecSkinMover");
     CHECK(skin);
-    if (!skin) return;
+    if (!skin)
+        return;
     UsdAttribute weight = skin.GetAttribute(TfToken("inputs:defaultWeight"));
     if (!weight) {
         weight = skin.CreateAttribute(TfToken("inputs:defaultWeight"),
@@ -842,7 +872,10 @@ ShareOneEnvelopeAcrossConstraints(const UsdStageRefPtr &stage,
 {
     EditInSession(stage);
     const UsdPrim skin = FirstPrimOfType(stage, rigPath, "RigExecSkinMover");
-    if (!skin) { ++failures; return SdfPath(); }
+    if (!skin) {
+        ++failures;
+        return SdfPath();
+    }
     UsdAttribute shared = skin.GetAttribute(TfToken("inputs:defaultWeight"));
     if (!shared) {
         shared = skin.CreateAttribute(TfToken("inputs:defaultWeight"),
@@ -879,22 +912,27 @@ TestAnOverrideOnAConnectionSourceIsFollowed(const std::string &examplesDir)
     UsdStageRefPtr stage = UsdStage::Open(stagePath);
     UsdStageRefPtr referenceStage = UsdStage::Open(stagePath);
     CHECK(stage && referenceStage);
-    if (!stage || !referenceStage) return;
+    if (!stage || !referenceStage)
+        return;
     const SdfPath rigPath = FindRig(stage);
-    if (rigPath.IsEmpty()) { ++failures; return; }
+    if (rigPath.IsEmpty()) {
+        ++failures;
+        return;
+    }
     const SdfPath shared = ShareOneEnvelopeAcrossConstraints(stage, rigPath);
     CHECK(ShareOneEnvelopeAcrossConstraints(referenceStage, rigPath) == shared);
-    if (shared.IsEmpty()) return;
+    if (shared.IsEmpty())
+        return;
 
     const std::vector<RigExecValueOverride> overrides{RigExecValueOverride{
-        shared.GetPrimPath(), TfToken(), shared.GetNameToken(),
-        VtValue(0.0f)}};
+        shared.GetPrimPath(), TfToken(), shared.GetNameToken(), VtValue(0.0f)}};
 
     RigExecRigEvaluator rig(stage, rigPath);
     std::vector<std::string> errors;
     if (!rig.Compile(&errors)) {
         ++failures;
-        for (const std::string &e : errors) std::printf("  ERR %s\n", e.c_str());
+        for (const std::string &e : errors)
+            std::printf("  ERR %s\n", e.c_str());
     }
     std::vector<std::string> reasons;
     if (!rig.IsBakeable(&reasons)) {
@@ -926,7 +964,8 @@ TestAnOverrideOnAConnectionSourceIsFollowed(const std::string &examplesDir)
     // on both paths could not pass this.
     size_t moved = 0;
     for (const auto &[path, frame] : dragged.jointFramesFinal) {
-        if (!SameFrame(frame, JointFrame(before, path))) ++moved;
+        if (!SameFrame(frame, JointFrame(before, path)))
+            ++moved;
     }
     CHECK(moved > 0);
     rig.ClearInteractiveOverrides();
@@ -954,7 +993,8 @@ CheckOneMismatch(const char *what, const RigExecRigPose &reference,
     if (out.comparisonMismatches != 1) {
         ++failures;
         std::printf("FAIL exact comparator: %s produced %zu mismatch(es), "
-                    "expected 1\n", what, out.comparisonMismatches);
+                    "expected 1\n",
+                    what, out.comparisonMismatches);
         return;
     }
     bool found = false;
@@ -967,7 +1007,8 @@ CheckOneMismatch(const char *what, const RigExecRigPose &reference,
     if (!found) {
         ++failures;
         std::printf("FAIL exact comparator: %s reported no diagnostic "
-                    "naming \"%s\"\n", what, expectedSubstring);
+                    "naming \"%s\"\n",
+                    what, expectedSubstring);
         for (const std::string &diagnostic : out.diagnostics) {
             std::printf("    %s\n", diagnostic.c_str());
         }
@@ -992,17 +1033,15 @@ TestPoseComparatorFindsWhatIsThere()
     agreed.controlFrames[a] = RigExecPointFrame();
     agreed.providerXforms[a] = GfMatrix4d(1.0);
     agreed.providerBaseXforms[a] = GfMatrix4d(1.0);
-    agreed.movedProperties[a.AppendProperty(TfToken("points"))] =
-        VtValue(1.0f);
+    agreed.movedProperties[a.AppendProperty(TfToken("points"))] = VtValue(1.0f);
     agreed.solverFrames[solver] =
         std::vector<RigExecPointFrame>{RigExecPointFrame()};
     // The two weight domains and the convergence flag. Nothing that bakes
     // today publishes any of them, which is exactly why they are here: a
     // domain nobody fills is a domain nobody notices the comparator is blind
     // to, until the generation that fills it.
-    agreed.weightFields[weight] =
-        RigExecResolvedWeightField{a.AppendProperty(TfToken("points")),
-                                   {1.0f, 0.5f, 0.0f}};
+    agreed.weightFields[weight] = RigExecResolvedWeightField{
+        a.AppendProperty(TfToken("points")), {1.0f, 0.5f, 0.0f}};
     agreed.weightFrames[volume] = GfMatrix4d(1.0);
     {
         RigExecRigPose out;
@@ -1037,8 +1076,7 @@ TestPoseComparatorFindsWhatIsThere()
     {
         RigExecRigPose d = agreed;
         d.providerXforms[a][3][1] = 1.0;
-        CheckOneMismatch("provider transform", agreed, d,
-                         "provider transform");
+        CheckOneMismatch("provider transform", agreed, d, "provider transform");
     }
     {
         RigExecRigPose d = agreed;
@@ -1048,8 +1086,7 @@ TestPoseComparatorFindsWhatIsThere()
     }
     {
         RigExecRigPose d = agreed;
-        d.movedProperties[a.AppendProperty(TfToken("points"))] =
-            VtValue(2.0f);
+        d.movedProperties[a.AppendProperty(TfToken("points"))] = VtValue(2.0f);
         CheckOneMismatch("moved property", agreed, d, "moved property");
     }
     {
@@ -1132,8 +1169,8 @@ TestPoseComparatorFindsWhatIsThere()
     {
         RigExecRigPose d = agreed;
         d.weightFrames[SdfPath("/Rig/Weights/y")] = GfMatrix4d(1.0);
-        CheckOneMismatch("a weight frame only the program published", agreed,
-                         d, "unexpected weight frame");
+        CheckOneMismatch("a weight frame only the program published", agreed, d,
+                         "unexpected weight frame");
     }
 
     // Every domain at once, so the count is a count and not a flag.
@@ -1145,8 +1182,7 @@ TestPoseComparatorFindsWhatIsThere()
         d.controlFrames[a] = MovedFrame(1.0);
         d.providerXforms[a][3][1] = 1.0;
         d.providerBaseXforms[a][3][1] = 1.0;
-        d.movedProperties[a.AppendProperty(TfToken("points"))] =
-            VtValue(2.0f);
+        d.movedProperties[a.AppendProperty(TfToken("points"))] = VtValue(2.0f);
         d.solverFrames[solver].clear();
         d.weightFields[weight].weights[0] = 0.25f;
         d.weightFrames[volume][3][1] = 1.0;
@@ -1165,16 +1201,21 @@ TestPoseComparatorIsExact(const std::string &examplesDir)
 {
     UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/biped/Biped.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     const SdfPath rigPath = FindRig(stage);
-    if (rigPath.IsEmpty()) { ++failures; return; }
+    if (rigPath.IsEmpty()) {
+        ++failures;
+        return;
+    }
     RigExecRigEvaluator rig(stage, rigPath);
     std::vector<std::string> errors;
     CHECK(rig.Compile(&errors));
     const RigExecRigPose reference = rig.Evaluate(UsdTimeCode(1.0));
     CHECK(reference.valid);
     CHECK(!reference.jointMatricesFinal.empty());
-    if (reference.jointMatricesFinal.empty()) return;
+    if (reference.jointMatricesFinal.empty())
+        return;
 
     // A copy with ONE number moved: everything else -- the diagnostics and
     // the work counters the comparator also compares -- has to stay equal,
@@ -1199,9 +1240,13 @@ TestDirtyCompiledRigStillEvaluates(const std::string &examplesDir)
 {
     const auto stage = UsdStage::Open(examplesDir + "/biped/Biped.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     const SdfPath rigPath = FindRig(stage);
-    if (rigPath.IsEmpty()) { ++failures; return; }
+    if (rigPath.IsEmpty()) {
+        ++failures;
+        return;
+    }
     RigExecRigEvaluator rig(stage, rigPath);
     std::vector<std::string> errors;
     CHECK(rig.Compile(&errors));
@@ -1217,7 +1262,8 @@ TestDirtyCompiledRigStillEvaluates(const std::string &examplesDir)
     for (double frame = 1; frame <= 5; ++frame) {
         const auto after = rig.Evaluate(UsdTimeCode(frame));
         CHECK(after.valid);
-        CompareEveryMap("an unrelated structural notice", before[size_t(frame)-1], after);
+        CompareEveryMap("an unrelated structural notice",
+                        before[size_t(frame) - 1], after);
         CHECK(after.executedOpCount == rig.GetLastOpTrace().size());
     }
     CHECK(rig.GetBakedProgramBuildCount() == builds);
@@ -1229,29 +1275,27 @@ static void
 MoveARestChannel(const UsdStageRefPtr &stage)
 {
     EditInSession(stage);
-    const UsdPrim hips =
-        stage->GetPrimAtPath(SdfPath("/Biped/Rig/Main/Shot/Aux/Joints/hips_def"));
+    const UsdPrim hips = stage->GetPrimAtPath(
+        SdfPath("/Biped/Rig/Main/Shot/Aux/Joints/hips_def"));
     CHECK(hips);
-    if (!hips) return;
+    if (!hips)
+        return;
     UsdAttribute rest = hips.GetAttribute(TfToken("rest:tx"));
     if (!rest) {
-        rest = hips.CreateAttribute(TfToken("rest:tx"),
-                                    SdfValueTypeNames->Double);
+        rest =
+            hips.CreateAttribute(TfToken("rest:tx"), SdfValueTypeNames->Double);
     }
     CHECK(rest);
-    if (rest) CHECK(rest.Set(3.0));
+    if (rest)
+        CHECK(rest.Set(3.0));
 }
 
-
 // The frames to sweep a stage at, from the stage's OWN authored range.
-// The sweep used to run every example at frames 1, 2 and 3. The numbered
-// examples are authored over 1001-1048, so all three reads held the first
-// key and the sweep compared one static pose three times -- it had never
-// compared an interpolated frame of any of them. Start, middle and end of
-// the authored range instead, and 1-3 for a stage with no authored range,
-// so a newly added example is swept at frames that differ the day it lands
-// rather than the day someone adds it to a table. The biped overlay authors
-// 1-200, so it sweeps start, middle and end like the numbered examples.
+// Start, middle and end of the authored range, and 1-3 for a stage with no
+// authored range, so a newly added example is swept at frames that differ
+// the day it lands rather than the day someone adds it to a table. The
+// biped overlay authors 1-200, so it sweeps start, middle and end like the
+// numbered examples.
 static std::vector<double>
 _SweepFrames(const UsdStageRefPtr &stage)
 {
@@ -1277,14 +1321,14 @@ MakeAConstrainedVolumeRig()
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
 
     stage->DefinePrim(SdfPath("/Asset/Geom"), TfToken("Scope"));
-    const UsdPrim mesh = stage->DefinePrim(SdfPath("/Asset/Geom/Slab"),
-                                           TfToken("Points"));
+    const UsdPrim mesh =
+        stage->DefinePrim(SdfPath("/Asset/Geom/Slab"), TfToken("Points"));
     mesh.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
-        .Set(VtVec3fArray{GfVec3f(0, 0, 0), GfVec3f(0, 4, 0),
-                          GfVec3f(0, 8, 0)});
+        .Set(
+            VtVec3fArray{GfVec3f(0, 0, 0), GfVec3f(0, 4, 0), GfVec3f(0, 8, 0)});
 
-    const UsdPrim lift = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Controls/Lift"), TfToken("RigExecControl"));
+    const UsdPrim lift = stage->DefinePrim(SdfPath("/Asset/Rig/Controls/Lift"),
+                                           TfToken("RigExecControl"));
     lift.CreateAttribute(TfToken("avars:ty"), SdfValueTypeNames->Double)
         .Set(8.0);
 
@@ -1292,21 +1336,25 @@ MakeAConstrainedVolumeRig()
         SdfPath("/Asset/Rig/Weights/Sphere"), TfToken("RigExecSphereWeight"));
     sphere.CreateRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({SdfPath("/Asset/Geom/Slab.points")});
-    sphere.CreateAttribute(TfToken("inputs:falloffMin"),
-                           SdfValueTypeNames->Float).Set(0.0f);
-    sphere.CreateAttribute(TfToken("inputs:falloffMax"),
-                           SdfValueTypeNames->Float).Set(8.0f);
-    sphere.CreateAttribute(TfToken("rigExec:falloffProfile"),
-                           SdfValueTypeNames->Token).Set(TfToken("linear"));
+    sphere
+        .CreateAttribute(TfToken("inputs:falloffMin"), SdfValueTypeNames->Float)
+        .Set(0.0f);
+    sphere
+        .CreateAttribute(TfToken("inputs:falloffMax"), SdfValueTypeNames->Float)
+        .Set(8.0f);
+    sphere
+        .CreateAttribute(TfToken("rigExec:falloffProfile"),
+                         SdfValueTypeNames->Token)
+        .Set(TfToken("linear"));
     // Resolve the entering geometry version independently of the Base/Final
     // volume placement selected on the consuming mover.
     sphere.GetRelationship(TfToken("rigExec:weightTarget"))
         .SetMetadata(TfToken("rigExecReadPhase"), std::string("preceding"));
 
     // The constraint that moves the volume. This is the whole fixture.
-    const UsdPrim move = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Pose/MoveVolume"),
-        TfToken("RigExecPositionConstraint"));
+    const UsdPrim move =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Pose/MoveVolume"),
+                          TfToken("RigExecPositionConstraint"));
     move.ApplyAPI(TfToken("RigExecMoverAPI"));
     move.CreateRelationship(TfToken("rigExec:moves"))
         .SetTargets({sphere.GetPath()});
@@ -1315,11 +1363,10 @@ MakeAConstrainedVolumeRig()
 
     const UsdGeomXform pull =
         UsdGeomXform::Define(stage, SdfPath("/Asset/PullTo"));
-    pull.MakeMatrixXform().Set(
-        GfMatrix4d(1.0).SetTranslate(GfVec3d(6, 0, 0)));
-    const UsdPrim constraint = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Sweep/Pull"),
-        TfToken("RigExecPositionConstraint"));
+    pull.MakeMatrixXform().Set(GfMatrix4d(1.0).SetTranslate(GfVec3d(6, 0, 0)));
+    const UsdPrim constraint =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Sweep/Pull"),
+                          TfToken("RigExecPositionConstraint"));
     constraint.ApplyAPI(TfToken("RigExecMoverAPI"));
     constraint.CreateRelationship(TfToken("rigExec:moves"))
         .SetTargets({SdfPath("/Asset/Geom/Slab.points")});
@@ -1329,7 +1376,6 @@ MakeAConstrainedVolumeRig()
         .SetTargets({sphere.GetPath()});
     return stage;
 }
-
 
 // Two constraints revise one joint. A named read sees the first revision,
 // while Base and Final see the literal identity and second revision.
@@ -1376,15 +1422,15 @@ MakeAPoseWalkReadPhaseRig(const char *phase)
     constrain("B", second);
 
     stage->DefinePrim(SdfPath("/Asset/Geom"), TfToken("Scope"));
-    const UsdPrim mesh = stage->DefinePrim(SdfPath("/Asset/Geom/Slab"),
-                                           TfToken("Points"));
+    const UsdPrim mesh =
+        stage->DefinePrim(SdfPath("/Asset/Geom/Slab"), TfToken("Points"));
     mesh.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
-        .Set(VtVec3fArray{GfVec3f(0, 0, 0), GfVec3f(1, 0, 0),
-                          GfVec3f(0, 1, 0)});
+        .Set(
+            VtVec3fArray{GfVec3f(0, 0, 0), GfVec3f(1, 0, 0), GfVec3f(0, 1, 0)});
 
-    const UsdPrim mover = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Geometry/Slide"),
-        TfToken("RigExecMatrixMover"));
+    const UsdPrim mover =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Geometry/Slide"),
+                          TfToken("RigExecMatrixMover"));
     mover.ApplyAPI(TfToken("RigExecMoverAPI"));
     mover.CreateRelationship(TfToken("rigExec:moves"))
         .SetTargets({mesh.GetPath().AppendProperty(TfToken("points"))});
@@ -1415,7 +1461,10 @@ ReadPhaseMatchesLiteral(const char *what, const UsdStageRefPtr &stage,
 {
     VtVec3fArray moved;
     const SdfPath rigPath = FindRig(stage);
-    if (rigPath.IsEmpty()) { ++failures; return moved; }
+    if (rigPath.IsEmpty()) {
+        ++failures;
+        return moved;
+    }
     RigExecRigEvaluator rig(stage, rigPath);
     std::vector<std::string> errors;
     if (!rig.Compile(&errors)) {
@@ -1513,25 +1562,33 @@ TestAPoseWalkReadPhaseMatchesTheStore()
 static void
 TestEveryExampleStage(const std::string &examplesDir)
 {
-    auto stages=TfGlob({examplesDir+"/*.usd*",examplesDir+"/biped/*.usda"});
-    std::sort(stages.begin(),stages.end());
-    size_t evaluated=0,referenceChecked=0;
-    for(const auto &path:stages) {
-        const auto stage=UsdStage::Open(path); if(!stage)continue;
-        const auto rigPath=FindRig(stage); if(rigPath.IsEmpty())continue;
-        RigExecRigEvaluator rig(stage,rigPath);
-        rig.cpuReference=true;
-        std::vector<std::string> errors; CHECK(rig.Compile(&errors));
+    auto stages =
+        TfGlob({examplesDir + "/*.usd*", examplesDir + "/biped/*.usda"});
+    std::sort(stages.begin(), stages.end());
+    size_t evaluated = 0, referenceChecked = 0;
+    for (const auto &path : stages) {
+        const auto stage = UsdStage::Open(path);
+        if (!stage)
+            continue;
+        const auto rigPath = FindRig(stage);
+        if (rigPath.IsEmpty())
+            continue;
+        RigExecRigEvaluator rig(stage, rigPath);
+        rig.cpuReference = true;
+        std::vector<std::string> errors;
+        CHECK(rig.Compile(&errors));
         CHECK(rig.IsBakeable());
-        for(const auto frame:_SweepFrames(stage)) {
-            const auto pose=rig.Evaluate(UsdTimeCode(frame)); CHECK(pose.valid);
-            CHECK(pose.referenceMismatches==0);
-            if(pose.referenceAgreements)++referenceChecked;
-            CHECK(pose.executedOpCount==rig.GetLastOpTrace().size());
+        for (const auto frame : _SweepFrames(stage)) {
+            const auto pose = rig.Evaluate(UsdTimeCode(frame));
+            CHECK(pose.valid);
+            CHECK(pose.referenceMismatches == 0);
+            if (pose.referenceAgreements)
+                ++referenceChecked;
+            CHECK(pose.executedOpCount == rig.GetLastOpTrace().size());
             ++evaluated;
         }
     }
-    CHECK(evaluated>0 && referenceChecked>0);
+    CHECK(evaluated > 0 && referenceChecked > 0);
 }
 
 // Intervening Xforms contribute to the one corrected rest and posed frame.
@@ -1560,15 +1617,15 @@ MakeAnInterveningXformRig(bool animated, bool identityToday = false)
         op.Set(GfVec3d(0, 3, 0));
     }
 
-    const UsdPrim joint = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Group/Arm"), TfToken("RigExecJoint"));
+    const UsdPrim joint = stage->DefinePrim(SdfPath("/Asset/Rig/Group/Arm"),
+                                            TfToken("RigExecJoint"));
     joint.CreateAttribute(TfToken("avars:tx"), SdfValueTypeNames->Double)
         .Set(2.0);
     // A child of the joint, so the correction is exercised where it is NOT a
     // uniform right-multiply: the child's own anchor is the joint, which the
     // pass has already corrected.
-    const UsdPrim tip = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Group/Arm/Tip"), TfToken("RigExecJoint"));
+    const UsdPrim tip = stage->DefinePrim(SdfPath("/Asset/Rig/Group/Arm/Tip"),
+                                          TfToken("RigExecJoint"));
     tip.CreateAttribute(TfToken("avars:tz"), SdfValueTypeNames->Double)
         .Set(1.0);
 
@@ -1577,8 +1634,8 @@ MakeAnInterveningXformRig(bool animated, bool identityToday = false)
         stage->DefinePrim(SdfPath("/Asset/Geom/M"), TfToken("Points"));
     mesh.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
         .Set(VtVec3fArray{GfVec3f(0, 0, 0), GfVec3f(1, 0, 0)});
-    const UsdPrim mover = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/M"), TfToken("RigExecMatrixMover"));
+    const UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/M"),
+                                            TfToken("RigExecMatrixMover"));
     mover.ApplyAPI(TfToken("RigExecMoverAPI"));
     mover.CreateRelationship(TfToken("rigExec:moves"))
         .SetTargets({SdfPath("/Asset/Geom/M.points")});
@@ -1599,8 +1656,8 @@ MakeARotationSignRig(const GfVec3d &sign, const GfVec3d &rotate)
     stage->SetEndTimeCode(3.0);
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const UsdPrim arm = stage->DefinePrim(SdfPath("/Asset/Rig/Arm"),
-                                          TfToken("RigExecControl"));
+    const UsdPrim arm =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Arm"), TfToken("RigExecControl"));
     arm.GetAttribute(TfToken("avars:rotationSign")).Set(sign);
     static const char *const kChannels[3] = {"avars:rx", "avars:ry",
                                              "avars:rz"};
@@ -1621,8 +1678,8 @@ MakeARotationSignRig(const GfVec3d &sign, const GfVec3d &rotate)
         stage->DefinePrim(SdfPath("/Asset/Geom/M"), TfToken("Points"));
     mesh.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
         .Set(VtVec3fArray{GfVec3f(0, 0, 0), GfVec3f(1, 0, 0)});
-    const UsdPrim mover = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/M"), TfToken("RigExecMatrixMover"));
+    const UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/M"),
+                                            TfToken("RigExecMatrixMover"));
     mover.ApplyAPI(TfToken("RigExecMoverAPI"));
     mover.CreateRelationship(TfToken("rigExec:moves"))
         .SetTargets({SdfPath("/Asset/Geom/M.points")});
@@ -1654,14 +1711,14 @@ TestRotationSignNegatesTheAvar()
 
     // The whole claim: a signed control at +pose is the unsigned control at
     // the negated pose, and nothing else about it changes.
-    const GfVec3d signedTip = RotationSignTip(
-        MakeARotationSignRig(mirrored, pose));
-    const GfVec3d byHand = RotationSignTip(
-        MakeARotationSignRig(plain, negated));
+    const GfVec3d signedTip =
+        RotationSignTip(MakeARotationSignRig(mirrored, pose));
+    const GfVec3d byHand =
+        RotationSignTip(MakeARotationSignRig(plain, negated));
     CHECK((signedTip - byHand).GetLength() < 1e-12);
     // And it is a real difference, not two ways of writing the same pose.
-    const GfVec3d unsignedTip = RotationSignTip(
-        MakeARotationSignRig(plain, pose));
+    const GfVec3d unsignedTip =
+        RotationSignTip(MakeARotationSignRig(plain, pose));
     CHECK((signedTip - unsignedTip).GetLength() > 1e-3);
 
     // Identity at rest: declaring the sign cannot move a control nobody
@@ -1684,48 +1741,72 @@ TestRotationSignNegatesTheAvar()
 static void
 TestRotationSignEditsAndAnimation()
 {
-    const GfVec3d plain(1,1,1),mirrored(-1,-1,1),rotation(30,20,40);
+    const GfVec3d plain(1, 1, 1), mirrored(-1, -1, 1), rotation(30, 20, 40);
     const SdfPath path("/Asset/Rig");
-    const auto stage=MakeARotationSignRig(plain,rotation);
-    RigExecRigEvaluator rig(stage,path);CHECK(rig.Compile());
+    const auto stage = MakeARotationSignRig(plain, rotation);
+    RigExecRigEvaluator rig(stage, path);
+    CHECK(rig.Compile());
     CHECK(rig.Evaluate(UsdTimeCode(1)).valid);
-    const auto builds=rig.GetBakedProgramBuildCount();
-    const auto sign=stage->GetPrimAtPath(SdfPath("/Asset/Rig/Arm")).GetAttribute(TfToken("avars:rotationSign"));
+    const auto builds = rig.GetBakedProgramBuildCount();
+    const auto sign = stage->GetPrimAtPath(SdfPath("/Asset/Rig/Arm"))
+                          .GetAttribute(TfToken("avars:rotationSign"));
     CHECK(sign.Set(mirrored));
-    const auto changed=rig.Evaluate(UsdTimeCode(1));CHECK(changed.valid);
-    CHECK(rig.GetBakedProgramBuildCount()==builds);
-    const auto expected=RotationSignTip(MakeARotationSignRig(plain,GfVec3d(-30,-20,40)));
-    const auto tip=changed.jointFramesFinal.find(SdfPath("/Asset/Rig/Arm/Tip"));
-    CHECK(tip!=changed.jointFramesFinal.end());
-    if(tip!=changed.jointFramesFinal.end())CHECK((tip->second.points[0]-expected).GetLength()<1e-12);
+    const auto changed = rig.Evaluate(UsdTimeCode(1));
+    CHECK(changed.valid);
+    CHECK(rig.GetBakedProgramBuildCount() == builds);
+    const auto expected =
+        RotationSignTip(MakeARotationSignRig(plain, GfVec3d(-30, -20, 40)));
+    const auto tip =
+        changed.jointFramesFinal.find(SdfPath("/Asset/Rig/Arm/Tip"));
+    CHECK(tip != changed.jointFramesFinal.end());
+    if (tip != changed.jointFramesFinal.end())
+        CHECK((tip->second.points[0] - expected).GetLength() < 1e-12);
     // An unavailable direct static sign selects the original caller fallback,
     // never the previously sampled mirrored value.
-    const auto unsignedExpected=RotationSignTip(MakeARotationSignRig(plain,rotation));
+    const auto unsignedExpected =
+        RotationSignTip(MakeARotationSignRig(plain, rotation));
     CHECK(sign.Clear());
-    const auto cleared=rig.Evaluate(UsdTimeCode(1));CHECK(cleared.valid);
-    const auto clearedTip=cleared.jointFramesFinal.find(SdfPath("/Asset/Rig/Arm/Tip"));
-    CHECK(clearedTip!=cleared.jointFramesFinal.end());
-    if(clearedTip!=cleared.jointFramesFinal.end())CHECK((clearedTip->second.points[0]-unsignedExpected).GetLength()<1e-12);
-    CHECK(rig.GetBakedProgramBuildCount()==builds);
+    const auto cleared = rig.Evaluate(UsdTimeCode(1));
+    CHECK(cleared.valid);
+    const auto clearedTip =
+        cleared.jointFramesFinal.find(SdfPath("/Asset/Rig/Arm/Tip"));
+    CHECK(clearedTip != cleared.jointFramesFinal.end());
+    if (clearedTip != cleared.jointFramesFinal.end())
+        CHECK((clearedTip->second.points[0] - unsignedExpected).GetLength() <
+              1e-12);
+    CHECK(rig.GetBakedProgramBuildCount() == builds);
     sign.Block();
-    const auto blocked=rig.Evaluate(UsdTimeCode(1));CHECK(blocked.valid);
-    const auto blockedTip=blocked.jointFramesFinal.find(SdfPath("/Asset/Rig/Arm/Tip"));
-    CHECK(blockedTip!=blocked.jointFramesFinal.end());
-    if(blockedTip!=blocked.jointFramesFinal.end())CHECK((blockedTip->second.points[0]-unsignedExpected).GetLength()<1e-12);
-    CHECK(rig.GetBakedProgramBuildCount()==builds);
+    const auto blocked = rig.Evaluate(UsdTimeCode(1));
+    CHECK(blocked.valid);
+    const auto blockedTip =
+        blocked.jointFramesFinal.find(SdfPath("/Asset/Rig/Arm/Tip"));
+    CHECK(blockedTip != blocked.jointFramesFinal.end());
+    if (blockedTip != blocked.jointFramesFinal.end())
+        CHECK((blockedTip->second.points[0] - unsignedExpected).GetLength() <
+              1e-12);
+    CHECK(rig.GetBakedProgramBuildCount() == builds);
     CHECK(sign.Set(mirrored));
-    const auto restored=rig.Evaluate(UsdTimeCode(1));CHECK(restored.valid);
-    const auto restoredTip=restored.jointFramesFinal.find(SdfPath("/Asset/Rig/Arm/Tip"));
-    CHECK(restoredTip!=restored.jointFramesFinal.end());
-    if(restoredTip!=restored.jointFramesFinal.end())CHECK((restoredTip->second.points[0]-expected).GetLength()<1e-12);
-    CHECK(rig.GetBakedProgramBuildCount()==builds);
-    CHECK(sign.Clear());CHECK(sign.Set(plain,UsdTimeCode(1)));CHECK(sign.Set(mirrored,UsdTimeCode(3)));
-    for(const auto frame:{1.0,3.0}) {
-        const auto pose=rig.Evaluate(UsdTimeCode(frame));CHECK(pose.valid);
-        const auto wanted=RotationSignTip(MakeARotationSignRig(plain,frame==1?rotation:GfVec3d(-30,-20,40)));
-        const auto found=pose.jointFramesFinal.find(SdfPath("/Asset/Rig/Arm/Tip"));
-        CHECK(found!=pose.jointFramesFinal.end());
-        if(found!=pose.jointFramesFinal.end())CHECK((found->second.points[0]-wanted).GetLength()<1e-12);
+    const auto restored = rig.Evaluate(UsdTimeCode(1));
+    CHECK(restored.valid);
+    const auto restoredTip =
+        restored.jointFramesFinal.find(SdfPath("/Asset/Rig/Arm/Tip"));
+    CHECK(restoredTip != restored.jointFramesFinal.end());
+    if (restoredTip != restored.jointFramesFinal.end())
+        CHECK((restoredTip->second.points[0] - expected).GetLength() < 1e-12);
+    CHECK(rig.GetBakedProgramBuildCount() == builds);
+    CHECK(sign.Clear());
+    CHECK(sign.Set(plain, UsdTimeCode(1)));
+    CHECK(sign.Set(mirrored, UsdTimeCode(3)));
+    for (const auto frame : {1.0, 3.0}) {
+        const auto pose = rig.Evaluate(UsdTimeCode(frame));
+        CHECK(pose.valid);
+        const auto wanted = RotationSignTip(MakeARotationSignRig(
+            plain, frame == 1 ? rotation : GfVec3d(-30, -20, 40)));
+        const auto found =
+            pose.jointFramesFinal.find(SdfPath("/Asset/Rig/Arm/Tip"));
+        CHECK(found != pose.jointFramesFinal.end());
+        if (found != pose.jointFramesFinal.end())
+            CHECK((found->second.points[0] - wanted).GetLength() < 1e-12);
     }
 }
 
@@ -1734,26 +1815,37 @@ TestRotationSignEditsAndAnimation()
 static void
 TestAnInterveningXformAboveAProvider()
 {
-    RigExecRigEvaluator rig(MakeAnInterveningXformRig(false),SdfPath("/Asset/Rig"));
-    CHECK(rig.Compile());CHECK(rig.IsBakeable());
-    const auto pose=rig.Evaluate(UsdTimeCode(1));CHECK(pose.valid);
-    const auto found=pose.jointFramesFinal.find(SdfPath("/Asset/Rig/Group/Arm/Tip"));
-    CHECK(found!=pose.jointFramesFinal.end());
-    if(found!=pose.jointFramesFinal.end())CHECK(GfIsClose(found->second.points[0],GfVec3d(2,3,1),1e-9));
+    RigExecRigEvaluator rig(MakeAnInterveningXformRig(false),
+                            SdfPath("/Asset/Rig"));
+    CHECK(rig.Compile());
+    CHECK(rig.IsBakeable());
+    const auto pose = rig.Evaluate(UsdTimeCode(1));
+    CHECK(pose.valid);
+    const auto found =
+        pose.jointFramesFinal.find(SdfPath("/Asset/Rig/Group/Arm/Tip"));
+    CHECK(found != pose.jointFramesFinal.end());
+    if (found != pose.jointFramesFinal.end())
+        CHECK(GfIsClose(found->second.points[0], GfVec3d(2, 3, 1), 1e-9));
 }
 
 static void
 TestAnAnimatedXformAboveAProvider()
 {
-    for(const bool identity:{false,true}) {
-        RigExecRigEvaluator rig(MakeAnInterveningXformRig(true,identity),SdfPath("/Asset/Rig"));
-        CHECK(rig.Compile());CHECK(rig.IsBakeable());
-        for(const double frame:{1.0,2.0,3.0}) {
-            const auto pose=rig.Evaluate(UsdTimeCode(frame));CHECK(pose.valid);
-            const auto found=pose.jointFramesFinal.find(SdfPath("/Asset/Rig/Group/Arm/Tip"));
-            CHECK(found!=pose.jointFramesFinal.end());
-            const double y=identity?0:3+1.5*(frame-1);
-            if(found!=pose.jointFramesFinal.end())CHECK(GfIsClose(found->second.points[0],GfVec3d(2,y,1),1e-9));
+    for (const bool identity : {false, true}) {
+        RigExecRigEvaluator rig(MakeAnInterveningXformRig(true, identity),
+                                SdfPath("/Asset/Rig"));
+        CHECK(rig.Compile());
+        CHECK(rig.IsBakeable());
+        for (const double frame : {1.0, 2.0, 3.0}) {
+            const auto pose = rig.Evaluate(UsdTimeCode(frame));
+            CHECK(pose.valid);
+            const auto found =
+                pose.jointFramesFinal.find(SdfPath("/Asset/Rig/Group/Arm/Tip"));
+            CHECK(found != pose.jointFramesFinal.end());
+            const double y = identity ? 0 : 3 + 1.5 * (frame - 1);
+            if (found != pose.jointFramesFinal.end())
+                CHECK(
+                    GfIsClose(found->second.points[0], GfVec3d(2, y, 1), 1e-9));
         }
     }
 }
@@ -1772,7 +1864,8 @@ TestInterveningXformUsesOneRest()
                 withoutXform->GetPrimAtPath(SdfPath("/Asset/Rig/Group")))
                 .GetOrderedXformOps(&resets);
         CHECK(ops.size() == 1);
-        if (ops.size() != 1) return;
+        if (ops.size() != 1)
+            return;
         ops.front().Set(GfVec3d(0, 0, 0));
     }
 
@@ -1784,7 +1877,8 @@ TestInterveningXformUsesOneRest()
     const RigExecRigPose a = moved.Evaluate(UsdTimeCode(1.0));
     const RigExecRigPose b = plain.Evaluate(UsdTimeCode(1.0));
     CHECK(a.valid && b.valid);
-    if (!a.valid || !b.valid) return;
+    if (!a.valid || !b.valid)
+        return;
 
     // 1. The published FRAMES follow the grouping Xform: the correction is
     //    what put them in the group's space.
@@ -1793,8 +1887,7 @@ TestInterveningXformUsesOneRest()
     const auto tipB = b.jointFramesFinal.find(tipPath);
     CHECK(tipA != a.jointFramesFinal.end());
     CHECK(tipB != b.jointFramesFinal.end());
-    if (tipA == a.jointFramesFinal.end() ||
-        tipB == b.jointFramesFinal.end()) {
+    if (tipA == a.jointFramesFinal.end() || tipB == b.jointFramesFinal.end()) {
         return;
     }
     CHECK(std::abs((tipA->second.points[0][1] - tipB->second.points[0][1]) -
@@ -1810,8 +1903,8 @@ TestInterveningXformUsesOneRest()
     if (matrixA != a.jointMatricesFinal.end() &&
         matrixB != b.jointMatricesFinal.end()) {
         CHECK(matrixA->second == matrixB->second);
-        CHECK(GfIsClose(matrixA->second.ExtractTranslation(),
-                        GfVec3d(2, 0, 1), 1e-9));
+        CHECK(GfIsClose(matrixA->second.ExtractTranslation(), GfVec3d(2, 0, 1),
+                        1e-9));
     }
 
     // D5 uses the same corrected rest for BASE geometry and joint matrices.
@@ -1828,9 +1921,10 @@ TestInterveningXformUsesOneRest()
     const VtVec3fArray movedWith = pointsA->second.Get<VtVec3fArray>();
     const VtVec3fArray movedWithout = pointsB->second.Get<VtVec3fArray>();
     CHECK(movedWith.size() == movedWithout.size());
-    if (movedWith.size() != movedWithout.size()) return;
+    if (movedWith.size() != movedWithout.size())
+        return;
     for (size_t i = 0; i < movedWith.size(); ++i) {
-        if (!GfIsClose(movedWith[i],movedWithout[i],1e-5)) {
+        if (!GfIsClose(movedWith[i], movedWithout[i], 1e-5)) {
             ++failures;
             std::printf("FAIL D5 one rest: BASE moved point %zu differs "
                         "(%g %g %g against %g %g %g)\n",
@@ -1845,49 +1939,71 @@ TestInterveningXformUsesOneRest()
 static void
 TestConnectedSpaceReadsTheRawAttribute()
 {
-    const auto stage=MakeAConnectedSpaceRig();
-    GfMatrix4d raw(1);raw.SetTranslateOnly(GfVec3d(5,0,0));
-    CHECK(stage->GetPrimAtPath(SdfPath("/Asset/Rig/Root")).GetAttribute(TfToken("posed:space")).Set(raw));
-    RigExecRigEvaluator rig(stage,SdfPath("/Asset/Rig"));
-    CHECK(rig.Compile());CHECK(rig.IsBakeable());
+    const auto stage = MakeAConnectedSpaceRig();
+    GfMatrix4d raw(1);
+    raw.SetTranslateOnly(GfVec3d(5, 0, 0));
+    CHECK(stage->GetPrimAtPath(SdfPath("/Asset/Rig/Root"))
+              .GetAttribute(TfToken("posed:space"))
+              .Set(raw));
+    RigExecRigEvaluator rig(stage, SdfPath("/Asset/Rig"));
+    CHECK(rig.Compile());
+    CHECK(rig.IsBakeable());
     // A connected posed frame is the complete current frame: ORIGINAL
     // publishes it directly before reading this provider's own avars.
-    std::string before;CHECK(stage->GetRootLayer()->ExportToString(&before));
-    const auto pose=rig.Evaluate(UsdTimeCode(1));CHECK(pose.valid);
-    const auto bone=pose.jointFramesFinal.find(SdfPath("/Asset/Rig/Bone"));
-    CHECK(bone!=pose.jointFramesFinal.end());
-    if(bone!=pose.jointFramesFinal.end())CHECK(GfIsClose(bone->second.points[0],GfVec3d(5,0,0),1e-12));
-    const auto found=pose.movedProperties.find(SdfPath("/Asset/Geom/Slab.points"));
-    CHECK(found!=pose.movedProperties.end());
-    if(found!=pose.movedProperties.end()) {
+    std::string before;
+    CHECK(stage->GetRootLayer()->ExportToString(&before));
+    const auto pose = rig.Evaluate(UsdTimeCode(1));
+    CHECK(pose.valid);
+    const auto bone = pose.jointFramesFinal.find(SdfPath("/Asset/Rig/Bone"));
+    CHECK(bone != pose.jointFramesFinal.end());
+    if (bone != pose.jointFramesFinal.end())
+        CHECK(GfIsClose(bone->second.points[0], GfVec3d(5, 0, 0), 1e-12));
+    const auto found =
+        pose.movedProperties.find(SdfPath("/Asset/Geom/Slab.points"));
+    CHECK(found != pose.movedProperties.end());
+    if (found != pose.movedProperties.end()) {
         CHECK(found->second.IsHolding<VtVec3fArray>());
-        if(found->second.IsHolding<VtVec3fArray>())CHECK((found->second.UncheckedGet<VtVec3fArray>()==VtVec3fArray{
-            GfVec3f(5,0,0),GfVec3f(6,0,0),GfVec3f(5,1,0)}));
+        if (found->second.IsHolding<VtVec3fArray>())
+            CHECK((found->second.UncheckedGet<VtVec3fArray>() ==
+                   VtVec3fArray{GfVec3f(5, 0, 0), GfVec3f(6, 0, 0),
+                                GfVec3f(5, 1, 0)}));
     }
-    const auto held=rig.Evaluate(UsdTimeCode(1));CHECK(held.valid);
-    ComparePose("connected posed attribute held",pose,held);
-    CHECK(held.executedOpCount==0);
-    std::string after;CHECK(stage->GetRootLayer()->ExportToString(&after));
-    CHECK(after==before);
+    const auto held = rig.Evaluate(UsdTimeCode(1));
+    CHECK(held.valid);
+    ComparePose("connected posed attribute held", pose, held);
+    CHECK(held.executedOpCount == 0);
+    std::string after;
+    CHECK(stage->GetRootLayer()->ExportToString(&after));
+    CHECK(after == before);
 }
 
 static void
 TestConstrainedVolumePlacementsAreDistinct()
 {
-    for(const bool final:{false,true}) {
-        const auto stage=MakeAConstrainedVolumeRig();
-        stage->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/Sweep/Pull")).GetRelationship(TfToken("rigExec:weightObject"))
-            .SetMetadata(TfToken("rigExecReadPhase"),std::string(final?"final":"base"));
-        RigExecRigEvaluator rig(stage,SdfPath("/Asset/Rig"));
-        CHECK(rig.Compile());CHECK(rig.IsBakeable());
-        const auto pose=rig.Evaluate(UsdTimeCode(1));CHECK(pose.valid);
-        const auto found=pose.movedProperties.find(SdfPath("/Asset/Geom/Slab.points"));
-        CHECK(found!=pose.movedProperties.end());
-        if(found==pose.movedProperties.end() || !found->second.IsHolding<VtVec3fArray>())continue;
-        const VtVec3fArray expected=final?VtVec3fArray{GfVec3f(0,0,0),GfVec3f(3,4,0),GfVec3f(6,8,0)}
-            :VtVec3fArray{GfVec3f(6,0,0),GfVec3f(3,4,0),GfVec3f(0,8,0)};
-        CHECK(found->second.UncheckedGet<VtVec3fArray>()==expected);
-        CHECK(rig.Evaluate(UsdTimeCode(1)).executedOpCount==0);
+    for (const bool final : {false, true}) {
+        const auto stage = MakeAConstrainedVolumeRig();
+        stage->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/Sweep/Pull"))
+            .GetRelationship(TfToken("rigExec:weightObject"))
+            .SetMetadata(TfToken("rigExecReadPhase"),
+                         std::string(final ? "final" : "base"));
+        RigExecRigEvaluator rig(stage, SdfPath("/Asset/Rig"));
+        CHECK(rig.Compile());
+        CHECK(rig.IsBakeable());
+        const auto pose = rig.Evaluate(UsdTimeCode(1));
+        CHECK(pose.valid);
+        const auto found =
+            pose.movedProperties.find(SdfPath("/Asset/Geom/Slab.points"));
+        CHECK(found != pose.movedProperties.end());
+        if (found == pose.movedProperties.end() ||
+            !found->second.IsHolding<VtVec3fArray>())
+            continue;
+        const VtVec3fArray expected =
+            final ? VtVec3fArray{GfVec3f(0, 0, 0), GfVec3f(3, 4, 0),
+                                 GfVec3f(6, 8, 0)}
+                  : VtVec3fArray{GfVec3f(6, 0, 0), GfVec3f(3, 4, 0),
+                                 GfVec3f(0, 8, 0)};
+        CHECK(found->second.UncheckedGet<VtVec3fArray>() == expected);
+        CHECK(rig.Evaluate(UsdTimeCode(1)).executedOpCount == 0);
     }
 }
 
@@ -1912,8 +2028,7 @@ main(int argc, char **argv)
     const std::string examplesDir = argv[1];
     const std::string resources = _SchemaResourceDir(examplesDir);
     if (PlugRegistry::GetInstance().RegisterPlugins(resources).empty()) {
-        std::printf("FATAL: no schema plugin found at %s\n",
-                    resources.c_str());
+        std::printf("FATAL: no schema plugin found at %s\n", resources.c_str());
         return 2;
     }
 
@@ -1928,11 +2043,11 @@ main(int argc, char **argv)
                          "moved rest",
                          EditKeyedBlendDisabledConstraintAndRest,
                          /* expectRebuild = */ true);
-    TestEditAfterTheBake(examplesDir, "biped/Biped.usda",
-                         "a moved foot roll", EditFootRollValue,
+    TestEditAfterTheBake(examplesDir, "biped/Biped.usda", "a moved foot roll",
+                         EditFootRollValue,
                          /* expectRebuild = */ false);
-    TestEditBeforeTheBake(examplesDir, "biped/Biped.usda",
-                          "a keyed foot roll", EditKeyedFootRoll);
+    TestEditBeforeTheBake(examplesDir, "biped/Biped.usda", "a keyed foot roll",
+                          EditKeyedFootRoll);
     TestEditAfterTheBake(examplesDir, "biped/Biped_anim.usda",
                          "a keyed avar value", EditAKeyedAvarValue,
                          /* expectRebuild = */ false);
@@ -1960,7 +2075,6 @@ main(int argc, char **argv)
 
     // An unrelated structural notice preserves a valid native program.
     TestDirtyCompiledRigStillEvaluates(examplesDir);
-
 
     // A read phase naming a point in the pose walk, which no shipped rig
     // authors and no other suite builds.

@@ -547,7 +547,6 @@ struct RigExecRevisionLeafView {
     /// declare is appended by attribute name (a test's report); the read
     /// answers the site's fallback.
     std::vector<std::string> *missing = nullptr;
-    /// Legacy payload transport retained for callers during API4 migration.
     /// API4 assembly reads declared input leaves directly.
     const RigExecExternalPayload *external = nullptr;
 };

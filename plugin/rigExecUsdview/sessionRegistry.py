@@ -4,10 +4,8 @@
 # usdview gives every window its own AppController, UsdviewApi and plugin
 # containers, but a Python module exists once per PROCESS. A host that runs
 # several usdview sessions in one QApplication (usdOrchestrate's shared host)
-# therefore shares every module global between its windows: the gizmo
-# installed itself into the first window only, the second window's panels
-# re-targeted the first window's, and one session's preview reached another
-# session's evaluator.
+# therefore shares every module global between its windows, so per-window
+# state cannot live in a module global.
 #
 # This module is where that state lives instead: one SessionRegistry per kind
 # of thing, keyed by the SESSION -- the usdview main window
@@ -23,9 +21,8 @@
 # There is deliberately no "current session" global. A caller with no api of
 # its own asks Current(), which answers for the session that owns
 # QApplication.activeWindow(), else for the ONLY session when there is exactly
-# one (a plain usdview, which is the answer every such caller got before), and
-# None when the question is ambiguous. Nothing ever wins by having been the
-# last to register.
+# one (a plain usdview), and None when the question is ambiguous. Nothing
+# ever wins by having been the last to register.
 #
 # Qt-free at import: Qt is reached lazily and only to ask for the active
 # window, so a headless process imports this module unchanged.

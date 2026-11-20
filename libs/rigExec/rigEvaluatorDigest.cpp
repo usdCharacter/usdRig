@@ -1768,7 +1768,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(unsigned segments,
             }
             // jointElements is a static input; record its time-sample count
             // so adding a sample post-compile re-runs Compile()'s rejection
-            // rather than silently keeping the captured default (round-6).
+            // rather than silently keeping the captured default.
             digest +=
                 "s" + std::to_string(jeAttr ? jeAttr.GetNumTimeSamples() : 0);
             // Cardinality-determining inputs: an edit that changes how many

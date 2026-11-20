@@ -2,8 +2,7 @@
 // engine shows for a baked rig. It travels as a nested buffer in the
 // File.presentation field of rigexec.fbs (file identifier REXP) and is read
 // by consumers such as the Godot add-on; the runtime never interprets it.
-// Its floats are presentation-only, so this schema is exempt from
-// rigexec.fbs's rule against float scalars in tables. Regenerate with
+// Its floats are presentation-only. Regenerate with
 // bin/gen_flatbuffers.sh or bin/gen_flatbuffers.bat after any edit.
 namespace rigExec.fb;
 

@@ -5,7 +5,7 @@
 [![Docs](https://img.shields.io/badge/docs-online-blue)](https://usdcharacter.github.io/usdRig/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-![Two-bone IK evaluated live by RigExec](docs/gifs/two_bone_ik.gif)
+![Mech rig in the usdview viewport](docs/gifs/mech-rig.gif)
 
 > **Warning: work in progress.** usdRig is an early AI-generated prototype
 > under active development. Its APIs, behavior, and file formats may change

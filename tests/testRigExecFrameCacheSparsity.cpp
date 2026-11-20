@@ -1249,11 +1249,10 @@ TestNoticeAdapterRealNotice()
     TfNotice::Revoke(key);
 }
 
-// Override seeds mirror SetOverrides placement exactly: the attribute
-// override on prim-plus-attribute reaches its inputs' clusters, and
-// anything unplaceable (computation, unknown, folded, or
-// merely routed) reaches nothing -- left foreign, never admitted
-// seedless.
+// Override seeds: the attribute override on prim-plus-attribute reaches
+// its inputs' clusters, and anything unplaceable (computation, unknown,
+// folded, or merely routed) reaches nothing -- left foreign, never
+// admitted seedless.
 void
 TestOverrideSeeds()
 {

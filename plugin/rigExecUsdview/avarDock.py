@@ -19,8 +19,7 @@
 #
 # The overlay technique is viewCubeUI's, deliberately: a plain child
 # widget of usdview's stage view, placed by an event filter on the
-# view's resize, with the install retried on a zero-length timer because
-# plugins load before the stage view exists.
+# view's resize.
 #
 import os
 import sys
@@ -36,15 +35,12 @@ except ImportError:                    # loader that did not add our dir
 
 # How far the dock sits from the viewport's edges, and how wide it opens.
 MARGIN = 8
-# The editor's own width, PLUS the category strip that now sits beside
-# it -- otherwise adding the strip would have quietly stolen 22px from
-# the channel fields.
+# The editor's own width, PLUS the category strip beside it.
 DOCK_WIDTH = 296 + 25
 # The strip left behind when it folds. Wide enough for the chevron and
 # the title turned on its side.
 COLLAPSED_WIDTH = 22
 
-# Retries for an install that arrives before usdview has a stage view.
 _INSTALL_RETRIES = 40
 
 _controller = None
@@ -176,9 +172,7 @@ class AvarDock(QtWidgets.QFrame):
         # The category strip and the editor sit SIDE BY SIDE, which is
         # what makes this read as a sidebar: the tabs are a
         # permanent column you click to change category, not something
-        # that only appears once the panel is folded away. Before, the
-        # strip was stacked above the editor and hidden while expanded,
-        # so an open panel showed nothing but the fold arrow.
+        # that only appears once the panel is folded away.
         row = QtWidgets.QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(3)
@@ -216,9 +210,9 @@ class AvarDock(QtWidgets.QFrame):
         if panel is None or self._body is panel:
             return
         self._body = panel
-        # Build the strip NOW. _SyncFold only fires when the fold state
+        # Build the strip NOW: _SyncFold only fires when the fold state
         # CHANGES, so a dock that opens expanded -- the normal case --
-        # never built its tabs and showed only the fold arrow.
+        # gets no tabs from it.
         self._BuildTabs()
         panel.setParent(self._host)
         panel.setWindowFlags(QtCore.Qt.Widget)

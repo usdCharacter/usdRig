@@ -52,7 +52,7 @@ QuatDot(const GfQuatd &a, const GfQuatd &b)
            ai[2] * bi[2];
 }
 
-}  // namespace
+} // namespace
 
 // Kernels and the metric
 
@@ -102,9 +102,7 @@ RigExecRbfCombine(double angle, double width, double gap,
                   bool enableTranslation)
 {
     // The rotation-only case returns the BARE ratio, with no square and no
-    // square root. That is the float the kernels were handed before the
-    // translation channel existed, and every table already shipped was
-    // solved with it; sqrt(x * x) would be right to within an ulp and wrong
+    // square root; sqrt(x * x) would be right to within an ulp and wrong
     // as a promise.
     if (!enableTranslation) {
         if (!enableRotation) {
@@ -151,10 +149,8 @@ RigExecRbfQuaternionFromEuler(const GfVec3d &euler)
     const double hz = euler[2] * 0.5;
     const double cx = std::cos(hx), cy = std::cos(hy), cz = std::cos(hz);
     const double sx = std::sin(hx), sy = std::sin(hy), sz = std::sin(hz);
-    return MakeQuat(cx * cy * cz + sx * sy * sz,
-                    sx * cy * cz - cx * sy * sz,
-                    cx * sy * cz + sx * cy * sz,
-                    cx * cy * sz - sx * sy * cz);
+    return MakeQuat(cx * cy * cz + sx * sy * sz, sx * cy * cz - cx * sy * sz,
+                    cx * sy * cz + sx * cy * sz, cx * cy * sz - sx * sy * cz);
 }
 
 GfVec3d
@@ -170,9 +166,8 @@ RigExecRbfEulerFromQuaternion(const GfQuatd &quaternion)
     // At the gimbal pole asin() is out of domain by a rounding error, so the
     // pitch is taken as +-pi/2 with the sign of sinp, the way math.copysign
     // does it.
-    const double pitch = std::abs(sinp) >= 1.0
-                             ? std::copysign(kPi / 2.0, sinp)
-                             : std::asin(sinp);
+    const double pitch = std::abs(sinp) >= 1.0 ? std::copysign(kPi / 2.0, sinp)
+                                               : std::asin(sinp);
     const double siny = 2.0 * (w * z + x * y);
     const double cosy = 1.0 - 2.0 * (y * y + z * z);
     return GfVec3d(std::atan2(sinr, cosr), pitch, std::atan2(siny, cosy));
@@ -200,7 +195,7 @@ RigExecRbfSwingTwist(const GfQuatd &quaternion, const GfVec3d &axis,
     double ax = axis[0], ay = axis[1], az = axis[2];
     double length = std::sqrt(ax * ax + ay * ay + az * az);
     if (length == 0.0) {
-        length = 1.0;  // a zero length falls back to 1
+        length = 1.0; // a zero length falls back to 1
     }
     ax /= length;
     ay /= length;
@@ -228,11 +223,10 @@ RigExecRbfSwingTwist(const GfQuatd &quaternion, const GfVec3d &axis,
     // but it forms the imaginary part as r1*i2 + r2*i1 + cross(i1, i2),
     // which reassociates the six products into a different double.
     const double tw_w = tw[0], tw_x = -tw[1], tw_y = -tw[2], tw_z = -tw[3];
-    const GfQuatd sw =
-        MakeQuat(w * tw_w - x * tw_x - y * tw_y - z * tw_z,
-                 w * tw_x + x * tw_w + y * tw_z - z * tw_y,
-                 w * tw_y - x * tw_z + y * tw_w + z * tw_x,
-                 w * tw_z + x * tw_y - y * tw_x + z * tw_w);
+    const GfQuatd sw = MakeQuat(w * tw_w - x * tw_x - y * tw_y - z * tw_z,
+                                w * tw_x + x * tw_w + y * tw_z - z * tw_y,
+                                w * tw_y - x * tw_z + y * tw_w + z * tw_x,
+                                w * tw_z + x * tw_y - y * tw_x + z * tw_w);
 
     if (swing) {
         *swing = sw;
@@ -243,8 +237,7 @@ RigExecRbfSwingTwist(const GfQuatd &quaternion, const GfVec3d &axis,
 }
 
 GfVec3d
-RigExecRbfSlerpEuler(const GfVec3d &first, const GfVec3d &second,
-                     double amount)
+RigExecRbfSlerpEuler(const GfVec3d &first, const GfVec3d &second, double amount)
 {
     //. GfSlerp would do the same job and not the same
     // doubles; this is sampled by the width fitter, so its output feeds the
@@ -279,7 +272,7 @@ RigExecRbfSlerpEuler(const GfVec3d &first, const GfVec3d &second,
     double size =
         std::sqrt(b[0] * b[0] + b[1] * b[1] + b[2] * b[2] + b[3] * b[3]);
     if (size == 0.0) {
-        size = 1.0;  // a zero length falls back to 1
+        size = 1.0; // a zero length falls back to 1
     }
     return RigExecRbfEulerFromQuaternion(
         MakeQuat(b[0] / size, b[1] / size, b[2] / size, b[3] / size));
@@ -348,14 +341,10 @@ RigExecRbfInvert(const std::vector<std::vector<double>> &matrix,
 // RigExecRbfSolver
 
 RigExecRbfSolver::RigExecRbfSolver(const RigExecRbfSolverDesc &desc)
-    : _poses(desc.poses),
-      _translations(desc.translations),
-      _poseTypes(desc.poseTypes),
-      _twistAxis(desc.twistAxis),
-      _kernel(desc.kernel),
-      _regularization(desc.regularization),
-      _normalize(desc.normalize),
-      _enableRotation(desc.enableRotation)
+    : _poses(desc.poses), _translations(desc.translations),
+      _poseTypes(desc.poseTypes), _twistAxis(desc.twistAxis),
+      _kernel(desc.kernel), _regularization(desc.regularization),
+      _normalize(desc.normalize), _enableRotation(desc.enableRotation)
 {
     // Asked for but not given is OFF, not a crash and not a channel that
     // silently measures zero: an interpolator with no translations has
@@ -756,9 +745,8 @@ RigExecRbfSolver::Solve()
     // kernel carrying POSE i's width, and asks that it come out as 1 at pose
     // c and 0 at the others. Since Matrix()[r][i] is phi_i(pose_r), that
     // reads W @ M.T == I, so what has to be inverted is M TRANSPOSED.
-    // With one shared radius M is symmetric and the two are the same matrix,
-    // which is why this went unnoticed for as long as every
-    // interpolator had one. Per-pose widths make it asymmetric --
+    // With one shared radius M is symmetric and the two are the same
+    // matrix. Per-pose widths make it asymmetric --
     // phi_far(near) is not phi_near(far) -- and inverting the UNTRANSPOSED
     // matrix then produces weights that are wrong AT THE POSES, which is the
     // one place an interpolator is supposed to be exact. The error can be
@@ -895,9 +883,7 @@ RigExecRbfSolver::Coverage(int steps) const
     // every shape switches off there and snaps back on as the driver leaves.
     // It is what popping usually is, and it is invisible to any check made
     // AT the poses, where the answer is always right. It happens with the
-    // linear kernel, whose support is compact -- the left thigh had poses 25
-    // to 150 degrees apart under a 30 degree radius, so the whole middle of
-    // every swing was uncovered.
+    // linear kernel, whose support is compact.
     const size_t size = _poses.size();
     if (size < 2) {
         return 1.0;
@@ -1013,8 +999,7 @@ RigExecRbfFitWidth(const RigExecRbfSolverDesc &desc,
 
     RigExecRbfSolver measure(common);
     const std::vector<double> spacing =
-        measure.GetEnableRotation() ? measure.Spacing()
-                                    : std::vector<double>();
+        measure.GetEnableRotation() ? measure.Spacing() : std::vector<double>();
     const std::vector<double> gaps = measure.GetEnableTranslation()
                                          ? measure.TranslationSpacing()
                                          : std::vector<double>();
@@ -1026,9 +1011,6 @@ RigExecRbfFitWidth(const RigExecRbfSolverDesc &desc,
     for (double value : gaps) {
         widestGap = std::max(widestGap, value);
     }
-    // Python takes max() of the list without a zero seed, but every entry is
-    // a distance or the 0.0 placeholder Spacing() writes for an isolated
-    // pose, so a zero seed cannot change the answer.
 
     auto fill = [](RigExecRbfFitReport *out, const RigExecRbfSolver &solver,
                    bool perPose, double scale, double coverage,
@@ -1045,9 +1027,9 @@ RigExecRbfFitWidth(const RigExecRbfSolverDesc &desc,
     };
 
     if (widest <= 0.0 && widestGap <= 0.0) {
-        // Nothing to fit against: no spread on either measured channel. The
-        // Python returns the unsolved probe here; Solve() is called so every
-        // path out of this function hands back something evaluable.
+        // Nothing to fit against: no spread on either measured channel.
+        // Solve() is called so every path out of this function hands back
+        // something evaluable.
         fill(report, measure, false, 0.0, 1.0, 0.0);
         measure.Solve();
         return measure;
@@ -1089,11 +1071,9 @@ RigExecRbfFitWidth(const RigExecRbfSolverDesc &desc,
             if (covered >= floor) {
                 // Least overshoot wins; a wider width (higher coverage)
                 // breaks the tie: the comparison is (over, -covered).
-                const bool better =
-                    !haveBest ||
-                    over < bestReport.overshoot ||
-                    (over == bestReport.overshoot &&
-                     -covered < -bestReport.coverage);
+                const bool better = !haveBest || over < bestReport.overshoot ||
+                                    (over == bestReport.overshoot &&
+                                     -covered < -bestReport.coverage);
                 if (better) {
                     best = built;
                     fill(&bestReport, built, perPose, scale, covered, over);
@@ -1125,4 +1105,4 @@ RigExecRbfFitWidth(const RigExecRbfSolverDesc &desc,
     return measure;
 }
 
-}  // namespace rigExec
+} // namespace rigExec

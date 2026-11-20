@@ -125,10 +125,9 @@ FFMPEG = os.environ.get("FFMPEG", shutil.which("ffmpeg") or
                         r"C:\ffmpeg\ffmpeg.exe")
 
 # --- output geometry -------------------------------------------------------
-# 640 is the width the docs page displays. Authoring wider and letting the
-# browser resample to 640 smeared every one-pixel guide, grid line and
-# 9px label; the 3D is supersampled instead (SUPERSAMPLE) and reduced
-# here, and every glyph is drawn at 1:1 on the final canvas.
+# 640 is the width the docs page displays. The 3D is supersampled
+# (SUPERSAMPLE) and reduced here, and every glyph is drawn at 1:1 on the
+# final canvas.
 VIEW_W, VIEW_H = 640, 360
 SUPERSAMPLE = 2
 TITLE_H = 58
@@ -319,8 +318,7 @@ GRID_PATH = "/DocsGrid"
 # (libs/rigExecImaging/sceneIndices.cpp, _controlGuideName). Selecting the
 # control alone leaves the drawn shape unhighlighted.
 CONTROL_GUIDE_CHILD = "rigGuideCtrl"
-# Every overlay stays this far inside the viewport. Chips were reaching
-# column 714 of 719 and getting clipped by the page.
+# Every overlay stays this far inside the viewport.
 SAFE = 20
 
 FONT_DIR = os.environ.get("WINDIR", r"C:\Windows") + os.sep + "Fonts"
@@ -817,8 +815,6 @@ def _add_grid(stage, bounds, diag):
         grid.CreatePointsAttr(Vt.Vec3fArray(lines))
         grid.CreateCurveVertexCountsAttr(Vt.IntArray(counts))
         grid.CreateTypeAttr("linear")
-        # Thickened: a hairline at 1280 wide survived the reduction to 640
-        # as a dotted crawl rather than a line.
         grid.CreateWidthsAttr(Vt.FloatArray([diag * 0.0055] * len(lines)))
         grid.GetWidthsAttr().SetMetadata("interpolation", "vertex")
         grid.CreateDisplayColorAttr(Vt.Vec3fArray([Gf.Vec3f(0.37, 0.40, 0.45)]))
@@ -1326,13 +1322,9 @@ def prepare_stage(src, samples=None, schema=None):
     # edge -- `compose` then draws its chip without a ring, rather than
     # putting a ring somewhere the control is not.
     #
-    # Allowed off the edge, but not out of the example. On aim_constraint
-    # this fired and left the LookAt control -- the ONE thing a reader is
-    # supposed to watch, and the thing the eyes are aiming at -- outside
-    # the picture for every frame of the loop: no ring anywhere, and a
-    # chip pinned to the offscreen slot in the corner saying a number with
-    # nothing to attach it to. So the tightened frame has to keep at least
-    # one sampled driver position in shot, or it is not taken.
+    # Allowed off the edge, but not out of the example: the tightened frame
+    # has to keep at least one sampled driver position in shot, or it is
+    # not taken.
     if moved_cloud and _coverage(scene.camera, moved_cloud) < 0.07:
         tightened = fit_camera(moved_cloud, VIEW_W / float(VIEW_H),
                                scene.yaw, scene.pitch, margin=1.45)
@@ -1721,10 +1713,7 @@ class Viewport(object):
         params.showGuides = bool(guides)
         params.highlight = bool(guides)
         if ghost:
-            # The rest pose is a WIREFRAME drawn over the live one. A
-            # filled silhouette underneath read as a second object lying
-            # on the floor in three of four pilots, and a deformation that
-            # swells outwards hid it completely in the fourth.
+            # The rest pose is a WIREFRAME drawn over the live one.
             params.drawMode = UsdImagingGL.DrawMode.DRAW_WIREFRAME
             params.enableSceneMaterials = False
             params.overrideColor = Gf.Vec4f(GHOST_RGB[0], GHOST_RGB[1],
@@ -2298,8 +2287,7 @@ def compose(chrome, passes, state, scene, index, total):
     if guides is not None:
         # The guides are drawn HERE and nowhere else, at partial strength,
         # so the mesh the rig is deforming is visible through the skeleton
-        # deforming it. In the live pass they were opaque and on top, and
-        # the only geometry a reader could see was the rest-pose ghost.
+        # deforming it.
         view.alpha_composite(_faded(guides, GUIDE_XRAY))
     view = view.resize((VIEW_W, VIEW_H), Image.LANCZOS)
 
@@ -2365,14 +2353,11 @@ def compose(chrome, passes, state, scene, index, total):
                 width=2 if live_link else 1, clip=clip)
 
     # 3. name every control in frame. An unlabelled ring reads as a second
-    #    handle with a secret -- the IK pole control swings every frame and
-    #    was never named.
+    #    handle with a secret.
     blockers = []
     # A driver is skipped only if it actually receives a CHIP: a page can
     # animate a dozen controls off one set of splines and only the first
-    # three are ever read out, so skipping every driver left nine
-    # silhouettes with no text on them at all -- on the one page whose
-    # whole subject is telling the shapes apart.
+    # three are ever read out.
     chipped = set(scene.driver_paths[:1] if scene.collapse_chips
                   else scene.driver_paths[:3])
     for path in scene.controls:
@@ -2467,9 +2452,7 @@ def compose(chrome, passes, state, scene, index, total):
         pen.text((x0 + 7, y0 + 3), text, font=chrome.label_font,
                  fill=(255, 226, 190))
 
-    # 5. where in the loop we are. The old "f 1006 (1001-1012)" counter was
-    #    a debugging artifact that snapped at the wrap and told a docs
-    #    reader nothing.
+    # 5. where in the loop we are.
     bar_y = VIEW_H - 9
     pen.rectangle([SAFE, bar_y, VIEW_W - SAFE, bar_y + 3],
                   fill=(255, 255, 255, 38))
@@ -2499,12 +2482,10 @@ def _write_gif(frames, path, fps=GIF_FPS):
     try:
         for index, frame in enumerate(frames):
             frame.save(os.path.join(workdir, "f%04d.png" % index))
-        # reserve_transparent=0 is what actually keeps a transparent entry
-        # out of the palette. Without it palettegen spends one of its
-        # colours on a transparent index whether or not any pixel uses it,
-        # every reader reports the GIF as "has transparency", and a
-        # converter that honours the entry can bring back the
-        # pastel-shapes-on-a-white-page bug this pipeline replaced.
+        # reserve_transparent=0 keeps a transparent entry out of the
+        # palette: otherwise palettegen spends one of its colours on a
+        # transparent index whether or not any pixel uses it, and every
+        # reader reports the GIF as "has transparency".
         # -gifflags -transdiff additionally turns off transparent-index
         # delta encoding between frames.
         filters = ("split[a][b];[a]palettegen=max_colors=%d:"
@@ -2585,11 +2566,9 @@ def _sequence(scene, frames):
         extreme = None
     if not scene.pingpong and len(frames) > 2:
         # A loop that closes ends where it started, so the last sample IS
-        # the first one: the GIF wrapped onto a duplicate frame, which
-        # HOLD_FIRST then dwelt on for five more ticks and which read as a
-        # hitch at the seam. Dropping it is the only way to have both a
-        # closed loop and no repeat -- ending the stage one frame early
-        # instead makes `_loop_closes` false and doubles the whole GIF.
+        # the first one; dropping it is the only way to have both a closed
+        # loop and no repeat -- ending the stage one frame early instead
+        # makes `_loop_closes` false and doubles the whole GIF.
         frames = frames[:-1]
     for index, frame in enumerate(frames):
         repeat = 1
@@ -2790,8 +2769,8 @@ def main(argv):
         jobs = [job for job in page_jobs() if job[0] == args.page] or [
             (args.page, page_stage(args.page), args.page)]
     elif files:
-        # An explicit stage path keeps the old contract: the GIF is named
-        # after the stage, and page_notes falls back to the stage's key.
+        # With an explicit stage path the GIF is named after the stage,
+        # and page_notes falls back to the stage's key.
         jobs = [(None, src, None) for src in files]
     else:
         jobs = page_jobs()

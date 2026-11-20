@@ -1316,7 +1316,7 @@ main()
         .SetTargets({pole.GetPath()});
     // Bone lengths are measured from the rests of the joints the solver
     // names -- there is no absolute length attribute to seed. Rests of
-    // 0/3/7 give the 3-unit upper and 4-unit lower this used to author.
+    // 0/3/7 give a 3-unit upper and a 4-unit lower.
     const auto joint = [&](const char *path, double rest) {
         const auto prim =
             stage->DefinePrim(SdfPath(path), TfToken("RigExecJoint"));

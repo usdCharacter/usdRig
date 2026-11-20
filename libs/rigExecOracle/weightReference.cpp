@@ -215,10 +215,7 @@ ResolveVolume(const RigExecWeightReferenceContext &context,
     // Placement.
     // Taken from the volume's own exec computeMatrix rather than
     // recomputed here. The oracle exists to check the WEIGHT FIELD math
-    // independently, not the xformable frame chain -- that already has
-    // its own parity coverage, and a second hand-rolled implementation
-    // of posed:space + rest offsets + avars + rotation order is exactly
-    // the drift frameExtraction.h was created to prevent.
+    // independently, not the xformable frame chain.
     const GfMatrix4d *placement = nullptr;
     const auto matrixIt = context.placements.find(prim.GetPath());
     if (matrixIt != context.placements.end())
