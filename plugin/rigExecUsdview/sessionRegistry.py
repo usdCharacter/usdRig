@@ -27,6 +27,7 @@
 # Qt-free at import: Qt is reached lazily and only to ask for the active
 # window, so a headless process imports this module unchanged.
 #
+import logging
 import weakref
 
 
@@ -126,11 +127,13 @@ class SessionRegistry(object):
     """
     One value per session, keyed weakly by the session's main window.
 
-    `name` only labels the registry in reprs and warnings.
+    `onRemove(value)` runs after a value is detached, including on distinct
+    replacement. `name` labels the registry in reprs and warnings.
     """
 
-    def __init__(self, name=""):
+    def __init__(self, name="", onRemove=None):
         self._name = name
+        self._onRemove = onRemove
         # id(key) -> _Entry. The entry's ref is checked on every lookup,
         # so a recycled id can never hand one session another's value.
         self._entries = {}
@@ -191,9 +194,13 @@ class SessionRegistry(object):
                              % self._name)
         entry = self._Find(key)
         if entry is not None:
-            entry.value = value
+            oldValue = entry.value
+            if oldValue is not value:
+                entry.value = value
+                self._Dispose(oldValue)
             return value
         token = id(key)
+        stale = self._entries.get(token)
         selfRef = weakref.ref(self)
         holder = []
 
@@ -210,6 +217,10 @@ class SessionRegistry(object):
         holder.append(weakref.ref(entry))
         self._entries[token] = entry
         entry.watch = self._WatchDestroyed(key, token, weakref.ref(entry))
+        if self._entries.get(token) is not entry:
+            _Unwatch(key, entry)
+        if stale is not None:
+            self._Dispose(stale.value)
         return value
 
     def Pop(self, session, default=None):
@@ -222,17 +233,29 @@ class SessionRegistry(object):
             return default
         del self._entries[id(key)]
         _Unwatch(key, entry)
+        self._Dispose(entry.value)
         return entry.value
 
     def Clear(self):
-        for key, entry in self._Live():
-            _Unwatch(key, entry)
-        self._entries.clear()
+        entries, self._entries = self._entries, {}
+        for entry in entries.values():
+            _Unwatch(entry.Key(), entry)
+        for entry in entries.values():
+            self._Dispose(entry.value)
 
     def _DropEntry(self, token, entryRef):
         entry = entryRef() if entryRef is not None else None
         if entry is not None and self._entries.get(token) is entry:
             del self._entries[token]
+            self._Dispose(entry.value)
+
+    def _Dispose(self, value):
+        if self._onRemove is not None:
+            try:
+                self._onRemove(value)
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "SessionRegistry %s: onRemove failed", self._name)
 
     def _WatchDestroyed(self, key, token, entryRef):
         """Drop the entry when the window's C++ object is destroyed.
@@ -243,10 +266,6 @@ class SessionRegistry(object):
 
         Returns the connected slot (for _Unwatch), or None.
         """
-        signal = getattr(key, "destroyed", None)
-        connect = getattr(signal, "connect", None)
-        if connect is None:
-            return None
         selfRef = weakref.ref(self)
 
         def _Destroyed(*_args):
@@ -255,7 +274,10 @@ class SessionRegistry(object):
                 registry._DropEntry(token, entryRef)
 
         try:
-            connect(_Destroyed)
+            signal = getattr(key, "destroyed", None)
+            if signal is None:
+                return None
+            signal.connect(_Destroyed)
         except Exception:
             return None
         return _Destroyed
