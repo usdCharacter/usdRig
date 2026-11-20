@@ -501,9 +501,6 @@ jobs:
           noodles-venv/bin/python -m pip install --disable-pip-version-check \
             PySide6 PyOpenGL numpy pybind11
 
-      # One X session is shared by the four drivers, so prove it exists before
-      # the editor build: an unresolvable plugin library is named here instead
-      # of four drivers aborting on Qt's generic "xcb-cursor0 is needed" hint.
       - name: Probe the Qt session the drivers need
         run: |
           py="${GITHUB_WORKSPACE}/noodles-venv/bin/python"
