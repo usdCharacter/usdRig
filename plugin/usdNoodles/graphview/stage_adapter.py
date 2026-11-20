@@ -15,6 +15,7 @@ from pxr import Sdf, Tf
 
 from UsdNoodles.nodeGraph import unsubscribe_edit_target_warning
 
+from . import model
 from .stage_sync import (
     MODE_BLUEPRINT,
     MODE_CONTAINER,
@@ -49,10 +50,16 @@ def graphScopeParentPath(view):
 
 def _dropNodeId(view, nodeId):
     """Forget one node id everywhere the view keys by it."""
-    view.nodes.pop(nodeId, None)
+    state = model.state_for_view(view)
+    if state is not None:
+        state.apply(model.GraphDelta(ops=(model.RemoveNode(nodeId),)))
+    else:
+        view.nodes.pop(nodeId, None)
     view._selectedNodes.discard(nodeId)
     view._marqueeBaseSelectedNodes.discard(nodeId)
     view._marqueePrevSelectedNodes.discard(nodeId)
+    if state is not None:
+        return
     # _rebuildLinks rebuilds the whole index, but that is deferred to
     # the next paint; drop it now so a click landing first cannot hit
     # a node that no longer exists.
@@ -389,7 +396,11 @@ def installScopePins(view, rebuilt, oldScope=None):
             _dropNodeId(view, oldId)
         if newId in view.nodes:
             continue
-        view.nodes[newId] = node
+        state = model.state_for_view(view)
+        if state is not None:
+            state.apply(model.GraphDelta(ops=(model.InsertNode(newId, node),)))
+        else:
+            view.nodes[newId] = node
         fresh.append(newId)
     if oldScope is not None:
         try:
@@ -682,6 +693,12 @@ def applyUsdChanges(view, resyncedPaths, infoChangedPaths, trace=None, movedPath
     if view._syncingSelection:
         return
 
+    with model.transaction_for(view):
+        _applyUsdChangesPass(view, resyncedPaths, infoChangedPaths, trace, movedPaths)
+
+
+def _applyUsdChangesPass(view, resyncedPaths, infoChangedPaths, trace, movedPaths):
+
     needsLinkRebuild = False
     needsRepaint = False
     needsTextUpdate = False
@@ -848,6 +865,8 @@ def _beginReloadOnView(view, frame):
 
 
 def _loadOnView(view, delta):
+    old_state = model.attached_state(view)
+    old_graph = getattr(view, "nodeGraph", None)
     if delta.mode == MODE_CONTAINER:
         loader, args = view.loadContainer, (delta.stage, delta.prim_path)
     elif delta.mode == MODE_BLUEPRINT:
@@ -859,6 +878,7 @@ def _loadOnView(view, delta):
     view._deferRenderCacheClear = True
     try:
         loader(*args)
+        model.note_graph_replaced(view, old_state, old_graph)
     finally:
         view._deferRenderCacheClear = False
         # A loader can initialize GL; only FinishReload should resume paint.

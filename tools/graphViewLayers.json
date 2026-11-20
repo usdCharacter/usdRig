@@ -10,6 +10,12 @@
     "plugin/usdNoodles/graphview/stage_sync.py": {
       "layer": "stage_sync"
     },
+    "plugin/usdNoodles/graphview/legacy.py": {
+      "layer": "compat"
+    },
+    "plugin/usdNoodles/graphview/model.py": {
+      "layer": "model"
+    },
     "plugin/usdNoodles/graphView.py": {
       "class": "GraphView",
       "symbols": {
@@ -41,8 +47,6 @@
         "_jumpToTargetNodeInternal": "interaction",
         "_selectFirstLinkInDirection": "selection",
         "_getFirstSelectedNode": "selection",
-        "_getLinksForNodeDirection": "model",
-        "_getLinksForNodeFlat": "model",
         "selectLinkByPinIndex": "selection",
         "setUsdviewApi": "coordinator",
         "_onFrameChanged": "coordinator",
@@ -98,7 +102,6 @@
         "_restoreNodePositions": "editing",
         "_updateNodeSpatialBounds": "model",
         "_applyMovedNodeDerivedState": "model",
-        "_reconcileMovedNodes": "model",
         "_authorNodePosition": "editing",
         "currentPrimPath": "coordinator",
         "_getContextMenuConf": "interaction",
@@ -113,32 +116,15 @@
         "_openPreferences": "interaction",
         "_onPreferencesClosed": "interaction",
         "_drawNodeVertices": "render",
-        "_findPinIndex": "model",
         "_nodeHasVisiblePort": "model",
         "_getNodeTopCenterPosition": "model",
-        "_resolveLinkDisplayPinName": "model",
         "_getPropertyOutputSide": "model",
         "_valueRowOnlyChange": "stage_sync",
         "_isPinPropertyChange": "stage_sync",
         "_mirrorPortPosition": "model",
         "_getVisiblePortPosition": "model",
         "_getRelationshipRowEndpointPosition": "model",
-        "_getLinkEndpointPosition": "model",
-        "_resolvePortPropertyName": "model",
         "_getPortPosition": "model",
-        "_setupLinkEndpoints": "model",
-        "_updateNodeLinkEndpoints": "model",
-        "_updateLinksForMovedNodes": "model",
-        "_setupDanglingLinkEndpoint": "model",
-        "_computeLinkBounds": "model",
-        "_makeLinkFromUsdData": "model",
-        "_populateNodeLinksFromPrim": "model",
-        "_rebuildLinks": "model",
-        "_surfaceConnectionEndpointPins": "model",
-        "_processNodeLinks": "model",
-        "_invalidateBackReferenceLinkDataCache": "model",
-        "_addBackReferenceDanglingLinks": "model",
-        "_rebuildConnectionCache": "model",
         "getConnectedNodes": "model",
         "resizeGL": "render",
         "paintGL": "render",
@@ -153,9 +139,6 @@
         "_worldSpaceProjectionMatrix": "render",
         "_screenSpaceProjectionMatrix": "render",
         "wheelEvent": "interaction",
-        "_collectSiblingDanglingLinks": "model",
-        "_addNodesFromDanglingLink": "model",
-        "_addNodeFromDanglingLink": "model",
         "_findDanglingLinkAtPort": "interaction",
         "mouseDoubleClickEvent": "interaction",
         "_navigateAlongRelationshipLink": "interaction",
@@ -196,8 +179,6 @@
         "_completeLinkDrag": "interaction",
         "_finishConnectionReplacement": "editing",
         "_showPinSelectionMenu": "interaction",
-        "_hasExactLink": "model",
-        "_findLinkToInput": "model",
         "_persistNodePositions": "editing",
         "_saveLayerAsSpelled": "editing",
         "_saveStage": "editing",
@@ -228,10 +209,7 @@
         "_resolveConnectionEndpoints": "editing",
         "_deleteOldConnection": "editing",
         "_createConnection": "editing",
-        "_addLinkToGraph": "model",
-        "_classifyRelationshipLinkFromUsd": "model",
         "_deleteConnection": "editing",
-        "_removeLinkFromGraph": "model",
         "_reloadLinksFromUSD": "stage_sync",
         "_selectNodesInMarquee": "selection",
         "_selectLinksInMarquee": "selection",
@@ -241,7 +219,6 @@
         "frameAll": "coordinator",
         "frameScene": "coordinator",
         "frameSelectionWithConnections": "coordinator",
-        "_syncLinksIfNeeded": "model",
         "paintLinks": "render",
         "_relationshipLinkColor": "render",
         "_isPrimTargetRelationshipLink": "render",
@@ -262,11 +239,9 @@
         "_frameNodeBounds": "coordinator",
         "_nodeHasAuthoredPosition": "model",
         "_positionNodeInViewport": "model",
-        "_addPrimAsNode": "model",
         "_getContainerChildNodes": "selection",
         "addNodesFromPrimTreeSelection": "selection",
         "removeSelectedNodes": "selection",
-        "_addNewNodeFast": "model",
         "_createNodeFromHotbox": "editing",
         "_applyApiSchemaFromHotbox": "editing",
         "_showApiSchemaResult": "editing",
@@ -325,6 +300,6 @@
     }
   },
   "line_ceilings": {
-    "plugin/usdNoodles/graphView.py": 11362
+    "plugin/usdNoodles/graphView.py": 10323
   }
 }

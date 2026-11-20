@@ -44,6 +44,7 @@ from ._schema_pin_names import (
 from .graphview import stage_adapter, stage_sync
 # Re-export the legacy path helpers.
 from .graphview.stage_sync import _isPathRelated, _nodeIdPrimPath
+from .graphview import model as _graphview_model
 from .constants import MAX_RENDER_DEPTH, node_content_depth
 from .linkRenderer import computeLinkCurveBounds, LinkRenderer, sampleLinkCurve
 from .nodeFactory import NodeFactory
@@ -1425,53 +1426,7 @@ class GraphView(QGLWidget):
                 return node
         return None
 
-    def _getLinksForNodeDirection(self, node, direction):
-        pinsToLinks = {}
 
-        for i, link in enumerate(self.links):
-            if direction == "output":
-                # Links where this node is the data source (outputs)
-                dataSource = getattr(link, "data_sourceNodeId", None)
-                if dataSource == node.id:
-                    # Find pin index for sorting
-                    pinName = link.sourcePort
-                    pinIdx = self._findPinIndex(node.outputPins, pinName)
-                    if pinIdx == -1:
-                        pinIdx = 999  # Put unknown pins at end
-                    if pinIdx not in pinsToLinks:
-                        pinsToLinks[pinIdx] = []
-                    pinsToLinks[pinIdx].append((i, link))
-            else:  # direction == "input"
-                # Links where this node is the data target (inputs)
-                dataTarget = getattr(link, "data_targetNodeId", None)
-                if dataTarget == node.id:
-                    # For input links, the current node receives data
-                    if link.sourceNodeId == node.id:
-                        pinName = link.sourcePort
-                    else:
-                        pinName = link.targetPort
-                    pinIdx = self._findPinIndex(node.inputPins, pinName)
-                    if pinIdx == -1:
-                        pinIdx = 999
-                    if pinIdx not in pinsToLinks:
-                        pinsToLinks[pinIdx] = []
-                    pinsToLinks[pinIdx].append((i, link))
-
-        # Sort links within each pin by link index for stable ordering
-        for pinIdx in pinsToLinks:
-            pinsToLinks[pinIdx].sort(key=lambda x: x[0])
-
-        return pinsToLinks
-
-    def _getLinksForNodeFlat(self, node, direction):
-        pinsToLinks = self._getLinksForNodeDirection(node, direction)
-
-        # Flatten to list sorted by pin index
-        result = []
-        for pinIdx in sorted(pinsToLinks.keys()):
-            result.extend(pinsToLinks[pinIdx])
-
-        return result
 
     def selectLinkByPinIndex(self, pinIndex, reverseDirection=False):
         """Select a link connected to the nth input or output of a node.
@@ -2986,30 +2941,6 @@ class GraphView(QGLWidget):
         self._updateLinksForMovedNodes(moved)
         self._portHighlightsDirty = True
 
-    def _reconcileMovedNodes(self):
-        """Refresh position-derived state for every node whose ``position``
-        version advanced since the last call (see ``VersionedVec2d``). Movers only
-        set the position; this pass updates everything that depends on it, so none
-        of them can leave it half-updated.
-
-        A process-global move generation keeps the common case (nothing moved,
-        e.g. a pan) at O(1). A drag refreshes its own derived state and is skipped
-        here; the release frame reconciles the final positions.
-        """
-        if self.draggingNodes:
-            return
-        gen = positionWriteGeneration()
-        if gen == self._reconcilePositionGen:
-            return
-        self._reconcilePositionGen = gen
-        seen = self._reconciledPositionVersions
-        moved = set()
-        for node_id, node in self.nodes.items():
-            version = node.positionVersion
-            if seen.get(node_id) != version:
-                seen[node_id] = version
-                moved.add(node_id)
-        self._applyMovedNodeDerivedState(moved)
 
     def _authorNodePosition(self, node_id, pos):
         """Write one node's position to USD and update its render caches."""
@@ -3441,11 +3372,6 @@ class GraphView(QGLWidget):
             if vao is not None:
                 GL.glDeleteVertexArrays(1, [vao])
 
-    def _findPinIndex(self, pins, pinName):
-        for i, pin in enumerate(pins):
-            if pin == pinName:
-                return i
-        return -1
 
     def _nodeHasVisiblePort(self, node, pinName, isOutput):
         if hasattr(node, "has_visible_port"):
@@ -3464,28 +3390,6 @@ class GraphView(QGLWidget):
             node.position[1],
         )
 
-    def _resolveLinkDisplayPinName(self, node, pinName, propertyName, isOutput):
-        if propertyName and hasattr(node, "_prim") and node._prim:
-            display_pin_name = get_display_pin_name_for_property_name(
-                node._prim,
-                propertyName,
-            )
-            if display_pin_name is not None:
-                pinName = display_pin_name
-        elif propertyName:
-            # No prim available: strip any direction hint and keep namespaced
-            # names intact (they double as their own display pin name).
-            pinName = split_direction_hint(propertyName)[1]
-
-        if hasattr(node, "resolve_pin_name"):
-            resolution_side = self._getPropertyOutputSide(propertyName)
-            if resolution_side is None:
-                resolution_side = isOutput
-            try:
-                return node.resolve_pin_name(pinName, is_output=resolution_side)
-            except TypeError:
-                return node.resolve_pin_name(pinName)
-        return pinName
 
     @staticmethod
     def _getPropertyOutputSide(propertyName):
@@ -3584,52 +3488,7 @@ class GraphView(QGLWidget):
             return fallbackPos
         return self._getNodeTopCenterPosition(node)
 
-    def _getLinkEndpointPosition(
-        self,
-        node,
-        pinName,
-        isOutput,
-        propertyName="",
-        preferPropertySide=False,
-    ):
-        if not pinName and not propertyName:
-            return self._getNodeTopCenterPosition(node)
 
-        resolved_pin = self._resolveLinkDisplayPinName(
-            node,
-            pinName,
-            propertyName,
-            isOutput,
-        )
-        if propertyName and is_relationship_pin(propertyName):
-            return self._getRelationshipRowEndpointPosition(
-                node,
-                resolved_pin,
-                isOutput,
-            )
-
-        property_side = self._getPropertyOutputSide(propertyName)
-
-        if property_side is None:
-            return self._getPortPosition(node, resolved_pin, isOutput)
-        if preferPropertySide:
-            return self._getPortPosition(node, resolved_pin, property_side)
-        if property_side == isOutput:
-            return self._getPortPosition(node, resolved_pin, isOutput)
-
-        opposite_pos = self._getPortPosition(node, resolved_pin, property_side)
-        if opposite_pos is None:
-            return self._getPortPosition(node, resolved_pin, isOutput)
-        return self._mirrorPortPosition(node, opposite_pos)
-
-    def _resolvePortPropertyName(self, node, pinName, isOutput):
-        if not hasattr(node, "_prim") or not node._prim:
-            return pinName
-        side = "output" if isOutput else "input"
-        property_name = resolve_property_name_for_display_pin(node._prim, pinName, side)
-        if property_name is not None:
-            return property_name
-        return pinName
 
     def _getPortPosition(self, node, pinName, isOutput):
         """Resolve a pin's port position via the C++ View Model.
@@ -3644,509 +3503,18 @@ class GraphView(QGLWidget):
             return None
         return renderer.resolvePortPosition(node, pinName, isOutput)
 
-    def _setupLinkEndpoints(self, link, startNode, endNode, startPinName, endPinName):
-        """Set up link endpoints using renderer-provided port positions.
 
-        Args:
-            link: LinkData to configure
-            startNode: Node where the link starts (has the output port)
-            endNode: Node where the link ends (has the input port)
-            startPinName: Name of the output port on startNode
-            endPinName: Name of the input port on endNode
-        """
-        # Get port positions from renderers (isOutput=True for start, False for end)
-        link.start = self._getLinkEndpointPosition(
-            startNode,
-            startPinName,
-            True,
-            str(getattr(link, "sourcePropertyName", "")),
-            preferPropertySide=bool(getattr(link, "is_relationship_link", False)),
-        )
-        link.end = self._getLinkEndpointPosition(
-            endNode,
-            endPinName,
-            False,
-            str(getattr(link, "targetPropertyName", "")),
-            preferPropertySide=bool(getattr(link, "is_relationship_link", False)),
-        )
 
-    def _updateNodeLinkEndpoints(self, node):
-        """Update link endpoints for all links connected to a specific node.
 
-        This is much faster than rebuilding all links when only one node has moved.
 
-        Args:
-            node: NodeModel whose connected links need updating
-        """
-        # Update input links (where this node receives data)
-        # For input links: sourceNodeId = connected node (output), targetNodeId = this node
-        for link in node.inputLinks:
-            if link.sourceNodeId not in self.nodes:
-                continue
 
-            connectedNode = self.nodes[link.sourceNodeId]
 
-            # Update endpoints
-            self._setupLinkEndpoints(
-                link, connectedNode, node, link.sourcePort, link.targetPort
-            )
 
-        # Update output links (where this node provides data)
-        for link in node.outputLinks:
-            if link.targetNodeId not in self.nodes:
-                continue
 
-            connectedNode = self.nodes[link.targetNodeId]
 
-            # Update endpoints
-            self._setupLinkEndpoints(
-                link, node, connectedNode, link.sourcePort, link.targetPort
-            )
 
-    def _updateLinksForMovedNodes(self, movedNodeIds):
-        """Update all links that connect to any of the moved nodes.
 
-        This finds links where EITHER end connects to a moved node and updates
-        both endpoints. Much more efficient than rebuilding all links.
 
-        Args:
-            movedNodeIds: Set of node IDs that moved
-        """
-        for linkIdx, link in enumerate(self.links):
-            # Check if either end of the link connects to a moved node
-            sourceNodeId = getattr(link, "data_sourceNodeId", None)
-            targetNodeId = getattr(link, "data_targetNodeId", None)
-
-            if sourceNodeId in movedNodeIds or targetNodeId in movedNodeIds:
-                # At least one end moved - need to update both endpoints
-                if sourceNodeId not in self.nodes or targetNodeId not in self.nodes:
-                    continue
-
-                sourceNode = self.nodes[sourceNodeId]
-                targetNode = self.nodes[targetNodeId]
-
-                # Both input and output links: sourceNode provides output, targetNode receives input
-                self._setupLinkEndpoints(
-                    link,
-                    sourceNode,
-                    targetNode,
-                    link.sourcePort,
-                    link.targetPort,
-                )
-
-                # The endpoints just moved, so this link's spatial-index bounds
-                # are stale. Re-insert (insertLink is an upsert) so the link
-                # stays pickable during the drag instead of only after the next
-                # full rebuild on linksChanged.
-                self._spatialIndex.insertLink(linkIdx, self._computeLinkBounds(link))
-
-        # Endpoints moved on the link snapshot; re-mirror to C++ next paint.
-        self._linksNeedSync = True
-
-    def _setupDanglingLinkEndpoint(self, link, node, pinName, isOutput):
-        """Set up a dangling link endpoint as a short straight line from the port.
-
-        Args:
-            link: LinkData to configure as dangling
-            node: The node that owns the port
-            pinName: Name of the port
-            isOutput: True if this is an output port, False for input
-        """
-        # Get the port position (handles dual pins via mirroring)
-        property_name = (
-            str(getattr(link, "sourcePropertyName", ""))
-            if isOutput
-            else str(getattr(link, "targetPropertyName", ""))
-        )
-        portPos = self._getLinkEndpointPosition(
-            node,
-            pinName,
-            isOutput,
-            property_name,
-            preferPropertySide=bool(getattr(link, "is_relationship_link", False)),
-        )
-
-        # Set the start and end points for the dangling link
-        link.start = portPos
-
-        # Calculate end point as a short line in the appropriate direction
-        linkLength = LinkData.DANGLING_LINK_LENGTH
-        if isOutput:
-            # Output ports point to the right
-            link.end = Gf.Vec2d(portPos[0] + linkLength, portPos[1])
-        else:
-            # Input ports point to the left
-            link.end = Gf.Vec2d(portPos[0] - linkLength, portPos[1])
-
-        link.isDangling = True
-        link.danglingDirection = "output" if isOutput else "input"
-
-    def _computeLinkBounds(self, link):
-        """Curve-inclusive Gf.Range2d for the spatial index.
-
-        Uses the shaped-curve bounds (covering the backward S-bow) rather than
-        the straight start/end box, so broad-phase queries do not mis-cull
-        backward links whose curve bulges outside their endpoint box. The bounds
-        are zoom-independent; the 20px margin covers link line width and the
-        prim-target arrow inset.
-        """
-        return computeLinkCurveBounds(link, margin=20.0)
-
-    @staticmethod
-    def _makeLinkFromUsdData(link_data):
-        link = LinkData()
-        link.sourceNodeId = link_data["sourceNodeId"]
-        link.sourcePort = link_data["sourcePinName"]
-        link.targetNodeId = link_data["targetNodeId"]
-        link.targetPort = link_data["targetPinName"]
-        link.is_input_link = bool(link_data["is_input_link"])
-        link.propertyOwnerNodeId = str(link_data.get("propertyOwnerNodeId", ""))
-        link.propertyName = str(link_data.get("propertyName", ""))
-        link.is_relationship_link = bool(link_data.get("is_relationship_link", False))
-        link.sourcePropertyName = str(link_data.get("sourcePropertyName", ""))
-        link.targetPropertyName = str(link_data.get("targetPropertyName", ""))
-        return link
-
-    def _populateNodeLinksFromPrim(self, node, prim):
-        node.inputLinks = []
-        node.outputLinks = []
-        for link_data in collect_links_for_prim(prim):
-            link = self._makeLinkFromUsdData(link_data)
-            if link.is_input_link:
-                node.inputLinks.append(link)
-            else:
-                node.outputLinks.append(link)
-
-    def _rebuildLinks(self):
-        """Rebuild all links by reading USD connections directly.
-
-        This method reads connection data directly from USD prims,
-        ensuring links always reflect the current USD state. This is
-        important for responding to external USD edits.
-        """
-        self.links.clear()
-
-
-
-
-        for node in self.nodes.values():
-            # Virtual nodes (Blueprint I/O) have no USD prim; keep their cached
-            # inputLinks/outputLinks as-is.
-            if "#" in node.id:
-                continue
-            # For USD-backed nodes, read connections fresh from the prim
-            # (clears the cached links and rebuilds from USD).
-            if node._prim and node._prim.IsValid():
-                self._populateNodeLinksFromPrim(node, node._prim)
-
-
-
-
-
-
-        self._surfaceConnectionEndpointPins()
-
-
-        for node in self.nodes.values():
-            self._processNodeLinks(node)
-
-        # Scan the stage for back-references: connections authored on absent
-        # prims that target present prims. Without this, an authored connection
-        # like B.inputs:x.connect = A.outputs:result is invisible from A when B
-        # is not in the graph, leaving A's output pin appearing disconnected.
-        self._addBackReferenceDanglingLinks()
-
-        # Deduplicate links (bare/dual-pin attributes can be discovered
-        # from both endpoints, producing duplicate link entries).
-        seen_links = set()
-        deduped = []
-        for link in self.links:
-            key = (
-                link.sourceNodeId,
-                link.sourcePort,
-                link.targetNodeId,
-                link.targetPort,
-                str(getattr(link, "sourcePropertyName", "")),
-                str(getattr(link, "targetPropertyName", "")),
-            )
-            if key not in seen_links:
-                seen_links.add(key)
-                deduped.append(link)
-        if len(deduped) != len(self.links):
-            self.links.clear()
-            self.links.extend(deduped)
-
-        # Sync the freshly-rebuilt links into the C++ View Model BEFORE rebuilding
-        # the connection cache, so the cache (isPortConnected / folded-header /
-        # synthetic-relationship endpoints, consumed by the port-highlight pass)
-        # reflects the current links rather than the previous frame's snapshot.
-        # paintLinks re-syncs the same list later for per-frame hover flags; this
-        # closes the update-path gap on the link-change frame itself.
-        self.nodeGraph.syncLinksFromModels(self.links)
-        # The snapshot was just refreshed from the rebuilt links; clear the
-        # incremental sync flag and force hover to re-derive against the new link
-        # indices on the next paint.
-        self._linksNeedSync = False
-        self._lastSyncedLinkHover = -1
-        # Connections were rebuilt, so per-port connected/disconnected colors may
-        # have changed; force the port-highlight geometry to rebuild next paint.
-        self._portHighlightsDirty = True
-        self._rebuildConnectionCache()
-
-        # Rebuild spatial index with updated nodes and links
-        with _ProfileSection(self._profiler, "Rebuild Spatial Index"):
-            self._spatialIndex.clear()
-            for nodeId, node in self.nodes.items():
-                bounds = Gf.Range2d(
-                    Gf.Vec2d(node.position),
-                    Gf.Vec2d(node.position + node.size),
-                )
-                self._spatialIndex.insertNode(nodeId, bounds)
-            for linkIndex, link in enumerate(self.links):
-                bounds = self._computeLinkBounds(link)
-                self._spatialIndex.insertLink(linkIndex, bounds)
-
-        self.linksChanged = False
-
-    def _surfaceConnectionEndpointPins(self):
-        """Ensure every connection endpoint renders as a pin/row.
-
-        A connection can reference a property that is not an authored or
-        schema-declared attribute on its prim -- e.g. a typed prim whose schema
-        is not registered, so its outputs exist only as the *targets* of other
-        prims' connections. Such endpoints have no pin row, so the noodle
-        attaches to the bare node edge with no pin. This surfaces every
-        non-relationship endpoint as a dual pin row on its node, uniformly,
-        regardless of schema availability. Relationship endpoints are left to
-        the synthetic-port path. Idempotent: endpoints that already have a
-        visible port are skipped.
-        """
-        endpoint_inputs: dict[str, list[str]] = {}
-        endpoint_outputs: dict[str, list[str]] = {}
-
-        def _note(mapping, node_id, pin_name):
-            if not node_id or not pin_name or node_id not in self.nodes:
-                return
-            mapping.setdefault(node_id, []).append(pin_name)
-
-        for node in self.nodes.values():
-            for link in list(node.inputLinks) + list(node.outputLinks):
-                if getattr(link, "is_relationship_link", False):
-                    continue
-                _note(endpoint_outputs, link.sourceNodeId, link.sourcePort)
-                _note(endpoint_inputs, link.targetNodeId, link.targetPort)
-
-        for node_id in set(endpoint_inputs) | set(endpoint_outputs):
-            node = self.nodes.get(node_id)
-            if node is None or not hasattr(node, "add_connection_endpoint_pins"):
-                continue
-            added = node.add_connection_endpoint_pins(
-                endpoint_inputs.get(node_id, ()),
-                endpoint_outputs.get(node_id, ()),
-            )
-            # Added rows change the node's row count, so recompute its size for
-            # correct hit-testing and spatial bounds.
-            if added and self.fontAtlas:
-                self.nodeGraph._calculateNodeSize(
-                    node,
-                    self.textRenderer.calculateTextWidth,
-                    self.fontAtlas,
-                )
-
-    def _processNodeLinks(self, node):
-        """Process a node's inputLinks and outputLinks into renderable links.
-
-        Args:
-            node: NodeModel whose links should be processed
-        """
-        # Process input links (connections on input attributes)
-        # For input links: sourceNodeId = connected node (provides output),
-        #                   targetNodeId = this node (receives input)
-        for link in node.inputLinks:
-            if link.sourceNodeId not in self.nodes:
-                # Source node is not in the graph - create dangling link.
-                # Applies to both attribute and relationship links: the port
-                # stays filled and double-click adds the missing prim back.
-                self._setupDanglingLinkEndpoint(
-                    link, node, link.targetPort, isOutput=False
-                )
-                link.data_sourceNodeId = (
-                    link.sourceNodeId
-                )  # The missing node would be source
-                link.data_targetNodeId = node.id  # This node receives data
-                link.is_input_link = True
-                self.links.append(link)
-                continue
-
-            connectedNode = self.nodes[link.sourceNodeId]
-
-            # Setup link endpoints using renderer port positions
-            # startNode = connectedNode (output side), endNode = this node (input side)
-            self._setupLinkEndpoints(
-                link, connectedNode, node, link.sourcePort, link.targetPort
-            )
-
-            # Track actual data flow direction:
-            # For inputLinks: data flows FROM connectedNode TO current node
-            link.data_sourceNodeId = (
-                connectedNode.id
-            )  # Node providing data (has output)
-            link.data_targetNodeId = node.id  # Node receiving data (has input)
-
-            link.is_input_link = True
-            link.isDangling = False
-
-            self.links.append(link)
-
-        # Process output links (connections on output attributes)
-        for link in node.outputLinks:
-            if link.targetNodeId not in self.nodes:
-                # Target node is not in the graph - create dangling link.
-                # Applies to both attribute and relationship links: the port
-                # stays filled and double-click adds the missing prim back.
-                self._setupDanglingLinkEndpoint(
-                    link, node, link.sourcePort, isOutput=True
-                )
-                link.data_sourceNodeId = node.id  # This node provides data
-                link.data_targetNodeId = (
-                    link.targetNodeId
-                )  # The missing node would receive
-                link.is_input_link = False
-                self.links.append(link)
-                continue
-
-            connectedNode = self.nodes[link.targetNodeId]
-
-            # Setup link endpoints using renderer port positions
-            self._setupLinkEndpoints(
-                link, node, connectedNode, link.sourcePort, link.targetPort
-            )
-
-            # Track actual data flow direction:
-            # For outputLinks: data flows FROM current node TO connectedNode
-            link.data_sourceNodeId = node.id  # Node providing data (has output)
-            link.data_targetNodeId = connectedNode.id  # Node receiving data (has input)
-
-            link.is_input_link = False
-            link.isDangling = False
-
-            self.links.append(link)
-
-    def _invalidateBackReferenceLinkDataCache(self):
-        """Drop the cached per-prim USD link scan used for back-references.
-
-        Called when stage composition changes (resync notice, stage replace)
-        so the next ``_addBackReferenceDanglingLinks`` call re-traverses the
-        stage. In steady state (no USD edits between paints) the cache is
-        reused, avoiding the O(prim-count) traversal on every paint.
-        """
-        self._backReferenceLinkDataCache = None
-
-    def _addBackReferenceDanglingLinks(self):
-        """Add dangling links for connections authored on prims NOT in the graph
-        that reference prims IN the graph.
-
-        USD attribute connections are usually authored on the input side
-        (``downstream.inputs:x.connect = </Upstream.outputs:result>``). When the
-        downstream prim is in the graph but the upstream prim is not, the input
-        side is handled by ``_processNodeLinks`` via the downstream node's
-        cached link list. The reverse — upstream in graph, downstream absent —
-        is NOT visible from the upstream prim's own attributes, because the
-        connection is authored on the downstream prim's input.
-
-        This scan walks the stage once and caches the per-prim USD link data
-        keyed by prim path. The cache is invalidated by
-        ``_invalidateBackReferenceLinkDataCache`` when stage composition
-        changes (see ``_handleUsdChanges`` and ``_onStageReplaced``); between
-        invalidations the cached data is reused, so subsequent
-        ``_rebuildLinks`` calls do not re-traverse the stage. The graph-side
-        ``self.nodes`` membership filter is applied at use time, not cache
-        time, because graph membership changes (add/remove node from the
-        editor) do not affect what USD authored.
-        """
-        nodeGraph = getattr(self, "nodeGraph", None)
-        stage = nodeGraph.getStage() if nodeGraph is not None else None
-        if not stage:
-            return
-
-        # Build / reuse the per-prim USD link cache.
-        cache = getattr(self, "_backReferenceLinkDataCache", None)
-        if cache is None:
-            cache = {}
-            for prim in stage.Traverse():
-                try:
-                    link_dicts = collect_links_for_prim(prim)
-                except (RuntimeError, TypeError, AttributeError):
-                    continue
-                if not link_dicts:
-                    continue
-                cache[str(prim.GetPath())] = link_dicts
-            self._backReferenceLinkDataCache = cache
-
-        # Build a key set of links already added so we don't duplicate the
-        # forward direction the per-node pass already produced.
-        existing_keys = set()
-        for existing in self.links:
-            existing_keys.add(
-                (
-                    existing.sourceNodeId,
-                    existing.sourcePort,
-                    existing.targetNodeId,
-                    existing.targetPort,
-                    str(getattr(existing, "sourcePropertyName", "")),
-                    str(getattr(existing, "targetPropertyName", "")),
-                )
-            )
-
-        for prim_path_str, link_dicts in cache.items():
-            if prim_path_str in self.nodes:
-                # Forward direction already handled by _processNodeLinks.
-                continue
-
-            for link_data in link_dicts:
-                src_id = str(link_data.get("sourceNodeId", ""))
-                tgt_id = str(link_data.get("targetNodeId", ""))
-
-                present_is_source = src_id in self.nodes
-                present_is_target = tgt_id in self.nodes
-                if not present_is_source and not present_is_target:
-                    continue
-
-                key = (
-                    src_id,
-                    str(link_data.get("sourcePinName", "")),
-                    tgt_id,
-                    str(link_data.get("targetPinName", "")),
-                    str(link_data.get("sourcePropertyName", "")),
-                    str(link_data.get("targetPropertyName", "")),
-                )
-                if key in existing_keys:
-                    continue
-                existing_keys.add(key)
-
-                link = self._makeLinkFromUsdData(link_data)
-
-                if present_is_source:
-                    present_node = self.nodes[src_id]
-                    self._setupDanglingLinkEndpoint(
-                        link, present_node, link.sourcePort, isOutput=True
-                    )
-                    link.data_sourceNodeId = src_id
-                    link.data_targetNodeId = tgt_id
-                    link.is_input_link = False
-                else:
-                    present_node = self.nodes[tgt_id]
-                    self._setupDanglingLinkEndpoint(
-                        link, present_node, link.targetPort, isOutput=False
-                    )
-                    link.data_sourceNodeId = src_id
-                    link.data_targetNodeId = tgt_id
-                    link.is_input_link = True
-
-                self.links.append(link)
-
-    def _rebuildConnectionCache(self):
-        self.nodeGraph.buildConnectionCache()
 
     def getConnectedNodes(self, nodeId):
         return self.nodeGraph.getConnectedNodeIds(nodeId)
@@ -4485,136 +3853,8 @@ class GraphView(QGLWidget):
         self._zoomAroundPoint(newZoom, (mousePos.x(), mousePos.y()))
         self.update()
 
-    def _collectSiblingDanglingLinks(self, seed_link):
-        """Return every dangling link that shares ``seed_link``'s present-side port.
 
-        A USD relationship with N targets produces N separate dangling
-        ``LinkData`` objects that all share the source prim/port and stack
-        their indicators on top of each other.  When the user expands the
-        indicator we want to bring in ALL of those missing targets, not just
-        the first one a port-hit search happens to return.
-        """
-        if not getattr(seed_link, "isDangling", False):
-            return [seed_link]
 
-        if seed_link.sourceNodeId in self.nodes:
-            present_id = seed_link.sourceNodeId
-            present_port = seed_link.sourcePort
-            present_property = str(getattr(seed_link, "sourcePropertyName", ""))
-            present_attr = "sourceNodeId"
-            present_port_attr = "sourcePort"
-            present_property_attr = "sourcePropertyName"
-        elif seed_link.targetNodeId in self.nodes:
-            present_id = seed_link.targetNodeId
-            present_port = seed_link.targetPort
-            present_property = str(getattr(seed_link, "targetPropertyName", ""))
-            present_attr = "targetNodeId"
-            present_port_attr = "targetPort"
-            present_property_attr = "targetPropertyName"
-        else:
-            return [seed_link]
-
-        siblings = []
-        for link in self.links:
-            if not getattr(link, "isDangling", False):
-                continue
-            if getattr(link, present_attr, "") != present_id:
-                continue
-            if getattr(link, present_port_attr, "") != present_port:
-                continue
-            if str(getattr(link, present_property_attr, "")) != present_property:
-                continue
-            siblings.append(link)
-        return siblings or [seed_link]
-
-    def _addNodesFromDanglingLink(self, seed_link):
-        """Add every missing target for the dangling-link expansion ``seed_link``.
-
-        Returns True when at least one node was added.  Wraps
-        :meth:`_addNodeFromDanglingLink` so a USD relationship with multiple
-        targets is fully expanded in a single user gesture.
-        """
-        added_any = False
-        for link in self._collectSiblingDanglingLinks(seed_link):
-            if self._addNodeFromDanglingLink(link):
-                added_any = True
-        return added_any
-
-    def _addNodeFromDanglingLink(self, link):
-        """Add the missing node referenced by a dangling link.
-
-        Args:
-            link: The dangling LinkData whose missing node should be added
-
-        Returns:
-            True if the node was successfully added, False otherwise
-        """
-        if not self._usdviewApi:
-            self._showPopupMessage("Cannot add node: no USD stage")
-            return False
-
-        stage = self._usdviewApi.stage
-        if not stage:
-            self._showPopupMessage("Cannot add node: no USD stage")
-            return False
-
-        # Determine which node is missing
-        missingNodeId = None
-        if link.isDangling:
-            # Check which end of the link is missing
-            if link.data_sourceNodeId and link.data_sourceNodeId not in self.nodes:
-                missingNodeId = link.data_sourceNodeId
-            elif link.data_targetNodeId and link.data_targetNodeId not in self.nodes:
-                missingNodeId = link.data_targetNodeId
-
-        if not missingNodeId:
-            self._showPopupMessage("No missing node to add")
-            return False
-
-        # Get the prim from USD
-        prim = stage.GetPrimAtPath(missingNodeId)
-        if not prim or not prim.IsValid():
-            self._showPopupMessage(f"Prim not found: {missingNodeId}")
-            return False
-
-        # Use NodeFactory to create the node
-        node = self._nodeFactory.create_node_from_prim(prim, stage)
-        if not node:
-            self._showPopupMessage(
-                f"Cannot create node for prim type: {prim.GetTypeName()}"
-            )
-            return False
-
-        self._populateNodeLinksFromPrim(node, prim)
-
-        # Calculate node size
-        if self.fontAtlas:
-            self.nodeGraph._calculateNodeSize(
-                node, self.textRenderer.calculateTextWidth, self.fontAtlas
-            )
-
-        # Register first, then place by connection exactly like the add-node
-        # path: the expanded node lands one column beside the node it wires
-        # to (inputs left, dependents right), staggered clear of siblings,
-        # so double-clicking a relationship/property reads like the L
-        # layout instead of dropping the node at the viewport center. The
-        # placement doubles as the position setup the renderer needs to
-        # compute pin positions before _rebuildLinks runs on the next paint.
-        self.nodes[node.id] = node
-        self._nextZOrder += 1
-        node.zOrder = self._nextZOrder
-        self._placeAddedNodes([node], fallback=self._viewportAnchor())
-
-        # Enable prim tree syncing since we now have nodes with valid USD paths
-        self.nodeGraph.syncSelectionToPrimTree = True
-
-        self.linksChanged = True
-        self.textChanged = True
-        self._clearRenderCache()
-        self.update()
-
-        self._showPopupMessage(f"Added: {prim.GetName()}")
-        return True
 
     def _findDanglingLinkAtPort(self, worldPos):
         """Find a dangling link whose present-node port is under worldPos.
@@ -6867,47 +6107,7 @@ class GraphView(QGLWidget):
             )
         menu.popup(self.mapToGlobal(self.lastMousePos))
 
-    def _hasExactLink(
-        self,
-        outputNodeId,
-        outputPortName,
-        inputNodeId,
-        inputPortName,
-        outputPropertyName="",
-        inputPropertyName="",
-    ):
-        """Return True if an identical link already exists."""
-        out_prop = outputPropertyName or ""
-        in_prop = inputPropertyName or ""
-        for existing in self.links:
-            if (
-                existing.sourceNodeId == outputNodeId
-                and existing.sourcePort == outputPortName
-                and existing.targetNodeId == inputNodeId
-                and existing.targetPort == inputPortName
-                and (getattr(existing, "sourcePropertyName", "") or "") == out_prop
-                and (getattr(existing, "targetPropertyName", "") or "") == in_prop
-            ):
-                return True
-        return False
 
-    def _findLinkToInput(self, nodeId, portName):
-        """
-        Find link connected to specified input port.
-
-        Args:
-            nodeId: ID of the node
-            portName: Name of the input port
-
-        Returns:
-            LinkData if found, None otherwise
-        """
-        if is_multi_target_relationship_input_pin(portName):
-            return None
-        for link in self.links:
-            if link.targetNodeId == nodeId and link.targetPort == portName:
-                return link
-        return None
 
     def _persistNodePositions(self, stage, layer):
         """Write all current node positions to the given layer.
@@ -7775,122 +6975,7 @@ class GraphView(QGLWidget):
             self._noticeHandler.setEnabled(True)
             self.update()
 
-    def _addLinkToGraph(
-        self,
-        outputNodeId,
-        outputPort,
-        inputNodeId,
-        inputPort,
-        outputNode,
-        inputNode,
-        *,
-        sourcePropertyName="",
-        targetPropertyName="",
-    ):
-        """Add a new link to the local graph state (no USD mutation)."""
-        link = LinkData()
-        link.sourceNodeId = outputNodeId
-        link.sourcePort = outputPort
-        link.targetNodeId = inputNodeId
-        link.targetPort = inputPort
-        link.sourcePropertyName = sourcePropertyName
-        link.targetPropertyName = targetPropertyName
-        relationship_metadata = get_relationship_link_metadata(
-            outputNodeId,
-            outputPort,
-            inputNodeId,
-            inputPort,
-        )
-        link.propertyOwnerNodeId = str(
-            relationship_metadata.get("propertyOwnerNodeId", "")
-        )
-        link.propertyName = str(relationship_metadata.get("propertyName", ""))
-        link.is_relationship_link = bool(
-            relationship_metadata.get("is_relationship_link", False)
-        )
 
-        # USD fallback: the name-based metadata only knows about the
-        # hardcoded sources/affects pins.  An unknown-name relationship like
-        # material:binding would otherwise drop in as a regular attribute
-        # link, so the persistent prim-target arrowhead at the top of the
-        # target prim would not draw until the next USD-driven rebuild.
-        if not link.is_relationship_link:
-            self._classifyRelationshipLinkFromUsd(
-                link,
-                outputNode,
-                inputNode,
-                outputPort,
-                inputPort,
-                sourcePropertyName,
-                targetPropertyName,
-            )
-
-        self._setupLinkEndpoints(link, outputNode, inputNode, outputPort, inputPort)
-
-        link.data_sourceNodeId = outputNodeId
-        link.data_targetNodeId = inputNodeId
-        link.is_input_link = False
-        link.isDangling = False
-
-        self.links.append(link)
-
-        linkIndex = len(self.links) - 1
-        self._spatialIndex.insertLink(linkIndex, self._computeLinkBounds(link))
-
-        self._rebuildConnectionCache()
-
-        outputNode.outputLinks.append(link)
-        inputNode.inputLinks.append(link)
-
-
-
-        self._linksNeedSync = True
-        self._portHighlightsDirty = True
-
-    @staticmethod
-    def _classifyRelationshipLinkFromUsd(
-        link,
-        outputNode,
-        inputNode,
-        outputPort,
-        inputPort,
-        sourcePropertyName,
-        targetPropertyName,
-    ):
-        """Mark ``link`` as a relationship link when the USD prim says so.
-
-        Mutates ``link.is_relationship_link``, ``link.propertyOwnerNodeId``
-        and ``link.propertyName`` in place when the source-side port name or
-        target-side port name resolves to an authored USD relationship on the
-        corresponding prim.  Returns silently if nothing matches.
-        """
-        for prim_node, property_candidates, owner_id in (
-            (
-                outputNode,
-                (sourcePropertyName, outputPort),
-                getattr(outputNode, "id", "") if outputNode is not None else "",
-            ),
-            (
-                inputNode,
-                (targetPropertyName, inputPort),
-                getattr(inputNode, "id", "") if inputNode is not None else "",
-            ),
-        ):
-            if prim_node is None:
-                continue
-            prim_getter = getattr(prim_node, "getUsdPrim", None)
-            prim = prim_getter() if callable(prim_getter) else None
-            if prim is None or not prim.IsValid():
-                continue
-            for property_name in property_candidates:
-                if not property_name:
-                    continue
-                rel = prim.GetRelationship(property_name)
-                if rel and rel.IsValid():
-                    link.is_relationship_link = True
-                    link.propertyOwnerNodeId = owner_id
-                    link.propertyName = property_name
-                    return
 
     def _deleteConnection(
         self,
@@ -7976,57 +7061,6 @@ class GraphView(QGLWidget):
             self._invalidateBackReferenceLinkDataCache()
             self._noticeHandler.setEnabled(True)
 
-    def _removeLinkFromGraph(
-        self,
-        outputNodeId,
-        outputPort,
-        inputNodeId,
-        inputPort,
-        *,
-        sourcePropertyName="",
-        targetPropertyName="",
-    ):
-        """Remove a link from the local graph state (no USD mutation)."""
-        linkRecord = self._makeSerializedLinkRecord(
-            outputNodeId,
-            outputPort,
-            inputNodeId,
-            inputPort,
-            sourcePropertyName=sourcePropertyName,
-            targetPropertyName=targetPropertyName,
-        )
-        linkToRemove = None
-        for link in self.links:
-            if self._linkMatchesRecord(link, linkRecord):
-                linkToRemove = link
-                break
-
-        if not linkToRemove:
-            return
-
-        linkIndex = self.links.index(linkToRemove)
-
-        outputNode = self.nodes.get(outputNodeId)
-        inputNode = self.nodes.get(inputNodeId)
-        if outputNode and linkToRemove in outputNode.outputLinks:
-            outputNode.outputLinks.remove(linkToRemove)
-        if inputNode and linkToRemove in inputNode.inputLinks:
-            inputNode.inputLinks.remove(linkToRemove)
-
-        self._spatialIndex.removeLink(linkIndex)
-        self.links.remove(linkToRemove)
-
-        # Re-index remaining links in spatial index (indices shifted)
-        for i in range(linkIndex, len(self.links)):
-            self._spatialIndex.removeLink(i + 1)
-            self._spatialIndex.insertLink(i, self._computeLinkBounds(self.links[i]))
-
-        self._rebuildConnectionCache()
-        # A link was removed in place (no full rebuild); re-mirror to C++ and
-        # rebuild port highlights (the removed connection changes port colors).
-        self._linksNeedSync = True
-        self._portHighlightsDirty = True
-        self.update()
 
     def _reloadLinksFromUSD(self):
         """Reload links from USD after connection changes.
@@ -8250,32 +7284,6 @@ class GraphView(QGLWidget):
         if not bounds.IsEmpty():
             self._frameNodeBounds(bounds)
 
-    def _syncLinksIfNeeded(self, graph):
-        """Mirror self.links into the held C++ GraphModel snapshot, but only when
-        that snapshot is stale.
-
-        syncLinksFromModels copies every LinkData across the C++ boundary, so
-        doing it unconditionally every frame is O(links) of pure marshalling on
-        the redraw hot path. The snapshot only goes stale when the hovered link
-        changes, or when some other path mutates a rendered link field
-        (selection, highlight, endpoints, membership) and flags
-        self._linksNeedSync. A plain pan/zoom redraw changes neither, so it skips
-        the marshal entirely.
-
-        Hover is derived from self._linkUnderCursor and re-applied here (rather
-        than every frame) whenever the hovered index changes; it persists on the
-        snapshot between frames, so there is no per-frame set/clear sweep.
-        """
-        if (
-            self._linkUnderCursor == self._lastSyncedLinkHover
-            and not self._linksNeedSync
-        ):
-            return
-        for i, link in enumerate(self.links):
-            link.hovered = i == self._linkUnderCursor
-        self._lastSyncedLinkHover = self._linkUnderCursor
-        graph.syncLinksFromModels(self.links)
-        self._linksNeedSync = False
 
     def paintLinks(self):
         """Paint all links in the scene."""
@@ -9194,45 +8202,6 @@ class GraphView(QGLWidget):
 
         node.position = Gf.Vec2d(x, y)
 
-    def _addPrimAsNode(self, prim, stage, addedNodeIds):
-        """Helper to add a single prim as a node to the graph.
-
-        Args:
-            prim: USD prim to add
-            stage: USD stage
-            addedNodeIds: List to append added node IDs to
-
-        Returns:
-            True if node was added, False otherwise
-        """
-        primPath = prim.GetPath()
-        primPathStr = str(primPath)
-
-        # Skip if already in graph
-        if primPathStr in self.nodes:
-            return False
-
-        # Use NodeFactory to create the node
-        node = self._nodeFactory.create_node_from_prim(prim, stage)
-        if not node:
-            # No library can handle this prim type
-            return False
-
-        self._populateNodeLinksFromPrim(node, prim)
-
-        # Calculate node size
-        if self.fontAtlas:
-            self.nodeGraph._calculateNodeSize(
-                node, self.textRenderer.calculateTextWidth, self.fontAtlas
-            )
-
-        # Placement is deferred to the caller, which grid-places the whole batch
-        # at once (sized to the batch and anchored below existing content).
-        self.nodes[node.id] = node
-        self._nextZOrder += 1
-        node.zOrder = self._nextZOrder
-        addedNodeIds.append(node.id)
-        return True
 
     def _getContainerChildNodes(self, containerPrim):
         """Get all child prims of a container/blueprint.
@@ -9467,49 +8436,6 @@ class GraphView(QGLWidget):
         else:
             self._showPopupMessage("No nodes removed")
 
-    def _addNewNodeFast(self, prim, stage):
-        """Add a newly created node to the graph with minimal overhead.
-
-        This is optimized for newly created nodes that have NO connections yet.
-        It skips the full link rebuild and only does the minimal work needed.
-
-        Args:
-            prim: The USD prim for the new node
-            stage: The USD stage
-
-        Returns:
-            str: The node ID if successful, None otherwise
-        """
-        primPath = prim.GetPath()
-        primPathStr = str(primPath)
-
-        # Skip if already in graph
-        if primPathStr in self.nodes:
-            return None
-
-        # Use NodeFactory to create the node
-        node = self._nodeFactory.create_node_from_prim(prim, stage)
-        if not node:
-            return None
-
-        # New nodes have no connections, so inputLinks and outputLinks are empty
-        # No need to process USD attributes for connections
-
-        # Calculate node size
-        if self.fontAtlas:
-            self.nodeGraph._calculateNodeSize(
-                node, self.textRenderer.calculateTextWidth, self.fontAtlas
-            )
-
-        # Add to nodes dictionary
-        self.nodes[node.id] = node
-        self._nextZOrder += 1
-        node.zOrder = self._nextZOrder
-
-        # Index the new node for hit-testing (no links / highlights yet).
-        self._updateNodeSpatialBounds({node.id})
-
-        return node.id
 
     def _createNodeFromHotbox(self, node_data, screen_pos):
         """Create a new node using the appropriate library.
@@ -11360,3 +10286,38 @@ class GraphView(QGLWidget):
         )
 
         self.update()
+
+    # Graph/topology behavior moved to graphview/model.py (nv-model-graph).
+    # Explicit bindings, never forwarding bodies, so unbound
+    # GraphView._method(duck_self, ...) calls keep working.
+    _addBackReferenceDanglingLinks = _graphview_model.add_back_reference_dangling_links
+    _addLinkToGraph = _graphview_model.add_link_to_graph
+    _addNewNodeFast = _graphview_model.add_new_node_fast
+    _addNodeFromDanglingLink = _graphview_model.add_node_from_dangling_link
+    _addNodesFromDanglingLink = _graphview_model.add_nodes_from_dangling_link
+    _addPrimAsNode = _graphview_model.add_prim_as_node
+    _classifyRelationshipLinkFromUsd = staticmethod(_graphview_model.classify_relationship_link_from_usd)
+    _collectSiblingDanglingLinks = _graphview_model.collect_sibling_dangling_links
+    _computeLinkBounds = _graphview_model.compute_link_bounds
+    _findLinkToInput = _graphview_model.find_link_to_input
+    _findPinIndex = _graphview_model.find_pin_index
+    _getLinkEndpointPosition = _graphview_model.get_link_endpoint_position
+    _getLinksForNodeDirection = _graphview_model.get_links_for_node_direction
+    _getLinksForNodeFlat = _graphview_model.get_links_for_node_flat
+    _hasExactLink = _graphview_model.has_exact_link
+    _invalidateBackReferenceLinkDataCache = _graphview_model.invalidate_back_reference_link_data_cache
+    _makeLinkFromUsdData = staticmethod(_graphview_model.make_link_from_usd_data)
+    _populateNodeLinksFromPrim = _graphview_model.populate_node_links_from_prim
+    _processNodeLinks = _graphview_model.process_node_links
+    _rebuildConnectionCache = _graphview_model.rebuild_connection_cache
+    _rebuildLinks = _graphview_model.rebuild_links
+    _reconcileMovedNodes = _graphview_model.reconcile_moved_nodes
+    _removeLinkFromGraph = _graphview_model.remove_link_from_graph
+    _resolveLinkDisplayPinName = _graphview_model.resolve_link_display_pin_name
+    _resolvePortPropertyName = _graphview_model.resolve_port_property_name
+    _setupDanglingLinkEndpoint = _graphview_model.setup_dangling_link_endpoint
+    _setupLinkEndpoints = _graphview_model.setup_link_endpoints
+    _surfaceConnectionEndpointPins = _graphview_model.surface_connection_endpoint_pins
+    _syncLinksIfNeeded = _graphview_model.sync_links_if_needed
+    _updateLinksForMovedNodes = _graphview_model.update_links_for_moved_nodes
+    _updateNodeLinkEndpoints = _graphview_model.update_node_link_endpoints
