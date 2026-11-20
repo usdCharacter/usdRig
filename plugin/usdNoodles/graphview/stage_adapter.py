@@ -15,7 +15,7 @@ from pxr import Sdf, Tf
 
 from UsdNoodles.nodeGraph import unsubscribe_edit_target_warning
 
-from . import model
+from . import model, selection
 from .stage_sync import (
     MODE_BLUEPRINT,
     MODE_CONTAINER,
@@ -55,9 +55,12 @@ def _dropNodeId(view, nodeId):
         state.apply(model.GraphDelta(ops=(model.RemoveNode(nodeId),)))
     else:
         view.nodes.pop(nodeId, None)
-    view._selectedNodes.discard(nodeId)
-    view._marqueeBaseSelectedNodes.discard(nodeId)
-    view._marqueePrevSelectedNodes.discard(nodeId)
+    if hasattr(view, "_selection"):
+        selection.reconcile(view)
+    else:
+        view._selectedNodes.discard(nodeId)
+        view._marqueeBaseSelectedNodes.discard(nodeId)
+        view._marqueePrevSelectedNodes.discard(nodeId)
     if state is not None:
         return
     # _rebuildLinks rebuilds the whole index, but that is deferred to
@@ -851,8 +854,11 @@ def _beginReloadOnView(view, frame):
     # Clear state that holds dead Usd.Prim / Usd.Stage references
     view._lastPrimTreeSelection = []
     view._lastSelectedNode = None
-    view._selectedNodes.clear()
-    view._selectedLinks.clear()
+    if hasattr(view, "_selection"):
+        view._selection.update("replace", (), ())
+    else:
+        view._selectedNodes.clear()
+        view._selectedLinks.clear()
     view._linkUnderCursor = -1
     # Drop per-node position watermarks for the torn-down graph; the next
     # graph's nodes reconcile fresh (and this bounds the map's growth).

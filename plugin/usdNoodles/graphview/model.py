@@ -73,6 +73,7 @@ from ..pinUtils import (
     split_direction_hint,
 )
 from ..spatial import SpatialIndex
+from UsdNoodles.graphview import selection as _selection
 from .legacy import legacy_symbol
 
 
@@ -1218,6 +1219,8 @@ def rebuild_links(view):
     if len(deduped) != len(view.links):
         view.links.clear()
         view.links.extend(deduped)
+
+    _selection.reconcile(view)
 
     # Sync the freshly-rebuilt links into the C++ View Model BEFORE rebuilding
     # the connection cache, so the cache (isPortConnected / folded-header /
