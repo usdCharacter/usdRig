@@ -221,6 +221,38 @@ class _StubView:
         return pathStr
 
 
+class _ClosedHostReads(_StubView):
+    """A view whose host surface refuses reads once the editor is closed.
+
+    usdview's dataModel keeps ``signalStageReplaced`` connected, and a closed
+    Qt widget is not a destroyed one, so the slot can fire while the api, the
+    graph and the current prim path are going away. Asking for any of them
+    then fails, which is what the teardown race looks like from the inside --
+    the effect assertions alone only catch the damage a successful read does.
+    """
+
+    _HOST_READS = frozenset(("_usdviewApi", "nodeGraph", "_currentPrimPath"))
+
+    def __init__(self, *args, **kwargs):
+        object.__setattr__(self, "_hostClosed", False)
+        self.host_reads = []
+        super().__init__(*args, **kwargs)
+
+    def closeHost(self):
+        object.__setattr__(self, "_hostClosed", True)
+
+    def openHost(self):
+        object.__setattr__(self, "_hostClosed", False)
+
+    def __getattribute__(self, name):
+        if name in _ClosedHostReads._HOST_READS and object.__getattribute__(
+            self, "_hostClosed"
+        ):
+            self.host_reads.append(name)
+            raise AssertionError("a closed editor read %s" % name)
+        return object.__getattribute__(self, name)
+
+
 class _LifecycleView:
     """A headless editor: the model a reload mutates, recorded.
 
@@ -1060,11 +1092,11 @@ class ProductionAdapterTest(unittest.TestCase):
     the widget, or a policy the widget stops applying, fails here.
     """
 
-    def _view(self, stage, paths):
+    def _view(self, stage, paths, view_class=_StubView):
         """A stub view whose node map refuses to be walked (see
         ``_KeyedOnlyNodes``), plus the usdview api ``readStageContext`` reads.
         """
-        view = _StubView(stage, paths)
+        view = view_class(stage, paths)
         view.nodeGraph.nodes = _KeyedOnlyNodes(view.nodeGraph.nodes)
         view._usdviewApi = SimpleNamespace(
             stage=stage, frame=Usd.TimeCode.Default()
@@ -1130,23 +1162,38 @@ class ProductionAdapterTest(unittest.TestCase):
         self.assertIsNone(traces[0])
 
     def test_a_replace_delivered_after_close_stops_at_the_service(self) -> None:
-        """usdview's signal reaches a closed editor through the real slot."""
+        """usdview's signal reaches a closed editor through the real slot.
+
+        The host reads are forbidden, not just watched: the slot must decide
+        the editor is gone before it asks the api for a frame or a stage, or
+        asks the graph which loader a reload would re-run.
+        """
         stageA = Usd.Stage.CreateInMemory()
         UsdGeom.Sphere.Define(stageA, "/Alpha")
         UsdGeom.Sphere.Define(stageA, "/Keeper")
         stageB = Usd.Stage.CreateInMemory()
-        view = self._view(stageA, ["/Alpha", "/Keeper"])
+        view = self._view(stageA, ["/Alpha", "/Keeper"], _ClosedHostReads)
         service = _makeStageSync(view)
         view._stageSync = service
         view._noticeHandler = service.handler()
         service.handler().register(stageA)
         service.close()
+        # usdview has moved on to a new stage and emits to the editor that
+        # already closed; the api it hands the slot is the replacement's.
+        view._usdviewApi = SimpleNamespace(
+            stage=stageB, frame=Usd.TimeCode.Default()
+        )
+        view.closeHost()
 
-        with patch(
-            "UsdNoodles.graphView.QtCore.QTimer.singleShot"
-        ) as posted:
-            GraphView._onStageReplaced(view)
+        try:
+            with patch(
+                "UsdNoodles.graphView.QtCore.QTimer.singleShot"
+            ) as posted:
+                GraphView._onStageReplaced(view)
+        finally:
+            view.openHost()
 
+        self.assertEqual(view.host_reads, [])
         posted.assert_not_called()
         self.assertIsNone(service.handler().getStage())
         self.assertEqual(view.nodes.iterated, [])

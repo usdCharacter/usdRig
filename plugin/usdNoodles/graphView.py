@@ -1644,10 +1644,13 @@ class GraphView(QGLWidget):
     def _onStageReplaced(self):
         sync = getattr(self, "_stageSync", None)
         if not isinstance(sync, stage_sync.StageSync):
-            # Test doubles never ran __init__: run the same policy through
-            # a transient service rather than a second copy of it.
+            # Test doubles never ran __init__: same policy, transient service.
             sync = _makeStageSync(self)
             self._stageSync = sync
+        if sync.isClosed():
+            # usdview keeps this signal connected and a closed widget is not
+            # a destroyed one: decide before the api or graph is read.
+            return
         frame = _frameOf(
             getattr(self._usdviewApi, "frame", Usd.TimeCode.Default())
             if self._usdviewApi
@@ -1655,17 +1658,14 @@ class GraphView(QGLWidget):
         )
         stage = self._usdviewApi.stage if self._usdviewApi else None
         sync.replace(
-            stage,
-            stage_sync.stageLoadMode(self),
-            self._currentPrimPath,
-            frame,
+            stage, stage_sync.stageLoadMode(self), self._currentPrimPath, frame
         )
 
     def _finishStageReload(self, epoch=None):
         sync = getattr(self, "_stageSync", None)
         if not isinstance(sync, stage_sync.StageSync):
-            # Test doubles never ran __init__: run the same policy through
-            # a transient service rather than a second copy of it.
+            # Test doubles never ran __init__: run the same policy through a
+            # transient service rather than a second copy of it.
             sync = _makeStageSync(self)
             self._stageSync = sync
         sync.finish(sync.epoch() if epoch is None else epoch)
