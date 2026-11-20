@@ -1,6 +1,7 @@
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecMath/blendLayoutKernel.h"
 #include "rigExecMath/blendRangeKernel.h"
+#include "rigExecMath/dualQuatKernel.h"
 // rigExecRuntime geometry family:RevisionStatic, InfluenceFold,
 // RevisionChunk, RevisionFuse, ChainStatus, Derived.
 // A zero-USD port of the baked geometry loop (libs/rigExec/bakedGeometry.cpp
@@ -339,84 +340,6 @@ RrVec3d
 RrGeoToVec3d(const RrVec3f &v)
 {
     return RrVec3d(double(v[0]), double(v[1]), double(v[2]));
-}
-
-// GfDot(const GfQuatd&, const GfQuatd&), verbatim from quatd.h: the
-// imaginary dot first, then the real product.
-double
-RrGeoQuatDot(const RrQuatd &a, const RrQuatd &b)
-{
-    return RrDot(a.GetImaginary(), b.GetImaginary()) +
-           a.GetReal() * b.GetReal();
-}
-
-// GfMatrix3d::SetRotate(const GfQuatd&): the same _SetRotateFromQuat the
-// 4x4 uses (verified equal on the USD build over random quaternions).
-RrMat3d
-RrGeoMat3SetRotate(const RrQuatd &q)
-{
-    const double r = q.GetReal();
-    const RrVec3d i = q.GetImaginary();
-    RrMat3d m;
-    m[0][0] = 1.0 - 2.0 * (i[1] * i[1] + i[2] * i[2]);
-    m[0][1] = 2.0 * (i[0] * i[1] + i[2] * r);
-    m[0][2] = 2.0 * (i[2] * i[0] - i[1] * r);
-    m[1][0] = 2.0 * (i[0] * i[1] - i[2] * r);
-    m[1][1] = 1.0 - 2.0 * (i[2] * i[2] + i[0] * i[0]);
-    m[1][2] = 2.0 * (i[1] * i[2] + i[0] * r);
-    m[2][0] = 2.0 * (i[2] * i[0] + i[1] * r);
-    m[2][1] = 2.0 * (i[1] * i[2] - i[0] * r);
-    m[2][2] = 1.0 - 2.0 * (i[1] * i[1] + i[0] * i[0]);
-    return m;
-}
-
-// GfMatrix3d::Orthonormalize: orthogonalize and normalize the row vectors
-// (matrix3d.cpp), without the convergence warning, which the frame path
-// never reads.
-void
-RrGeoMat3Orthonormalize(RrMat3d *m)
-{
-    RrVec3d r0(m->GetRow(0)), r1(m->GetRow(1)), r2(m->GetRow(2));
-    RrOrthogonalizeBasis(&r0, &r1, &r2, true);
-    m->SetRow(0, r0);
-    m->SetRow(1, r1);
-    m->SetRow(2, r2);
-}
-
-// GfMatrix3d::ExtractRotationQuaternion (matrix3d.cpp, transcribed
-// verbatim including the int-typed 4 in the else arm), followed by the
-// GfRotation round trip ExtractRotation().GetQuat() performs: SetQuat's
-// length gate and axis/angle extraction, then GetQuat's half-angle sine
-// and cosine with one normalization (rotation.cpp).
-RrQuatd
-RrGeoMat3ExtractRotationQuat(const RrMat3d &m)
-{
-    int i;
-    if (m[0][0] > m[1][1]) {
-        i = (m[0][0] > m[2][2] ? 0 : 2);
-    } else {
-        i = (m[1][1] > m[2][2] ? 1 : 2);
-    }
-    RrVec3d im(0.0, 0.0, 0.0);
-    double r = 0.0;
-    if (m[0][0] + m[1][1] + m[2][2] > m[i][i]) {
-        r = 0.5 * std::sqrt(m[0][0] + m[1][1] + m[2][2] + 1);
-        im[0] = (m[1][2] - m[2][1]) / (4.0 * r);
-        im[1] = (m[2][0] - m[0][2]) / (4.0 * r);
-        im[2] = (m[0][1] - m[1][0]) / (4.0 * r);
-    } else {
-        const int j = (i + 1) % 3;
-        const int k = (i + 2) % 3;
-        const double q = 0.5 * std::sqrt(m[i][i] - m[j][j] - m[k][k] + 1);
-        im[i] = q;
-        im[j] = (m[i][j] + m[j][i]) / (4 * q);
-        im[k] = (m[k][i] + m[i][k]) / (4 * q);
-        r = (m[j][k] - m[k][j]) / (4 * q);
-    }
-    r = RrClamp(r, -1.0, 1.0);
-    RrRotation rotation;
-    rotation.SetQuat(RrQuatd(r, im));
-    return rotation.GetQuat();
 }
 
 // Packet mirrors: the per-mover parameter packet and its shared layouts,
@@ -1293,525 +1216,13 @@ RrGeoApplyMatrixKernel(const RrGeoMoverParameters &p, std::vector<RrVec3f> *pts,
     return true;
 }
 
-// Dual-quaternion skinning (dualQuat.*, pointFrame.cpp): the per-matrix
-// stretch/rotation split, the weighted palette blend, and the Kabsch SVD
-// the non-rigid split fits through.
+// Dual-quaternion skinning: rigExecMath/dualQuatKernel.h over the runtime
+// mirror is the one numeric definition (blend, normalize, polar split, point
+// apply). Only the palette build and the per-range apply below are the
+// runtime's, as solvers.cpp's RigExecSkinDualQuatPalette and
+// RigExecApplyDualQuatSkin are for the core.
 
-constexpr double RrGeoDualQuatEpsilon = 1e-9;
-
-struct RrGeoDualQuat {
-    RrQuatd real{1.0};
-    RrQuatd dual{0.0};
-};
-
-struct RrGeoScaledDualQuat {
-    RrGeoDualQuat rigid;
-    RrMat3d stretch{1.0};
-    bool isRigid = true;
-};
-
-struct RrGeoTransformParams {
-    RrQuatd rotation{1.0};
-    RrVec3d translation{0.0, 0.0, 0.0};
-    RrVec3d scale{1.0, 1.0, 1.0};
-    RrVec3d shear{0.0, 0.0, 0.0};
-    int reflectionAxis = 2;
-};
-
-namespace {
-
-// Jacobi eigen decomposition of a symmetric 3x3, transcribed from
-// pointFrame.cpp: eigenvalues descending, eigenvectors as the columns
-// of V, hemisphere- and repeated-eigenspace-canonicalized.
-void
-RrGeoSymmetricEigen3(const double m[3][3], double eval[3], double evec[3][3])
-{
-    double a[3][3];
-    double v[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j)
-            a[i][j] = m[i][j];
-
-    for (int sweep = 0; sweep < 64; ++sweep) {
-        double off = std::abs(a[0][1]) + std::abs(a[0][2]) + std::abs(a[1][2]);
-        if (off < 1e-15)
-            break;
-        for (int p = 0; p < 2; ++p) {
-            for (int q = p + 1; q < 3; ++q) {
-                if (std::abs(a[p][q]) < 1e-18)
-                    continue;
-                const double theta = (a[q][q] - a[p][p]) / (2 * a[p][q]);
-                const double t =
-                    (theta >= 0 ? 1.0 : -1.0) /
-                    (std::abs(theta) + std::sqrt(theta * theta + 1));
-                const double cth = 1.0 / std::sqrt(t * t + 1);
-                const double sth = t * cth;
-                for (int k = 0; k < 3; ++k) {
-                    const double akp = a[k][p], akq = a[k][q];
-                    a[k][p] = cth * akp - sth * akq;
-                    a[k][q] = sth * akp + cth * akq;
-                }
-                for (int k = 0; k < 3; ++k) {
-                    const double apk = a[p][k], aqk = a[q][k];
-                    a[p][k] = cth * apk - sth * aqk;
-                    a[q][k] = sth * apk + cth * aqk;
-                }
-                for (int k = 0; k < 3; ++k) {
-                    const double vkp = v[k][p], vkq = v[k][q];
-                    v[k][p] = cth * vkp - sth * vkq;
-                    v[k][q] = sth * vkp + cth * vkq;
-                }
-            }
-        }
-    }
-
-    int order[3] = {0, 1, 2};
-    double d[3] = {a[0][0], a[1][1], a[2][2]};
-    std::sort(order, order + 3, [&](int x, int y) { return d[x] > d[y]; });
-    for (int i = 0; i < 3; ++i) {
-        eval[i] = d[order[i]];
-        for (int k = 0; k < 3; ++k) {
-            evec[k][i] = v[k][order[i]];
-        }
-        int maxK = 0;
-        for (int k = 1; k < 3; ++k) {
-            if (std::abs(evec[k][i]) > std::abs(evec[maxK][i])) {
-                maxK = k;
-            }
-        }
-        if (evec[maxK][i] < 0) {
-            for (int k = 0; k < 3; ++k) {
-                evec[k][i] = -evec[k][i];
-            }
-        }
-    }
-
-    const double tol =
-        1e-8 * std::max({std::abs(eval[0]), std::abs(eval[2]), 1.0});
-    const bool eq01 = std::abs(eval[0] - eval[1]) <= tol;
-    const bool eq12 = std::abs(eval[1] - eval[2]) <= tol;
-    if (eq01 && eq12) {
-        // Full isotropy: the canonical basis is the world basis.
-        for (int i = 0; i < 3; ++i)
-            for (int k = 0; k < 3; ++k)
-                evec[k][i] = (k == i) ? 1.0 : 0.0;
-    } else if (eq01 || eq12) {
-        const int a = eq01 ? 0 : 1;
-        const int other = eq01 ? 2 : 0;
-        const double n[3] = {evec[0][other], evec[1][other], evec[2][other]};
-        int bestAxis = 0;
-        double bestLen = -1.0;
-        double b1[3] = {0, 0, 0};
-        for (int axis = 0; axis < 3; ++axis) {
-            double p[3];
-            for (int k = 0; k < 3; ++k) {
-                p[k] = ((k == axis) ? 1.0 : 0.0) - n[k] * n[axis];
-            }
-            const double len =
-                std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]);
-            if (len > bestLen) {
-                bestLen = len;
-                bestAxis = axis;
-                for (int k = 0; k < 3; ++k)
-                    b1[k] = p[k] / len;
-            }
-        }
-        (void)bestAxis;
-        double b2[3] = {n[1] * b1[2] - n[2] * b1[1],
-                        n[2] * b1[0] - n[0] * b1[2],
-                        n[0] * b1[1] - n[1] * b1[0]};
-        int maxK = 0;
-        for (int k = 1; k < 3; ++k) {
-            if (std::abs(b2[k]) > std::abs(b2[maxK]))
-                maxK = k;
-        }
-        if (b2[maxK] < 0) {
-            for (int k = 0; k < 3; ++k)
-                b2[k] = -b2[k];
-        }
-        for (int k = 0; k < 3; ++k) {
-            evec[k][a] = b1[k];
-            evec[k][a + 1] = b2[k];
-        }
-    }
-}
-
-bool
-RrGeoPointsToParams(const std::array<RrVec3d, 4> &restPoints,
-                    const std::array<RrVec3d, 4> &posePoints,
-                    int reflectionAxis, RrGeoTransformParams *params)
-{
-    RrMat4d m;
-    if (!RrPointsToMatrix(restPoints, posePoints, &m)) {
-        return false;
-    }
-
-    double L[3][3];
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j)
-            L[i][j] = m[j][i];
-
-    double ltl[3][3];
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            double sum = 0;
-            for (int k = 0; k < 3; ++k)
-                sum += L[k][i] * L[k][j];
-            ltl[i][j] = sum;
-        }
-    }
-    double s2[3], V[3][3];
-    RrGeoSymmetricEigen3(ltl, s2, V);
-
-    double sigma[3];
-    for (int i = 0; i < 3; ++i) {
-        sigma[i] = std::sqrt(std::max(s2[i], 0.0));
-    }
-    const double detL = L[0][0] * (L[1][1] * L[2][2] - L[1][2] * L[2][1]) -
-                        L[0][1] * (L[1][0] * L[2][2] - L[1][2] * L[2][0]) +
-                        L[0][2] * (L[1][0] * L[2][1] - L[1][1] * L[2][0]);
-    if (sigma[2] < 1e-14 * std::max(1.0, sigma[0])) {
-        return false; // singular posed frame: no SRT decomposition
-    }
-
-    double U[3][3];
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            double sum = 0;
-            for (int k = 0; k < 3; ++k)
-                sum += L[i][k] * V[k][j];
-            U[i][j] = sum / sigma[j];
-        }
-    }
-
-    const double delta = (detL >= 0) ? 1.0 : -1.0;
-
-    int k = 2;
-    if (delta < 0) {
-        const int axis = reflectionAxis;
-        double best = -1.0;
-        for (int i = 0; i < 3; ++i) {
-            const double align = std::abs(V[axis][i]);
-            if (align > best) {
-                best = align;
-                k = i;
-            }
-        }
-    }
-
-    double R[3][3];
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            double sum = 0;
-            for (int kk = 0; kk < 3; ++kk) {
-                const double dkk = (kk == k) ? delta : 1.0;
-                sum += U[i][kk] * dkk * V[j][kk];
-            }
-            R[i][j] = sum;
-        }
-    }
-
-    double H[3][3];
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            double sum = 0;
-            for (int kk = 0; kk < 3; ++kk)
-                sum += R[kk][i] * L[kk][j];
-            H[i][j] = sum;
-        }
-    }
-
-    RrMat3d rowR(R[0][0], R[1][0], R[2][0], R[0][1], R[1][1], R[2][1], R[0][2],
-                 R[1][2], R[2][2]);
-    RrGeoMat3Orthonormalize(&rowR);
-    const RrQuatd q = RrGeoMat3ExtractRotationQuat(rowR);
-
-    params->translation = RrVec3d(m[3][0], m[3][1], m[3][2]);
-    params->rotation = q.GetNormalized();
-    params->scale = RrVec3d(H[0][0], H[1][1], H[2][2]);
-    params->shear =
-        RrVec3d(H[0][1] / H[0][0], H[0][2] / H[0][0], H[1][2] / H[1][1]);
-    params->reflectionAxis = reflectionAxis;
-    return true;
-}
-
-bool
-RrGeoQuatIsFinite(const RrQuatd &q)
-{
-    const RrVec3d &v = q.GetImaginary();
-    return std::isfinite(q.GetReal()) && std::isfinite(v[0]) &&
-           std::isfinite(v[1]) && std::isfinite(v[2]);
-}
-
-bool
-RrGeoIsProperRotation(const RrMat4d &m, double tolerance)
-{
-    const RrVec3d r0(m[0][0], m[0][1], m[0][2]);
-    const RrVec3d r1(m[1][0], m[1][1], m[1][2]);
-    const RrVec3d r2(m[2][0], m[2][1], m[2][2]);
-    const double gram[6] = {
-        RrDot(r0, r0) - 1.0, RrDot(r1, r1) - 1.0, RrDot(r2, r2) - 1.0,
-        RrDot(r0, r1),       RrDot(r0, r2),       RrDot(r1, r2),
-    };
-    for (const double g : gram) {
-        if (!(std::abs(g) <= tolerance)) {
-            return false;
-        }
-    }
-    return RrDot(RrCross(r0, r1), r2) > 0.0;
-}
-
-bool
-RrGeoDualQuatNormalize(RrGeoDualQuat *dq)
-{
-    const double norm = dq->real.GetLength();
-    if (!(norm > RrGeoDualQuatEpsilon) || !std::isfinite(norm) ||
-        !RrGeoQuatIsFinite(dq->dual)) {
-        *dq = RrGeoDualQuat();
-        return false;
-    }
-    const double inv = 1.0 / norm;
-    dq->real *= inv;
-    dq->dual *= inv;
-    dq->dual -= dq->real * RrGeoQuatDot(dq->real, dq->dual);
-    return true;
-}
-
-template <class GetDq, class GetWeight>
-bool
-RrGeoBlendDualQuats(size_t count, GetDq getDq, GetWeight getWeight,
-                    RrGeoDualQuat *result)
-{
-    *result = RrGeoDualQuat();
-
-    RrQuatd realSum(0.0);
-    RrQuatd dualSum(0.0);
-    RrQuatd reference(0.0);
-    bool haveReference = false;
-    double absWeightSum = 0.0;
-
-    for (size_t i = 0; i < count; ++i) {
-        const double w = getWeight(i);
-        if (!std::isfinite(w)) {
-            return false;
-        }
-        if (w == 0.0) {
-            continue;
-        }
-        const RrGeoDualQuat *dq = getDq(i);
-        if (!dq) {
-            return false;
-        }
-        double sign = 1.0;
-        if (!haveReference) {
-            reference = dq->real;
-            haveReference = true;
-        } else if (RrGeoQuatDot(dq->real, reference) < 0.0) {
-            sign = -1.0;
-        }
-        const double sw = sign * w;
-        realSum += dq->real * sw;
-        dualSum += dq->dual * sw;
-        absWeightSum += std::abs(w);
-    }
-
-    if (!haveReference) {
-        return false;
-    }
-    result->real = realSum;
-    result->dual = dualSum;
-    const double norm = realSum.GetLength();
-    if (!(norm > RrGeoDualQuatEpsilon * std::max(1.0, absWeightSum))) {
-        *result = RrGeoDualQuat();
-        return false;
-    }
-    return RrGeoDualQuatNormalize(result);
-}
-
-RrGeoDualQuat
-RrGeoDualQuatFromRotationTranslation(const RrQuatd &rotation,
-                                     const RrVec3d &translation)
-{
-    RrGeoDualQuat dq;
-    dq.real = rotation.GetNormalized();
-    dq.dual = (RrQuatd(0.0, translation) * dq.real) * 0.5;
-    return dq;
-}
-
-bool
-RrGeoDecomposeMatrix(const RrMat4d &matrix, RrQuatd *rotation, RrMat3d *stretch)
-{
-    if (RrGeoIsProperRotation(matrix, RrGeoDualQuatEpsilon)) {
-        *rotation = matrix.ExtractRotationQuat();
-        if (stretch) {
-            stretch->SetIdentity();
-        }
-        return true;
-    }
-
-    const std::array<RrVec3d, 4> unitRest = {
-        RrVec3d(0, 0, 0), RrVec3d(1, 0, 0), RrVec3d(0, 1, 0), RrVec3d(0, 0, 1)};
-    RrGeoTransformParams params;
-    const bool nonSingular =
-        RrGeoPointsToParams(unitRest, RrMatrixToPoints(unitRest, matrix).points,
-                            /*reflectionAxis=*/2, &params);
-    *rotation = nonSingular ? params.rotation : RrQuatd(1.0);
-
-    if (stretch) {
-        const RrMat3d linear = matrix.ExtractRotationMatrix();
-        if (!nonSingular) {
-            *stretch = linear;
-        } else {
-            // L = S * R  =>  S = L * R^T; symmetrise away rounding.
-            const RrMat3d rowR = RrGeoMat3SetRotate(*rotation);
-            const RrMat3d s = linear * rowR.GetTranspose();
-            for (int i = 0; i < 3; ++i) {
-                for (int j = 0; j < 3; ++j) {
-                    (*stretch)[i][j] = 0.5 * (s[i][j] + s[j][i]);
-                }
-            }
-        }
-    }
-    return false;
-}
-
-RrVec3d
-RrGeoMulRow(const RrVec3d &p, const RrMat3d &s)
-{
-    return RrVec3d(p[0] * s[0][0] + p[1] * s[1][0] + p[2] * s[2][0],
-                   p[0] * s[0][1] + p[1] * s[1][1] + p[2] * s[2][1],
-                   p[0] * s[0][2] + p[1] * s[1][2] + p[2] * s[2][2]);
-}
-
-RrVec3d
-RrGeoDualQuatRotateVector(const RrGeoDualQuat &dq, const RrVec3d &vector)
-{
-    const double w = dq.real.GetReal();
-    const RrVec3d &u = dq.real.GetImaginary();
-    const RrVec3d c = RrCross(u, vector);
-    return vector + (c * w + RrCross(u, c)) * 2.0;
-}
-
-RrVec3d
-RrGeoDualQuatTranslation(const RrGeoDualQuat &dq)
-{
-    const double w = dq.real.GetReal();
-    const RrVec3d &v = dq.real.GetImaginary();
-    const double dw = dq.dual.GetReal();
-    const RrVec3d &dv = dq.dual.GetImaginary();
-    return (dv * w - v * dw + RrCross(v, dv)) * 2.0;
-}
-
-RrVec3d
-RrGeoDualQuatTransformPoint(const RrGeoDualQuat &dq, const RrVec3d &point)
-{
-    return RrGeoDualQuatRotateVector(dq, point) + RrGeoDualQuatTranslation(dq);
-}
-
-template <class GetSdq, class GetWeight>
-bool
-RrGeoBlendStretch(size_t count, GetSdq getSdq, GetWeight getWeight,
-                  RrGeoScaledDualQuat *result)
-{
-    bool allRigid = true;
-    double weightSum = 0.0;
-    double absWeightSum = 0.0;
-    for (size_t i = 0; i < count; ++i) {
-        const double w = getWeight(i);
-        if (w == 0.0) {
-            continue;
-        }
-        weightSum += w;
-        absWeightSum += std::abs(w);
-        if (!getSdq(i)->isRigid) {
-            allRigid = false;
-        }
-    }
-    if (allRigid) {
-        // Exact identity stretch: nothing to normalise, nothing dropped.
-        return true;
-    }
-    if (!(std::abs(weightSum) >
-          RrGeoDualQuatEpsilon * std::max(1.0, absWeightSum))) {
-        *result = RrGeoScaledDualQuat();
-        return false;
-    }
-    RrMat3d stretchSum(0.0);
-    for (size_t i = 0; i < count; ++i) {
-        const double w = getWeight(i);
-        if (w == 0.0) {
-            continue;
-        }
-        stretchSum += getSdq(i)->stretch * w;
-    }
-    result->stretch = stretchSum * (1.0 / weightSum);
-    result->isRigid = false;
-    return true;
-}
-
-RrGeoScaledDualQuat
-RrGeoScaledDualQuatFromMatrix(const RrMat4d &matrix)
-{
-    RrGeoScaledDualQuat sdq;
-    RrQuatd rotation(1.0);
-    sdq.isRigid = RrGeoDecomposeMatrix(matrix, &rotation, &sdq.stretch);
-    sdq.rigid = RrGeoDualQuatFromRotationTranslation(
-        rotation, matrix.ExtractTranslation());
-    return sdq;
-}
-
-bool
-RrGeoBlendScaledDualQuats(const RrGeoScaledDualQuat *palette,
-                          size_t paletteSize, const int *indices,
-                          const double *weights, size_t count,
-                          RrGeoScaledDualQuat *result)
-{
-    *result = RrGeoScaledDualQuat();
-    if (count > 0 && (!palette || !indices || !weights)) {
-        return false;
-    }
-    auto getSdq = [palette, paletteSize,
-                   indices](size_t i) -> const RrGeoScaledDualQuat * {
-        const int index = indices[i];
-        if (index < 0 || static_cast<size_t>(index) >= paletteSize) {
-            return nullptr;
-        }
-        return &palette[index];
-    };
-    auto getWeight = [weights](size_t i) { return weights[i]; };
-    if (!RrGeoBlendDualQuats(
-            count,
-            [&getSdq](size_t i) -> const RrGeoDualQuat * {
-                const RrGeoScaledDualQuat *sdq = getSdq(i);
-                return sdq ? &sdq->rigid : nullptr;
-            },
-            getWeight, &result->rigid)) {
-        return false;
-    }
-    // Every non-zero-weight index was validated by the rigid blend.
-    return RrGeoBlendStretch(count, getSdq, getWeight, result);
-}
-
-RrVec3d
-RrGeoScaledDualQuatTransformPoint(const RrGeoScaledDualQuat &sdq,
-                                  const RrVec3d &point)
-{
-    if (sdq.isRigid) {
-        return RrGeoDualQuatTransformPoint(sdq.rigid, point);
-    }
-    return RrGeoDualQuatTransformPoint(sdq.rigid,
-                                       RrGeoMulRow(point, sdq.stretch));
-}
-
-void
-RrGeoGatherDualQuatInfluences(const RrGeoSkinLayout &layout, size_t i,
-                              std::vector<int> *indices,
-                              std::vector<double> *weights)
-{
-    RigExecGatherDualQuatInfluences(layout, i, indices, weights);
-}
-
-} // namespace
+using RrGeoScaledDualQuat = RigExecScaledDualQuatKernelT<RrVec3f, RrVec3d>;
 
 std::vector<RrGeoScaledDualQuat>
 RrGeoSkinDualQuatPalette(const RrGeoSkinLayout &layout)
@@ -1819,7 +1230,9 @@ RrGeoSkinDualQuatPalette(const RrGeoSkinLayout &layout)
     std::vector<RrGeoScaledDualQuat> palette;
     palette.reserve(layout.transformCount + 1);
     for (size_t t = 0; t < layout.transformCount; ++t) {
-        palette.push_back(RrGeoScaledDualQuatFromMatrix(layout.transforms[t]));
+        palette.push_back(
+            RigExecScaledDualQuatFromMatrixKernel<RrVec3f, RrVec3d>(
+                layout.transforms[t]));
     }
     palette.emplace_back(); // identity: the weight complement's influence
     return palette;
@@ -1835,15 +1248,15 @@ RrGeoApplyDualQuatSkin(const RrVec3f *in, RrVec3f *out,
     indices.reserve(layout.elementSize + 1);
     weights.reserve(layout.elementSize + 1);
     for (size_t i = 0; i < layout.pointCount; ++i) {
-        RrGeoGatherDualQuatInfluences(layout, i, &indices, &weights);
+        RigExecGatherDualQuatInfluences(layout, i, &indices, &weights);
         RrGeoScaledDualQuat blend;
-        if (!RrGeoBlendScaledDualQuats(palette, paletteSize, indices.data(),
-                                       weights.data(), indices.size(),
-                                       &blend)) {
+        if (!RigExecBlendScaledDualQuatsKernel(palette, paletteSize,
+                                               indices.data(), weights.data(),
+                                               indices.size(), &blend)) {
             return false;
         }
-        out[i] = RrGeoToVec3f(
-            RrGeoScaledDualQuatTransformPoint(blend, RrGeoToVec3d(in[i])));
+        out[i] = RrGeoToVec3f(RigExecScaledDualQuatTransformPointKernel(
+            blend, RrGeoToVec3d(in[i])));
     }
     return true;
 }
@@ -4104,42 +3517,6 @@ RrGeoStatusForParameters(const RrGeoMoverParameters &parameters,
 }
 
 } // namespace
-
-// The affine frame expressions' dual quaternions (affineMath.h): the rigid
-// half of the skinning port above, which is dualQuat.cpp's.
-RrAffineDualQuat
-RrAffineDualQuatFromMatrix(const RrMat4d &matrix)
-{
-    RrQuatd rotation(1.0);
-    RrGeoDecomposeMatrix(matrix, &rotation, nullptr);
-    const RrGeoDualQuat dq = RrGeoDualQuatFromRotationTranslation(
-        rotation, matrix.ExtractTranslation());
-    return RrAffineDualQuat{dq.real, dq.dual};
-}
-
-bool
-RrAffineDualQuatNormalize(RrAffineDualQuat *dq)
-{
-    RrGeoDualQuat value;
-    value.real = dq->real;
-    value.dual = dq->dual;
-    const bool normalized = RrGeoDualQuatNormalize(&value);
-    dq->real = value.real;
-    dq->dual = value.dual;
-    return normalized;
-}
-
-RrMat4d
-RrAffineDualQuatToMatrix(const RrAffineDualQuat &dq)
-{
-    RrGeoDualQuat value;
-    value.real = dq.real;
-    value.dual = dq.dual;
-    RrMat4d m(1.0);
-    m.SetRotate(dq.real);
-    m.SetTranslateOnly(RrGeoDualQuatTranslation(value));
-    return m;
-}
 
 // Scratch: revision packets, influence tables, output buffers, chunks, skin
 // topologies, blend layouts and points, base points and the resolved stage
@@ -7408,7 +6785,9 @@ RrGeoFoldTransformForms(RrGeometryScratch::Revision *rev, bool useSimd)
         rev->rows.clear();
         rev->palette.resize(count + 1);
         for (size_t t = 0; t < count; ++t) {
-            rev->palette[t] = RrGeoScaledDualQuatFromMatrix(rev->influences[t]);
+            rev->palette[t] =
+                RigExecScaledDualQuatFromMatrixKernel<RrVec3f, RrVec3d>(
+                    rev->influences[t]);
         }
         rev->palette[count] = RrGeoScaledDualQuat();
         return;
@@ -7501,14 +6880,15 @@ RrGeoGatherChunkTransforms(RrProgram *program, const RigExecWireRevision &wire,
             &chunk->rows[size_t(position) * size_t(RrGeoSkinRowStride)]);
         if (splitAlready && size_t(position) < chunk->palette.size()) {
             chunk->palette[size_t(position)] =
-                RrGeoScaledDualQuatFromMatrix(matrix);
+                RigExecScaledDualQuatFromMatrixKernel<RrVec3f, RrVec3d>(matrix);
         }
     }
     if (dualQuat && !splitAlready) {
         chunk->palette.resize(count + 1);
         for (size_t t = 0; t < count; ++t) {
             chunk->palette[t] =
-                RrGeoScaledDualQuatFromMatrix(chunk->transforms[t]);
+                RigExecScaledDualQuatFromMatrixKernel<RrVec3f, RrVec3d>(
+                    chunk->transforms[t]);
         }
         chunk->palette[count] = RrGeoScaledDualQuat();
     }
@@ -8381,9 +7761,9 @@ RrGeoRunInfluenceFoldStep(RrProgram *program, RrGeometryScratch *scratch,
                 layout,
                 [&](const int *indices, const double *weights, size_t count) {
                     RrGeoScaledDualQuat blend;
-                    return RrGeoBlendScaledDualQuats(palette.data(),
-                                                     palette.size(), indices,
-                                                     weights, count, &blend);
+                    return RigExecBlendScaledDualQuatsKernel(
+                        palette.data(), palette.size(), indices, weights, count,
+                        &blend);
                 });
     }
     return true;

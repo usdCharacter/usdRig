@@ -658,6 +658,12 @@ jobs:
             "$P/lib/usd/rigExecSchema/resources/generatedSchema.usda" \
             "$P/lib/usd/rigExecImaging/resources/plugInfo.json" \
             "$P/lib/cmake/rigExec/rigExecConfig.cmake" \
+            "$P/lib/cmake/rigExec/rigexec_flags.cmake" \
+            "$P/share/rigExec/exactFpFlags.txt" \
+            "$P/share/rigExec/runtimeSources.txt" \
+            "$P/share/rigExec/runtimeIncludes.txt" \
+            "$P/share/rigExec/evalCoreSources.txt" \
+            "$P/share/rigExec/evalCoreIncludes.txt" \
             "$P/include/rigExec/rigEvaluator.h"
           do
             test -e "$f" || { echo "missing: $f"; exit 1; }

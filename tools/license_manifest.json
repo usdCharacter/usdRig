@@ -36,10 +36,10 @@
       },
       {
         "archive": "docs/examples/godot_rolling_ball.zip",
-        "blob": "4c8123a225f030028be9ffbb1ca855ee7b79289e",
-        "members": 85,
-        "legal_members": 18,
-        "refresh_note": "18 legal texts are packed; 9 mapped members (godot_rigExec/NOTICE, godot_rigExec/THIRD_PARTY_NOTICES.md, godot_rigExec/thirdparty/flatbuffers/LICENSE, godot_rigExec/thirdparty/lzma/NOTICE.md, godot_rigExec/thirdparty/lzma/DOC/lzma-sdk.txt, godot_rigExec/plugin/usdNoodles/LICENSE.txt, godot_rigExec/plugin/usdNoodles/NOODLES_LICENSE.txt, godot_rigExec/plugin/usdNoodles/THIRD_PARTY_LICENSES.txt, godot_rigExec/tools/license_manifest.json) come from the add-on checkout or the install prefix and are shipped only when that tree is rebuilt",
+        "blob": "a868212b6c4d8dda14dd395d71339647a6b54157",
+        "members": 94,
+        "legal_members": 27,
+        "refresh_note": "repacked with the SDK-consuming SConstruct; all 27 mapped legal members are now packed, including the canonical-root NOTICE and THIRD_PARTY_NOTICES.md, the source-relative vendored copies and a snapshot of tools/license_manifest.json; the SConstruct member ships from docs/godot_example/SConstruct in this checkout",
         "legal_members_mapped": 27
       },
       {
@@ -690,6 +690,7 @@
         ".gitignore",
         "mkdocs.yml",
         "docs/requirements.txt",
+        "docs/godot_example/**",
         "skills/**",
         "packaging/**"
       ],
@@ -700,7 +701,8 @@
       "provenance": [
         "CMakeLists pins the FlatBuffers and LZMA install notices and comments on the vendored Apache-2.0 headers",
         "the root .clang-format is adapted from OpenUSD's conventions per AGENTS.md; that is a derivation of style rules, not of licensed code, and clang-format 18.1.8 is an external tool",
-        "tools/license_manifest.json and tools/check_licenses.py are project-authored records and checks, not third-party material"
+        "tools/license_manifest.json and tools/check_licenses.py are project-authored records and checks, not third-party material",
+        "docs/godot_example/SConstruct is the packer-owned build script the Godot example archive ships; it reads the SDK's flag fragment and manifests rather than copying flags or file lists"
       ],
       "required_texts": [
         {
@@ -709,7 +711,7 @@
       ],
       "generator": null,
       "exception_scope": "External tools invoked by these scripts (flatc, usdGenSchema, clang-format, MkDocs, Qt/PySide) are not relicensed by the root MIT; only their checked-in scripts are project work.",
-      "matched_files": 123
+      "matched_files": 124
     },
     {
       "id": "original-example-generators",
@@ -1221,7 +1223,7 @@
       "archive": "docs/examples/godot_rolling_ball.zip",
       "generator": "docs/package_godot_example.py",
       "source_root": "a sibling checkout at ../godot_rigExec that is not tracked in this repository; the packer resolves every add-on-bound source inside it and rejects one that leaves that root",
-      "canonical_contract": "the root legal texts and the vendored texts named by THIRD_PARTY_NOTICES.md travel with the add-on under their source-relative paths. The packer writes exactly the legal_members list below; entries marked 'mapping recorded on this boundary' are absent from the checked-in archive, which predates them and was not repacked because no authorized add-on checkout or build inputs are available.",
+      "canonical_contract": "the root legal texts and the vendored texts named by THIRD_PARTY_NOTICES.md travel with the add-on under their source-relative paths. The packer writes exactly the legal_members list below; the checked-in archive was repacked with those entries, and the shipped SConstruct comes from docs/godot_example/SConstruct in this checkout rather than the add-on tree.",
       "legal_members": [
         {
           "member": "godot_rigExec/LICENSE",
@@ -1251,7 +1253,7 @@
           "member": "godot_rigExec/NOTICE-usdRig",
           "source": "NOTICE",
           "spdx": "MIT",
-          "status": "STALE: the archived copy predates the current NOTICE (3892 B against 5714 B); refreshed only when the archive is repacked"
+          "status": "byte-identical after CRLF normalization"
         },
         {
           "member": "godot_rigExec/LICENSE-OpenUSD",
@@ -1288,7 +1290,7 @@
           "member": "godot_rigExec/THIRD_PARTY_NOTICES-usdRig.md",
           "source": "THIRD_PARTY_NOTICES.md",
           "spdx": null,
-          "status": "STALE: missing the Epic OpenRigLogic section, uses third_party/lzma paths"
+          "status": "byte-identical after CRLF normalization"
         },
         {
           "member": "godot_rigExec/addons/rigexec/LICENSE-OpenUSD.txt",
@@ -1336,55 +1338,55 @@
           "member": "godot_rigExec/NOTICE",
           "source": "NOTICE",
           "spdx": "MIT",
-          "status": "canonical root name; mapping recorded on this boundary, absent from the checked-in archive"
+          "status": "canonical root name; shipped by the repacked archive"
         },
         {
           "member": "godot_rigExec/THIRD_PARTY_NOTICES.md",
           "source": "THIRD_PARTY_NOTICES.md",
           "spdx": null,
-          "status": "canonical root name; mapping recorded on this boundary, absent from the checked-in archive"
+          "status": "canonical root name; shipped by the repacked archive"
         },
         {
           "member": "godot_rigExec/thirdparty/flatbuffers/LICENSE",
           "source": "thirdparty/flatbuffers/LICENSE",
           "spdx": "Apache-2.0",
-          "status": "add-on checkout text, absent from the checked-in archive; the packer ships it when the add-on checkout is available"
+          "status": "source-relative vendored text; shipped by the repacked archive"
         },
         {
           "member": "godot_rigExec/thirdparty/lzma/NOTICE.md",
           "source": "thirdparty/lzma/NOTICE.md",
           "spdx": null,
-          "status": "add-on checkout text, absent from the checked-in archive; the packer ships it when the add-on checkout is available"
+          "status": "source-relative vendored text; shipped by the repacked archive"
         },
         {
           "member": "godot_rigExec/thirdparty/lzma/DOC/lzma-sdk.txt",
           "source": "thirdparty/lzma/DOC/lzma-sdk.txt",
           "spdx": null,
-          "status": "add-on checkout text, absent from the checked-in archive; the packer ships it when the add-on checkout is available"
+          "status": "source-relative vendored text; shipped by the repacked archive"
         },
         {
           "member": "godot_rigExec/plugin/usdNoodles/LICENSE.txt",
           "source": "plugin/usdNoodles/LICENSE.txt",
           "spdx": "TOST-1.0",
-          "status": "add-on checkout text, absent from the checked-in archive; the packer ships it when the add-on checkout is available"
+          "status": "source-relative vendored text; shipped by the repacked archive"
         },
         {
           "member": "godot_rigExec/plugin/usdNoodles/NOODLES_LICENSE.txt",
           "source": "plugin/usdNoodles/NOODLES_LICENSE.txt",
           "spdx": "MIT",
-          "status": "source-relative copy so the link in the canonical notice resolves; mapping recorded on this boundary, absent from the checked-in archive"
+          "status": "source-relative copy so the link in the canonical notice resolves; shipped by the repacked archive"
         },
         {
           "member": "godot_rigExec/plugin/usdNoodles/THIRD_PARTY_LICENSES.txt",
           "source": "plugin/usdNoodles/THIRD_PARTY_LICENSES.txt",
           "spdx": "OFL-1.1",
-          "status": "source-relative copy so the link in the canonical notice resolves; mapping recorded on this boundary, absent from the checked-in archive"
+          "status": "source-relative copy so the link in the canonical notice resolves; shipped by the repacked archive"
         },
         {
           "member": "godot_rigExec/tools/license_manifest.json",
           "source": "tools/license_manifest.json",
           "spdx": null,
-          "status": "installed by CMake, absent from the checked-in archive; the packer ships it when the checkout is available"
+          "status": "snapshot of this manifest shipped inside the archive; presence and shape only are checked"
         }
       ],
       "prose_members": [

@@ -38,6 +38,18 @@ a later or held generation cannot reuse stale cyclic results. Unsupported
 source declarations or failed compilation produce an invalid pose with a
 reason, rather than selecting a second evaluator.
 
+## Exact floating point
+
+Every translation unit that instantiates the kernels compiles with the
+settings named by `cmake/rigexec_flags.cmake`: `/fp:precise` on MSVC,
+`-fno-fast-math -ffp-contract=off` elsewhere. Without them the compiler fuses
+`a*b+c` into an FMA and the baked, frozen and `.rigexec` results drift an ulp
+from each other and from the goldens. That fragment and the USD-free source
+and include manifests install under `lib/cmake/rigExec` and `share/rigExec`,
+the manifests with paths relative to the checkout, so a host building those
+sources with its own tool reads the flag list and the file list instead of
+copying them.
+
 ## Optional independent judges
 
 `Rig.cpu_reference` enables the independent scalar point reference. Its original
