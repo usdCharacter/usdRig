@@ -43,7 +43,7 @@ transient between the mutation and that re-derive: the committed state
 agrees everywhere (collections, per-node link lists, native adjacency,
 spatial index) immediately.
 
-The remainder of this module is the graph/topology subset of
+The remainder of this module is the graph/topology and geometry subset of
 ``GraphView``, moved verbatim as module-level functions whose first
 parameter is ``view``. Names the suite patches on the legacy module
 resolve at call time through ``legacy_symbol``; everything else is
@@ -58,14 +58,17 @@ from pxr import Gf, Sdf
 
 from UsdNoodles.core import LinkData
 
+from .. import noodlesValues
 from .._schema_pin_names import (
     get_display_pin_name_for_property_name,
     resolve_property_name_for_display_pin,
 )
 from ..linkRenderer import computeLinkCurveBounds
+from ..nodeLayout import place_node
 from ..pinUtils import (
     get_relationship_link_metadata,
     is_multi_target_relationship_input_pin,
+    is_relationship_input_pin,
     is_relationship_pin,
     split_direction_hint,
 )
@@ -2187,3 +2190,775 @@ def compute_link_bounds(view, link):
 def rebuild_connection_cache(view):
     view.nodeGraph.buildConnectionCache()
 
+
+# Placement and port geometry
+def node_rect(node):
+    """``(x, y, w, h)`` floats: a node as layout input."""
+    return (
+        float(node.position[0]),
+        float(node.position[1]),
+        float(node.size[0]),
+        float(node.size[1]),
+    )
+
+
+def batch_extents(view, placeable):
+    """The (width, height) the grid below will actually occupy.
+
+    Mirrors the layout loop exactly -- uniform columns sized to the widest
+    node, rows only as tall as their own tallest node. Guessing high here
+    is not "safe": an over-tall box collides with things the batch would
+    never have reached, and each collision pushes the anchor further down,
+    which is how a batch ends up nowhere near where it was asked to go.
+    """
+    cellW = max(n.size[0] for n in placeable) + view._AUTO_GRID_GAP
+    cols = view._AUTO_GRID_COLUMNS
+    width = cellW * min(len(placeable), cols)
+    height = 0.0
+    for rowStart in range(0, len(placeable), cols):
+        rowNodes = placeable[rowStart : rowStart + cols]
+        height += max(n.size[1] for n in rowNodes) + view._AUTO_GRID_GAP
+    return width, height
+
+
+def push_below_occupied(view, anchorX, anchorY, placeable, placed):
+    """Slide ``anchorY`` down until the batch clears the nodes already placed.
+
+    A caller-chosen anchor says *where the user is looking*, not *where
+    there is room*; dropping a batch straight onto existing nodes would hide
+    both. Each pass moves the anchor just under whatever it collides with
+    and re-tests, bounded by the number of placed nodes because every pass
+    clears at least one of them.
+    """
+    if not placed:
+        return anchorY
+
+    batchWidth, batchHeight = view._batchExtents(placeable)
+
+    for _ in range(len(placed)):
+        collided = False
+        for node in placed:
+            nx, ny = node.position[0], node.position[1]
+            nw, nh = node.size[0], node.size[1]
+            if (
+                anchorX < nx + nw
+                and anchorX + batchWidth > nx
+                and anchorY < ny + nh
+                and anchorY + batchHeight > ny
+            ):
+                anchorY = ny + nh + view._AUTO_GRID_GAP
+                collided = True
+                break
+        if not collided:
+            break
+    return anchorY
+
+
+def grid_place_nodes(view, nodes, anchor=None):
+    """Lay out the (0, 0) nodes among ``nodes`` in a grid and return them.
+
+    Only nodes still at the USD default (0, 0) are placed; nodes with their
+    own position (an authored ``ui:nodegraph:node:pos`` or one the loader set
+    for virtual input/output nodes) are left untouched. The batch is anchored
+    at world origin when nothing else is placed (a fresh load) and otherwise
+    just below the bounding box of the already-placed nodes, so adding into an
+    arranged graph never lands on top of it. Columns are a uniform width and
+    each row is only as tall as the tallest node in that row, so one very tall
+    node doesn't inflate every row's spacing. Placement is display-only (no USD
+    authoring), so it can't fail on a prim that won't take the attribute and
+    opening a stage never dirties it.
+
+    Args:
+        nodes: Candidate nodes; only those still at (0, 0) are placed.
+        anchor: Optional ``(x, y)`` in world space to start the batch at,
+            for callers that need the result somewhere specific -- adding
+            into the viewport the user is looking at, rather than below
+            content that may be far off screen. The batch is still pushed
+            clear of anything already placed that it would land on.
+    """
+    placeable = [n for n in nodes if n.position[0] == 0.0 and n.position[1] == 0.0]
+    if not placeable:
+        return []
+    placeableIds = {n.id for n in placeable}
+
+    # Anchor below everything already placed (origin if there is nothing).
+    anchorX, anchorY = 0.0, 0.0
+    placed = [
+        n
+        for n in view.nodes.values()
+        if n.id not in placeableIds
+        and (n.position[0] != 0.0 or n.position[1] != 0.0)
+    ]
+    if anchor is not None:
+        anchorX, anchorY = float(anchor[0]), float(anchor[1])
+        anchorY = view._pushBelowOccupied(anchorX, anchorY, placeable, placed)
+    elif placed:
+        anchorX = min(n.position[0] for n in placed)
+        anchorY = (
+            max(n.position[1] + n.size[1] for n in placed) + view._AUTO_GRID_GAP
+        )
+
+    # Uniform column width keeps columns aligned; each row's height is sized
+    # to the tallest node IN THAT ROW (not the whole batch) so a single very
+    # tall node doesn't inflate every row's vertical gap.
+    cellW = max(n.size[0] for n in placeable) + view._AUTO_GRID_GAP
+    cols = view._AUTO_GRID_COLUMNS
+    y = anchorY
+    for rowStart in range(0, len(placeable), cols):
+        rowNodes = placeable[rowStart : rowStart + cols]
+        for col, node in enumerate(rowNodes):
+            # Display-only (no USD authoring): never fails on a prim that can't
+            # take ui:nodegraph:node:pos, and opening a stage doesn't dirty it.
+            node.setDisplayPosition(Gf.Vec2d(anchorX + col * cellW, y))
+        y += max(n.size[1] for n in rowNodes) + view._AUTO_GRID_GAP
+    return placeable
+
+
+def place_added_nodes(view, nodes, fallback=None):
+    """Position freshly added nodes by connection; return the placed ones.
+
+    Only nodes still at the USD default (0, 0) are placed; nodes with
+    their own position (authored ``ui:nodegraph:node:pos`` or loader-set)
+    are left untouched. Each placed node lands beside the neighbors it
+    wires to -- one column past its inputs, else one column before its
+    outputs -- and slides to a slot that overlaps nothing; unconnected
+    nodes take *fallback* (world origin into an empty canvas, else the
+    caller's viewport anchor). Only the new nodes move. Placement is
+    display-only (no USD authoring), like the grid this replaces on the
+    add path.
+    """
+    placeable = [n for n in nodes if n.position[0] == 0.0 and n.position[1] == 0.0]
+    if not placeable:
+        return []
+    fx, fy = (
+        (0.0, 0.0)
+        if fallback is None
+        else (float(fallback[0]), float(fallback[1]))
+    )
+    # Edges come from the node link lists, not view.links: the graph
+    # link list rebuilds on the next paint, but the added nodes' lists
+    # were populated when they were added and everyone else's are
+    # current. Attribute and relationship links place alike: any noodle
+    # touching the new node tells it where to stand.
+    preds_of = {}
+    succs_of = {}
+    for node in view.nodes.values():
+        preds_of[node.id] = [
+            link.sourceNodeId for link in getattr(node, "inputLinks", [])
+        ]
+        succs_of[node.id] = [
+            link.targetNodeId for link in getattr(node, "outputLinks", [])
+        ]
+    batch_ids = {n.id for n in placeable}
+    positioned = {
+        nid: n for nid, n in view.nodes.items() if nid not in batch_ids
+    }
+    placed = []
+    for node in placeable:
+        preds = [
+            node_rect(positioned[pid])
+            for pid in preds_of.get(node.id, [])
+            if pid in positioned
+        ]
+        succs = [
+            node_rect(positioned[sid])
+            for sid in succs_of.get(node.id, [])
+            if sid in positioned
+        ]
+        occupants = [node_rect(n) for n in positioned.values()]
+        x, y = place_node(
+            (float(node.size[0]), float(node.size[1])),
+            preds,
+            succs,
+            occupants,
+            (fx, fy),
+        )
+        node.setDisplayPosition(Gf.Vec2d(x, y))
+        positioned[node.id] = node
+        placed.append(node)
+    return placed
+
+
+def auto_layout_nodes(view):
+    """Arrange every node left-to-right by connection (L / context menu).
+
+    Layered layout over every rendered link (see :mod:`nodeLayout`):
+    sources left, sinks right, cycles sharing a column, over-full
+    layers wrapped into sub-columns, components tiled into rows and
+    unwired nodes parked in a grid below. Attribute and relationship
+    links rank alike -- any noodle on the canvas is a connection the
+    user reads, so all of them lay out. Only dangling links (an
+    endpoint off the canvas) are skipped. The new positions are
+    authored to USD as a single undo step.
+
+    Each link also carries the y offset of its own two endpoints,
+    taken from the endpoints the renderer already resolved: on a node
+    two thousand pixels tall, "line the boxes up" still leaves the
+    noodle sweeping the whole height, so the layout lines up the
+    PINS. A link whose endpoints are not resolved yet falls back to
+    the plain pair, which aims at the node centres instead.
+    """
+    if not view.nodes:
+        return
+
+    sizes = {
+        node_id: (float(node.size[0]), float(node.size[1]))
+        for node_id, node in view.nodes.items()
+    }
+    edges = []
+    for link in view.links:
+        src = link.sourceNodeId
+        dst = link.targetNodeId
+        if src not in sizes or dst not in sizes:
+            continue
+        start = getattr(link, "start", None)
+        end = getattr(link, "end", None)
+        try:
+            start_y = float(start[1])
+            end_y = float(end[1])
+        except (TypeError, IndexError, ValueError):
+            edges.append((src, dst))
+            continue
+        source_node = view.nodes[src]
+        target_node = view.nodes[dst]
+        edges.append(
+            (
+                src,
+                dst,
+                start_y - float(source_node.position[1]),
+                end_y - float(target_node.position[1]),
+            )
+        )
+    positions = legacy_symbol("layout_graph")(sizes, edges)
+    if not positions:
+        return
+
+    # Capture old and new positions so the whole arrange is one undo step
+    # (mirrors _finalizeNodeDrag).
+    old_positions = {}
+    new_positions = {}
+    for node_id, node in view.nodes.items():
+        new_pos = positions.get(node_id)
+        if new_pos is None:
+            continue
+        old = node.position
+        old_positions[node_id] = (old[0], old[1])
+        new_positions[node_id] = (new_pos[0], new_pos[1])
+
+    if not new_positions:
+        return
+
+    view._applyNodePositions(new_positions)
+
+    legacy_symbol("_push_undo_command")(
+        "Auto Layout",
+        lambda gv, p=new_positions: gv._restoreNodePositions(p),
+        lambda gv, p=old_positions: gv._restoreNodePositions(p),
+        view=view,
+    )
+
+    view.frameAll()
+
+
+def update_node_spatial_bounds(view, node_ids):
+    """Refresh the spatial-index bounds for the given moved nodes.
+
+    Hit-testing (click, marquee, hover) resolves nodes through the spatial
+    index, so any path that changes a node's position must keep the index
+    consistent with the drawn position. This is the shared helper that does
+    it; callers that move nodes route through here instead of recomputing
+    bounds inline.
+    """
+    for node_id in node_ids:
+        node = view.nodes.get(node_id)
+        if node is None:
+            continue
+        bounds = Gf.Range2d(
+            Gf.Vec2d(node.position),
+            Gf.Vec2d(node.position + node.size),
+        )
+        view._spatialIndex.updateNode(node_id, bounds)
+
+
+def apply_moved_node_derived_state(view, moved):
+    """Refresh the state derived from a node's position for ``moved``:
+    spatial-index bounds (hit-testing), link endpoints, and port highlights.
+
+    Both callers that move nodes (the per-frame reconcile and the live drag)
+    go through here, so the set of position-derived state is defined in one
+    place. Render re-baking is not included; it differs by caller (bulk moves
+    call _resetRenderCachesAfterBulkMove, a drag rides the transform frame).
+    """
+    if not moved:
+        return
+    view._updateNodeSpatialBounds(moved)
+    view._updateLinksForMovedNodes(moved)
+    view._portHighlightsDirty = True
+
+
+def node_has_visible_port(view, node, pinName, isOutput):
+    if hasattr(node, "has_visible_port"):
+        return node.has_visible_port(pinName, isOutput)
+    pins = node.outputPins if isOutput else node.inputPins
+    if pinName in pins:
+        return True
+    if isOutput:
+        return pinName in getattr(node, "_dual_pin_names", set())
+    return pinName in getattr(node, "_output_dual_pin_names", set())
+
+
+def get_node_top_center_position(node):
+    return Gf.Vec2d(
+        node.position[0] + node.size[0] * 0.5,
+        node.position[1],
+    )
+
+
+def get_property_output_side(propertyName):
+    side, _stripped = split_direction_hint(propertyName)
+    if side == "output" or is_relationship_pin(propertyName):
+        return True
+    if side == "input" or is_relationship_input_pin(propertyName):
+        return False
+    # Bare attrs (dual pins) and other namespaced attrs have no inherent
+    # side here; the caller falls back to the link's own direction.
+    return None
+
+
+def mirror_port_position(node, portPos):
+    mirrored_x = node.position[0] + node.size[0] - (portPos[0] - node.position[0])
+    return type(portPos)(mirrored_x, portPos[1])
+
+
+def get_visible_port_position(view, node, pinName, isOutput):
+    renderer = node.renderer if node.renderer else view.defaultRenderer
+    if not renderer:
+        return None
+    if isOutput and pinName in getattr(node, "_dual_pin_names", set()):
+        inPos = renderer.getPortPosition(node, pinName, False, view.fontAtlas)
+        if inPos:
+            return view._mirrorPortPosition(node, inPos)
+        return None
+    if not isOutput and pinName in getattr(node, "_output_dual_pin_names", set()):
+        outPos = renderer.getPortPosition(node, pinName, True, view.fontAtlas)
+        if outPos:
+            return view._mirrorPortPosition(node, outPos)
+        return None
+    if not view._nodeHasVisiblePort(node, pinName, isOutput):
+        return None
+    return renderer.getPortPosition(node, pinName, isOutput, view.fontAtlas)
+
+
+def get_relationship_row_endpoint_position(view, node, pinName, isOutput):
+    visiblePos = view._getVisiblePortPosition(node, pinName, isOutput)
+    if visiblePos is not None:
+        return visiblePos
+
+    oppositePos = view._getVisiblePortPosition(node, pinName, not isOutput)
+    if oppositePos is not None:
+        return view._mirrorPortPosition(node, oppositePos)
+
+    fallbackPos = view._getPortPosition(node, pinName, isOutput)
+    if fallbackPos is not None:
+        return fallbackPos
+    return view._getNodeTopCenterPosition(node)
+
+
+def get_port_position(view, node, pinName, isOutput):
+    """Resolve a pin's port position via the C++ View Model.
+
+    Thin shim over ``GraphNodeRenderer.resolvePortPosition``, the single
+    node-local resolver that handles synthetic relationship ports, dual /
+    output-dual mirrors, and normal pins. Python no longer computes port
+    geometry — it just reads the View Model.
+    """
+    renderer = node.renderer if node.renderer else view.defaultRenderer
+    if not renderer:
+        return None
+    return renderer.resolvePortPosition(node, pinName, isOutput)
+
+
+def get_connected_nodes(view, nodeId):
+    return view.nodeGraph.getConnectedNodeIds(nodeId)
+
+
+def append_triangle_vertices(view, vertices, points, depth, color):
+    min_x = min(point[0] for point in points)
+    max_x = max(point[0] for point in points)
+    min_y = min(point[1] for point in points)
+    max_y = max(point[1] for point in points)
+    width = max(max_x - min_x, 1.0)
+    height = max(max_y - min_y, 1.0)
+    r = int(color[0] * 255)
+    g = int(color[1] * 255)
+    b = int(color[2] * 255)
+    a = int(color[3] * 255)
+    for point_x, point_y in points:
+        vertices.append(
+            legacy_symbol("NodeVertex")(
+                float(point_x),
+                float(point_y),
+                depth,
+                float(point_x - min_x),
+                float(point_y - min_y),
+                float(width),
+                float(height),
+                r,
+                g,
+                b,
+                a,
+                0.0,
+                0,
+                0,
+                0,
+                255,
+                0.0,
+            )
+        )
+
+
+def node_has_authored_position(view, node):
+    """Return True if the node's prim already has an authored position.
+
+    ``ui:nodegraph:node:pos`` is the editor's per-node placement metadata.
+    When it is authored, the position was set deliberately (a previous
+    editor session, an upstream tool, or hand-authoring) and must be
+    respected when the node is added to the graph instead of being replaced
+    with an auto-layout position.
+    """
+    prim = node.getUsdPrim()
+    if not prim or not prim.IsValid():
+        return False
+    posAttr = prim.GetAttribute("ui:nodegraph:node:pos")
+    return bool(posAttr and posAttr.HasValue())
+
+
+def position_node_in_viewport(view, node):
+    """Position a node in the center of the current viewport, avoiding overlap.
+
+    A node whose prim already has an authored ``ui:nodegraph:node:pos`` is
+    left where it is — we respect the authored position instead of
+    overwriting it with an auto-computed placement. Only nodes that have no
+    position of their own are auto-placed (which also avoids leaving them
+    stacked at the USD default of (0, 0)).
+    """
+    if view._nodeHasAuthoredPosition(node):
+        # Respect the authored position, but read it once so the cached and
+        # C++-side positions sync from the authored USD value without
+        # re-authoring it. The noodle renderer reads the C++
+        # NodeData.position (via getPortPosition) to place link endpoints;
+        # the old code reached that sync through the position setter, so
+        # skipping the setter here must not skip the sync, or connected
+        # noodles draw to a stale (0, 0) endpoint.
+        _ = node.position
+        return
+    scaledW = view.width() / view.zoom
+    scaledH = view.height() / view.zoom
+    centerX = view.panX + scaledW * 0.5
+    centerY = view.panY + scaledH * 0.5
+
+    nodeW = node.size[0] if node.size[0] > 0 else 200
+    nodeH = node.size[1] if node.size[1] > 0 else 100
+
+    # Start at viewport center
+    x = centerX - nodeW * 0.5
+    y = centerY - nodeH * 0.5
+
+    # Nudge to avoid overlap with existing nodes. The cap scales with the node
+    # count so the search can always clear a full row instead of giving up
+    # after a fixed number of steps and dropping the node onto others.
+    padding = 30.0
+    for _ in range(len(view.nodes) + 1):
+        overlap = False
+        for existingNode in view.nodes.values():
+            ex, ey = existingNode.position[0], existingNode.position[1]
+            ew = existingNode.size[0] if existingNode.size[0] > 0 else 200
+            eh = existingNode.size[1] if existingNode.size[1] > 0 else 100
+            if (
+                x < ex + ew + padding
+                and x + nodeW + padding > ex
+                and y < ey + eh + padding
+                and y + nodeH + padding > ey
+            ):
+                overlap = True
+                # Place to the right of the overlapping node
+                x = ex + ew + padding
+                break
+        if not overlap:
+            break
+
+    node.position = Gf.Vec2d(x, y)
+
+
+# Inline value geometry and metrics
+def value_row_layout(view, node):
+    """``(input_pins, in_slots, in_kinds, occupied)`` for the value rows.
+
+    The C++ slot/kind vectors are copied out of the bindings ONCE per
+    layout epoch instead of once per node per frame: they only change in
+    the C++ layout passes (which bump ``node._row_layout_version``) or
+    are cleared by ``invalidateCache`` (which drops this cache), so an
+    equal version means reusable geometry.
+    """
+    version = getattr(node, "_row_layout_version", None)
+    cached = getattr(node, "_value_row_layout", None)
+    if version is not None and cached is not None and cached[0] == version:
+        return cached[1], cached[2], cached[3], cached[4]
+    input_pins = list(getattr(node, "inputPins", []))
+    in_slots = list(node.inputRowSlots)
+    in_kinds = list(node.inputRowKinds)
+    # Every slot an output-side row occupies. A real output row's label is
+    # right-aligned to the node's right edge -- into exactly the space the
+    # cell wants -- so where the two share a slot, the cell gives way.
+    out_pins = getattr(node, "outputPins", [])
+    out_slots = list(node.outputRowSlots)
+    occupied = set(
+        out_slots[i] if i < len(out_slots) else i for i in range(len(out_pins))
+    )
+    if version is not None:
+        try:
+            node._value_row_layout = (
+                version,
+                input_pins,
+                in_slots,
+                in_kinds,
+                occupied,
+            )
+        except AttributeError:
+            pass
+    return input_pins, in_slots, in_kinds, occupied
+
+
+def value_row_geometry(view, node):
+    """Yield ``(row, cellRect, subRects, H)`` for each value-bearing row.
+
+    Row geometry comes from :meth:`_getRowHitMetrics` -- the same function
+    the connection hit-tests use -- so the cells cannot drift away from
+    the rows they belong to (which is the failure
+    ``testUsdNoodlesRowDrift.py`` exists to prevent).
+
+    The four row-level suppressions live here rather than in the value
+    model, because each of them is a fact about the LAYOUT:
+      * a collapsed title has no rows at all;
+      * a group HEADER is not a property row. The C++ row kinds are
+        ``0 = normal, 1 = folded header, 2 = unfolded header, 3 = child``
+        (noodles core/NodeData.h:48), so 1 and 2 are dropped and 3 -- a
+        real property inside an open group, which is where
+        ``rigExec:controlSpace`` lives -- keeps its cell;
+      * a slot shared with an output row has that row's label
+        right-aligned into exactly the space the cell wants;
+      * a vector too narrow to read drops back to today's look.
+    """
+    if not view._cachedShowAttributeValues:
+        return
+    if getattr(node, "_title_collapsed", False):
+        return
+    rows_fn = getattr(node, "value_rows", None)
+    if rows_fn is None:
+        return
+    renderer = node.renderer if node.renderer else view.defaultRenderer
+    if not renderer:
+        return
+    rows = rows_fn(view._currentTimeCode)
+    if not rows:
+        return
+    cell_w = float(getattr(node, "_value_cell_width", 0.0) or 0.0)
+    if cell_w <= 0.0:
+        return
+
+    # Import on demand: the widgets package initializer loads the UI.
+    from ..widgets import valueCell
+
+    nx = float(node.position[0])
+    nw = float(node.size[0])
+    if not valueCell.node_is_wide_enough(nw, renderer.getPortWidth()):
+        return
+    port_start_y, h = view._getRowHitMetrics(node, renderer)
+    band = view._valueTextBand(h)
+
+    input_pins, in_slots, in_kinds, occupied = view._valueRowLayout(node)
+
+    for i, pin_name in enumerate(input_pins):
+        row = rows.get((pin_name, False))
+        if row is None:
+            continue
+        kind = in_kinds[i] if i < len(in_kinds) else 0
+        if kind in (1, 2):
+            continue
+        slot = in_slots[i] if i < len(in_slots) else i
+        if slot in occupied:
+            continue
+        row_top = port_start_y + slot * h
+        rect = valueCell.cell_rect(
+            nx,
+            nw,
+            row_top,
+            h,
+            cell_w,
+            top=row_top + band[0],
+            height=band[1],
+        )
+        if rect is None:
+            continue
+        inset = valueCell.swatch_inset(h) if row.has_swatch else 0.0
+        subs = valueCell.sub_rects_fit(rect, row.count, h, inset)
+        if not subs:
+            continue
+        yield row, rect, subs, h
+
+
+def value_cell_rect_for(view, node, propertyName, comp=0):
+    """World rect of one component's cell, or None when it has none.
+
+    The paint pass, the hit test and the tests all ask through here, so
+    there is one answer to "where is that cell".
+    """
+    for row, rect, subs, _h in view._valueRowGeometry(node):
+        if row.property_name != propertyName:
+            continue
+        if 0 <= comp < len(subs):
+            return subs[comp]
+        return rect
+    return None
+
+
+def as_world_xy(point):
+    if hasattr(point, "x"):
+        return float(point.x()), float(point.y())
+    return float(point[0]), float(point[1])
+
+
+def value_font_size(view):
+    """Value text size: a little smaller than the row label, never its own.
+
+    Derived from nodePinFontSize so a user who scales the node fonts
+    scales the values with them.
+    """
+    return float(view._cachedNodePinFontSize) * float(
+        view._cachedValueFontScale
+    )
+
+
+def value_digit_advance(view, size):
+    """The widest digit at *size*: the cell every digit is set in."""
+    cached = view._valueDigitAdvanceCache.get(size)
+    if cached is None:
+        cached = max(
+            view.textRenderer.calculateTextWidth(d, size)
+            for d in "0123456789"
+        )
+        view._valueDigitAdvanceCache[size] = cached
+    return cached
+
+
+def value_text_width(view, text, size, tabular):
+    if not tabular:
+        return view.textRenderer.calculateTextWidth(text, size)
+    advance = view._valueDigitAdvance(size)
+    total = 0.0
+    for ch in text:
+        if ch.isdigit():
+            total += advance
+        else:
+            total += view._valueGlyph(ch, size)[1]
+    return total
+
+
+def value_state_colors(view, row, theme, hovered, active):
+    """(fill, stroke, textColor, italicShear) for one row's pill.
+
+    Fill is None where the state asks for no pill at all: a schema
+    fallback is information the user did not author, so it is shown as
+    dim text on the bare row rather than as a filled field inviting a
+    click.
+    """
+    fill = theme.fillAuthored
+    stroke = theme.hairline
+    text = theme.textNormal
+    italic = 0.0
+    if row.state == noodlesValues.STATE_CONNECTED or not row.editable:
+        fill = None
+        stroke = None
+        text = theme.textConnected if row.state == (
+            noodlesValues.STATE_CONNECTED
+        ) else theme.textDim
+        italic = 0.20
+    elif row.state == noodlesValues.STATE_FALLBACK:
+        fill = None
+        stroke = None
+        text = theme.textDim
+    elif row.state == noodlesValues.STATE_ANIMATED:
+        text = theme.textAnimated
+    if hovered and fill is not None:
+        fill = theme.fillHover
+    if active:
+        fill = theme.fillAccent
+        stroke = theme.accent
+    return fill, stroke, text, italic
+
+
+def find_value_row(view, nodeId, propertyName):
+    node = view.nodes.get(nodeId)
+    if node is None:
+        return None
+    lookup = getattr(node, "value_row_for_property", None)
+    if lookup is not None:
+        return lookup(propertyName, view._currentTimeCode)
+    rows_fn = getattr(node, "value_rows", None)
+    if rows_fn is None:
+        return None
+    for row in rows_fn(view._currentTimeCode).values():
+        if row.property_name == propertyName:
+            return row
+    return None
+
+
+def editable_value_cells(view, nodeId):
+    """Every ``(propertyName, component)`` Tab can reach, in row order."""
+    cells = []
+    node = view.nodes.get(nodeId)
+    if node is None:
+        return cells
+    for row, _rect, subs, _h in view._valueRowGeometry(node):
+        if not row.editable or row.kind == noodlesValues.KIND_BOOL:
+            continue
+        for index in range(len(subs)):
+            cells.append((row.property_name, index))
+    return cells
+
+
+def value_axis_width(view, label, size):
+    """Width of one axis hint (``x``/``y``/``z``/``r``/...) at *size*.
+
+    A handful of constant single characters measured once each instead
+    of once per vector row per frame.
+    """
+    key = (label, size)
+    width = view._valueAxisWidthCache.get(key)
+    if width is None:
+        width = view.textRenderer.calculateTextWidth(label, size)
+        view._valueAxisWidthCache[key] = width
+    return width
+
+
+def value_fitted_texts(view, nodeId, row, slotWidth, fontSize, rowMeasure):
+    """Display texts for one row's components, fitted once per value.
+
+    The fit is pure arithmetic over (components, width, font): refitting
+    it every frame re-measures every candidate format through C++, so
+    the answer is cached until one of those changes.
+    """
+    key = (
+        row.components,
+        round(float(slotWidth), 2),
+        row.type_name,
+        fontSize,
+    )
+    entry = view._valueFitCache.get((nodeId, row.property_name))
+    if entry is not None and entry[0] == key:
+        return entry[1]
+    texts = noodlesValues.fit_components(
+        row.components, row.type_name, max(slotWidth, 1.0), rowMeasure
+    )
+    view._valueFitCache[(nodeId, row.property_name)] = (key, texts)
+    return texts
