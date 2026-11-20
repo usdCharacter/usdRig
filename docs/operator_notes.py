@@ -798,21 +798,24 @@ off this prim directly; naming a joint per sample on `rigExec:joints` is
 optional, and buys a posed chain that constraints and matrix movers can
 read like any other joint.""",
         "how_it_works": """All of it is pose phase: the solve is one solver operation
-(`libs/rigExecScene/solverProgram.cpp:91`), and `RigExecRibbon` is one of
-the six compiled solver types (`libs/rigExec/bakedProgram.cpp:146`). The
-compiler resolves `rigExec:driverCurve` to the target's native `points`
-attribute and the solve reads two values of it — the live one, at the read
-phase declared on `rigExec:driverCurve`
-(`libs/rigExec/crossDomainInputs.cpp:244`), and the bind-time (default)
-one — then samples both at equal arc length and transports a
-rotation-minimizing frame along each
-(`libs/rigExecMath/geometryKernels.cpp:804`), publishing the posed frames
-paired with their rests as one `computePointFrameArray`. Each
+(`libs/rigExecScene/solverProgram.cpp:113`), and `RigExecRibbon` is one of
+the solver types the bake compiles (`_IsBakedSolverType`,
+`libs/rigExec/bakedProgram.cpp:210`). The compiler resolves
+`rigExec:driverCurve` to the target's native `points` attribute
+(`libs/rigExec/rigEvaluatorCompile.cpp:678-689`), and the solve reads two
+values of it — the live one, whose producer is bound at the read phase
+declared on `rigExec:driverCurve`
+(`libs/rigExec/crossDomainInputs.cpp:322-326`), and the bind-time
+(default-time) one (`libs/rigExec/bakedPose.cpp:684-686`).
+`RigExecSampleRibbonFrames` (`libs/rigExec/solverKernels.cpp:58`) samples
+both curves at equal arc length and transports a rotation-minimizing frame
+along each (`libs/rigExecMath/geometryKernels.cpp:833`), publishing the
+posed frames paired with their rests as one `computePointFrameArray`. Each
 `rigExec:joints` entry takes one element of that array as its whole posed
 frame through the compiled solver-to-joint binding. What a wrap measures
 against is the bind-time curve.""",
         "wiring": [
-            # rigEvaluatorCompile.cpp:581-593 resolves the target to its `.points`;
+            # rigEvaluatorCompile.cpp:670-691 resolves the target to its `.points`;
             # with no target nothing is resolved and solverKernels.cpp:66
             # returns an empty array, so the mover downstream passes points
             # through untouched. NOT enforced: no compile error names this
@@ -822,28 +825,29 @@ against is the bind-time curve.""",
             # rigExec:surface is written up.
             ("`rigExec:driverCurve`", "Native BasisCurves supplying the spine path; "
              "without it the solver publishes no frames rather than erroring.", "yes"),
-            # bakedPose.cpp:574-579: "rigExec:parameterization, frameTransport,
+            # bakedPose.cpp:723-728: "rigExec:parameterization, frameTransport,
             # startFrame, endFrame and twistFrames are
             # deliberately NOT read: the computation does not read them
             # either". The exec computation's inputs are sampleCount, the
             # joints' rest frames and the two point packets
-            # (moverKernels.cpp:875-883). The frame relationships declare
+            # (moverKernels.cpp:864-872). The frame relationships declare
             # authoring intent without adding inputs to this computation; a
             # solver they name is still a scheduling prerequisite
-            # (RigExecSolverRelationshipPorts, libs/rigExecScene/solverProgram.h:13).
+            # (RigExecSolverRelationshipPorts,
+            # libs/rigExecScene/solverProgram.h:25).
             ("`rigExec:startFrame`", "Joint provider naming the run's base; declared "
              "for authoring intent, read by no computation.", "no"),
             ("`rigExec:endFrame`", "Joint provider naming the run's tip; the same.", "no"),
             ("`rigExec:twistFrames`", "Twist solver named as the run's unwind; the "
              "same.", "no"),
-            # rigEvaluatorCompile.cpp:973-982: cardinality is sampleCount (zero
+            # rigEvaluatorCompile.cpp:1084-1093: cardinality is sampleCount (zero
             # below two, so no element binds), and jointElements defaults to
-            # list position (schema.usda:989-992). A solver with an empty
+            # list position (schema.usda:998-1000). A solver with an empty
             # joints list is simply skipped by the claim pass
-            # (rigEvaluatorCompile.cpp:907-909).
+            # (rigEvaluatorCompile.cpp:1011-1013).
             ("`rigExec:joints`", "Ordered joints posed along the run, one per sample.", "no"),
         ],
-        # RigExecRibbon inherits Boundable directly (schema.usda:938-939): it
+        # RigExecRibbon inherits Boundable directly (schema.usda:947-948): it
         # is not a RigExecXformable and applies no RigExec API schema, so every
         # knob it has is already on its own page.
         "param_groups": [],
@@ -874,7 +878,7 @@ ribbon.""",
             "Never bind the driver perfectly straight. The seed normal is the "
             "world axis least parallel to the first tangent, picked once per "
             "curve, and a tie is broken by declaration order X, Y, Z "
-            "(`libs/rigExecMath/geometryKernels.cpp:892-899`), so a straight "
+            "(`libs/rigExecMath/geometryKernels.cpp:912-929`), so a straight "
             "bind against bent poses picks a different axis for the rest than "
             "for the pose and rolls the whole wrap 90 degrees. Rest it at a "
             "lean and keep the leaning component of the first tangent larger "
@@ -883,15 +887,15 @@ ribbon.""",
             "are declared but never read: the solve's only inputs are the "
             "driver points, `rigExec:sampleCount` and the rests of the joints "
             "on `rigExec:joints` "
-            "(`libs/rigExec/moverKernels.cpp:875-883`, "
-            "`libs/rigExec/bakedPose.cpp:574`). A solver one of them names is "
+            "(`libs/rigExec/moverKernels.cpp:864-872`, "
+            "`libs/rigExec/bakedPose.cpp:723-728`). A solver one of them names is "
             "still scheduled before the ribbon. What actually pins the run is "
             "the bind-time driver curve.",
             "`rigExec:sampleCount` is the run's cardinality. Below two the "
             "solver publishes no frames at all "
             "(`libs/rigExec/solverKernels.cpp:66`) and no joint element can "
             "bind, and time-sampling it is rejected at compile "
-            "(`libs/rigExec/rigEvaluatorCompile.cpp:818`).",
+            "(`libs/rigExec/rigEvaluatorCompile.cpp:917-927`).",
         ],
         "see_also": [
             ("curve_mover", "Curve Mover"),
