@@ -47,13 +47,15 @@ public:
     /// compiler-private provider (a generated chain head). The private
     /// path is used only to build the internal value key; it is never
     /// part of the public address.
-    RigExecTapId AddResolved(
-        const RigExecValueAddress &publicAddress,
-        const SdfPath &privateProvider);
+    RigExecTapId AddResolved(const RigExecValueAddress &publicAddress,
+                             const SdfPath &privateProvider);
 
     /// How many taps stand. Tap ids are dense from zero, so the live
     /// operation graph enumerates every address through this.
-    size_t GetTapCount() const { return _addresses.size(); }
+    size_t GetTapCount() const
+    {
+        return _addresses.size();
+    }
 
     /// The public canonical address of a tap.
     const RigExecValueAddress &GetAddress(RigExecTapId tap) const;
@@ -81,19 +83,22 @@ public:
     /// Evaluate calls or affect cached values (ExecUsdSystem contract).
     /// dropped counts missing prim/attribute addresses during key construction;
     /// it cannot report whether an existing key lies in the request's cone.
-    RigExecSnapshot Evaluate(
-        UsdTimeCode time, const std::vector<RigExecValueOverride> &overrides,
-        size_t *dropped = nullptr);
+    RigExecSnapshot Evaluate(UsdTimeCode time,
+                             const std::vector<RigExecValueOverride> &overrides,
+                             size_t *dropped = nullptr);
 
     /// Returns and clears the dirty flag raised by invalidation callbacks.
-    bool ConsumeDirty() { return _dirty.exchange(false); }
+    bool ConsumeDirty()
+    {
+        return _dirty.exchange(false);
+    }
 
     ExecUsdSystem *GetSystem();
 
     /// Retire requests before stock Esf processes a removed prim. Consumers
     /// that evaluate synchronously inside a USD notice call this first.
     static void PrepareStageChange(const UsdStageRefPtr &stage,
-                                  const UsdNotice::ObjectsChanged &notice);
+                                   const UsdNotice::ObjectsChanged &notice);
 
 private:
     friend class RigExecTapContext;
@@ -111,6 +116,6 @@ private:
     size_t _prepareCount = 0;
 };
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_TAP_SET_H
+#endif // RIGEXEC_TAP_SET_H
