@@ -196,6 +196,18 @@ class _NoticeReceiver:
         )
 
 
+class _SuppressionToken:
+    def __init__(self, owner):
+        self._owner = owner
+
+    def release(self):
+        """Release this acquisition on the editor's owner thread."""
+        owner = self._owner
+        if owner is not None:
+            self._owner = None
+            owner._releaseSuppression(self)
+
+
 class StageSync:
     """One editor's stage lifecycle: replace, bind, notice, finish, close.
 
@@ -232,6 +244,8 @@ class StageSync:
         self._closed = False
         self._receiver = _NoticeReceiver(self)
         self._handler = listen(self._receiver)
+        self._suppressionTokens = set()
+        self._enabledBeforeSuppression = None
 
     # -- the editor's notice handler -------------------------------------
 
@@ -251,21 +265,32 @@ class StageSync:
     def isClosed(self):
         return self._closed
 
+    def acquireSuppression(self):
+        """Inhibit this editor's notices until its last live token is released."""
+        if self._closed:
+            return _SuppressionToken(None)
+        token = _SuppressionToken(self)
+        if not self._suppressionTokens:
+            self._enabledBeforeSuppression = self._handler.isEnabled()
+            self._handler.setEnabled(False)
+        self._suppressionTokens.add(token)
+        return token
+
+    def _releaseSuppression(self, token):
+        if token not in self._suppressionTokens:
+            return
+        self._suppressionTokens.remove(token)
+        if not self._suppressionTokens:
+            self._handler.setEnabled(self._enabledBeforeSuppression)
+
     @contextmanager
     def suppressed(self):
-        """Ignore USD notices for the duration of the block.
-
-        The state lives on the editor's UsdNoticeHandler, and the value in
-        front when the block opened is restored on the normal path and on an
-        exception, so nesting cannot leave the editor deaf.
-        """
-        handler = self._handler
-        previous = handler.isEnabled()
-        handler.setEnabled(False)
+        """Ignore USD notices for the duration of the block."""
+        token = self.acquireSuppression()
         try:
             yield
         finally:
-            handler.setEnabled(previous)
+            token.release()
 
     # -- replace / reload -------------------------------------------------
 
@@ -342,6 +367,7 @@ class StageSync:
     def close(self):
         """Revoke the notice receiver and invalidate anything still queued."""
         self._closed = True
+        self._suppressionTokens.clear()
         # Past every queued finish and every receiver stamp: the epoch moving
         # is what makes the deferred callbacks return without touching the
         # model.
