@@ -84,10 +84,10 @@ the driver's final and rest frames, forms
 (`libs/rigExecMath/poseArithmeticKernel.h:305-307`), runs one kernel row
 through the inverted matrix, and publishes a `float` on each pose's
 `outputs:weight` into both the resolved-input table a consumer reads
-through and the rig pose's moved-property map (`bakedPose.cpp:5914-5917`).
+through and the rig pose's moved-property map (`bakedPose.cpp:5913-5916`).
 A driver with no usable final frame is diagnosed and the interpolator
 publishes zeros rather than quietly measuring a rest
-(`bakedPose.cpp:5656-5661`).
+(`bakedPose.cpp:5655-5660`).
 
 ## Wiring
 
@@ -528,7 +528,7 @@ python docs/render_media.py --page pose_interpolator
 
 ## Tips
 
-- Author a non-zero `rigExec:rotationRadius` on every pose, roughly the angle between neighbouring poses. A per-pose zero is used literally rather than fitted (`rbf.cpp:974-983`, `rbf.cpp:401-407`), and an interpolator whose radii are all zero reads 1 only when the driver stands exactly on a pose and 0 everywhere else.
+- Author a non-zero `rigExec:rotationRadius` on every pose, roughly the angle between neighbouring poses. A per-pose zero is used literally rather than fitted (`rbf.cpp:969-978`, `rbf.cpp:399-405`), and an interpolator whose radii are all zero reads 1 only when the driver stands exactly on a pose and 0 everywhere else.
 - Drive from a joint whose parent already carries the motion you do not want measured: the interpolator measures the driver's rotation relative to its rest in its nearest joint or control ancestor's frame, so the parent subtracts its own share back out. Measuring against anything other than the immediate namespace parent is reported as a warning.
 - `rigExec:enableTranslation` also measures the driver's translation from rest, in its own rest frame, against each pose's `rigExec:translation` and `rigExec:translationRadius` (`poseArithmeticKernel.h:337-343`). Disabling a whole interpolator publishes zeros, while disabling one pose drops it out of the solve entirely so the other poses' weights change.
 - A radius wider than the pose spacing makes the Gaussian rows overlap enough that the inverse pushes a far pose negative between two near ones. `rigExec:allowNegativeWeights = 0` clamps that lobe; leave it on only when a consumer wants the extrapolation.

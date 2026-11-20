@@ -241,7 +241,7 @@ python docs/render_media.py --page scale_constraint
 
 ## Tips
 
-- `inputs:scaleOffset` is ADDITIVE: its identity is (0, 0, 0), not (1, 1, 1), because the kernel computes blended scale + offset (`RigExecApplyScaleConstraint`, libs/rigExecMath/solvers.cpp:1203).
+- `inputs:scaleOffset` is ADDITIVE: its identity is (0, 0, 0), not (1, 1, 1), because the kernel computes blended scale + offset (`RigExecApplyScaleConstraint`, libs/rigExecMath/solvers.cpp:1187).
 - Only the scale channel is honored — authoring `inputs:translationOffset`, `inputs:rotationOffset`, any `inputs:affectTranslation*`/`inputs:affectRotation*`, or `rigExec:rotationOrder` on a scale constraint is a compile error, never a silent no-op.
 - Several sources average, they do not multiply: two equally weighted sources at scale 2 and 1 land the target at 1.5. Use `inputs:sourceWeights` to bias between them.
 

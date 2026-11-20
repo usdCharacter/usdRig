@@ -45,14 +45,14 @@ solve after any solver they name but supply no value to it.
 
 All of it is pose phase: the solve is one solver operation
 (`libs/rigExecScene/solverProgram.cpp:91`), and `RigExecRibbon` is one of
-the six compiled solver types (`libs/rigExec/bakedProgram.cpp:160`). The
+the six compiled solver types (`libs/rigExec/bakedProgram.cpp:146`). The
 compiler resolves `rigExec:driverCurve` to the target's native `points`
 attribute and the solve reads two values of it — the live one, at the read
 phase declared on `rigExec:driverCurve`
 (`libs/rigExec/crossDomainInputs.cpp:244`), and the bind-time (default)
 one — then samples both at equal arc length and transports a
 rotation-minimizing frame along each
-(`libs/rigExecMath/geometryKernels.cpp:805`), publishing the posed frames
+(`libs/rigExecMath/geometryKernels.cpp:804`), publishing the posed frames
 paired with their rests as one `computePointFrameArray`. Each
 `rigExec:joints` entry takes one element of that array as its whole posed
 frame through the compiled solver-to-joint binding. What a wrap measures
@@ -196,9 +196,9 @@ python docs/render_media.py --page ribbon
 
 ## Tips
 
-- Never bind the driver perfectly straight. The seed normal is the world axis least parallel to the first tangent, picked once per curve, and a tie is broken by declaration order X, Y, Z (`libs/rigExecMath/geometryKernels.cpp:893-900`), so a straight bind against bent poses picks a different axis for the rest than for the pose and rolls the whole wrap 90 degrees. Rest it at a lean and keep the leaning component of the first tangent larger than the other one all the way through the animation.
-- `rigExec:startFrame`, `rigExec:endFrame` and `rigExec:twistFrames` are declared but never read: the solve's only inputs are the driver points, `rigExec:sampleCount` and the rests of the joints on `rigExec:joints` (`libs/rigExec/moverKernels.cpp:877-885`, `libs/rigExec/bakedPose.cpp:574`). A solver one of them names is still scheduled before the ribbon. What actually pins the run is the bind-time driver curve.
-- `rigExec:sampleCount` is the run's cardinality. Below two the solver publishes no frames at all (`libs/rigExec/solverKernels.cpp:66`) and no joint element can bind, and time-sampling it is rejected at compile (`libs/rigExec/rigEvaluatorCompile.cpp:824`).
+- Never bind the driver perfectly straight. The seed normal is the world axis least parallel to the first tangent, picked once per curve, and a tie is broken by declaration order X, Y, Z (`libs/rigExecMath/geometryKernels.cpp:892-899`), so a straight bind against bent poses picks a different axis for the rest than for the pose and rolls the whole wrap 90 degrees. Rest it at a lean and keep the leaning component of the first tangent larger than the other one all the way through the animation.
+- `rigExec:startFrame`, `rigExec:endFrame` and `rigExec:twistFrames` are declared but never read: the solve's only inputs are the driver points, `rigExec:sampleCount` and the rests of the joints on `rigExec:joints` (`libs/rigExec/moverKernels.cpp:875-883`, `libs/rigExec/bakedPose.cpp:574`). A solver one of them names is still scheduled before the ribbon. What actually pins the run is the bind-time driver curve.
+- `rigExec:sampleCount` is the run's cardinality. Below two the solver publishes no frames at all (`libs/rigExec/solverKernels.cpp:66`) and no joint element can bind, and time-sampling it is rejected at compile (`libs/rigExec/rigEvaluatorCompile.cpp:818`).
 
 ## See also
 
