@@ -7,201 +7,139 @@
 #
 
 
-"""Unit tests for stage-reload crash fix.
+"""Test the stage lifecycle and the host's GL teardown guards."""
 
-Covers the logic added/modified for NVIDIA Windows stage-reopen safety:
-  1. _onStageReplaced: null-stage early return still schedules
-     _finishStageReload (prevents widget freeze)
-  2. _onStageReplaced: reload exceptions are logged, not swallowed
-  3. _finishStageReload: sets initialized=True to preserve FontAtlas
-  4. _isStageViewMidTeardown: detects stageView mid-teardown
-  5. _installCloseStageGuard: wraps _closeStage to pre-clean VBOs and
-     rebind the stage view's context for Storm's teardown
-  6. event() paint guard: blocks Paint during teardown
-
-Production methods run against view doubles; Qt scheduling and GL calls are mocked.
-"""
-
+import os
+from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 
+from pxr import Tf, Usd
+from pxr.Usdviewq.qt import QtWidgets
 from UsdNoodles.graphView import GraphView
 from UsdNoodles.nodeGraphBpContainer import NodeGraphBpContainer
+from UsdNoodles.nodeGraphBlueprint import NodeGraphBlueprint
+from UsdNoodles.nodeGraphStage import NodeGraphStage
 from UsdNoodles._qt_editor import NoodlesEditorManager, _makeStageViewCurrent
 
-
-def _on_stage_replaced(view):
-    with (patch("UsdNoodles.graphView.QtCore.QTimer.singleShot") as schedule,
-          patch("UsdNoodles.graphView.Tf.Warn") as warnings):
-        GraphView._onStageReplaced(view)
-    view._scheduleFinishReload = schedule
-    view._reloadWarnings = warnings
-
-
-_finish_stage_reload = GraphView._finishStageReload
+os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 _is_stage_view_mid_teardown = GraphView._isStageViewMidTeardown
 _make_stage_view_current = _makeStageViewCurrent
 _install_close_stage_guard = NoodlesEditorManager._installCloseStageGuard
 
 
-def _make_view():
-    """Create a duck-typed GraphView stand-in."""
-    view = MagicMock()
-    view.initialized = True
-    view._selectedNodes = set()
-    view._selectedLinks = set()
-    view._currentPrimPath = None
-    view._isContainer = False
-    view._deferRenderCacheClear = False
-    view._renderCacheClearPending = False
-    view.linksChanged = False
-    view.textChanged = False
-    return view
+class TestReloadLifecycle(unittest.TestCase):
+    def setUp(self):
+        self.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        self.view = GraphView()
+        self.addCleanup(self.view.close)
+        self.view._nodeRenderManager = MagicMock()
+        self.view.makeCurrent = MagicMock()
+        self.view.doneCurrent = MagicMock()
+        self.view.update = MagicMock()
+        self.posts = []
+        patcher = patch('UsdNoodles.graphView.QtCore.QTimer.singleShot',
+                        side_effect=lambda delay, callback: self.posts.append(callback))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.stage = Usd.Stage.CreateInMemory()
+        self.view._usdviewApi = SimpleNamespace(stage=self.stage)
 
+    def assertUnbound(self):
+        view = self.view
+        self.assertIsNone(view.nodeGraph.getStage())
+        self.assertIsNone(view._stageSync.boundStage())
+        self.assertIsNone(view._currentPrimPath)
+        self.assertIsNone(view._undoHistory)
+        self.assertFalse(view.nodes)
+        self.assertFalse(view._startupSamplePending)
 
-class TestOnStageReplacedNullStage(unittest.TestCase):
-    """When stage is None, _onStageReplaced must still schedule
-    _finishStageReload so setUpdatesEnabled(True) is eventually called."""
+    def test_null_stage_drops_graph_and_recovers_paint(self):
+        self.view.loadStage(self.stage)
+        self.assertFalse(self.posts)
+        self.view._usdviewApi.stage = None
+        self.view._onStageReplaced()
+        self.assertUnbound()
+        self.assertFalse(self.view.updatesEnabled())
+        self.assertEqual(len(self.posts), 1)
+        self.posts.pop()()
+        self.assertTrue(self.view.updatesEnabled())
 
-    def test_null_stage_schedules_finish(self):
-        view = _make_view()
-        view._usdviewApi.stage = None
+    def test_replacement_preserves_graph_mode_and_scope(self):
+        for loader, prim_type, graph_type in (
+            (self.view.loadStage, None, NodeGraphStage),
+            (self.view.loadBlueprint, 'Blueprint', NodeGraphBlueprint),
+            (self.view.loadContainer, 'Container', NodeGraphBpContainer),
+        ):
+            with self.subTest(graph_type=graph_type):
+                stage = Usd.Stage.CreateInMemory()
+                replacement = Usd.Stage.CreateInMemory()
+                path = None
+                if prim_type:
+                    path = '/Scope'
+                    stage.DefinePrim(path, prim_type)
+                    replacement.DefinePrim(path, prim_type)
+                    loader(stage, path)
+                else:
+                    loader(stage)
+                self.assertFalse(self.posts)
+                self.view._usdviewApi.stage = replacement
+                self.view._onStageReplaced()
+                self.assertIsInstance(self.view.nodeGraph, graph_type)
+                self.assertEqual(self.view._currentPrimPath, path)
+                self.assertIs(self.view.nodeGraph.getStage(), replacement)
+                self.assertIs(self.view._stageSync.boundStage(), replacement)
+                self.posts.pop()()
 
-        _on_stage_replaced(view)
-
-        view._scheduleFinishReload.assert_called_once()
-        view.setUpdatesEnabled.assert_called_with(False)
-
-    def test_null_stage_does_not_reload_graph(self):
-        view = _make_view()
-        view._usdviewApi.stage = None
-
-        _on_stage_replaced(view)
-
-        view.loadStage.assert_not_called()
-        view.loadBlueprint.assert_not_called()
-        view.loadContainer.assert_not_called()
-
-    def test_null_stage_unregisters_notice_handler(self):
-        view = _make_view()
-        view._usdviewApi.stage = None
-
-        _on_stage_replaced(view)
-
-        view._noticeHandler.unregister.assert_called_once()
-
-
-class TestOnStageReplacedWithStage(unittest.TestCase):
-    """When stage is valid, _onStageReplaced reloads the graph and
-    schedules _finishStageReload."""
-
-    def test_calls_load_stage(self):
-        view = _make_view()
-        stage = MagicMock()
-        view._usdviewApi.stage = stage
-        view._currentPrimPath = None
-        view._isContainer = False
-
-        _on_stage_replaced(view)
-
-        view.loadStage.assert_called_once_with(stage)
-        view._scheduleFinishReload.assert_called_once()
-
-    def test_calls_load_blueprint_when_prim_path_set(self):
-        view = _make_view()
-        stage = MagicMock()
-        view._usdviewApi.stage = stage
-        view._currentPrimPath = "/Root/MyBlueprint"
-        view._isContainer = False
-
-        _on_stage_replaced(view)
-
-        view.loadBlueprint.assert_called_once_with(stage, "/Root/MyBlueprint")
-
-    def test_calls_load_container_when_container(self):
-        view = _make_view()
-        stage = MagicMock()
-        view._usdviewApi.stage = stage
-        view._currentPrimPath = "/Root/MyContainer"
-        view.nodeGraph = NodeGraphBpContainer()
-
-        _on_stage_replaced(view)
-
-        view.loadContainer.assert_called_once_with(stage, "/Root/MyContainer")
-
-
-class TestOnStageReplacedExceptionLogging(unittest.TestCase):
-    """Reload exceptions must be logged, not silently swallowed."""
-
-    def test_load_stage_exception_is_logged(self):
-        view = _make_view()
-        view._usdviewApi.stage = MagicMock()
-        view.loadStage.side_effect = RuntimeError("stage broken")
-
-        _on_stage_replaced(view)
-
-        view._reloadWarnings.assert_called_once()
-        self.assertIn("stage broken", view._reloadWarnings.call_args.args[0])
-
-    def test_load_stage_exception_still_schedules_finish(self):
-        view = _make_view()
-        view._usdviewApi.stage = MagicMock()
-        view.loadStage.side_effect = RuntimeError("stage broken")
-
-        _on_stage_replaced(view)
-
-        view._scheduleFinishReload.assert_called_once()
-
-    def test_defer_flag_reset_after_exception(self):
-        view = _make_view()
-        view._usdviewApi.stage = MagicMock()
-        view.loadStage.side_effect = RuntimeError("stage broken")
-
-        _on_stage_replaced(view)
-
+    def test_failed_replacement_warns_and_finishes_pending_cache_clear(self):
+        view = self.view
+        view.loadStage(Usd.Stage.CreateInMemory())
+        with (patch.object(view, '_seedNodeZOrders', side_effect=RuntimeError('stage broken')),
+              patch('UsdNoodles.graphView.Tf.Warn') as warn):
+            view._onStageReplaced()
+        self.assertIn('stage broken', warn.call_args.args[0])
+        self.assertUnbound()
+        self.assertFalse(view.initialized)
+        self.assertFalse(view.updatesEnabled())
         self.assertFalse(view._deferRenderCacheClear)
-
-
-class TestFinishStageReload(unittest.TestCase):
-    """_finishStageReload must re-enable updates and preserve initialized."""
-
-    def test_sets_initialized_true(self):
-        view = _make_view()
-        view.initialized = False
-        view._renderCacheClearPending = False
-
-        _finish_stage_reload(view)
-
+        view.makeCurrent.assert_not_called()
+        view._nodeRenderManager.clearCache.assert_not_called()
+        self.assertEqual(len(self.posts), 1)
+        self.posts.pop()()
         self.assertTrue(view.initialized)
-
-    def test_re_enables_updates(self):
-        view = _make_view()
-        view._renderCacheClearPending = False
-
-        _finish_stage_reload(view)
-
-        view.setUpdatesEnabled.assert_called_with(True)
-        view.update.assert_called_once()
-
-    def test_clears_pending_render_cache(self):
-        view = _make_view()
-        view._renderCacheClearPending = True
-
-        _finish_stage_reload(view)
-
+        self.assertTrue(view.updatesEnabled())
+        self.assertTrue(view.linksChanged)
+        self.assertTrue(view.textChanged)
+        self.assertFalse(view._renderCacheClearPending)
         view.makeCurrent.assert_called_once()
         view._nodeRenderManager.clearCache.assert_called_once()
         view.doneCurrent.assert_called_once()
-        self.assertFalse(view._renderCacheClearPending)
 
-    def test_sets_text_and_links_changed(self):
-        view = _make_view()
-        view._renderCacheClearPending = False
+    def test_missing_scoped_prim_leaves_no_graph_or_binding(self):
+        for loader in (self.view.loadBlueprint, self.view.loadContainer):
+            with self.subTest(loader=loader.__name__):
+                self.view.loadStage(self.stage)
+                with self.assertRaisesRegex(RuntimeError, '/Missing'):
+                    loader(self.stage, '/Missing')
+                self.assertUnbound()
+                self.assertFalse(self.posts)
 
-        _finish_stage_reload(view)
-
-        self.assertTrue(view.linksChanged)
-        self.assertTrue(view.textChanged)
+    def test_failed_tf_acquisition_leaves_no_graph_and_recovery_receives_notices(self):
+        view = self.view
+        previous = Usd.Stage.CreateInMemory()
+        view.loadStage(previous)
+        with patch.object(Tf.Notice, 'Register', side_effect=RuntimeError('Tf failed')):
+            with self.assertRaisesRegex(RuntimeError, 'Tf failed'):
+                view.loadStage(self.stage)
+        self.assertUnbound()
+        self.assertFalse(self.posts)
+        view.loadStage(self.stage)
+        with patch.object(view, '_addNewNodeFast', return_value=None) as adopt:
+            previous.DefinePrim('/Former', 'Xform')
+            adopt.assert_not_called()
+            self.stage.DefinePrim('/Current', 'Xform')
+            adopt.assert_called_once()
+            self.assertEqual(str(adopt.call_args.args[0].GetPath()), '/Current')
 
 
 class TestIsStageViewMidTeardown(unittest.TestCase):

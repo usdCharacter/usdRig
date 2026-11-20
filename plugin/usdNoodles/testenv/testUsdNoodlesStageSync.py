@@ -276,16 +276,22 @@ class _ClosedHostReads(_StubView):
 
 
 class _RecordingHandler:
-    __slots__ = ("events", "enabled")
+    __slots__ = ("events", "enabled", "stage")
 
     def __init__(self, events):
         self.events = events
         self.enabled = True
+        self.stage = None
 
     def register(self, stage):
+        self.stage = stage
         self.events.append(("register", stage))
 
+    def getStage(self):
+        return self.stage
+
     def unregister(self):
+        self.stage = None
         self.events.append(("unregister",))
 
     def isEnabled(self):
@@ -314,6 +320,7 @@ class _RecordingHooks:
         self.sync = stage_sync.StageSync(
             self.read, self.notice, self.apply, self.post, self.listen,
             warn=self.warn, sink=self.publish, reconcile=self.reconcile,
+            reset=lambda: None,
         )
 
     def read(self):
@@ -1054,7 +1061,7 @@ class ReplaceStalenessTest(unittest.TestCase):
             ("publish", clear), ("apply", clear), ("post", finishNone),
         ])
         self.assertEqual(sync.epoch(), 3)
-        self.assertIs(sync.handler(), hooks.handler)
+        self.assertIsNone(sync.boundStage())
 
         events = hooks.events[:]
         sync.changed(1, {"/Alpha"}, set())
@@ -1184,7 +1191,7 @@ class SuppressionTest(unittest.TestCase):
 
     def test_suppression_restores_on_the_normal_path(self) -> None:
         hooks = _RecordingHooks()
-        handler = hooks.sync.handler()
+        handler = hooks.handler
         self.assertTrue(handler.isEnabled())
         with hooks.sync.suppressed():
             self.assertFalse(handler.isEnabled())
@@ -1219,7 +1226,7 @@ class CloseTest(unittest.TestCase):
         hooks = _RecordingHooks()
         stage = object()
         hooks.sync.replace(stage, "stage", None, "frame")
-        handler = hooks.sync.handler()
+        handler = hooks.handler
         self.assertIs(handler, hooks.handler)
         self.assertFalse(any(event[0] == "register" for event in hooks.events))
         handler.register(stage)
@@ -1274,7 +1281,6 @@ class NoticeRegistrationTest(unittest.TestCase):
             ),
         )
         service.bind(stage)
-        service.handler().register(stage)
 
         self._rename(stage)
         self._rename(twin)
@@ -1407,7 +1413,6 @@ class ProductionAdapterTest(unittest.TestCase):
         view = self._view(stage, ["/Alpha", "/Keeper"])
         service = _makeStageSync(view)
         service.bind(stage)
-        service.handler().register(stage)
 
         stage.GetPrimAtPath("/Alpha").GetAttribute("radius").Set(3.0)
 
@@ -1434,7 +1439,6 @@ class ProductionAdapterTest(unittest.TestCase):
         view = self._view(stage, ["/Alpha"])
         service = _makeStageSync(view)
         service.bind(stage)
-        service.handler().register(stage)
 
         traces = []
 
@@ -1461,8 +1465,7 @@ class ProductionAdapterTest(unittest.TestCase):
         view = self._view(stageA, ["/Alpha", "/Keeper"], _ClosedHostReads)
         service = _makeStageSync(view)
         view._stageSync = service
-        view._noticeHandler = service.handler()
-        service.handler().register(stageA)
+        service.bind(stageA)
         service.close()
         # usdview has moved on to a new stage and emits to the editor that
         # already closed; the api it hands the slot is the replacement's.
@@ -1481,7 +1484,7 @@ class ProductionAdapterTest(unittest.TestCase):
 
         self.assertEqual(view.host_reads, [])
         posted.assert_not_called()
-        self.assertIsNone(service.handler().getStage())
+        self.assertIsNone(service.boundStage())
         self.assertEqual(view.nodes.iterated, [])
         self.assertEqual(len(view.nodes), 2)
         self.assertIn("/Alpha", view.nodes)
@@ -1576,7 +1579,7 @@ class DockWindowCloseTest(unittest.TestCase):
             len(view.nodes),
             len(view.links),
             view._undoHistory,
-            view._noticeHandler.getStage(),
+            view._stageSync.boundStage(),
         )
 
     def test_close_teardowns_then_ignores_a_later_replace(self):
@@ -1590,8 +1593,8 @@ class DockWindowCloseTest(unittest.TestCase):
             lambda delay, callback: queued.append(callback),
         ):
             # A reload started through the real signal and not yet finished:
-            # the finish is queued, paint is off and the notice receiver is
-            # revoked until it does. Emitting while the editor is open also
+            # the finish is queued, paint is off and the new sender is bound.
+            # Emitting while the editor is open also
             # proves the wiring is live, so the zero-count assertion after the
             # close measures a refused read rather than an unconnected slot.
             self.api.dataModel.signalStageReplaced.emit()
@@ -1607,7 +1610,7 @@ class DockWindowCloseTest(unittest.TestCase):
             self.assertTrue(service.isClosed())
             self.assertEqual(service.epoch(), live + 1)
             self.assertIsNone(view._undoHistory)
-            self.assertIsNone(view._noticeHandler.getStage())
+            self.assertIsNone(view._stageSync.boundStage())
             torn_down = self._state()
 
             # usdview moves on to another stage and emits through the same
@@ -1658,7 +1661,7 @@ class DockWindowCloseTest(unittest.TestCase):
         self.assertEqual(service.epoch(), live + 1)
         self.assertEqual(self.closes, [(7, True, True)])
         self.assertIsNone(view._undoHistory)
-        self.assertIsNone(view._noticeHandler.getStage())
+        self.assertIsNone(view._stageSync.boundStage())
         self.assertEqual(self.api.post_close_reads, [])
         self.assertEqual(self.api.api_reads, reads)
 

@@ -1028,52 +1028,16 @@ def _beginReloadOnView(view, frame):
     view.setUpdatesEnabled(False)
     view.initialized = False
 
-    view._noticeHandler.unregister()
-    view._invalidateBackReferenceLinkDataCache()
-
-    # A value drag / editor / popup pinned to the old stage must not survive
-    # into the new one.
-    view._clearValueInteractionState()
     view._currentTimeCode = frame
-
-    # Clear state that holds dead Usd.Prim / Usd.Stage references
-    view._lastPrimTreeSelection = []
-    view._lastSelectedNode = None
-    if hasattr(view, "_selection"):
-        view._selection.update("replace", (), ())
-    else:
-        view._selectedNodes.clear()
-        view._selectedLinks.clear()
-    view._linkUnderCursor = -1
-    # Drop per-node position watermarks for the torn-down graph; the next
-    # graph's nodes reconcile fresh (and this bounds the map's growth).
-    view._reconciledPositionVersions.clear()
-    view._lastPinIndex = -1
-    view._lastLinkCycleIndex = 0
-    view._lastInputLinkIndex = -1
-    view._lastOutputLinkIndex = -1
-    view._lastDanglingLinkIndex = -1
 
 
 def _loadOnView(view, delta):
-    old_state = model.attached_state(view)
-    old_graph = getattr(view, "nodeGraph", None)
     if delta.mode == MODE_CONTAINER:
-        loader, args = view.loadContainer, (delta.stage, delta.prim_path)
+        view._populateContainer(delta.stage, delta.prim_path)
     elif delta.mode == MODE_BLUEPRINT:
-        loader, args = view.loadBlueprint, (delta.stage, delta.prim_path)
+        view._populateBlueprint(delta.stage, delta.prim_path)
     else:
-        loader, args = view.loadStage, (delta.stage,)
-
-    # Defer GL deletion until the host renderer has finished teardown.
-    view._deferRenderCacheClear = True
-    try:
-        loader(*args)
-        model.note_graph_replaced(view, old_state, old_graph)
-    finally:
-        view._deferRenderCacheClear = False
-        # A loader can initialize GL; only FinishReload should resume paint.
-        view.initialized = False
+        view._populateStage(delta.stage)
 
 
 def _finishReloadOnView(view):
@@ -1088,26 +1052,27 @@ def _finishReloadOnView(view):
     # driver state has stabilized.  Doing it during BeginReload would race
     # with the stageView's renderer teardown and crash the NVIDIA driver on
     # its worker thread.
-    if view._renderCacheClearPending:
-        view._renderCacheClearPending = False
-        view.makeCurrent()
-        try:
-            view._nodeRenderManager.clearCache()
-        finally:
-            view.doneCurrent()
-
-    view.linksChanged = True
-    view.textChanged = True
-    view.initialized = True
-    view.setUpdatesEnabled(True)
-    view.update()
+    try:
+        if view._renderCacheClearPending:
+            view.makeCurrent()
+            try:
+                view._nodeRenderManager.clearCache()
+                view._renderCacheClearPending = False
+            finally:
+                view.doneCurrent()
+    finally:
+        view.linksChanged = True
+        view.textChanged = True
+        view.initialized = True
+        view.setUpdatesEnabled(True)
+        view.update()
 
 
 def applyStageDelta(view, delta):
     """Perform one reload delta on *view*, synchronously, owner thread.
 
-    Remove / Adopt / Invalidate are records of work reconciliation already
-    did, so they carry nothing to apply here.
+    Remove / Adopt / Invalidate are records of work reconciliation
+    already did, so they carry nothing to apply here.
     """
     if isinstance(delta, BeginReload):
         _beginReloadOnView(view, delta.frame)
@@ -1128,12 +1093,15 @@ def closeStageLifecycle(view):
     receiver that is already gone, because every queued delta and notice is
     dropped by comparing against that epoch.
     """
-    service = getattr(view, "_stageSync", None)
-    if service is None or service.isClosed():
+    service = view._stageSync
+    if service.isClosed():
         return
-    unsubscribe_edit_target_warning(view._showWarningPopup)
-    view._undoHistory = None
     service.close()
+    try:
+        view._clearValueInteractionState()
+    finally:
+        view._undoHistory = None
+        unsubscribe_edit_target_warning(view._showWarningPopup)
     dispose = getattr(view, "_disposeView", None)
     if dispose is not None:
         dispose()

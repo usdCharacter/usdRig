@@ -40,7 +40,7 @@ except ImportError as e:  # pragma: no cover - import guard
     _has_core = False
 
 try:
-    from UsdNoodles.graphView import GraphView
+    from UsdNoodles.graphView import GraphView, _makeStageSync
     from UsdNoodles.models import NodeModel
     from pxr.Usdviewq.qt import QtCore
 
@@ -184,6 +184,7 @@ class TestAutoLayoutAction(unittest.TestCase):
             textChanged=False,
             linksChanged=False,
         )
+        view._invalidateGraphGeometry = lambda: GraphView._invalidateGraphGeometry(view)
         GraphView._resetRenderCachesAfterBulkMove(view)
         view._clearRenderCache.assert_called_once()
         view.textRenderer.resetPositionCaches.assert_called_once()
@@ -205,26 +206,22 @@ class TestAutoLayoutAction(unittest.TestCase):
             textChanged=False,
             linksChanged=False,
         )
+        view._invalidateGraphGeometry = lambda: GraphView._invalidateGraphGeometry(view)
         GraphView._resetRenderCachesAfterBulkMove(view, rebuild_links=False)
         view._clearRenderCache.assert_called_once()
         self.assertTrue(view.textChanged)
         self.assertFalse(view.linksChanged)
 
     def test_apply_node_positions_batches_and_refreshes(self):
-        notice = SimpleNamespace(setEnabled=MagicMock())
         view = SimpleNamespace(
             nodes={"A": _fake_node(Gf.Vec2d(0.0, 0.0))},
-            _noticeHandler=notice,
+            _stageSync=_makeStageSync(None),
             _authorNodePosition=MagicMock(),
             _resetRenderCachesAfterBulkMove=MagicMock(),
             update=MagicMock(),
         )
         GraphView._applyNodePositions(view, {"A": (5.0, 6.0)})
         view._authorNodePosition.assert_called_once_with("A", (5.0, 6.0))
-        # Notice handler is disabled during authoring and re-enabled after.
-        self.assertEqual(
-            [c.args[0] for c in notice.setEnabled.call_args_list], [False, True]
-        )
         # Drawables re-bake here; the spatial index / link endpoints / port
         # highlights are NOT touched by this method -- authoring bumped each
         # node's self-versioning position and the single _reconcileMovedNodes

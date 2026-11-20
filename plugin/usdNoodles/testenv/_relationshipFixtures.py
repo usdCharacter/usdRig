@@ -27,7 +27,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from pxr import Gf
-from UsdNoodles.graphView import GraphView
+from UsdNoodles.graphView import GraphView, _makeStageSync
 from UsdNoodles.pinUtils import RELATIONSHIP_LINK_BASE_COLOR
 from pxr.Usdviewq.qt import QtCore
 
@@ -291,6 +291,7 @@ def make_connection_view(*, delete_old_returns=True, show_popup=True):
         ),
         nodeGraph=SimpleNamespace(getStage=MagicMock(return_value=stage)),
         _noticeHandler=SimpleNamespace(setEnabled=MagicMock()),
+        _stageSync=_makeStageSync(None),
         _abortConnection=MagicMock(),
         _deleteOldConnection=MagicMock(return_value=delete_old_returns),
         _addLinkToGraph=MagicMock(),

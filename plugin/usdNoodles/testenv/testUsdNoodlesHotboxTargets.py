@@ -26,7 +26,7 @@ from pxr import Sdf, Usd, UsdGeom
 
 try:
     from UsdNoodles.apiSchemas import API_SCHEMA_KIND
-    from UsdNoodles.graphView import GraphView
+    from UsdNoodles.graphView import GraphView, _makeStageSync
 
     _has_graph_view = True
 except ImportError:
@@ -55,7 +55,7 @@ class _StubGraphView:
         self._lastPrimTreeSelection = list(cachedPrims)
         self._currentPrimPath = currentPrimPath
 
-        self._noticeHandler = MagicMock()
+        self._stageSync = _makeStageSync(self)
         self.nodeGraph = MagicMock()
         self.nodeGraph.getStage.return_value = stage
 
@@ -277,15 +277,15 @@ class ApplyApiSchemaFromHotboxTest(unittest.TestCase):
 
         view._reloadCurrentGraph.assert_called_once()
 
-    def test_plugin_edits_are_not_reprocessed_as_external_changes(self) -> None:
+    def test_plugin_edits_are_not_reprocessed_as_external_changes(self):
         view = _StubGraphView(self.stage, livePrims=[self.alpha])
-
-        self._apply(view, "PhysicsRigidBodyAPI")
-
-        self.assertEqual(
-            [call.args[0] for call in view._noticeHandler.setEnabled.call_args_list],
-            [False, True],
-        )
+        view._stageSync.bind(self.stage)
+        self.addCleanup(view._stageSync.close)
+        with patch.object(view._stageSync, "changed") as external:
+            self._apply(view, "PhysicsRigidBodyAPI")
+            external.assert_not_called()
+            self.alpha.SetDocumentation("external edit")
+            self.assertTrue(external.called)
 
     def test_undo_removes_the_schema_and_redo_restores_it(self) -> None:
         view = _StubGraphView(self.stage, livePrims=[self.alpha])

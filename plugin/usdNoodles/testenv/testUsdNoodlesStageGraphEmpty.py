@@ -24,7 +24,7 @@ from pxr import Usd
 
 try:
     from UsdNoodles import _usdNoodles as _noodles
-    from UsdNoodles.graphView import GraphView
+    from UsdNoodles.graphView import GraphView, _makeStageSync
     from UsdNoodles.nodeFactory import NodeFactory
     from UsdNoodles.nodeGraphStage import NodeGraphStage
     from UsdNoodles.nodeLibs.usdPrimLibrary import UsdPrimLibrary
@@ -70,7 +70,11 @@ class _OpenStubView:
         self.textRenderer = MagicMock()
         self.textRenderer.calculateTextWidth = _measure
         self.fontAtlas = _font_metrics()
-        self._noticeHandler = MagicMock()
+        self._stageSync = _makeStageSync(self)
+        self._syncingSelection = False
+        self._deferRenderCacheClear = False
+        self._prepareGraphSwitch = MagicMock()
+        self._resetUnboundGraph = MagicMock()
         self._seedNodeZOrders = MagicMock()
         self._gridPlaceNodes = MagicMock()
         self._resetRenderCachesAfterBulkMove = MagicMock()
@@ -82,6 +86,8 @@ class _OpenStubView:
     @property
     def nodes(self):
         return self.nodeGraph.nodes
+
+    _populateStage = GraphView._populateStage if _has_graph else None
 
     def loadStage(self, stage):
         return GraphView.loadStage(self, stage)
@@ -117,7 +123,7 @@ class OpenStageGraphsNothingTest(unittest.TestCase):
         self.assertTrue(view.nodeGraph.syncSelectionToPrimTree)
         self.assertTrue(view.nodeGraph.linksChanged)
         self.assertIsNone(view._currentPrimPath)
-        view._noticeHandler.register.assert_called_once_with(stage)
+        self.assertIs(view._stageSync.boundStage(), stage)
         view._initUndoTracking.assert_called_once_with(stage)
         view._seedNodeZOrders.assert_called_once_with()
         view._resetRenderCachesAfterBulkMove.assert_called_once_with()
@@ -129,9 +135,7 @@ class _ReloadStubView(_OpenStubView):
 
     def __init__(self, stage):
         super().__init__(stage)
-        self.nodeGraph = NodeGraphStage()
-        self.nodeGraph.setStage(stage)
-        self._currentPrimPath = None
+        self.loadStage(stage)
         self._nextZOrder = 0
         self._clearValueInteractionState = MagicMock()
         self._clearRenderCache = MagicMock()
