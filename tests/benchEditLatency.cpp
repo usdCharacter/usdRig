@@ -49,7 +49,7 @@
 #include "rigExec/parallel.h"
 #include "rigExec/profiler.h"
 #include "rigExec/rigEvaluator.h"
-#include "rigExec/tapSet.h"
+#include "rigExec/valueAddress.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"
@@ -88,8 +88,7 @@ GetEnv(const char *name)
     // for the next one.
     static char buffer[1024];
     size_t needed = 0;
-    if (getenv_s(&needed, buffer, sizeof(buffer), name) != 0 ||
-        needed == 0) {
+    if (getenv_s(&needed, buffer, sizeof(buffer), name) != 0 || needed == 0) {
         return nullptr;
     }
     return buffer;
@@ -190,14 +189,13 @@ UsdAttribute
 FindKeyedAvar(const UsdStageRefPtr &stage, const Targets &t)
 {
     if (!t.hips.IsEmpty()) {
-        const UsdAttribute rz = stage->GetPrimAtPath(t.hips).GetAttribute(
-            TfToken("avars:rz"));
+        const UsdAttribute rz =
+            stage->GetPrimAtPath(t.hips).GetAttribute(TfToken("avars:rz"));
         if (rz && rz.GetNumTimeSamples() > 1) {
             return rz;
         }
     }
-    for (const UsdPrim &prim :
-         UsdPrimRange(stage->GetPrimAtPath(t.rig))) {
+    for (const UsdPrim &prim : UsdPrimRange(stage->GetPrimAtPath(t.rig))) {
         for (const UsdAttribute &attr : prim.GetAttributes()) {
             if (TfStringStartsWith(attr.GetName().GetString(), "avars:") &&
                 attr.GetTypeName() == SdfValueTypeNames->Double &&
@@ -275,9 +273,9 @@ FindTargets(const UsdStageRefPtr &stage, const SdfPath &rig)
     }
     const UsdPrim fkSolver =
         stage->GetPrimAtPath(rig.AppendPath(SdfPath("Solvers/fk_index_l")));
-    const UsdRelationship fk = fkSolver
-        ? fkSolver.GetRelationship(TfToken("rigExec:joints"))
-        : UsdRelationship();
+    const UsdRelationship fk =
+        fkSolver ? fkSolver.GetRelationship(TfToken("rigExec:joints"))
+                 : UsdRelationship();
     SdfPathVector targets;
     if (fk && fk.GetTargets(&targets) && !targets.empty()) {
         t.joints = fk;
@@ -294,8 +292,8 @@ FindTargets(const UsdStageRefPtr &stage, const SdfPath &rig)
     // The folded values: the biped's spine spline IK first, any aggregate
     // solver (the types that declare rigExec:jointElements) otherwise.
     std::vector<UsdPrim> solvers;
-    const UsdPrim spine = stage->GetPrimAtPath(
-        rig.AppendPath(SdfPath("Solvers/spine_splineIk")));
+    const UsdPrim spine =
+        stage->GetPrimAtPath(rig.AppendPath(SdfPath("Solvers/spine_splineIk")));
     if (spine) {
         solvers.push_back(spine);
     }
@@ -308,8 +306,8 @@ FindTargets(const UsdStageRefPtr &stage, const SdfPath &rig)
         const UsdRelationship joints =
             prim.GetRelationship(TfToken("rigExec:joints"));
         if (!t.jointElements && elements &&
-            elements.GetTypeName() == SdfValueTypeNames->IntArray &&
-            joints && joints.GetTargets(&targets) && targets.size() >= 2) {
+            elements.GetTypeName() == SdfValueTypeNames->IntArray && joints &&
+            joints.GetTargets(&targets) && targets.size() >= 2) {
             t.jointElements = elements;
             t.jointCount = targets.size();
         }
@@ -364,11 +362,11 @@ SplitByScopes(const std::vector<RigExecProfileEvent> &events, Round *r)
         }
         bakeUs += double(e.durationUs);
         const uint64_t end = e.startUs + e.durationUs;
-        const bool inSettle = std::any_of(
-            settles.begin(), settles.end(),
-            [&](const std::pair<uint64_t, uint64_t> &s) {
-                return e.startUs >= s.first && end <= s.second;
-            });
+        const bool inSettle =
+            std::any_of(settles.begin(), settles.end(),
+                        [&](const std::pair<uint64_t, uint64_t> &s) {
+                            return e.startUs >= s.first && end <= s.second;
+                        });
         if (!inSettle) {
             bakeOutsideSettleUs += double(e.durationUs);
         }
@@ -399,9 +397,8 @@ CountProgramWork(const RigExecRigEvaluator &evaluator, Round *r)
 /// Applies the edit, evaluates at \p time, and measures both. Returns
 /// false when the edit could not be authored.
 bool
-MeasureRound(RigExecRigEvaluator &evaluator,
-             const std::function<bool()> &edit, UsdTimeCode time,
-             Round *r)
+MeasureRound(RigExecRigEvaluator &evaluator, const std::function<bool()> &edit,
+             UsdTimeCode time, Round *r)
 {
     evaluator.ClearProfile();
     const double editStart = NowUs();
@@ -433,9 +430,8 @@ void
 PrintHeader()
 {
     std::printf("%-10s %3s %7s %8s %17s %8s %8s %7s %7s %7s %9s %9s %5s\n",
-                "id", "n", "edit", "wall", "[min..max]", "settle",
-                "compile", "bake", "run", "other", "clusters", "steps",
-                "baked");
+                "id", "n", "edit", "wall", "[min..max]", "settle", "compile",
+                "bake", "run", "other", "clusters", "steps", "baked");
 }
 
 template <class Get>
@@ -463,27 +459,25 @@ PrintRow(const std::string &id, const std::vector<Round> &rounds)
         hi = std::max(hi, r.wallMs);
         baked += r.baked ? 1 : 0;
     }
-    const double clusters = MedianOf(rounds, [](const Round &r) {
-        return r.clusters;
-    });
-    const double steps = MedianOf(rounds, [](const Round &r) {
-        return r.steps;
-    });
+    const double clusters =
+        MedianOf(rounds, [](const Round &r) { return r.clusters; });
+    const double steps =
+        MedianOf(rounds, [](const Round &r) { return r.steps; });
     const std::string clusterText =
-        clusters > 0
-            ? TfStringPrintf("%.0f/%.0f",
-                             MedianOf(rounds, [](const Round &r) {
-                                 return r.clustersRun;
-                             }),
-                             clusters)
-            : std::string("-");
+        clusters > 0 ? TfStringPrintf("%.0f/%.0f",
+                                      MedianOf(rounds,
+                                               [](const Round &r) {
+                                                   return r.clustersRun;
+                                               }),
+                                      clusters)
+                     : std::string("-");
     const std::string stepText =
-        steps > 0 ? TfStringPrintf("%.0f/%.0f",
-                                   MedianOf(rounds, [](const Round &r) {
-                                       return r.stepsRun;
-                                   }),
-                                   steps)
-                  : std::string("-");
+        steps > 0
+            ? TfStringPrintf(
+                  "%.0f/%.0f",
+                  MedianOf(rounds, [](const Round &r) { return r.stepsRun; }),
+                  steps)
+            : std::string("-");
     const std::string range = TfStringPrintf("[%.2f..%.2f]", lo, hi);
     std::printf(
         "%-10s %3zu %7.2f %8.2f %17s %8.2f %8.2f %7.2f %7.2f %7.2f %9s %9s "
@@ -526,8 +520,8 @@ bool
 SetOverride(RigExecRigEvaluator &evaluator, const SdfPath &prim,
             const char *attr, double value)
 {
-    evaluator.SetInteractiveOverrides({RigExecValueOverride{
-        prim, TfToken(), TfToken(attr), VtValue(value)}});
+    evaluator.SetInteractiveOverrides(
+        {RigExecValueOverride{prim, TfToken(), TfToken(attr), VtValue(value)}});
     return true;
 }
 
@@ -616,8 +610,8 @@ BuildScenarios(const UsdStageRefPtr &stage, const Targets &t, double held)
     {
         Scenario s;
         s.id = "T1c-guide";
-        s.what = "non-avar value in the rig " + t.hips.GetString() +
-                 ".guide:scaleX";
+        s.what =
+            "non-avar value in the rig " + t.hips.GetString() + ".guide:scaleX";
         s.missing = noHips;
         if (hips) {
             const UsdAttribute a = hipsAttr("guide:scaleX");
@@ -700,8 +694,7 @@ BuildScenarios(const UsdStageRefPtr &stage, const Targets &t, double held)
         }
         VtIntArray swapped = identity;
         if (swapped.size() >= 2) {
-            std::swap(swapped[swapped.size() - 1],
-                      swapped[swapped.size() - 2]);
+            std::swap(swapped[swapped.size() - 1], swapped[swapped.size() - 2]);
         }
         s.setup = [a, identity](RigExecRigEvaluator &) {
             return a.Set(identity);
@@ -732,20 +725,20 @@ BuildScenarios(const UsdStageRefPtr &stage, const Targets &t, double held)
     {
         Scenario s;
         s.id = "T4";
-        const SdfPath added = t.hips.IsEmpty()
-                                  ? SdfPath()
-                                  : t.hips.GetParentPath().AppendChild(
-                                        TfToken("zz_new_ctl"));
-        s.what = "structural: define / remove RigExecControl " +
-                 added.GetString();
+        const SdfPath added =
+            t.hips.IsEmpty()
+                ? SdfPath()
+                : t.hips.GetParentPath().AppendChild(TfToken("zz_new_ctl"));
+        s.what =
+            "structural: define / remove RigExecControl " + added.GetString();
         s.missing = noHips;
         s.evenLabel = "T4-add";
         s.oddLabel = "T4-remove";
         s.evenRounds = true;
         s.edit = [stage, added](RigExecRigEvaluator &, size_t i) {
             if (i % 2 == 0) {
-                return bool(stage->DefinePrim(added,
-                                              TfToken("RigExecControl")));
+                return bool(
+                    stage->DefinePrim(added, TfToken("RigExecControl")));
             }
             return stage->RemovePrim(added);
         };
@@ -758,9 +751,9 @@ BuildScenarios(const UsdStageRefPtr &stage, const Targets &t, double held)
         Scenario s;
         s.id = "T5";
         const UsdRelationship rel = t.joints;
-        s.what = "broken: " +
-                 (rel ? rel.GetPath().GetString() : std::string()) +
-                 " += a missing target, one frame per round";
+        s.what =
+            "broken: " + (rel ? rel.GetPath().GetString() : std::string()) +
+            " += a missing target, one frame per round";
         s.missing = rel ? "" : "no rigExec:joints relationship";
         SdfPathVector original;
         if (rel) {
@@ -803,8 +796,8 @@ Usage()
 /// failure that makes the rest of the run meaningless (no compile).
 bool
 RunScenario(const Scenario &scenario, const UsdStageRefPtr &stage,
-            const SdfPath &rigPath, bool referenceChecks,
-            size_t rounds, double held)
+            const SdfPath &rigPath, bool referenceChecks, size_t rounds,
+            double held)
 {
     if (!scenario.missing.empty()) {
         std::printf("%-10s n/a: %s\n", scenario.id.c_str(),
@@ -840,10 +833,9 @@ RunScenario(const Scenario &scenario, const UsdStageRefPtr &stage,
         Round r;
         const double time = scenario.time ? scenario.time(i) : held;
         const std::function<bool()> edit =
-            scenario.edit
-                ? std::function<bool()>(
-                      [&]() { return scenario.edit(evaluator, i); })
-                : std::function<bool()>([]() { return true; });
+            scenario.edit ? std::function<bool()>(
+                                [&]() { return scenario.edit(evaluator, i); })
+                          : std::function<bool()>([]() { return true; });
         ok = MeasureRound(evaluator, edit, UsdTimeCode(time), &r);
         if (!ok) {
             break;
@@ -917,7 +909,7 @@ RunChild(const std::string &commandLine)
 #endif
 }
 
-}  // namespace
+} // namespace
 
 int
 main(int argc, char **argv)
@@ -969,20 +961,18 @@ main(int argc, char **argv)
     const std::string resources = SchemaResourceDir();
     if (!resources.empty() &&
         PlugRegistry::GetInstance().RegisterPlugins(resources).empty()) {
-        std::printf("FATAL: no schema plugin found at %s\n",
-                    resources.c_str());
+        std::printf("FATAL: no schema plugin found at %s\n", resources.c_str());
         return 2;
     }
     if (!child) {
-        for (const char *name : {"RIGEXEC_ENABLE_PARALLEL_EVAL",
-                                 "RIGEXEC_BAKED_SCHEDULE",
-                                 "RIGEXEC_FRAME_CACHE"}) {
+        for (const char *name :
+             {"RIGEXEC_ENABLE_PARALLEL_EVAL", "RIGEXEC_BAKED_SCHEDULE",
+              "RIGEXEC_FRAME_CACHE"}) {
             const char *value = GetEnv(name);
             std::printf("%s=%s\n", name, value ? value : "(unset)");
         }
         std::printf("parallel eval: %s\n",
-                    RigExecParallelEvaluationEnabled() ? "on"
-                                                       : "off (serial)");
+                    RigExecParallelEvaluationEnabled() ? "on" : "off (serial)");
     }
 
     const UsdStageRefPtr stage = UsdStage::Open(stagePath);
@@ -1007,7 +997,8 @@ main(int argc, char **argv)
     if (child) {
         for (const Scenario &scenario : scenarios) {
             if ((only.empty() || only.count(scenario.id)) &&
-                !RunScenario(scenario, stage, rigPath, referenceChecks, rounds, held)) {
+                !RunScenario(scenario, stage, rigPath, referenceChecks, rounds,
+                             held)) {
                 return 1;
             }
         }
@@ -1015,8 +1006,8 @@ main(int argc, char **argv)
     }
 
     std::printf("[stage] %s rig=%s reference=%s held=%g rounds=%zu\n",
-                stagePath.c_str(), rigPath.GetText(), referenceChecks ? "on" : "off", held,
-                rounds);
+                stagePath.c_str(), rigPath.GetText(),
+                referenceChecks ? "on" : "off", held, rounds);
     std::printf("columns: medians over the rounds, ms; settle nests "
                 "compile, and compile nests bake on a recompile\n");
     PrintHeader();

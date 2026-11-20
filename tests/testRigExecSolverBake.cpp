@@ -17,7 +17,7 @@
 #include "rigExec/bakedProgram.h"
 #include "rigExec/bakedProgramImpl.h"
 #include "rigExec/rigEvaluator.h"
-#include "rigExec/tapSet.h"
+#include "rigExec/valueAddress.h"
 
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/plug/registry.h"
@@ -46,12 +46,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
@@ -68,13 +68,14 @@ using MakeStage = std::function<UsdStageRefPtr()>;
 /// and cache behavior; the numeric solver checks below establish correctness.
 void
 CheckEvaluatorConsistency(const char *what, const MakeStage &make,
-            const std::vector<double> &frames, bool expectBaked,
-            bool guides = true)
+                          const std::vector<double> &frames, bool expectBaked,
+                          bool guides = true)
 {
     const UsdStageRefPtr baselineStage = make();
     const UsdStageRefPtr bakedStage = make();
     CHECK(baselineStage && bakedStage);
-    if (!baselineStage || !bakedStage) return;
+    if (!baselineStage || !bakedStage)
+        return;
 
     RigExecRigEvaluator baseline(baselineStage, kRigPath);
     RigExecRigEvaluator baked(bakedStage, kRigPath);
@@ -132,8 +133,8 @@ CheckEvaluatorConsistency(const char *what, const MakeStage &make,
     if (expectBaked && baked.GetBakedGenerationCount() != generations) {
         ++failures;
         std::printf("FAIL %s: %zu of %zu generation(s) came from the "
-                    "program\n", what, baked.GetBakedGenerationCount(),
-                    generations);
+                    "program\n",
+                    what, baked.GetBakedGenerationCount(), generations);
     }
 }
 
@@ -151,7 +152,8 @@ CheckDrag(const char *what, const MakeStage &make, const SdfPath &prim,
     const UsdStageRefPtr baselineStage = make();
     const UsdStageRefPtr bakedStage = make();
     CHECK(baselineStage && bakedStage);
-    if (!baselineStage || !bakedStage) return;
+    if (!baselineStage || !bakedStage)
+        return;
 
     RigExecRigEvaluator baseline(baselineStage, kRigPath);
     RigExecRigEvaluator baked(bakedStage, kRigPath);
@@ -161,7 +163,6 @@ CheckDrag(const char *what, const MakeStage &make, const SdfPath &prim,
         std::printf("FAIL %s: the fixture does not compile\n", what);
         return;
     }
-
 
     const std::vector<RigExecValueOverride> drag{
         RigExecValueOverride{prim, TfToken(), TfToken(attribute), held}};
@@ -181,8 +182,8 @@ CheckDrag(const char *what, const MakeStage &make, const SdfPath &prim,
     baked.ClearInteractiveOverrides();
     const RigExecRigPose freedA = baseline.Evaluate(UsdTimeCode(2.0));
     const RigExecRigPose freedB = baked.Evaluate(UsdTimeCode(2.0));
-    rigExecTest::ComparePose(&failures, std::string(what) + " released",
-                             freedA, freedB);
+    rigExecTest::ComparePose(&failures, std::string(what) + " released", freedA,
+                             freedB);
     // The drag has to MOVE something, or the comparison above is two
     // identical generations agreeing about nothing.
     if (heldA.solverFrames == settledA.solverFrames &&
@@ -197,7 +198,8 @@ CheckDrag(const char *what, const MakeStage &make, const SdfPath &prim,
     if (baked.GetBakedGenerationCount() != 3) {
         ++failures;
         std::printf("FAIL %s: %zu of 3 generation(s) came from the "
-                    "program\n", what, baked.GetBakedGenerationCount());
+                    "program\n",
+                    what, baked.GetBakedGenerationCount());
     }
 }
 
@@ -214,7 +216,8 @@ SetTargets(const UsdPrim &prim, const char *relationship,
            const SdfPathVector &targets)
 {
     UsdRelationship rel = prim.GetRelationship(TfToken(relationship));
-    if (!rel) rel = prim.CreateRelationship(TfToken(relationship));
+    if (!rel)
+        rel = prim.CreateRelationship(TfToken(relationship));
     rel.SetTargets(targets);
 }
 
@@ -257,10 +260,9 @@ MakeFkSpine()
         Define(stage, "/Asset/Rig/Joints/Root/Chest", "RigExecJoint");
     chest.GetAttribute(TfToken("rest:space")).Set(RestAt(4.0));
 
-    const UsdPrim fk = Define(stage, "/Asset/Rig/Solvers/SpineFK",
-                              "RigExecFkChain");
-    SetTargets(fk, "rigExec:controls",
-               {rootCtl.GetPath(), chestCtl.GetPath()});
+    const UsdPrim fk =
+        Define(stage, "/Asset/Rig/Solvers/SpineFK", "RigExecFkChain");
+    SetTargets(fk, "rigExec:controls", {rootCtl.GetPath(), chestCtl.GetPath()});
     SetTargets(fk, "rigExec:joints", {root.GetPath(), chest.GetPath()});
     return stage;
 }
@@ -282,10 +284,8 @@ MakeTwistRig()
     twist.GetAttribute(TfToken("rigExec:count")).Set(5);
     twist.GetAttribute(TfToken("rigExec:weights"))
         .Set(VtFloatArray{0.0f, 0.25f, 0.5f, 0.75f, 1.0f});
-    SetTargets(twist, "rigExec:start",
-               {SdfPath("/Asset/Rig/Joints/Root")});
-    SetTargets(twist, "rigExec:end",
-               {SdfPath("/Asset/Rig/Joints/Root/Chest")});
+    SetTargets(twist, "rigExec:start", {SdfPath("/Asset/Rig/Joints/Root")});
+    SetTargets(twist, "rigExec:end", {SdfPath("/Asset/Rig/Joints/Root/Chest")});
     SetTargets(twist, "rigExec:joints", {mid.GetPath()});
     twist.GetAttribute(TfToken("rigExec:jointElements")).Set(VtIntArray{2});
     return stage;
@@ -366,8 +366,10 @@ DefineDriverCurve(const UsdStageRefPtr &stage, bool animated,
         .Set(TfToken("bspline"));
     curve.CreateAttribute(TfToken("wrap"), SdfValueTypeNames->Token)
         .Set(TfToken("nonperiodic"));
-    curve.CreateAttribute(TfToken("curveVertexCounts"),
-                          SdfValueTypeNames->IntArray).Set(VtIntArray{4});
+    curve
+        .CreateAttribute(TfToken("curveVertexCounts"),
+                         SdfValueTypeNames->IntArray)
+        .Set(VtIntArray{4});
     const VtVec3fArray rest{GfVec3f(0, 0, 0), GfVec3f(0, 2.7f, 0),
                             GfVec3f(0, 5.3f, 0), GfVec3f(0, 8, 0)};
     UsdAttribute points = curve.CreateAttribute(
@@ -456,7 +458,8 @@ MakeGuideOnlyRibbonRig()
     SetTargets(stage->GetPrimAtPath(SdfPath("/Asset/Rig/Solvers/SpineRibbon")),
                "rigExec:joints", {});
     stage->GetPrimAtPath(SdfPath("/Asset/Rig/Solvers/SpineRibbon"))
-        .GetAttribute(TfToken("rigExec:jointElements")).Set(VtIntArray{});
+        .GetAttribute(TfToken("rigExec:jointElements"))
+        .Set(VtIntArray{});
     stage->RemovePrim(SdfPath("/Asset/Rig/Joints/RibbonMid"));
     return stage;
 }
@@ -471,7 +474,8 @@ MakeGuideOnlyTwistRig()
     SetTargets(stage->GetPrimAtPath(SdfPath("/Asset/Rig/Solvers/SpineTwist")),
                "rigExec:joints", {});
     stage->GetPrimAtPath(SdfPath("/Asset/Rig/Solvers/SpineTwist"))
-        .GetAttribute(TfToken("rigExec:jointElements")).Set(VtIntArray{});
+        .GetAttribute(TfToken("rigExec:jointElements"))
+        .Set(VtIntArray{});
     stage->RemovePrim(SdfPath("/Asset/Rig/Joints/TwistMid"));
     return stage;
 }
@@ -631,7 +635,8 @@ MakeSplineIkRigWithUnsupportedRestLength()
 {
     const UsdStageRefPtr stage = MakeSplineIkRig();
     stage->GetPrimAtPath(SdfPath("/Asset/Rig/Solvers/SpineIk"))
-        .GetAttribute(TfToken("rigExec:restLength")).Set(TfToken("spring"));
+        .GetAttribute(TfToken("rigExec:restLength"))
+        .Set(TfToken("spring"));
     return stage;
 }
 
@@ -640,7 +645,8 @@ MakeSplineIkRigWithUnsupportedRootTangent()
 {
     const UsdStageRefPtr stage = MakeSplineIkRig();
     stage->GetPrimAtPath(SdfPath("/Asset/Rig/Solvers/SpineIk"))
-        .GetAttribute(TfToken("rigExec:rootTangent")).Set(TfToken("wobble"));
+        .GetAttribute(TfToken("rigExec:rootTangent"))
+        .Set(TfToken("wobble"));
     return stage;
 }
 
@@ -696,8 +702,7 @@ MakeBlendRig()
     const UsdPrim blend =
         Define(stage, "/Asset/Rig/Solvers/Blend", "RigExecBlendPointFrames");
     SetTargets(blend, "rigExec:inputA", {fk.GetPath()});
-    SetTargets(blend, "rigExec:inputB",
-               {SdfPath("/Asset/Rig/Solvers/LegIK")});
+    SetTargets(blend, "rigExec:inputB", {SdfPath("/Asset/Rig/Solvers/LegIK")});
     UsdAttribute weight = blend.GetAttribute(TfToken("inputs:weight"));
     weight.Set(0.0f, UsdTimeCode(1.0));
     weight.Set(1.0f, UsdTimeCode(5.0));
@@ -757,8 +762,7 @@ MakeBlendRigWithANonSolverInput()
     const UsdStageRefPtr stage = MakeBlendRig();
     stage->RemovePrim(SdfPath("/Asset/Rig/Solvers/LegIK"));
     SetTargets(stage->GetPrimAtPath(SdfPath("/Asset/Rig/Solvers/Blend")),
-               "rigExec:inputB",
-               {SdfPath("/Asset/Rig/Controls/KneePole")});
+               "rigExec:inputB", {SdfPath("/Asset/Rig/Controls/KneePole")});
     return stage;
 }
 
@@ -808,12 +812,13 @@ CheckRibbonPointsOverrideIsRefused()
     const std::unique_ptr<RigExecBakedProgram> program =
         RigExecBakedProgram::Build(&rig, &reasons);
     CHECK(program != nullptr);
-    if (!program) return;
+    if (!program)
+        return;
     const VtVec3fArray held{GfVec3f(0, 0, 0), GfVec3f(1.0f, 2.7f, 0),
                             GfVec3f(2.0f, 5.3f, 0), GfVec3f(3.0f, 8, 0)};
-    CHECK(!program->SetOverrides({RigExecValueOverride{
-        SdfPath("/Asset/Geom/SpineCurve"), TfToken(), TfToken("points"),
-        VtValue(held)}}));
+    CHECK(!program->SetOverrides(
+        {RigExecValueOverride{SdfPath("/Asset/Geom/SpineCurve"), TfToken(),
+                              TfToken("points"), VtValue(held)}}));
     // Two reasons refuse it and either is enough -- the path is folded, and
     // it is in no binding table -- which is the point: no future rewiring
     // of one of them can make this drag placeable quietly.
@@ -876,7 +881,8 @@ CheckRibbonPointsCreatedAfterTheBake()
     const UsdStageRefPtr baselineStage = MakeRibbonRigWithNoPointsYet();
     const UsdStageRefPtr bakedStage = MakeRibbonRigWithNoPointsYet();
     CHECK(baselineStage && bakedStage);
-    if (!baselineStage || !bakedStage) return;
+    if (!baselineStage || !bakedStage)
+        return;
 
     RigExecRigEvaluator baseline(baselineStage, kRigPath);
     RigExecRigEvaluator baked(bakedStage, kRigPath);
@@ -907,7 +913,8 @@ CheckRibbonPointsCreatedAfterTheBake()
     if (baked.GetBakedGenerationCount() != 2) {
         ++failures;
         std::printf("FAIL %s: the generation after the edit was not the "
-                    "program's\n", what);
+                    "program's\n",
+                    what);
     }
     if (b.jointFramesFinal == before.jointFramesFinal) {
         ++failures;
@@ -929,7 +936,8 @@ CheckRibbonPointsEdit(const char *what, bool editDefault)
     const UsdStageRefPtr baselineStage = MakeAnimatedRibbonRig();
     const UsdStageRefPtr bakedStage = MakeAnimatedRibbonRig();
     CHECK(baselineStage && bakedStage);
-    if (!baselineStage || !bakedStage) return;
+    if (!baselineStage || !bakedStage)
+        return;
 
     RigExecRigEvaluator baseline(baselineStage, kRigPath);
     RigExecRigEvaluator baked(bakedStage, kRigPath);
@@ -954,8 +962,8 @@ CheckRibbonPointsEdit(const char *what, bool editDefault)
     const VtVec3fArray edited{GfVec3f(0, 0, 0), GfVec3f(1.1f, 2.7f, 0),
                               GfVec3f(2.3f, 5.3f, 0), GfVec3f(3.5f, 7.6f, 0)};
     for (const UsdStageRefPtr &stage : {baselineStage, bakedStage}) {
-        UsdAttribute points = stage->GetAttributeAtPath(
-            SdfPath("/Asset/Geom/SpineCurve.points"));
+        UsdAttribute points =
+            stage->GetAttributeAtPath(SdfPath("/Asset/Geom/SpineCurve.points"));
         CHECK(points);
         if (editDefault) {
             points.Set(edited);
@@ -975,7 +983,8 @@ CheckRibbonPointsEdit(const char *what, bool editDefault)
     if (baked.GetBakedGenerationCount() != 2) {
         ++failures;
         std::printf("FAIL %s: the generation after the edit was not the "
-                    "program's\n", what);
+                    "program's\n",
+                    what);
     }
     // And the edit has to have MOVED something, or nothing above followed
     // anything.
@@ -1014,15 +1023,15 @@ SameBits(double a, double b)
 bool
 SameBits(const GfVec3d &a, const GfVec3d &b)
 {
-    return SameBits(a[0], b[0]) && SameBits(a[1], b[1]) &&
-           SameBits(a[2], b[2]);
+    return SameBits(a[0], b[0]) && SameBits(a[1], b[1]) && SameBits(a[2], b[2]);
 }
 
 bool
 SameBits(const RestPoints &a, const RestPoints &b)
 {
     for (size_t i = 0; i < a.size(); ++i) {
-        if (!SameBits(a[i], b[i])) return false;
+        if (!SameBits(a[i], b[i]))
+            return false;
     }
     return true;
 }
@@ -1037,9 +1046,11 @@ template <class T>
 bool
 SameBits(const std::vector<T> &a, const std::vector<T> &b)
 {
-    if (a.size() != b.size()) return false;
+    if (a.size() != b.size())
+        return false;
     for (size_t i = 0; i < a.size(); ++i) {
-        if (!SameBits(a[i], b[i])) return false;
+        if (!SameBits(a[i], b[i]))
+            return false;
     }
     return true;
 }
@@ -1097,12 +1108,14 @@ struct RestDiff {
             return;
         }
         ++compared;
-        if (same) return;
+        if (same)
+            return;
         ++differing;
-        if (!report) return;
+        if (!report)
+            return;
         ++failures;
-        std::printf("FAIL %s: %s differs from the refresh%s%s\n",
-                    where.c_str(), field.c_str(), detail ? ": " : "",
+        std::printf("FAIL %s: %s differs from the refresh%s%s\n", where.c_str(),
+                    field.c_str(), detail ? ": " : "",
                     detail ? detail().c_str() : "");
     }
 };
@@ -1119,7 +1132,8 @@ CompareRestDescription(const SolverDesc &held, const SolverDesc &refreshed,
     // Whether a live ref feeds element \p e of an element-remapped table.
     const auto liveElement = [&](int e) {
         for (size_t k = 0; k < held.restRefs.size(); ++k) {
-            if (held.restRefs[k].second == e && liveRef(k)) return true;
+            if (held.restRefs[k].second == e && liveRef(k))
+                return true;
         }
         return false;
     };
@@ -1136,9 +1150,8 @@ CompareRestDescription(const SolverDesc &held, const SolverDesc &refreshed,
 
     diff->Field("jointRests.size", false,
                 held.jointRests.size() == refreshed.jointRests.size());
-    for (size_t k = 0; k < held.jointRests.size() &&
-                       k < refreshed.jointRests.size();
-         ++k) {
+    for (size_t k = 0;
+         k < held.jointRests.size() && k < refreshed.jointRests.size(); ++k) {
         diff->Field("jointRests[" + std::to_string(k) + "]", liveRef(k),
                     SameBits(held.jointRests[k], refreshed.jointRests[k]),
                     points(held.jointRests[k], refreshed.jointRests[k]));
@@ -1146,16 +1159,14 @@ CompareRestDescription(const SolverDesc &held, const SolverDesc &refreshed,
 
     if (held.type == "RigExecFkChain") {
         diff->Field("controlRests.size", false,
-                    held.controlRests.size() ==
-                        refreshed.controlRests.size());
-        for (size_t k = 0; k < held.controlRests.size() &&
-                           k < refreshed.controlRests.size();
+                    held.controlRests.size() == refreshed.controlRests.size());
+        for (size_t k = 0;
+             k < held.controlRests.size() && k < refreshed.controlRests.size();
              ++k) {
-            diff->Field("controlRests[" + std::to_string(k) + "]", false,
-                        SameBits(held.controlRests[k],
-                                 refreshed.controlRests[k]),
-                        points(held.controlRests[k],
-                               refreshed.controlRests[k]));
+            diff->Field(
+                "controlRests[" + std::to_string(k) + "]", false,
+                SameBits(held.controlRests[k], refreshed.controlRests[k]),
+                points(held.controlRests[k], refreshed.controlRests[k]));
         }
         diff->Field("startRest", false,
                     SameBits(held.startRest, refreshed.startRest),
@@ -1165,11 +1176,10 @@ CompareRestDescription(const SolverDesc &held, const SolverDesc &refreshed,
         for (int e = 0; e < 3; ++e) {
             const bool live = liveElement(e);
             anyLive = anyLive || live;
-            diff->Field("ikRests[" + std::to_string(e) + "]", live,
-                        SameBits(held.ikRests[size_t(e)],
-                                 refreshed.ikRests[size_t(e)]),
-                        points(held.ikRests[size_t(e)],
-                               refreshed.ikRests[size_t(e)]));
+            diff->Field(
+                "ikRests[" + std::to_string(e) + "]", live,
+                SameBits(held.ikRests[size_t(e)], refreshed.ikRests[size_t(e)]),
+                points(held.ikRests[size_t(e)], refreshed.ikRests[size_t(e)]));
         }
         // Measured from ikRests, so a live element excludes them too.
         diff->Field("upperLengthBase", anyLive,
@@ -1178,16 +1188,14 @@ CompareRestDescription(const SolverDesc &held, const SolverDesc &refreshed,
         diff->Field("lowerLengthBase", anyLive,
                     SameBits(held.lowerLengthBase, refreshed.lowerLengthBase),
                     scalar(held.lowerLengthBase, refreshed.lowerLengthBase));
-        diff->Field("ikParams.upperLength", anyLive,
-                    SameBits(held.ikParams.upperLength,
-                             refreshed.ikParams.upperLength),
-                    scalar(held.ikParams.upperLength,
-                           refreshed.ikParams.upperLength));
-        diff->Field("ikParams.lowerLength", anyLive,
-                    SameBits(held.ikParams.lowerLength,
-                             refreshed.ikParams.lowerLength),
-                    scalar(held.ikParams.lowerLength,
-                           refreshed.ikParams.lowerLength));
+        diff->Field(
+            "ikParams.upperLength", anyLive,
+            SameBits(held.ikParams.upperLength, refreshed.ikParams.upperLength),
+            scalar(held.ikParams.upperLength, refreshed.ikParams.upperLength));
+        diff->Field(
+            "ikParams.lowerLength", anyLive,
+            SameBits(held.ikParams.lowerLength, refreshed.ikParams.lowerLength),
+            scalar(held.ikParams.lowerLength, refreshed.ikParams.lowerLength));
         if (held.spaceSlot >= 0) {
             diff->Field("spaceRest", false,
                         SameBits(held.spaceRest, refreshed.spaceRest),
@@ -1226,14 +1234,14 @@ CompareRestDescription(const SolverDesc &held, const SolverDesc &refreshed,
                     SameBits(held.splineRootRest, refreshed.splineRootRest),
                     points(held.splineRootRest.points,
                            refreshed.splineRootRest.points));
-        diff->Field("splineMidRest", false,
-                    SameBits(held.splineMidRest, refreshed.splineMidRest),
-                    points(held.splineMidRest.points,
-                           refreshed.splineMidRest.points));
-        diff->Field("splineEndRest", false,
-                    SameBits(held.splineEndRest, refreshed.splineEndRest),
-                    points(held.splineEndRest.points,
-                           refreshed.splineEndRest.points));
+        diff->Field(
+            "splineMidRest", false,
+            SameBits(held.splineMidRest, refreshed.splineMidRest),
+            points(held.splineMidRest.points, refreshed.splineMidRest.points));
+        diff->Field(
+            "splineEndRest", false,
+            SameBits(held.splineEndRest, refreshed.splineEndRest),
+            points(held.splineEndRest.points, refreshed.splineEndRest.points));
         // Built from the joint rest frames, so a live element excludes it.
         diff->Field("splineRest", anyLive,
                     SameBits(held.splineRest, refreshed.splineRest),
@@ -1274,8 +1282,7 @@ SameRestInputs(const SolverDesc &s, const RigExecBakedProgramImpl &a,
 {
     for (const int slot : s.restSlots) {
         if (!SameBits(a.restPts[size_t(slot)], b.restPts[size_t(slot)]) ||
-            !SameBits(a.restFrames[size_t(slot)],
-                      b.restFrames[size_t(slot)])) {
+            !SameBits(a.restFrames[size_t(slot)], b.restFrames[size_t(slot)])) {
             return false;
         }
     }
@@ -1295,7 +1302,8 @@ CompareProgramRests(const std::string &where,
     size_t solvers = 0;
     for (size_t i = 0; i < B.solvers.size(); ++i) {
         const SolverDesc &held = B.solvers[i];
-        if (held.restSlots.empty()) continue;
+        if (held.restSlots.empty())
+            continue;
         ++solvers;
         const std::string name = where + " " + held.path.GetString() + " (" +
                                  held.type.GetString() + ")";
@@ -1306,9 +1314,9 @@ CompareProgramRests(const std::string &where,
         CompareRestDescription(held, refreshed, &diff);
         counts->compared += diff.compared;
         counts->excluded += diff.excluded;
-        if (!build) continue;
-        if (i >= build->solvers.size() ||
-            build->solvers[i].path != held.path ||
+        if (!build)
+            continue;
+        if (i >= build->solvers.size() || build->solvers[i].path != held.path ||
             build->solvers[i].restSlots != held.restSlots ||
             build->paths != B.paths) {
             ++failures;
@@ -1317,7 +1325,8 @@ CompareProgramRests(const std::string &where,
                         name.c_str());
             continue;
         }
-        if (!SameRestInputs(held, B, *build)) continue;
+        if (!SameRestInputs(held, B, *build))
+            continue;
         RestDiff since;
         since.where = name + " against Build";
         CompareRestDescription(build->solvers[i], refreshed, &since);
@@ -1333,7 +1342,8 @@ SdfPath
 FindRigRoot(const UsdStageRefPtr &stage)
 {
     for (const UsdPrim &prim : stage->Traverse()) {
-        if (prim.GetTypeName() == "RigExecRoot") return prim.GetPath();
+        if (prim.GetTypeName() == "RigExecRoot")
+            return prim.GetPath();
     }
     return SdfPath();
 }
@@ -1373,7 +1383,8 @@ TestRefreshSolverRestsOnBuildStateIsIdentity(const char *what,
     // program stays as the reference for the runs below.
     const UsdStageRefPtr buildStage = make();
     const auto buildEvaluator = CompileFixture(what, buildStage);
-    if (!buildEvaluator) return 0;
+    if (!buildEvaluator)
+        return 0;
     std::vector<std::string> reasons;
     const std::unique_ptr<RigExecBakedProgram> built =
         RigExecBakedProgram::Build(buildEvaluator.get(), &reasons);
@@ -1385,8 +1396,8 @@ TestRefreshSolverRestsOnBuildStateIsIdentity(const char *what,
         }
         return 0;
     }
-    if (CompareProgramRests(std::string(what) + " after Build", *built,
-                            nullptr, &counts) == 0) {
+    if (CompareProgramRests(std::string(what) + " after Build", *built, nullptr,
+                            &counts) == 0) {
         ++failures;
         std::printf("FAIL %s: no solver measures from a rest\n", what);
         return 0;
@@ -1396,19 +1407,17 @@ TestRefreshSolverRestsOnBuildStateIsIdentity(const char *what,
     // After runs: settled, under a drag on a rest channel, and released.
     const UsdStageRefPtr stage = make();
     const auto evaluator = CompileFixture(what, stage);
-    if (!evaluator) return 0;
+    if (!evaluator)
+        return 0;
 
     const std::vector<double> frames{1, 3, 7};
     const auto runAndCompare = [&](const std::string &phase) {
         for (const double frame : frames) {
             const std::string where = std::string(what) + " " + phase +
-                                      " frame " +
-                                      std::to_string(int(frame));
+                                      " frame " + std::to_string(int(frame));
             const size_t before = evaluator->GetBakedGenerationCount();
-            const RigExecRigPose pose =
-                evaluator->Evaluate(UsdTimeCode(frame));
-            const RigExecBakedProgram *program =
-                evaluator->GetBakedProgram();
+            const RigExecRigPose pose = evaluator->Evaluate(UsdTimeCode(frame));
+            const RigExecBakedProgram *program = evaluator->GetBakedProgram();
             if (!pose.valid || !program ||
                 evaluator->GetBakedGenerationCount() != before + 1) {
                 ++failures;
@@ -1432,9 +1441,10 @@ TestRefreshSolverRestsOnBuildStateIsIdentity(const char *what,
         for (size_t i = 0; i < solvers.size() && slot < 0; ++i) {
             const SolverDesc &s = solvers[i];
             std::set<int> live;
-            for (size_t k = 0;
-                 k < s.restRefs.size() && k < s.restIsLive.size(); ++k) {
-                if (s.restIsLive[k]) live.insert(s.restRefs[k].first);
+            for (size_t k = 0; k < s.restRefs.size() && k < s.restIsLive.size();
+                 ++k) {
+                if (s.restIsLive[k])
+                    live.insert(s.restRefs[k].first);
             }
             for (const int candidate : s.restSlots) {
                 if (!live.count(candidate)) {
@@ -1452,8 +1462,8 @@ TestRefreshSolverRestsOnBuildStateIsIdentity(const char *what,
     }
     const SdfPath dragged = program->GetStepGraph().paths[size_t(slot)];
     double authored = 0.0;
-    if (const UsdAttribute a = stage->GetPrimAtPath(dragged).GetAttribute(
-            TfToken("rest:tx"))) {
+    if (const UsdAttribute a =
+            stage->GetPrimAtPath(dragged).GetAttribute(TfToken("rest:tx"))) {
         a.Get(&authored, UsdTimeCode(frames.front()));
     }
     evaluator->SetInteractiveOverrides({RigExecValueOverride{
@@ -1465,9 +1475,9 @@ TestRefreshSolverRestsOnBuildStateIsIdentity(const char *what,
     RestDiff moved;
     moved.report = false;
     if (program) {
-        CompareRestDescription(
-            build.solvers[draggedSolver],
-            program->GetStepGraph().solvers[draggedSolver], &moved);
+        CompareRestDescription(build.solvers[draggedSolver],
+                               program->GetStepGraph().solvers[draggedSolver],
+                               &moved);
     }
     if (moved.differing == 0) {
         ++failures;
@@ -1500,16 +1510,14 @@ RestFixtureRigs(const std::string &examples)
         {"01 fk chain tail", file(examples + "/01_FkChainTail.usda")},
         {"02 two-bone ik leg", file(examples + "/02_TwoBoneIkLeg.usda")},
         {"03 ik/fk blend clamp", file(examples + "/03_IkFkBlendClamp.usda")},
-        {"05 twist ribbon spine",
-         file(examples + "/05_TwistRibbonSpine.usda")},
+        {"05 twist ribbon spine", file(examples + "/05_TwistRibbonSpine.usda")},
         {"13 read phases", file(examples + "/13_ReadPhases.usda")},
         {"arm rig", file(examples + "/ArmRig.usda")},
         {"rubberhose", file(examples + "/2d/rubberhose/rubberhose_rig.usda")},
         {"bust", file(examples + "/2d/bust/bust_rig.usda")},
         {"solver_checkpoint", file(fixtures + "/solver_checkpoint.usda")},
         {"oneloop_two_limbs", file(fixtures + "/oneloop_two_limbs.usda")},
-        {"oneloop_cross_domain",
-         file(fixtures + "/oneloop_cross_domain.usda")},
+        {"oneloop_cross_domain", file(fixtures + "/oneloop_cross_domain.usda")},
         {"computed_ik_space", file(fixtures + "/computed_ik_space.usda")},
         {"preceding_own_chain", file(fixtures + "/preceding_own_chain.usda")},
         {"volume_placements", file(fixtures + "/volume_placements.usda")},
@@ -1531,8 +1539,8 @@ RestFixtureRigs(const std::string &examples)
 
 const SdfPath kIkSpaceMaster("/IkSpaceAsset/Rig/Controls/Master");
 const SdfPath kIkSpaceWrist("/IkSpaceAsset/Rig/Joints/Shoulder/Elbow/Wrist");
-const SdfPath kIkSpaceTailEnd(
-    "/IkSpaceAsset/Rig/Joints/Tail0/Tail1/Tail2/Tail3/Tail4");
+const SdfPath
+    kIkSpaceTailEnd("/IkSpaceAsset/Rig/Joints/Tail0/Tail1/Tail2/Tail3/Tail4");
 
 /// Canonical baseline and cached evaluators, each over its own stage.
 struct EvaluatorPair {
@@ -1543,15 +1551,14 @@ struct EvaluatorPair {
 };
 
 bool
-MakeEvaluatorPair(const char *what, const MakeStage &make,
-                  EvaluatorPair *pair)
+MakeEvaluatorPair(const char *what, const MakeStage &make, EvaluatorPair *pair)
 {
     pair->baselineStage = make();
     pair->bakedStage = make();
     pair->baseline = CompileFixture(what, pair->baselineStage);
     pair->baked = CompileFixture(what, pair->bakedStage);
-    if (!pair->baseline || !pair->baked) return false;
-
+    if (!pair->baseline || !pair->baked)
+        return false;
 
     return true;
 }
@@ -1602,12 +1609,13 @@ TestASpaceRestMoveReachesTheSolve(const std::string &examples)
     const MakeStage plain = [file] { return UsdStage::Open(file); };
     const MakeStage keyed = [file] {
         const UsdStageRefPtr stage = UsdStage::Open(file);
-        if (!stage) return stage;
+        if (!stage)
+            return stage;
         UsdEditContext session(stage, stage->GetSessionLayer());
         const UsdPrim master = stage->GetPrimAtPath(kIkSpaceMaster);
         const auto key = [&master](const char *name, double last) {
-            UsdAttribute a = master.CreateAttribute(
-                TfToken(name), SdfValueTypeNames->Double);
+            UsdAttribute a = master.CreateAttribute(TfToken(name),
+                                                    SdfValueTypeNames->Double);
             a.Set(0.0, UsdTimeCode(1.0));
             a.Set(last, UsdTimeCode(10.0));
         };
@@ -1620,7 +1628,8 @@ TestASpaceRestMoveReachesTheSolve(const std::string &examples)
     const auto compare = [&](const std::string &where, EvaluatorPair *pair,
                              double frame, RigExecRigPose *dynamic) {
         ++generations;
-        if (!GenerationsAgree(where, pair, frame, dynamic)) ++disagreeing;
+        if (!GenerationsAgree(where, pair, frame, dynamic))
+            ++disagreeing;
     };
 
     // Keyed: frame 1 is Build's rest, 5 and 10 are not.
@@ -1659,8 +1668,7 @@ TestASpaceRestMoveReachesTheSolve(const std::string &examples)
             const auto drag = [&](double degrees) {
                 const std::vector<RigExecValueOverride> overrides{
                     RigExecValueOverride{kIkSpaceMaster, TfToken(),
-                                         TfToken("rest:ry"),
-                                         VtValue(degrees)}};
+                                         TfToken("rest:ry"), VtValue(degrees)}};
                 pair.baseline->SetInteractiveOverrides(overrides);
                 pair.baked->SetInteractiveOverrides(overrides);
             };
@@ -1693,10 +1701,9 @@ TestASpaceRestMoveReachesTheSolve(const std::string &examples)
         for (const UsdStageRefPtr &stage :
              {pair.baselineStage, pair.bakedStage}) {
             UsdEditContext session(stage, stage->GetSessionLayer());
-            UsdAttribute a =
-                stage->GetPrimAtPath(kIkSpaceMaster)
-                    .CreateAttribute(TfToken("rest:tx"),
-                                     SdfValueTypeNames->Double);
+            UsdAttribute a = stage->GetPrimAtPath(kIkSpaceMaster)
+                                 .CreateAttribute(TfToken("rest:tx"),
+                                                  SdfValueTypeNames->Double);
             if (keyedLadder) {
                 a.Set(6.0, UsdTimeCode(10.0));
             } else {
@@ -1740,7 +1747,8 @@ KeyedIkSpaceRest(const std::string &examples, const SdfPath &prim,
     const std::string name(attribute);
     return [file, prim, name, last] {
         const UsdStageRefPtr stage = UsdStage::Open(file);
-        if (!stage) return stage;
+        if (!stage)
+            return stage;
         UsdEditContext session(stage, stage->GetSessionLayer());
         UsdAttribute a = stage->GetPrimAtPath(prim).CreateAttribute(
             TfToken(name), SdfValueTypeNames->Double);
@@ -1759,7 +1767,8 @@ CheckOwnRestRefreshes(const char *what, const MakeStage &make,
                       const std::vector<SdfPath> &still)
 {
     EvaluatorPair pair;
-    if (!MakeEvaluatorPair(what, make, &pair)) return;
+    if (!MakeEvaluatorPair(what, make, &pair))
+        return;
     RigExecRigPose dynamic;
     for (const double frame : {1.0, 5.0, 10.0}) {
         GenerationsAgree(std::string(what) + " frame " +
@@ -1781,14 +1790,14 @@ CheckOwnRestRefreshes(const char *what, const MakeStage &make,
     }
     const auto refreshesOf = [&B](const SdfPath &path) -> long long {
         for (const SolverDesc &s : B.solvers) {
-            if (s.path == path) return (long long)s.restRefreshes;
+            if (s.path == path)
+                return (long long)s.restRefreshes;
         }
         return -1;
     };
     for (const SdfPath &path : refreshing) {
         const long long n = refreshesOf(path);
-        std::printf("%s: %s refreshed %lld time(s)\n", what, path.GetText(),
-                    n);
+        std::printf("%s: %s refreshed %lld time(s)\n", what, path.GetText(), n);
         if (n <= 0) {
             ++failures;
             std::printf("FAIL %s: %s never refreshed its rests\n", what,
@@ -1797,8 +1806,7 @@ CheckOwnRestRefreshes(const char *what, const MakeStage &make,
     }
     for (const SdfPath &path : still) {
         const long long n = refreshesOf(path);
-        std::printf("%s: %s refreshed %lld time(s)\n", what, path.GetText(),
-                    n);
+        std::printf("%s: %s refreshed %lld time(s)\n", what, path.GetText(), n);
         if (n != 0) {
             ++failures;
             std::printf("FAIL %s: %s refreshed although none of its rests "
@@ -1848,8 +1856,10 @@ ParseFrames(const std::string &text)
         const size_t comma = text.find(',', at);
         const std::string item = text.substr(
             at, comma == std::string::npos ? std::string::npos : comma - at);
-        if (!item.empty()) frames.push_back(std::stod(item));
-        if (comma == std::string::npos) break;
+        if (!item.empty())
+            frames.push_back(std::stod(item));
+        if (comma == std::string::npos)
+            break;
         at = comma + 1;
     }
     return frames;
@@ -1865,8 +1875,7 @@ ListSpaceRestCandidates(const std::vector<CandidateRig> &rigs)
         const UsdStageRefPtr stage = rig.make();
         if (!stage) {
             ++failures;
-            std::printf("FAIL %s: the stage does not open\n",
-                        rig.name.c_str());
+            std::printf("FAIL %s: the stage does not open\n", rig.name.c_str());
             continue;
         }
         SdfPathVector roots;
@@ -1894,9 +1903,11 @@ ListSpaceRestCandidates(const std::vector<CandidateRig> &rigs)
             const RigExecBakedProgramImpl &build = built->GetStepGraph();
             std::vector<size_t> spaceSolvers;
             for (size_t i = 0; i < build.solvers.size(); ++i) {
-                if (build.solvers[i].spaceSlot >= 0) spaceSolvers.push_back(i);
+                if (build.solvers[i].spaceSlot >= 0)
+                    spaceSolvers.push_back(i);
             }
-            if (spaceSolvers.empty()) continue;
+            if (spaceSolvers.empty())
+                continue;
             spaced += spaceSolvers.size();
 
             std::vector<std::string> why(build.solvers.size());
@@ -1905,20 +1916,21 @@ ListSpaceRestCandidates(const std::vector<CandidateRig> &rigs)
                      slot = build.parent[size_t(slot)]) {
                     const SdfPath &path = build.paths[size_t(slot)];
                     const UsdPrim prim = stage->GetPrimAtPath(path);
-                    if (!prim) continue;
+                    if (!prim)
+                        continue;
                     for (const UsdAttribute &a : prim.GetAttributes()) {
                         const std::string name = a.GetName().GetString();
-                        if (name.rfind("rest:", 0) != 0) continue;
+                        if (name.rfind("rest:", 0) != 0)
+                            continue;
                         if (a.ValueMightBeTimeVarying()) {
-                            why[i] += " " + a.GetPath().GetString() +
-                                      " varies;";
+                            why[i] +=
+                                " " + a.GetPath().GetString() + " varies;";
                         }
                         if (a.HasAuthoredConnections()) {
                             why[i] += " " + a.GetPath().GetString() +
                                       " is connected;";
                         }
-                        if (path == rig.dragPrim &&
-                            name == rig.dragAttribute) {
+                        if (path == rig.dragPrim && name == rig.dragAttribute) {
                             why[i] += " " + a.GetPath().GetString() +
                                       " is the registered drag;";
                         }
@@ -1931,7 +1943,8 @@ ListSpaceRestCandidates(const std::vector<CandidateRig> &rigs)
                 evaluator.Evaluate(UsdTimeCode(frame));
                 const RigExecBakedProgram *program =
                     evaluator.GetBakedProgram();
-                if (!program) continue;
+                if (!program)
+                    continue;
                 const RigExecBakedProgramImpl &B = program->GetStepGraph();
                 if (B.paths != build.paths) {
                     ++failures;
@@ -1959,14 +1972,14 @@ ListSpaceRestCandidates(const std::vector<CandidateRig> &rigs)
                 const SolverDesc &s = build.solvers[i];
                 const SdfPath &space = build.paths[size_t(s.spaceSlot)];
                 const std::string solver = where + " " + s.path.GetString() +
-                                           " (space " + space.GetString() +
-                                           ")";
+                                           " (space " + space.GetString() + ")";
                 std::printf("%s: names a space\n", solver.c_str());
-                if (!why[i].empty()) moving.push_back(solver + ":" + why[i]);
+                if (!why[i].empty())
+                    moving.push_back(solver + ":" + why[i]);
                 SdfPathVector named;
                 if (const UsdPrim prim = stage->GetPrimAtPath(s.path)) {
-                    if (const UsdRelationship rel = prim.GetRelationship(
-                            TfToken("rigExec:joints"))) {
+                    if (const UsdRelationship rel =
+                            prim.GetRelationship(TfToken("rigExec:joints"))) {
                         rel.GetTargets(&named);
                     }
                 }
@@ -1981,10 +1994,8 @@ ListSpaceRestCandidates(const std::vector<CandidateRig> &rigs)
             }
         }
     }
-    std::printf("space-rest candidates: %zu solver(s) name a space\n",
-                spaced);
-    std::printf("whose space rest can move after Build: %zu\n",
-                moving.size());
+    std::printf("space-rest candidates: %zu solver(s) name a space\n", spaced);
+    std::printf("whose space rest can move after Build: %zu\n", moving.size());
     for (const std::string &line : moving) {
         std::printf("    %s\n", line.c_str());
     }
@@ -2000,7 +2011,7 @@ ListSpaceRestCandidates(const std::vector<CandidateRig> &rigs)
     }
 }
 
-}  // namespace
+} // namespace
 
 static std::string
 SchemaResourceDir(const std::string &examplesDir)
@@ -2022,8 +2033,7 @@ main(int argc, char **argv)
     }
     const std::string resources = SchemaResourceDir(argv[1]);
     if (PlugRegistry::GetInstance().RegisterPlugins(resources).empty()) {
-        std::printf("FATAL: no schema plugin found at %s\n",
-                    resources.c_str());
+        std::printf("FATAL: no schema plugin found at %s\n", resources.c_str());
         return 2;
     }
 
@@ -2043,15 +2053,13 @@ main(int argc, char **argv)
             rigs.push_back({what, make, frames, SdfPath(), std::string()});
         }
         for (const RigExecExampleFixture &fixture : kRigExecExampleFixtures) {
-            const std::string path =
-                std::string(argv[1]) + "/" + fixture.stage;
-            rigs.push_back(
-                {std::string("example ") + fixture.stage,
-                 [path] { return UsdStage::Open(path); },
-                 ParseFrames(fixture.frames),
-                 *fixture.controlPrim ? SdfPath(fixture.controlPrim)
-                                      : SdfPath(),
-                 fixture.controlAvar});
+            const std::string path = std::string(argv[1]) + "/" + fixture.stage;
+            rigs.push_back({std::string("example ") + fixture.stage,
+                            [path] { return UsdStage::Open(path); },
+                            ParseFrames(fixture.frames),
+                            *fixture.controlPrim ? SdfPath(fixture.controlPrim)
+                                                 : SdfPath(),
+                            fixture.controlAvar});
         }
         ListSpaceRestCandidates(rigs);
         if (failures) {
@@ -2066,56 +2074,60 @@ main(int argc, char **argv)
 
     CheckEvaluatorConsistency("twist distribution", MakeTwistRig, frames, true);
     CheckEvaluatorConsistency("twist distribution with keyed turns",
-                MakeTwistRigWithKeyedTurns, frames, true);
+                              MakeTwistRigWithKeyedTurns, frames, true);
     CheckEvaluatorConsistency("twist distribution with unauthored weights",
-                MakeTwistRigWithUnauthoredWeights, frames, true);
+                              MakeTwistRigWithUnauthoredWeights, frames, true);
     CheckEvaluatorConsistency("twist distribution with one sample",
-                MakeTwistRigWithOneSample, frames, true);
-    CheckEvaluatorConsistency("twist distribution with no end", MakeTwistRigWithNoEnd,
-                frames, true);
+                              MakeTwistRigWithOneSample, frames, true);
+    CheckEvaluatorConsistency("twist distribution with no end",
+                              MakeTwistRigWithNoEnd, frames, true);
 
-    CheckEvaluatorConsistency("ribbon on a keyed driver curve", MakeAnimatedRibbonRig,
-                frames, true);
-    CheckEvaluatorConsistency("ribbon on a static driver curve", MakeStaticRibbonRig,
-                frames, true);
+    CheckEvaluatorConsistency("ribbon on a keyed driver curve",
+                              MakeAnimatedRibbonRig, frames, true);
+    CheckEvaluatorConsistency("ribbon on a static driver curve",
+                              MakeStaticRibbonRig, frames, true);
     CheckEvaluatorConsistency("ribbon whose driver curve has no bind pose",
-                MakeRibbonRigWithNoBindPose, frames, true);
-    CheckEvaluatorConsistency("ribbon with no driver curve", MakeRibbonRigWithNoDriver,
-                frames, true);
+                              MakeRibbonRigWithNoBindPose, frames, true);
+    CheckEvaluatorConsistency("ribbon with no driver curve",
+                              MakeRibbonRigWithNoDriver, frames, true);
 
     CheckEvaluatorConsistency("two-bone ik", MakeTwoBoneIkRig, frames, true);
     CheckEvaluatorConsistency("two-bone ik binding two joints",
-                MakeTwoBoneIkRigWithTwoJoints, frames, true);
+                              MakeTwoBoneIkRigWithTwoJoints, frames, true);
 
     CheckEvaluatorConsistency("two-bone ik with a non-provider pole",
-                MakeTwoBoneIkRigWithANonProviderPole, frames, true);
+                              MakeTwoBoneIkRigWithANonProviderPole, frames,
+                              true);
     CheckEvaluatorConsistency("fk chain with a non-provider control",
-                MakeFkChainWithANonProviderControl, frames, true);
+                              MakeFkChainWithANonProviderControl, frames, true);
 
     CheckEvaluatorConsistency("spline ik", MakeSplineIkRig, frames, true);
     CheckEvaluatorConsistency("spline ik with an unsupported restLength",
-                MakeSplineIkRigWithUnsupportedRestLength, frames, true);
+                              MakeSplineIkRigWithUnsupportedRestLength, frames,
+                              true);
     CheckEvaluatorConsistency("spline ik with an unsupported rootTangent",
-                MakeSplineIkRigWithUnsupportedRootTangent, frames, true);
+                              MakeSplineIkRigWithUnsupportedRootTangent, frames,
+                              true);
 
     CheckEvaluatorConsistency("ik/fk blend", MakeBlendRig, frames, true);
     CheckEvaluatorConsistency("ik/fk blend with a linear rotation blend",
-                MakeBlendRigWithLinearRotation, frames, true);
+                              MakeBlendRigWithLinearRotation, frames, true);
     CheckEvaluatorConsistency("ik/fk blend with a non-solver input",
-                MakeBlendRigWithANonSolverInput, frames, true);
-    CheckEvaluatorConsistency("ik/fk blend with a linear rotation blend AND a non-solver "
-                "input",
-                MakeBlendRigWithLinearRotationAndANonSolverInput, frames,
-                true);
+                              MakeBlendRigWithANonSolverInput, frames, true);
+    CheckEvaluatorConsistency(
+        "ik/fk blend with a linear rotation blend AND a non-solver "
+        "input",
+        MakeBlendRigWithLinearRotationAndANonSolverInput, frames, true);
 
-    CheckEvaluatorConsistency("guide-only ribbon", MakeGuideOnlyRibbonRig, frames, true);
-    CheckEvaluatorConsistency("guide-only twist distribution", MakeGuideOnlyTwistRig,
-                frames, true);
+    CheckEvaluatorConsistency("guide-only ribbon", MakeGuideOnlyRibbonRig,
+                              frames, true);
+    CheckEvaluatorConsistency("guide-only twist distribution",
+                              MakeGuideOnlyTwistRig, frames, true);
     CheckEvaluatorConsistency("guide-only blend of two guide-only solvers",
-                MakeGuideOnlyBlendRig, frames, true);
+                              MakeGuideOnlyBlendRig, frames, true);
     CheckEvaluatorConsistency("guide-only solvers with the guides switched off",
-                MakeGuideOnlyBlendRig, frames, true,
-                /* guides = */ false);
+                              MakeGuideOnlyBlendRig, frames, true,
+                              /* guides = */ false);
 
     // A blend reads its inputs' aggregates from the generation it answers,
     // whatever came before: another frame, or a drag on an input solver.
@@ -2138,18 +2150,17 @@ main(int argc, char **argv)
         {
             const auto check = [&](const char *what, const MakeStage &make,
                                    const EvaluationState &before) {
-                rigExecTest::CheckHistoryIndependent(
-                    &failures, what, make, kRigPath, before, frame2);
+                rigExecTest::CheckHistoryIndependent(&failures, what, make,
+                                                     kRigPath, before, frame2);
             };
             check("ik/fk blend after another frame", MakeBlendRig, frame5);
-            check("ik/fk blend after a drag on its ik", MakeBlendRig,
-                  footDrag);
+            check("ik/fk blend after a drag on its ik", MakeBlendRig, footDrag);
             check("linear-rotation blend after another frame",
                   MakeBlendRigWithLinearRotation, frame5);
             check("linear-rotation blend after a drag on its ik",
                   MakeBlendRigWithLinearRotation, footDrag);
-            check("guide-only blend after another frame",
-                  MakeGuideOnlyBlendRig, frame5);
+            check("guide-only blend after another frame", MakeGuideOnlyBlendRig,
+                  frame5);
             check("guide-only blend after a drag on an input",
                   MakeGuideOnlyBlendRig, turnsDrag);
         }
@@ -2160,8 +2171,8 @@ main(int argc, char **argv)
               SdfPath("/Asset/Rig/Solvers/SpineTwist"), "inputs:twistTurns",
               VtValue(0.4));
     CheckDrag("a drag on rigExec:sampleCount", MakeAnimatedRibbonRig,
-              SdfPath("/Asset/Rig/Solvers/SpineRibbon"),
-              "rigExec:sampleCount", VtValue(int(4)));
+              SdfPath("/Asset/Rig/Solvers/SpineRibbon"), "rigExec:sampleCount",
+              VtValue(int(4)));
     CheckDrag("a drag on a guide-only solver's turns", MakeGuideOnlyBlendRig,
               SdfPath("/Asset/Rig/Solvers/SecondTwist"), "inputs:twistTurns",
               VtValue(0.2));

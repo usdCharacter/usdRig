@@ -24,7 +24,7 @@
 #include "rigExec/bakedTrace.h"
 #include "rigExec/parallel.h"
 #include "rigExec/rigEvaluator.h"
-#include "rigExec/tapSet.h"
+#include "rigExec/valueAddress.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/getenv.h"
@@ -55,12 +55,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
@@ -109,8 +109,7 @@ Report(const std::string &what, const std::vector<std::string> &violations)
         return true;
     }
     ++failures;
-    std::printf("FAIL %s: %zu violation(s)\n", what.c_str(),
-                violations.size());
+    std::printf("FAIL %s: %zu violation(s)\n", what.c_str(), violations.size());
     for (size_t i = 0; i < violations.size() && i < 10; ++i) {
         std::printf("    %s\n", violations[i].c_str());
     }
@@ -133,7 +132,8 @@ CheckTraceMatchesClosure(const RigExecRigEvaluator &E,
     std::set<size_t> traced;
     for (const RigExecOpTraceEntry &entry : trace) {
         CHECK(entry.step < B.steps.size());
-        if (entry.step >= B.steps.size()) continue;
+        if (entry.step >= B.steps.size())
+            continue;
         CHECK(B.opExecution.completion[entry.step] == entry.seq);
         traced.insert(entry.step);
     }
@@ -208,16 +208,18 @@ CheckOpPhases(const RigExecRigEvaluator &E,
         }
         const RigExecBakedStep &step = B.steps[entry.step];
         const uint64_t endUs = entry.startUs + entry.durationUs;
-        const bool bracketed = entry.startUs != 0 && step.memoStartNs != 0 &&
-            step.publishEndNs != 0 && step.memoStartNs / 1000 <= entry.startUs &&
+        const bool bracketed =
+            entry.startUs != 0 && step.memoStartNs != 0 &&
+            step.publishEndNs != 0 &&
+            step.memoStartNs / 1000 <= entry.startUs &&
             step.publishEndNs / 1000 >= endUs &&
             entry.memoUs == entry.startUs - step.memoStartNs / 1000 &&
             entry.publishUs == step.publishEndNs / 1000 - endUs;
         if (!bracketed) {
             if (unbracketed < 5) {
                 std::printf("    %s: %s memo %llu ns, body %llu+%llu us, "
-                            "publication end %llu ns\n", what.c_str(),
-                            entry.label.c_str(),
+                            "publication end %llu ns\n",
+                            what.c_str(), entry.label.c_str(),
                             (unsigned long long)step.memoStartNs,
                             (unsigned long long)entry.startUs,
                             (unsigned long long)entry.durationUs,
@@ -231,7 +233,8 @@ CheckOpPhases(const RigExecRigEvaluator &E,
     if (unbracketed) {
         ++failures;
         std::printf("FAIL %s: %zu op(s) whose phases do not bracket the "
-                    "body\n", what.c_str(), unbracketed);
+                    "body\n",
+                    what.c_str(), unbracketed);
     }
     if (B.opAdapter.parallel) {
         return;
@@ -246,13 +249,14 @@ CheckOpPhases(const RigExecRigEvaluator &E,
     if (overlaps) {
         ++failures;
         std::printf("FAIL %s: %zu serial op(s) overlap the previous op on "
-                    "their thread\n", what.c_str(), overlaps);
+                    "their thread\n",
+                    what.c_str(), overlaps);
     }
 }
 
 void
-TestStage(const std::string &examplesDir, const std::string &file,
-          double t0, double t1, bool expectTimeChange = true)
+TestStage(const std::string &examplesDir, const std::string &file, double t0,
+          double t1, bool expectTimeChange = true)
 {
     const std::string path = examplesDir + "/" + file;
     LiveRig rig = OpenRig(path);
@@ -270,7 +274,8 @@ TestStage(const std::string &examplesDir, const std::string &file,
     if (!first.valid || E.GetBakedGenerationCount() != 1) {
         ++failures;
         std::printf("FAIL %s: the first generation did not come from the "
-                    "program\n", file.c_str());
+                    "program\n",
+                    file.c_str());
         return;
     }
     const std::vector<RigExecOpGraphNode> graph = E.GetOpGraph();
@@ -351,8 +356,8 @@ TestStage(const std::string &examplesDir, const std::string &file,
                 "%zu geometry), t=%g ran %zu, repeat ran %zu (%zu geometry), "
                 "%zu of %zu cluster(s)\n",
                 file.c_str(), graph.size(), trace0.size(), poseSteps,
-                rigExecTest::CountTraceDomain(trace0, "weight"),
-                geometrySteps, t1, trace1.size(), trace2.size(),
+                rigExecTest::CountTraceDomain(trace0, "weight"), geometrySteps,
+                t1, trace1.size(), trace2.size(),
                 rigExecTest::CountTraceDomain(trace2, "geometry"),
                 E.GetBakedClustersRunLastGeneration(),
                 E.GetBakedClusterCount());
@@ -364,7 +369,8 @@ TestReferenceChecksUseProductionGraph(const std::string &examplesDir)
 {
     LiveRig rig = OpenRig(examplesDir + "/ArmRig.usda", true);
     CHECK(rig.evaluator != nullptr);
-    if (!rig.evaluator) return;
+    if (!rig.evaluator)
+        return;
     const RigExecRigPose pose = rig.evaluator->Evaluate(UsdTimeCode(1001));
     CHECK(pose.valid);
     CHECK(pose.referenceMismatches == 0);
@@ -381,7 +387,8 @@ TestARebuiltProgramHasNoTraceUntilItRuns(const std::string &examplesDir)
 {
     LiveRig rig = OpenRig(examplesDir + "/ArmRig.usda");
     CHECK(rig.evaluator != nullptr);
-    if (!rig.evaluator) return;
+    if (!rig.evaluator)
+        return;
     RigExecRigEvaluator &E = *rig.evaluator;
     CHECK(E.GetBakedProgram() != nullptr);
     CHECK(E.GetLastOpTrace().empty());
@@ -407,7 +414,8 @@ TestOpTimingAloneStampsOperationPhases(const std::string &examplesDir,
 {
     LiveRig rig = OpenRig(examplesDir + "/" + file);
     CHECK(rig.evaluator != nullptr);
-    if (!rig.evaluator) return;
+    if (!rig.evaluator)
+        return;
     RigExecRigEvaluator &E = *rig.evaluator;
     E.SetOpTimingEnabled(true);
     CHECK(!E.GetProfilingEnabled());
@@ -415,8 +423,7 @@ TestOpTimingAloneStampsOperationPhases(const std::string &examplesDir,
                            RigExecBakedScheduleCalibrationRequested();
     for (const double t : {t0, t1}) {
         CHECK(E.Evaluate(UsdTimeCode(t)).valid);
-        const RigExecBakedProgramImpl &B =
-            E.GetBakedProgram()->GetStepGraph();
+        const RigExecBakedProgramImpl &B = E.GetBakedProgram()->GetStepGraph();
         CHECK(B.recordOpTimings);
         CHECK(!B.profiler || !B.profiler->IsEnabled());
         const std::vector<RigExecOpTraceEntry> trace = E.GetLastOpTrace();
@@ -439,7 +446,8 @@ TestMeasurementFoldsOperationPhases(const std::string &examplesDir)
 {
     LiveRig rig = OpenRig(examplesDir + "/ArmShotAnim.usda");
     CHECK(rig.evaluator != nullptr);
-    if (!rig.evaluator) return;
+    if (!rig.evaluator)
+        return;
     RigExecRigEvaluator &E = *rig.evaluator;
     CHECK(!E.GetOpTimingEnabled());
     CHECK(E.Evaluate(UsdTimeCode(1001)).valid);
@@ -479,8 +487,8 @@ TestMeasurementFoldsOperationPhases(const std::string &examplesDir)
         CHECK(bodies == 0 && memos == 0);
     }
     std::printf("  measurement %s: %zu body run(s), %zu memo run(s), "
-                "%.1f us of publication\n", requested ? "on" : "off",
-                bodies, memos, publications);
+                "%.1f us of publication\n",
+                requested ? "on" : "off", bodies, memos, publications);
 }
 
 /// A cold run -- the program's first, or a forced one -- runs nearly every
@@ -495,14 +503,16 @@ TestStepTimingLeavesOutColdRuns(const std::string &examplesDir)
     const UsdStageRefPtr stage =
         UsdStage::Open(examplesDir + "/ArmShotAnim.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     RigExecRigEvaluator rig(stage, FindRig(stage));
     std::vector<std::string> errors;
     CHECK(rig.Compile(&errors));
     const std::unique_ptr<RigExecBakedProgram> program =
         RigExecBakedProgram::Build(&rig, nullptr);
     CHECK(program);
-    if (!program) return;
+    if (!program)
+        return;
     RigExecBakedProgramImpl &B =
         const_cast<RigExecBakedProgramImpl &>(program->GetStepGraph());
     B.opAdapter.measuring = true;
@@ -545,11 +555,13 @@ TestStepTimingLeavesOutColdRuns(const std::string &examplesDir)
     std::vector<char> listed(B.steps.size(), 0);
     for (const uint32_t index : B.stampedSteps) {
         CHECK(index < listed.size());
-        if (index < listed.size()) listed[index] = 1;
+        if (index < listed.size())
+            listed[index] = 1;
     }
     size_t listedStamps = 0, unlistedStamps = 0;
     for (size_t k = 0; k < B.steps.size(); ++k) {
-        if (stamped(B.steps[k])) ++(listed[k] ? listedStamps : unlistedStamps);
+        if (stamped(B.steps[k]))
+            ++(listed[k] ? listedStamps : unlistedStamps);
     }
     CHECK(listedStamps > 0 && unlistedStamps == 0);
     // Listed from the executor's own candidate list, in its order, rather
@@ -560,10 +572,9 @@ TestStepTimingLeavesOutColdRuns(const std::string &examplesDir)
         bool executorOrder = B.stampedSteps.size() == pending.size();
         bool opOrder = true;
         for (size_t i = 0; i < pending.size(); ++i) {
-            executorOrder = executorOrder &&
-                            pending[i] < B.opGraph.ops.size() &&
-                            B.stampedSteps[i] ==
-                                B.opGraph.ops[pending[i]].originalIndex;
+            executorOrder =
+                executorOrder && pending[i] < B.opGraph.ops.size() &&
+                B.stampedSteps[i] == B.opGraph.ops[pending[i]].originalIndex;
             opOrder = opOrder && (i == 0 || pending[i - 1] < pending[i]);
         }
         CHECK(executorOrder);
@@ -585,20 +596,23 @@ TestStepTimingLeavesOutColdRuns(const std::string &examplesDir)
     std::vector<std::string> lines;
     for (size_t at = 0; at < table.size();) {
         const size_t end = table.find('\n', at);
-        if (end == std::string::npos) break;
+        if (end == std::string::npos)
+            break;
         lines.push_back(table.substr(at, end - at));
         at = end + 1;
     }
     CHECK(lines.size() >= 5);
     if (lines.size() >= 5) {
         // The lines a parser reads by position keep their place and form.
-        CHECK(lines[0] == "rigExec baked step timing over 1 frame(s), us/frame");
+        CHECK(lines[0] ==
+              "rigExec baked step timing over 1 frame(s), us/frame");
         CHECK(lines[1].rfind("  prologue ", 0) == 0);
         CHECK(lines[2].rfind("  step bodies ", 0) == 0);
         size_t kindLines = 0, bodyRuns = 0;
         for (size_t i = 3; i < lines.size(); ++i) {
             const size_t at = lines[i].find(" per run, ");
-            if (at == std::string::npos) continue;
+            if (at == std::string::npos)
+                continue;
             CHECK(i == 3 + kindLines);
             ++kindLines;
             bodyRuns += size_t(std::stoul(lines[i].substr(at + 10)));
@@ -633,35 +647,39 @@ TestStepTimingLeavesOutColdRuns(const std::string &examplesDir)
 /// An unresolved plain constraint target publishes invalid source state.
 /// The graph records ordinary pure callback outcomes while publication is withheld.
 void
-TestInvalidTargetStillExecutesUnrelatedOperations(const std::string &examplesDir)
+TestInvalidTargetStillExecutesUnrelatedOperations(
+    const std::string &examplesDir)
 {
     const UsdStageRefPtr stage =
         UsdStage::Open(examplesDir + "/05_TwistRibbonSpine.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     const SdfPath rigPath = FindRig(stage);
     const SdfPath target("/SpineAsset/Geom/Probe");
     const UsdPrim targetPrim = stage->DefinePrim(target, TfToken("Xform"));
-    const UsdPrim aim = stage->DefinePrim(
-        rigPath.AppendPath(SdfPath("Movers/ProbeAim")),
-        TfToken("RigExecAimConstraint"));
+    const UsdPrim aim =
+        stage->DefinePrim(rigPath.AppendPath(SdfPath("Movers/ProbeAim")),
+                          TfToken("RigExecAimConstraint"));
     CHECK(targetPrim && aim);
-    if (!targetPrim || !aim) return;
+    if (!targetPrim || !aim)
+        return;
     CHECK(aim.CreateAttribute(TfToken("rigExec:aimAxis"),
                               SdfValueTypeNames->Token, false,
                               SdfVariabilityUniform)
               .Set(TfToken("z")));
     CHECK(aim.CreateRelationship(TfToken("rigExec:aimTarget"))
               .SetTargets({rigPath.AppendPath(SdfPath("Joints/Root/Chest"))}));
-    CHECK(aim.CreateRelationship(TfToken("rigExec:moves"))
-              .SetTargets({target}));
+    CHECK(
+        aim.CreateRelationship(TfToken("rigExec:moves")).SetTargets({target}));
     RigExecRigEvaluator rig(stage, rigPath);
     std::vector<std::string> errors;
     CHECK(rig.Compile(&errors));
     const std::unique_ptr<RigExecBakedProgram> program =
         RigExecBakedProgram::Build(&rig, nullptr);
     CHECK(program);
-    if (!program) return;
+    if (!program)
+        return;
     RigExecRigPose first;
     CHECK(program->Run(UsdTimeCode(1001.0), &first));
     CHECK(!program->GetLastOpTrace().empty());
@@ -674,20 +692,21 @@ TestInvalidTargetStillExecutesUnrelatedOperations(const std::string &examplesDir
     CHECK(program->GetLastBail() == RigExecBakedBail::StageFrames);
     CHECK(!given.valid && given.jointMatricesFinal.empty());
     CHECK(given.providerXforms.empty() && given.providerBaseXforms.empty());
-    const auto trace=program->GetLastOpTrace();
+    const auto trace = program->GetLastOpTrace();
     CHECK(!trace.empty());
-    CHECK(std::any_of(trace.begin(),trace.end(),[](const auto &entry) {
-        return entry.kind=="Solve";
-    }));
-    CHECK(!given.diagnostics.empty() && given.diagnostics.back() ==
-        "could not resolve constraint target " + target.GetString() +
-        " relative to the asset root");
+    CHECK(std::any_of(trace.begin(), trace.end(),
+                      [](const auto &entry) { return entry.kind == "Solve"; }));
+    CHECK(!given.diagnostics.empty() &&
+          given.diagnostics.back() == "could not resolve constraint target " +
+                                          target.GetString() +
+                                          " relative to the asset root");
     const auto &state = program->GetStepGraph();
     // Refusal preserves caller metadata; the trace describes actual callbacks.
     CHECK(given.executedOpCount == callerExecutedOpCount);
-    CHECK(trace.size() == size_t(std::count_if(
-        state.opExecution.ran.begin(), state.opExecution.ran.end(),
-        [](const auto ran) { return bool(ran); })));
+    CHECK(trace.size() ==
+          size_t(std::count_if(state.opExecution.ran.begin(),
+                               state.opExecution.ran.end(),
+                               [](const auto ran) { return bool(ran); })));
     for (const auto &entry : trace) {
         CHECK(entry.step < state.opExecution.ran.size());
         if (entry.step < state.opExecution.ran.size())
@@ -708,9 +727,12 @@ TestTheReplayRecordsEachStepOnce(const std::string &examplesDir)
 {
     LiveRig rig = OpenRig(examplesDir + "/biped/Biped.usda");
     CHECK(rig.evaluator != nullptr);
-    if (!rig.evaluator) return;
+    if (!rig.evaluator)
+        return;
     RigExecRigEvaluator &E = *rig.evaluator;
-    const SdfPath control("/Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_Torso/M_Chest/M_ChestTop/L_Shldr/L_UpArmSwing/L_UpArm/L_LoArm/L_Hand");
+    const SdfPath control(
+        "/Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_Torso/M_Chest/M_ChestTop/"
+        "L_Shldr/L_UpArmSwing/L_UpArm/L_LoArm/L_Hand");
     const TfToken avar("avars:rz");
     const UsdAttribute attribute =
         rig.stage->GetPrimAtPath(control).GetAttribute(avar);
@@ -722,7 +744,8 @@ TestTheReplayRecordsEachStepOnce(const std::string &examplesDir)
         dragged = VtValue(authored.UncheckedGet<float>() + 3.0f);
     }
     CHECK(!dragged.IsEmpty());
-    if (dragged.IsEmpty()) return;
+    if (dragged.IsEmpty())
+        return;
 
     E.SetProfilingEnabled(true);
     CHECK(E.Evaluate(UsdTimeCode(1)).valid);
@@ -733,7 +756,8 @@ TestTheReplayRecordsEachStepOnce(const std::string &examplesDir)
     CHECK(E.GetBakedGenerationCount() == generations + 1);
     const RigExecBakedProgram *program = E.GetBakedProgram();
     CHECK(program != nullptr);
-    if (!program) return;
+    if (!program)
+        return;
     RigExecBakedProgramImpl &B =
         const_cast<RigExecBakedProgramImpl &>(program->GetStepGraph());
     CHECK(!B.stampedSteps.empty() && !B.timedClusters.empty());
@@ -769,8 +793,7 @@ TestTheReplayRecordsEachStepOnce(const std::string &examplesDir)
     const std::vector<uint32_t> timed = B.timedClusters;
     B.stampedSteps.insert(B.stampedSteps.end(), stamped.rbegin(),
                           stamped.rend());
-    B.timedClusters.insert(B.timedClusters.end(), timed.rbegin(),
-                           timed.rend());
+    B.timedClusters.insert(B.timedClusters.end(), timed.rbegin(), timed.rend());
     E.ClearProfile();
     RigExecBakedReplayStepTimings(B);
     std::vector<std::pair<std::string, std::string>> recordedSteps;
@@ -778,17 +801,17 @@ TestTheReplayRecordsEachStepOnce(const std::string &examplesDir)
     for (const RigExecProfileEvent &event : E.GetProfiler().GetEvents()) {
         if (event.category == "op") {
             const auto seq = event.args.find("seq");
-            recordedSteps.emplace_back(event.name,
-                                       seq == event.args.end()
-                                           ? std::string("-")
-                                           : seq->second);
+            recordedSteps.emplace_back(event.name, seq == event.args.end()
+                                                       ? std::string("-")
+                                                       : seq->second);
         } else if (event.category == "cluster") {
             recordedClusters.push_back(event.name);
         }
     }
     CHECK(recordedSteps == expectedSteps);
     CHECK(recordedClusters == expectedClusters);
-    std::printf("  replay: %zu step event(s) from %zu listed, %zu cluster event(s) from %zu listed\n",
+    std::printf("  replay: %zu step event(s) from %zu listed, %zu cluster "
+                "event(s) from %zu listed\n",
                 recordedSteps.size(), B.stampedSteps.size(),
                 recordedClusters.size(), B.timedClusters.size());
 }
@@ -798,12 +821,21 @@ void
 TestTheHelpersReadTheTrace()
 {
     std::vector<RigExecOpTraceEntry> trace(3);
-    trace[0].step = 4; trace[0].seq = 1; trace[0].kind = "Solve";
-    trace[0].domain = "pose"; trace[0].label = "Solve /A";
-    trace[1].step = 2; trace[1].seq = 2; trace[1].kind = "RevisionFuse";
-    trace[1].domain = "geometry"; trace[1].label = "RevisionFuse /B";
-    trace[2].step = 7; trace[2].seq = 3; trace[2].kind = "Solve";
-    trace[2].domain = "pose"; trace[2].label = "Solve /C";
+    trace[0].step = 4;
+    trace[0].seq = 1;
+    trace[0].kind = "Solve";
+    trace[0].domain = "pose";
+    trace[0].label = "Solve /A";
+    trace[1].step = 2;
+    trace[1].seq = 2;
+    trace[1].kind = "RevisionFuse";
+    trace[1].domain = "geometry";
+    trace[1].label = "RevisionFuse /B";
+    trace[2].step = 7;
+    trace[2].seq = 3;
+    trace[2].kind = "Solve";
+    trace[2].domain = "pose";
+    trace[2].label = "Solve /C";
     CHECK(rigExecTest::Precedes(trace, 4, 2));
     CHECK(!rigExecTest::Precedes(trace, 2, 4));
     CHECK(!rigExecTest::Precedes(trace, 4, 99));
@@ -849,7 +881,7 @@ SchemaResourceDir(const std::string &examplesDir)
 #endif
 }
 
-}  // namespace
+} // namespace
 
 int
 main(int argc, char **argv)
@@ -864,8 +896,7 @@ main(int argc, char **argv)
     const std::string examplesDir = argv[1];
     const std::string resources = SchemaResourceDir(examplesDir);
     if (PlugRegistry::GetInstance().RegisterPlugins(resources).empty()) {
-        std::printf("FATAL: no schema plugin found at %s\n",
-                    resources.c_str());
+        std::printf("FATAL: no schema plugin found at %s\n", resources.c_str());
         return 2;
     }
     std::printf("testRigExecOpTrace: %s executor\n",
@@ -884,8 +915,8 @@ main(int argc, char **argv)
     TestARebuiltProgramHasNoTraceUntilItRuns(examplesDir);
     TestOpTimingAloneStampsOperationPhases(examplesDir, "ArmShotAnim.usda",
                                            1001, 1024);
-    TestOpTimingAloneStampsOperationPhases(examplesDir,
-                                           "biped/Biped_anim.usda", 1, 5);
+    TestOpTimingAloneStampsOperationPhases(examplesDir, "biped/Biped_anim.usda",
+                                           1, 5);
     TestMeasurementFoldsOperationPhases(examplesDir);
     TestStepTimingLeavesOutColdRuns(examplesDir);
     TestInvalidTargetStillExecutesUnrelatedOperations(examplesDir);

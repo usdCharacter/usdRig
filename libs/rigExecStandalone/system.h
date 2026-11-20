@@ -1,13 +1,13 @@
 #ifndef RIGEXEC_STANDALONE_SYSTEM_H
 #define RIGEXEC_STANDALONE_SYSTEM_H
 #include "sceneDb.h"
-#include "rigExec/tapSet.h"
+#include "rigExec/valueAddress.h"
 #include <memory>
 
 namespace rigExec {
 struct RigExecStandaloneResolvedState {
     VtValue value;
-    bool blocked=false;
+    bool blocked = false;
 };
 struct RigExecStandaloneResult {
     /// True means every requested value was extracted without execution errors.
@@ -17,11 +17,13 @@ struct RigExecStandaloneResult {
     UsdTimeCode time = UsdTimeCode::Default();
     std::vector<VtValue> values;
     std::vector<std::string> diagnostics;
-    const VtValue &Get(int tap) const {
+    const VtValue &Get(int tap) const
+    {
         static const VtValue empty;
         return tap >= 0 && size_t(tap) < values.size() ? values[tap] : empty;
     }
-    template<class T> T Get(int tap) const {
+    template <class T> T Get(int tap) const
+    {
         const VtValue &value = Get(tap);
         return value.IsHolding<T>() ? value.UncheckedGet<T>() : T();
     }
@@ -36,7 +38,8 @@ public:
     explicit RigExecStandaloneSystem(const RigExecSceneDb &database);
     ~RigExecStandaloneSystem();
     RigExecStandaloneSystem(const RigExecStandaloneSystem &) = delete;
-    RigExecStandaloneSystem &operator=(const RigExecStandaloneSystem &) = delete;
+    RigExecStandaloneSystem &
+    operator=(const RigExecStandaloneSystem &) = delete;
 
     int AddTap(const RigExecValueAddress &address);
     bool Prepare(std::string *error = nullptr);
@@ -45,13 +48,16 @@ public:
     /// identity. Missing slots fail; no row is borrowed from an exported time.
     /// Empty boxes preserve an existing identity's block bit; new identities
     /// need the typed overload below to distinguish blocks from no value.
-    RigExecStandaloneResult EvaluateResolved(
-        UsdTimeCode time, const std::map<SdfPath, VtValue> &resolvedStates);
+    RigExecStandaloneResult
+    EvaluateResolved(UsdTimeCode time,
+                     const std::map<SdfPath, VtValue> &resolvedStates);
 
     /// Explicit block/no-value provenance for an arbitrary identity. A block
     /// requires an empty value; captured structural Default facts must match.
-    RigExecStandaloneResult EvaluateResolved(UsdTimeCode time,
-        const std::map<SdfPath,RigExecStandaloneResolvedState> &resolvedStates);
+    RigExecStandaloneResult
+    EvaluateResolved(UsdTimeCode time,
+                     const std::map<SdfPath, RigExecStandaloneResolvedState>
+                         &resolvedStates);
 
     bool SetValue(const SdfPath &attribute, UsdTimeCode time,
                   const VtValue &value, std::string *error = nullptr);
@@ -59,12 +65,14 @@ public:
                         std::string *error = nullptr);
     bool SetTargets(const SdfPath &relationship, const SdfPathVector &targets,
                     std::string *error = nullptr);
-    bool SetPrimActive(const SdfPath &prim, bool active, std::string *error = nullptr);
+    bool SetPrimActive(const SdfPath &prim, bool active,
+                       std::string *error = nullptr);
     /// Actual compiled scene artifact identity: retained for numeric row edits,
     /// replaced after structural declarations change.
     const void *GetCompilerIdentity() const;
     /// Requested outputs reached by changed sampled IDs in the compiled graph.
     size_t GetValueInvalidationCount() const;
+
 private:
     struct _Impl;
     std::unique_ptr<_Impl> _impl;

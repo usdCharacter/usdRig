@@ -13,7 +13,7 @@
 #define RIGEXEC_BAKED_PROGRAM_H
 
 #include "bakedTrace.h"
-#include "tapSet.h"
+#include "valueAddress.h"
 
 #include "rigExecGraph/windowHistory.h"
 
@@ -139,6 +139,8 @@ struct RigExecRigPose;
 /// The program's whole state, declared in bakedProgramImpl.h so that the
 /// files building and running each domain of it can name the same type.
 struct RigExecBakedProgramImpl;
+/// The same compiled rig as a sealed read-only view (compiledProgram.h).
+class RigExecCompiledProgram;
 struct RigExecWeightOracleFacts;
 struct RigExecBakedEnvelopeObject;
 struct RigExecBakedPropertyChainDesc;
@@ -255,6 +257,12 @@ public:
     static bool
     ComposeEnvelopeObjects(const RigExecRigEvaluator &evaluator,
                            const RigExecBakedProgramImpl &program,
+                           std::vector<RigExecBakedEnvelopeObject> *objects,
+                           std::map<SdfPath, int> *index, std::string *error);
+    /// The same pass over the sealed compiled view.
+    static bool
+    ComposeEnvelopeObjects(const RigExecRigEvaluator &evaluator,
+                           const RigExecCompiledProgram &program,
                            std::vector<RigExecBakedEnvelopeObject> *objects,
                            std::map<SdfPath, int> *index, std::string *error);
     static bool
@@ -527,6 +535,17 @@ public:
     /// which only this library's own sources and its tests include.
     const RigExecBakedProgramImpl &GetStepGraph() const;
 
+    /// The same compiled rig as the sealed read-only view
+    /// (compiledProgram.h): counts, records by index, the operation graph,
+    /// the declared reads and writes, the bound paths and the overridden
+    /// inputs, with no way to the builder. Borrowed records live as long as
+    /// this program does; ShareCompiledProgram hands out a version that
+    /// lives on its own, and answers the same version until a structural
+    /// rebuild -- never a copy per call.
+    const RigExecCompiledProgram &GetCompiledProgram() const noexcept;
+    std::shared_ptr<const RigExecCompiledProgram>
+    ShareCompiledProgram() const noexcept;
+
     /// The steps the last run executed, in completion order, and the step
     /// graph as plain records (bakedTrace.h). Observability only.
     std::vector<RigExecOpTraceEntry> GetLastOpTrace() const;
@@ -573,7 +592,10 @@ public:
 
 private:
     explicit RigExecBakedProgram(std::unique_ptr<RigExecBakedProgramImpl> impl);
-    std::unique_ptr<RigExecBakedProgramImpl> _impl;
+    std::shared_ptr<RigExecBakedProgramImpl> _impl;
+    /// This program's compiled view, built with it: one version per
+    /// program, shared by every consumer that asks for it.
+    std::shared_ptr<RigExecCompiledProgram> _compiled;
     /// RequestFullRun's one-shot flag, consumed by the next Run.
     mutable bool _fullRunRequested = false;
     RigExecBakedBail _lastBail = RigExecBakedBail::None;

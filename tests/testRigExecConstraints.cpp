@@ -13,6 +13,7 @@
 #include "rigExec/bakedTrace.h"
 #include "rigExec/frameExtraction.h"
 #include "rigExec/frozenContext.h"
+#include "rigExec/tapSet.h"
 #include "rigExecMath/pointFrame.h"
 #include "rigExecMath/splineIk.h"
 

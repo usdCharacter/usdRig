@@ -752,7 +752,9 @@ RigExecBakedProgram::RigExecBakedProgram(
 
 RigExecBakedProgram::RigExecBakedProgram(
     std::unique_ptr<RigExecBakedProgramImpl> impl)
-    : _impl(std::move(impl))
+    : _impl(std::move(impl)),
+      _compiled(std::make_shared<RigExecCompiledProgram>(
+          RigExecCompiledProgram::_VersionTag(0), _impl))
 {
 }
 
@@ -5372,6 +5374,18 @@ RigExecBakedProgram::GetStepGraph() const
     return *_impl;
 }
 
+const RigExecCompiledProgram &
+RigExecBakedProgram::GetCompiledProgram() const noexcept
+{
+    return *_compiled;
+}
+
+std::shared_ptr<const RigExecCompiledProgram>
+RigExecBakedProgram::ShareCompiledProgram() const noexcept
+{
+    return _compiled;
+}
+
 const std::set<SdfPath> &
 RigExecBakedProgram::GetExportPinnedPaths() const
 {
@@ -5633,6 +5647,16 @@ RigExecBakedProgram::DescribeWeightOracle(const RigExecRigEvaluator &evaluator,
             return;
         }
     }
+}
+
+bool
+RigExecBakedProgram::ComposeEnvelopeObjects(
+    const RigExecRigEvaluator &evaluator, const RigExecCompiledProgram &program,
+    std::vector<RigExecBakedEnvelopeObject> *objects,
+    std::map<SdfPath, int> *index, std::string *error)
+{
+    return ComposeEnvelopeObjects(evaluator, program.Storage(), objects, index,
+                                  error);
 }
 
 bool

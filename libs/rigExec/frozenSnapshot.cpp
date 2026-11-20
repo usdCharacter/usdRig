@@ -817,28 +817,7 @@ RigExecFrozenSnapshotOwesLiveEdits(const RigExecFrozenProgram &base,
 uint64_t
 RigExecFrozenAvarRegionDigest(const RigExecBakedProgram &program)
 {
-    // Exactly the fields RigExecProgramAvarPatch writes, plus the table it
-    // keeps beside them: per-binding constants and varying flags, the
-    // promoted set, the varying count, and the constant table. Working
-    // state (avars, lastAvars) is history, not region, and is excluded --
-    // it converges on the next run whatever the snapshot holds.
-    const RigExecBakedProgramImpl &B = program.GetStepGraph();
-    uint64_t h = 1469598103934665603ULL;
-    h = _HashBytes(h, &B.varyingInputs, sizeof(B.varyingInputs));
-    for (double constant : B.avarConstants) {
-        h = _HashBytes(h, &constant, sizeof(constant));
-    }
-    for (const RigExecBakedProgramImpl::AvarBinding &binding :
-         B.avarConstantBindings) {
-        h = _HashBytes(h, &binding.input.constant,
-                       sizeof(binding.input.constant));
-        const unsigned char varying = binding.input.varying ? 1 : 0;
-        h = _HashBytes(h, &varying, sizeof(varying));
-    }
-    for (size_t promoted : B.promotedAvars) {
-        h = _HashBytes(h, &promoted, sizeof(promoted));
-    }
-    return h;
+    return program.GetCompiledProgram().GetConstantDigest();
 }
 
 } // namespace rigExec

@@ -1,5 +1,6 @@
 // Exact frame-input and compiled rig constant fingerprints.
 
+#include "compiledProgram.h"
 #include "frozenContextInternal.h"
 #include "pathText.h"
 #include "pxr/base/gf/vec2f.h"
@@ -326,20 +327,50 @@ RigExecFrameCacheCompiledRigSignature(const RigExecRigEvaluator &evaluator)
     // constant values. A value patch moves the constant digest the
     // control half folds -- not this -- so it opens a new key namespace
     // instead of evicting the compiled rig.
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
-    const uint64_t constants = uint64_t(B.avarConstants.size());
+    const RigExecCompiledProgram &compiled = program->GetCompiledProgram();
+    const uint64_t constants = uint64_t(compiled.GetAvarConstantCount());
     h = _HashBytes(h, &constants, sizeof(constants));
-    const uint64_t bindings = uint64_t(B.avarConstantBindings.size());
+    const uint64_t bindings = uint64_t(compiled.GetAvarConstantBindingCount());
     h = _HashBytes(h, &bindings, sizeof(bindings));
-    for (const RigExecBakedProgramImpl::AvarBinding &binding :
-         B.avarConstantBindings) {
+    for (const RigExecBakedAvarBinding &binding :
+         compiled.GetAvarConstantBindings()) {
         const uint64_t slot = uint64_t(binding.slot);
         h = _HashBytes(h, &slot, sizeof(slot));
     }
-    const uint64_t varying = uint64_t(B.avarBindings.size());
+    const uint64_t varying = uint64_t(compiled.GetAvarBindingCount());
     h = _HashBytes(h, &varying, sizeof(varying));
-    const uint64_t table = uint64_t(B.avars.size());
+    const uint64_t table = uint64_t(compiled.GetAvarSlotCount());
     h = _HashBytes(h, &table, sizeof(table));
+    return h;
+}
+
+// Defined here, beside the byte-hash it folds with, so the constant digest
+// has one definition: the view's accessor and RigExecFrozenAvarRegionDigest
+// reach the same fold.
+uint64_t
+RigExecCompiledProgram::GetConstantDigest() const noexcept
+{
+    // Exactly the fields RigExecProgramAvarPatch writes, plus the table it
+    // keeps beside them: per-binding constants and varying flags, the
+    // promoted set, the varying count, and the constant table. Working
+    // state (avars, lastAvars) is history, not region, and is excluded --
+    // it converges on the next run whatever the snapshot holds.
+    uint64_t h = 1469598103934665603ULL;
+    h = _HashBytes(h, &_compiled->varyingInputs,
+                   sizeof(_compiled->varyingInputs));
+    for (double constant : _compiled->avarConstants) {
+        h = _HashBytes(h, &constant, sizeof(constant));
+    }
+    for (const RigExecBakedAvarBinding &binding :
+         _compiled->avarConstantBindings) {
+        h = _HashBytes(h, &binding.input.constant,
+                       sizeof(binding.input.constant));
+        const unsigned char varying = binding.input.varying ? 1 : 0;
+        h = _HashBytes(h, &varying, sizeof(varying));
+    }
+    for (size_t promoted : _compiled->promotedAvars) {
+        h = _HashBytes(h, &promoted, sizeof(promoted));
+    }
     return h;
 }
 

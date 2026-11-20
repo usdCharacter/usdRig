@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Map a source path to the CTest targets that link it.
 
-Reads the root CMakeLists.txt (no configure, no compiler). Prints the
+Reads the root CMakeLists.txt plus the four rigExec layer source files it
+includes (no configure, no compiler). Prints the
 libraries, executables, and ctest names a change would rebuild. The
 ctest line uses the labels from cmake/TestLabels.cmake: usd-free when
 every direct executable is free of OpenUSD, otherwise the project
@@ -16,8 +17,9 @@ links. A PRIVATE dependency does not pull in the dependents of the
 library that links it. An OBJECT library is the exception: its sources
 are compiled into every target that composes it (by a link at any
 visibility or by $<TARGET_OBJECTS:...>), so they are attributed to
-those targets as well. --self-test checks this rule against synthetic
-CMake text and this repository's imaging inventory.
+those targets as well: a rigExec layer source names its layer target and
+still selects through the rigExec label tier. --self-test checks this rule
+against synthetic CMake text and this repository's imaging inventory.
 """
 
 from __future__ import annotations
@@ -32,6 +34,18 @@ from collections import defaultdict
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 CMAKE = os.path.join(ROOT, "CMakeLists.txt")
 
+# The per-layer source lists the root list includes for the rigExec layers.
+# The selector parses their text beside the root list so a source keeps its
+# attribution to its layer target. No other included file is parsed: the
+# mover, label and fixture modules declare sources inside functions and
+# loops, which the text parser would read as top-level.
+LAYER_CMAKE = (
+    "cmake/rigExecCompileSources.cmake",
+    "cmake/rigExecEvalSources.cmake",
+    "cmake/rigExecScheduleSources.cmake",
+    "cmake/rigExecVerifySources.cmake",
+)
+
 # Imported OpenUSD/OpenExec targets. A test that reaches one of these
 # cannot be built or run without the USD prefix.
 PXR_LIBS = {
@@ -45,6 +59,31 @@ PXR_LIBS = {
 # target_link_libraries edges in CMakeLists.txt. Recomputed after parse
 # when the file says otherwise.
 USD_FREE_SEEDS = {"rigExecGraph", "rigExecBinary", "rigExecRuntime", "rigExecLzma", "rigExecFlatBuffers"}
+
+
+def parse_cmake_files() -> dict:
+    """Parse the root list and the rigExec layer files, then merge.
+
+    Each file is parsed on its own: the root list's text ends in commands
+    the paren-balanced scanner does not resume past, so appending the
+    layer files would drop them.
+    """
+    merged = {"libraries": {}, "executables": {}, "tests": []}
+    paths = [CMAKE] + [os.path.join(ROOT, rel) for rel in LAYER_CMAKE]
+    seen_tests = set()
+    for path in paths:
+        if not os.path.exists(path):
+            continue
+        with open(path, "r", encoding="utf-8") as fh:
+            model = parse(fh.read())
+        merged["libraries"].update(model["libraries"])
+        merged["executables"].update(model["executables"])
+        for test in model["tests"]:
+            if test["name"] in seen_tests:
+                continue
+            seen_tests.add(test["name"])
+            merged["tests"].append(test)
+    return merged
 
 
 def strip_comments(text: str) -> str:
@@ -595,7 +634,9 @@ def ctest_regex(names: list[str]) -> str:
 
 # Labels cmake/TestLabels.cmake writes from an executable's own link line.
 PROJECT_LIBS = {
-    "rigExec", "rigExecScene", "rigExecOracle", "rigExecRuntime", "rigExecMath",
+    "rigExec", "rigExecCompile", "rigExecEval", "rigExecSchedule",
+    "rigExecVerify",
+    "rigExecScene", "rigExecOracle", "rigExecRuntime", "rigExecMath",
     "rigExecGraph", "rigExecBinary", "rigExecBake", "rigExecImaging",
     "rigExecAuthoring", "rigExecStandalone", "rigExecSampler", "rigExecLzma",
 }
@@ -765,8 +806,7 @@ def self_test() -> int:
 
     # (d) The real repository: every moved imaging domain source still
     # resolves to the pre-split 15-executable / 18-test inventory.
-    with open(CMAKE, "r", encoding="utf-8") as fh:
-        real_model = parse(fh.read())
+    real_model = parse_cmake_files()
     real_index = build_index(real_model)
     for src in IMAGING_SOURCES:
         res = select([src], real_model, real_index, False)
@@ -847,8 +887,7 @@ def main(argv: list[str]) -> int:
         if not args.paths and not args.json and not args.diff:
             return self_test_status
 
-    with open(CMAKE, "r", encoding="utf-8") as fh:
-        model = parse(fh.read())
+    model = parse_cmake_files()
     index = build_index(model)
 
     if args.json:

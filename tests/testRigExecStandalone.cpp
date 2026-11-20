@@ -12,6 +12,7 @@
 #include "rigExecScene/propertySceneTranslation.h"
 #include "pxr/usd/sdf/attributeSpec.h"
 #include "rigExec/types.h"
+#include "rigExec/tapSet.h"
 #include "rigExecAuthoring/rigBuilder.h"
 #include "pxr/usd/usdGeom/mesh.h"
 #include "pxr/usd/usdGeom/xform.h"

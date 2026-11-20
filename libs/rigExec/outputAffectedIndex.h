@@ -14,7 +14,7 @@
 #define RIGEXEC_OUTPUT_AFFECTED_INDEX_H
 
 #include "bakedClusters.h"
-#include "tapSet.h"
+#include "valueAddress.h"
 
 #include <atomic>
 #include <cstddef>
@@ -57,9 +57,9 @@ RigExecControlIdForOverride(const RigExecValueOverride &o)
 /// `dirty ∩ affecting(requested)`: the brief's lazy dirty set (p. 10) as bit
 /// arrays over clusters. Either side may be shorter than the other; missing
 /// words read as zero.
-RigExecBakedClusterSet RigExecIntersectClusterSets(
-    const RigExecBakedClusterSet &dirty,
-    const RigExecBakedClusterSet &affecting);
+RigExecBakedClusterSet
+RigExecIntersectClusterSets(const RigExecBakedClusterSet &dirty,
+                            const RigExecBakedClusterSet &affecting);
 
 /// The downstream closure of every control, for one compiled rig.
 ///
@@ -71,8 +71,8 @@ public:
     RigExecOutputAffectedIndex() = default;
 
     RigExecOutputAffectedIndex(const RigExecOutputAffectedIndex &) = delete;
-    RigExecOutputAffectedIndex &operator=(
-        const RigExecOutputAffectedIndex &) = delete;
+    RigExecOutputAffectedIndex &
+    operator=(const RigExecOutputAffectedIndex &) = delete;
 
     /// Snapshots \p program's closures for \p compiledRigSignature: the forward cone
     /// of every cluster, the always-dirty set, the varying/override cluster
@@ -82,13 +82,23 @@ public:
     /// delta bases, and constraint arrays -- plus the control universe the
     /// family walk yields. Replaces any previous build, including explicit
     /// MapControl entries, and zeroes the walk counter.
-    void Build(const RigExecBakedProgramImpl &program, uint64_t compiledRigSignature);
+    void Build(const RigExecBakedProgramImpl &program,
+               uint64_t compiledRigSignature);
 
     void Clear();
 
-    bool Empty() const { return _clusterCount == 0; }
-    size_t ClusterCount() const { return _clusterCount; }
-    uint64_t CompiledRigSignature() const { return _compiledRigSignature; }
+    bool Empty() const
+    {
+        return _clusterCount == 0;
+    }
+    size_t ClusterCount() const
+    {
+        return _clusterCount;
+    }
+    uint64_t CompiledRigSignature() const
+    {
+        return _compiledRigSignature;
+    }
 
     /// Registers \p seeds as the clusters \p control reaches directly, before
     /// closure. Replaces any entry Build derived or an earlier call set.
@@ -114,15 +124,14 @@ public:
     /// non-member -- see IsKnownControl: a known-empty member also
     /// answers empty, and means "affects nothing". Callers that need a
     /// closed set use AffectedByControls, which branches three ways.
-    std::vector<int> SeedsForControl(
-        const RigExecControlId &control) const;
+    std::vector<int> SeedsForControl(const RigExecControlId &control) const;
 
     /// The union of cone[c] over \p seeds: everything that has to run when
     /// any of them does. Out-of-range seeds are skipped. Counts one walk.
-    RigExecBakedClusterSet AffectedClusters(
-        const std::vector<int> &seeds) const;
-    RigExecBakedClusterSet AffectedClusters(
-        const RigExecBakedClusterSet &seeds) const;
+    RigExecBakedClusterSet
+    AffectedClusters(const std::vector<int> &seeds) const;
+    RigExecBakedClusterSet
+    AffectedClusters(const RigExecBakedClusterSet &seeds) const;
 
     /// The union of AffectedClusters over every control's seeds, branching
     /// three ways: a FOREIGN control (outside the universe) contributes
@@ -131,8 +140,8 @@ public:
     /// contributes NOTHING; a mapped member contributes the cone closure
     /// of its seeds. Counts one walk per call, however many controls were
     /// named.
-    RigExecBakedClusterSet AffectedByControls(
-        const std::vector<RigExecControlId> &controls) const;
+    RigExecBakedClusterSet
+    AffectedByControls(const std::vector<RigExecControlId> &controls) const;
 
     /// Every cluster, set. The conservative affected set and the default
     /// `affecting(requested)` for a whole-pose request.
@@ -144,23 +153,38 @@ public:
 
     /// Clusters holding a step that reads outside the graph: dirty on any
     /// run whose time moved, whatever the sources say.
-    const RigExecBakedClusterSet &Always() const { return _always; }
+    const RigExecBakedClusterSet &Always() const
+    {
+        return _always;
+    }
 
     /// The forward closure of every varying step's cluster: what a moved
     /// time dirties beside Always (the executor's time rule).
-    const RigExecBakedClusterSet &Varying() const { return _varying; }
+    const RigExecBakedClusterSet &Varying() const
+    {
+        return _varying;
+    }
 
     /// The forward closure of every override-step cluster: what dirties
     /// while a standing override holds (the executor's override rule).
-    const RigExecBakedClusterSet &Override() const { return _override; }
+    const RigExecBakedClusterSet &Override() const
+    {
+        return _override;
+    }
 
     /// Affected-set computations performed since Build: AffectedClusters and
     /// AffectedByControls each count one. The task-list cache exists to keep
     /// this at zero across repeated edits of one control.
-    size_t Walks() const { return _walks.load(std::memory_order_relaxed); }
+    size_t Walks() const
+    {
+        return _walks.load(std::memory_order_relaxed);
+    }
 
     /// The cone table Build shares, or null.
-    const void *ConeTableForTesting() const { return _cones.get(); }
+    const void *ConeTableForTesting() const
+    {
+        return _cones.get();
+    }
 
 private:
     size_t _clusterCount = 0;
@@ -194,16 +218,16 @@ private:
 /// edit; the specific path names the change and the ancestor adds no
 /// information, while a LONE prim path (nothing specific under it) is
 /// kept, so an unspecified change still retires conservatively.
-std::vector<RigExecControlId> RigExecNoticeControlIds(
-    const UsdNotice::ObjectsChanged &notice);
+std::vector<RigExecControlId>
+RigExecNoticeControlIds(const UsdNotice::ObjectsChanged &notice);
 
 /// The adapter core over explicit path lists, for tests that cannot
 /// fabricate a USD notice. The notice entry point forwards its three
 /// path lists here unchanged.
-std::vector<RigExecControlId> RigExecNoticeControlIdsFromPaths(
-    const std::vector<SdfPath> &resynced,
-    const std::vector<SdfPath> &infoOnly,
-    const std::vector<SdfPath> &resolvedResynced);
+std::vector<RigExecControlId>
+RigExecNoticeControlIdsFromPaths(const std::vector<SdfPath> &resynced,
+                                 const std::vector<SdfPath> &infoOnly,
+                                 const std::vector<SdfPath> &resolvedResynced);
 
 /// The seed clusters an interactive override reaches (the MapControl
 /// production input): the clusters of the steps whose
@@ -219,10 +243,9 @@ std::vector<RigExecControlId> RigExecNoticeControlIdsFromPaths(
 /// nowhere: the caller leaves it foreign (all clusters), never admits
 /// it seedless. Exact, not conservative: these are the clusters the
 /// executor dirties for a standing override.
-std::vector<int> RigExecOverrideSeeds(
-    const RigExecBakedProgramImpl &program,
-    const RigExecValueOverride &override);
+std::vector<int> RigExecOverrideSeeds(const RigExecBakedProgramImpl &program,
+                                      const RigExecValueOverride &override);
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_OUTPUT_AFFECTED_INDEX_H
+#endif // RIGEXEC_OUTPUT_AFFECTED_INDEX_H

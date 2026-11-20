@@ -6,7 +6,7 @@
 #include "rigExecSchema/schemaNames.h"
 #include "frozenContext.h"
 #include "frozenProgram.h"
-#include "tapSet.h"
+#include "valueAddress.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec3d.h"

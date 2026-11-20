@@ -18,6 +18,28 @@ reports cycles, assigns canonical IDs and lowers safe linear clusters.
 | `rigExecGraph/opGraph.cpp` | Common producer compiler, SCC reporting, clusters and readiness executor |
 | `rigExecScene/sceneProgramTranslation.cpp` | Detached typed graph assembly from composed scene descriptors |
 
+## Build layers
+
+The sources here compile as four OBJECT targets, each declared with its
+own sources, include directories and links in
+`cmake/rigExec<Layer>Sources.cmake`, and composed into `librigExec.so`
+with `$<TARGET_OBJECTS:...>`.
+
+| Target | Owns |
+| --- | --- |
+| `rigExecCompile` | Discovery, validation, scene dispatch, dependency and value descriptors, digests, the compiled program |
+| `rigExecEval` | Domain bodies, mover and solver execution, weight packets, upstream and windowed reads, the GPU deformation and cloth jobs |
+| `rigExecSchedule` | Frame and task caches, the invalidation index, frozen snapshots, sampling and workers |
+| `rigExecVerify` | Baked verification, oracle dispatch, scalar reference adaptation, input replay and the tap set |
+
+Those targets are build boundaries, not shipped libraries: none is
+installed, exported, aliased or linked, so callers still link `rigExec`
+(or `rigExec::rigExecScene`) exactly as before, and `bin/test_changed.sh`
+still attributes a change there to `rigExec`. The lifecycle and notice
+sources `rigEvaluator.cpp` and `rigEvaluatorNotices.cpp` stay on the
+shared target, and so does the generated `ClothMover` adapter until the
+mover helper names its layer target.
+
 At each evaluation, the host samples source inputs before executing the
 common graph. Operations wait for their declared predecessors. Exact
 changes in value, type, count, validity and diagnostics determine whether

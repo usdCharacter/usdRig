@@ -169,9 +169,10 @@ requests before a prim removal reaches OpenExec, which works around the
 `tests/python/test_rigexec_stage_edits.py`.
 
 `RigExecValueAddress` and `RigExecValueOverride` are declared in
-`libs/rigExec/tapSet.h` but are plain data types. Production uses them for
-interactive overrides, falloff tables and input replay, and the header includes
-no OpenExec header.
+`libs/rigExec/valueAddress.h` as plain data types. Production uses them for
+interactive overrides, falloff tables and input replay; the ExecUsd-backed
+`RigExecTapSet` sits on top of that contract and its header includes no
+OpenExec header.
 
 `libs/rigExecStandalone/adapter.{h,cpp}` implements OpenExec's Esf scene
 interfaces over `RigExecSceneDb`, but nothing calls it. The
@@ -235,13 +236,13 @@ Paths are relative to the repository root.
 | Role | What | Where |
 |---|---|---|
 | Production graph | Shared compiler and readiness executor; OpenExec is not called | `libs/rigExecGraph/opGraph.cpp:97`, `libs/rigExecGraph/opGraph.cpp:409` |
-| Build and link | `rigExec` links `exec execUsd ef vdf` publicly | `CMakeLists.txt:230-234` |
-| | `rigExecStandalone` links `exec esf` | `CMakeLists.txt:293` |
-| | `rigExecRuntime` links neither USD nor OpenExec | `CMakeLists.txt:407` |
+| Build and link | `rigExec` links `exec execUsd ef vdf` publicly | `CMakeLists.txt:166-170` |
+| | `rigExecStandalone` links `exec esf` | `CMakeLists.txt:229` |
+| | `rigExecRuntime` links neither USD nor OpenExec | `CMakeLists.txt:343` |
 | | The installed package requires the same OpenUSD targets | `cmake/rigExecConfig.cmake.in:20-25` |
-| | The schema plugin's library is `rigExecImaging`; there is no `Exec` plugInfo block | `CMakeLists.txt:2669-2671` |
+| | The schema plugin's library is `rigExecImaging`; there is no `Exec` plugInfo block | `CMakeLists.txt:2610-2612` |
 | | `RigExecLoadComputations()` is an empty link anchor | `libs/rigExec/types.cpp:16` |
-| | `probeEsfCompatibility` is built only on request and has no test | `CMakeLists.txt:1957-1958` |
+| | `probeEsfCompatibility` is built only on request and has no test | `CMakeLists.txt:1898-1899` |
 | Value types | Nine `ExecTypeRegistry::RegisterType` calls | `libs/rigExec/types.cpp:205-215` |
 | Schema computations | Joint, Control and VolumeWeight providers (macros, then uses) | `libs/rigExec/computations.cpp:434-563`, `:565`, `:567`, `:590` |
 | | FkChain, TwoBoneIk, BlendPointFrames, TwistDistribution, SplineIk | `libs/rigExec/computations.cpp:764`, `:951`, `:1088`, `:1151`, `:1378` |
@@ -265,9 +266,9 @@ Paths are relative to the repository root.
 | | Frozen clone, which omits the rows | `libs/rigExec/frozenSnapshot.cpp:89` |
 | | Enable hook | `libs/rigExecOracle/bakedExecCrossCheckRows.cpp:680-685` |
 | | `rigExecPose --exec-crosscheck` and backend refusals | `tools/rigExecPose.cpp:1435`, `:1551-1557`, `:1159`, `:1168` |
-| | CTest registration | `CMakeLists.txt:767-769`, `:973-974`, `:987-995` |
-| Direct test references | Tap sets built by tests | `tests/testRigExecDefaultSpaces.cpp:56`, `tests/testRigExecArm.cpp:198`, `tests/testRigExecConstraints.cpp:2629`, `tests/testRigExecStandalone.cpp:547`, `tests/testRigExecStandalone.cpp:915`, `tests/testRigExecInteractive.cpp:161` |
+| | CTest registration | `CMakeLists.txt:703-705`, `:909-910`, `:923-931` |
+| Direct test references | Tap sets built by tests | `tests/testRigExecDefaultSpaces.cpp:56`, `tests/testRigExecArm.cpp:198`, `tests/testRigExecConstraints.cpp:2630`, `tests/testRigExecStandalone.cpp:548`, `tests/testRigExecStandalone.cpp:916`, `tests/testRigExecInteractive.cpp:162` |
 | Esf | Adapter with no callers | `libs/rigExecStandalone/adapter.h:7-8`, `libs/rigExecStandalone/adapter.cpp:182-186` |
 | | Standalone runtime translation into the shared graph | `libs/rigExecStandalone/sceneRuntime.cpp:4-18` |
-| Shared data types | `RigExecValueAddress`, `RigExecValueOverride` | `libs/rigExec/tapSet.h:41-57`, `libs/rigExec/tapSet.h:72-97` |
-| | Production uses of the override type | `libs/rigExec/bakedProgram.h:439`, `libs/rigExec/frameCache.h:159` |
+| Shared data types | `RigExecValueAddress`, `RigExecValueOverride` | `libs/rigExec/valueAddress.h:30-48`, `libs/rigExec/valueAddress.h:63-88` |
+| | Production uses of the override type | `libs/rigExec/bakedProgram.h:456`, `libs/rigExec/frameCache.h:159` |
