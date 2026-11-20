@@ -6,7 +6,7 @@ rem Biped.usda. The touch-only layer alone has nothing to draw and
 rem nothing to select; it is asserted by the importer's own verify pass.
 rem
 rem Why it exists: three of TouchPose's claims cannot be checked from a
-rem script, and all three have been wrong before.
+rem script.
 rem
 rem   * The HIGHLIGHT has to be seen. It is a Storm shader tint driven by
 rem     primvars a Hydra scene index adds (rigExecImaging,

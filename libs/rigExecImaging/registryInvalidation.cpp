@@ -336,7 +336,7 @@ RigExecImagingRegistry::_RetireAffectedTimesLocked(
         return bridge.GetAffectedIndex();
     }();
     if (!program || !index || index->Empty()) {
-        // No oracle: every completed time is affected, as before.
+        // No oracle: every completed time is affected.
         _RetireAllTimesLocked(session, notice, inFlight);
         return;
     }
@@ -405,10 +405,7 @@ RigExecImagingRegistry::_RetireAffectedTimesLocked(
         // Lane c: retire the time. The stale entry strands under its old
         // key (unreachable by construction -- the digest backstop -- and
         // drained by LRU); the row goes dirty and the frame requeues for
-        // a full re-warm. (Cone-granular re-execution waits on slot
-        // capture: sources-only retained state plans but cannot run a
-        // Partial, so the planner's verdict here would only restate this
-        // partition at higher cost.)
+        // a full re-warm.
         purge.push_back(time);
         rewarm.push_back(stamped);
         _warmIndex->NoteDirtied(rig, stamped);

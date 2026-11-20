@@ -415,9 +415,9 @@ def update(stage, rig_root="/Biped/Rig", panel_label=None, rename_to=None,
     pairs = driving_controls(stage, rig_root, verbose=verbose)
 
     retargets = []
-    # A control MOVED rather than added -- re-nested under a new parent, as
-    # the eye look targets were when lookRot went in above them -- leaves
-    # every button and region naming its old path, which no longer resolves.
+    # A control MOVED rather than added -- re-nested under a new parent --
+    # leaves every button and region naming its old path, which no longer
+    # resolves.
     # Found again by name, but only when exactly one selectable control
     # still carries that name: a left/right pair or any other ambiguity is
     # left dead and reported, never guessed at.
@@ -451,7 +451,7 @@ def update(stage, rig_root="/Biped/Rig", panel_label=None, rename_to=None,
             # is the IK/FK switch and is driven by nothing an animator wants
             # instead -- and a "driver" that turns out to be another joint
             # (a spline IK's internal chain for skull_bind) is not a control
-            # at all. Both were in the first dry run of this.
+            # at all.
             wanted = []
             for target in current:
                 candidate = pairs.get(target, target)

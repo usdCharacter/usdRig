@@ -43,11 +43,9 @@ RigExecBridgeGuides::_FillVolumeGuides(const RigExecGuideCall &call,
         if (!prim) {
             continue;
         }
-        // The schema fallbacks, restated for the same reason
-        // _FillControlGuides restates its own: a stage composed without
-        // the codeless schema plugin registered has no fallback to
-        // resolve, and a volume would silently stop drawing rather than
-        // draw the documented default.
+        // A stage composed without the codeless schema
+        // plugin registered has no fallback to resolve, and a volume would
+        // silently stop drawing rather than draw the documented default.
         TfToken drawMode(_tFalloff);
         if (UsdAttribute a = prim.GetAttribute(_tGuideDrawMode)) {
             a.Get(&drawMode, pose.time);

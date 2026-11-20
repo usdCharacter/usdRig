@@ -8,7 +8,7 @@
 // completions, so a "playback feels slow" report can be attributed to the
 // tick path, the warming race, or the cache rather than guessed at.
 // Prints human-readable numbers; asserts nothing, so it is built but
-// deliberately NOT registered with ctest (like benchCommitLag).
+// NOT registered with ctest (like benchCommitLag).
 //   benchPlayback [examplesDir] [frameCount] [paceMs] [stage] [profile]
 // paceMs paces tick starts apart (41.7 ~= 24 fps); 0 runs unpaced, which
 // is the mechanics run (the playhead outruns the workers on purpose).

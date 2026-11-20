@@ -59,12 +59,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
@@ -110,14 +110,12 @@ struct RigSpec {
     std::vector<std::string> rigOrder;
     /// The FK chain's controls and the joints it writes. The defaults name
     /// the same three joints the IK does, which is the stack under test.
-    std::string fkControls =
-        "</Asset/Rig/Controls/FkHip>, "
-        "</Asset/Rig/Controls/FkHip/FkKnee>, "
-        "</Asset/Rig/Controls/FkHip/FkKnee/FkAnkle>";
-    std::string fkJoints =
-        "</Asset/Rig/Joints/Hip>, "
-        "</Asset/Rig/Joints/Hip/Knee>, "
-        "</Asset/Rig/Joints/Hip/Knee/Ankle>";
+    std::string fkControls = "</Asset/Rig/Controls/FkHip>, "
+                             "</Asset/Rig/Controls/FkHip/FkKnee>, "
+                             "</Asset/Rig/Controls/FkHip/FkKnee/FkAnkle>";
+    std::string fkJoints = "</Asset/Rig/Joints/Hip>, "
+                           "</Asset/Rig/Joints/Hip/Knee>, "
+                           "</Asset/Rig/Joints/Hip/Knee/Ankle>";
     /// A three-point mesh carried by a RigExecMatrixMover that reads the knee
     /// at this read phase. Empty authors neither the mesh nor the mover.
     std::string probePhase;
@@ -137,22 +135,21 @@ Rest(double x, double y, double z)
 std::string
 RigText(const RigSpec &spec)
 {
-    std::string text =
-        "#usda 1.0\n"
-        "(\n"
-        "    defaultPrim = \"Asset\"\n"
-        "    startTimeCode = 1\n"
-        "    endTimeCode = 5\n"
-        "    metersPerUnit = 0.01\n"
-        "    timeCodesPerSecond = 24\n"
-        "    upAxis = \"Y\"\n"
-        ")\n"
-        "\n"
-        "def Xform \"Asset\"\n"
-        "{\n"
-        "    def RigExecRoot \"Rig\"\n"
-        "    {\n"
-        "        uniform token rigExec:partition = \"Asset\"\n";
+    std::string text = "#usda 1.0\n"
+                       "(\n"
+                       "    defaultPrim = \"Asset\"\n"
+                       "    startTimeCode = 1\n"
+                       "    endTimeCode = 5\n"
+                       "    metersPerUnit = 0.01\n"
+                       "    timeCodesPerSecond = 24\n"
+                       "    upAxis = \"Y\"\n"
+                       ")\n"
+                       "\n"
+                       "def Xform \"Asset\"\n"
+                       "{\n"
+                       "    def RigExecRoot \"Rig\"\n"
+                       "    {\n"
+                       "        uniform token rigExec:partition = \"Asset\"\n";
     if (!spec.rigOrder.empty()) {
         text += "        reorder nameChildren = [";
         for (size_t i = 0; i < spec.rigOrder.size(); ++i) {
@@ -160,107 +157,126 @@ RigText(const RigSpec &spec)
         }
         text += "]\n";
     }
-    text +=
-        "\n"
-        "        def Scope \"Controls\"\n"
-        "        {\n"
-        "            def RigExecControl \"HipRoot\"\n"
-        "            {\n"
-        "                matrix4d rest:space = " + Rest(0, 8, 0) + "\n"
-        "            }\n"
-        "            def RigExecControl \"FootIK\"\n"
-        "            {\n"
-        "                double avars:ty.timeSamples = {\n"
-        "                    1: 0,\n"
-        "                    3: 1.5,\n"
-        "                    5: 0.5,\n"
-        "                }\n"
-        "                matrix4d rest:space = " + Rest(0, 0, 0) + "\n"
-        "            }\n"
-        "            def RigExecControl \"KneePole\"\n"
-        "            {\n"
-        "                matrix4d rest:space = " + Rest(0, 4, 3) + "\n"
-        "            }\n"
-        "            def RigExecControl \"FkHip\"\n"
-        "            {\n"
-        "                double avars:rz.timeSamples = {\n"
-        "                    1: 0,\n"
-        "                    5: 30,\n"
-        "                }\n"
-        "                matrix4d rest:space = " + Rest(0, 8, 0) + "\n"
-        "\n"
-        "                def RigExecControl \"FkKnee\"\n"
-        "                {\n"
-        "                    matrix4d rest:space = " + Rest(4, 0, 0) + "\n"
-        "\n"
-        "                    def RigExecControl \"FkAnkle\"\n"
-        "                    {\n"
-        "                        matrix4d rest:space = " + Rest(4, 0, 0) +
-        "\n"
-        "                    }\n"
-        "                }\n"
-        "            }\n";
-    if (spec.fk2) {
-        text +=
-            "            def RigExecControl \"Fk2Hip\"\n"
+    text += "\n"
+            "        def Scope \"Controls\"\n"
+            "        {\n"
+            "            def RigExecControl \"HipRoot\"\n"
+            "            {\n"
+            "                matrix4d rest:space = " +
+            Rest(0, 8, 0) +
+            "\n"
+            "            }\n"
+            "            def RigExecControl \"FootIK\"\n"
+            "            {\n"
+            "                double avars:ty.timeSamples = {\n"
+            "                    1: 0,\n"
+            "                    3: 1.5,\n"
+            "                    5: 0.5,\n"
+            "                }\n"
+            "                matrix4d rest:space = " +
+            Rest(0, 0, 0) +
+            "\n"
+            "            }\n"
+            "            def RigExecControl \"KneePole\"\n"
+            "            {\n"
+            "                matrix4d rest:space = " +
+            Rest(0, 4, 3) +
+            "\n"
+            "            }\n"
+            "            def RigExecControl \"FkHip\"\n"
             "            {\n"
             "                double avars:rz.timeSamples = {\n"
             "                    1: 0,\n"
-            "                    5: -20,\n"
+            "                    5: 30,\n"
             "                }\n"
-            "                matrix4d rest:space = " + Rest(0, 8, 0) + "\n"
+            "                matrix4d rest:space = " +
+            Rest(0, 8, 0) +
             "\n"
-            "                def RigExecControl \"Fk2Knee\"\n"
+            "\n"
+            "                def RigExecControl \"FkKnee\"\n"
             "                {\n"
-            "                    matrix4d rest:space = " + Rest(4, 0, 0) +
+            "                    matrix4d rest:space = " +
+            Rest(4, 0, 0) +
             "\n"
             "\n"
-            "                    def RigExecControl \"Fk2Ankle\"\n"
+            "                    def RigExecControl \"FkAnkle\"\n"
             "                    {\n"
-            "                        matrix4d rest:space = " + Rest(4, 0, 0) +
+            "                        matrix4d rest:space = " +
+            Rest(4, 0, 0) +
             "\n"
             "                    }\n"
             "                }\n"
             "            }\n";
+    if (spec.fk2) {
+        text += "            def RigExecControl \"Fk2Hip\"\n"
+                "            {\n"
+                "                double avars:rz.timeSamples = {\n"
+                "                    1: 0,\n"
+                "                    5: -20,\n"
+                "                }\n"
+                "                matrix4d rest:space = " +
+                Rest(0, 8, 0) +
+                "\n"
+                "\n"
+                "                def RigExecControl \"Fk2Knee\"\n"
+                "                {\n"
+                "                    matrix4d rest:space = " +
+                Rest(4, 0, 0) +
+                "\n"
+                "\n"
+                "                    def RigExecControl \"Fk2Ankle\"\n"
+                "                    {\n"
+                "                        matrix4d rest:space = " +
+                Rest(4, 0, 0) +
+                "\n"
+                "                    }\n"
+                "                }\n"
+                "            }\n";
     }
     if (spec.kneeAim) {
-        text +=
-            "            def RigExecControl \"AimTarget\"\n"
-            "            {\n"
-            "                matrix4d rest:space = " + Rest(0, 20, 6) + "\n"
-            "            }\n";
+        text += "            def RigExecControl \"AimTarget\"\n"
+                "            {\n"
+                "                matrix4d rest:space = " +
+                Rest(0, 20, 6) +
+                "\n"
+                "            }\n";
     }
     if (spec.kneeMove) {
-        text +=
-            "            def RigExecControl \"KneeTarget\"\n"
-            "            {\n"
-            "                matrix4d rest:space = " + Rest(4, 10, 2) + "\n"
-            "            }\n";
+        text += "            def RigExecControl \"KneeTarget\"\n"
+                "            {\n"
+                "                matrix4d rest:space = " +
+                Rest(4, 10, 2) +
+                "\n"
+                "            }\n";
     }
-    text +=
-        "        }\n"
-        "\n"
-        "        def Scope \"Joints\"\n"
-        "        {\n"
-        "            def RigExecJoint \"Hip\"\n"
-        "            {\n"
-        "                matrix4d rest:space = " + Rest(0, 8, 0) + "\n"
-        "\n"
-        "                def RigExecJoint \"Knee\"\n"
-        "                {\n"
-        "                    matrix4d rest:space = " + Rest(4, 0, 0) + "\n"
-        "\n"
-        "                    def RigExecJoint \"Ankle\"\n"
-        "                    {\n"
-        "                        matrix4d rest:space = " + Rest(4, 0, 0) +
-        "\n"
-        "                    }\n"
-        "                }\n"
-        "            }\n"
-        "        }\n"
-        "\n"
-        "        def Scope \"Solvers\"\n"
-        "        {\n";
+    text += "        }\n"
+            "\n"
+            "        def Scope \"Joints\"\n"
+            "        {\n"
+            "            def RigExecJoint \"Hip\"\n"
+            "            {\n"
+            "                matrix4d rest:space = " +
+            Rest(0, 8, 0) +
+            "\n"
+            "\n"
+            "                def RigExecJoint \"Knee\"\n"
+            "                {\n"
+            "                    matrix4d rest:space = " +
+            Rest(4, 0, 0) +
+            "\n"
+            "\n"
+            "                    def RigExecJoint \"Ankle\"\n"
+            "                    {\n"
+            "                        matrix4d rest:space = " +
+            Rest(4, 0, 0) +
+            "\n"
+            "                    }\n"
+            "                }\n"
+            "            }\n"
+            "        }\n"
+            "\n"
+            "        def Scope \"Solvers\"\n"
+            "        {\n";
     if (!spec.solverOrder.empty()) {
         text += "            reorder nameChildren = [";
         for (size_t i = 0; i < spec.solverOrder.size(); ++i) {
@@ -269,74 +285,68 @@ RigText(const RigSpec &spec)
         text += "]\n\n";
     }
     if (spec.ik) {
-        text +=
-            "            def RigExecTwoBoneIk \"LegIK\"\n"
-            "            {\n";
+        text += "            def RigExecTwoBoneIk \"LegIK\"\n"
+                "            {\n";
         if (spec.ikWired) {
-            text +=
-                "                rel rigExec:rootControl = "
-                "</Asset/Rig/Controls/HipRoot>\n"
-                "                rel rigExec:effectorControl = "
-                "</Asset/Rig/Controls/FootIK>\n"
-                "                rel rigExec:poleControl = "
-                "</Asset/Rig/Controls/KneePole>\n";
+            text += "                rel rigExec:rootControl = "
+                    "</Asset/Rig/Controls/HipRoot>\n"
+                    "                rel rigExec:effectorControl = "
+                    "</Asset/Rig/Controls/FootIK>\n"
+                    "                rel rigExec:poleControl = "
+                    "</Asset/Rig/Controls/KneePole>\n";
         }
-        text +=
-            "                rel rigExec:joints = [\n"
-            "                    </Asset/Rig/Joints/Hip>,\n"
-            "                    </Asset/Rig/Joints/Hip/Knee>,\n"
-            "                    </Asset/Rig/Joints/Hip/Knee/Ankle>,\n"
-            "                ]\n"
-            "                double rigExec:preferredBendRadians = 0.3\n"
-            "            }\n";
+        text += "                rel rigExec:joints = [\n"
+                "                    </Asset/Rig/Joints/Hip>,\n"
+                "                    </Asset/Rig/Joints/Hip/Knee>,\n"
+                "                    </Asset/Rig/Joints/Hip/Knee/Ankle>,\n"
+                "                ]\n"
+                "                double rigExec:preferredBendRadians = 0.3\n"
+                "            }\n";
     }
     if (spec.fk) {
-        text +=
-            "            def RigExecFkChain \"LegFK\"\n"
-            "            {\n"
-            "                rel rigExec:controls = [ " + spec.fkControls +
-            " ]\n"
-            "                rel rigExec:joints = [ " + spec.fkJoints +
-            " ]\n"
-            "            }\n";
+        text += "            def RigExecFkChain \"LegFK\"\n"
+                "            {\n"
+                "                rel rigExec:controls = [ " +
+                spec.fkControls +
+                " ]\n"
+                "                rel rigExec:joints = [ " +
+                spec.fkJoints +
+                " ]\n"
+                "            }\n";
     }
     if (spec.fk2) {
-        text +=
-            "            def RigExecFkChain \"LegFK2\"\n"
-            "            {\n"
-            "                rel rigExec:controls = [ "
-            "</Asset/Rig/Controls/Fk2Hip>, "
-            "</Asset/Rig/Controls/Fk2Hip/Fk2Knee>, "
-            "</Asset/Rig/Controls/Fk2Hip/Fk2Knee/Fk2Ankle> ]\n"
-            "                rel rigExec:joints = [ "
-            "</Asset/Rig/Joints/Hip>, "
-            "</Asset/Rig/Joints/Hip/Knee>, "
-            "</Asset/Rig/Joints/Hip/Knee/Ankle> ]\n"
-            "            }\n";
+        text += "            def RigExecFkChain \"LegFK2\"\n"
+                "            {\n"
+                "                rel rigExec:controls = [ "
+                "</Asset/Rig/Controls/Fk2Hip>, "
+                "</Asset/Rig/Controls/Fk2Hip/Fk2Knee>, "
+                "</Asset/Rig/Controls/Fk2Hip/Fk2Knee/Fk2Ankle> ]\n"
+                "                rel rigExec:joints = [ "
+                "</Asset/Rig/Joints/Hip>, "
+                "</Asset/Rig/Joints/Hip/Knee>, "
+                "</Asset/Rig/Joints/Hip/Knee/Ankle> ]\n"
+                "            }\n";
     }
-    text +=
-        "        }\n";
+    text += "        }\n";
     if (!spec.probePhase.empty() || spec.kneeAim || spec.kneeMove) {
-        text +=
-            "\n"
-            "        def Scope \"Movers\"\n"
-            "        {\n";
+        text += "\n"
+                "        def Scope \"Movers\"\n"
+                "        {\n";
     }
     if (spec.kneeAim) {
-        text +=
-            "            def RigExecAimConstraint \"KneeAim\" (\n"
-            "                prepend apiSchemas = [\"RigExecMoverAPI\"]\n"
-            "            )\n"
-            "            {\n"
-            "                float inputs:defaultWeight = 1\n"
-            "                uniform token rigExec:aimAxis = \"x\"\n"
-            "                rel rigExec:aimTarget = "
-            "</Asset/Rig/Controls/AimTarget>\n"
-            "                rel rigExec:moves = "
-            "</Asset/Rig/Joints/Hip/Knee>\n"
-            "                uniform token[] rigExec:preserve = "
-            "[\"origin\", \"scale\"]\n"
-            "            }\n";
+        text += "            def RigExecAimConstraint \"KneeAim\" (\n"
+                "                prepend apiSchemas = [\"RigExecMoverAPI\"]\n"
+                "            )\n"
+                "            {\n"
+                "                float inputs:defaultWeight = 1\n"
+                "                uniform token rigExec:aimAxis = \"x\"\n"
+                "                rel rigExec:aimTarget = "
+                "</Asset/Rig/Controls/AimTarget>\n"
+                "                rel rigExec:moves = "
+                "</Asset/Rig/Joints/Hip/Knee>\n"
+                "                uniform token[] rigExec:preserve = "
+                "[\"origin\", \"scale\"]\n"
+                "            }\n";
     }
     if (!spec.probePhase.empty()) {
         text +=
@@ -348,49 +358,45 @@ RigText(const RigSpec &spec)
             "                rel rigExec:moves = </Asset/Geom/Probe.points>\n"
             "                rel rigExec:transform = "
             "</Asset/Rig/Joints/Hip/Knee> (\n"
-            "                    rigExecReadPhase = \"" + spec.probePhase +
+            "                    rigExecReadPhase = \"" +
+            spec.probePhase +
             "\"\n"
             "                )\n";
-        text +=
-            "            }\n";
+        text += "            }\n";
     }
     // LAST in the composed order, so it is the BOTTOM sibling and runs
     // FIRST of the movers -- which leaves the probe above it, where a
     // `final` read of the knee is legal and AtPrim(Movers) means "after
     // this constraint".
     if (spec.kneeMove) {
-        text +=
-            "            def RigExecPositionConstraint \"KneeMove\" (\n"
-            "                prepend apiSchemas = [\"RigExecMoverAPI\"]\n"
-            "            )\n"
-            "            {\n"
-            "                float inputs:defaultWeight = 1\n"
-            "                rel rigExec:sources = "
-            "</Asset/Rig/Controls/KneeTarget>\n"
-            "                rel rigExec:moves = "
-            "</Asset/Rig/Joints/Hip/Knee>\n"
-            "            }\n";
+        text += "            def RigExecPositionConstraint \"KneeMove\" (\n"
+                "                prepend apiSchemas = [\"RigExecMoverAPI\"]\n"
+                "            )\n"
+                "            {\n"
+                "                float inputs:defaultWeight = 1\n"
+                "                rel rigExec:sources = "
+                "</Asset/Rig/Controls/KneeTarget>\n"
+                "                rel rigExec:moves = "
+                "</Asset/Rig/Joints/Hip/Knee>\n"
+                "            }\n";
     }
     if (!spec.probePhase.empty() || spec.kneeAim || spec.kneeMove) {
-        text +=
-            "        }\n";
+        text += "        }\n";
     }
-    text +=
-        "    }\n";
+    text += "    }\n";
     if (!spec.probePhase.empty()) {
-        text +=
-            "\n"
-            "    def Scope \"Geom\"\n"
-            "    {\n"
-            "        def Mesh \"Probe\"\n"
-            "        {\n"
-            "            int[] faceVertexCounts = [3]\n"
-            "            int[] faceVertexIndices = [0, 1, 2]\n"
-            "            point3f[] points = [(0, 0, 0), (1, 0, 0), "
-            "(0, 0, 1)]\n"
-            "            uniform token subdivisionScheme = \"none\"\n"
-            "        }\n"
-            "    }\n";
+        text += "\n"
+                "    def Scope \"Geom\"\n"
+                "    {\n"
+                "        def Mesh \"Probe\"\n"
+                "        {\n"
+                "            int[] faceVertexCounts = [3]\n"
+                "            int[] faceVertexIndices = [0, 1, 2]\n"
+                "            point3f[] points = [(0, 0, 0), (1, 0, 0), "
+                "(0, 0, 1)]\n"
+                "            uniform token subdivisionScheme = \"none\"\n"
+                "        }\n"
+                "    }\n";
     }
     text += "}\n";
     return text;
@@ -400,7 +406,8 @@ UsdStageRefPtr
 MakeStage(const RigSpec &spec)
 {
     const SdfLayerRefPtr layer = SdfLayer::CreateAnonymous(".usda");
-    if (!layer || !rigExec::RigExecInputReplayImportFromString(layer, RigText(spec))) {
+    if (!layer ||
+        !rigExec::RigExecInputReplayImportFromString(layer, RigText(spec))) {
         std::printf("FAIL: the stacking fixture does not parse\n");
         ++failures;
         return UsdStageRefPtr();
@@ -492,7 +499,8 @@ Evaluate(const char *what, const UsdStageRefPtr &stage, double time,
         }
         return pose;
     }
-    if (chains) *chains = evaluator.GetFrameChains();
+    if (chains)
+        *chains = evaluator.GetFrameChains();
     pose = evaluator.Evaluate(UsdTimeCode(time));
     if (!pose.valid) {
         ++failures;
@@ -587,17 +595,22 @@ FkControls(const char *name, int degrees)
            "Hip\"\n"
            "            {\n"
            "                double avars:rz.timeSamples = { 1: 0, 5: " +
-           std::to_string(degrees) + " }\n"
-           "                matrix4d rest:space = " + Rest(0, 8, 0) + "\n"
+           std::to_string(degrees) +
+           " }\n"
+           "                matrix4d rest:space = " +
+           Rest(0, 8, 0) +
+           "\n"
            "\n"
            "                def RigExecControl \"Knee\"\n"
            "                {\n"
-           "                    matrix4d rest:space = " + Rest(4, 0, 0) +
+           "                    matrix4d rest:space = " +
+           Rest(4, 0, 0) +
            "\n"
            "\n"
            "                    def RigExecControl \"Ankle\"\n"
            "                    {\n"
-           "                        matrix4d rest:space = " + Rest(4, 0, 0) +
+           "                        matrix4d rest:space = " +
+           Rest(4, 0, 0) +
            "\n"
            "                    }\n"
            "                }\n"
@@ -608,56 +621,64 @@ FkControls(const char *name, int degrees)
 std::string
 Head(const std::string &controls, const std::string &extraJoints = "")
 {
-    return
-        "#usda 1.0\n"
-        "(\n"
-        "    defaultPrim = \"Asset\"\n"
-        "    startTimeCode = 1\n"
-        "    endTimeCode = 5\n"
-        "    metersPerUnit = 0.01\n"
-        "    timeCodesPerSecond = 24\n"
-        "    upAxis = \"Y\"\n"
-        ")\n"
-        "\n"
-        "def Xform \"Asset\"\n"
-        "{\n"
-        "    def RigExecRoot \"Rig\"\n"
-        "    {\n"
-        "        uniform token rigExec:partition = \"Asset\"\n"
-        "\n"
-        "        def Scope \"Controls\"\n"
-        "        {\n" + controls +
-        "        }\n"
-        "\n"
-        "        def Scope \"Joints\"\n"
-        "        {\n"
-        "            def RigExecJoint \"Hip\"\n"
-        "            {\n"
-        "                matrix4d rest:space = " + Rest(0, 8, 0) + "\n"
-        "\n"
-        "                def RigExecJoint \"Knee\"\n"
-        "                {\n"
-        "                    matrix4d rest:space = " + Rest(4, 0, 0) + "\n"
-        "\n"
-        "                    def RigExecJoint \"Ankle\"\n"
-        "                    {\n"
-        "                        matrix4d rest:space = " + Rest(4, 0, 0) +
-        "\n"
-        "                    }\n"
-        "                }\n"
-        "            }\n" + extraJoints +
-        "        }\n";
+    return "#usda 1.0\n"
+           "(\n"
+           "    defaultPrim = \"Asset\"\n"
+           "    startTimeCode = 1\n"
+           "    endTimeCode = 5\n"
+           "    metersPerUnit = 0.01\n"
+           "    timeCodesPerSecond = 24\n"
+           "    upAxis = \"Y\"\n"
+           ")\n"
+           "\n"
+           "def Xform \"Asset\"\n"
+           "{\n"
+           "    def RigExecRoot \"Rig\"\n"
+           "    {\n"
+           "        uniform token rigExec:partition = \"Asset\"\n"
+           "\n"
+           "        def Scope \"Controls\"\n"
+           "        {\n" +
+           controls +
+           "        }\n"
+           "\n"
+           "        def Scope \"Joints\"\n"
+           "        {\n"
+           "            def RigExecJoint \"Hip\"\n"
+           "            {\n"
+           "                matrix4d rest:space = " +
+           Rest(0, 8, 0) +
+           "\n"
+           "\n"
+           "                def RigExecJoint \"Knee\"\n"
+           "                {\n"
+           "                    matrix4d rest:space = " +
+           Rest(4, 0, 0) +
+           "\n"
+           "\n"
+           "                    def RigExecJoint \"Ankle\"\n"
+           "                    {\n"
+           "                        matrix4d rest:space = " +
+           Rest(4, 0, 0) +
+           "\n"
+           "                    }\n"
+           "                }\n"
+           "            }\n" +
+           extraJoints + "        }\n";
 }
 
 std::string
-Chain(const char *name, const std::string &controls,
-      const std::string &joints)
+Chain(const char *name, const std::string &controls, const std::string &joints)
 {
     return std::string("            def RigExecFkChain \"") + name +
            "\"\n"
            "            {\n"
-           "                rel rigExec:controls = [ " + controls + " ]\n"
-           "                rel rigExec:joints = [ " + joints + " ]\n"
+           "                rel rigExec:controls = [ " +
+           controls +
+           " ]\n"
+           "                rel rigExec:joints = [ " +
+           joints +
+           " ]\n"
            "            }\n";
 }
 
@@ -677,12 +698,11 @@ Chain(const char *name, const std::string &controls,
 std::string
 SubsetOrderText()
 {
-    std::string text =
-        Head(FkControls("FkA", 10) + FkControls("FkB", 25) +
-             FkControls("FkC", 40)) +
-        "\n"
-        "        def Scope \"Solvers\"\n"
-        "        {\n";
+    std::string text = Head(FkControls("FkA", 10) + FkControls("FkB", 25) +
+                            FkControls("FkC", 40)) +
+                       "\n"
+                       "        def Scope \"Solvers\"\n"
+                       "        {\n";
     text += Chain("FkA",
                   "</Asset/Rig/Controls/FkAHip>, "
                   "</Asset/Rig/Controls/FkAHip/Knee>, "
@@ -701,10 +721,9 @@ SubsetOrderText()
                   "</Asset/Rig/Controls/FkBHip/Knee/Ankle>",
                   "</Asset/Rig/Joints/Hip>, "
                   "</Asset/Rig/Joints/Hip/Knee>");
-    text +=
-        "        }\n"
-        "    }\n"
-        "}\n";
+    text += "        }\n"
+            "    }\n"
+            "}\n";
     return text;
 }
 
@@ -725,17 +744,16 @@ std::string
 ConstraintOrderText(bool withAim)
 {
     // A second root joint for the aim to move, outside the stacked chain.
-    std::string text =
-        Head(FkControls("FkA", 10) + FkControls("FkB", 40),
-             "            def RigExecJoint \"Tip\"\n"
-             "            {\n"
-             "                matrix4d rest:space = " + Rest(0, 20, 0) +
-             "\n"
-             "            }\n");
-    text +=
-        "\n"
-        "        def Scope \"Solvers\"\n"
-        "        {\n";
+    std::string text = Head(FkControls("FkA", 10) + FkControls("FkB", 40),
+                            "            def RigExecJoint \"Tip\"\n"
+                            "            {\n"
+                            "                matrix4d rest:space = " +
+                                Rest(0, 20, 0) +
+                                "\n"
+                                "            }\n");
+    text += "\n"
+            "        def Scope \"Solvers\"\n"
+            "        {\n";
     text += Chain("FkB",
                   "</Asset/Rig/Controls/FkBHip>, "
                   "</Asset/Rig/Controls/FkBHip/Knee>, "
@@ -743,32 +761,29 @@ ConstraintOrderText(bool withAim)
                   "</Asset/Rig/Joints/Hip>, "
                   "</Asset/Rig/Joints/Hip/Knee>, "
                   "</Asset/Rig/Joints/Hip/Knee/Ankle>");
-    text += Chain("FkA", "</Asset/Rig/Joints/Tip>",
-                  "</Asset/Rig/Joints/Hip>");
+    text += Chain("FkA", "</Asset/Rig/Joints/Tip>", "</Asset/Rig/Joints/Hip>");
     text += "        }\n";
     if (withAim) {
-        text +=
-            "\n"
-            "        def Scope \"Movers\"\n"
-            "        {\n"
-            "            def RigExecAimConstraint \"TipAim\" (\n"
-            "                prepend apiSchemas = [\"RigExecMoverAPI\"]\n"
-            "            )\n"
-            "            {\n"
-            "                float inputs:defaultWeight = 1\n"
-            "                uniform token rigExec:aimAxis = \"x\"\n"
-            "                rel rigExec:aimTarget = "
-            "</Asset/Rig/Joints/Hip/Knee/Ankle>\n"
-            "                rel rigExec:moves = "
-            "</Asset/Rig/Joints/Tip>\n"
-            "                uniform token[] rigExec:preserve = "
-            "[\"origin\", \"scale\"]\n"
-            "            }\n"
-            "        }\n";
+        text += "\n"
+                "        def Scope \"Movers\"\n"
+                "        {\n"
+                "            def RigExecAimConstraint \"TipAim\" (\n"
+                "                prepend apiSchemas = [\"RigExecMoverAPI\"]\n"
+                "            )\n"
+                "            {\n"
+                "                float inputs:defaultWeight = 1\n"
+                "                uniform token rigExec:aimAxis = \"x\"\n"
+                "                rel rigExec:aimTarget = "
+                "</Asset/Rig/Joints/Hip/Knee/Ankle>\n"
+                "                rel rigExec:moves = "
+                "</Asset/Rig/Joints/Tip>\n"
+                "                uniform token[] rigExec:preserve = "
+                "[\"origin\", \"scale\"]\n"
+                "            }\n"
+                "        }\n";
     }
-    text +=
-        "    }\n"
-        "}\n";
+    text += "    }\n"
+            "}\n";
     return text;
 }
 
@@ -789,12 +804,13 @@ OpenText(const std::string &text)
 
 void
 CheckEvaluatorConsistency(const char *what, const RigSpec &spec,
-            const std::vector<double> &frames, bool expectBaked)
+                          const std::vector<double> &frames, bool expectBaked)
 {
     const UsdStageRefPtr baselineStage = MakeStage(spec);
     const UsdStageRefPtr bakedStage = MakeStage(spec);
     CHECK(baselineStage && bakedStage);
-    if (!baselineStage || !bakedStage) return;
+    if (!baselineStage || !bakedStage)
+        return;
 
     RigExecRigEvaluator baseline(baselineStage, kRigPath);
     RigExecRigEvaluator baked(bakedStage, kRigPath);
@@ -807,7 +823,6 @@ CheckEvaluatorConsistency(const char *what, const RigSpec &spec,
         }
         return;
     }
-
 
     std::vector<std::string> reasons;
     const bool bakeable = baked.IsBakeable(&reasons);
@@ -842,8 +857,8 @@ CheckEvaluatorConsistency(const char *what, const RigSpec &spec,
     if (expectBaked && baked.GetBakedGenerationCount() != generations) {
         ++failures;
         std::printf("FAIL %s: %zu of %zu generation(s) came from the "
-                    "program\n", what, baked.GetBakedGenerationCount(),
-                    generations);
+                    "program\n",
+                    what, baked.GetBakedGenerationCount(), generations);
     }
 }
 
@@ -887,9 +902,8 @@ WarmFrozen(const std::string &what, RigExecRigEvaluator *evaluator,
         context.flags |= kRigExecFrozenSolverGuidesEnabled;
     }
     context.frozen = frozen.get();
-    return RigExecEvaluateFrozen(context, inputs,
-                                 RigExecMakeProductionStepRunner(), &scheduler,
-                                 rig);
+    return RigExecEvaluateFrozen(
+        context, inputs, RigExecMakeProductionStepRunner(), &scheduler, rig);
 }
 
 /// One checkpoint rig run through live and frozen canonical programs.
@@ -963,8 +977,7 @@ CheckCheckpointBakes(const std::string &what, const UsdStageRefPtr &stage,
         rigExecTest::ComparePose(&failures, where + " baked", walked, live);
         rigExecTest::ComparePose(&failures, where + " checked", walked,
                                  checked);
-        rigExecTest::ComparePose(&failures, where + " frozen", walked,
-                                 warmed);
+        rigExecTest::ComparePose(&failures, where + " frozen", walked, warmed);
         const size_t fromRecords =
             rigExecTest::CheckFrameRecords(&failures, where, *run.baked);
         if (fromRecords != answered) {
@@ -990,7 +1003,8 @@ TestCompilesAndChains()
 {
     const UsdStageRefPtr stage = MakeStage(Stacked());
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     RigExecRigEvaluator evaluator(stage, kRigPath);
     evaluator.cpuReference = true;
     std::vector<std::string> errors;
@@ -1028,7 +1042,8 @@ TestLastWriterWins()
     const UsdStageRefPtr ikStage = MakeStage(ikOnly);
     const UsdStageRefPtr fkStage = MakeStage(fkOnly);
     CHECK(stackedStage && ikStage && fkStage);
-    if (!stackedStage || !ikStage || !fkStage) return;
+    if (!stackedStage || !ikStage || !fkStage)
+        return;
 
     bool differs = false;
     bool reMeasured = false;
@@ -1037,7 +1052,8 @@ TestLastWriterWins()
             Evaluate("stacked", stackedStage, time, nullptr);
         const RigExecRigPose ik = Evaluate("ik only", ikStage, time, nullptr);
         const RigExecRigPose fk = Evaluate("fk only", fkStage, time, nullptr);
-        if (!stacked.valid || !ik.valid || !fk.valid) return;
+        if (!stacked.valid || !ik.valid || !fk.valid)
+            return;
         for (const SdfPath &joint : {kHip, kKnee, kAnkle}) {
             // The LAST writer supplies the frame: never the FK's answer.
             CHECK(!SameJoint(stacked, fk, joint) || SameJoint(ik, fk, joint));
@@ -1080,16 +1096,17 @@ TestReorderFlipsTheStack()
     const UsdStageRefPtr reorderedStage = MakeStage(reordered);
     const UsdStageRefPtr defaultStage = MakeStage(Stacked());
     CHECK(reorderedStage && defaultStage);
-    if (!reorderedStage || !defaultStage) return;
+    if (!reorderedStage || !defaultStage)
+        return;
 
     std::vector<std::string> errors;
     std::map<SdfPath, std::vector<SdfPath>> chains, defaultChains;
     const RigExecRigPose flipped =
         Evaluate("reordered", reorderedStage, 5.0, &errors, true, &chains);
-    const RigExecRigPose plain =
-        Evaluate("default order", defaultStage, 5.0, nullptr, true,
-                 &defaultChains);
-    if (!flipped.valid || !plain.valid) return;
+    const RigExecRigPose plain = Evaluate("default order", defaultStage, 5.0,
+                                          nullptr, true, &defaultChains);
+    if (!flipped.valid || !plain.valid)
+        return;
     CHECK(errors.empty());
     // The chain really is the other way round...
     CHECK(InOrder(ChainText(defaultChains, kHip), kLegFk.GetString(),
@@ -1112,7 +1129,8 @@ TestReorderFlipsTheStack()
     // other solver's solution.
     const UsdStageRefPtr liveStage = MakeStage(Stacked());
     CHECK(liveStage);
-    if (!liveStage) return;
+    if (!liveStage)
+        return;
     RigExecRigEvaluator live(liveStage, kRigPath);
     live.cpuReference = true;
     std::vector<std::string> liveErrors;
@@ -1125,7 +1143,8 @@ TestReorderFlipsTheStack()
     const UsdPrim solvers =
         liveStage->GetPrimAtPath(SdfPath("/Asset/Rig/Solvers"));
     CHECK(solvers);
-    if (!solvers) return;
+    if (!solvers)
+        return;
     solvers.SetChildrenReorder({TfToken("LegFK"), TfToken("LegIK")});
 
     const RigExecRigPose after = live.Evaluate(UsdTimeCode(5.0));
@@ -1161,7 +1180,8 @@ TestCheckpointSeesTheEarlierWriter()
     const UsdStageRefPtr fkStage = MakeStage(fkOnly);
     const UsdStageRefPtr ikStage = MakeStage(ikOnly);
     CHECK(atFkStage && fkStage && ikStage);
-    if (!atFkStage || !fkStage || !ikStage) return;
+    if (!atFkStage || !fkStage || !ikStage)
+        return;
 
     const RigExecRigPose checkpoint =
         Evaluate("checkpoint probe", atFkStage, 5.0, nullptr, false);
@@ -1169,7 +1189,8 @@ TestCheckpointSeesTheEarlierWriter()
         Evaluate("fk probe", fkStage, 5.0, nullptr, false);
     const RigExecRigPose ik =
         Evaluate("ik probe", ikStage, 5.0, nullptr, false);
-    if (!checkpoint.valid || !fk.valid || !ik.valid) return;
+    if (!checkpoint.valid || !fk.valid || !ik.valid)
+        return;
 
     GfVec3f atCheckpoint, atFkOnly, atIkOnly;
     CHECK(ProbePoint(checkpoint, &atCheckpoint));
@@ -1183,7 +1204,8 @@ TestCheckpointSeesTheEarlierWriter()
     // knee, and so does a frozen warming job, bit for bit the walk's.
     const CheckpointRun run = CheckCheckpointBakes(
         "checkpoint probe", atFkStage, kRigPath, {1.0, 3.0, 5.0}, 1);
-    if (!run.baked) return;
+    if (!run.baked)
+        return;
     const auto walked = run.walked.find(5.0);
     GfVec3f walkedPoint;
     CHECK(walked != run.walked.end() &&
@@ -1191,7 +1213,8 @@ TestCheckpointSeesTheEarlierWriter()
     CHECK(walkedPoint == atCheckpoint);
     const RigExecBakedProgram *program = run.baked->GetBakedProgram();
     CHECK(program != nullptr);
-    if (!program) return;
+    if (!program)
+        return;
     const RigExecBakedProgramImpl &B = program->GetStepGraph();
     const RigExecBakedProgramImpl::GeomRevision *probe =
         rigExecTest::FindRevision(B, SdfPath("/Asset/Rig/Movers/KneeProbe"));
@@ -1223,13 +1246,15 @@ TestPartialSubsetTearIsPinned()
     const UsdStageRefPtr tearStage = MakeStage(tear);
     const UsdStageRefPtr ikStage = MakeStage(ikOnly);
     CHECK(tearStage && ikStage);
-    if (!tearStage || !ikStage) return;
+    if (!tearStage || !ikStage)
+        return;
 
     std::vector<std::string> errors;
     const RigExecRigPose torn =
         Evaluate("partial subset", tearStage, 5.0, &errors);
     const RigExecRigPose ik = Evaluate("ik only", ikStage, 5.0, nullptr);
-    if (!torn.valid || !ik.valid) return;
+    if (!torn.valid || !ik.valid)
+        return;
 
     // The hip moved to the FK's solution; the knee and ankle did NOT follow.
     CHECK(!SameJoint(torn, ik, kHip));
@@ -1244,33 +1269,31 @@ TestPartialSubsetTearIsPinned()
 
 /// A FRAME read below its writer is POSITIONAL, and does not reorder anything.
 ///
-/// The FK reads the ankle, which only the IK writes. Under the old rule that
-/// read forced the FK to run second, reversing the composed namespace. Under
-/// the unified pose stack the namespace IS the order and nothing bends it: the
-/// FK is the bottom sibling, so it runs first and reads the ankle as it stands
-/// at its own place in the stack -- the rest-propagated frame, before the IK
-/// wrote it. Nothing contradicts anything and nothing is reported.
+/// The FK reads the ankle, which only the IK writes. Under the unified pose
+/// stack the namespace IS the order and nothing bends it: the FK is the
+/// bottom sibling, so it runs first and reads the ankle as it stands at its
+/// own place in the stack -- the rest-propagated frame, before the IK wrote
+/// it. Nothing contradicts anything and nothing is reported.
 void
 TestDataFlowOutranksTheNamespace()
 {
     RigSpec spec = Stacked();
     spec.fkControls =
         "</Asset/Rig/Controls/FkHip>, </Asset/Rig/Joints/Hip/Knee/Ankle>";
-    spec.fkJoints =
-        "</Asset/Rig/Joints/Hip>, </Asset/Rig/Joints/Hip/Knee>";
+    spec.fkJoints = "</Asset/Rig/Joints/Hip>, </Asset/Rig/Joints/Hip/Knee>";
 
     const UsdStageRefPtr stage = MakeStage(spec);
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     RigExecRigEvaluator evaluator(stage, kRigPath);
     evaluator.cpuReference = true;
     std::vector<std::string> errors;
     CHECK(evaluator.Compile(&errors));
-    const std::string hipLine =
-        ChainText(evaluator.GetFrameChains(), kHip);
+    const std::string hipLine = ChainText(evaluator.GetFrameChains(), kHip);
     CHECK(!hipLine.empty());
     // Definition order is LegIK then LegFK, so the REVERSE -- the stack --
-    // is LegFK then LegIK, and the ankle read no longer flips it.
+    // is LegFK then LegIK.
     CHECK(InOrder(hipLine, kLegFk.GetString(), kLegIk.GetString()));
     CHECK(!Mentions(errors, "dependency cycle"));
     const RigExecRigPose stacked = evaluator.Evaluate(UsdTimeCode(5.0));
@@ -1289,10 +1312,12 @@ TestDataFlowOutranksTheNamespace()
     const UsdStageRefPtr ikStage = MakeStage(ikOnly);
     const UsdStageRefPtr fkStage = MakeStage(fkOnly);
     CHECK(ikStage && fkStage);
-    if (!ikStage || !fkStage || !stacked.valid) return;
+    if (!ikStage || !fkStage || !stacked.valid)
+        return;
     const RigExecRigPose ik = Evaluate("ik only", ikStage, 5.0, nullptr);
     const RigExecRigPose fk = Evaluate("fk only", fkStage, 5.0, nullptr);
-    if (!ik.valid || !fk.valid) return;
+    if (!ik.valid || !fk.valid)
+        return;
     // The IK lands LAST on the hip now, so the hip is not the FK's answer.
     CHECK(!SameJoint(stacked, fk, kHip));
     // The ankle is the IK's alone -- nothing stacks there -- and the IK's
@@ -1322,7 +1347,8 @@ TestFallbackVerdictUnderStack(bool ikLast)
     const UsdStageRefPtr dynamicStage = MakeStage(spec);
     const UsdStageRefPtr bakedStage = MakeStage(spec);
     CHECK(dynamicStage && bakedStage);
-    if (!dynamicStage || !bakedStage) return;
+    if (!dynamicStage || !bakedStage)
+        return;
 
     RigExecRigEvaluator dynamicRig(dynamicStage, kRigPath);
     RigExecRigEvaluator bakedRig(bakedStage, kRigPath);
@@ -1369,9 +1395,8 @@ TestFallbackVerdictUnderStack(bool ikLast)
                 std::printf("    [baked]   %s\n", line.c_str());
             }
         }
-        rigExecTest::ComparePose(&failures,
-                                 std::string(what) + " t=" +
-                                     std::to_string(time), a, b);
+        rigExecTest::ComparePose(
+            &failures, std::string(what) + " t=" + std::to_string(time), a, b);
     }
 }
 
@@ -1396,21 +1421,23 @@ TestConstraintObservesTopOfStack()
 
     const UsdStageRefPtr stackedStage = MakeStage(stacked);
     CHECK(stackedStage);
-    if (!stackedStage) return;
+    if (!stackedStage)
+        return;
 
     RigSpec noAim = stacked;
     noAim.kneeAim = false;
     const UsdStageRefPtr noAimStage = MakeStage(noAim);
     CHECK(noAimStage);
-    if (!noAimStage) return;
+    if (!noAimStage)
+        return;
 
     std::map<SdfPath, std::vector<SdfPath>> chains;
     const RigExecRigPose a =
-        Evaluate("aim over a stack", stackedStage, 5.0, nullptr, true,
-                 &chains);
+        Evaluate("aim over a stack", stackedStage, 5.0, nullptr, true, &chains);
     const RigExecRigPose none =
         Evaluate("the same stack, no aim", noAimStage, 5.0, nullptr);
-    if (!a.valid || !none.valid) return;
+    if (!a.valid || !none.valid)
+        return;
     // The aim is the LAST step of the knee's chain -- above both solvers --
     // so it revises what they left rather than feeding them.
     const std::vector<SdfPath> &knee = chains[kKnee];
@@ -1426,23 +1453,19 @@ TestConstraintObservesTopOfStack()
     CHECK(SameJoint(a, none, kAnkle));
     // Both writers ran: an inert one would make the lines above pass for the
     // wrong reason.
-
 }
 
 /// Every joint's writer list is a restriction of ONE order.
 ///
-/// Two joints with different writer sets used to settle their order
-/// independently, so a writer waiting on a solver absent from one of the sets
-/// looked free there and blocked in the other -- and the adjacent-pair stack
-/// edges then pointed both ways and Kahn reported a pose cycle on a rig that
-/// is entirely legal. Partial-subset stacking is one of the shapes this
-/// feature exists for, so this compiles or the feature does not work.
+/// Partial-subset stacking is one of the shapes this feature exists for,
+/// so this compiles or the feature does not work.
 void
 TestPartialSubsetsAgreeOnOneOrder()
 {
     const UsdStageRefPtr stage = OpenText(SubsetOrderText());
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     RigExecRigEvaluator evaluator(stage, kRigPath);
     evaluator.cpuReference = true;
     std::vector<std::string> errors;
@@ -1483,9 +1506,7 @@ TestPartialSubsetsAgreeOnOneOrder()
 ///
 /// The stack order is settled against the finished pose graph, so a pair only
 /// a solver -> constraint -> solver path reaches is ordered by that path and
-/// no stack edge is inserted against it. Adding a constraint that names
-/// neither solver's rigExec:joints used to turn this compiling rig into a
-/// pose cycle.
+/// no stack edge is inserted against it.
 void
 TestConstraintMediatedOrderIsRespected()
 {
@@ -1495,22 +1516,23 @@ TestConstraintMediatedOrderIsRespected()
         const char *what = aim ? "with the aim" : "without the aim";
         const UsdStageRefPtr stage = OpenText(ConstraintOrderText(aim));
         CHECK(stage);
-        if (!stage) continue;
+        if (!stage)
+            continue;
         RigExecRigEvaluator evaluator(stage, kRigPath);
         evaluator.cpuReference = true;
         std::vector<std::string> errors;
         if (!evaluator.Compile(&errors)) {
             ++failures;
             std::printf("FAIL: the constraint-ordered stack (%s) does not "
-                        "compile\n", what);
+                        "compile\n",
+                        what);
             for (const std::string &error : errors) {
                 std::printf("    %s\n", error.c_str());
             }
             continue;
         }
         CHECK(!Mentions(errors, "dependency cycle"));
-        const std::string hipLine =
-            ChainText(evaluator.GetFrameChains(), kHip);
+        const std::string hipLine = ChainText(evaluator.GetFrameChains(), kHip);
         CHECK(!hipLine.empty());
         // The NAMESPACE decides, with or without the aim: definition order
         // FkB, FkA reversed makes FkA the first writer, and a constraint in
@@ -1543,13 +1565,16 @@ TestDuplicateJointOnOneSolverIsUnauthorable()
     fkOnly.ik = false;
     const UsdStageRefPtr stage = MakeStage(fkOnly);
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     const UsdPrim fk = stage->GetPrimAtPath(kLegFk);
     CHECK(fk);
-    if (!fk) return;
+    if (!fk)
+        return;
     UsdRelationship joints = fk.GetRelationship(TfToken("rigExec:joints"));
     CHECK(joints);
-    if (!joints) return;
+    if (!joints)
+        return;
     CHECK(joints.SetTargets({kHip, kKnee, kHip}));
     SdfPathVector targets;
     joints.GetTargets(&targets);
@@ -1584,7 +1609,7 @@ void
 TestConstraintBelowASolverFeedsIt()
 {
     RigSpec fed = Stacked();
-    fed.fk = false;      // the IK alone: FkChain takes no joint rest
+    fed.fk = false; // the IK alone: FkChain takes no joint rest
     fed.kneeMove = true;
     RigSpec plain = Stacked();
     plain.fk = false;
@@ -1592,14 +1617,16 @@ TestConstraintBelowASolverFeedsIt()
     const UsdStageRefPtr fedStage = MakeStage(fed);
     const UsdStageRefPtr plainStage = MakeStage(plain);
     CHECK(fedStage && plainStage);
-    if (!fedStage || !plainStage) return;
+    if (!fedStage || !plainStage)
+        return;
 
     std::vector<std::string> errors;
-    const RigExecRigPose a = Evaluate("constraint below", fedStage, 5.0,
-                                      &errors);
-    const RigExecRigPose b = Evaluate("no constraint", plainStage, 5.0,
-                                      nullptr);
-    if (!a.valid || !b.valid) return;
+    const RigExecRigPose a =
+        Evaluate("constraint below", fedStage, 5.0, &errors);
+    const RigExecRigPose b =
+        Evaluate("no constraint", plainStage, 5.0, nullptr);
+    if (!a.valid || !b.valid)
+        return;
 
     // The knee is the IK's answer, not the constraint's target (0, 10, 2)...
     const auto knee = a.jointFramesFinal.find(kKnee);
@@ -1634,11 +1661,13 @@ TestConstraintAboveASolverRevisesIt()
 
     const UsdStageRefPtr stage = MakeStage(revised);
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     std::vector<std::string> errors;
-    const RigExecRigPose pose = Evaluate("constraint above", stage, 5.0,
-                                         &errors);
-    if (!pose.valid) return;
+    const RigExecRigPose pose =
+        Evaluate("constraint above", stage, 5.0, &errors);
+    if (!pose.valid)
+        return;
     const auto knee = pose.jointFramesFinal.find(kKnee);
     CHECK(knee != pose.jointFramesFinal.end());
     if (knee != pose.jointFramesFinal.end()) {
@@ -1653,10 +1682,12 @@ TestConstraintAboveASolverRevisesIt()
     fed.rigOrder.clear();
     const UsdStageRefPtr fedStage = MakeStage(fed);
     CHECK(fedStage);
-    if (!fedStage) return;
+    if (!fedStage)
+        return;
     const RigExecRigPose flipped =
         Evaluate("reorder flips it", fedStage, 5.0, nullptr);
-    if (!flipped.valid) return;
+    if (!flipped.valid)
+        return;
     CHECK(!SameJoint(pose, flipped, kKnee));
 }
 
@@ -1668,8 +1699,8 @@ TestConstraintAboveASolverRevisesIt()
 /// a constraint below the chain moves the joint and the chain carries that
 /// displacement through its own solve instead of replacing it.
 ///
-/// Every aggregate solver answers to this rule; the FK chain is the one that
-/// used to be the exception, so it is the one pinned here.
+/// Every aggregate solver answers to this rule; the FK chain is the one
+/// pinned here.
 void
 TestFkChainComposesOverTheIncomingFrame()
 {
@@ -1682,12 +1713,13 @@ TestFkChainComposesOverTheIncomingFrame()
     const UsdStageRefPtr fedStage = MakeStage(fed);
     const UsdStageRefPtr plainStage = MakeStage(plain);
     CHECK(fedStage && plainStage);
-    if (!fedStage || !plainStage) return;
+    if (!fedStage || !plainStage)
+        return;
     std::vector<std::string> errors;
-    const RigExecRigPose a = Evaluate("fk over a feed", fedStage, 5.0,
-                                      &errors);
+    const RigExecRigPose a = Evaluate("fk over a feed", fedStage, 5.0, &errors);
     const RigExecRigPose b = Evaluate("fk alone", plainStage, 5.0, nullptr);
-    if (!a.valid || !b.valid) return;
+    if (!a.valid || !b.valid)
+        return;
     // The constrained joint carries the constraint's displacement...
     CHECK(!SameJoint(a, b, kKnee));
     // ... and the joints no step below the chain wrote are untouched, which
@@ -1721,12 +1753,15 @@ TestReadPhasesOverTheUnifiedStack()
         spec.fk = false;
         spec.kneeMove = true;
         spec.probePhase = phase;
-        if (solversLast) spec.rigOrder = SolversLast();
+        if (solversLast)
+            spec.rigOrder = SolversLast();
         const UsdStageRefPtr stage = MakeStage(spec);
         CHECK(stage);
-        if (!stage) return false;
+        if (!stage)
+            return false;
         const RigExecRigPose pose = Evaluate(what, stage, 5.0, nullptr, false);
-        if (!pose.valid) return false;
+        if (!pose.valid)
+            return false;
         return ProbePoint(pose, out);
     };
     GfVec3f base, atSolvers, atMovers, atFinal;
@@ -1764,7 +1799,8 @@ TestReadPhasesOverTheUnifiedStack()
     const CheckpointRun run =
         CheckCheckpointBakes("AtPrim(Solvers) checkpoint, solvers last",
                              MakeStage(spec), kRigPath, {1.0, 3.0, 5.0}, 1);
-    if (!run.baked) return;
+    if (!run.baked)
+        return;
     const auto walked = run.walked.find(5.0);
     GfVec3f walkedPoint;
     CHECK(walked != run.walked.end() &&
@@ -1772,7 +1808,8 @@ TestReadPhasesOverTheUnifiedStack()
     CHECK(Near(GfVec3d(walkedPoint), GfVec3d(atSolvers), 1e-6));
     const RigExecBakedProgram *program = run.baked->GetBakedProgram();
     CHECK(program != nullptr);
-    if (!program) return;
+    if (!program)
+        return;
     const RigExecBakedProgramImpl &B = program->GetStepGraph();
     const RigExecBakedProgramImpl::GeomRevision *knee =
         rigExecTest::FindRevision(B, SdfPath("/Asset/Rig/Movers/KneeProbe"));
@@ -1798,10 +1835,12 @@ TestAtPrimMoversRecordsMatchTheStore()
         spec.fk = false;
         spec.kneeMove = true;
         spec.probePhase = "/Asset/Rig/Movers";
-        if (solversLast) spec.rigOrder = SolversLast();
+        if (solversLast)
+            spec.rigOrder = SolversLast();
         const UsdStageRefPtr stage = MakeStage(spec);
         CHECK(stage);
-        if (!stage) return;
+        if (!stage)
+            return;
         RigExecRigEvaluator evaluator(stage, kRigPath);
 
         std::vector<std::string> errors;
@@ -1817,13 +1856,14 @@ TestAtPrimMoversRecordsMatchTheStore()
             const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(frame));
             CHECK(pose.valid);
 
-            CHECK(rigExecTest::CheckFrameRecords(&failures, where,
-                                                 evaluator) == 1);
+            CHECK(rigExecTest::CheckFrameRecords(&failures, where, evaluator) ==
+                  1);
         }
         CHECK(evaluator.GetBakedGenerationCount() == 2);
         const RigExecBakedProgram *program = evaluator.GetBakedProgram();
         CHECK(program != nullptr);
-        if (!program) continue;
+        if (!program)
+            continue;
         const RigExecBakedProgramImpl &B = program->GetStepGraph();
         const RigExecBakedProgramImpl::GeomRevision *probe =
             rigExecTest::FindRevision(B,
@@ -1854,14 +1894,14 @@ TestSolverCheckpointsBake(const std::string &examplesDir)
     const SdfPath legBlend("/CheckpointAsset/Rig/Stack/LegBlend");
     const SdfPath legZ("/CheckpointAsset/Rig/Late/LegZ");
     const auto reader = [](const char *name) {
-        return SdfPath("/CheckpointAsset/Rig/Movers").AppendChild(
-            TfToken(name));
+        return SdfPath("/CheckpointAsset/Rig/Movers")
+            .AppendChild(TfToken(name));
     };
     const auto points = [](const RigExecRigPose &pose, const char *name) {
-        const auto it = pose.movedProperties.find(
-            SdfPath("/CheckpointAsset/Geom")
-                .AppendChild(TfToken(name))
-                .AppendProperty(TfToken("points")));
+        const auto it =
+            pose.movedProperties.find(SdfPath("/CheckpointAsset/Geom")
+                                          .AppendChild(TfToken(name))
+                                          .AppendProperty(TfToken("points")));
         return it != pose.movedProperties.end() &&
                        it->second.IsHolding<VtVec3fArray>()
                    ? it->second.UncheckedGet<VtVec3fArray>()
@@ -1874,7 +1914,8 @@ TestSolverCheckpointsBake(const std::string &examplesDir)
             withP1 ? "solver checkpoints" : "solver checkpoints without P1";
         const UsdStageRefPtr stage = UsdStage::Open(stagePath);
         CHECK(stage);
-        if (!stage) return;
+        if (!stage)
+            return;
         stage->SetEditTarget(stage->GetSessionLayer());
         if (!withP1) {
             CHECK(stage->GetPrimAtPath(reader("P1")).SetActive(false));
@@ -1883,10 +1924,12 @@ TestSolverCheckpointsBake(const std::string &examplesDir)
         // P3's one record is skipped and it reads `base`.
         const CheckpointRun run =
             CheckCheckpointBakes(label, stage, rig, frames, withP1 ? 3 : 1);
-        if (!run.baked) return;
+        if (!run.baked)
+            return;
         const RigExecBakedProgram *program = run.baked->GetBakedProgram();
         CHECK(program != nullptr);
-        if (!program) return;
+        if (!program)
+            return;
         const RigExecBakedProgramImpl &B = program->GetStepGraph();
 
         // The records: one per named (knee, solver) pair, in walk order, on
@@ -1923,9 +1966,9 @@ TestSolverCheckpointsBake(const std::string &examplesDir)
             const RigExecBakedProgramImpl::GeomRevision *revision =
                 rigExecTest::FindRevision(B, reader(name));
             CHECK(revision != nullptr);
-            return revision
-                       ? rigExecTest::RecordMovers(B, revision->transformRecords)
-                       : std::vector<SdfPath>{SdfPath("/missing")};
+            return revision ? rigExecTest::RecordMovers(
+                                  B, revision->transformRecords)
+                            : std::vector<SdfPath>{SdfPath("/missing")};
         };
         if (withP1) {
             CHECK(list("P1") == std::vector<SdfPath>{legFk});
@@ -1976,10 +2019,10 @@ TestSolverCheckpointsBake(const std::string &examplesDir)
         RigExecRigEvaluator &baked = *run.baked;
         const auto ranRecords = [&B]() {
             std::vector<SdfPath> ran;
-            for (size_t id=0;id<B.steps.size();++id) {
-                const auto &step=B.steps[id];
+            for (size_t id = 0; id < B.steps.size(); ++id) {
+                const auto &step = B.steps[id];
                 if (step.kind == RigExecBakedStepKind::FrameMatrix &&
-                    id<B.opExecution.ran.size() && B.opExecution.ran[id]) {
+                    id < B.opExecution.ran.size() && B.opExecution.ran[id]) {
                     ran.push_back(B.frameRecords[size_t(step.object)].mover);
                 }
             }
@@ -1987,15 +2030,16 @@ TestSolverCheckpointsBake(const std::string &examplesDir)
             return ran;
         };
         const auto foldRan = [&B](const SdfPath &mover) {
-            for (size_t id=0;id<B.steps.size();++id) {
-                const auto &step=B.steps[id];
+            for (size_t id = 0; id < B.steps.size(); ++id) {
+                const auto &step = B.steps[id];
                 if (step.kind != RigExecBakedStepKind::InfluenceFold) {
                     continue;
                 }
                 const auto [c, r] = B.revisionIndex[size_t(step.object)];
                 if (B.chains[size_t(c)].revisions[size_t(r)].moverPath ==
                     mover) {
-                    return id<B.opExecution.ran.size() && B.opExecution.ran[id];
+                    return id < B.opExecution.ran.size() &&
+                           B.opExecution.ran[id];
                 }
             }
             return false;
@@ -2006,8 +2050,8 @@ TestSolverCheckpointsBake(const std::string &examplesDir)
             const std::string where = label + " " + what;
             const RigExecRigPose before = baked.Evaluate(UsdTimeCode(9.0));
             baked.SetInteractiveOverrides({RigExecValueOverride{
-                SdfPath("/CheckpointAsset/Rig/Controls").AppendChild(
-                    TfToken(control)),
+                SdfPath("/CheckpointAsset/Rig/Controls")
+                    .AppendChild(TfToken(control)),
                 TfToken(), TfToken(avar), VtValue(value)}});
             const RigExecRigPose dragged = baked.Evaluate(UsdTimeCode(9.0));
             CHECK(dragged.valid);
@@ -2061,9 +2105,9 @@ TestSolverCheckpointsBake(const std::string &examplesDir)
             // KneeTarget moves the knee KneeMove leaves, which LegBlend and
             // LegZ both read: their records re-run, LegFK's stays clean, and
             // P3's fold re-runs over LegFK's kept record.
-            const auto [before, dragged, p3Fold] = drag(
-                "KneeTarget dragged", "KneeTarget", "avars:tx", 0.8,
-                {legBlend, legZ});
+            const auto [before, dragged, p3Fold] =
+                drag("KneeTarget dragged", "KneeTarget", "avars:tx", 0.8,
+                     {legBlend, legZ});
             const auto moved = movedBetween(before, dragged);
             CHECK(p3Fold);
             CHECK(moved("P2"));
@@ -2089,11 +2133,10 @@ TestSolverCheckpointsBake(const std::string &examplesDir)
 void
 TestProducersCarryNoStackPosition()
 {
-    std::string text =
-        Head(FkControls("Fk", 30)) +
-        "\n"
-        "        def Scope \"Solvers\"\n"
-        "        {\n";
+    std::string text = Head(FkControls("Fk", 30)) +
+                       "\n"
+                       "        def Scope \"Solvers\"\n"
+                       "        {\n";
     text += Chain("FK",
                   "</Asset/Rig/Controls/FkHip>, "
                   "</Asset/Rig/Controls/FkHip/Knee>, "
@@ -2112,24 +2155,24 @@ TestProducersCarryNoStackPosition()
     // them producers: the relaxation is PER JOINT, so an input that named a
     // joint the blend does not would still write it and would still be a
     // stack step.
-    text +=
-        "            def RigExecBlendPointFrames \"Blend\"\n"
-        "            {\n"
-        "                rel rigExec:inputA = </Asset/Rig/Solvers/FK>\n"
-        "                rel rigExec:inputB = </Asset/Rig/Solvers/FK2>\n"
-        "                float inputs:weight = 0.5\n"
-        "                rel rigExec:joints = [\n"
-        "                    </Asset/Rig/Joints/Hip>,\n"
-        "                    </Asset/Rig/Joints/Hip/Knee>,\n"
-        "                    </Asset/Rig/Joints/Hip/Knee/Ankle>,\n"
-        "                ]\n"
-        "            }\n"
-        "        }\n"
-        "    }\n"
-        "}\n";
+    text += "            def RigExecBlendPointFrames \"Blend\"\n"
+            "            {\n"
+            "                rel rigExec:inputA = </Asset/Rig/Solvers/FK>\n"
+            "                rel rigExec:inputB = </Asset/Rig/Solvers/FK2>\n"
+            "                float inputs:weight = 0.5\n"
+            "                rel rigExec:joints = [\n"
+            "                    </Asset/Rig/Joints/Hip>,\n"
+            "                    </Asset/Rig/Joints/Hip/Knee>,\n"
+            "                    </Asset/Rig/Joints/Hip/Knee/Ankle>,\n"
+            "                ]\n"
+            "            }\n"
+            "        }\n"
+            "    }\n"
+            "}\n";
     const UsdStageRefPtr stage = OpenText(text);
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     RigExecRigEvaluator evaluator(stage, kRigPath);
     evaluator.cpuReference = true;
     std::vector<std::string> errors;
@@ -2169,12 +2212,12 @@ std::string
 AggregateProducerText()
 {
     std::string text =
-        Head(FkControls("Fk", 30),
-             "            def RigExecJoint \"Tip\"\n"
-             "            {\n"
-             "                matrix4d rest:space = " + Rest(0, 20, 0) +
-             "\n"
-             "            }\n") +
+        Head(FkControls("Fk", 30), "            def RigExecJoint \"Tip\"\n"
+                                   "            {\n"
+                                   "                matrix4d rest:space = " +
+                                       Rest(0, 20, 0) +
+                                       "\n"
+                                       "            }\n") +
         "\n"
         "        def Scope \"Solvers\"\n"
         "        {\n"
@@ -2187,10 +2230,9 @@ AggregateProducerText()
         "            }\n";
     text += Chain("Producer", "</Asset/Rig/Controls/FkHip>",
                   "</Asset/Rig/Joints/Tip>");
-    text +=
-        "        }\n"
-        "    }\n"
-        "}\n";
+    text += "        }\n"
+            "    }\n"
+            "}\n";
     return text;
 }
 
@@ -2199,7 +2241,8 @@ TestAggregateContradictionIsRejected()
 {
     const UsdStageRefPtr stage = OpenText(AggregateProducerText());
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     RigExecRigEvaluator evaluator(stage, kRigPath);
     evaluator.cpuReference = true;
     std::vector<std::string> errors;
@@ -2216,7 +2259,8 @@ TestAggregateContradictionIsRejected()
     stage->SetEditTarget(stage->GetSessionLayer());
     const UsdPrim solvers = stage->GetPrimAtPath(SdfPath("/Asset/Rig/Solvers"));
     CHECK(solvers);
-    if (!solvers) return;
+    if (!solvers)
+        return;
     solvers.SetChildrenReorder({TfToken("Producer"), TfToken("Blend")});
     RigExecRigEvaluator flipped(stage, kRigPath);
     flipped.cpuReference = true;
@@ -2257,11 +2301,12 @@ TestAggregateReadIsHistoryIndependent()
     const rigExecTest::EvaluationState frame5{UsdTimeCode(5.0), {}};
     const rigExecTest::EvaluationState frame2{UsdTimeCode(2.0), {}};
     {
+        rigExecTest::CheckHistoryIndependent(&failures, "blend of a producer",
+                                             make(false), kRigPath, frame5,
+                                             frame2);
         rigExecTest::CheckHistoryIndependent(
-            &failures, "blend of a producer", make(false), kRigPath,
+            &failures, "blend of a producer, flipped", make(true), kRigPath,
             frame5, frame2);
-        rigExecTest::CheckHistoryIndependent(
-            &failures, "blend of a producer, flipped", make(true), kRigPath, frame5, frame2);
     }
 }
 
@@ -2285,83 +2330,118 @@ TestUnrelatedLimbsHaveIndependentDependencies()
     const auto limb = [](const char *side) {
         const std::string s(side);
         std::string text =
-            "            def RigExecControl \"" + s + "Root\"\n"
+            "            def RigExecControl \"" + s +
+            "Root\"\n"
             "            {\n"
-            "                matrix4d rest:space = " + Rest(0, 8, 0) + "\n"
+            "                matrix4d rest:space = " +
+            Rest(0, 8, 0) +
+            "\n"
             "            }\n"
-            "            def RigExecControl \"" + s + "Foot\"\n"
+            "            def RigExecControl \"" +
+            s +
+            "Foot\"\n"
             "            {\n"
             "                double avars:ty.timeSamples = { 1: 0, 5: 1.5 }\n"
-            "                matrix4d rest:space = " + Rest(0, 0, 0) + "\n"
+            "                matrix4d rest:space = " +
+            Rest(0, 0, 0) +
+            "\n"
             "            }\n"
-            "            def RigExecControl \"" + s + "Pole\"\n"
+            "            def RigExecControl \"" +
+            s +
+            "Pole\"\n"
             "            {\n"
-            "                matrix4d rest:space = " + Rest(0, 4, 3) + "\n"
+            "                matrix4d rest:space = " +
+            Rest(0, 4, 3) +
+            "\n"
             "            }\n" +
             FkControls((s + "Fk").c_str(), 30);
         return text;
     };
     const auto joints = [](const char *side) {
         const std::string s(side);
-        return
-            "            def RigExecJoint \"" + s + "Hip\"\n"
-            "            {\n"
-            "                matrix4d rest:space = " + Rest(0, 8, 0) + "\n"
-            "\n"
-            "                def RigExecJoint \"Knee\"\n"
-            "                {\n"
-            "                    matrix4d rest:space = " + Rest(4, 0, 0) +
-            "\n"
-            "\n"
-            "                    def RigExecJoint \"Ankle\"\n"
-            "                    {\n"
-            "                        matrix4d rest:space = " + Rest(4, 0, 0) +
-            "\n"
-            "                    }\n"
-            "                }\n"
-            "            }\n";
+        return "            def RigExecJoint \"" + s +
+               "Hip\"\n"
+               "            {\n"
+               "                matrix4d rest:space = " +
+               Rest(0, 8, 0) +
+               "\n"
+               "\n"
+               "                def RigExecJoint \"Knee\"\n"
+               "                {\n"
+               "                    matrix4d rest:space = " +
+               Rest(4, 0, 0) +
+               "\n"
+               "\n"
+               "                    def RigExecJoint \"Ankle\"\n"
+               "                    {\n"
+               "                        matrix4d rest:space = " +
+               Rest(4, 0, 0) +
+               "\n"
+               "                    }\n"
+               "                }\n"
+               "            }\n";
     };
     const auto solvers = [](const char *side) {
         const std::string s(side);
-        const std::string chain =
-            "</Asset/Rig/Joints/" + s + "Hip>, "
-            "</Asset/Rig/Joints/" + s + "Hip/Knee>, "
-            "</Asset/Rig/Joints/" + s + "Hip/Knee/Ankle>";
+        const std::string chain = "</Asset/Rig/Joints/" + s +
+                                  "Hip>, "
+                                  "</Asset/Rig/Joints/" +
+                                  s +
+                                  "Hip/Knee>, "
+                                  "</Asset/Rig/Joints/" +
+                                  s + "Hip/Knee/Ankle>";
         std::string text =
-            "            def RigExecTwoBoneIk \"" + s + "IK\"\n"
+            "            def RigExecTwoBoneIk \"" + s +
+            "IK\"\n"
             "            {\n"
             "                rel rigExec:rootControl = "
-            "</Asset/Rig/Controls/" + s + "Root>\n"
+            "</Asset/Rig/Controls/" +
+            s +
+            "Root>\n"
             "                rel rigExec:effectorControl = "
-            "</Asset/Rig/Controls/" + s + "Foot>\n"
+            "</Asset/Rig/Controls/" +
+            s +
+            "Foot>\n"
             "                rel rigExec:poleControl = "
-            "</Asset/Rig/Controls/" + s + "Pole>\n"
-            "                rel rigExec:joints = [ " + chain + " ]\n"
+            "</Asset/Rig/Controls/" +
+            s +
+            "Pole>\n"
+            "                rel rigExec:joints = [ " +
+            chain +
+            " ]\n"
             "                double rigExec:preferredBendRadians = 0.3\n"
             "            }\n";
         text += Chain((s + "FK").c_str(),
-                      "</Asset/Rig/Controls/" + s + "FkHip>, "
-                      "</Asset/Rig/Controls/" + s + "FkHip/Knee>, "
-                      "</Asset/Rig/Controls/" + s + "FkHip/Knee/Ankle>",
+                      "</Asset/Rig/Controls/" + s +
+                          "FkHip>, "
+                          "</Asset/Rig/Controls/" +
+                          s +
+                          "FkHip/Knee>, "
+                          "</Asset/Rig/Controls/" +
+                          s + "FkHip/Knee/Ankle>",
                       chain);
         return text;
     };
     const auto aim = [](const char *side) {
         const std::string s(side);
-        return
-            "            def RigExecAimConstraint \"" + s + "Aim\" (\n"
-            "                prepend apiSchemas = [\"RigExecMoverAPI\"]\n"
-            "            )\n"
-            "            {\n"
-            "                float inputs:defaultWeight = 1\n"
-            "                uniform token rigExec:aimAxis = \"x\"\n"
-            "                rel rigExec:aimTarget = "
-            "</Asset/Rig/Controls/" + s + "Pole>\n"
-            "                rel rigExec:moves = "
-            "</Asset/Rig/Joints/" + s + "Hip/Knee>\n"
-            "                uniform token[] rigExec:preserve = "
-            "[\"origin\", \"scale\"]\n"
-            "            }\n";
+        return "            def RigExecAimConstraint \"" + s +
+               "Aim\" (\n"
+               "                prepend apiSchemas = [\"RigExecMoverAPI\"]\n"
+               "            )\n"
+               "            {\n"
+               "                float inputs:defaultWeight = 1\n"
+               "                uniform token rigExec:aimAxis = \"x\"\n"
+               "                rel rigExec:aimTarget = "
+               "</Asset/Rig/Controls/" +
+               s +
+               "Pole>\n"
+               "                rel rigExec:moves = "
+               "</Asset/Rig/Joints/" +
+               s +
+               "Hip/Knee>\n"
+               "                uniform token[] rigExec:preserve = "
+               "[\"origin\", \"scale\"]\n"
+               "            }\n";
     };
     const auto build = [&](bool bothLimbs, bool solversLast) {
         std::string controls = limb("L");
@@ -2384,60 +2464,72 @@ TestUnrelatedLimbsHaveIndependentDependencies()
             "        uniform token rigExec:partition = \"Asset\"\n";
         text.replace(text.find(partition), partition.size(),
                      partition +
-                     (solversLast
-                          ? "        reorder nameChildren = [\"Controls\", "
-                            "\"Joints\", \"Movers\", \"Solvers\"]\n"
-                          : "        reorder nameChildren = [\"Controls\", "
-                            "\"Joints\", \"Solvers\", \"Movers\"]\n"));
-        return
-            text +
-            "\n"
-            "        def Scope \"Solvers\"\n"
-            "        {\n" + solverText +
-            "        }\n"
-            "\n"
-            "        def Scope \"Movers\"\n"
-            "        {\n" + moverText +
-            "        }\n"
-            "    }\n"
-            "}\n";
+                         (solversLast
+                              ? "        reorder nameChildren = [\"Controls\", "
+                                "\"Joints\", \"Movers\", \"Solvers\"]\n"
+                              : "        reorder nameChildren = [\"Controls\", "
+                                "\"Joints\", \"Solvers\", \"Movers\"]\n"));
+        return text +
+               "\n"
+               "        def Scope \"Solvers\"\n"
+               "        {\n" +
+               solverText +
+               "        }\n"
+               "\n"
+               "        def Scope \"Movers\"\n"
+               "        {\n" +
+               moverText +
+               "        }\n"
+               "    }\n"
+               "}\n";
     };
     const auto graphOf = [](const UsdStageRefPtr &stage) {
-        RigExecRigEvaluator evaluator(stage,kRigPath);
+        RigExecRigEvaluator evaluator(stage, kRigPath);
         std::vector<std::string> errors;
         CHECK(evaluator.Compile(&errors));
         CHECK(evaluator.Evaluate(UsdTimeCode(5.0)).valid);
         return evaluator.GetOpGraph();
     };
-    const auto operations=[](const auto &graph,const char *side) {
+    const auto operations = [](const auto &graph, const char *side) {
         std::vector<size_t> ids;
-        for(const char *name:{"Solvers/IK","Solvers/FK","Movers/Aim"}) {
-            const std::string text(name);const auto slash=text.find('/');
-            const SdfPath path("/Asset/Rig/"+text.substr(0,slash+1)+side+text.substr(slash+1));
-            const size_t id=rigExecTest::FindOperation(graph,path,slash==7?"Solve":"Constraint");
-            CHECK(id<graph.size());ids.push_back(id);
+        for (const char *name : {"Solvers/IK", "Solvers/FK", "Movers/Aim"}) {
+            const std::string text(name);
+            const auto slash = text.find('/');
+            const SdfPath path("/Asset/Rig/" + text.substr(0, slash + 1) +
+                               side + text.substr(slash + 1));
+            const size_t id = rigExecTest::FindOperation(
+                graph, path, slash == 7 ? "Solve" : "Constraint");
+            CHECK(id < graph.size());
+            ids.push_back(id);
         }
         return ids;
     };
-    for(const bool solversLast:{true,false}) {
-        const auto single=graphOf(OpenText(build(false,solversLast)));
-        const auto pair=graphOf(OpenText(build(true,solversLast)));
-        const auto alone=operations(single,"L"),left=operations(pair,"L"),right=operations(pair,"R");
+    for (const bool solversLast : {true, false}) {
+        const auto single = graphOf(OpenText(build(false, solversLast)));
+        const auto pair = graphOf(OpenText(build(true, solversLast)));
+        const auto alone = operations(single, "L"),
+                   left = operations(pair, "L"), right = operations(pair, "R");
         // Every directed dependency within one limb survives adding the other.
-        for(size_t i=0;i<left.size();++i)for(size_t j=0;j<left.size();++j)if(i!=j) {
-            const bool expected=rigExecTest::HasDependencyPath(single,alone[i],alone[j]);
-            CHECK(rigExecTest::HasDependencyPath(pair,left[i],left[j])==expected);
-            CHECK(rigExecTest::HasDependencyPath(pair,right[i],right[j])==expected);
-        }
+        for (size_t i = 0; i < left.size(); ++i)
+            for (size_t j = 0; j < left.size(); ++j)
+                if (i != j) {
+                    const bool expected = rigExecTest::HasDependencyPath(
+                        single, alone[i], alone[j]);
+                    CHECK(rigExecTest::HasDependencyPath(pair, left[i],
+                                                         left[j]) == expected);
+                    CHECK(rigExecTest::HasDependencyPath(pair, right[i],
+                                                         right[j]) == expected);
+                }
         // No actual producer edge serializes the unrelated limbs.
-        for(size_t l:left)for(size_t r:right) {
-            CHECK(!rigExecTest::HasDependencyPath(pair,l,r));
-            CHECK(!rigExecTest::HasDependencyPath(pair,r,l));
-        }
+        for (size_t l : left)
+            for (size_t r : right) {
+                CHECK(!rigExecTest::HasDependencyPath(pair, l, r));
+                CHECK(!rigExecTest::HasDependencyPath(pair, r, l));
+            }
     }
 }
 
-}  // namespace
+} // namespace
 
 static std::string
 SchemaResourceDir(const std::string &examplesDir)
@@ -2461,48 +2553,50 @@ SchemaResourceDir(const std::string &examplesDir)
 std::string
 ControlFollowText(const char *controlsPhase)
 {
-    const std::string phase =
-        controlsPhase ? std::string(" (\n                    "
-                                    "rigExecReadPhase = \"") +
-                            controlsPhase + "\"\n                )"
-                      : std::string();
-    std::string text = Head(
-        FkControls("Fk", 0) +
-        "            def RigExecControl \"Lift\"\n"
-        "            {\n"
-        "                matrix4d rest:space = " + Rest(0, 20, 6) + "\n"
-        "            }\n");
+    const std::string phase = controlsPhase
+                                  ? std::string(" (\n                    "
+                                                "rigExecReadPhase = \"") +
+                                        controlsPhase + "\"\n                )"
+                                  : std::string();
+    std::string text = Head(FkControls("Fk", 0) +
+                            "            def RigExecControl \"Lift\"\n"
+                            "            {\n"
+                            "                matrix4d rest:space = " +
+                            Rest(0, 20, 6) +
+                            "\n"
+                            "            }\n");
     // Movers defined before Solvers, so Solvers is the bottom sibling and
     // every solver executes before every constraint.
-    text +=
-        "\n"
-        "        def Scope \"Movers\"\n"
-        "        {\n"
-        "            def RigExecPositionConstraint \"HipFollow\" (\n"
-        "                prepend apiSchemas = [\"RigExecMoverAPI\"]\n"
-        "            )\n"
-        "            {\n"
-        "                float inputs:defaultWeight = 1\n"
-        "                rel rigExec:sources = </Asset/Rig/Controls/Lift>\n"
-        "                rel rigExec:moves = </Asset/Rig/Controls/FkHip>\n"
-        "            }\n"
-        "        }\n"
-        "\n"
-        "        def Scope \"Solvers\"\n"
-        "        {\n"
-        "            def RigExecFkChain \"LegFK\"\n"
-        "            {\n"
-        "                rel rigExec:controls = [ "
-        "</Asset/Rig/Controls/FkHip>, "
-        "</Asset/Rig/Controls/FkHip/Knee>, "
-        "</Asset/Rig/Controls/FkHip/Knee/Ankle> ]" + phase + "\n"
-        "                rel rigExec:joints = [ "
-        "</Asset/Rig/Joints/Hip>, </Asset/Rig/Joints/Hip/Knee>, "
-        "</Asset/Rig/Joints/Hip/Knee/Ankle> ]\n"
-        "            }\n"
-        "        }\n"
-        "    }\n"
-        "}\n";
+    text += "\n"
+            "        def Scope \"Movers\"\n"
+            "        {\n"
+            "            def RigExecPositionConstraint \"HipFollow\" (\n"
+            "                prepend apiSchemas = [\"RigExecMoverAPI\"]\n"
+            "            )\n"
+            "            {\n"
+            "                float inputs:defaultWeight = 1\n"
+            "                rel rigExec:sources = </Asset/Rig/Controls/Lift>\n"
+            "                rel rigExec:moves = </Asset/Rig/Controls/FkHip>\n"
+            "            }\n"
+            "        }\n"
+            "\n"
+            "        def Scope \"Solvers\"\n"
+            "        {\n"
+            "            def RigExecFkChain \"LegFK\"\n"
+            "            {\n"
+            "                rel rigExec:controls = [ "
+            "</Asset/Rig/Controls/FkHip>, "
+            "</Asset/Rig/Controls/FkHip/Knee>, "
+            "</Asset/Rig/Controls/FkHip/Knee/Ankle> ]" +
+            phase +
+            "\n"
+            "                rel rigExec:joints = [ "
+            "</Asset/Rig/Joints/Hip>, </Asset/Rig/Joints/Hip/Knee>, "
+            "</Asset/Rig/Joints/Hip/Knee/Ankle> ]\n"
+            "            }\n"
+            "        }\n"
+            "    }\n"
+            "}\n";
     return text;
 }
 
@@ -2515,7 +2609,8 @@ CheckTextParity(const char *what, const std::string &text,
     const UsdStageRefPtr baselineStage = OpenText(text);
     const UsdStageRefPtr bakedStage = OpenText(text);
     CHECK(baselineStage && bakedStage);
-    if (!baselineStage || !bakedStage) return;
+    if (!baselineStage || !bakedStage)
+        return;
     RigExecRigEvaluator baseline(baselineStage, kRigPath);
     RigExecRigEvaluator baked(bakedStage, kRigPath);
     std::vector<std::string> errors;
@@ -2545,12 +2640,14 @@ TestSolverInputReadPhaseFollowsAConstraintAbove()
     const UsdStageRefPtr plain = OpenText(ControlFollowText(nullptr));
     const UsdStageRefPtr declared = OpenText(ControlFollowText("final"));
     CHECK(plain && declared);
-    if (!plain || !declared) return;
-    const RigExecRigPose before = Evaluate("no read phase", plain, 1.0,
-                                           nullptr);
-    const RigExecRigPose after = Evaluate("final read phase", declared,
-                                          1.0, nullptr);
-    if (!before.valid || !after.valid) return;
+    if (!plain || !declared)
+        return;
+    const RigExecRigPose before =
+        Evaluate("no read phase", plain, 1.0, nullptr);
+    const RigExecRigPose after =
+        Evaluate("final read phase", declared, 1.0, nullptr);
+    if (!before.valid || !after.valid)
+        return;
     const auto hipBefore = before.jointFramesFinal.find(kHip);
     const auto hipAfter = after.jointFramesFinal.find(kHip);
     CHECK(hipBefore != before.jointFramesFinal.end());
@@ -2565,8 +2662,7 @@ TestSolverInputReadPhaseFollowsAConstraintAbove()
     CHECK(Near(hipAfter->second.Origin(), GfVec3d(0, 20, 6), 1e-6));
     // And the baked program schedules both the same way.
     CheckTextParity("no read phase", ControlFollowText(nullptr), {1, 3, 5});
-    CheckTextParity("final read phase", ControlFollowText("final"),
-                    {1, 3, 5});
+    CheckTextParity("final read phase", ControlFollowText("final"), {1, 3, 5});
 }
 
 /// Constraint B reads a control constraint A moves: B's source is the
@@ -2582,58 +2678,70 @@ ConstraintReadsConstraintText(bool aBelowB, bool child)
 {
     const auto position = [](const char *name, const char *moves,
                              const char *source) {
-        return std::string(
-                   "            def RigExecPositionConstraint \"") +
-               name + "\" (\n"
+        return std::string("            def RigExecPositionConstraint \"") +
+               name +
+               "\" (\n"
                "                prepend apiSchemas = [\"RigExecMoverAPI\"]\n"
                "            )\n"
                "            {\n"
                "                float inputs:defaultWeight = 1\n"
-               "                rel rigExec:sources = <" + source + ">\n"
-               "                rel rigExec:moves = <" + moves + ">\n"
+               "                rel rigExec:sources = <" +
+               source +
+               ">\n"
+               "                rel rigExec:moves = <" +
+               moves +
+               ">\n"
                "            }\n";
     };
     const char *ctl = "/Asset/Rig/Controls/Ctl";
-    const char *read = child ? "/Asset/Rig/Controls/Ctl/Child"
-                             : "/Asset/Rig/Controls/Ctl";
+    const char *read =
+        child ? "/Asset/Rig/Controls/Ctl/Child" : "/Asset/Rig/Controls/Ctl";
     const char *srcA = "/Asset/Rig/Controls/SrcA";
     const char *srcD = "/Asset/Rig/Controls/SrcD";
     const char *outB = "/Asset/Rig/Controls/OutB";
-    std::string text = Head(
-        "            def RigExecControl \"Ctl\"\n"
-        "            {\n"
-        "                matrix4d rest:space = " + Rest(0, 0, 0) + "\n"
-        "\n"
-        "                def RigExecControl \"Child\"\n"
-        "                {\n"
-        "                    matrix4d rest:space = " + Rest(2, 0, 0) + "\n"
-        "                }\n"
-        "            }\n"
-        "            def RigExecControl \"SrcA\"\n"
-        "            {\n"
-        "                matrix4d rest:space = " + Rest(10, 0, 0) + "\n"
-        "            }\n"
-        "            def RigExecControl \"SrcD\"\n"
-        "            {\n"
-        "                matrix4d rest:space = " + Rest(0, 0, 7) + "\n"
-        "            }\n"
-        "            def RigExecControl \"OutB\"\n"
-        "            {\n"
-        "                matrix4d rest:space = " + Rest(0, 5, 0) + "\n"
-        "            }\n");
+    std::string text = Head("            def RigExecControl \"Ctl\"\n"
+                            "            {\n"
+                            "                matrix4d rest:space = " +
+                            Rest(0, 0, 0) +
+                            "\n"
+                            "\n"
+                            "                def RigExecControl \"Child\"\n"
+                            "                {\n"
+                            "                    matrix4d rest:space = " +
+                            Rest(2, 0, 0) +
+                            "\n"
+                            "                }\n"
+                            "            }\n"
+                            "            def RigExecControl \"SrcA\"\n"
+                            "            {\n"
+                            "                matrix4d rest:space = " +
+                            Rest(10, 0, 0) +
+                            "\n"
+                            "            }\n"
+                            "            def RigExecControl \"SrcD\"\n"
+                            "            {\n"
+                            "                matrix4d rest:space = " +
+                            Rest(0, 0, 7) +
+                            "\n"
+                            "            }\n"
+                            "            def RigExecControl \"OutB\"\n"
+                            "            {\n"
+                            "                matrix4d rest:space = " +
+                            Rest(0, 5, 0) +
+                            "\n"
+                            "            }\n");
     // Definition order is top to bottom; the stack runs bottom first.
     const std::string a = position("A", ctl, srcA);
     const std::string b = position("B", outB, read);
-    const std::string d = aBelowB ? position("D", ctl, srcD)
-                                  : position("D", outB, srcD);
-    text +=
-        "\n"
-        "        def Scope \"Movers\"\n"
-        "        {\n" +
-        (aBelowB ? b + a + d : a + b + d) +
-        "        }\n"
-        "    }\n"
-        "}\n";
+    const std::string d =
+        aBelowB ? position("D", ctl, srcD) : position("D", outB, srcD);
+    text += "\n"
+            "        def Scope \"Movers\"\n"
+            "        {\n" +
+            (aBelowB ? b + a + d : a + b + d) +
+            "        }\n"
+            "    }\n"
+            "}\n";
     return text;
 }
 
@@ -2649,10 +2757,12 @@ TestConstraintReadsAConstraintInStackOrder()
                 ConstraintReadsConstraintText(aBelowB, child);
             const UsdStageRefPtr stage = OpenText(text);
             CHECK(stage);
-            if (!stage) continue;
+            if (!stage)
+                continue;
             const RigExecRigPose pose =
                 Evaluate(what.c_str(), stage, 1.0, nullptr);
-            if (!pose.valid) continue;
+            if (!pose.valid)
+                continue;
             const auto ctl =
                 pose.controlFrames.find(SdfPath("/Asset/Rig/Controls/Ctl"));
             const auto out =
@@ -2696,41 +2806,54 @@ ConstraintReadsUnderASolvedJointText(const char *aMoves, bool xformSource)
 {
     const auto position = [](const char *name, const std::string &moves,
                              const char *source) {
-        return std::string(
-                   "            def RigExecPositionConstraint \"") +
-               name + "\" (\n"
+        return std::string("            def RigExecPositionConstraint \"") +
+               name +
+               "\" (\n"
                "                prepend apiSchemas = [\"RigExecMoverAPI\"]\n"
                "            )\n"
                "            {\n"
                "                float inputs:defaultWeight = 1\n"
-               "                rel rigExec:sources = <" + source + ">\n"
-               "                rel rigExec:moves = <" + moves + ">\n"
+               "                rel rigExec:sources = <" +
+               source +
+               ">\n"
+               "                rel rigExec:moves = <" +
+               moves +
+               ">\n"
                "            }\n";
     };
     const std::string moved = std::string("/Asset/Rig/Joints/") + aMoves;
     const char *read = xformSource ? "/Asset/Rig/Joints/Hip/Knee/Tip"
                                    : "/Asset/Rig/Joints/Hip/Knee/Ankle";
-    std::string text = Head(
-        "            def RigExecControl \"SrcA\"\n"
-        "            {\n"
-        "                matrix4d rest:space = " + Rest(10, 0, 0) + "\n"
-        "            }\n"
-        "            def RigExecControl \"SrcD\"\n"
-        "            {\n"
-        "                matrix4d rest:space = " + Rest(0, 0, 7) + "\n"
-        "            }\n"
-        "            def RigExecControl \"SrcE\"\n"
-        "            {\n"
-        "                matrix4d rest:space = " + Rest(0, 6, 6) + "\n"
-        "            }\n"
-        "            def RigExecControl \"OutB\"\n"
-        "            {\n"
-        "                matrix4d rest:space = " + Rest(0, 5, 0) + "\n"
-        "            }\n"
-        "            def RigExecControl \"FkKnee\"\n"
-        "            {\n"
-        "                matrix4d rest:space = " + Rest(4, 1, 0) + "\n"
-        "            }\n");
+    std::string text = Head("            def RigExecControl \"SrcA\"\n"
+                            "            {\n"
+                            "                matrix4d rest:space = " +
+                            Rest(10, 0, 0) +
+                            "\n"
+                            "            }\n"
+                            "            def RigExecControl \"SrcD\"\n"
+                            "            {\n"
+                            "                matrix4d rest:space = " +
+                            Rest(0, 0, 7) +
+                            "\n"
+                            "            }\n"
+                            "            def RigExecControl \"SrcE\"\n"
+                            "            {\n"
+                            "                matrix4d rest:space = " +
+                            Rest(0, 6, 6) +
+                            "\n"
+                            "            }\n"
+                            "            def RigExecControl \"OutB\"\n"
+                            "            {\n"
+                            "                matrix4d rest:space = " +
+                            Rest(0, 5, 0) +
+                            "\n"
+                            "            }\n"
+                            "            def RigExecControl \"FkKnee\"\n"
+                            "            {\n"
+                            "                matrix4d rest:space = " +
+                            Rest(4, 1, 0) +
+                            "\n"
+                            "            }\n");
     const std::string ankle = "                    def RigExecJoint \"Ankle\"";
     text.insert(text.find(ankle),
                 "                    def Xform \"Tip\"\n"
@@ -2743,26 +2866,24 @@ ConstraintReadsUnderASolvedJointText(const char *aMoves, bool xformSource)
     const std::string partition =
         "        uniform token rigExec:partition = \"Asset\"\n";
     text.replace(text.find(partition), partition.size(),
-                 partition +
-                 "        reorder nameChildren = [\"Controls\", "
-                 "\"Joints\", \"Movers\", \"Solvers\"]\n");
-    text +=
-        "\n"
-        "        def Scope \"Solvers\"\n"
-        "        {\n" +
-        Chain("KneeFK", "</Asset/Rig/Controls/FkKnee>",
-              "</Asset/Rig/Joints/Hip/Knee>") +
-        "        }\n"
-        "\n"
-        "        def Scope \"Movers\"\n"
-        "        {\n" +
-        position("B", "/Asset/Rig/Controls/OutB", read) +
-        position("A", moved, "/Asset/Rig/Controls/SrcA") +
-        position("D", moved, "/Asset/Rig/Controls/SrcD") +
-        position("E", moved, "/Asset/Rig/Controls/SrcE") +
-        "        }\n"
-        "    }\n"
-        "}\n";
+                 partition + "        reorder nameChildren = [\"Controls\", "
+                             "\"Joints\", \"Movers\", \"Solvers\"]\n");
+    text += "\n"
+            "        def Scope \"Solvers\"\n"
+            "        {\n" +
+            Chain("KneeFK", "</Asset/Rig/Controls/FkKnee>",
+                  "</Asset/Rig/Joints/Hip/Knee>") +
+            "        }\n"
+            "\n"
+            "        def Scope \"Movers\"\n"
+            "        {\n" +
+            position("B", "/Asset/Rig/Controls/OutB", read) +
+            position("A", moved, "/Asset/Rig/Controls/SrcA") +
+            position("D", moved, "/Asset/Rig/Controls/SrcD") +
+            position("E", moved, "/Asset/Rig/Controls/SrcE") +
+            "        }\n"
+            "    }\n"
+            "}\n";
     return text;
 }
 
@@ -2778,14 +2899,17 @@ TestConstraintReadsUnderASolvedJoint()
                 ConstraintReadsUnderASolvedJointText(aMoves, xformSource);
             const UsdStageRefPtr stage = OpenText(text);
             CHECK(stage);
-            if (!stage) continue;
+            if (!stage)
+                continue;
             const RigExecRigPose pose =
                 Evaluate(what.c_str(), stage, 1.0, nullptr);
-            if (!pose.valid) continue;
+            if (!pose.valid)
+                continue;
             const auto out =
                 pose.controlFrames.find(SdfPath("/Asset/Rig/Controls/OutB"));
             CHECK(out != pose.controlFrames.end());
-            if (out == pose.controlFrames.end()) continue;
+            if (out == pose.controlFrames.end())
+                continue;
             // The FK chain puts the Knee at its control, (4, 1, 0); A then
             // moves the Hip from (0, 8, 0) to (10, 0, 0), or the Knee to
             // (10, 0, 0). Tip's stage frame is (0, 3, 0).
@@ -2794,12 +2918,10 @@ TestConstraintReadsUnderASolvedJoint()
             if (hip) {
                 // The Knee stops A's move: the Ankle stays on the solved
                 // Knee, while the native Tip rides the Hip's delta.
-                expected = xformSource ? GfVec3d(10, -5, 0)
-                                       : GfVec3d(8, 1, 0);
+                expected = xformSource ? GfVec3d(10, -5, 0) : GfVec3d(8, 1, 0);
             } else {
                 // A's own write to the solved Knee reaches both.
-                expected = xformSource ? GfVec3d(6, 2, 0)
-                                       : GfVec3d(14, 0, 0);
+                expected = xformSource ? GfVec3d(6, 2, 0) : GfVec3d(14, 0, 0);
             }
             CHECK(Near(out->second.Origin(), expected, 1e-6));
             if (!Near(out->second.Origin(), expected, 1e-6)) {
@@ -2824,97 +2946,122 @@ IndependentConstraintsText()
     const auto controls = [](const char *side, int degrees) {
         const std::string s(side);
         return FkControls((s + "Fk").c_str(), degrees) +
-               "            def RigExecControl \"" + s + "Pole\"\n"
+               "            def RigExecControl \"" + s +
+               "Pole\"\n"
                "            {\n"
-               "                matrix4d rest:space = " + Rest(4, 12, 3) +
+               "                matrix4d rest:space = " +
+               Rest(4, 12, 3) +
                "\n"
                "            }\n"
-               "            def RigExecControl \"" + s + "Tip\"\n"
+               "            def RigExecControl \"" +
+               s +
+               "Tip\"\n"
                "            {\n"
-               "                matrix4d rest:space = " + Rest(0, 0, 0) +
+               "                matrix4d rest:space = " +
+               Rest(0, 0, 0) +
                "\n"
                "            }\n";
     };
     const auto joints = [](const char *side) {
         const std::string s(side);
-        return
-            "            def RigExecJoint \"" + s + "Hip\"\n"
-            "            {\n"
-            "                matrix4d rest:space = " + Rest(0, 8, 0) + "\n"
-            "\n"
-            "                def RigExecJoint \"Knee\"\n"
-            "                {\n"
-            "                    matrix4d rest:space = " + Rest(4, 0, 0) +
-            "\n"
-            "\n"
-            "                    def RigExecJoint \"Ankle\"\n"
-            "                    {\n"
-            "                        matrix4d rest:space = " + Rest(4, 0, 0) +
-            "\n"
-            "                    }\n"
-            "                }\n"
-            "            }\n";
+        return "            def RigExecJoint \"" + s +
+               "Hip\"\n"
+               "            {\n"
+               "                matrix4d rest:space = " +
+               Rest(0, 8, 0) +
+               "\n"
+               "\n"
+               "                def RigExecJoint \"Knee\"\n"
+               "                {\n"
+               "                    matrix4d rest:space = " +
+               Rest(4, 0, 0) +
+               "\n"
+               "\n"
+               "                    def RigExecJoint \"Ankle\"\n"
+               "                    {\n"
+               "                        matrix4d rest:space = " +
+               Rest(4, 0, 0) +
+               "\n"
+               "                    }\n"
+               "                }\n"
+               "            }\n";
     };
     const auto chain = [](const char *side) {
         const std::string s(side);
         return Chain((s + "FK").c_str(),
-                     "</Asset/Rig/Controls/" + s + "FkHip>, "
-                     "</Asset/Rig/Controls/" + s + "FkHip/Knee>, "
-                     "</Asset/Rig/Controls/" + s + "FkHip/Knee/Ankle>",
-                     "</Asset/Rig/Joints/" + s + "Hip>, "
-                     "</Asset/Rig/Joints/" + s + "Hip/Knee>, "
-                     "</Asset/Rig/Joints/" + s + "Hip/Knee/Ankle>");
+                     "</Asset/Rig/Controls/" + s +
+                         "FkHip>, "
+                         "</Asset/Rig/Controls/" +
+                         s +
+                         "FkHip/Knee>, "
+                         "</Asset/Rig/Controls/" +
+                         s + "FkHip/Knee/Ankle>",
+                     "</Asset/Rig/Joints/" + s +
+                         "Hip>, "
+                         "</Asset/Rig/Joints/" +
+                         s +
+                         "Hip/Knee>, "
+                         "</Asset/Rig/Joints/" +
+                         s + "Hip/Knee/Ankle>");
     };
     const auto aim = [](const char *side) {
         const std::string s(side);
-        return
-            "            def RigExecAimConstraint \"" + s + "Aim\" (\n"
-            "                prepend apiSchemas = [\"RigExecMoverAPI\"]\n"
-            "            )\n"
-            "            {\n"
-            "                float inputs:defaultWeight = 1\n"
-            "                uniform token rigExec:aimAxis = \"x\"\n"
-            "                rel rigExec:aimTarget = "
-            "</Asset/Rig/Controls/" + s + "Pole>\n"
-            "                rel rigExec:moves = "
-            "</Asset/Rig/Joints/" + s + "Hip/Knee>\n"
-            "                uniform token[] rigExec:preserve = "
-            "[\"origin\", \"scale\"]\n"
-            "            }\n";
+        return "            def RigExecAimConstraint \"" + s +
+               "Aim\" (\n"
+               "                prepend apiSchemas = [\"RigExecMoverAPI\"]\n"
+               "            )\n"
+               "            {\n"
+               "                float inputs:defaultWeight = 1\n"
+               "                uniform token rigExec:aimAxis = \"x\"\n"
+               "                rel rigExec:aimTarget = "
+               "</Asset/Rig/Controls/" +
+               s +
+               "Pole>\n"
+               "                rel rigExec:moves = "
+               "</Asset/Rig/Joints/" +
+               s +
+               "Hip/Knee>\n"
+               "                uniform token[] rigExec:preserve = "
+               "[\"origin\", \"scale\"]\n"
+               "            }\n";
     };
     const auto tip = [](const char *side) {
         const std::string s(side);
-        return
-            "            def RigExecPositionConstraint \"" + s + "Tip\" (\n"
-            "                prepend apiSchemas = [\"RigExecMoverAPI\"]\n"
-            "            )\n"
-            "            {\n"
-            "                float inputs:defaultWeight = 1\n"
-            "                rel rigExec:sources = "
-            "</Asset/Rig/Joints/" + s + "Hip/Knee>\n"
-            "                rel rigExec:moves = "
-            "</Asset/Rig/Controls/" + s + "Tip>\n"
-            "            }\n";
+        return "            def RigExecPositionConstraint \"" + s +
+               "Tip\" (\n"
+               "                prepend apiSchemas = [\"RigExecMoverAPI\"]\n"
+               "            )\n"
+               "            {\n"
+               "                float inputs:defaultWeight = 1\n"
+               "                rel rigExec:sources = "
+               "</Asset/Rig/Joints/" +
+               s +
+               "Hip/Knee>\n"
+               "                rel rigExec:moves = "
+               "</Asset/Rig/Controls/" +
+               s +
+               "Tip>\n"
+               "            }\n";
     };
-    std::string text = Head(controls("L", 30) + controls("R", -20),
-                            joints("L") + joints("R"));
+    std::string text =
+        Head(controls("L", 30) + controls("R", -20), joints("L") + joints("R"));
     const std::string partition =
         "        uniform token rigExec:partition = \"Asset\"\n";
     text.replace(text.find(partition), partition.size(),
-                 partition +
-                 "        reorder nameChildren = [\"Controls\", "
-                 "\"Joints\", \"Movers\", \"Solvers\"]\n");
-    text +=
-        "\n"
-        "        def Scope \"Solvers\"\n"
-        "        {\n" + chain("L") + chain("R") +
-        "        }\n"
-        "\n"
-        "        def Scope \"Movers\"\n"
-        "        {\n" + tip("L") + tip("R") + aim("L") + aim("R") +
-        "        }\n"
-        "    }\n"
-        "}\n";
+                 partition + "        reorder nameChildren = [\"Controls\", "
+                             "\"Joints\", \"Movers\", \"Solvers\"]\n");
+    text += "\n"
+            "        def Scope \"Solvers\"\n"
+            "        {\n" +
+            chain("L") + chain("R") +
+            "        }\n"
+            "\n"
+            "        def Scope \"Movers\"\n"
+            "        {\n" +
+            tip("L") + tip("R") + aim("L") + aim("R") +
+            "        }\n"
+            "    }\n"
+            "}\n";
     return text;
 }
 
@@ -2939,7 +3086,8 @@ TestIndependentConstraintsShareALevel()
     {
         const UsdStageRefPtr stage = OpenText(text);
         CHECK(stage);
-        if (!stage) return;
+        if (!stage)
+            return;
         RigExecRigEvaluator evaluator(stage, kRigPath);
         evaluator.cpuReference = true;
         std::vector<std::string> errors;
@@ -2952,18 +3100,20 @@ TestIndependentConstraintsShareALevel()
             }
             return;
         }
-        const auto graph=evaluator.GetOpGraph();
-        const size_t la=rigExecTest::FindOperation(graph,lAim,"Constraint");
-        const size_t ra=rigExecTest::FindOperation(graph,rAim,"Constraint");
-        const size_t lt=rigExecTest::FindOperation(graph,lTip,"Constraint");
-        const size_t rt=rigExecTest::FindOperation(graph,rTip,"Constraint");
-        CHECK(la<graph.size() && ra<graph.size() && lt<graph.size() && rt<graph.size());
-        CHECK(rigExecTest::HasDependencyPath(graph,la,lt));
-        CHECK(rigExecTest::HasDependencyPath(graph,ra,rt));
-        for(size_t left:{la,lt})for(size_t right:{ra,rt}) {
-            CHECK(!rigExecTest::HasDependencyPath(graph,left,right));
-            CHECK(!rigExecTest::HasDependencyPath(graph,right,left));
-        }
+        const auto graph = evaluator.GetOpGraph();
+        const size_t la = rigExecTest::FindOperation(graph, lAim, "Constraint");
+        const size_t ra = rigExecTest::FindOperation(graph, rAim, "Constraint");
+        const size_t lt = rigExecTest::FindOperation(graph, lTip, "Constraint");
+        const size_t rt = rigExecTest::FindOperation(graph, rTip, "Constraint");
+        CHECK(la < graph.size() && ra < graph.size() && lt < graph.size() &&
+              rt < graph.size());
+        CHECK(rigExecTest::HasDependencyPath(graph, la, lt));
+        CHECK(rigExecTest::HasDependencyPath(graph, ra, rt));
+        for (size_t left : {la, lt})
+            for (size_t right : {ra, rt}) {
+                CHECK(!rigExecTest::HasDependencyPath(graph, left, right));
+                CHECK(!rigExecTest::HasDependencyPath(graph, right, left));
+            }
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(5.0));
         CHECK(pose.valid);
         for (const char *side : {"L", "R"}) {
@@ -2978,8 +3128,7 @@ TestIndependentConstraintsShareALevel()
                 tipFrame == pose.controlFrames.end()) {
                 continue;
             }
-            CHECK(Near(tipFrame->second.Origin(), knee->second.Origin(),
-                       1e-6));
+            CHECK(Near(tipFrame->second.Origin(), knee->second.Origin(), 1e-6));
         }
         // The limbs curl differently, so each tip found its own knee.
         const auto lTipFrame =
@@ -2988,8 +3137,8 @@ TestIndependentConstraintsShareALevel()
             pose.controlFrames.find(SdfPath("/Asset/Rig/Controls/RTip"));
         if (lTipFrame != pose.controlFrames.end() &&
             rTipFrame != pose.controlFrames.end()) {
-            CHECK(!Near(lTipFrame->second.Origin(),
-                        rTipFrame->second.Origin(), 1e-3));
+            CHECK(!Near(lTipFrame->second.Origin(), rTipFrame->second.Origin(),
+                        1e-3));
         }
     }
 
@@ -2997,7 +3146,8 @@ TestIndependentConstraintsShareALevel()
     {
         const UsdStageRefPtr stage = OpenText(text);
         CHECK(stage);
-        if (!stage) return;
+        if (!stage)
+            return;
         RigExecRigEvaluator evaluator(stage, kRigPath);
         std::vector<std::string> errors;
         if (!evaluator.Compile(&errors)) {
@@ -3011,12 +3161,12 @@ TestIndependentConstraintsShareALevel()
         CHECK(evaluator.GetBakedGenerationCount() == 1);
         const std::vector<RigExecOpGraphNode> graph = evaluator.GetOpGraph();
         CHECK(!graph.empty());
-        if (graph.empty()) return;
+        if (graph.empty())
+            return;
         // Every step a mover owns (its Constraint step and its commit
         // steps), and its Constraint step alone.
         const auto stepsOf = [&graph](const SdfPath &mover) {
-            return rigExecTest::FindOpGraphSteps(graph, "",
-                                                 mover.GetString());
+            return rigExecTest::FindOpGraphSteps(graph, "", mover.GetString());
         };
         const auto constraintOf = [&graph](const SdfPath &mover) {
             const std::vector<size_t> steps = rigExecTest::FindOpGraphSteps(
@@ -3043,7 +3193,8 @@ TestIndependentConstraintsShareALevel()
                 rigExecTest::OpGraphForwardCone(graph, seeds);
             for (const SdfPath &mover : to) {
                 for (const size_t step : stepsOf(mover)) {
-                    if (cone[step]) return true;
+                    if (cone[step])
+                        return true;
                 }
             }
             return false;
@@ -3062,12 +3213,15 @@ TestIndependentConstraintsShareALevel()
             const size_t consumer = constraintOf(reader);
             for (size_t producer : stepsOf(writer)) {
                 for (const auto &write : graph[producer].writes) {
-                    if (write.domain != "PoseFin") continue;
+                    if (write.domain != "PoseFin")
+                        continue;
                     for (const auto &read : graph[consumer].reads) {
                         if (read.domain == write.domain &&
-                            read.first <= write.last && write.first <= read.last) {
+                            read.first <= write.last &&
+                            write.first <= read.last) {
                             CHECK(graph[producer].step < graph[consumer].step);
-                            const auto cone = rigExecTest::OpGraphForwardCone(graph, {producer});
+                            const auto cone = rigExecTest::OpGraphForwardCone(
+                                graph, {producer});
                             CHECK(cone[consumer]);
                             return true;
                         }
@@ -3076,8 +3230,8 @@ TestIndependentConstraintsShareALevel()
             }
             return false;
         };
-        CHECK(sharedFrameProducer(lAim,lTip));
-        CHECK(sharedFrameProducer(rAim,rTip));
+        CHECK(sharedFrameProducer(lAim, lTip));
+        CHECK(sharedFrameProducer(rAim, rTip));
         for (const auto &node : graph)
             for (const size_t predecessor : node.preds) {
                 CHECK(predecessor < graph.size());
@@ -3098,8 +3252,7 @@ main(int argc, char **argv)
     }
     const std::string resources = SchemaResourceDir(argv[1]);
     if (PlugRegistry::GetInstance().RegisterPlugins(resources).empty()) {
-        std::printf("FATAL: no schema plugin found at %s\n",
-                    resources.c_str());
+        std::printf("FATAL: no schema plugin found at %s\n", resources.c_str());
         return 2;
     }
 
@@ -3142,16 +3295,18 @@ main(int argc, char **argv)
         tear.fkControls = "</Asset/Rig/Controls/FkHip>";
         tear.fkJoints = "</Asset/Rig/Joints/Hip>";
         RigSpec dataFlow = Stacked();
-        dataFlow.fkControls =
-            "</Asset/Rig/Controls/FkHip>, "
-            "</Asset/Rig/Joints/Hip/Knee/Ankle>";
+        dataFlow.fkControls = "</Asset/Rig/Controls/FkHip>, "
+                              "</Asset/Rig/Joints/Hip/Knee/Ankle>";
         dataFlow.fkJoints =
             "</Asset/Rig/Joints/Hip>, </Asset/Rig/Joints/Hip/Knee>";
 
         CheckEvaluatorConsistency("stacked fk + ik", Stacked(), frames, true);
-        CheckEvaluatorConsistency("stacked fk + ik, reordered", reordered, frames, true);
-        CheckEvaluatorConsistency("stacked with a partial subset", tear, frames, true);
-        CheckEvaluatorConsistency("stacked, ordered by data flow", dataFlow, frames, true);
+        CheckEvaluatorConsistency("stacked fk + ik, reordered", reordered,
+                                  frames, true);
+        CheckEvaluatorConsistency("stacked with a partial subset", tear, frames,
+                                  true);
+        CheckEvaluatorConsistency("stacked, ordered by data flow", dataFlow,
+                                  frames, true);
 
         // Three writers on one joint, and a pose constraint sitting on top of
         // a stacked one: two writers is the shape that is easy to get right
@@ -3161,8 +3316,10 @@ main(int argc, char **argv)
         three.fk2 = true;
         RigSpec aim = Stacked();
         aim.kneeAim = true;
-        CheckEvaluatorConsistency("three writers on one joint", three, frames, true);
-        CheckEvaluatorConsistency("a constraint over a stacked joint", aim, frames, true);
+        CheckEvaluatorConsistency("three writers on one joint", three, frames,
+                                  true);
+        CheckEvaluatorConsistency("a constraint over a stacked joint", aim,
+                                  frames, true);
 
         // The unified stack, both ways round. A LIVE rest -- a solver
         // measuring from the frame a constraint below it left -- is the one
@@ -3176,12 +3333,12 @@ main(int argc, char **argv)
         RigSpec fedFk = Stacked();
         fedFk.ik = false;
         fedFk.kneeMove = true;
-        CheckEvaluatorConsistency("a constraint BELOW a solver feeds it", fed, frames,
-                    true);
-        CheckEvaluatorConsistency("a constraint ABOVE a solver revises it", above, frames,
-                    true);
-        CheckEvaluatorConsistency("an fk chain over a constrained joint", fedFk, frames,
-                    true);
+        CheckEvaluatorConsistency("a constraint BELOW a solver feeds it", fed,
+                                  frames, true);
+        CheckEvaluatorConsistency("a constraint ABOVE a solver revises it",
+                                  above, frames, true);
+        CheckEvaluatorConsistency("an fk chain over a constrained joint", fedFk,
+                                  frames, true);
         // Both solver kinds over the same constrained joint, and the three
         // writers case on top of it: the live rest is the one place the
         // baked description stops being a bake-time constant, and it has to
@@ -3190,10 +3347,10 @@ main(int argc, char **argv)
         fedBoth.kneeMove = true;
         RigSpec fedThree = fedBoth;
         fedThree.fk2 = true;
-        CheckEvaluatorConsistency("both solvers over a constrained joint", fedBoth, frames,
-                    true);
-        CheckEvaluatorConsistency("three writers over a constrained joint", fedThree,
-                    frames, true);
+        CheckEvaluatorConsistency("both solvers over a constrained joint",
+                                  fedBoth, frames, true);
+        CheckEvaluatorConsistency("three writers over a constrained joint",
+                                  fedThree, frames, true);
     }
 
     if (failures) {

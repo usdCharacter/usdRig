@@ -53,9 +53,7 @@ struct RigExecWarmWorkspacePool {
 
 namespace {
 
-// The injected runner, or the production one when none was given. Null used
-// to mean "skip every frame"; since the production runner factory exists it
-// means "warm for real", which is what the C-API triggers run under.
+// The injected runner, or the production one when none was given.
 RigExecFrozenStepRunner
 _ProductionRunner(const RigExecFrozenStepRunner &runner)
 {
@@ -377,8 +375,7 @@ RigExecImagingRegistry::BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
     // The cached route, when the burst prepared one for this rig's
     // program: prepared pins, visit sets, and compiled rig signature, with static
     // reads and digests served from the burst maps. Anything else takes
-    // the plain per-frame route below, which re-derives everything
-    // exactly as before.
+    // the plain per-frame route below, which re-derives everything.
     const std::vector<RigExecValueOverride> overrides =
         session->bridge->GetInteractiveOverrides();
     const RigExecBakedProgram *program = evaluator.GetBakedProgram();

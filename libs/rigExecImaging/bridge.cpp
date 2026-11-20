@@ -508,9 +508,7 @@ RigExecImagingBridge::EvaluateAndPublish(UsdTimeCode time)
     const PublishResult result = EvaluateAndPublishResult(time);
     // Deliver the notices even when evaluation failed. A failed generation
     // still CLEARS the previous one, and that clearing is only worth
-    // anything if it reaches the observers -- returning early here was the
-    // second half of the stale-pose bug: the store had been corrected and
-    // nobody was told.
+    // anything if it reaches the observers.
     if (_binding && result.compiledRig) {
         _binding->SetCompiledRigBinding(result.compiledRig);
     }
@@ -528,9 +526,9 @@ RigExecImagingBridge::EvaluateAndPublishResult(UsdTimeCode time)
                                    "Imaging.EvaluateAndPublish", "imaging");
     // 0. Frame-cache fast path: a hit publishes the stored pose through the
     // same atomic snapshot without evaluating. Off, empty, unsampleable, and
-    // unproven all fall through to the live path, which is the historical
-    // behavior plus one memoization. Off disables both halves: the cache
-    // is neither read nor written -- as does an active drag (below).
+    // unproven all fall through to the live path. Off disables both
+    // halves: the cache is neither read nor written -- as does an active
+    // drag (below).
     const RigExecFrameCacheMode cacheMode = _cache->mode();
     // Interactive bypass: every drag tick carries unique overrides, so a
     // lookup would always miss after paying a full sample+digest, and

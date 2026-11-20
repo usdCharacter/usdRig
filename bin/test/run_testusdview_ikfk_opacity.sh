@@ -3,10 +3,9 @@
 # IK/FK switch fades the inactive control set
 # (tests/testUsdviewIkFkOpacity.py) on biped_rig_v3.usda.
 #
-# Why it exists: `guide:displayOpacity.connect = <dial>` compiled and
-# changed nothing, because UsdAttribute::Get never follows a connection.
-# The imaging bridge now does, and this asserts the DRAWN opacity from the
-# terminal Hydra scene index -- never the authored attribute -- as
+# Why it exists: UsdAttribute::Get never follows a connection, so this
+# asserts the DRAWN opacity from the terminal Hydra scene index -- never
+# the authored attribute -- as
 # the builder wires each limb's controls (into the session
 # layer; the file is never written) and the limb's avars:ikfk is driven on
 # the param node, a different prim from every guide it fades. The IK

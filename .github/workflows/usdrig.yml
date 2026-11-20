@@ -131,8 +131,7 @@ jobs:
         # --usd-imaging     -> PXR_BUILD_IMAGING=ON + PXR_BUILD_USD_IMAGING=ON
         # --no-usdview      -> skip PySide/PyOpenGL
         # --no-python       -> first-gate prefix: C++ tests do not need pxr
-        #                      Python bindings. Python + usdNoodles return
-        #                      when that job is added.
+        #                      Python bindings.
         # --no-materialx    -> drop MaterialX
         # --build-args USD  -> keep OpenExec on even if a later OpenUSD
         #                      default flips (PXR_BUILD_EXEC is ON in 26.08)
@@ -188,6 +187,105 @@ jobs:
         with:
           name: usd-install.tar
           path: usd-install.tar
+          retention-days: 5
+
+  # --------------------------------------------------------------------------
+  # The same OpenUSD v26.08 commit as `openusd`, with Python bindings and
+  # usdview, for the usdNoodles scenario suite. Distinct cache key (py-usdview)
+  # and distinct artifact name so the two prefixes never alias, and the C++
+  # jobs keep configuring against the no-Python prefix.
+  #
+  # build_usd.py builds usdview only when the interpreter running it already
+  # imports PySide and PyOpenGL and finds pyside6-uic on PATH -- it refuses to
+  # install PySide itself -- so both go into a venv that also runs the build.
+  # --------------------------------------------------------------------------
+  openusd-py:
+    name: OpenUSD v26.08 (Python + usdview)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout OpenUSD @ v26.08
+        uses: actions/checkout@v4
+        with:
+          repository: PixarAnimationStudios/OpenUSD
+          ref: v26.08
+          fetch-depth: 1
+
+      - name: OpenUSD commit (cache key)
+        id: openusd-sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            python3-dev python3-setuptools \
+            libglew-dev libxrandr-dev libxcursor-dev libxinerama-dev libxi-dev \
+            libgl1-mesa-dev xorg-dev ninja-build
+
+      - name: Restore cached OpenUSD install prefix
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: usd-install
+          key: openusd-${{ runner.os }}-${{ runner.arch }}-${{ steps.openusd-sha.outputs.sha }}-exec-usdimg-gl-py-usdview-v1
+
+      - name: Python environment with PySide6 and PyOpenGL
+        # Only the build step needs it, so a cache hit skips the download.
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          python3 -m venv usd-venv
+          usd-venv/bin/python -m pip install --disable-pip-version-check \
+            PySide6 PyOpenGL
+
+      - name: Build OpenUSD (Release, Ninja, imaging, OpenExec, Python, usdview)
+        # Only --no-python and --no-usdview differ from the `openusd` recipe;
+        # pyside6-uic must be on PATH or build_usd.py skips usdview.
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          export PATH="${GITHUB_WORKSPACE}/usd-venv/bin:$PATH"
+          usd-venv/bin/python build_scripts/build_usd.py \
+            usd-install \
+            --build usd-build \
+            --generator Ninja \
+            --build-variant release \
+            --jobs 4 \
+            --usd-imaging \
+            --no-tests --no-examples --no-tutorials --no-docs \
+            --no-materialx \
+            --build-args USD,"-DPXR_BUILD_EXEC=ON" \
+            -v
+
+      - name: Drop OpenUSD build tree
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: rm -rf usd-build
+
+      - name: Save OpenUSD install prefix to cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: usd-install
+          key: openusd-${{ runner.os }}-${{ runner.arch }}-${{ steps.openusd-sha.outputs.sha }}-exec-usdimg-gl-py-usdview-v1
+
+      - name: Sanity - usdview and its python modules are present
+        run: |
+          test -e usd-install/bin/usdview \
+            || { echo "missing usd-install/bin/usdview"; exit 1; }
+          test -e usd-install/bin/testusdview \
+            || { echo "missing usd-install/bin/testusdview"; exit 1; }
+          ls -d usd-install/lib/python*/site-packages/pxr/Usdviewq \
+            || { echo "missing pxr.Usdviewq in the prefix"; exit 1; }
+          ls -d usd-install/lib/python*/site-packages/pxr/Usd \
+            || { echo "missing pxr.Usd python bindings in the prefix"; exit 1; }
+
+      - name: Pack OpenUSD prefix as tarball
+        run: tar -C usd-install -cf usd-install-py.tar .
+
+      - name: Upload OpenUSD prefix tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: usd-install-py.tar
+          path: usd-install-py.tar
           retention-days: 5
 
   # --------------------------------------------------------------------------
@@ -356,6 +454,149 @@ jobs:
           path: |
             build/Testing/Temporary/
             build/verify-binary/*.log
+
+  # --------------------------------------------------------------------------
+  # The usdNoodles scenario suite (plugin/usdNoodles/testenv) plus the four
+  # headless editor drivers. plugin/ is pruned from the change selector, so no
+  # other job reaches this code: --no-tests=error turns a missing testUsdNoodles
+  # registration into a failure instead of a silent skip.
+  # --------------------------------------------------------------------------
+  usdnoodles-suite:
+    name: usdNoodles scenario suite
+    runs-on: ubuntu-24.04
+    needs: openusd-py
+    timeout-minutes: 90
+    steps:
+      - name: Checkout usdRig
+        uses: actions/checkout@v4
+
+      # The build-release set, plus python3-dev for the _rigexec bindings that
+      # -DRIGEXEC_BUILD_PYTHON=ON configures, plus xvfb for the editor drivers.
+      # The PySide6 wheel carries its own Qt but links the system's XCB and
+      # xkbcommon libraries, so the xcb platform plugin is unloadable -- and
+      # every driver aborts before usdview starts -- without this set. They are
+      # what `ldd` reports unresolved for that plugin on this image.
+      - name: Install build and test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build ccache libgl1-mesa-dev xorg-dev python3-dev xvfb \
+            libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \
+            libxcb-xkb1 libxkbcommon0 libxkbcommon-x11-0 libglib2.0-0t64 \
+            libdbus-1-3
+
+      - name: ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-noodles-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-noodles-${{ runner.os }}-
+
+      # CTest runs the suite with CMake's Python3, so that interpreter is the
+      # one that needs PySide6 and PyOpenGL. numpy is for the editor drivers,
+      # pybind11 for the RigExec Python bindings.
+      - name: Python environment for the suite
+        run: |
+          python3 -m venv noodles-venv
+          noodles-venv/bin/python -m pip install --disable-pip-version-check \
+            PySide6 PyOpenGL numpy pybind11
+
+      - name: Probe the Qt session the drivers need
+        run: |
+          py="${GITHUB_WORKSPACE}/noodles-venv/bin/python"
+          plugins="$("$py" -c 'import os, PySide6; print(os.path.join(os.path.dirname(PySide6.__file__), "Qt", "plugins", "platforms"))')"
+          missing="$(ldd "$plugins/libqxcb.so" \
+            | sed -n 's/[[:space:]]*\(.*\.so[^ ]*\) => not found$/\1/p' | sort -u)"
+          if [ -n "$missing" ]; then
+            echo "FAIL: the Qt xcb platform plugin cannot resolve:"
+            echo "$missing"
+            exit 1
+          fi
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            "$py" -c 'import sys; from PySide6.QtWidgets import QApplication; app = QApplication([]); print("qt platform:", app.platformName()); sys.exit(app.platformName() != "xcb")'
+
+      - name: Download OpenUSD prefix
+        uses: actions/download-artifact@v4
+        with:
+          name: usd-install-py.tar
+
+      - name: Extract OpenUSD prefix
+        run: |
+          mkdir -p usd-install
+          tar -C usd-install -xf usd-install-py.tar
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DUSD_INSTALL_DIR="${GITHUB_WORKSPACE}/usd-install" \
+            -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/usd-install" \
+            -DPython3_EXECUTABLE="${GITHUB_WORKSPACE}/noodles-venv/bin/python3" \
+            -DRIGEXEC_BUILD_PYTHON=ON \
+            -DRIGEXEC_BUILD_USDNOODLES=ON \
+            -DRIGEXEC_BUILD_TESTS=ON
+
+      # rigExecImaging is not part of the editor; the drivers load it through
+      # the plugin path bin/_env.sh exports, and usdview fails its Tf error
+      # check when the named plugin library is missing.
+      - name: Build the staged editor
+        run: |
+          cmake --build build -j"$(nproc)" \
+            --target usdNoodlesLib _usdNoodles usdNoodles_python_package rigExecImaging
+
+      - name: Run the scenario suite
+        run: |
+          export USD="${GITHUB_WORKSPACE}/usd-install"
+          export VENV="${GITHUB_WORKSPACE}/noodles-venv"
+          source bin/_env.sh
+          export PXR_PLUGINPATH_NAME="$PWD/build/usd/rigExecSchema/resources:$PWD/build/usd/rigExecImaging/resources:$PWD/build/usd/rigExecMoverPlugins"
+          ctest --test-dir build -R '^testUsdNoodles$' \
+            --output-on-failure --no-tests=error
+
+      # GraphView's widget (usdview's QGLWidget, QOpenGLWidget under PySide6)
+      # is unsupported on the Qt offscreen platform, so the drivers get a GLX
+      # display and Mesa software rendering. The .sh drivers are checked in
+      # without the executable bit.
+      - name: Run the usdview editor drivers
+        run: |
+          export USD="${GITHUB_WORKSPACE}/usd-install"
+          export VENV="${GITHUB_WORKSPACE}/noodles-venv"
+          source bin/_env.sh
+          export PXR_PLUGINPATH_NAME="$PWD/build/usd/rigExecSchema/resources:$PWD/build/usd/rigExecImaging/resources:$PWD/build/usd/rigExecMoverPlugins"
+          export LIBGL_ALWAYS_SOFTWARE=1
+          status=0
+          for driver in rename values icons touch; do
+            case "$driver" in
+              rename) marker=RIGEXEC_NOODLES_RENAME_OK ;;
+              values) marker=RIGEXEC_NOODLES_VALUES_OK ;;
+              icons)  marker=RIGEXEC_NOODLES_ICONS_OK ;;
+              touch)  marker=RIGEXEC_NOODLES_TOUCH_OK ;;
+            esac
+            log="noodles-driver-${driver}.log"
+            rc=0
+            xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+              bash "bin/test/run_testusdview_noodles_${driver}.sh" \
+              > "$log" 2>&1 || rc=$?
+            if [ "$rc" -ne 0 ] || ! grep -q "$marker" "$log"; then
+              echo "FAIL: run_testusdview_noodles_${driver}.sh (exit ${rc}, no ${marker})"
+              tail -n 40 "$log"
+              status=1
+            else
+              echo "ok: ${marker}"
+            fi
+          done
+          exit $status
+
+      - name: Upload suite and driver logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: usdnoodles-suite
+          path: |
+            build/Testing/Temporary/
+            noodles-driver-*.log
 
   # --------------------------------------------------------------------------
   # Install tree: cmake --install into a scratch prefix, then verify the

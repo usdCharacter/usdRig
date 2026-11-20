@@ -8,13 +8,9 @@ rem and over the rig alone there are no regions.
 rem
 rem Why it exists: usdNoodles builds its graph from whatever prims a load
 rem path hands it, and TouchPose is invisible to the one the editor uses
-rem when usdview opens a stage. MEASURED before this test existed:
-rem NodeGraphStage.load on the stack produced ONE node -- /Biped --
-rem and zero links, because that loader reads the stage's ROOT CHILDREN
-rem and the 98 regions hang off /Biped/TouchPose. Nothing about that is
-rem visible from a unit test of the pieces: each piece was already right
-rem (the regions are prims, the relationship reads as a link), and the
-rem graph was still empty.
+rem when usdview opens a stage: that loader reads the stage's ROOT
+rem CHILDREN, and the regions hang off /Biped/TouchPose. Nothing about
+rem that is visible from a unit test of the pieces.
 rem
 rem Asserts, on the stage usdview itself composed: the TouchPose group is
 rem found by property and not by path; every authored region becomes a

@@ -1069,8 +1069,7 @@ TestBridgeOverShotStage(const std::string &examplesDir)
 
         // The guide inherits its parent's visibility. The wrist is hidden
         // upstream, so its guides must be hidden too -- a synthesized prim
-        // with no visibility of its own falls back to VISIBLE, which left
-        // guides floating over a hidden rig.
+        // with no visibility of its own falls back to VISIBLE.
         {
             HdVisibilitySchema vis = HdVisibilitySchema::GetFromParent(
                 results->GetPrim(wristSphere).dataSource);
@@ -1336,8 +1335,7 @@ TestControlGuides(const std::string &examplesDir)
     // nearly invisible on screen: doubleSided keeps an inward-wound solid
     // from disappearing, so it survives a look at the viewport while
     // inverting every derived normal a normal AOV or a front/back-sensitive
-    // material sees. The solid pyramid shipped inward-wound on all five
-    // faces behind exactly that gap.
+    // material sees.
     struct _Expected {
         const char *shape;
         const char *drawMode;
@@ -1558,9 +1556,7 @@ TestControlGuides(const std::string &examplesDir)
         }
     }
 
-    // inactive control set. UsdAttribute::Get never follows a connection,
-    // so a bridge reading the attribute plainly drew the local value and a
-    // wired rig looked wired while nothing faded.
+    // inactive control set. UsdAttribute::Get never follows a connection.
     {
         auto readOpacity = [&](const SdfPath &control) {
             HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(
@@ -1881,9 +1877,7 @@ TestControlGuides(const std::string &examplesDir)
     }
 
     // usdview's interactive pick window is one physical pixel, so an
-    // unwidthed hairline is a target a real click virtually never lands on
-    // -- and an empty pick deselects to the pseudo-root, which is what the
-    // user actually saw. The width is the fix, so it is pinned here.
+    // unwidthed hairline is a target a real click virtually never lands on.
     {
         CHECK(setToken(elbowPole, "guide:shape", "circle"));
         CHECK(setToken(elbowPole, "guide:drawMode", "wire"));
@@ -1912,9 +1906,7 @@ TestControlGuides(const std::string &examplesDir)
         // A widthed wire guide also asks to be REFINED, or the width is
         // decoration: Storm honours a curve's width only once the curve is
         // refined (HdStBasisCurves::_SupportsRefinement is refineLevel > 0),
-        // and usdview's default complexity is refineLevel 0. Measured
-        // against the real single-pixel pick path, this is the difference
-        // between 8 and 89 hits out of 1681.
+        // and usdview's default complexity is refineLevel 0.
         auto refineLevel = [&]() -> int {
             const HdSceneIndexPrim guide =
                 results->GetPrim(guidePath(elbowPole));
@@ -1954,8 +1946,7 @@ TestControlGuides(const std::string &examplesDir)
         }
         CHECK(sawWidthDirty);
 
-        // Zero authors NO widths at all -- the hairline fallback, which is
-        // exactly what wire guides drew before this attribute existed.
+        // Zero authors NO widths at all -- the hairline fallback.
         // Unlike a bad scale, this still draws the guide.
         CHECK(setDouble(elbowPole, "guide:wireWidth", 0.0));
         CHECK(bridge.EvaluateAndPublish(UsdTimeCode(1024)));
@@ -2301,8 +2292,8 @@ TestStandaloneControlGuide()
 
 // Joint guides are hierarchy edges, not authored dimensions: one sphere per
 // joint and one cone from the evaluated parent origin to every nested child.
-// The shipped spider component is the user-facing regression for an oblique
-// link whose parent +X axis does not already point at the child.
+// The shipped spider component exercises an oblique link whose parent +X
+// axis does not already point at the child.
 static void
 TestJointHierarchyGuides(const std::string &examplesDir)
 {
@@ -3027,12 +3018,8 @@ TestGuidesFollowDrivenAssetRoot()
 
 // An aggregate solver's guides are sized by guide:radius on the SOLVER,
 // the same way a joint's are sized by guide:radius on the joint.
-// The elements have no prim of their own, which is why they were pinned at
-// Hydra's fallback radius of 1.0 long after the joints stopped being. On an
-// asset authored at one unit -- chars/puppetA is 0.59 units tall -- that is
-// several times the whole character, so turning guide display on buried the
-// rig in solver spheres and cones. The solver prim already carries the
-// guide colour and opacity; the radius is read from the same place.
+// The solver prim already carries the guide colour and opacity; the
+// radius is read from the same place.
 static void
 TestSolverGuideRadius(const std::string &examplesDir)
 {
@@ -3291,14 +3278,12 @@ TestExampleControlGuides(const std::string &examplesDir)
             CHECK(resolved == control);
         }
 
-        // No example draws circle or box any more: both lie in the local
-        // XZ plane, so they are edge-on from the default front view and
-        // read as bare lines there. They are still shapes a real rig must
-        // be able to draw, and dropping them from the examples must not
-        // quietly drop them from the coverage -- so they are authored here
-        // instead, keeping the planar topology asserted against a composed
-        // example stage rather than only against the synthetic sweep in
-        // TestControlGuides.
+        // circle and box lie in the local XZ plane, so they are edge-on
+        // from the default front view and read as bare lines there. They
+        // are still shapes a real rig must be able to draw, so they are
+        // authored here, keeping the planar topology asserted against a
+        // composed example stage rather than only against the synthetic
+        // sweep in TestControlGuides.
         const SdfPath probe =
             SdfPath(example.controls)
                 .AppendChild(TfToken(example.cases.front().control));
@@ -4341,9 +4326,8 @@ TestExternalReadEditsRepublish()
 // A constraint-driven Xform reaches the snapshot as a transform, and it
 // changes with time.
 // The evaluator side is asserted in testRigExecArm; this is the imaging leg.
-// hasXform was plumbed to HdXformSchema and had no writer at all, so the
-// failure mode here is a published-once-then-frozen transform, which looks
-// exactly like a static prop in the viewer.
+// The failure mode here is a published-once-then-frozen transform, which
+// looks exactly like a static prop in the viewer.
 // A rig with no joints publishes through the bridge like any other.
 // The evaluator gate is only half of it: the bridge's guide fills all iterate
 // joint frames, the compiled rig is built from the published prim set, and a
@@ -4470,11 +4454,7 @@ TestJointFreeRigPublishes(const std::string &examplesDir)
 }
 
 // Property-domain results stay out of the imaging snapshot.
-// They share movedProperties with the point chains, and the publish loop used
-// to index snapshot->prims before deciding whether it had anything to store —
-// so a float dial on a Scope MINTED an empty published prim for that Scope,
-// which then entered the compiled rig and made the scene index resolve a
-// prim RigExec publishes nothing for.
+// They share movedProperties with the point chains.
 static void
 TestPropertyResultsDoNotPublishPrims(const std::string &examplesDir)
 {
@@ -4750,9 +4730,9 @@ TestConstraintDrivenXformPublishes(const std::string &examplesDir)
         return xf.GetMatrix()->GetTypedValue(0.0);
     };
 
-    // Mirror RigExecImagingRegistry::_Broadcast: publishing to the store is
-    // only half of it -- the results index must be told, or every downstream
-    // cache (flattening included) keeps serving the previous generation.
+    // Publishing to the store is only half of it -- the results index must be
+    // told, or every downstream cache (flattening included) keeps serving the
+    // previous generation.
     auto publish = [&](double frame) {
         const RigExecImagingBridge::PublishResult r =
             bridge.EvaluateAndPublishResult(UsdTimeCode(frame));
@@ -4889,11 +4869,9 @@ TestConstraintDrivenXformPublishes(const std::string &examplesDir)
     // STRUCTURAL transitions, which are a different code path entirely.
     // Every hasXform transition -- first publication, a provider gaining or
     // losing its constraint, recompilation, Deactivate() -- is reported as
-    // RigExecChangeStructural, never as RigExecChangeXform. The structural
-    // branch used to dirty only the provider and move on, so a driven
-    // subtree went stale on exactly the transitions that matter most. Drive
-    // the removal case: publish an empty snapshot and require the
-    // descendants to be told.
+    // RigExecChangeStructural, never as RigExecChangeXform. Drive the
+    // removal case: publish an empty snapshot and require the descendants
+    // to be told.
     _RecordingObserver onClear;
     results->AddObserver(HdSceneIndexObserverPtr(&onClear));
     results->NotifyGenerationPublished(store->Publish(nullptr));
@@ -5323,7 +5301,7 @@ TestGuideBoundsExport()
     CHECK(bounds(broken) == 1);
     CHECK(matches(GfVec3d(-1, -1, -1), GfVec3d(1, 1, 1)));
 
-    // Overflow regression: finite but huge authored values overflow an
+    // Overflow: finite but huge authored values overflow an
     // element's corners to infinity. The element is rejected whole: the
     // overflowing corner and the collapsed zero of origin - extent (a DBL_MAX
     // radius under a DBL_MAX translation) must not touch the caller's range.
@@ -5473,9 +5451,9 @@ TestCustomControlRestExtent()
         boundable, UsdTimeCode::Default(), &extent));
 }
 
-// Overflow regressions for the cold (never-evaluated) default-pose
-// extent: authored values that are finite doubles outside the float
-// range must not reach the host as infinities in the float extent.
+// Overflow for the cold (never-evaluated) default-pose extent:
+// authored values that are finite doubles outside the float range must
+// not reach the host as infinities in the float extent.
 static void
 TestColdExtentFloatRepresentability()
 {
@@ -5674,9 +5652,8 @@ TestTransformAuthorityWarnings(const std::string &examplesDir)
     }
 
     // An Xformable between the asset root and a provider is COMPOSED into
-    // the provider's frames as of 2026-09-10, so it is no longer a defect to
-    // warn about -- placing a rig, or one leg of an assembly, under an Xform
-    // inside the asset is a supported shape.
+    // the provider's frames: placing a rig, or one leg of an assembly,
+    // under an Xform inside the asset is a supported shape.
     // The assertion is that the walk stays quiet about it. That the
     // transform actually lands is a frame question, tested where the frames
     // are (tests/python/test_intervening_xform.py).
@@ -5702,8 +5679,8 @@ TestTransformAuthorityWarnings(const std::string &examplesDir)
 // An intervening Xformable moves the guide and must NOT move the extent.
 // The extent is LOCAL and UsdGeomBBoxCache multiplies it by the prim's own
 // local-to-world, which already contains that Xform. The published frames
-// contain it too since 2026-09-10, so the snapshot branch has to divide it
-// back out; if it does not, the box lands at the Xform applied twice --
+// contain it too, so the snapshot branch has to divide it back out; if it
+// does not, the box lands at the Xform applied twice --
 // guide in one place, bounding box in another.
 // Asserted with a pure TRANSLATION, where the local extent must come back
 // bit-for-bit unchanged. A rotation would also grow the box through two
@@ -5831,10 +5808,9 @@ TestSnapshotBackedExtent(const std::string &examplesDir)
 // Also pins the documented CACHING contract. UsdGeomBBoxCache caches a
 // plugin-computed extent as constant: nothing about it is time-varying,
 // because RigExec authors no extent attribute (and must not -- see
-// testRigExecNoAuthoring). Measured: after SetTime(1024) a long-lived
-// cache still returns the 1001 box while a fresh cache returns 1024's.
-// So the contract is per-query correctness; a holder of a long-lived
-// cache must Clear() it, and SetTime alone is NOT enough.
+// testRigExecNoAuthoring). So the contract is per-query correctness; a
+// holder of a long-lived cache must Clear() it, and SetTime alone is
+// NOT enough.
 static void
 TestExtentIsPureFunctionOfStageAndTime(const std::string &examplesDir)
 {
@@ -5873,9 +5849,8 @@ TestExtentIsPureFunctionOfStageAndTime(const std::string &examplesDir)
     const GfVec3d posed = extent(boundable, 1024);
     CHECK(!GfIsClose(posed, rest, 1e-4));
 
-    // ...and 1001 is NOT. Before the time gate this returned the 1024
-    // pose for a 1001 query; now it falls back to the rest pose, which is
-    // the only answer this callback can give for a frame nothing has
+    // ...and 1001 is NOT: it falls back to the rest pose, which is the
+    // only answer this callback can give for a frame nothing has
     // evaluated.
     const GfVec3d otherFrame = extent(boundable, 1001);
     if (GfIsClose(otherFrame, posed, 1e-4)) {

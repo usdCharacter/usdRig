@@ -113,7 +113,7 @@ def TestTwoDials():
     _Check(abs(got[2] - 1.0) < 1e-5 and abs(got[1]) < 1e-5,
            "y alone stands on `up`: %s" % got)
     # The second dial is READ, not ignored: moving it off zero has to move
-    # the weights (the bug a one-dial test cannot see).
+    # the weights.
     got, _ = _Weights(rig, [5.0, 5.0], names, ["x", "y"])
     _Check(got[1] > 0.01 and got[2] > 0.01 and abs(got[1] - got[2]) < 1e-5,
            "halfway between the two dials shares them evenly: %s" % got)

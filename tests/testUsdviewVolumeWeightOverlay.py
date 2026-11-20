@@ -250,11 +250,9 @@ def testUsdviewInputFunction(appController):
 
     # --- and now the part that actually matters: PIXELS ---
     #
-    # Everything above passed while the mesh rendered grey. A newly
-    # appearing primvar is a RESYNC, not a dirty --
+    # A newly appearing primvar is a RESYNC, not a dirty --
     # HdSceneIndexAdapterSceneDelegate rebuilds an rprim's primvar
-    # DESCRIPTORS from PrimsAdded, so a correct red displayColor sat one
-    # hop upstream and Storm never asked for it. Scene-index assertions
+    # DESCRIPTORS from PrimsAdded. Scene-index assertions
     # cannot see that; only the framebuffer can.
     sv = appController._stageView
 
@@ -281,9 +279,8 @@ def testUsdviewInputFunction(appController):
     # An absolute count cannot work here: RigExec draws its own guide geometry
     # -- the volume rings and bars are red, and they are far larger on screen
     # than the strip -- so most of the red in either frame was never the
-    # overlay's. That baseline also moves whenever guide drawing changes,
-    # which is exactly how the earlier `lit > grey * 2` threshold silently
-    # stopped being satisfiable.
+    # overlay's. That baseline also moves whenever guide drawing
+    # changes.
     #
     # The guides are identical in both captures, so differencing cancels them
     # and leaves only what the overlay changed. Measured as a FRACTION of the

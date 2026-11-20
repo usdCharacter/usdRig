@@ -57,10 +57,8 @@ _EPS = 1e-3
 # Controls and NOT under the head. So with the aim live a head turn
 # leaves the eyes pointing at the same world spot -- they counter-rotate
 # in the socket -- and the eye drag carries the lids with them. The
-# blink wires then contribute 0.433 units at 60 degrees with their own
-# controls untouched, which looks exactly like a broken wire and is in
-# fact the look-at working. Measured both ways: lookAt=1 gives 0.338 at
-# 45 degrees and 0.433 at 60; lookAt=0 gives 0.000000 at every angle.
+# blink wires then move with their own controls untouched, which looks
+# exactly like a broken wire and is in fact the look-at working.
 #
 # Neutralising it isolates what this file is actually asking -- whether
 # a wire adds anything of its OWN -- and leaves no wire needing an
@@ -166,9 +164,7 @@ def _check(mode):
     for carrier in _CARRIERS:
         rig, enables = _open(mode, carrier)
         # Seeded with every wire, not filled as violations appear: a
-        # wire contributing exactly 0.0 never clears a `>` test, so the
-        # first version of this silently reported on 8 wires out of 25
-        # and called it a pass.
+        # wire contributing exactly 0.0 never clears a `>` test.
         for name in enables:
             worst.setdefault(name, (0.0, ""))
         base = _points(rig)
@@ -241,8 +237,7 @@ def _check_look_at_drives_the_lids():
     # where it is while the head turns, the eyes counter-rotate to keep
     # looking at it, and the drag carries the lids -- which is the thing
     # being asserted. In LOCAL the target rides M_UpFace, so a head turn
-    # carries it along and the eyes have nothing to counter: measured
-    # 0.000514 at ry=60, against 0.433 in world.
+    # carries it along and the eyes have nothing to counter.
     #
     # That is local working, not the drag breaking, so world is set
     # explicitly -- and by its LABEL, looked up on the switch, because the
@@ -264,8 +259,8 @@ def _check_look_at_drives_the_lids():
     look.Set(1.0)
     on = _points(rig)
     moved = _worst(off, on)
-    # 0.433 measured 2026-09-23. A floor, not an equality: the point is
-    # that the drag REACHES the lids, not that it never changes.
+    # A floor, not an equality: the point is that the drag REACHES the
+    # lids, not that it never changes.
     assert moved > 0.1, ("the look-at no longer drives the lids", moved)
     print("    look-at drives the lids: %.6f at ry=60, in world space"
           % moved)
@@ -275,10 +270,8 @@ def main():
     _setup_environment()
     import rigexec
     rigexec.load_schema_plugin(sys.argv[1] if len(sys.argv) > 1 else None)
-    # Baked only: it is the path the biped runs, and the sweep gives
-    # numbers identical to the digit in both modes -- measured -- so the
-    # second pass doubled a 150-second test to buy nothing. Parity
-    # between the two paths is verify_binary's job, not this file's.
+    # Baked only: it is the path the biped runs. Parity between the two
+    # paths is verify_binary's job, not this file's.
     _check("graph")
     _check_look_at_drives_the_lids()
     print("OK: a deformer at rest adds nothing, however it is carried")

@@ -57,7 +57,7 @@ approximating one with a blend of constraint sources.
 
 The provider publishes `computeMatrix`, the rest-to-posed map of its
 own frame (computations.cpp:416-432), and the mover blends it over the
-incoming points as `p' = q + w (T q - q)` (schema.usda:2557-2558), where
+incoming points as `p' = q + w (T q - q)` (schema.usda:2552-2553), where
 `w` is the bound weight field or, with none bound,
 `inputs:defaultWeight`. `rigExecReadPhase` metadata on
 `rigExec:transform` chooses which revision of the provider is read: the default `base` binds the provider
@@ -269,7 +269,7 @@ python docs/render_media.py --page matrix_mover
 
 - The provider may be a control as readily as a joint: those are the only two types `rigExec:transform` accepts (matrixMover.cpp:273-279).
 - `final` binds the provider's frame-chain head, so every pose step above it is included; the default `base` is the joint after the LAST SOLVER wrote it, which is not the same as "before every constraint" — a constraint that sits below the last solver is folded into `base` through that solver. Name a prim if you want a specific moment: the `Solvers` scope means "after the last solver", the `Movers` scope "after the last constraint" (matrixMover.cpp:105-118).
-- Same-target movers are an ordinary stack ordered by the composed namespace: reverse-sibling post-order, so descendants run before their parent and the bottom sibling before the top (spec section 4.2). Stacking is how you layer rigid follows, not how you blend influences on one point — use the Skin Mover for that (schema.usda:2690-2695).
+- Same-target movers are an ordinary stack ordered by the composed namespace: reverse-sibling post-order, so descendants run before their parent and the bottom sibling before the top (spec section 4.2). Stacking is how you layer rigid follows, not how you blend influences on one point — use the Skin Mover for that (schema.usda:2685-2690).
 - `rigExec:weightBlend = "radial"` blends a fraction of the rotation instead of the chord, so a partly weighted point keeps its distance from the driver's pivot; the default `linear` is the classic cluster. A frame mover blends its landmark points the same way (examples/15_TransformMatrixMover.usda).
 
 ## See also

@@ -5,10 +5,9 @@
 # run_testusdview_noodles_touch.bat, which carries the full rationale.
 #
 # In short: usdNoodles builds its graph from the prims a load path hands
-# it, and TouchPose was invisible to the one usdview uses when it opens a
-# stage -- measured, NodeGraphStage.load on the stack produced one
-# node (/Biped) and zero links, because it reads root children and the 98
-# regions hang off /Biped/TouchPose.
+# it, and TouchPose is invisible to the one usdview uses when it opens a
+# stage: that loader reads root children, and the regions hang off
+# /Biped/TouchPose.
 #
 # Asserts every authored region becomes a node, every touchpose:control
 # is drawn as a relationship link onto a RigExec prim that is itself a

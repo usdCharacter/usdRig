@@ -29,27 +29,30 @@ namespace rigExec {
 /// it. A hit is topology, not position, so the same hit evaluates on any
 /// point set that shares the mesh's topology.
 struct RigExecSurfaceHit {
-    int a = -1, b = -1, c = -1;  ///< corners of the winning triangle
-    double u = 0.0, v = 0.0;     ///< weights of b and c; a carries 1 - u - v
-    double distance = 0.0;       ///< along the normalized ray, from origin
+    int a = -1, b = -1, c = -1; ///< corners of the winning triangle
+    double u = 0.0, v = 0.0;    ///< weights of b and c; a carries 1 - u - v
+    double distance = 0.0;      ///< along the normalized ray, from origin
 };
 
 namespace surfaceProjectorDetail {
 
 template <class Vec3d, class Vec3f>
-Vec3d ToDouble(const Vec3f &p)
+Vec3d
+ToDouble(const Vec3f &p)
 {
     return Vec3d(double(p[0]), double(p[1]), double(p[2]));
 }
 
 template <class Mat4, class Vec3d>
-Vec3d Row(const Mat4 &m, int row)
+Vec3d
+Row(const Mat4 &m, int row)
 {
     return Vec3d(m[row][0], m[row][1], m[row][2]);
 }
 
 template <class Mat4, class Vec3d>
-void SetRow(Mat4 *m, int row, const Vec3d &v)
+void
+SetRow(Mat4 *m, int row, const Vec3d &v)
 {
     (*m)[row][0] = v[0];
     (*m)[row][1] = v[1];
@@ -57,7 +60,8 @@ void SetRow(Mat4 *m, int row, const Vec3d &v)
 }
 
 template <class Mat4, class Vec3d>
-double MeanRowLength(const Mat4 &m)
+double
+MeanRowLength(const Mat4 &m)
 {
     double sum = 0.0;
     for (int i = 0; i < 3; ++i) {
@@ -66,33 +70,37 @@ double MeanRowLength(const Mat4 &m)
     return sum;
 }
 
-inline std::string Format3(const char *label, double x, double y, double z)
+inline std::string
+Format3(const char *label, double x, double y, double z)
 {
     char text[96];
     std::snprintf(text, sizeof(text), "%s(%.4f %.4f %.4f)", label, x, y, z);
     return text;
 }
 
-}  // namespace surfaceProjectorDetail
+} // namespace surfaceProjectorDetail
 
 /// Cast a ray at a prebuilt fan triangulation: the same Moller-Trumbore
 /// loop over caller-provided triangles, so one validation serves every
 /// cast of a solve. False, leaving \p hit untouched, when the
 /// triangulation is invalid.
 template <class Vec3d, class Vec3f>
-bool RigExecRaycastSurfaceTrisT(const std::vector<Vec3f> &points,
-                                const RigExecFanTrisStrict &fan,
-                                const Vec3d &origin, const Vec3d &direction,
-                                RigExecSurfaceHit *hit)
+bool
+RigExecRaycastSurfaceTrisT(const std::vector<Vec3f> &points,
+                           const RigExecFanTrisStrict &fan, const Vec3d &origin,
+                           const Vec3d &direction, RigExecSurfaceHit *hit)
 {
     using surfaceProjectorDetail::ToDouble;
-    if (!hit || points.empty() || !fan.valid) return false;
+    if (!hit || points.empty() || !fan.valid)
+        return false;
     Vec3d dir = direction;
     const double dirLength = dir.GetLength();
-    if (!(dirLength > 0) || !std::isfinite(dirLength)) return false;
+    if (!(dirLength > 0) || !std::isfinite(dirLength))
+        return false;
     dir /= dirLength;
     for (int axis = 0; axis < 3; ++axis) {
-        if (!std::isfinite(origin[axis])) return false;
+        if (!std::isfinite(origin[axis]))
+            return false;
     }
 
     // Nearest forward hit, tracked with its barycentric coordinates so the
@@ -113,24 +121,35 @@ bool RigExecRaycastSurfaceTrisT(const std::vector<Vec3f> &points,
         const double det = e1 * p;
         // Two-sided: the ray starts INSIDE the eyeball, so the face it
         // leaves through is back-facing to it.
-        if (std::abs(det) < 1e-16) continue;
+        if (std::abs(det) < 1e-16)
+            continue;
         const double inv = 1.0 / det;
         const Vec3d t = origin - a;
         const double u = (t * p) * inv;
-        if (u < 0.0 || u > 1.0) continue;
+        if (u < 0.0 || u > 1.0)
+            continue;
         const Vec3d q = t ^ e1;
         const double v = (dir * q) * inv;
-        if (v < 0.0 || u + v > 1.0) continue;
+        if (v < 0.0 || u + v > 1.0)
+            continue;
         const double distance = (e2 * q) * inv;
-        if (distance <= 1e-9 || distance >= nearest) continue;
+        if (distance <= 1e-9 || distance >= nearest)
+            continue;
         nearest = distance;
-        hitA = ia; hitB = ib; hitC = ic;
-        hitU = u; hitV = v;
+        hitA = ia;
+        hitB = ib;
+        hitC = ic;
+        hitU = u;
+        hitV = v;
     }
-    if (hitA < 0 || !std::isfinite(nearest)) return false;
+    if (hitA < 0 || !std::isfinite(nearest))
+        return false;
 
-    hit->a = hitA; hit->b = hitB; hit->c = hitC;
-    hit->u = hitU; hit->v = hitV;
+    hit->a = hitA;
+    hit->b = hitB;
+    hit->c = hitC;
+    hit->u = hitU;
+    hit->v = hitV;
     hit->distance = nearest;
     return true;
 }
@@ -140,18 +159,19 @@ bool RigExecRaycastSurfaceTrisT(const std::vector<Vec3f> &points,
 /// origin. False, leaving \p hit untouched, when nothing is met, the
 /// direction is degenerate, or the topology is invalid.
 template <class Vec3d, class Vec3f>
-bool RigExecRaycastSurfaceT(const std::vector<Vec3f> &points,
-                            const std::vector<int> &faceVertexCounts,
-                            const std::vector<int> &faceVertexIndices,
-                            const Vec3d &origin, const Vec3d &direction,
-                            RigExecSurfaceHit *hit)
+bool
+RigExecRaycastSurfaceT(const std::vector<Vec3f> &points,
+                       const std::vector<int> &faceVertexCounts,
+                       const std::vector<int> &faceVertexIndices,
+                       const Vec3d &origin, const Vec3d &direction,
+                       RigExecSurfaceHit *hit)
 {
-    if (!hit || points.empty() || faceVertexCounts.empty()) return false;
+    if (!hit || points.empty() || faceVertexCounts.empty())
+        return false;
     // Validate and fan once, then run the shared triangle loop.
     const RigExecFanTrisStrict fan = RigExecBuildFanTrisStrict(
         faceVertexCounts, faceVertexIndices, points.size());
-    return RigExecRaycastSurfaceTrisT(points, fan, origin, direction,
-                                      hit);
+    return RigExecRaycastSurfaceTrisT(points, fan, origin, direction, hit);
 }
 
 /// The surface frame at a hit, evaluated on the given points: the hit's
@@ -159,26 +179,28 @@ bool RigExecRaycastSurfaceT(const std::vector<Vec3f> &points,
 /// +Z, with \p upHint fixing the roll. \p normals are the vertex normals of
 /// \p points, precomputed by the caller; they must cover the points.
 template <class Mat4, class Vec3d, class Vec3f>
-bool RigExecSurfaceFrameAtHitT(const std::vector<Vec3f> &points,
-                               const RigExecSurfaceHit &hit,
-                               const Vec3d &upHint,
-                               const std::vector<Vec3f> &normals,
-                               Mat4 *frame)
+bool
+RigExecSurfaceFrameAtHitT(const std::vector<Vec3f> &points,
+                          const RigExecSurfaceHit &hit, const Vec3d &upHint,
+                          const std::vector<Vec3f> &normals, Mat4 *frame)
 {
     using surfaceProjectorDetail::SetRow;
     using surfaceProjectorDetail::ToDouble;
-    if (!frame || points.empty()) return false;
+    if (!frame || points.empty())
+        return false;
     const int corners[3] = {hit.a, hit.b, hit.c};
     for (int index : corners) {
         if (index < 0 || static_cast<size_t>(index) >= points.size()) {
             return false;
         }
     }
-    if (!std::isfinite(hit.u) || !std::isfinite(hit.v)) return false;
+    if (!std::isfinite(hit.u) || !std::isfinite(hit.v))
+        return false;
 
     // The vertex normals validate the topology on the way: an invalid mesh
     // yields none, and a frame on it would be a frame on nothing.
-    if (normals.size() != points.size()) return false;
+    if (normals.size() != points.size())
+        return false;
 
     const double w = 1.0 - hit.u - hit.v;
     const Vec3d a = ToDouble<Vec3d>(points[hit.a]);
@@ -192,7 +214,8 @@ bool RigExecSurfaceFrameAtHitT(const std::vector<Vec3f> &points,
         // A degenerate blend still has the triangle itself to fall back on.
         normal = (b - a) ^ (c - a);
         length = normal.GetLength();
-        if (!(length > 0) || !std::isfinite(length)) return false;
+        if (!(length > 0) || !std::isfinite(length))
+            return false;
     }
     normal /= length;
 
@@ -202,12 +225,14 @@ bool RigExecSurfaceFrameAtHitT(const std::vector<Vec3f> &points,
     if (up.GetLengthSq() < 1e-12) {
         int axis = 0;
         for (int i = 1; i < 3; ++i) {
-            if (std::abs(normal[i]) < std::abs(normal[axis])) axis = i;
+            if (std::abs(normal[i]) < std::abs(normal[axis]))
+                axis = i;
         }
         Vec3d fallback(0.0, 0.0, 0.0);
         fallback[axis] = 1.0;
         up = fallback - (fallback * normal) * normal;
-        if (up.GetLengthSq() < 1e-12) return false;
+        if (up.GetLengthSq() < 1e-12)
+            return false;
     }
     up.Normalize();
     const Vec3d side = up ^ normal;
@@ -227,25 +252,27 @@ bool RigExecSurfaceFrameAtHitT(const std::vector<Vec3f> &points,
 /// \p normalsOf: the evaluator's own normals kernel, so the frame agrees
 /// with the normals that evaluator publishes.
 template <class Mat4, class Vec3d, class Vec3f, class Normals>
-bool RigExecSurfaceFrameAtHitT(const std::vector<Vec3f> &points,
-                               const std::vector<int> &faceVertexCounts,
-                               const std::vector<int> &faceVertexIndices,
-                               const RigExecSurfaceHit &hit,
-                               const Vec3d &upHint, Normals &&normalsOf,
-                               Mat4 *frame)
+bool
+RigExecSurfaceFrameAtHitT(const std::vector<Vec3f> &points,
+                          const std::vector<int> &faceVertexCounts,
+                          const std::vector<int> &faceVertexIndices,
+                          const RigExecSurfaceHit &hit, const Vec3d &upHint,
+                          Normals &&normalsOf, Mat4 *frame)
 {
-    if (!frame || points.empty()) return false;
+    if (!frame || points.empty())
+        return false;
     const int corners[3] = {hit.a, hit.b, hit.c};
     for (int index : corners) {
         if (index < 0 || static_cast<size_t>(index) >= points.size()) {
             return false;
         }
     }
-    if (!std::isfinite(hit.u) || !std::isfinite(hit.v)) return false;
+    if (!std::isfinite(hit.u) || !std::isfinite(hit.v))
+        return false;
     const std::vector<Vec3f> normals =
         normalsOf(points, faceVertexCounts, faceVertexIndices);
-    return RigExecSurfaceFrameAtHitT<Mat4, Vec3d, Vec3f>(
-        points, hit, upHint, normals, frame);
+    return RigExecSurfaceFrameAtHitT<Mat4, Vec3d, Vec3f>(points, hit, upHint,
+                                                         normals, frame);
 }
 
 /// Everything a RigExecSurfaceProjector reads, resolved by the evaluator.
@@ -253,8 +280,7 @@ bool RigExecSurfaceFrameAtHitT(const std::vector<Vec3f> &points,
 /// The provider frames share the evaluator's ASSET space: `Base` before pose constraints,
 /// `Final` after them. A flag says whether the relationship named a provider
 /// that resolved; an unnamed one leaves its frames unread.
-template <class Mat4, class Vec3d>
-struct RigExecSurfaceProjectorInputs {
+template <class Mat4, class Vec3d> struct RigExecSurfaceProjectorInputs {
     /// rigExec:rayOrigin / rayDirection / rayUp, in the mesh's own space.
     Vec3d rayOrigin;
     Vec3d rayDirection;
@@ -277,7 +303,7 @@ struct RigExecSurfaceProjectorInputs {
     bool hasSpace = false;
     Mat4 spaceFinal;
     /// Asset-to-mesh transform: where a source with no sourceSpace is
-    /// expressed in the mesh's space. The field retains its historical name.
+    /// expressed in the mesh's space.
     Mat4 worldToMesh;
 };
 
@@ -287,24 +313,23 @@ struct RigExecSurfaceProjectorInputs {
 /// could be measured; \p diagnostics then says which step failed, prefixed
 /// with \p who.
 template <class Mat4, class Vec3d, class Vec3f, class Normals>
-bool RigExecSolveSurfaceProjectorT(
+bool
+RigExecSolveSurfaceProjectorT(
     const RigExecSurfaceProjectorInputs<Mat4, Vec3d> &in,
-    const std::vector<Vec3f> &basePoints,
-    const std::vector<Vec3f> &posedPoints,
+    const std::vector<Vec3f> &basePoints, const std::vector<Vec3f> &posedPoints,
     const std::vector<int> &faceVertexCounts,
     const std::vector<int> &faceVertexIndices, Normals &&normalsOf,
     const std::string &who, Mat4 *shaderMatrix,
     std::vector<std::string> *diagnostics,
-    RigExecSurfaceKernelCache<Vec3f,Vec3d> *cache = nullptr)
+    RigExecSurfaceKernelCache<Vec3f, Vec3d> *cache = nullptr)
 {
     using surfaceProjectorDetail::Format3;
     using surfaceProjectorDetail::MeanRowLength;
     using surfaceProjectorDetail::Row;
     if (basePoints.empty() || faceVertexCounts.empty() ||
         posedPoints.size() != basePoints.size()) {
-        diagnostics->push_back(
-            "SurfaceProjector " + who +
-            ": surface has no usable points or topology");
+        diagnostics->push_back("SurfaceProjector " + who +
+                               ": surface has no usable points or topology");
         return false;
     }
 
@@ -313,11 +338,12 @@ bool RigExecSolveSurfaceProjectorT(
     bool haveBaseNormals = false;
     std::vector<Vec3f> baseNormalsStorage;
     const auto baseNormals = [&]() -> const std::vector<Vec3f> & {
-        if(cache) return cache->VertexNormals(false,basePoints,faceVertexCounts,
-            faceVertexIndices,normalsOf);
+        if (cache)
+            return cache->VertexNormals(false, basePoints, faceVertexCounts,
+                                        faceVertexIndices, normalsOf);
         if (!haveBaseNormals) {
-            baseNormalsStorage = normalsOf(
-                basePoints, faceVertexCounts, faceVertexIndices);
+            baseNormalsStorage =
+                normalsOf(basePoints, faceVertexCounts, faceVertexIndices);
             haveBaseNormals = true;
         }
         return baseNormalsStorage;
@@ -325,11 +351,12 @@ bool RigExecSolveSurfaceProjectorT(
     bool havePosedNormals = false;
     std::vector<Vec3f> posedNormalsStorage;
     const auto posedNormals = [&]() -> const std::vector<Vec3f> & {
-        if(cache) return cache->VertexNormals(true,posedPoints,faceVertexCounts,
-            faceVertexIndices,normalsOf);
+        if (cache)
+            return cache->VertexNormals(true, posedPoints, faceVertexCounts,
+                                        faceVertexIndices, normalsOf);
         if (!havePosedNormals) {
-            posedNormalsStorage = normalsOf(
-                posedPoints, faceVertexCounts, faceVertexIndices);
+            posedNormalsStorage =
+                normalsOf(posedPoints, faceVertexCounts, faceVertexIndices);
             havePosedNormals = true;
         }
         return posedNormalsStorage;
@@ -403,16 +430,19 @@ bool RigExecSolveSurfaceProjectorT(
     // guard rejects mismatched point counts, so base and posed validate
     // identically -- exactly as the per-cast validation did.
     RigExecFanTrisStrict localFan;
-    if(!cache) localFan=RigExecBuildFanTrisStrict(faceVertexCounts,
-        faceVertexIndices,basePoints.size());
-    const RigExecFanTrisStrict &fan=cache ? cache->FanTriangles(
-        basePoints.size(),faceVertexCounts,faceVertexIndices) : localFan;
+    if (!cache)
+        localFan = RigExecBuildFanTrisStrict(
+            faceVertexCounts, faceVertexIndices, basePoints.size());
+    const RigExecFanTrisStrict &fan =
+        cache ? cache->FanTriangles(basePoints.size(), faceVertexCounts,
+                                    faceVertexIndices)
+              : localFan;
     RigExecSurfaceHit hit;
     Mat4 restFrame, posedFrame;
     restFrame.SetIdentity();
     posedFrame.SetIdentity();
     bool ok = RigExecRaycastSurfaceTrisT(basePoints, fan, restRayOrigin,
-                                        restRayDirection, &hit) &&
+                                         restRayDirection, &hit) &&
               RigExecSurfaceFrameAtHitT<Mat4, Vec3d, Vec3f>(
                   basePoints, hit, restRayUp, baseNormals(), &restFrame);
     if (ok && in.reproject) {
@@ -421,8 +451,7 @@ bool RigExecSolveSurfaceProjectorT(
             RigExecRaycastSurfaceTrisT(posedPoints, fan, rayOrigin,
                                        rayDirection, &posedHit) &&
             RigExecSurfaceFrameAtHitT<Mat4, Vec3d, Vec3f>(
-                posedPoints, posedHit, rayUp, posedNormals(),
-                &posedFrame);
+                posedPoints, posedHit, rayUp, posedNormals(), &posedFrame);
         if (!reprojected) {
             ok = RigExecSurfaceFrameAtHitT<Mat4, Vec3d, Vec3f>(
                 posedPoints, hit, rayUp, posedNormals(), &posedFrame);
@@ -443,20 +472,17 @@ bool RigExecSolveSurfaceProjectorT(
         const bool castHit = RigExecRaycastSurfaceTrisT(
             basePoints, fan, restRayOrigin, restRayDirection, &probe);
         RigExecSurfaceHit posedProbe;
-        const bool posedCast =
-            !in.reproject ||
-            RigExecRaycastSurfaceTrisT(posedPoints, fan, rayOrigin,
-                                       rayDirection, &posedProbe);
+        const bool posedCast = !in.reproject || RigExecRaycastSurfaceTrisT(
+                                                    posedPoints, fan, rayOrigin,
+                                                    rayDirection, &posedProbe);
         Mat4 scratch;
         scratch.SetIdentity();
         const bool restOk =
-            castHit &&
-            RigExecSurfaceFrameAtHitT<Mat4, Vec3d, Vec3f>(
-                basePoints, probe, rayUp, baseNormals(), &scratch);
+            castHit && RigExecSurfaceFrameAtHitT<Mat4, Vec3d, Vec3f>(
+                           basePoints, probe, rayUp, baseNormals(), &scratch);
         const bool posedOk =
-            castHit &&
-            RigExecSurfaceFrameAtHitT<Mat4, Vec3d, Vec3f>(
-                posedPoints, probe, rayUp, posedNormals(), &scratch);
+            castHit && RigExecSurfaceFrameAtHitT<Mat4, Vec3d, Vec3f>(
+                           posedPoints, probe, rayUp, posedNormals(), &scratch);
         diagnostics->push_back(
             "SurfaceProjector " + who + ": ray " +
             Format3("o", rayOrigin[0], rayOrigin[1], rayOrigin[2]) + " " +
@@ -524,7 +550,8 @@ bool RigExecSolveSurfaceProjectorT(
 /// rigExec:shaderDialSources packed row-major into one matrix primvar, at
 /// most sixteen; a non-finite dial is left at zero.
 template <class Mat4>
-Mat4 RigExecPackShaderDialsT(const std::vector<double> &values)
+Mat4
+RigExecPackShaderDialsT(const std::vector<double> &values)
 {
     Mat4 packed(0.0);
     const size_t slots = values.size() < 16 ? values.size() : 16;
@@ -536,6 +563,6 @@ Mat4 RigExecPackShaderDialsT(const std::vector<double> &values)
     return packed;
 }
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_MATH_SURFACE_PROJECTOR_KERNEL_H
+#endif // RIGEXEC_MATH_SURFACE_PROJECTOR_KERNEL_H

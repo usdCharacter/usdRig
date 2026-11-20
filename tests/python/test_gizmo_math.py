@@ -947,9 +947,9 @@ def TestIkLengthAdvisoryIsGone():
            "lengths measure the rests: no advisory, got %r"
            % target.Advisory())
 
-    # Even a leftover custom opinion from an asset saved against the old
-    # schema cannot freeze the bone -- there is no absolute length input
-    # any more, and Compile rejects the stale property outright.
+    # A leftover custom opinion cannot freeze the bone -- there is no
+    # absolute length input, and Compile rejects the stale property
+    # outright.
     solver.CreateAttribute("rigExec:upperLength", Sdf.ValueTypeNames.Double,
                            custom=True).Set(4.0)
     target.Refresh()
@@ -2121,8 +2121,8 @@ def TestSolverCacheRetarget():
         _Check(cache.For(rigRoot) == {child.GetPath()},
                "the first SetTargets reached the memo: %s"
                % cache.For(rigRoot))
-        # The one that used to be missed: the relationship already has
-        # targets, so USD reports an info-only change.
+        # The relationship already has targets, so USD reports an
+        # info-only change.
         rel.SetTargets([parent.GetPath()])
         _Check(not listener.resynced and listener.changed,
                "retargeting is info-only, not a resync: resynced=%s "
@@ -2911,13 +2911,9 @@ def TestGroupOnBiped():
     wrist = elbow + "/L_Hand"
     spine = control + "/M_Body/M_HipSwivel/M_BodyGimbal"
     # The finger ROOT is now posable, and the prim the rig overwrites is
-    # the FOLLOW HELPER above it. `build_fingers.py` used to parent-
-    # constrain the root control itself to the wrist so the hand rode the
-    # arm -- but a constraint overwrites the frame it writes, so the
-    # control's own avars were discarded and ten finger roots moved 0 of
-    # 26,276 skinned points on any avar. The constraint now targets a
-    # helper and the control hangs off it by namespace, so it carries the
-    # hand AND stays posable (measured: 612 points, 8.18 cm on rz=30).
+    # the FOLLOW HELPER above it. The constraint targets a helper and the
+    # control hangs off it by namespace, so it carries the hand AND stays
+    # posable.
     #
     # This case wants a prim the rig really does overwrite, so it uses the
     # helper. `L_Arm` would do as well.

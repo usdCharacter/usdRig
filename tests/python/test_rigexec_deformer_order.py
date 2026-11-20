@@ -200,12 +200,10 @@ def main():
     print("    the four head deformers run after the lip, cheek and eye stacks")
 
     # 3. the lash proxies take the head LAST, on top of the lid shaping.
-    #    lashes_geo used to run at execution slot 0, ahead of every pose
-    #    scope, which put the head wire (rank 121) in the middle of the
-    #    lid stack: 13 of 28 pairs inverted, now 2. The residual two are
-    #    socketStretch (rank 62) ahead of the blink wires (16, 17), which
-    #    share the lashes_geo scope with the blink clusters (11, 13) and
-    #    cannot both be right without splitting that scope.
+    #    Two inversions remain: socketStretch (rank 62) ahead of the blink
+    #    wires (16, 17), which share the lashes_geo scope with the blink
+    #    clusters (11, 13) and cannot both be right without splitting that
+    #    scope.
     for side in ("l", "r"):
         mesh = "/Biped/Geom/lash_upper_%s_proxy.points" % side
         run = [e["path"].rsplit("/", 1)[-1] for e in rig.mover_order()

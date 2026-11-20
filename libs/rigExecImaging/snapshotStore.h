@@ -340,9 +340,9 @@ struct RigExecImagingSnapshot {
 
     /// WHICH STAGE, and WHICH TIME, this generation describes.
     ///
-    /// The snapshot store is a process-global singleton, so without these a
-    /// consumer that looks a prim up by path alone gets an answer from
-    /// whatever rig happened to publish last: open a second stage whose rig
+    /// Without these a consumer that looks a prim up by path
+    /// alone gets an answer from whatever rig happened to publish last: open
+    /// a second stage whose rig
     /// uses the same paths and the first stage's poses are served for it,
     /// silently and plausibly. Time has the same shape of problem in one
     /// stage -- a query at frame 12 answered from the generation published
@@ -369,7 +369,7 @@ struct RigExecImagingSnapshot {
     /// answers a rig output sampled at a time offset from it, recording a
     /// miss as demand. Null for snapshots published outside a registry
     /// (tests, a bare bridge): offsets then answer the explicit motion
-    /// samples or the displayed value, as before.
+    /// samples or the displayed value.
     std::shared_ptr<RigExecFrameTable> frameTable;
 
     /// True when this generation describes \p queryStage at \p time.

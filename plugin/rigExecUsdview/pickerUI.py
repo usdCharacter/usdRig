@@ -72,18 +72,11 @@ def _path_for(button):
             path.cubicTo(c1[0], c1[1], c2[0], c2[1], b[0][0], b[0][1])
         path.closeSubpath()
     elif shape == "trapezoid":
-        # A SLOPE INSETS AN EDGE; IT NEVER FLARES PAST THE BOX.
-        #
-        # The slopes arrive in +/- pairs -- L_InLid is +3/+3 and L_UpLid2
-        # is -3/-3 -- and the old form applied both to the TOP edge, so a
-        # negative one ran the top from -3 to w+3 and the shape spilled
-        # outside its own bounds on both sides. Around an eye that is
-        # dozens of lid and socket segments each three pixels too wide,
-        # colliding with their neighbours: the chaotic wedges.
-        #
-        # Positive insets the top, negative insets the bottom. The pair
-        # then mirrors vertically, which is what an upper-lid and a
-        # lower-lid segment need in order to tile.
+        # A SLOPE INSETS AN EDGE; IT NEVER FLARES PAST THE BOX. The
+        # slopes arrive in +/- pairs -- L_InLid is +3/+3 and L_UpLid2
+        # is -3/-3. Positive insets the top, negative insets the bottom.
+        # The pair then mirrors vertically, which is what an upper-lid
+        # and a lower-lid segment need in order to tile.
         ls, rs = button.left_slope, button.right_slope
         if button.direction in ("top", "bottom"):
             top_l = ls if ls > 0 else 0.0
@@ -244,10 +237,7 @@ def DrawButton(painter, button, fontFamily, hover, selectedPaths):
             box.setLeft(box.left() + min(button.h - 4.0, 11.0) + 5.0)
             align = QtCore.Qt.AlignLeft
 
-        # THE TWO HALVES DO NOT OVERLAP. Both used to be drawn into
-        # the same rect with opposite alignments, which reads fine
-        # only while they happen not to meet in the middle -- and on
-        # this rig they met on every leg.
+        # THE TWO HALVES DO NOT OVERLAP.
         label_box, value_box, value_align, caret_x = box, None, None, 0.0
         if button.value:
             metrics = QtGui.QFontMetricsF(font)
@@ -566,8 +556,8 @@ class PickerPanel(QtWidgets.QDialog):
         # (stage, gizmoMath.Writer, undo label). See _PreviewThenCommit.
         self._pendingCommit = None
         # Every picker on the stage, one outer tab each, and the one
-        # whose tab is showing. `_picker` stays the ACTIVE picker so the
-        # single-character code below reads the same as it always did.
+        # whose tab is showing. `_picker` is the ACTIVE picker, which is
+        # what the single-character code below reads.
         self._pickers = []
         self._visAttrs = []
         self._visAnimated = False
@@ -708,14 +698,9 @@ class PickerPanel(QtWidgets.QDialog):
         if signal is not None:
             signal.connect(self._OnSelectionChanged)
 
-        # THE PICKER FOLLOWS THE RIG, not only its own buttons. The
-        # IK/FK half it draws was refreshed on a switch click and nowhere
-        # else, so a dial moved from anywhere ELSE -- the Avar Editor, a
-        # gizmo on `avars:ikfk`, an undo, a scrub onto a keyed frame --
-        # left the dead half drawn. Measured in usdview on Biped_stack:
-        # after setting arm_l `avars:ikfk` back to 0 (FK) from outside,
-        # the panel still drew L_ArmIK and L_ArmPV and still hid L_UpArm,
-        # L_LoArm and L_Hand, and only reopening it corrected them.
+        # THE PICKER FOLLOWS THE RIG, not only its own buttons: the
+        # IK/FK half it draws refreshes on frame changes and stage edits,
+        # not only on a switch click.
         for name, slot in (("currentFrameChanged", self._OnFrameChanged),
                            ("signalStageReplaced", self._OnStageReplaced)):
             emitter = getattr(model, name, None)

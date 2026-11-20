@@ -82,7 +82,7 @@ _FoldBytes(uint64_t hash, const void *data, size_t size)
     if (size > 0) {
         // Zero-padded, with the length mixed in so a short tail cannot
         // equal a longer stream's shared prefix. An empty fold stays a
-        // no-op, as before.
+        // no-op.
         uint64_t tail = 0;
         std::memcpy(&tail, bytes, size);
         hash = _MixWord(hash, tail + size);
@@ -184,7 +184,8 @@ _FoldStageSeeds(uint64_t hash, const RigExecStageFrameSeeds &seeds)
         for (int row = 0; row < 4; ++row)
             for (int column = 0; column < 4; ++column)
                 hash = _FoldScalar(hash, matrix[row][column]);
-    for (char reset : seeds.interveningReset) hash = _FoldScalar(hash, reset);
+    for (char reset : seeds.interveningReset)
+        hash = _FoldScalar(hash, reset);
     return hash;
 }
 
@@ -264,8 +265,7 @@ _FoldArray(uint64_t hash, const VtArray<T> &array)
 
 // _FoldVtValue past the type name and its separator: a non-empty value's
 // storage.
-uint64_t
-_FoldVtValueAfterName(uint64_t hash, const VtValue &value);
+uint64_t _FoldVtValueAfterName(uint64_t hash, const VtValue &value);
 
 uint64_t
 _FoldVtValue(uint64_t hash, const VtValue &value)
@@ -317,30 +317,45 @@ _FoldVtValueAfterName(uint64_t hash, const VtValue &value)
     // Bitwise for everything holding floating point: TfHash deliberately
     // conflates +0.0 and -0.0, but the evaluator need not evaluate them
     // equally, so the digest folds storage instead.
-#define _RIGEXEC_FOLD_HELD(type, expr)                 \
-    if (value.IsHolding<type>()) {                     \
-        const type &held = value.UncheckedGet<type>(); \
-        (void)held;                                    \
-        return expr;                                   \
+#define _RIGEXEC_FOLD_HELD(type, expr)                                         \
+    if (value.IsHolding<type>()) {                                             \
+        const type &held = value.UncheckedGet<type>();                         \
+        (void)held;                                                            \
+        return expr;                                                           \
     }
     _RIGEXEC_FOLD_HELD(float, _FoldScalar(hash, held));
     _RIGEXEC_FOLD_HELD(double, _FoldScalar(hash, held));
     _RIGEXEC_FOLD_HELD(GfHalf, _FoldScalar(hash, held));
-    _RIGEXEC_FOLD_HELD(GfVec2f, _FoldBytes(hash, held.data(), 2 * sizeof(float)));
-    _RIGEXEC_FOLD_HELD(GfVec3f, _FoldBytes(hash, held.data(), 3 * sizeof(float)));
-    _RIGEXEC_FOLD_HELD(GfVec4f, _FoldBytes(hash, held.data(), 4 * sizeof(float)));
-    _RIGEXEC_FOLD_HELD(GfVec2d, _FoldBytes(hash, held.data(), 2 * sizeof(double)));
-    _RIGEXEC_FOLD_HELD(GfVec3d, _FoldBytes(hash, held.data(), 3 * sizeof(double)));
-    _RIGEXEC_FOLD_HELD(GfVec4d, _FoldBytes(hash, held.data(), 4 * sizeof(double)));
-    _RIGEXEC_FOLD_HELD(GfVec2h, _FoldBytes(hash, held.data(), 2 * sizeof(GfHalf)));
-    _RIGEXEC_FOLD_HELD(GfVec3h, _FoldBytes(hash, held.data(), 3 * sizeof(GfHalf)));
-    _RIGEXEC_FOLD_HELD(GfVec4h, _FoldBytes(hash, held.data(), 4 * sizeof(GfHalf)));
-    _RIGEXEC_FOLD_HELD(GfMatrix2f, _FoldBytes(hash, held.data(), 4 * sizeof(float)));
-    _RIGEXEC_FOLD_HELD(GfMatrix2d, _FoldBytes(hash, held.data(), 4 * sizeof(double)));
-    _RIGEXEC_FOLD_HELD(GfMatrix3f, _FoldBytes(hash, held.data(), 9 * sizeof(float)));
-    _RIGEXEC_FOLD_HELD(GfMatrix3d, _FoldBytes(hash, held.data(), 9 * sizeof(double)));
-    _RIGEXEC_FOLD_HELD(GfMatrix4f, _FoldBytes(hash, held.data(), 16 * sizeof(float)));
-    _RIGEXEC_FOLD_HELD(GfMatrix4d, _FoldBytes(hash, held.data(), 16 * sizeof(double)));
+    _RIGEXEC_FOLD_HELD(GfVec2f,
+                       _FoldBytes(hash, held.data(), 2 * sizeof(float)));
+    _RIGEXEC_FOLD_HELD(GfVec3f,
+                       _FoldBytes(hash, held.data(), 3 * sizeof(float)));
+    _RIGEXEC_FOLD_HELD(GfVec4f,
+                       _FoldBytes(hash, held.data(), 4 * sizeof(float)));
+    _RIGEXEC_FOLD_HELD(GfVec2d,
+                       _FoldBytes(hash, held.data(), 2 * sizeof(double)));
+    _RIGEXEC_FOLD_HELD(GfVec3d,
+                       _FoldBytes(hash, held.data(), 3 * sizeof(double)));
+    _RIGEXEC_FOLD_HELD(GfVec4d,
+                       _FoldBytes(hash, held.data(), 4 * sizeof(double)));
+    _RIGEXEC_FOLD_HELD(GfVec2h,
+                       _FoldBytes(hash, held.data(), 2 * sizeof(GfHalf)));
+    _RIGEXEC_FOLD_HELD(GfVec3h,
+                       _FoldBytes(hash, held.data(), 3 * sizeof(GfHalf)));
+    _RIGEXEC_FOLD_HELD(GfVec4h,
+                       _FoldBytes(hash, held.data(), 4 * sizeof(GfHalf)));
+    _RIGEXEC_FOLD_HELD(GfMatrix2f,
+                       _FoldBytes(hash, held.data(), 4 * sizeof(float)));
+    _RIGEXEC_FOLD_HELD(GfMatrix2d,
+                       _FoldBytes(hash, held.data(), 4 * sizeof(double)));
+    _RIGEXEC_FOLD_HELD(GfMatrix3f,
+                       _FoldBytes(hash, held.data(), 9 * sizeof(float)));
+    _RIGEXEC_FOLD_HELD(GfMatrix3d,
+                       _FoldBytes(hash, held.data(), 9 * sizeof(double)));
+    _RIGEXEC_FOLD_HELD(GfMatrix4f,
+                       _FoldBytes(hash, held.data(), 16 * sizeof(float)));
+    _RIGEXEC_FOLD_HELD(GfMatrix4d,
+                       _FoldBytes(hash, held.data(), 16 * sizeof(double)));
     _RIGEXEC_FOLD_HELD(VtArray<float>, _FoldArray(hash, held));
     _RIGEXEC_FOLD_HELD(VtArray<double>, _FoldArray(hash, held));
     _RIGEXEC_FOLD_HELD(VtArray<GfHalf>, _FoldArray(hash, held));
@@ -385,7 +400,8 @@ _FoldVtValueAfterName(uint64_t hash, const VtValue &value)
         hash = _FoldU64(hash, static_cast<uint64_t>(q.size()));
         for (const GfQuatd &e : q) {
             hash = _FoldScalar(hash, e.GetReal());
-            hash = _FoldBytes(hash, e.GetImaginary().data(), 3 * sizeof(double));
+            hash =
+                _FoldBytes(hash, e.GetImaginary().data(), 3 * sizeof(double));
         }
         return hash;
     }
@@ -394,7 +410,8 @@ _FoldVtValueAfterName(uint64_t hash, const VtValue &value)
         hash = _FoldU64(hash, static_cast<uint64_t>(q.size()));
         for (const GfQuath &e : q) {
             hash = _FoldScalar(hash, e.GetReal());
-            hash = _FoldBytes(hash, e.GetImaginary().data(), 3 * sizeof(GfHalf));
+            hash =
+                _FoldBytes(hash, e.GetImaginary().data(), 3 * sizeof(GfHalf));
         }
         return hash;
     }
@@ -422,11 +439,11 @@ _FoldLeafValue(uint64_t hash, const VtValue &value)
     if (value.IsEmpty()) {
         return _FoldU64(hash, 0);
     }
-#define _RIGEXEC_FOLD_LEAF(tag, type, expr)            \
-    if (value.IsHolding<type>()) {                     \
-        const type &held = value.UncheckedGet<type>(); \
-        hash = _FoldU64(hash, tag);                    \
-        return expr;                                   \
+#define _RIGEXEC_FOLD_LEAF(tag, type, expr)                                    \
+    if (value.IsHolding<type>()) {                                             \
+        const type &held = value.UncheckedGet<type>();                         \
+        hash = _FoldU64(hash, tag);                                            \
+        return expr;                                                           \
     }
     _RIGEXEC_FOLD_LEAF(1, VtIntArray, _FoldArray(hash, held));
     _RIGEXEC_FOLD_LEAF(2, VtFloatArray, _FoldArray(hash, held));
@@ -434,20 +451,23 @@ _FoldLeafValue(uint64_t hash, const VtValue &value)
     _RIGEXEC_FOLD_LEAF(4, float, _FoldScalar(hash, held));
     _RIGEXEC_FOLD_LEAF(5, double, _FoldScalar(hash, held));
     _RIGEXEC_FOLD_LEAF(6, bool, _FoldScalar(hash, held));
-    _RIGEXEC_FOLD_LEAF(7, GfVec3f, _FoldBytes(hash, held.data(), 3 * sizeof(float)));
-    _RIGEXEC_FOLD_LEAF(8, GfVec3d, _FoldBytes(hash, held.data(), 3 * sizeof(double)));
-    _RIGEXEC_FOLD_LEAF(9, GfVec3i, _FoldBytes(hash, held.data(), 3 * sizeof(int)));
-    _RIGEXEC_FOLD_LEAF(10, GfMatrix4d, _FoldBytes(hash, held.data(), 16 * sizeof(double)));
+    _RIGEXEC_FOLD_LEAF(7, GfVec3f,
+                       _FoldBytes(hash, held.data(), 3 * sizeof(float)));
+    _RIGEXEC_FOLD_LEAF(8, GfVec3d,
+                       _FoldBytes(hash, held.data(), 3 * sizeof(double)));
+    _RIGEXEC_FOLD_LEAF(9, GfVec3i,
+                       _FoldBytes(hash, held.data(), 3 * sizeof(int)));
+    _RIGEXEC_FOLD_LEAF(10, GfMatrix4d,
+                       _FoldBytes(hash, held.data(), 16 * sizeof(double)));
     _RIGEXEC_FOLD_LEAF(11, VtArray<GfVec2f>, _FoldArray(hash, held));
     _RIGEXEC_FOLD_LEAF(12, VtVec3fArray, _FoldArray(hash, held));
     _RIGEXEC_FOLD_LEAF(13, VtDoubleArray, _FoldArray(hash, held));
     // The token's own string, length first; an empty token reads no
     // string at all.
     _RIGEXEC_FOLD_LEAF(14, TfToken,
-                       held.IsEmpty()
-                           ? _FoldU64(hash, 0)
-                           : _FoldString(_FoldU64(hash, held.size()),
-                                         held.GetString()));
+                       held.IsEmpty() ? _FoldU64(hash, 0)
+                                      : _FoldString(_FoldU64(hash, held.size()),
+                                                    held.GetString()));
 #undef _RIGEXEC_FOLD_LEAF
     return _FoldVtValue(_FoldU64(hash, 15), value);
 }
@@ -466,8 +486,8 @@ _FoldVaryingTransport(uint64_t hash, const RigExecFrameInputs &inputs)
     }
     constexpr uint64_t kAbsent = ~uint64_t(0);
     hash = _FoldBytes(hash, "vary\x1f", 5);
-    hash = _FoldU64(hash,
-                    static_cast<uint64_t>(inputs.varyingLayoutRows.size()));
+    hash =
+        _FoldU64(hash, static_cast<uint64_t>(inputs.varyingLayoutRows.size()));
     for (const uint32_t row : inputs.varyingLayoutRows) {
         hash = _FoldU64(hash, row);
         if (row >= inputs.layoutLeaves.size()) {
@@ -492,7 +512,7 @@ _FoldVaryingTransport(uint64_t hash, const RigExecFrameInputs &inputs)
     return hash;
 }
 
-// Payload bytes of one VtValue, by the bench's counting: array payloads and
+// Payload bytes of one VtValue: array payloads and
 // scalar sizes; unknown types count the shell (the report says so).
 size_t
 _VtValueBytes(const VtValue &value)
@@ -500,9 +520,9 @@ _VtValueBytes(const VtValue &value)
     if (value.IsEmpty()) {
         return 0;
     }
-#define _RIGEXEC_CACHE_ARRAY(type, element)                     \
-    if (value.IsHolding<type>()) {                              \
-        return value.UncheckedGet<type>().size() * sizeof(element); \
+#define _RIGEXEC_CACHE_ARRAY(type, element)                                    \
+    if (value.IsHolding<type>()) {                                             \
+        return value.UncheckedGet<type>().size() * sizeof(element);            \
     }
     _RIGEXEC_CACHE_ARRAY(VtVec3fArray, GfVec3f)
     _RIGEXEC_CACHE_ARRAY(VtVec3dArray, GfVec3d)
@@ -514,9 +534,9 @@ _VtValueBytes(const VtValue &value)
     _RIGEXEC_CACHE_ARRAY(VtBoolArray, bool)
     _RIGEXEC_CACHE_ARRAY(VtStringArray, std::string)
 #undef _RIGEXEC_CACHE_ARRAY
-#define _RIGEXEC_CACHE_SCALAR(type)        \
-    if (value.IsHolding<type>()) {         \
-        return sizeof(type);               \
+#define _RIGEXEC_CACHE_SCALAR(type)                                            \
+    if (value.IsHolding<type>()) {                                             \
+        return sizeof(type);                                                   \
     }
     _RIGEXEC_CACHE_SCALAR(float)
     _RIGEXEC_CACHE_SCALAR(double)
@@ -536,7 +556,7 @@ _VtValueBytes(const VtValue &value)
     return sizeof(VtValue);
 }
 
-}  // namespace
+} // namespace
 
 uint64_t
 RigExecControlStateDigest(const RigExecFrameInputs &inputs)
@@ -547,7 +567,7 @@ RigExecControlStateDigest(const RigExecFrameInputs &inputs)
 
 // The upstream block: a tag, the count, then per path (sorted, the last
 // entry of a path winning) its path and value type, then the value. Empty
-// folds nothing, so a frame with no upstream value keys as before.
+// folds nothing, so a frame with no upstream value keys as the identity.
 uint64_t
 _FoldUpstream(uint64_t hash, const std::vector<RigExecUpstreamValue> &upstream)
 {
@@ -578,7 +598,7 @@ _FoldUpstream(uint64_t hash, const std::vector<RigExecUpstreamValue> &upstream)
 // The windowed operations' history (RigExecFrameInputs::windowRings): a
 // tag, the ring count, then per ring its length and per packet a presence
 // byte and its values' bits. No rings fold nothing, so a rig without
-// windowed operations keys as before.
+// windowed operations keys as the identity.
 uint64_t
 _FoldWindowRings(uint64_t hash, const RigExecFrameInputs &inputs)
 {
@@ -595,7 +615,8 @@ _FoldWindowRings(uint64_t hash, const RigExecFrameInputs &inputs)
                 continue;
             }
             hash = _FoldBytes(hash, "\x01", 1);
-            hash = _FoldU64(hash, static_cast<uint64_t>(packet->scalars.size()));
+            hash =
+                _FoldU64(hash, static_cast<uint64_t>(packet->scalars.size()));
             if (!packet->scalars.empty())
                 hash = _FoldBytes(hash, packet->scalars.data(),
                                   packet->scalars.size() * sizeof(double));
@@ -710,7 +731,7 @@ _OrderedLevel1(const RigExecFrameInputs &inputs,
                              });
 }
 
-}  // namespace
+} // namespace
 
 uint64_t
 RigExecSampleDigest(const RigExecSampledInput &sample)
@@ -837,11 +858,11 @@ RigExecFrameDigestOrderHasPath(const RigExecFrameDigestOrder *order,
     }
     // `order` lists the first-win paths ascending by SdfPath's operator<,
     // the recording map's own comparison.
-    const auto found = std::lower_bound(
-        order->order.begin(), order->order.end(), path,
-        [order](uint32_t index, const SdfPath &key) {
-            return order->paths[index] < key;
-        });
+    const auto found =
+        std::lower_bound(order->order.begin(), order->order.end(), path,
+                         [order](uint32_t index, const SdfPath &key) {
+                             return order->paths[index] < key;
+                         });
     return found != order->order.end() && order->paths[*found] == path;
 }
 
@@ -858,8 +879,7 @@ RigExecFoldConstantDigest(uint64_t controlDigest, uint64_t constantDigest)
 uint64_t
 RigExecControlStateDigestWithConstants(
     const RigExecFrameInputs &inputs,
-    const std::vector<RigExecValueOverride> &overrides,
-    uint64_t constantDigest)
+    const std::vector<RigExecValueOverride> &overrides, uint64_t constantDigest)
 {
     return RigExecFoldConstantDigest(
         RigExecControlStateDigest(inputs, overrides), constantDigest);
@@ -869,25 +889,23 @@ uint64_t
 RigExecControlStateDigestWithConstants(
     const RigExecFrameInputs &inputs,
     const std::vector<RigExecValueOverride> &overrides,
-    const std::vector<RigExecUpstreamValue> &upstream,
-    uint64_t constantDigest)
+    const std::vector<RigExecUpstreamValue> &upstream, uint64_t constantDigest)
 {
     return RigExecFoldConstantDigest(
-        RigExecControlStateDigest(inputs, overrides, upstream),
-        constantDigest);
+        RigExecControlStateDigest(inputs, overrides, upstream), constantDigest);
 }
 
 uint64_t
 RigExecControlStateDigest(const RigExecFrameInputs &inputs,
-                         const std::vector<RigExecValueOverride> &overrides)
+                          const std::vector<RigExecValueOverride> &overrides)
 {
     return RigExecControlStateDigest(inputs, overrides, inputs.upstream);
 }
 
 uint64_t
 RigExecControlStateDigest(const RigExecFrameInputs &inputs,
-                         const std::vector<RigExecValueOverride> &overrides,
-                         const std::vector<RigExecUpstreamValue> &upstream)
+                          const std::vector<RigExecValueOverride> &overrides,
+                          const std::vector<RigExecUpstreamValue> &upstream)
 {
     // First sample per path wins, matching FrameInputs::Find; the survivors
     // sort by path so enqueue order cannot move the digest. Two levels --
@@ -1014,14 +1032,13 @@ RigExecControlStateDigestWithBurstCache(
                 inputs.values[recorded->order[j]];
             uint64_t level1 = 0;
             if (!burstLevel1(sample, &level1)) {
-                level1 = _OrderedLevel1(inputs, sample, recorded->prefix[j],
-                                        &names);
+                level1 =
+                    _OrderedLevel1(inputs, sample, recorded->prefix[j], &names);
             }
             hash = _FoldU64(hash, level1);
         }
     } else {
-        hash = _FoldU64(hash,
-                        static_cast<uint64_t>(cache->sortedOrder.size()));
+        hash = _FoldU64(hash, static_cast<uint64_t>(cache->sortedOrder.size()));
         for (size_t i : cache->sortedOrder) {
             const RigExecSampledInput &sample = inputs.values[i];
             uint64_t level1 = 0;
@@ -1043,18 +1060,16 @@ RigExecControlStateDigestWithBurstCache(
 }
 
 uint64_t
-RigExecRefusalControlDigest(
-    UsdTimeCode time, uint64_t stageEditSerial,
-    const std::vector<RigExecValueOverride> &overrides)
+RigExecRefusalControlDigest(UsdTimeCode time, uint64_t stageEditSerial,
+                            const std::vector<RigExecValueOverride> &overrides)
 {
     return RigExecRefusalControlDigest(time, stageEditSerial, overrides, {});
 }
 
 uint64_t
-RigExecRefusalControlDigest(
-    UsdTimeCode time, uint64_t stageEditSerial,
-    const std::vector<RigExecValueOverride> &overrides,
-    const std::vector<RigExecUpstreamValue> &upstream)
+RigExecRefusalControlDigest(UsdTimeCode time, uint64_t stageEditSerial,
+                            const std::vector<RigExecValueOverride> &overrides,
+                            const std::vector<RigExecUpstreamValue> &upstream)
 {
     uint64_t hash = 1469598103934665603ull;
     // The domain tag: a refusal digest must never equal a sampled digest
@@ -1172,14 +1187,14 @@ RigExecFrameCachePoseBytes(const RigExecRigPose &pose)
              (sizeof(SdfPath) + sizeof(RigExecPointFrame));
     total += pose.jointFramesFinal.size() *
              (sizeof(SdfPath) + sizeof(RigExecPointFrame));
-    total += pose.jointMatricesFinal.size() *
-             (sizeof(SdfPath) + sizeof(GfMatrix4d));
+    total +=
+        pose.jointMatricesFinal.size() * (sizeof(SdfPath) + sizeof(GfMatrix4d));
     total += pose.controlFrames.size() *
              (sizeof(SdfPath) + sizeof(RigExecPointFrame));
-    total += pose.providerXforms.size() *
-             (sizeof(SdfPath) + sizeof(GfMatrix4d));
-    total += pose.providerBaseXforms.size() *
-             (sizeof(SdfPath) + sizeof(GfMatrix4d));
+    total +=
+        pose.providerXforms.size() * (sizeof(SdfPath) + sizeof(GfMatrix4d));
+    total +=
+        pose.providerBaseXforms.size() * (sizeof(SdfPath) + sizeof(GfMatrix4d));
     for (const auto &kv : pose.solverFrames) {
         total += sizeof(SdfPath) + kv.second.size() * sizeof(RigExecPointFrame);
     }
@@ -1237,16 +1252,14 @@ RigExecFrameCache::Lookup(const RigExecFrameCacheKey &key,
 }
 
 bool
-RigExecFrameCache::Lookup(const RigExecFrameCacheKey &key,
-                          RigExecRigPose *pose,
+RigExecFrameCache::Lookup(const RigExecFrameCacheKey &key, RigExecRigPose *pose,
                           std::shared_ptr<const void> *retainedOut) const
 {
     return Lookup(key, pose, retainedOut, nullptr);
 }
 
 bool
-RigExecFrameCache::Lookup(const RigExecFrameCacheKey &key,
-                          RigExecRigPose *pose,
+RigExecFrameCache::Lookup(const RigExecFrameCacheKey &key, RigExecRigPose *pose,
                           std::shared_ptr<const void> *retainedOut,
                           size_t *bytesOut) const
 {
@@ -1278,9 +1291,8 @@ RigExecFrameCache::Lookup(const RigExecFrameCacheKey &key,
             shard.map.erase(it);
             corrupt = true;
         } else {
-            entry->lastUse.store(
-                _clock.fetch_add(1, std::memory_order_relaxed),
-                std::memory_order_relaxed);
+            entry->lastUse.store(_clock.fetch_add(1, std::memory_order_relaxed),
+                                 std::memory_order_relaxed);
         }
     }
     if (corrupt) {
@@ -1303,9 +1315,8 @@ RigExecFrameCache::Lookup(const RigExecFrameCacheKey &key,
 }
 
 bool
-RigExecFrameCache::LookupProvenance(
-    const RigExecFrameCacheKey &key,
-    RigExecEntryProvenance *provenance) const
+RigExecFrameCache::LookupProvenance(const RigExecFrameCacheKey &key,
+                                    RigExecEntryProvenance *provenance) const
 {
     if (!provenance) {
         return false;
@@ -1535,8 +1546,7 @@ RigExecFrameCache::_EvictUntilUnderCap()
     // Each pass drops at most one entry; a pass that raced a touch rescans.
     // Bounded so a publisher racing us cannot spin the loop: whatever still
     // exceeds the cap is left for the next Publish or SetByteCap.
-    size_t guard =
-        _entryCount.load(std::memory_order_relaxed) + _kShardCount;
+    size_t guard = _entryCount.load(std::memory_order_relaxed) + _kShardCount;
     std::vector<RigExecFrameCacheEviction> evicted;
     while (guard-- > 0) {
         if (_bytes.load(std::memory_order_relaxed) <= cap) {
@@ -1549,8 +1559,8 @@ RigExecFrameCache::_EvictUntilUnderCap()
         for (_Shard &shard : _shards) {
             std::lock_guard<std::mutex> lock(shard.mutex);
             for (const auto &kv : shard.map) {
-                const uint64_t use = kv.second->lastUse.load(
-                    std::memory_order_relaxed);
+                const uint64_t use =
+                    kv.second->lastUse.load(std::memory_order_relaxed);
                 if (!found || use < victimUse) {
                     victim = kv.first;
                     victimUse = use;
@@ -1589,4 +1599,4 @@ RigExecFrameCache::_EvictUntilUnderCap()
     _ReportEvictions(std::move(evicted));
 }
 
-}  // namespace rigExec
+} // namespace rigExec

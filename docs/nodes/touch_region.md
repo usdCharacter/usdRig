@@ -26,7 +26,7 @@ shoulder's control is selected, with no picker window and no knowledge of where
 the rig parked its controls. Regions are *not* `GeomSubset`s — hdSt collects
 every face subset under a mesh whatever its `familyName`, so touch sets living
 there would collide with the material-bind sets sharing the same faces
-(schema.usda:4508-4512); they sit in their own `RigExecTouchRegions` scope
+(schema.usda:4503-4507); they sit in their own `RigExecTouchRegions` scope
 instead, found by type rather than by position.
 
 One named touch set: the faces it owns and the control a
@@ -46,7 +46,7 @@ face → region-index array — `-1` for unpainted skin — and hands it to the
 native mesh once (touchPoseModel.py:254-278); a pick is then a BVH ray cast to a
 face plus one array index, and the first target of `rigExec:touch:control`
 becomes the prim the selection is replaced with (touchPoseModel.py:343-344,
-touchPoseUI.py:1563-1630). The
+touchPoseUI.py:1543-1610). The
 region writes nothing to the stage: the highlight is a Storm shader tint fed by
 two synthetic primvars, `rigExecTouchRegion` (face → slot) and
 `rigExecTouchTable` (slot → colour), added by a scene-index filter

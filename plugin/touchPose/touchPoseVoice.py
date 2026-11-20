@@ -52,22 +52,14 @@ import touchPoseModel
 
 # The key held to talk.
 #
-# NOT `N`, AND THE REASON IS WORTH KEEPING. `N` was chosen by checking
-# usdview and the gizmo, was free in both, and was verified under
-# `testusdview` -- which is exactly where the check could not fail,
-# because the headless runners deliberately do not load extra panels.
-# `bin/launch.sh` DOES register the Noodles editor, and Noodles binds
-# plain `N` to "Show Noodles editor" (noodlesSettings.py,
-# `shortcutShowEditor`). A QAction shortcut is delivered before an
-# application-wide event filter ever sees the key, so in a real session
-# the hold never arrived at all and voice looked simply broken, with
-# nothing in the log: the quiet-degrade path had nothing to report
-# because nothing had failed. Hence `_Conflict` below -- a key this
-# plugin cannot actually receive is now SAID, not shrugged at.
+# A QAction shortcut is delivered before an application-wide event filter
+# ever sees the key, so a hotkey claimed by any registered panel's action
+# never reaches this filter: `_Conflict` below says so rather than
+# degrading quietly.
 #
-# Backtick instead: the push-to-talk key by convention, reachable with
-# the left hand while the right stays on the mouse, and claimed by
-# nothing in usdview (Space, Shift+H, the arrows), the gizmo
+# Backtick: the push-to-talk key by convention, reachable with the left
+# hand while the right stays on the mouse, and claimed by nothing in
+# usdview (Space, Shift+H, the arrows), the gizmo
 # (Q W E R D X B L P J C V Insert + - =), the graph editor
 # (A F I Home Delete Backspace) or Noodles (A D F G N Escape).
 _DEFAULT_KEY = "Backtick"

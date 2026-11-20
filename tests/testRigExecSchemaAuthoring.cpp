@@ -19,17 +19,17 @@
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
-using rigExec::RigExecSchemaPrim;
 using rigExec::RigExecAvarScaleFloor;
+using rigExec::RigExecSchemaPrim;
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 template <class Fn>
@@ -51,8 +51,8 @@ TestMissingSchemaFailsClosed()
         TfToken("RigExecRoot")));
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     CHECK(Throws([&] {
-        RigExecSchemaPrim::Define(
-            stage, SdfPath("/MustNotExist"), TfToken("RigExecRoot"));
+        RigExecSchemaPrim::Define(stage, SdfPath("/MustNotExist"),
+                                  TfToken("RigExecRoot"));
     }));
     CHECK(!stage->GetPrimAtPath(SdfPath("/MustNotExist")));
     return failures == 0 ? 0 : 1;
@@ -61,31 +61,30 @@ TestMissingSchemaFailsClosed()
 static void
 TestDefineGetAndStrictAttributes(const UsdStageRefPtr &stage)
 {
-    RigExecSchemaPrim root = RigExecSchemaPrim::Define(
-        stage, SdfPath("/Rig"), TfToken("RigExecRoot"));
+    RigExecSchemaPrim root = RigExecSchemaPrim::Define(stage, SdfPath("/Rig"),
+                                                       TfToken("RigExecRoot"));
     CHECK(root.IsValid());
     CHECK(root.GetPath() == SdfPath("/Rig"));
     CHECK(root.GetSchemaTypeName() == TfToken("RigExecRoot"));
     CHECK(root.GetPrim().GetTypeName() == TfToken("RigExecRoot"));
 
     // Idempotent Define and exact-type Get both retain the schema contract.
-    CHECK(RigExecSchemaPrim::Define(
-              stage, SdfPath("/Rig"), TfToken("RigExecRoot"))
+    CHECK(RigExecSchemaPrim::Define(stage, SdfPath("/Rig"),
+                                    TfToken("RigExecRoot"))
               .IsValid());
-    CHECK(RigExecSchemaPrim::Get(
-              stage, SdfPath("/Rig"), TfToken("RigExecRoot"))
+    CHECK(RigExecSchemaPrim::Get(stage, SdfPath("/Rig"), TfToken("RigExecRoot"))
               .IsValid());
     CHECK(Throws([&] {
-        RigExecSchemaPrim::Get(
-            stage, SdfPath("/Rig"), TfToken("RigExecControl"));
+        RigExecSchemaPrim::Get(stage, SdfPath("/Rig"),
+                               TfToken("RigExecControl"));
     }));
     CHECK(Throws([&] {
-        RigExecSchemaPrim::Get(
-            stage, SdfPath("/Absent"), TfToken("RigExecRoot"));
+        RigExecSchemaPrim::Get(stage, SdfPath("/Absent"),
+                               TfToken("RigExecRoot"));
     }));
 
-    root.SetAttribute(
-        TfToken("rigExec:partition"), VtValue(TfToken("Character")));
+    root.SetAttribute(TfToken("rigExec:partition"),
+                      VtValue(TfToken("Character")));
     const UsdAttribute partition =
         root.GetPrim().GetAttribute(TfToken("rigExec:partition"));
     TfToken partitionValue;
@@ -97,8 +96,8 @@ TestDefineGetAndStrictAttributes(const UsdStageRefPtr &stage)
     // A caller cannot supply a type, and the exact schema type is enforced
     // before Set() can author anything.
     CHECK(Throws([&] {
-        root.SetAttribute(
-            TfToken("rigExec:partition"), VtValue(std::string("wrong type")));
+        root.SetAttribute(TfToken("rigExec:partition"),
+                          VtValue(std::string("wrong type")));
     }));
     CHECK(partition.Get(&partitionValue));
     CHECK(partitionValue == TfToken("Character"));
@@ -108,14 +107,13 @@ TestDefineGetAndStrictAttributes(const UsdStageRefPtr &stage)
     }));
     CHECK(!root.GetPrim().GetProperty(TfToken("rigExec:notDeclared")));
     CHECK(Throws([&] {
-        root.SetRelationship(
-            TfToken("rigExec:partition"), {SdfPath("/Target")});
+        root.SetRelationship(TfToken("rigExec:partition"),
+                             {SdfPath("/Target")});
     }));
 
     CHECK(Throws([&] {
-        root.SetAttribute(
-            TfToken("rigExec:partition"), VtValue(TfToken("Animated")),
-            UsdTimeCode(12.0));
+        root.SetAttribute(TfToken("rigExec:partition"),
+                          VtValue(TfToken("Animated")), UsdTimeCode(12.0));
     }));
     CHECK(partition.Get(&partitionValue));
     CHECK(partitionValue == TfToken("Character"));
@@ -134,18 +132,15 @@ TestAppliedSchemasAndRelationships(const UsdStageRefPtr &stage)
     control.ApplyAPI(TfToken("RigExecControlAPI"));
     CHECK(control.HasAPI(TfToken("RigExecControlAPI")));
     CHECK(control.GetPrim().GetAttribute(TfToken("rigExec:channelRole")));
-    control.SetAttribute(
-        TfToken("rigExec:channelRole"), VtValue(TfToken("tweak")));
+    control.SetAttribute(TfToken("rigExec:channelRole"),
+                         VtValue(TfToken("tweak")));
 
-    // The public call takes the USD schema identifier directly. This standard
-    // API's identifier differs from its C++ TfType name, making it a regression
-    // test for identifier-vs-TfType confusion.
+    // The public call takes the USD schema identifier directly. This
+    // standard API's identifier differs from its C++ TfType name.
     control.ApplyAPI(TfToken("NodeGraphNodeAPI"));
     CHECK(control.HasAPI(TfToken("NodeGraphNodeAPI")));
 
-    CHECK(Throws([&] {
-        control.ApplyAPI(TfToken("RigExecMissingAPI"));
-    }));
+    CHECK(Throws([&] { control.ApplyAPI(TfToken("RigExecMissingAPI")); }));
 
     RigExecSchemaPrim mover = RigExecSchemaPrim::Define(
         stage, SdfPath("/Rig/Mover"), TfToken("RigExecMatrixMover"));
@@ -181,12 +176,13 @@ TestAppliedSchemasAndRelationships(const UsdStageRefPtr &stage)
 
     mover.SetAttribute(TfToken("inputs:enabled"), VtValue(false));
     bool enabled = true;
-    CHECK(mover.GetPrim().GetAttribute(TfToken("inputs:enabled")).Get(&enabled));
+    CHECK(
+        mover.GetPrim().GetAttribute(TfToken("inputs:enabled")).Get(&enabled));
     CHECK(!enabled);
 
     CHECK(Throws([&] {
-        mover.SetRelationship(
-            TfToken("rigExec:notDeclared"), {SdfPath("/Target")});
+        mover.SetRelationship(TfToken("rigExec:notDeclared"),
+                              {SdfPath("/Target")});
     }));
     CHECK(!mover.GetPrim().GetProperty(TfToken("rigExec:notDeclared")));
     CHECK(Throws([&] {
@@ -194,15 +190,14 @@ TestAppliedSchemasAndRelationships(const UsdStageRefPtr &stage)
     }));
 
     // The weight-object relationship is common too, including for a scalar
-    // property mover.  MatrixMover used to declare this relationship itself,
-    // so using FloatMathMover here proves it really comes from MoverAPI.
+    // property mover, so using FloatMathMover here proves it really comes
+    // from MoverAPI.
     RigExecSchemaPrim scalarMover = RigExecSchemaPrim::Define(
         stage, SdfPath("/Rig/ScalarMover"), TfToken("RigExecFloatMathMover"));
     scalarMover.ApplyAPI(TfToken("RigExecMoverAPI"));
     CHECK(!Throws([&] {
-        scalarMover.SetRelationship(
-            TfToken("rigExec:weightObject"),
-            {SdfPath("/Rig/Weights/Scalar")});
+        scalarMover.SetRelationship(TfToken("rigExec:weightObject"),
+                                    {SdfPath("/Rig/Weights/Scalar")});
     }));
     const UsdRelationship scalarWeight =
         scalarMover.GetPrim().GetRelationship(TfToken("rigExec:weightObject"));
@@ -225,17 +220,17 @@ TestAppliedSchemasAndRelationships(const UsdStageRefPtr &stage)
     for (const auto &legacyEnvelopeName : legacyEnvelopeNames) {
         const char *typeName = legacyEnvelopeName.first;
         const char *propertyName = legacyEnvelopeName.second;
-        const SdfPath path = SdfPath("/Rig").AppendChild(
-            TfToken(std::string(typeName).substr(std::string("RigExec").size())));
-        RigExecSchemaPrim operation = RigExecSchemaPrim::Define(
-            stage, path, TfToken(typeName));
+        const SdfPath path = SdfPath("/Rig").AppendChild(TfToken(
+            std::string(typeName).substr(std::string("RigExec").size())));
+        RigExecSchemaPrim operation =
+            RigExecSchemaPrim::Define(stage, path, TfToken(typeName));
         operation.ApplyAPI(TfToken("RigExecMoverAPI"));
         CHECK(Throws([&] {
             operation.SetAttribute(TfToken(propertyName), VtValue(0.5f));
         }));
         CHECK(!operation.GetPrim().GetProperty(TfToken(propertyName)));
-        CHECK(operation.GetPrim().GetAttribute(
-            TfToken("inputs:defaultWeight")));
+        CHECK(
+            operation.GetPrim().GetAttribute(TfToken("inputs:defaultWeight")));
     }
 }
 
@@ -276,9 +271,8 @@ TestAvarScaleSchemaContract(const UsdStageRefPtr &stage)
         // floor. Negative zero and negative sub-floor values remain mirrors.
         authored.SetAttribute(TfToken("avars:sx"), VtValue(0.0));
         authored.SetAttribute(TfToken("avars:sy"), VtValue(-0.0));
-        authored.SetAttribute(
-            TfToken("avars:sz"),
-            VtValue(-0.5 * RigExecAvarScaleFloor));
+        authored.SetAttribute(TfToken("avars:sz"),
+                              VtValue(-0.5 * RigExecAvarScaleFloor));
         double sx = 0.0, sz = 0.0;
         CHECK(prim.GetAttribute(TfToken("avars:sx")).Get(&sx));
         CHECK(prim.GetAttribute(TfToken("avars:sy")).Get(&sy));
@@ -297,13 +291,12 @@ TestAvarScaleSchemaContract(const UsdStageRefPtr &stage)
 
         // Non-finite scale is not a stage value in the strict contract. Each
         // rejection happens before mutation and preserves the signed floor.
-        for (const double nonFinite : {
-                 std::numeric_limits<double>::quiet_NaN(),
-                 std::numeric_limits<double>::infinity(),
-                 -std::numeric_limits<double>::infinity()}) {
+        for (const double nonFinite :
+             {std::numeric_limits<double>::quiet_NaN(),
+              std::numeric_limits<double>::infinity(),
+              -std::numeric_limits<double>::infinity()}) {
             CHECK(Throws([&] {
-                authored.SetAttribute(
-                    TfToken("avars:sy"), VtValue(nonFinite));
+                authored.SetAttribute(TfToken("avars:sy"), VtValue(nonFinite));
             }));
             CHECK(prim.GetAttribute(TfToken("avars:sy")).Get(&sy));
             CHECK(sy == -RigExecAvarScaleFloor);
@@ -318,8 +311,8 @@ TestReadPhaseMetadataAndRetypeGuard(const UsdStageRefPtr &stage)
         stage, SdfPath("/Rig/Mover"), TfToken("RigExecMatrixMover"));
     // The read phase is metadata only: the role-named attribute is gone.
     CHECK(Throws([&] {
-        mover.SetAttribute(
-            TfToken("rigExec:transformReadPhase"), VtValue(TfToken("final")));
+        mover.SetAttribute(TfToken("rigExec:transformReadPhase"),
+                           VtValue(TfToken("final")));
     }));
     mover.SetReadPhase(TfToken("rigExec:transform"), "final");
     // Any declared property can carry the field, attributes included.
@@ -335,15 +328,13 @@ TestReadPhaseMetadataAndRetypeGuard(const UsdStageRefPtr &stage)
               .GetMetadata(TfToken("rigExecReadPhase"), &phase));
     CHECK(phase == "/Rig/Movers/Previous");
 
-    CHECK(Throws([&] {
-        mover.SetReadPhase(TfToken("rigExec:notDeclared"), "base");
-    }));
+    CHECK(Throws(
+        [&] { mover.SetReadPhase(TfToken("rigExec:notDeclared"), "base"); }));
     CHECK(!mover.GetPrim().GetProperty(TfToken("rigExec:notDeclared")));
 
     // Handles do not become generic authoring proxies if another tool retypes
     // the prim after Get/Define.
-    CHECK(stage->DefinePrim(
-        SdfPath("/Rig/Mover"), TfToken("RigExecJoint")));
+    CHECK(stage->DefinePrim(SdfPath("/Rig/Mover"), TfToken("RigExecJoint")));
     CHECK(!mover.IsValid());
     CHECK(Throws([&] {
         mover.SetAttribute(TfToken("rest:space"), VtValue(GfMatrix4d(1.0)));

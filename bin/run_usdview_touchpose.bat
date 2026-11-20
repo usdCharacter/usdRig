@@ -19,12 +19,8 @@ rem picking is back exactly as it was.
 rem
 rem Alt still drives the camera, untouched.
 rem
-rem Why this exists rather than a flag on launch_usdview.bat: that script
-rem is the RigExec launcher and registers usdNoodles;
-rem this one adds plugin\touchPose to PXR_PLUGINPATH_NAME the same way,
-rem APPENDING to the canonical value _env.bat sets rather than replacing
-rem it (pointing it at the SOURCE schema resources instead of the
-rem generated ones fails with a duplicate-plugin registration error).
+rem This one adds plugin\touchPose to PXR_PLUGINPATH_NAME, APPENDING to the
+rem canonical value _env.bat sets rather than replacing it.
 rem
 rem DELIBERATELY NO `cmake --build`: an already-open usdview holds a lock
 rem on build\rigExec.dll that would fail the link. TouchPose's native half

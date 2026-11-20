@@ -1,4 +1,4 @@
-// Persistent graph and interactive edit regressions through the public evaluator.
+// Persistent graph and interactive edits through the public evaluator.
 #include "rigExec/bakedProgramImpl.h"
 #include "rigExec/frozenContext.h"
 #include "rigExec/inputReplay.h"
@@ -18,17 +18,23 @@
 
 using namespace rigExec;
 static int failures = 0;
-#define CHECK(condition) do { if (!(condition)) { ++failures; \
-    std::printf("FAIL %d: %s\n", __LINE__, #condition); } } while (0)
+#define CHECK(condition)                                                       \
+    do {                                                                       \
+        if (!(condition)) {                                                    \
+            ++failures;                                                        \
+            std::printf("FAIL %d: %s\n", __LINE__, #condition);                \
+        }                                                                      \
+    } while (0)
 
-static void TestPersistentChains()
+static void
+TestPersistentChains()
 {
     constexpr size_t count = 256;
     auto stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const UsdPrim driver = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Driver"), TfToken("RigExecControl"));
+    const UsdPrim driver = stage->DefinePrim(SdfPath("/Asset/Rig/Driver"),
+                                             TfToken("RigExecControl"));
     driver.GetAttribute(TfToken("avars:tx")).Set(1.0);
     const UsdPrim sideDriver = stage->DefinePrim(
         SdfPath("/Asset/Rig/SideDriver"), TfToken("RigExecControl"));
@@ -36,10 +42,12 @@ static void TestPersistentChains()
     const SdfPath target("/Asset/Shape.points");
     const SdfPath sideTarget("/Asset/Side.points");
     for (const SdfPath &path : {target, sideTarget}) {
-        const UsdPrim points = stage->DefinePrim(path.GetPrimPath(), TfToken("Points"));
+        const UsdPrim points =
+            stage->DefinePrim(path.GetPrimPath(), TfToken("Points"));
         points.GetAttribute(TfToken("points")).Set(VtVec3fArray{GfVec3f(0)});
     }
-    stage->GetPrimAtPath(target.GetPrimPath()).GetAttribute(TfToken("extent"))
+    stage->GetPrimAtPath(target.GetPrimPath())
+        .GetAttribute(TfToken("extent"))
         .Set(VtVec3fArray{GfVec3f(0), GfVec3f(0)});
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
     for (size_t i = 0; i <= count; ++i) {
@@ -56,21 +64,27 @@ static void TestPersistentChains()
     RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
     std::vector<std::string> errors;
     CHECK(evaluator.Compile(&errors));
-    for (const auto &error : errors) std::printf("compile: %s\n", error.c_str());
+    for (const auto &error : errors)
+        std::printf("compile: %s\n", error.c_str());
     const size_t compiledRig = evaluator.GetCompiledRigSignature();
     auto checkPose = [&](const RigExecRigPose &pose, float expectedX) {
         CHECK(pose.valid);
         const auto found = pose.movedProperties.find(target);
         CHECK(found != pose.movedProperties.end());
-        if (found == pose.movedProperties.end()) return;
+        if (found == pose.movedProperties.end())
+            return;
         const auto points = found->second.Get<VtVec3fArray>();
         CHECK(points.size() == 1);
-        if (!points.empty()) CHECK(std::abs(points[0][0] - expectedX) < 1e-4f);
-        const auto extent = pose.movedProperties.at(SdfPath("/Asset/Shape.extent"))
-            .Get<VtVec3fArray>();
+        if (!points.empty())
+            CHECK(std::abs(points[0][0] - expectedX) < 1e-4f);
+        const auto extent =
+            pose.movedProperties.at(SdfPath("/Asset/Shape.extent"))
+                .Get<VtVec3fArray>();
         CHECK(extent.size() == 2);
-        if (extent.size() == 2) CHECK(std::abs(extent[1][0] - expectedX) < 1e-4f);
-        const auto side = pose.movedProperties.at(sideTarget).Get<VtVec3fArray>();
+        if (extent.size() == 2)
+            CHECK(std::abs(extent[1][0] - expectedX) < 1e-4f);
+        const auto side =
+            pose.movedProperties.at(sideTarget).Get<VtVec3fArray>();
         CHECK(side.size() == 1 && side[0] == GfVec3f(0, 2, 0));
     };
     auto pose = evaluator.Evaluate(UsdTimeCode::Default());
@@ -85,11 +99,12 @@ static void TestPersistentChains()
     // prefix and the independent branch must remain cached.
     SdfPath last;
     for (const auto &mover : evaluator.GetMoverOrder()) {
-        if (mover.targets == std::vector<SdfPath>{target}) last = mover.moverPath;
+        if (mover.targets == std::vector<SdfPath>{target})
+            last = mover.moverPath;
     }
     CHECK(!last.IsEmpty());
-    const auto weight = stage->GetPrimAtPath(last)
-        .GetAttribute(TfToken("inputs:defaultWeight"));
+    const auto weight = stage->GetPrimAtPath(last).GetAttribute(
+        TfToken("inputs:defaultWeight"));
     weight.Set(0.5f);
     pose = evaluator.Evaluate(UsdTimeCode::Default());
     checkPose(pose, float(count) - 0.5f);
@@ -103,8 +118,8 @@ static void TestPersistentChains()
 
     CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
 
-    const auto enabled = stage->GetPrimAtPath(last)
-        .GetAttribute(TfToken("inputs:enabled"));
+    const auto enabled =
+        stage->GetPrimAtPath(last).GetAttribute(TfToken("inputs:enabled"));
     enabled.Set(false);
     pose = evaluator.Evaluate(UsdTimeCode::Default());
     checkPose(pose, float(count) + 9.0f);
@@ -123,38 +138,54 @@ static void TestPersistentChains()
     CHECK(pose.referenceMismatches == 0);
 }
 
-static void TestStructuralSplices()
+static void
+TestStructuralSplices()
 {
     auto stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    auto scope = stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
-    auto driver = stage->DefinePrim(SdfPath("/Asset/Rig/C"), TfToken("RigExecControl"));
+    auto scope =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
+    auto driver =
+        stage->DefinePrim(SdfPath("/Asset/Rig/C"), TfToken("RigExecControl"));
     driver.GetAttribute(TfToken("avars:tx")).Set(1.0);
-    auto other = stage->DefinePrim(SdfPath("/Asset/Rig/D"), TfToken("RigExecControl"));
+    auto other =
+        stage->DefinePrim(SdfPath("/Asset/Rig/D"), TfToken("RigExecControl"));
     other.GetAttribute(TfToken("avars:tx")).Set(3.0);
     for (const char *name : {"Shape", "Side"}) {
-        stage->DefinePrim(SdfPath(std::string("/Asset/") + name), TfToken("Points"))
-            .GetAttribute(TfToken("points")).Set(VtVec3fArray{GfVec3f(0)});
+        stage
+            ->DefinePrim(SdfPath(std::string("/Asset/") + name),
+                         TfToken("Points"))
+            .GetAttribute(TfToken("points"))
+            .Set(VtVec3fArray{GfVec3f(0)});
     }
     const SdfPath target("/Asset/Shape.points"), side("/Asset/Side.points");
     auto add = [&](const std::string &name, const SdfPath &out) {
-        auto prim = stage->DefinePrim(scope.GetPath().AppendChild(TfToken(name)),
-                                     TfToken("RigExecMatrixMover"));
+        auto prim =
+            stage->DefinePrim(scope.GetPath().AppendChild(TfToken(name)),
+                              TfToken("RigExecMatrixMover"));
         prim.ApplyAPI(TfToken("RigExecMoverAPI"));
         prim.GetRelationship(TfToken("rigExec:moves")).SetTargets({out});
-        prim.GetRelationship(TfToken("rigExec:transform")).SetTargets({driver.GetPath()});
+        prim.GetRelationship(TfToken("rigExec:transform"))
+            .SetTargets({driver.GetPath()});
         return prim;
     };
     constexpr int count = 128;
-    for (int i = 0; i < count; ++i) add("M" + std::to_string(i), target);
+    for (int i = 0; i < count; ++i)
+        add("M" + std::to_string(i), target);
     add("Side", side);
     RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
-    auto pull = [&]() { auto p = evaluator.Evaluate(UsdTimeCode::Default());
-        for (const auto &s : p.diagnostics) if (!p.valid) std::printf("%s\n", s.c_str());
-        CHECK(p.valid); return p; };
+    auto pull = [&]() {
+        auto p = evaluator.Evaluate(UsdTimeCode::Default());
+        for (const auto &s : p.diagnostics)
+            if (!p.valid)
+                std::printf("%s\n", s.c_str());
+        CHECK(p.valid);
+        return p;
+    };
     auto x = [&](const RigExecRigPose &p) {
-        return p.movedProperties.at(target).Get<VtVec3fArray>()[0][0]; };
+        return p.movedProperties.at(target).Get<VtVec3fArray>()[0][0];
+    };
     auto pose = pull();
     CHECK(x(pose) == count);
     // Stable tap systems share compiler nodes across requests and compiled rig versions.
@@ -167,13 +198,15 @@ static void TestStructuralSplices()
     // Reverse sibling traversal: first child executes last.
     TfTokenVector names{TfToken("Inserted")};
     for (const auto &child : scope.GetChildren())
-        if (child != tail) names.push_back(child.GetName());
+        if (child != tail)
+            names.push_back(child.GetName());
     scope.SetChildrenReorder(names);
     pose = pull();
     CHECK(x(pose) == count + 1);
 
     CHECK(first.GetSystem() == system);
-    tail.GetRelationship(TfToken("rigExec:transform")).SetTargets({other.GetPath()});
+    tail.GetRelationship(TfToken("rigExec:transform"))
+        .SetTargets({other.GetPath()});
     pose = pull();
     CHECK(x(pose) == count + 3);
 
@@ -195,68 +228,86 @@ static void TestStructuralSplices()
     CHECK(pose.movedProperties.at(side).Get<VtVec3fArray>()[0][0] == 1);
 }
 
-static void TestBlendSampleReadPhases()
+static void
+TestBlendSampleReadPhases()
 {
     auto stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const auto scope = stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
-    const SdfPath target("/Asset/Shape.points"), samplePoints("/Asset/Sample.points");
+    const auto scope =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
+    const SdfPath target("/Asset/Shape.points"),
+        samplePoints("/Asset/Sample.points");
     for (const auto &path : {target, samplePoints}) {
         stage->DefinePrim(path.GetPrimPath(), TfToken("Points"))
             .GetAttribute(TfToken("points"))
             .Set(VtVec3fArray{path == target ? GfVec3f(0) : GfVec3f(10, 0, 0)});
     }
-    const auto x = stage->DefinePrim(SdfPath("/Asset/Rig/X"), TfToken("RigExecControl"));
-    const auto y = stage->DefinePrim(SdfPath("/Asset/Rig/Y"), TfToken("RigExecControl"));
+    const auto x =
+        stage->DefinePrim(SdfPath("/Asset/Rig/X"), TfToken("RigExecControl"));
+    const auto y =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Y"), TfToken("RigExecControl"));
     x.GetAttribute(TfToken("avars:tx")).Set(2.0);
     y.GetAttribute(TfToken("avars:ty")).Set(3.0);
-    for (const auto &entry : {std::make_pair("Early", x), std::make_pair("Late", y)}) {
-        const auto mover = stage->DefinePrim(scope.GetPath().AppendChild(TfToken(entry.first)),
-                                             TfToken("RigExecMatrixMover"));
+    for (const auto &entry :
+         {std::make_pair("Early", x), std::make_pair("Late", y)}) {
+        const auto mover =
+            stage->DefinePrim(scope.GetPath().AppendChild(TfToken(entry.first)),
+                              TfToken("RigExecMatrixMover"));
         mover.ApplyAPI(TfToken("RigExecMoverAPI"));
-        mover.GetRelationship(TfToken("rigExec:moves")).SetTargets({samplePoints});
-        mover.GetRelationship(TfToken("rigExec:transform")).SetTargets({entry.second.GetPath()});
+        mover.GetRelationship(TfToken("rigExec:moves"))
+            .SetTargets({samplePoints});
+        mover.GetRelationship(TfToken("rigExec:transform"))
+            .SetTargets({entry.second.GetPath()});
     }
-    const auto sample = stage->DefinePrim(SdfPath("/Asset/Rig/S"), TfToken("RigExecBlendSample"));
-    sample.GetRelationship(TfToken("rigExec:targetPoints")).SetTargets({samplePoints});
-    const auto channel = stage->DefinePrim(SdfPath("/Asset/Rig/B"), TfToken("RigExecBlendInput"));
+    const auto sample = stage->DefinePrim(SdfPath("/Asset/Rig/S"),
+                                          TfToken("RigExecBlendSample"));
+    sample.GetRelationship(TfToken("rigExec:targetPoints"))
+        .SetTargets({samplePoints});
+    const auto channel = stage->DefinePrim(SdfPath("/Asset/Rig/B"),
+                                           TfToken("RigExecBlendInput"));
     channel.GetAttribute(TfToken("inputs:weight")).Set(1.0f);
-    channel.GetRelationship(TfToken("rigExec:samples")).SetTargets({sample.GetPath()});
-    const auto blend = stage->DefinePrim(scope.GetPath().AppendChild(TfToken("Blend")),
-                                         TfToken("RigExecBlendShapeMover"));
+    channel.GetRelationship(TfToken("rigExec:samples"))
+        .SetTargets({sample.GetPath()});
+    const auto blend =
+        stage->DefinePrim(scope.GetPath().AppendChild(TfToken("Blend")),
+                          TfToken("RigExecBlendShapeMover"));
     blend.ApplyAPI(TfToken("RigExecMoverAPI"));
     blend.GetRelationship(TfToken("rigExec:moves")).SetTargets({target});
-    blend.GetRelationship(TfToken("rigExec:blendInputs")).SetTargets({channel.GetPath()});
-    scope.SetChildrenReorder({TfToken("Late"), TfToken("Blend"), TfToken("Early")});
+    blend.GetRelationship(TfToken("rigExec:blendInputs"))
+        .SetTargets({channel.GetPath()});
+    scope.SetChildrenReorder(
+        {TfToken("Late"), TfToken("Blend"), TfToken("Early")});
     RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
     evaluator.cpuReference = true;
     auto check = [&](const GfVec3f &expected, bool retained) {
         const auto pose = evaluator.Evaluate(UsdTimeCode::Default());
         CHECK(pose.valid);
         if (!pose.valid) {
-            for (const auto &s : pose.diagnostics) std::printf("%s\n", s.c_str());
+            for (const auto &s : pose.diagnostics)
+                std::printf("%s\n", s.c_str());
             return;
         }
-        CHECK(pose.movedProperties.at(target).Get<VtVec3fArray>()[0] == expected);
+        CHECK(pose.movedProperties.at(target).Get<VtVec3fArray>()[0] ==
+              expected);
         CHECK(pose.referenceMismatches == 0);
-
     };
     check(GfVec3f(10, 0, 0), false);
     const UsdRelationship targetPoints =
         sample.GetRelationship(TfToken("rigExec:targetPoints"));
-    targetPoints.SetMetadata(
-        TfToken(RigExecReadPhaseMetadataName), std::string("final"));
+    targetPoints.SetMetadata(TfToken(RigExecReadPhaseMetadataName),
+                             std::string("final"));
     check(GfVec3f(12, 3, 0), true);
     x.GetAttribute(TfToken("avars:tx")).Set(4.0);
     check(GfVec3f(14, 3, 0), true);
-    targetPoints.SetMetadata(
-        TfToken(RigExecReadPhaseMetadataName), std::string("preceding"));
+    targetPoints.SetMetadata(TfToken(RigExecReadPhaseMetadataName),
+                             std::string("preceding"));
     check(GfVec3f(14, 0, 0), true);
-    targetPoints.SetMetadata(
-        TfToken(RigExecReadPhaseMetadataName), std::string("final"));
+    targetPoints.SetMetadata(TfToken(RigExecReadPhaseMetadataName),
+                             std::string("final"));
     check(GfVec3f(14, 3, 0), true);
-    sample.GetRelationship(TfToken("rigExec:targetPoints")).SetTargets({target});
+    sample.GetRelationship(TfToken("rigExec:targetPoints"))
+        .SetTargets({target});
     std::string cyclicAuthored;
     CHECK(stage->GetRootLayer()->ExportToString(&cyclicAuthored));
     const auto cyclic = evaluator.Evaluate(UsdTimeCode::Default());
@@ -264,12 +315,16 @@ static void TestBlendSampleReadPhases()
     const auto skipped = evaluator.GetSkippedOperations();
     CHECK(skipped.size() == 1);
     CHECK(skipped.count(blend.GetPath()) == 1);
-    if (const auto found = skipped.find(blend.GetPath()); found != skipped.end()) {
+    if (const auto found = skipped.find(blend.GetPath());
+        found != skipped.end()) {
         CHECK(found->second.find("operation cycle") != std::string::npos);
-        CHECK(found->second.find(blend.GetPath().GetString()) != std::string::npos);
-        CHECK(found->second.find(blend.GetPath().GetString() +
-            ": read phase 'final' on " + target.GetString() +
-            " creates a self dependency on the final output") != std::string::npos);
+        CHECK(found->second.find(blend.GetPath().GetString()) !=
+              std::string::npos);
+        CHECK(found->second.find(
+                  blend.GetPath().GetString() + ": read phase 'final' on " +
+                  target.GetString() +
+                  " creates a self dependency on the final output") !=
+              std::string::npos);
     }
     // The common SCC report excludes only the blend's authored owner. Both
     // unrelated matrix movers stay in the live graph; repeat reporting is stable.
@@ -282,53 +337,72 @@ static void TestBlendSampleReadPhases()
     std::string afterCycle;
     CHECK(stage->GetRootLayer()->ExportToString(&afterCycle));
     CHECK(afterCycle == cyclicAuthored);
-    sample.GetRelationship(TfToken("rigExec:targetPoints")).SetTargets({samplePoints});
+    sample.GetRelationship(TfToken("rigExec:targetPoints"))
+        .SetTargets({samplePoints});
     check(GfVec3f(14, 3, 0), false);
     CHECK(evaluator.GetSkippedOperations().empty());
     const SdfPath secondTarget("/Asset/Second.points");
     stage->DefinePrim(secondTarget.GetPrimPath(), TfToken("Points"))
-        .GetAttribute(TfToken("points")).Set(VtVec3fArray{GfVec3f(100, 0, 0)});
-    blend.GetRelationship(TfToken("rigExec:moves")).SetTargets({target, secondTarget});
+        .GetAttribute(TfToken("points"))
+        .Set(VtVec3fArray{GfVec3f(100, 0, 0)});
+    blend.GetRelationship(TfToken("rigExec:moves"))
+        .SetTargets({target, secondTarget});
     channel.GetAttribute(TfToken("inputs:weight")).Set(0.5f);
     const auto fanout = evaluator.Evaluate(UsdTimeCode::Default());
     CHECK(fanout.valid);
-    CHECK(fanout.movedProperties.at(target).Get<VtVec3fArray>()[0] == GfVec3f(7, 1.5f, 0));
-    CHECK(fanout.movedProperties.at(secondTarget).Get<VtVec3fArray>()[0] == GfVec3f(57, 1.5f, 0));
+    CHECK(fanout.movedProperties.at(target).Get<VtVec3fArray>()[0] ==
+          GfVec3f(7, 1.5f, 0));
+    CHECK(fanout.movedProperties.at(secondTarget).Get<VtVec3fArray>()[0] ==
+          GfVec3f(57, 1.5f, 0));
 
     CHECK(fanout.referenceMismatches == 0);
 }
 
-static void TestBlendSurfaceFrames()
+static void
+TestBlendSurfaceFrames()
 {
     auto stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const auto mesh = stage->DefinePrim(SdfPath("/Asset/Mesh"), TfToken("Mesh"));
-    const VtVec3fArray rest{{0,0,0}, {1,0,0}, {1,1,0}, {0,1,0}};
+    const auto mesh =
+        stage->DefinePrim(SdfPath("/Asset/Mesh"), TfToken("Mesh"));
+    const VtVec3fArray rest{{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}};
     mesh.GetAttribute(TfToken("points")).Set(rest);
     mesh.GetAttribute(TfToken("faceVertexCounts")).Set(VtIntArray{4});
-    mesh.GetAttribute(TfToken("faceVertexIndices")).Set(VtIntArray{0,1,2,3});
-    const auto control = stage->DefinePrim(SdfPath("/Asset/Rig/C"), TfToken("RigExecControl"));
+    mesh.GetAttribute(TfToken("faceVertexIndices")).Set(VtIntArray{0, 1, 2, 3});
+    const auto control =
+        stage->DefinePrim(SdfPath("/Asset/Rig/C"), TfToken("RigExecControl"));
     control.GetAttribute(TfToken("avars:rx")).Set(90.0);
     const SdfPath target("/Asset/Mesh.points");
-    const auto rotate = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/A"), TfToken("RigExecMatrixMover"));
+    const auto rotate = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/A"),
+                                          TfToken("RigExecMatrixMover"));
     rotate.ApplyAPI(TfToken("RigExecMoverAPI"));
     rotate.GetRelationship(TfToken("rigExec:moves")).SetTargets({target});
-    rotate.GetRelationship(TfToken("rigExec:transform")).SetTargets({control.GetPath()});
-    const auto sculpt = stage->DefinePrim(SdfPath("/Asset/Sculpt"), TfToken("Points"));
+    rotate.GetRelationship(TfToken("rigExec:transform"))
+        .SetTargets({control.GetPath()});
+    const auto sculpt =
+        stage->DefinePrim(SdfPath("/Asset/Sculpt"), TfToken("Points"));
     auto shape = rest;
-    for (auto &p : shape) p[2] += 1.0f;
+    for (auto &p : shape)
+        p[2] += 1.0f;
     sculpt.GetAttribute(TfToken("points")).Set(shape);
-    const auto sample = stage->DefinePrim(SdfPath("/Asset/Rig/Sample"), TfToken("RigExecBlendSample"));
-    sample.GetRelationship(TfToken("rigExec:targetPoints")).SetTargets({SdfPath("/Asset/Sculpt.points")});
-    const auto channel = stage->DefinePrim(SdfPath("/Asset/Rig/Channel"), TfToken("RigExecBlendInput"));
-    channel.GetRelationship(TfToken("rigExec:samples")).SetTargets({sample.GetPath()});
+    const auto sample = stage->DefinePrim(SdfPath("/Asset/Rig/Sample"),
+                                          TfToken("RigExecBlendSample"));
+    sample.GetRelationship(TfToken("rigExec:targetPoints"))
+        .SetTargets({SdfPath("/Asset/Sculpt.points")});
+    const auto channel = stage->DefinePrim(SdfPath("/Asset/Rig/Channel"),
+                                           TfToken("RigExecBlendInput"));
+    channel.GetRelationship(TfToken("rigExec:samples"))
+        .SetTargets({sample.GetPath()});
     channel.GetAttribute(TfToken("inputs:weight")).Set(1.0f);
-    const auto blend = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/B"), TfToken("RigExecBlendShapeMover"));
+    const auto blend = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/B"),
+                                         TfToken("RigExecBlendShapeMover"));
     blend.ApplyAPI(TfToken("RigExecMoverAPI"));
     blend.GetRelationship(TfToken("rigExec:moves")).SetTargets({target});
-    blend.GetRelationship(TfToken("rigExec:blendInputs")).SetTargets({channel.GetPath()});
-    blend.GetAttribute(TfToken("rigExec:deltaSpace")).Set(TfToken("surfaceFrame"));
+    blend.GetRelationship(TfToken("rigExec:blendInputs"))
+        .SetTargets({channel.GetPath()});
+    blend.GetAttribute(TfToken("rigExec:deltaSpace"))
+        .Set(TfToken("surfaceFrame"));
     stage->GetPrimAtPath(SdfPath("/Asset/Rig/Movers"))
         .SetChildrenReorder({TfToken("B"), TfToken("A")});
     RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
@@ -337,55 +411,75 @@ static void TestBlendSurfaceFrames()
     auto check = [&](const GfVec3f &expected) {
         const auto pose = evaluator.Evaluate(UsdTimeCode::Default());
         CHECK(pose.valid && pose.referenceMismatches == 0);
-        if (pose.valid) CHECK((pose.movedProperties.at(target).Get<VtVec3fArray>()[0] - expected).GetLength() < 1e-5f);
+        if (pose.valid)
+            CHECK((pose.movedProperties.at(target).Get<VtVec3fArray>()[0] -
+                   expected)
+                      .GetLength() < 1e-5f);
         return pose;
     };
-    check(GfVec3f(0,-1,0));
+    check(GfVec3f(0, -1, 0));
     channel.GetAttribute(TfToken("inputs:weight")).Set(0.5f);
-    const auto edited = check(GfVec3f(0,-0.5f,0));
+    const auto edited = check(GfVec3f(0, -0.5f, 0));
 
     blend.GetAttribute(TfToken("rigExec:deltaSpace")).Set(TfToken("target"));
-    check(GfVec3f(0,0,0.5f));
+    check(GfVec3f(0, 0, 0.5f));
     blend.GetAttribute(TfToken("rigExec:deltaSpace")).Set(TfToken("unknown"));
     CHECK(evaluator.Evaluate(UsdTimeCode::Default()).valid);
     CHECK(evaluator.GetSkippedOperations().count(blend.GetPath()) == 1);
-    blend.GetAttribute(TfToken("rigExec:deltaSpace")).Set(TfToken("surfaceFrame"));
-    check(GfVec3f(0,-0.5f,0));
+    blend.GetAttribute(TfToken("rigExec:deltaSpace"))
+        .Set(TfToken("surfaceFrame"));
+    check(GfVec3f(0, -0.5f, 0));
 }
 
-static void TestGeometryConstraintsCompose()
+static void
+TestGeometryConstraintsCompose()
 {
     auto stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const auto scope = stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
+    const auto scope =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
     const SdfPath target("/Asset/Shape.points");
     stage->DefinePrim(target.GetPrimPath(), TfToken("Points"))
-        .GetAttribute(TfToken("points")).Set(VtVec3fArray{GfVec3f(1,0,0)});
+        .GetAttribute(TfToken("points"))
+        .Set(VtVec3fArray{GfVec3f(1, 0, 0)});
     auto driver = [&](const char *name, double x) {
-        const auto prim = stage->DefinePrim(SdfPath(std::string("/Asset/Rig/") + name), TfToken("RigExecControl"));
+        const auto prim =
+            stage->DefinePrim(SdfPath(std::string("/Asset/Rig/") + name),
+                              TfToken("RigExecControl"));
         prim.GetAttribute(TfToken("avars:tx")).Set(x);
         return prim;
     };
     const auto a = driver("A", 10), b = driver("B", 2), c = driver("C", 3);
-    auto mover = [&](const char *name, const char *type, const char *rel, const UsdPrim &source) {
-        const auto prim = stage->DefinePrim(scope.GetPath().AppendChild(TfToken(name)), TfToken(type));
+    auto mover = [&](const char *name, const char *type, const char *rel,
+                     const UsdPrim &source) {
+        const auto prim = stage->DefinePrim(
+            scope.GetPath().AppendChild(TfToken(name)), TfToken(type));
         prim.ApplyAPI(TfToken("RigExecMoverAPI"));
         prim.GetRelationship(TfToken("rigExec:moves")).SetTargets({target});
         prim.GetRelationship(TfToken(rel)).SetTargets({source.GetPath()});
         return prim;
     };
     mover("Matrix", "RigExecMatrixMover", "rigExec:transform", a);
-    const auto first = mover("First", "RigExecPositionConstraint", "rigExec:sources", b);
-    const auto last = mover("Last", "RigExecPositionConstraint", "rigExec:sources", c);
-    scope.SetChildrenReorder({TfToken("Last"), TfToken("First"), TfToken("Matrix")});
+    const auto first =
+        mover("First", "RigExecPositionConstraint", "rigExec:sources", b);
+    const auto last =
+        mover("Last", "RigExecPositionConstraint", "rigExec:sources", c);
+    scope.SetChildrenReorder(
+        {TfToken("Last"), TfToken("First"), TfToken("Matrix")});
     RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
     evaluator.cpuReference = true;
     auto check = [&](float expected) {
         const auto pose = evaluator.Evaluate(UsdTimeCode::Default());
         CHECK(pose.valid && pose.referenceMismatches == 0);
-        if (pose.valid) CHECK(std::abs(pose.movedProperties.at(target).Get<VtVec3fArray>()[0][0] - expected) < 1e-5f);
-        else for (const auto &d : pose.diagnostics) std::printf("%s\n", d.c_str());
+        if (pose.valid)
+            CHECK(
+                std::abs(
+                    pose.movedProperties.at(target).Get<VtVec3fArray>()[0][0] -
+                    expected) < 1e-5f);
+        else
+            for (const auto &d : pose.diagnostics)
+                std::printf("%s\n", d.c_str());
         return pose;
     };
     check(16);
@@ -405,32 +499,36 @@ static void TestGeometryConstraintsCompose()
         .Set(GfVec3d(std::numeric_limits<double>::quiet_NaN(), 0, 0));
     pose = check(11);
     CHECK(std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
-        [](const std::string &d) { return d.find("MoverFailed /Asset/Rig/Movers/Last") != std::string::npos; }));
+                      [](const std::string &d) {
+                          return d.find("MoverFailed /Asset/Rig/Movers/Last") !=
+                                 std::string::npos;
+                      }));
     last.GetAttribute(TfToken("inputs:translationOffset")).Set(GfVec3d(0));
     check(15);
 }
 
-static void TestAnimatedPointCounts()
+static void
+TestAnimatedPointCounts()
 {
     auto stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const auto control = stage->DefinePrim(
-        SdfPath("/Asset/Rig/C"), TfToken("RigExecControl"));
+    const auto control =
+        stage->DefinePrim(SdfPath("/Asset/Rig/C"), TfToken("RigExecControl"));
     control.GetAttribute(TfToken("avars:tx")).Set(2.0);
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
     for (const char *name : {"Changing", "Fixed"}) {
         const SdfPath target(std::string("/Asset/") + name);
         const auto points = stage->DefinePrim(target, TfToken("Points"))
-            .GetAttribute(TfToken("points"));
+                                .GetAttribute(TfToken("points"));
         points.Set(VtVec3fArray{GfVec3f(0)}, UsdTimeCode(1));
         if (std::string(name) == "Changing") {
             points.Set(VtVec3fArray{GfVec3f(10, 0, 0), GfVec3f(20, 0, 0)},
                        UsdTimeCode(2));
         }
-        const auto mover = stage->DefinePrim(
-            SdfPath(std::string("/Asset/Rig/Movers/") + name),
-            TfToken("RigExecMatrixMover"));
+        const auto mover =
+            stage->DefinePrim(SdfPath(std::string("/Asset/Rig/Movers/") + name),
+                              TfToken("RigExecMatrixMover"));
         mover.ApplyAPI(TfToken("RigExecMoverAPI"));
         mover.GetRelationship(TfToken("rigExec:moves"))
             .SetTargets({target.AppendProperty(TfToken("points"))});
@@ -447,10 +545,12 @@ static void TestAnimatedPointCounts()
         CHECK(pose.valid);
 
         CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
-        const auto result = pose.movedProperties.at(SdfPath("/Asset/Changing.points"))
-            .Get<VtVec3fArray>();
+        const auto result =
+            pose.movedProperties.at(SdfPath("/Asset/Changing.points"))
+                .Get<VtVec3fArray>();
         CHECK(result.size() == (time == 1.0 ? 1 : 2));
-        CHECK(!result.empty() && result.front()[0] == (time == 1.0 ? 2.0f : 12.0f));
+        CHECK(!result.empty() &&
+              result.front()[0] == (time == 1.0 ? 2.0f : 12.0f));
     }
 }
 
@@ -519,11 +619,13 @@ def Scope "Asset"
 }
 )USDA";
 
-static void TestInteractiveOverrides()
+static void
+TestInteractiveOverrides()
 {
     const SdfLayerRefPtr layer = SdfLayer::CreateAnonymous(".usda");
     CHECK(layer);
-    if (!layer || !rigExec::RigExecInputReplayImportFromString(layer, kPreviewFixture)) {
+    if (!layer ||
+        !rigExec::RigExecInputReplayImportFromString(layer, kPreviewFixture)) {
         std::printf("  could not build the preview fixture\n");
         ++failures;
         return;
@@ -627,11 +729,11 @@ static void TestInteractiveOverrides()
     CHECK(exported() == authored);
 
     // 5. Two overrides at once, on both kinds of consumer.
-    evaluator.SetInteractiveOverrides({
-        RigExecValueOverride{driver, TfToken(), TfToken("avars:tx"),
-                             VtValue(-2.0)},
-        RigExecValueOverride{timesTen, TfToken(), TfToken("inputs:value"),
-                             VtValue(4.0f)}});
+    evaluator.SetInteractiveOverrides(
+        {RigExecValueOverride{driver, TfToken(), TfToken("avars:tx"),
+                              VtValue(-2.0)},
+         RigExecValueOverride{timesTen, TfToken(), TfToken("inputs:value"),
+                              VtValue(4.0f)}});
     pose = evaluator.Evaluate(UsdTimeCode::Default());
     CHECK(pointX(pose, &x) && std::abs(x + 2.0f) < 1e-6f);
     CHECK(dialValue(pose, &value) && std::abs(value - 9.0f) < 1e-6f);
@@ -658,8 +760,7 @@ static void TestInteractiveOverrides()
     //    on the way out is a bug shape worth spending a test on.
     const SdfPath moveShape("/Asset/Rig/Movers/MoveShape");
     evaluator.SetInteractiveOverrides({RigExecValueOverride{
-        moveShape, TfToken(), TfToken("inputs:defaultWeight"),
-        VtValue(0.0f)}});
+        moveShape, TfToken(), TfToken("inputs:defaultWeight"), VtValue(0.0f)}});
     pose = evaluator.Evaluate(UsdTimeCode::Default());
     CHECK(pointX(pose, &x) && std::abs(x) < 1e-6f);
     // Twice, so a cache that filled during the drag would have had its
@@ -681,27 +782,24 @@ static void TestInteractiveOverrides()
 // A released drag is an ordinary value edit, so nothing about the rig's
 // structure moves and no recompile follows it. What the baked program holds
 // across such an edit therefore has to be re-read, and for a spline-valued
-// input it was not: the program pinned a UsdAttributeQuery to the attribute
-// at bake time, and a UsdAttributeQuery does not follow a later edit to a
-// SPLINE the way it follows an edited time sample or default -- it resolves
-// the spline once and keeps answering from that copy.
-// In usdview that read as the drag being ignored. The first release on a
-// control CREATES the property spec, which resyncs and rebakes, so it
-// worked; every release after it re-authored the same knot, which is
-// changed-info only, so nothing rebaked and the rig kept publishing the
-// first drag's pose. The control followed the preview and sprang back the
-// instant the artist let go -- until some other control's first release
-// resynced the stage and rebaked the program for all of them.
+// input a UsdAttributeQuery does not follow a later edit to a SPLINE the
+// way it follows an edited time sample or default -- it resolves the spline
+// once and keeps answering from that copy. The first release on a control
+// CREATES the property spec, which resyncs and rebakes; every release after
+// it re-authors the same knot, which is changed-info only, so nothing
+// rebakes.
 // Two drags is the whole test: one release to create the spec, and one more
 // to be answered from the spline as it now stands. The suite runs under
 // RIGEXEC_EVALUATION_MODE=baked in the parity harness, which is where this
 // fails without the fix; the dynamic path re-binds its queries on every
 // notice and has always passed.
-static void TestReleasedDragsFollowTheReauthoredSpline()
+static void
+TestReleasedDragsFollowTheReauthoredSpline()
 {
     const SdfLayerRefPtr layer = SdfLayer::CreateAnonymous(".usda");
     CHECK(layer);
-    if (!layer || !rigExec::RigExecInputReplayImportFromString(layer, kPreviewFixture)) {
+    if (!layer ||
+        !rigExec::RigExecInputReplayImportFromString(layer, kPreviewFixture)) {
         std::printf("  could not build the preview fixture\n");
         ++failures;
         return;
@@ -759,8 +857,8 @@ static void TestReleasedDragsFollowTheReauthoredSpline()
     float x = 0;
     for (const double committed : {4.0, 7.0, -3.0}) {
         // The drag itself: uncommitted values, which author nothing.
-        evaluator.SetInteractiveOverrides({RigExecValueOverride{
-            driver, TfToken(), tx, VtValue(committed)}});
+        evaluator.SetInteractiveOverrides(
+            {RigExecValueOverride{driver, TfToken(), tx, VtValue(committed)}});
         RigExecRigPose pose = evaluator.Evaluate(frame);
         CHECK(pose.valid);
         CHECK(pointX(pose, &x) && std::abs(x - float(committed)) < 1e-6f);
@@ -907,7 +1005,8 @@ _SkinMethod(const char *method)
 // the method flips once and then holds, since the rebuild classifies with
 // the admitted value. An animated method takes no pin, so three frames that
 // move it rebuild nothing.
-static void TestRoleFlipsRebuildOnce()
+static void
+TestRoleFlipsRebuildOnce()
 {
     const _ScopedEnv chunkVerts("RIGEXEC_BAKED_CHUNK_VERTS", "2");
     const _ScopedEnv groupVerts("RIGEXEC_BAKED_GROUP_VERTS", "2");
@@ -1045,7 +1144,8 @@ _RunFrozenJob(const RigExecRigEvaluator &evaluator,
 // restating it runs and matches live, while one flipping it to
 // dualQuaternion publishes nothing and builds nothing; the live Evaluate
 // the caller falls back to rebuilds once and poses the flip.
-static void TestAFrozenJobThatFlipsARoleDeclines()
+static void
+TestAFrozenJobThatFlipsARoleDeclines()
 {
     const _ScopedEnv chunkVerts("RIGEXEC_BAKED_CHUNK_VERTS", "2");
     const _ScopedEnv groupVerts("RIGEXEC_BAKED_GROUP_VERTS", "2");
@@ -1070,8 +1170,8 @@ static void TestAFrozenJobThatFlipsARoleDeclines()
     const std::vector<RigExecValueOverride> restated = {
         _SkinMethod("classicLinear")};
     RigExecFrameInputs same;
-    CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(2.0), restated,
-                                   &same, &error));
+    CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(2.0), restated, &same,
+                                   &error));
     const RigExecRigPose ran = _RunFrozenJob(evaluator, frozen, same);
     CHECK(ran.valid);
 
@@ -1094,7 +1194,8 @@ static void TestAFrozenJobThatFlipsARoleDeclines()
     CHECK(evaluator.GetBakedProgramBuildCount() == builds + 1);
 }
 
-int main()
+int
+main()
 {
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
     TestPersistentChains();

@@ -22,9 +22,7 @@ from pxr import Tf
 from pxr.Usdviewq.plugin import PluginContainer
 
 
-# RigExec -> submenu placement by rank. A copy of
-# rigExecUsdview.AddToRigExecMenu, kept here so this directory does not
-# import that one; the rank table lives beside the original.
+# RigExec -> submenu placement by rank.
 _SUBMENU_RANKS = {"Viewport": 10, "General Editors": 20,
                   "Animation Editors": 30}
 _MENU_RANK = "rigExecMenuRank"

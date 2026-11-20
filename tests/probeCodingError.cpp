@@ -70,11 +70,10 @@ main(int argc, char **argv)
     }
 
     // Phase C: a rig whose solvers include RigExecRibbon.
-    // This used to exercise chain compilation alone; there is no compiler
-    // any more. The ribbon is what replaced its last remaining pass, and it
-    // is the one solver whose inputs arrive as attribute value overrides
-    // rather than from authored scene description, so a bad override key
-    // shows up here as a coding error rather than as quietly empty geometry.
+    // The ribbon is the one solver whose inputs arrive as attribute value
+    // overrides rather than from authored scene description, so a bad
+    // override key shows up here as a coding error rather than as quietly
+    // empty geometry.
     {
         UsdStageRefPtr s3 =
             UsdStage::Open(examplesDir + "/05_TwistRibbonSpine.usda");

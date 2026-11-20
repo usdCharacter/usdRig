@@ -26,13 +26,8 @@
 // RigExecDualQuatFromMatrix keeps the proper rotation of the polar
 // decomposition (the closest rotation in the Frobenius sense, computed by
 // the library's standard RigExecPointsToParams SVD path) and the
-// translation, and DROPS the stretch and any reflection. This is the same
-// limitation the conventional dual-quaternion skinning has (joint scale is ignored by
-// the DQ branch of skinCluster); dropping it with an explicit report is more
-// useful to a rig than failing, because the alternative for a kernel is to
-// fall back to linear blending for those joints, which needs to be a caller
-// decision. The optional isRigid output tells the caller whether anything
-// was dropped.
+// translation, and DROPS the stretch and any reflection. The optional
+// isRigid output tells the caller whether anything was dropped.
 #ifndef RIGEXEC_MATH_DUAL_QUAT_H
 #define RIGEXEC_MATH_DUAL_QUAT_H
 
@@ -222,11 +217,6 @@ GfVec3d RigExecDualQuatTransformPoint(const RigExecDualQuat &dq,
 // influence come out as exactly s and anisotropic scales come out as their
 // weighted mean, independent of how much the influences rotate relative to
 // each other.
-// A DELIBERATE DIFFERENCE: the classical dual-quaternion skinCluster ignores
-// joint scale and shear entirely (only the rigid motion of each joint
-// reaches the skin). This path does NOT ignore them. A non-uniformly scaled
-// joint therefore deforms the skin here; that is the intended behaviour,
-// not a bug.
 // Reflection and singular input: a reflected influence comes back from the
 // library decomposition with one negative scale on the pinned Z axis, so
 // its stretch is symmetric but not positive-definite, and a blend across it

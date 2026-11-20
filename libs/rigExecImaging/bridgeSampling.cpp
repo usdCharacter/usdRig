@@ -129,8 +129,8 @@ RigExecBridgeSampling::SampleLive(
         return true;
     }
     // The pinned route declined (a bind that failed, an override it cannot
-    // place, a hook that refused): the self-binding sampler answers exactly
-    // as it always has, at its own cost.
+    // place, a hook that refused): the self-binding sampler answers, at its
+    // own cost.
     return RigExecSampleFrameInputs(_evaluator, time, overrides, upstream, out);
 }
 

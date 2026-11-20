@@ -107,7 +107,7 @@ bin\launch_usdview.bat docs\examples\picker.usda
 ## Tips
 
 - Author button positions as if `ui:size` were the frame, but do not rely on it: the tab is fitted to the buttons, so a panel split out of a shared canvas still reads (`pickerModel.py:372-400`).
-- y grows DOWNWARD in panel units — a button at y=24 is near the top of the tab, not the bottom (`schema.usda:4312-4315`).
+- y grows DOWNWARD in panel units — a button at y=24 is near the top of the tab, not the bottom (`schema.usda:4307-4310`).
 - `ui:label` is the tab caption and empty means the prim name, so a panel named `Body` needs no label at all (`pickerScene.py:188`).
 
 ## See also

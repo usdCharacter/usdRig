@@ -83,7 +83,7 @@ def _bootstrap():
                 if d.is_dir():
                     _DLL_DIR_HANDLES.append(os.add_dll_directory(str(d)))
             except OSError:
-                pass  # already registered or unsupported; harmless
+                pass
 
 
 _bootstrap()

@@ -1,4 +1,4 @@
-// Shared exact published-value comparisons mirror RigExecComparePoses.
+// Shared exact published-value comparisons.
 // History tests compare maps and ordered diagnostics; executor work traces
 // are checked separately because cached and fresh runs can execute differently.
 // Helpers report through the caller-owned failure counter.
@@ -96,8 +96,7 @@ CompareEveryMap(int *failures, const std::string &where,
                 [](const std::vector<rigExec::RigExecPointFrame> &a,
                    const std::vector<rigExec::RigExecPointFrame> &b) {
                     return a.size() == b.size() &&
-                           std::equal(a.begin(), a.end(), b.begin(),
-                                      SameFrame);
+                           std::equal(a.begin(), a.end(), b.begin(), SameFrame);
                 });
     CompareMaps(failures, "weight field", where, reference.weightFields,
                 baked.weightFields,
@@ -120,17 +119,19 @@ CompareGenerationScalars(int *failures, const std::string &where,
 {
     if (reference.diagnostics != baked.diagnostics) {
         ++*failures;
-        std::printf("FAIL %s: diagnostics differ (%zu vs %zu)\n",
-                    where.c_str(), reference.diagnostics.size(),
-                    baked.diagnostics.size());
-        for (size_t i = 0;
-             i < std::max(reference.diagnostics.size(),
-                          baked.diagnostics.size()); ++i) {
+        std::printf("FAIL %s: diagnostics differ (%zu vs %zu)\n", where.c_str(),
+                    reference.diagnostics.size(), baked.diagnostics.size());
+        for (size_t i = 0; i < std::max(reference.diagnostics.size(),
+                                        baked.diagnostics.size());
+             ++i) {
             const char *a = i < reference.diagnostics.size()
-                                ? reference.diagnostics[i].c_str() : "<none>";
+                                ? reference.diagnostics[i].c_str()
+                                : "<none>";
             const char *b = i < baked.diagnostics.size()
-                                ? baked.diagnostics[i].c_str() : "<none>";
-            if (std::string(a) != b) std::printf("    %s\n  vs%s\n", a, b);
+                                ? baked.diagnostics[i].c_str()
+                                : "<none>";
+            if (std::string(a) != b)
+                std::printf("    %s\n  vs%s\n", a, b);
         }
     }
 }
@@ -164,8 +165,7 @@ struct EvaluationState {
 inline void
 CheckHistoryIndependent(int *failures, const std::string &what,
                         const std::function<UsdStageRefPtr()> &make,
-                        const SdfPath &rigPath,
-                        const EvaluationState &before,
+                        const SdfPath &rigPath, const EvaluationState &before,
                         const EvaluationState &after)
 {
     const std::string where = what + " (history independence)";
@@ -181,8 +181,7 @@ CheckHistoryIndependent(int *failures, const std::string &what,
     std::vector<std::string> errors;
     if (!warm.Compile(&errors) || !fresh.Compile(&errors)) {
         ++*failures;
-        std::printf("FAIL %s: the fixture does not compile\n",
-                    where.c_str());
+        std::printf("FAIL %s: the fixture does not compile\n", where.c_str());
         return;
     }
     const auto evaluate = [](rigExec::RigExecRigEvaluator &evaluator,
@@ -205,20 +204,21 @@ CheckHistoryIndependent(int *failures, const std::string &what,
     if (first.solverFrames == second.solverFrames) {
         ++*failures;
         std::printf("FAIL %s: the two states publish the same solver "
-                    "frames\n", where.c_str());
+                    "frames\n",
+                    where.c_str());
     }
     CompareEveryMap(failures, where + " after a previous generation", alone,
                     second);
     if (warm.GetBakedGenerationCount() != 2 ||
-                  fresh.GetBakedGenerationCount() != 1) {
+        fresh.GetBakedGenerationCount() != 1) {
         ++*failures;
         std::printf("FAIL %s: %zu of 2 and %zu of 1 generation(s) came from "
-                    "the program\n", where.c_str(),
-                    warm.GetBakedGenerationCount(),
+                    "the program\n",
+                    where.c_str(), warm.GetBakedGenerationCount(),
                     fresh.GetBakedGenerationCount());
     }
 }
 
-}  // namespace rigExecTest
+} // namespace rigExecTest
 
-#endif  // RIGEXEC_TESTS_POSE_COMPARE_H
+#endif // RIGEXEC_TESTS_POSE_COMPARE_H

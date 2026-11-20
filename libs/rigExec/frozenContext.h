@@ -778,8 +778,8 @@ bool RigExecChainSampleBindingsStillCurrent(
 /// program \p evaluator currently holds. Every varying binding is read
 /// through the same route the baked frame path reads it -- the retained
 /// query when USD alone answers, the job's overrides and the stage when the
-/// walk is read the long way -- plus the prologue reads the bench measures
-/// (blend channels, constraint operator arrays, ribbon drivers, chain base
+/// walk is read the long way -- plus the prologue reads (blend channels,
+/// constraint operator arrays, ribbon drivers, chain base
 /// points) and the standing \p overrides, which never reach the stage and
 /// therefore must be sampled from the list the caller passes.
 ///

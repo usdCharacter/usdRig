@@ -44,14 +44,16 @@ struct RigExecValueAddress {
     /// base, afterMover, or final (informational public identity).
     TfToken phase = RigExecFinalPhase();
 
-    static RigExecValueAddress Prim(
-        const SdfPath &path, const TfToken &computation,
-        const TfToken &phase = RigExecFinalPhase()) {
+    static RigExecValueAddress Prim(const SdfPath &path,
+                                    const TfToken &computation,
+                                    const TfToken &phase = RigExecFinalPhase())
+    {
         return {path, computation, phase};
     }
-    static RigExecValueAddress Property(
-        const SdfPath &propertyPath,
-        const TfToken &phase = RigExecFinalPhase()) {
+    static RigExecValueAddress
+    Property(const SdfPath &propertyPath,
+             const TfToken &phase = RigExecFinalPhase())
+    {
         return {propertyPath, TfToken(), phase};
     }
 };
@@ -64,9 +66,8 @@ using RigExecTapId = int;
 /// provider through a relationship authored on the consuming prim, and the
 /// authored direction here is the wrong way round: a solver names its joints,
 /// not the reverse (there is no reverse-relationship accessor -- see the
-/// accessor list in exec/computationBuilders.h). Authoring the reverse link
-/// per joint is what the derived evaluation stage existed to hold. Supplying
-/// the frame as an override instead keeps the binding in the compiled graph
+/// accessor list in exec/computationBuilders.h). Supplying
+/// the frame as an override keeps the binding in the compiled graph
 /// where it belongs, and exec's own consumers -- computeMatrix, frame-chain
 /// applications, and the NamespaceAncestor fallback that unbound descendants
 /// follow -- all read the overridden value with nothing authored anywhere.
@@ -102,8 +103,8 @@ class RigExecSnapshot {
 public:
     const VtValue &Get(RigExecTapId tap) const;
 
-    template <class T>
-    T Get(RigExecTapId tap) const {
+    template <class T> T Get(RigExecTapId tap) const
+    {
         const VtValue &v = Get(tap);
         return v.IsHolding<T>() ? v.UncheckedGet<T>() : T();
     }
@@ -111,21 +112,30 @@ public:
     /// Borrowed access to the tapped value without copying: null when the
     /// tap is missing or holds another type. The pointer stays valid while
     /// this snapshot is alive; callers needing ownership keep Get<T>.
-    template <class T>
-    const T *TryGet(RigExecTapId tap) const {
+    template <class T> const T *TryGet(RigExecTapId tap) const
+    {
         const VtValue &v = Get(tap);
         return v.IsHolding<T>() ? &v.UncheckedGet<T>() : nullptr;
     }
 
-    UsdTimeCode GetTime() const { return _time; }
+    UsdTimeCode GetTime() const
+    {
+        return _time;
+    }
 
     /// True when evaluation ran and produced this snapshot.
-    bool IsValid() const { return _valid; }
+    bool IsValid() const
+    {
+        return _valid;
+    }
 
     /// True when every requested tap produced a value. A valid snapshot
     /// with missing values means some computations failed to compile or
     /// evaluate; consumers must not treat defaulted values as results.
-    bool IsComplete() const { return _valid && _complete; }
+    bool IsComplete() const
+    {
+        return _valid && _complete;
+    }
 
 private:
     friend class RigExecTapSet;
@@ -154,13 +164,15 @@ public:
     /// compiler-private provider (a generated chain head). The private
     /// path is used only to build the internal value key; it is never
     /// part of the public address.
-    RigExecTapId AddResolved(
-        const RigExecValueAddress &publicAddress,
-        const SdfPath &privateProvider);
+    RigExecTapId AddResolved(const RigExecValueAddress &publicAddress,
+                             const SdfPath &privateProvider);
 
     /// How many taps stand. Tap ids are dense from zero, so the live
     /// operation graph enumerates every address through this.
-    size_t GetTapCount() const { return _addresses.size(); }
+    size_t GetTapCount() const
+    {
+        return _addresses.size();
+    }
 
     /// The public canonical address of a tap.
     const RigExecValueAddress &GetAddress(RigExecTapId tap) const;
@@ -188,19 +200,22 @@ public:
     /// Evaluate calls or affect cached values (ExecUsdSystem contract).
     /// dropped counts missing prim/attribute addresses during key construction;
     /// it cannot report whether an existing key lies in the request's cone.
-    RigExecSnapshot Evaluate(
-        UsdTimeCode time, const std::vector<RigExecValueOverride> &overrides,
-        size_t *dropped = nullptr);
+    RigExecSnapshot Evaluate(UsdTimeCode time,
+                             const std::vector<RigExecValueOverride> &overrides,
+                             size_t *dropped = nullptr);
 
     /// Returns and clears the dirty flag raised by invalidation callbacks.
-    bool ConsumeDirty() { return _dirty.exchange(false); }
+    bool ConsumeDirty()
+    {
+        return _dirty.exchange(false);
+    }
 
     ExecUsdSystem *GetSystem();
 
     /// Retire requests before stock Esf processes a removed prim. Consumers
     /// that evaluate synchronously inside a USD notice call this first.
     static void PrepareStageChange(const UsdStageRefPtr &stage,
-                                  const UsdNotice::ObjectsChanged &notice);
+                                   const UsdNotice::ObjectsChanged &notice);
 
 private:
     friend class RigExecTapContext;
@@ -218,6 +233,6 @@ private:
     size_t _prepareCount = 0;
 };
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_TAP_SET_H
+#endif // RIGEXEC_TAP_SET_H

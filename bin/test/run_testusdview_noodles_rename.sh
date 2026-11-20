@@ -4,12 +4,12 @@
 # tests/fixtures/noodles_rename.usda. The POSIX twin of
 # run_testusdview_noodles_rename.bat, which carries the full rationale.
 #
-# In short: double-clicking a node did nothing because usdview ran the
-# older pxr.UsdNoodles from the USD install; and once the in-repo editor
-# ran, the prim browser did not follow the rename. This registers the
-# in-repo editor as the launchers do, drives double-click, typing and
-# Return with real Qt events, and checks the prim, the graph and usdview's
-# selection. Prints RIGEXEC_NOODLES_RENAME_OK.
+# In short: the launcher can run an installed pxr.UsdNoodles instead of
+# the in-repo editor, and the prim browser only follows a rename once it
+# is rebuilt. This registers the in-repo editor as the launchers do,
+# drives double-click, typing and Return with real Qt events, and checks
+# the prim, the graph and usdview's selection. Prints
+# RIGEXEC_NOODLES_RENAME_OK.
 #
 # Usage: bin/test/run_testusdview_noodles_rename.sh [rendererDisplayName]
 # Set RIGEXEC_NOODLES_SHOT=/path.png to keep a grab of the open editor.

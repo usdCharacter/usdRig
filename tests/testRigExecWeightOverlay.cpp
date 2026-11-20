@@ -70,8 +70,7 @@ const SdfPath _kRigPath("/Asset/Rig");
 const SdfPath _kVolumePath("/Asset/Rig/Weights/Sphere");
 const SdfPath _kTarget("/Asset/Geom/M.points");
 
-// The fixture, copied from testRigExecVolumeWeights' working idiom: a
-// four-point mesh, a rig, a joint posed as a pure +2Y translation, and a
+// A four-point mesh, a rig, a joint posed as a pure +2Y translation, and a
 // sphere volume weight consumed by one matrix mover. The four points sit at
 // radii 0, 0.5, 1 and 2 in a [0, 2] band, so the resolved field is
 // 1, 0.75, 0.5, 0 -- one saturated end, one fully-off end, and two readable
@@ -288,9 +287,7 @@ Near(const GfVec3f &a, const GfVec3f &b, float tol = 1e-4f)
     return (a - b).GetLength() <= tol;
 }
 
-// The weights the shared fixture resolves, restated so the assertions read
-// as intent rather than as arithmetic: radii 0, 0.5, 1, 2 over a [0, 2]
-// linear band.
+// radii 0, 0.5, 1, 2 over a [0, 2] linear band.
 const float _kExpectedWeights[4] = {1.0f, 0.75f, 0.5f, 0.0f};
 
 } // namespace
@@ -1244,11 +1241,7 @@ TestCurveGeometryVolumeGuides()
 // The plane guide's SIZE comes from inputs:extentU/extentV and from
 // nothing else; the falloff band only slides the two rectangles apart
 // along the axis.
-// This is the regression test for the reported bug. The guide used to size
-// itself max(1, |falloffMin|, |falloffMax|), so a rigger dragging the band
-// watched the square grow and shrink instead of watching the two surfaces
-// separate -- the band's job -- and had no way to say how big the plane
-// actually was. Measured on the published POINTS, because that is where a
+// Measured on the published POINTS, because that is where a
 // plane's dimensions live (it has no implicit Hydra form whose transform
 // could carry them, unlike the sphere a few cases up).
 static void

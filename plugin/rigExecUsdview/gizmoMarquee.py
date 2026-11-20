@@ -169,8 +169,7 @@ def ScreenPositions(stage, camera, viewport, time, solverPosed=None):
     selectable = Selectable(stage, solverPosed)
     # The evaluated frames the viewport already published, where it has
     # them: one lookup per control instead of recomposing each from its
-    # avars (~1.3 s for the 570 on Biped_stack, on every release, even for
-    # a band that catches nothing). Anything unpublished is composed below.
+    # avars on every release. Anything unpublished is composed below.
     remaining = []
     if gizmoMath._HasPublishedControlFrameReader():
         xformCache = UsdGeom.XformCache(time)
@@ -201,12 +200,10 @@ def ScreenPositions(stage, camera, viewport, time, solverPosed=None):
             return positions
     else:
         remaining = selectable
-    # ONE frame cache and ONE memo scope for the whole pass. Measured on
-    # examples/biped/Biped.usda, the 111 selectable controls cost 0.844 s
-    # with a memo per ComputeRigFrames call and 0.262 s inside one scope;
-    # this runs on the mouse release that ends the drag, so the 0.58 s is
-    # latency the animator feels. Bound to THIS stage: another session's
-    # stage never shares the memo, whatever its prim paths.
+    # ONE frame cache and ONE memo scope for the whole pass: a memo per
+    # ComputeRigFrames call recomposes the chain for every control on the
+    # mouse release that ends the drag. Bound to THIS stage: another
+    # session's stage never shares the memo, whatever its prim paths.
     frameCache = {}
     with gizmoMath.MemoScope(stage):
         for prim, posed in remaining:

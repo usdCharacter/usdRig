@@ -142,8 +142,7 @@ RigExecDecomposePartialTransform(const GfMatrix4d &transform)
     // translation, P - R P. Scaling THAT by w while turning by w*theta
     // does not put the point on the arc at all: it lands inside, so a
     // half-weighted lid pulls back into the eye instead of sweeping
-    // round it. That is the "the falloff is turning it linear" report,
-    // and it is a weighting bug rather than a painting one.
+    // round it.
     //
     // So recover the pivot the transform actually turns about -- its
     // screw axis -- and turn a fraction about that.

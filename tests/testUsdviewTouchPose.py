@@ -1584,21 +1584,16 @@ def testUsdviewInputFunction(appController):
 
     # --- 10. EVERY region set is live, and the look survives a switch --
     #
-    # Two bugs the animator hit, both asserted here because neither can
-    # be seen from a unit test: the sets are discovered off the composed
-    # stage and the pick runs through the live camera.
+    # Neither half is visible from a unit test: the sets are discovered
+    # off the composed stage and the pick runs through the live camera.
     #
     #   * the eyes. A set states the mesh its faces index -- the body set
     #     indexes body_geo, TouchPoseEyeL/R index l_eye_geo and r_eye_geo
-    #     -- and with one model open the cast only ever reached the
-    #     active set's mesh. Measured at the pixel over the front of the
-    #     left eyeball: l_eye_geo hit at t = 332.45, body_geo at
-    #     t = 337.57, and the hover still answered body_geo's face 489,
-    #     which is unpainted, so hovering an eye lit nothing at all.
+    #     -- and the cast must reach every set's mesh, not only the
+    #     active set's.
     #
-    #   * the opacity. `Load` assigned HIGHLIGHT_OPACITY on every load,
-    #     so a layer change put a session set to 30% back to 85% while
-    #     the slider still read 30.
+    #   * the opacity. A layer change must not put a session-set opacity
+    #     back to HIGHLIGHT_OPACITY.
     import touchPoseModel
 
     controller.SetActive(True)
@@ -1638,7 +1633,7 @@ def testUsdviewInputFunction(appController):
              panel._opacity.value()))
 
     # The eye sets are live whichever one the switch is standing on, so
-    # put it back on the body first: that is the case that was broken.
+    # put it back on the body first.
     panel._layer.setCurrentIndex(0)
     panel._OnLayerChosen(0)
     controller.SetOpacity(touchPoseUI.HIGHLIGHT_OPACITY)

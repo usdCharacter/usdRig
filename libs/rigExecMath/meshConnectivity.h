@@ -7,9 +7,7 @@
 // Traversal order is semantic -- delta-mush breaks equal-length neighbor
 // ties by index, wrinkle solves its constraints in edge order -- so every
 // builder below is an order-preserving sorted-vector build: neighbors
-// ascending, edges lexicographic, exactly the order the std::set/std::map
-// builders they replace produced. A cached entry costs one allocation per
-// vertex instead of one node per edge endpoint.
+// ascending, edges lexicographic.
 #ifndef RIGEXEC_MATH_MESH_CONNECTIVITY_H
 #define RIGEXEC_MATH_MESH_CONNECTIVITY_H
 
@@ -34,16 +32,15 @@ struct RigExecMeshAdjacency {
     /// Whether this entry answers a mesh of \p n points. Content trust
     /// stays with the retainer (which compares the topology arrays); this
     /// is the fail-closed shape check for a hand-built entry.
-    bool Covers(size_t n) const {
+    bool Covers(size_t n) const
+    {
         return valid && pointCount == n && neighbors.size() == n;
     }
 };
 
 // Builds the adjacency for \p pointCount points. False (\p out untouched)
-// on the same inputs the legacy set-based builders rejected: a face corner
-// past the index array or addressing no point. A repeated corner
-// contributes once, exactly as the set insert did. No count<3 or
-// trailing-index rule: the smooth kernel never had one.
+// on a face corner past the index array or addressing no point. A repeated
+// corner contributes once. No count<3 or trailing-index rule.
 //
 // The span form borrows both ranges for the call only; the caller keeps
 // the storage (e.g. the VtArray behind cdata()) alive until it returns.
@@ -51,13 +48,14 @@ struct RigExecMeshAdjacency {
 // does; a null range with size zero is the empty range. Bit-identical
 // to the vector form, which delegates to it.
 inline bool
-RigExecBuildMeshAdjacency(
-    size_t pointCount,
-    const int *faceVertexCounts, size_t faceVertexCountsSize,
-    const int *faceVertexIndices, size_t faceVertexIndicesSize,
-    RigExecMeshAdjacency *out)
+RigExecBuildMeshAdjacency(size_t pointCount, const int *faceVertexCounts,
+                          size_t faceVertexCountsSize,
+                          const int *faceVertexIndices,
+                          size_t faceVertexIndicesSize,
+                          RigExecMeshAdjacency *out)
 {
-    if (!out) return false;
+    if (!out)
+        return false;
     if ((faceVertexCountsSize > 0 && !faceVertexCounts) ||
         (faceVertexIndicesSize > 0 && !faceVertexIndices)) {
         return false;
@@ -71,14 +69,12 @@ RigExecBuildMeshAdjacency(
         for (int c = 0; c < faceCount; ++c) {
             const size_t ia = offset + c;
             const size_t ib = offset + (c + 1) % faceCount;
-            if (ia >= faceVertexIndicesSize ||
-                ib >= faceVertexIndicesSize) {
+            if (ia >= faceVertexIndicesSize || ib >= faceVertexIndicesSize) {
                 return false;
             }
             const int a = faceVertexIndices[ia];
             const int b = faceVertexIndices[ib];
-            if (a < 0 || b < 0 ||
-                static_cast<size_t>(a) >= pointCount ||
+            if (a < 0 || b < 0 || static_cast<size_t>(a) >= pointCount ||
                 static_cast<size_t>(b) >= pointCount) {
                 return false;
             }
@@ -99,11 +95,10 @@ RigExecBuildMeshAdjacency(
 }
 
 inline bool
-RigExecBuildMeshAdjacency(
-    size_t pointCount,
-    const std::vector<int> &faceVertexCounts,
-    const std::vector<int> &faceVertexIndices,
-    RigExecMeshAdjacency *out)
+RigExecBuildMeshAdjacency(size_t pointCount,
+                          const std::vector<int> &faceVertexCounts,
+                          const std::vector<int> &faceVertexIndices,
+                          RigExecMeshAdjacency *out)
 {
     return RigExecBuildMeshAdjacency(
         pointCount, faceVertexCounts.data(), faceVertexCounts.size(),
@@ -111,8 +106,7 @@ RigExecBuildMeshAdjacency(
 }
 
 // One triangle edge: its endpoints in minmax order with the opposite
-// corner of every triangle using it, in triangle order -- the sorted key
-// order std::map iteration produced, with the same per-key lists.
+// corner of every triangle using it, in triangle order.
 struct RigExecWrinkleEdge {
     int a = -1;
     int b = -1;
@@ -144,8 +138,8 @@ struct RigExecWrinkleMesh {
     /// of reading out of range below.
     bool Covers(size_t n, const std::vector<int> &faceCounts,
                 const std::vector<int> &faceIndices,
-                RigExecWrinkleTopology wantMode,
-                int wantNeighborDistance) const {
+                RigExecWrinkleTopology wantMode, int wantNeighborDistance) const
+    {
         return valid && pointCount == n && mode == wantMode &&
                neighborDistance == wantNeighborDistance &&
                neighbors.size() == n && counts == faceCounts &&
@@ -160,15 +154,13 @@ struct RigExecWrinkleMesh {
 // does: cloth pairs opposite corners across shared edges, surface struts
 // pairs graph-hop rings at \p neighborDistance (which cloth ignores).
 inline bool
-RigExecBuildWrinkleMesh(
-    size_t pointCount,
-    const std::vector<int> &counts,
-    const std::vector<int> &indices,
-    RigExecWrinkleTopology mode,
-    int neighborDistance,
-    RigExecWrinkleMesh *out)
+RigExecBuildWrinkleMesh(size_t pointCount, const std::vector<int> &counts,
+                        const std::vector<int> &indices,
+                        RigExecWrinkleTopology mode, int neighborDistance,
+                        RigExecWrinkleMesh *out)
 {
-    if (!out) return false;
+    if (!out)
+        return false;
     RigExecWrinkleMesh built;
     built.pointCount = pointCount;
     built.counts = counts;
@@ -194,9 +186,9 @@ RigExecBuildWrinkleMesh(
             corners.push_back(a);
             polygonEdges.emplace_back(std::minmax(a, b));
         }
-        // The kernel's per-face duplicate-corner verdict, without the set:
-        // every corner appears as `a` exactly once, so a sorted adjacent
-        // match is the same rejection.
+        // The kernel's per-face duplicate-corner verdict: every corner
+        // appears as `a` exactly once, so a sorted adjacent match is the
+        // same rejection.
         std::sort(corners.begin(), corners.end());
         for (size_t i = 1; i < corners.size(); ++i) {
             if (corners[i] == corners[i - 1]) {
@@ -205,8 +197,10 @@ RigExecBuildWrinkleMesh(
         }
         const int origin = indices[offset];
         if (count == 4 && faceIndex % 2) {
-            triangles.push_back({indices[offset], indices[offset + 1], indices[offset + 3]});
-            triangles.push_back({indices[offset + 1], indices[offset + 2], indices[offset + 3]});
+            triangles.push_back(
+                {indices[offset], indices[offset + 1], indices[offset + 3]});
+            triangles.push_back({indices[offset + 1], indices[offset + 2],
+                                 indices[offset + 3]});
         } else {
             for (int corner = 1; corner + 1 < count; ++corner) {
                 triangles.push_back({origin, indices[offset + corner],
@@ -219,8 +213,7 @@ RigExecBuildWrinkleMesh(
     if (offset != indices.size()) {
         return false;
     }
-    // Border vertices: polygon edges used exactly once, as the map count
-    // the kernel consulted. Sorted runs give the same verdicts.
+    // Border vertices: polygon edges used exactly once.
     std::sort(polygonEdges.begin(), polygonEdges.end());
     for (size_t i = 0; i < polygonEdges.size();) {
         size_t j = i + 1;
@@ -237,9 +230,9 @@ RigExecBuildWrinkleMesh(
     built.borderVertices.erase(
         std::unique(built.borderVertices.begin(), built.borderVertices.end()),
         built.borderVertices.end());
-    // Triangle edges in map order with per-key opposites in triangle
-    // order: the stable sort keeps each key's list in the order the
-    // triangle walk pushed it.
+    // Triangle edges in sorted key order with per-key opposites in
+    // triangle order: the stable sort keeps each key's list in the order
+    // the triangle walk pushed it.
     std::vector<std::pair<std::pair<int, int>, int>> keyed;
     keyed.reserve(triangles.size() * 3);
     for (const std::array<int, 3> &triangle : triangles) {
@@ -281,19 +274,21 @@ RigExecBuildWrinkleMesh(
     }
     struct EdgeKeyLess {
         bool operator()(const RigExecWrinkleEdge &edge,
-                        const std::pair<int, int> &key) const {
+                        const std::pair<int, int> &key) const
+        {
             return edge.a < key.first ||
                    (edge.a == key.first && edge.b < key.second);
         }
         bool operator()(const std::pair<int, int> &key,
-                        const RigExecWrinkleEdge &edge) const {
+                        const RigExecWrinkleEdge &edge) const
+        {
             return key.first < edge.a ||
                    (key.first == edge.a && key.second < edge.b);
         }
     };
     const auto haveEdge = [&built](const std::pair<int, int> &pair) {
-        return std::binary_search(built.edges.begin(), built.edges.end(),
-                                  pair, EdgeKeyLess());
+        return std::binary_search(built.edges.begin(), built.edges.end(), pair,
+                                  EdgeKeyLess());
     };
     std::vector<std::pair<int, int>> bendingPairs;
     if (mode == RigExecWrinkleTopology::Cloth) {
@@ -317,9 +312,11 @@ RigExecBuildWrinkleMesh(
             distance[start] = 0;
             for (size_t cursor = 0; cursor < visited.size(); ++cursor) {
                 const int a = visited[cursor];
-                if (distance[a] == neighborDistance) continue;
+                if (distance[a] == neighborDistance)
+                    continue;
                 for (int b : built.neighbors[a]) {
-                    if (distance[b] >= 0) continue;
+                    if (distance[b] >= 0)
+                        continue;
                     distance[b] = distance[a] + 1;
                     visited.push_back(b);
                     if (distance[b] == neighborDistance && size_t(b) > start) {
@@ -327,7 +324,8 @@ RigExecBuildWrinkleMesh(
                     }
                 }
             }
-            for (int index : visited) distance[index] = -1;
+            for (int index : visited)
+                distance[index] = -1;
         }
     }
     std::sort(bendingPairs.begin(), bendingPairs.end());

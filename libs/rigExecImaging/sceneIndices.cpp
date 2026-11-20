@@ -519,7 +519,7 @@ constexpr float kFrameOffsetEpsilon = 1.0e-4f;
 
 // Explicit motion samples a renderer should read for [start, end]: the
 // offsets inside it plus the nearest one outside each end. False with fewer
-// than two, as before (a single sample is no motion).
+// than two (a single sample is no motion).
 bool
 _MotionSampleTimes(const std::vector<float> &offsets, float start, float end,
                    std::vector<HdSampledDataSource::Time> *out)
@@ -718,7 +718,7 @@ private:
         }
         if (!_source.Live()) {
             // No table (a bare bridge): the nearest explicit sample, else
-            // the displayed value -- the answer before frames on demand.
+            // the displayed value.
             size_t best = 0;
             for (size_t i = 1; i < _offsets.size(); ++i) {
                 if (std::abs(_offsets[i] - offset) <
@@ -1021,9 +1021,8 @@ _BuildGuidePrim(const RigExecPublishedPrim &published, bool isCone,
 
     // Composed with the ASSET ROOT's world transform, and declared final.
     // guideFrames are ASSET-space -- the space rig frames live in, since
-    // rest:space and avars carry no stage placement. Publishing one directly
-    // drew every guide at the world origin no matter where the asset was
-    // placed, and nothing downstream composes it for us.
+    // rest:space and avars carry no stage placement, and nothing downstream
+    // composes it for us.
     // The asset root, NOT the guide's parent. A joint may sit under an
     // intervening UsdGeomXform inside the asset (joints are discovered
     // anywhere beneath the rig), and that Xform's contribution is already
@@ -1055,7 +1054,7 @@ _BuildGuidePrim(const RigExecPublishedPrim &published, bool isCone,
     // axis -- but the radius is authored rather than left to Hydra's fallback
     // of 1.0, which is only the right size at arm scale. It MUST be set on both
     // primitives: an absent radius silently becomes 1.0
-    // (hdsi/implicitSurfaceSceneIndex.cpp), which is the bug this replaced.
+    // (hdsi/implicitSurfaceSceneIndex.cpp).
     const HdDataSourceBaseHandle radiusSource =
         HdRetainedTypedSampledDataSource<double>::New(radius);
     if (isCone) {
@@ -1661,10 +1660,7 @@ _BuildControlGuidePrim(const RigExecPublishedPrim &published,
         // HdStBasisCurves::_SupportsRefinement is `refineLevel > 0`, and
         // below that a linear basisCurves draws as one-pixel GL lines with
         // widths ignored outright. usdview's default complexity is "low",
-        // which is refineLevel 0 -- so an authored width changed nothing at
-        // all where it mattered most, and the control stayed as unclickable
-        // as the hairline it replaced (measured: 8 hits out of 1681
-        // single-pixel picks at low, 97 at high).
+        // which is refineLevel 0.
         // Asking for refinement on the guide itself decouples that from the
         // viewer's global complexity setting, which is a display preference
         // about the ASSET and has no business deciding whether the rig's
@@ -1713,8 +1709,7 @@ _BuildControlGuidePrim(const RigExecPublishedPrim &published,
     } else if (shape.primType == HdPrimTypeTokens->sphere) {
         // Unit radius: the authored scale sizes it, exactly like the
         // explicit shapes. Set EXPLICITLY even though 1.0 is also the
-        // implicit-surface fallback — the joint guides learned that lesson
-        // (see _BuildGuidePrim).
+        // implicit-surface fallback.
         names.push_back(HdSphereSchema::GetSchemaToken());
         values.push_back(
             HdSphereSchema::Builder()
@@ -1816,8 +1811,7 @@ _BuildVolumeGuidePrim(const RigExecPublishedPrim &published, size_t index,
             // (HdStBasisCurves::_SupportsRefinement), and usdview's default
             // complexity is refineLevel 0 -- so ask for refinement here
             // rather than let a viewer preference about the ASSET decide
-            // whether the rig's guides are visible. Same reasoning, same
-            // fix, as the control guides.
+            // whether the rig's guides are visible.
             names.push_back(HdLegacyDisplayStyleSchemaTokens->displayStyle);
             values.push_back(HdRetainedContainerDataSource::New(
                 HdLegacyDisplayStyleSchemaTokens->refineLevel,
@@ -3342,12 +3336,8 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
             // there at sync time is therefore never asked for, and the
             // mesh renders grey with a perfectly correct red displayColor
             // sitting in the scene index one hop upstream.
-            // Measured in a real usdview by differencing the framebuffer
-            // across the on/off transition: with this re-announcement, 2.8%
-            // of the frame gets redder; without it, 0.0% does, while every
-            // scene-index assertion still passes. tests/
-            // testUsdviewVolumeWeightOverlay.py is that measurement, and it
-            // compares the two frames rather than counting red in one --
+            // tests/testUsdviewVolumeWeightOverlay.py compares the two
+            // frames rather than counting red in one --
             // RigExec's own guide geometry is red and much larger on screen
             // than the mesh, so an absolute count says almost nothing.
             // Re-announcing the prim with its upstream type is the same
@@ -3424,7 +3414,7 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
             // losing its constraint, recompilation, and Deactivate() (which
             // publishes an empty snapshot). Hydra dirtiness is not
             // hierarchical, so without this the descendants keep whichever
-            // delta was last applied -- the original bug, in a new dress.
+            // delta was last applied.
             // _announcedDrivenXforms is what makes the disappearing case
             // work: by the time we see the removal the snapshot no longer
             // mentions the prim, so the only record that its subtree needs
