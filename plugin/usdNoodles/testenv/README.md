@@ -129,7 +129,12 @@ bash bin/test/run_testusdview_noodles_rename.sh
   that widget at all ("QOpenGLWidget is not supported on this
   platform"). These drivers need a GLX display: a desktop session, or
   `xvfb-run -a --server-args="-screen 0 1920x1080x24"` in front of each with
-  `libgl1-mesa-dev xorg-dev` installed, which is what CI does.
+  `libgl1-mesa-dev xorg-dev` installed, which is what CI does. A display where
+  the GL context cannot be created (`QOpenGLWidget: Failed to create context`)
+  never runs `initializeGL`, and then `rename`, `values` and `icons` fail with
+  `AttributeError: 'GraphView' object has no attribute '_cppIconRenderer'`, the
+  renderer `initializeGL` creates. That signature appears on the unmodified
+  tree too, so it marks an unusable display, not a broken editor.
 - They need `build-noodles/python/UsdNoodles/plugInfo.json` (staged by
   `usdNoodles_python_package`), `numpy`, and this build tree's
   `librigExecImaging.so`: build `--target rigExecImaging` as well, or
@@ -161,6 +166,9 @@ break down as:
 
 Later tasks compare against **1289 collected / 46 skipped / 0 failed / 0
 errors**; a count that moves needs an explanation in the change that moved it.
+The stage-sync files raise it to **1331 collected / 46 skipped / 0 failed / 0
+errors** on the same host (measured 2026-11-20), the 42 added cases all in
+`testUsdNoodlesStageSync.py`.
 
 The editor drivers on the same tree:
 
