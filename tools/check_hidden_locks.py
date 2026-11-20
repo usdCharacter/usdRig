@@ -28,6 +28,7 @@ SCANNED_DIRS = [
     "libs/rigExec",
     "libs/rigExecScene",
     "libs/rigExecGraph",
+    "libs/rigExecEvalCore",
     "libs/rigExecMath",
     "libs/rigExecRuntime",
     "libs/rigExecSampler",

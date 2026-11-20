@@ -67,6 +67,22 @@ target_include_directories(rigExecGraph PUBLIC
 set_target_properties(rigExecGraph PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(rigExec::rigExecGraph ALIAS rigExecGraph)
 
+# EvalCore: the step contract the baked program and playback share. The step
+# bodies are templates each front end instantiates, so only the non-templated
+# ordinal table lands in this archive. It links nothing but the scheduler:
+# the rigExecMath archive carries OpenUSD publicly, and EvalCore uses only its
+# USD-free headers. The wire enum it reuses is generated against the vendored
+# FlatBuffers headers.
+add_library(rigExecEvalCore STATIC libs/rigExecEvalCore/kinds.cpp)
+target_compile_features(rigExecEvalCore PUBLIC cxx_std_17)
+target_include_directories(rigExecEvalCore PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
+    $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/flatbuffers/include>)
+target_link_libraries(rigExecEvalCore PUBLIC rigExecGraph)
+set_target_properties(rigExecEvalCore PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_library(rigExec::rigExecEvalCore ALIAS rigExecEvalCore)
+
 # rigExecMath: pure point-frame and solver kernels (spec §5).
 add_library(rigExecMath STATIC
     libs/rigExecMath/affineFrameKernels.cpp
@@ -237,7 +253,7 @@ target_link_libraries(rigExec PUBLIC
 )
 
 target_link_libraries(rigExec PRIVATE
-    rigExecGraph rigExecMath rigExecInputValues ts)
+    rigExecGraph rigExecMath rigExecEvalCore rigExecInputValues ts)
 # On Windows the consumers of rigExec need those two archives as well.
 
 # Scene translation calls back into the evaluator. The evaluator does not
@@ -515,7 +531,7 @@ add_library(rigExecRuntime STATIC
 target_include_directories(rigExecRuntime PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
-target_link_libraries(rigExecRuntime PUBLIC rigExecBinary rigExecGraph)
+target_link_libraries(rigExecRuntime PUBLIC rigExecBinary rigExecGraph rigExecEvalCore)
 set_target_properties(rigExecRuntime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # Installed names, so a mover plugin's tests can export and replay its rigs
 # the same way inside this build and against an installed SDK.
@@ -532,6 +548,10 @@ file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/runtimeSources.txt"
     CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecRuntime,SOURCES>,\n>\n")
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/runtimeIncludes.txt"
     CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecRuntime,INCLUDE_DIRECTORIES>,\n>\n")
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/evalCoreSources.txt"
+    CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecEvalCore,SOURCES>,\n>\n")
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/evalCoreIncludes.txt"
+    CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecEvalCore,INCLUDE_DIRECTORIES>,\n>\n")
 # -ffp-contract=off repeats the global option so the runtime's own flags
 # name everything its bitwise operation order needs; other builds of these
 # sources (the Godot extension) copy this list.
@@ -1204,6 +1224,10 @@ set_tests_properties(testRigExecExecCrossCheck PROPERTIES LABELS "exec")
 add_executable(testRigExecOpValues tests/testRigExecOpValues.cpp)
 target_link_libraries(testRigExecOpValues PRIVATE rigExec)
 add_test(NAME testRigExecOpValues COMMAND testRigExecOpValues)
+
+add_executable(testRigExecEvalCoreKinds tests/testRigExecEvalCoreKinds.cpp)
+target_link_libraries(testRigExecEvalCoreKinds PRIVATE rigExec rigExecEvalCore)
+add_test(NAME testRigExecEvalCoreKinds COMMAND testRigExecEvalCoreKinds)
 
 add_executable(testRigExecSurfaceKernelCache tests/testRigExecSurfaceKernelCache.cpp)
 target_link_libraries(testRigExecSurfaceKernelCache PRIVATE rigExecMath)
@@ -2938,7 +2962,7 @@ endforeach()
 # Install
 include(CMakePackageConfigHelpers)
 
-install(TARGETS rigExecLzma rigExecGraph rigExecMath rigExec rigExecScene rigExecOracle rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu rigExecFlatBuffers rigExecBinary rigExecBake rigExecRuntime rigExecSampler
+install(TARGETS rigExecLzma rigExecGraph rigExecEvalCore rigExecMath rigExec rigExecScene rigExecOracle rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu rigExecFlatBuffers rigExecBinary rigExecBake rigExecRuntime rigExecSampler
     EXPORT rigExecTargets
     RUNTIME DESTINATION "${RIGEXEC_INSTALL_LIBDIR}"
     LIBRARY DESTINATION "${RIGEXEC_INSTALL_LIBDIR}"
@@ -2950,7 +2974,7 @@ install(FILES libs/rigExecOracle/registerOracle.h
     DESTINATION "${RIGEXEC_INSTALL_INCLUDEDIR}/rigExecOracle")
 
 # FILES_MATCHING still walks -- and recreates -- every subdirectory it passes
-foreach(_lib rigExecGraph rigExecScene rigExecMath rigExec rigExecSchema rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu rigExecBinary rigExecBake rigExecRuntime rigExecSampler)
+foreach(_lib rigExecGraph rigExecEvalCore rigExecScene rigExecMath rigExec rigExecSchema rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu rigExecBinary rigExecBake rigExecRuntime rigExecSampler)
     install(DIRECTORY "libs/${_lib}/"
         DESTINATION "${RIGEXEC_INSTALL_INCLUDEDIR}/${_lib}"
         FILES_MATCHING

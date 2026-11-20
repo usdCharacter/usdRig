@@ -1,12 +1,13 @@
 #!/bin/bash
-# Compile the runtime, the op scheduler, and the binary format with no
-# OpenUSD include path. Fails if a translation unit needs a pxr header,
-# or if an undefined symbol is an OpenUSD type.
+# Compile the runtime, the EvalCore step table, the op scheduler, and the
+# binary format with no OpenUSD include path. Fails if a translation unit
+# needs a pxr header, or if an undefined symbol is an OpenUSD type.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD="${1:-$ROOT/build}"
-if [[ ! -f "$BUILD/runtimeSources.txt" || ! -f "$BUILD/runtimeIncludes.txt" ]]; then
+if [[ ! -f "$BUILD/runtimeSources.txt" || ! -f "$BUILD/runtimeIncludes.txt" ||
+      ! -f "$BUILD/evalCoreSources.txt" || ! -f "$BUILD/evalCoreIncludes.txt" ]]; then
     echo "configure and build rigExecRuntime first (missing source manifest in $BUILD)" >&2
     exit 1
 fi
@@ -23,14 +24,16 @@ CFLAGS=(
     -std=c11 -O2 -DZ7_ST -DRIGEXEC_LZMA_PORTABLE_SCALAR
     -I "$ROOT/thirdparty/lzma/C"
 )
-while IFS= read -r include_dir; do
-    include_dir="${include_dir%$'\r'}"
-    if [[ -d "$include_dir/pxr" ]]; then
-        echo "runtime include directories expose OpenUSD: $include_dir" >&2
-        exit 1
-    fi
-    [[ -z "$include_dir" ]] || CXXFLAGS+=(-I "$include_dir")
-done < "$BUILD/runtimeIncludes.txt"
+for manifest in runtimeIncludes.txt evalCoreIncludes.txt; do
+    while IFS= read -r include_dir; do
+        include_dir="${include_dir%$'\r'}"
+        if [[ -d "$include_dir/pxr" ]]; then
+            echo "runtime/EvalCore include directories expose OpenUSD: $include_dir" >&2
+            exit 1
+        fi
+        [[ -z "$include_dir" ]] || CXXFLAGS+=(-I "$include_dir")
+    done < "$BUILD/$manifest"
+done
 
 objs=()
 compile_one() {
@@ -45,13 +48,15 @@ compile_one() {
 }
 
 sources=()
-while IFS= read -r src; do
-    src="${src%$'\r'}"
-    [[ -z "$src" ]] && continue
-    [[ "$src" = *.cpp || "$src" = *.c ]] || continue
-    [[ "$src" = /* ]] || src="$ROOT/$src"
-    sources+=("$src")
-done < "$BUILD/runtimeSources.txt"
+for manifest in runtimeSources.txt evalCoreSources.txt; do
+    while IFS= read -r src; do
+        src="${src%$'\r'}"
+        [[ -z "$src" ]] && continue
+        [[ "$src" = *.cpp || "$src" = *.c ]] || continue
+        [[ "$src" = /* ]] || src="$ROOT/$src"
+        sources+=("$src")
+    done < "$BUILD/$manifest"
+done
 sources+=(
     "$ROOT/libs/rigExecGraph/opGraph.cpp"
     "$ROOT/libs/rigExecBinary/format.cpp"

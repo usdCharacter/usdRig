@@ -9,7 +9,8 @@
 # as text and follows INTERFACE links, and this is not a dependency edge for
 # test selection.
 if (WIN32)
-    target_link_libraries(rigExec INTERFACE rigExecGraph rigExecMath)
+    target_link_libraries(rigExec INTERFACE rigExecGraph rigExecMath
+        rigExecEvalCore)
     # The GPU worker's hidden OpenGL context.
     target_link_libraries(rigExecGpu PRIVATE opengl32 user32 gdi32)
 endif()

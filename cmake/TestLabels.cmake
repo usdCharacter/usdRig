@@ -11,8 +11,8 @@ set(_rigexec_pxr_libs
     usdImagingGL)
 set(_rigexec_project_libs
     rigExec rigExecScene rigExecOracle rigExecRuntime rigExecMath rigExecGraph
-    rigExecBinary rigExecBake rigExecImaging rigExecAuthoring rigExecStandalone
-    rigExecSampler rigExecLzma)
+    rigExecEvalCore rigExecBinary rigExecBake rigExecImaging rigExecAuthoring
+    rigExecStandalone rigExecSampler rigExecLzma)
 set(_rigexec_fast_direct rigExecMath)
 
 function(_rigexec_normalize_link raw out)
