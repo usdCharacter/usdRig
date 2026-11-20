@@ -1,16 +1,10 @@
-// rigExecRuntime property chains: a line port of runChain and its three
-// appliers (RigExecRigEvaluator::_EvaluatePropertyChains,
-// rigEvaluatorProperties.cpp) over the file's chain tables. The chains run
-// before every prologue, as the baked prologue runs them, and publish into
-// RrStore::propertyResults, which every later read of a chain target sees.
-// The arithmetic is propertyMathKernel.h instantiated with the runtime's
-// own types, so each revision computes the evaluator's bits. USD-free.
+// Bind playback property parts to decoded reads and typed result slots.
 #include "rigExecRuntime/store.h"
-#include "rigExecMath/propertyMathKernel.h"
+#include "rigExecEvalCore/properties.h"
 
 #include <algorithm>
-#include <cmath>
 #include <cstring>
+#include <limits>
 #include <memory>
 
 namespace rigExec {
@@ -24,7 +18,7 @@ using _RrTag = RrPropertyValue::Tag;
 // of phased consumers, and where each result is published.
 struct RrPropertyScratch {
     struct Revision {
-        std::string mover;  ///< prim path text, for diagnostics
+        std::string mover; ///< prim path text, for diagnostics
         bool opValid = false;
         RigExecPropertyOp op = RigExecPropertyOp::Add;
         std::vector<RrVec2f> keys;
@@ -37,7 +31,7 @@ struct RrPropertyScratch {
         int32_t pathPoints = -1;
     };
     struct Chain {
-        std::string target;  ///< target path text, for diagnostics
+        std::string target; ///< target path text, for diagnostics
         /// The slot type the chain's typed base read needs.
         RigExecWireInputTag baseTag = RigExecWireInputTag::Float;
         /// propertyValues entry of the target.
@@ -52,9 +46,6 @@ struct RrPropertyScratch {
     std::vector<size_t> phasedPublish;
     /// Per propertyValues entry: the attribute path id it is published at.
     std::vector<uint32_t> publishNames;
-    // Per-run scratch, reused across Executes.
-    std::vector<RrPropertyValue> history;
-    std::vector<float> weights;
 };
 
 bool
@@ -115,39 +106,6 @@ _RrHold(const RrVec3f &v)
     return value;
 }
 
-// _IsFinite (rigEvaluatorProperties.cpp). It has no double overload, so a
-// double is tested as the float it converts to.
-bool
-_RrFinite(float v)
-{
-    return std::isfinite(v);
-}
-
-bool
-_RrFinite(double v)
-{
-    return std::isfinite(float(v));
-}
-
-bool
-_RrFinite(const RrVec3f &v)
-{
-    return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
-}
-
-bool
-_RrFinite(const RrMat4d &m)
-{
-    for (size_t r = 0; r < 4; ++r) {
-        for (size_t c = 0; c < 4; ++c) {
-            if (!std::isfinite(m[r][c])) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
 RrMat4d
 _RrMatrix(const RigExecWireMatrix4d &m)
 {
@@ -176,204 +134,206 @@ _RrPublish(RrProgram *program, const RrPropertyScratch &scratch, size_t entry,
     store.propertyResults[scratch.publishNames[entry]] = value;
 }
 
-// The float applier: the operation and its three inputs, all read and
-// finite-checked whatever the operation, then the curve's keys and
-// tangents, then the kernel.
-bool
-_RrApplyFloat(const RrProgram *program, const RigExecWirePropertyRevision &revision,
-              const RrPropertyScratch::Revision &bound, float in,
-              float envelope, float *out)
-{
-    if (!bound.opValid) {
-        return false;
-    }
-    RigExecPropertyMathKernelParams<float, RrVec2f> params;
-    params.op = bound.op;
-    params.value = RrWireValueFloat(RrReadInput(program, *revision.value));
-    params.min = RrWireValueFloat(RrReadInput(program, *revision.min));
-    params.max = RrWireValueFloat(RrReadInput(program, *revision.max));
-    if (!_RrFinite(params.value) || !_RrFinite(params.min) ||
-        !_RrFinite(params.max)) {
-        return false;
-    }
-    if (params.op == RigExecPropertyOp::Curve) {
-        if (bound.keys.empty() || !bound.keysValid) {
-            return false;
-        }
-        params.keys = bound.keys.data();
-        params.keyCount = bound.keys.size();
-        if (!bound.tangents.empty()) {
-            if (bound.tangents.size() != bound.keys.size()) {
-                return false;
-            }
-            params.tangents = bound.tangents.data();
-            params.tangentCount = bound.tangents.size();
-        }
-    }
-    if (params.op == RigExecPropertyOp::Path) {
-        // The curve's points this run: the input a host sets, else the
-        // bake-time default.
-        const std::vector<RrVec3f> *points =
-            bound.pathPoints >= 0
-                ? RrInputArray<RrVec3f>(program, uint32_t(bound.pathPoints))
-                : nullptr;
-        if (!bound.path.valid || !points) {
-            return false;
-        }
-        params.path.points =
-            points->empty() ? nullptr : (*points)[0]._data;
-        params.path.pointCount = points->size();
-        params.path.basis = bound.path.basis;
-        params.path.pinned = bound.path.pinned;
-        params.path.planar = bound.path.planar;
-        params.pathSettings = bound.path;
-        if (!RigExecPathCurveValid(params.path)) {
-            return false;
-        }
-    }
-    params.weight = envelope;
-    *out = RigExecApplyFloatMathKernel(in, params);
-    return true;
-}
+struct RrPropertyHost {
+    struct Math {
+        using Matrix = RrMat4d;
+        using Vec3 = RrVec3f;
+        using Key = RrVec2f;
+    };
 
-// A double chain is computed in float: the incoming value is narrowed, the
-// float applier runs, and its result is widened back.
-bool
-_RrApplyDouble(const RrProgram *program, const RigExecWirePropertyRevision &revision,
-               const RrPropertyScratch::Revision &bound, double in,
-               float envelope, double *out)
-{
-    float result = 0.0f;
-    if (!_RrApplyFloat(program, revision, bound, float(in), envelope,
-                       &result)) {
-        return false;
-    }
-    *out = double(result);
-    return true;
-}
+    struct Revision {
+        const RrProgram &program;
+        const RigExecWirePropertyRevision &wire;
+        const RrPropertyScratch::Revision &bound;
 
-bool
-_RrApplyMatrix(const RrProgram *program, const RigExecWirePropertyRevision &revision,
-               const RrPropertyScratch::Revision &bound, const RrMat4d &in,
-               float envelope, RrMat4d *out)
-{
-    if (!bound.opValid) {
-        return false;
-    }
-    const RrMat4d opValue =
-        _RrMatrix(RrReadInput(program, *revision.value).matrix);
-    if (!_RrFinite(opValue)) {
-        return false;
-    }
-    return RigExecApplyMatrixMathKernel(in, bound.op, opValue, envelope, out);
-}
+        bool exists() const
+        {
+            return true;
+        }
+        std::string label() const
+        {
+            return "diag " + bound.mover;
+        }
+        void appendInputDiagnostics(std::vector<std::string> &) const
+        {
+        }
+        bool enabled() const
+        {
+            return RrReadInput(&program, *wire.enabled).bits != 0;
+        }
+        bool hasWeightField() const
+        {
+            return wire.envelope >= 0;
+        }
+        eval::properties::WeightFieldView weightField() const
+        {
+            const auto &field =
+                program.store.weightFieldResults[size_t(wire.weightField)];
+            return {field.ok, field.values.size(), field.values.data(),
+                    field.error};
+        }
+        float defaultWeight() const
+        {
+            return RrWireValueFloat(RrReadInput(&program, *wire.defaultWeight));
+        }
+        bool opValid() const
+        {
+            return bound.opValid;
+        }
+        RigExecPropertyOp op() const
+        {
+            return bound.op;
+        }
+        template <class T> T read(eval::properties::Operand operand) const
+        {
+            using O = eval::properties::Operand;
+            const auto &input = operand == O::Value     ? wire.value
+                                : operand == O::Minimum ? wire.min
+                                                        : wire.max;
+            const auto value = RrReadInput(&program, *input);
+            if constexpr (std::is_same_v<T, float>)
+                return RrWireValueFloat(value);
+            else if constexpr (std::is_same_v<T, RrMat4d>)
+                return _RrMatrix(value.matrix);
+            else
+                return _RrVec3f(value);
+        }
+        eval::properties::ArrayView<RrVec2f> keys() const
+        {
+            return {bound.keys.data(), bound.keys.size()};
+        }
+        eval::properties::ArrayView<RrVec2f> tangents() const
+        {
+            return {bound.tangents.data(), bound.tangents.size()};
+        }
+        bool keysValid(eval::properties::ArrayView<RrVec2f>) const
+        {
+            return bound.keysValid;
+        }
+        eval::properties::ArrayView<RrVec3f> pathPoints() const
+        {
+            const auto *points = bound.pathPoints >= 0
+                                     ? RrInputArray<RrVec3f>(
+                                           &program, uint32_t(bound.pathPoints))
+                                     : nullptr;
+            return points ? eval::properties::ArrayView<RrVec3f>{points->data(),
+                                                                 points->size()}
+                          : eval::properties::ArrayView<RrVec3f>{};
+        }
+        const RigExecPathSettings &pathSettings() const
+        {
+            return bound.path;
+        }
+    };
 
-bool
-_RrApplyVec3f(const RrProgram *program, const RigExecWirePropertyRevision &revision,
-              const RrPropertyScratch::Revision &bound, const RrVec3f &in,
-              float envelope, RrVec3f *out)
-{
-    if (!bound.opValid) {
-        return false;
-    }
-    RigExecPropertyMathKernelParams<RrVec3f, RrVec2f> params;
-    params.op = bound.op;
-    params.value = _RrVec3f(RrReadInput(program, *revision.value));
-    params.min = _RrVec3f(RrReadInput(program, *revision.min));
-    params.max = _RrVec3f(RrReadInput(program, *revision.max));
-    if (!_RrFinite(params.value) || !_RrFinite(params.min) ||
-        !_RrFinite(params.max)) {
-        return false;
-    }
-    params.weight = envelope;
-    *out = RigExecApplyVec3fMathKernel(in, params);
-    return true;
-}
+    struct Inputs {
+        const RrProgram &program;
+        const RigExecWireFile &file;
+        const RrPropertyScratch &scratch;
 
-// runChain: the base, then each revision in order (enabled, envelope,
-// apply, finite result), then the published result and the phased
-// consumers' values. A skipped chain publishes nothing.
-template <class T, class Apply>
-void
-_RrRunPart(RrProgram *program, RrPropertyScratch *scratch, size_t c, size_t part,
-           T value, const Apply &apply, std::vector<std::string> *diagnostics)
-{
-    const auto &file = *program->inputState.file;
-    const auto &chain = file.propertyChains[c];
-    const auto &plan = scratch->chains[c];
-    auto &store = program->store;
-    if (part == 0) {
-        store.propertyChainValid[c] = _RrFinite(value) ? 1 : 0;
-        if (!store.propertyChainValid[c])
-            diagnostics->push_back("property chain " + plan.target +
-                ": authored base is not finite; chain skipped");
-    } else if (store.propertyChainValid[c]) {
-        const size_t r = part - 1;
-        const auto &revision = chain.revisions[r];
-        const auto &bound = plan.revisions[r];
-        do {
-        if (RrReadInput(program, *revision.enabled).bits == 0) {
-            diagnostics->push_back("diag " + bound.mover +
-                                   ": disabled; revision passed through");
-            break;
+        size_t chainCount() const
+        {
+            return file.propertyChains.size();
         }
-        float envelope = 1.0f;
-        if (revision.envelope >= 0) {
-            const auto &field = store.weightFieldResults[
-                size_t(revision.weightField)];
-            if (!field.ok || field.values.size() != 1) {
-                diagnostics->push_back("diag " + bound.mover + ": " +
-                                       field.error +
-                                       "; revision passed through");
-                break;
-            }
-            envelope = field.values[0];
-        } else {
-            envelope =
-                RrWireValueFloat(RrReadInput(program, *revision.defaultWeight));
-            if (!std::isfinite(envelope) || envelope < 0.0f ||
-                envelope > 1.0f) {
-                diagnostics->push_back(
-                    "diag " + bound.mover +
-                    ": inputs:defaultWeight must be finite and in [0, 1]; "
-                    "revision passed through");
-                break;
-            }
+        size_t revisionCount(size_t c) const
+        {
+            return file.propertyChains[c].revisions.size();
         }
-        T next = value;
-        if (!apply(program, revision, bound, value, envelope, &next)) {
-            diagnostics->push_back("diag " + bound.mover +
-                                   ": inputs unusable; revision passed "
-                                   "through");
-            break;
+        size_t versionBase(size_t c) const
+        {
+            return file.propertyChains[c].versionBase;
         }
-        if (!_RrFinite(next)) {
-            diagnostics->push_back("diag " + bound.mover +
-                                   ": produced a non-finite value; revision "
-                                   "passed through");
-            break;
+        auto valueType(size_t c) const
+        {
+            return file.propertyChains[c].valueType;
         }
-        value = next;
-        } while (false);
-    }
-    const size_t version = size_t(chain.versionBase) + part;
-    store.propertyVersions[version] = _RrHold(value);
-    store.propertyVersionValid[version] = store.propertyChainValid[c];
-    for (size_t k = plan.phasedBegin; k < plan.phasedEnd; ++k) {
-        const auto &consumer = file.phasedConsumers[k];
-        if (size_t(consumer.applied) != part) continue;
-        auto held = _RrHold(value);
-        if (consumer.consumerType == RigExecWirePropertyValueType::Double &&
-            held.tag == _RrTag::Float) held = _RrHold(double(held.f32));
-        else if (consumer.consumerType == RigExecWirePropertyValueType::Float &&
-                 held.tag == _RrTag::Double) held = _RrHold(float(held.f64));
-        store.propertyVersions[consumer.version] = held;
-        store.propertyVersionValid[consumer.version] =
-            store.propertyChainValid[c] && !store.propertyRecordStoodAside[k];
-    }
-}
+        std::string baseLabel(size_t c) const
+        {
+            return "property chain " + scratch.chains[c].target;
+        }
+        template <class T>
+        eval::properties::BaseRead readBase(size_t c, T &value) const
+        {
+            using B = eval::properties::BaseRead;
+            RrWireValue base;
+            if (!RrChainBase(&program, c, scratch.chains[c].baseTag, &base))
+                return B::Missing;
+            if constexpr (std::is_same_v<T, float>)
+                value = RrWireValueFloat(base);
+            else if constexpr (std::is_same_v<T, double>)
+                std::memcpy(&value, &base.bits, sizeof(value));
+            else if constexpr (std::is_same_v<T, RrMat4d>)
+                value = _RrMatrix(base.matrix);
+            else
+                value = _RrVec3f(base);
+            return B::Present;
+        }
+        Revision revision(size_t c, size_t r) const
+        {
+            return {program, file.propertyChains[c].revisions[r],
+                    scratch.chains[c].revisions[r]};
+        }
+        template <class Fn> void forEachRecord(size_t c, Fn fn) const
+        {
+            const auto &chain = scratch.chains[c];
+            for (size_t k = chain.phasedBegin; k < chain.phasedEnd; ++k)
+                fn(k, file.phasedConsumers[k]);
+        }
+    };
 
-}  // namespace
+    struct State {
+        RrStore &store;
+        std::vector<std::string> &lines;
+        void setChainValid(size_t c, bool valid)
+        {
+            store.propertyChainValid[c] = valid;
+        }
+        bool predecessorValid(size_t c, size_t) const
+        {
+            return store.propertyChainValid[c];
+        }
+        template <class T> const T &version(size_t id) const
+        {
+            const auto &value = store.propertyVersions[id];
+            if constexpr (std::is_same_v<T, float>)
+                return value.f32;
+            else if constexpr (std::is_same_v<T, double>)
+                return value.f64;
+            else if constexpr (std::is_same_v<T, RrMat4d>)
+                return value.matrix;
+            else
+                return value.vec;
+        }
+        template <class T>
+        void storeVersion(size_t id, const T *value, bool valid)
+        {
+            if (value)
+                store.propertyVersions[id] = _RrHold(*value);
+            store.propertyVersionValid[id] = valid;
+        }
+        bool recordStoodAside(size_t k) const
+        {
+            return store.propertyRecordStoodAside[k];
+        }
+    };
+
+    Inputs input;
+    State output;
+    const Inputs &inputs() const
+    {
+        return input;
+    }
+    State &state()
+    {
+        return output;
+    }
+    const RigExecRangeRunner *ranges() const
+    {
+        return nullptr;
+    }
+};
+
+} // namespace
 
 bool
 RrPropertySizeScratch(RrProgram *program, std::string *error)
@@ -398,8 +358,7 @@ RrPropertySizeScratch(RrProgram *program, std::string *error)
             return _RrFail(error, "a property chain targets no input "
                                   "slot");
         }
-        plan.target =
-            program->TextOrEmpty(file->inputs[chain.target].name());
+        plan.target = program->TextOrEmpty(file->inputs[chain.target].name());
         switch (chain.valueType) {
         case RigExecWirePropertyValueType::Float:
             plan.baseTag = RigExecWireInputTag::Float;
@@ -455,7 +414,8 @@ RrPropertySizeScratch(RrProgram *program, std::string *error)
             if (bound.opValid && bound.op == RigExecPropertyOp::Path) {
                 bound.pathPoints = revision.pathPoints;
                 bound.path.valid = revision.pathValid;
-                bound.path.basis = RigExecPathBasis(uint8_t(revision.pathBasis));
+                bound.path.basis =
+                    RigExecPathBasis(uint8_t(revision.pathBasis));
                 bound.path.pinned = revision.pathPinned;
                 bound.path.planar = revision.pathPlanar;
                 bound.path.component =
@@ -494,8 +454,8 @@ RrPropertySizeScratch(RrProgram *program, std::string *error)
             plan.phasedBegin = k;
         } else if (plan.phasedEnd != k) {
             return _RrFail(error, "the phased consumers of property "
-                                  "chain " + plan.target +
-                                      " are not contiguous");
+                                  "chain " +
+                                      plan.target + " are not contiguous");
         }
         plan.phasedEnd = k + 1;
         scratch->phasedPublish[k] = entryOf(consumer.consumer);
@@ -506,7 +466,8 @@ RrPropertySizeScratch(RrProgram *program, std::string *error)
     store.propertyPublished.assign(entries, 0);
     size_t versions = 0;
     for (const auto &chain : file->propertyChains)
-        versions = std::max(versions, size_t(chain.versionBase) + chain.revisions.size() + 1);
+        versions = std::max(versions, size_t(chain.versionBase) +
+                                          chain.revisions.size() + 1);
     for (const auto &record : file->phasedConsumers)
         versions = std::max(versions, size_t(record.version) + 1);
     store.propertyVersions.assign(versions, _RrPropertyZero());
@@ -517,7 +478,8 @@ RrPropertySizeScratch(RrProgram *program, std::string *error)
     store.propertyPublishedVersions.assign(slots, -1);
     store.propertyPathSlots.clear();
     for (size_t slot = 0; slot < slots; ++slot)
-        store.propertyPathSlots.emplace(file->inputs[slot].name(), uint32_t(slot));
+        store.propertyPathSlots.emplace(file->inputs[slot].name(),
+                                        uint32_t(slot));
     program->properties = scratch;
     return true;
 }
@@ -527,9 +489,12 @@ RrPropertyBegin(RrProgram *program)
 {
     auto &store = program->store;
     store.propertyResults.clear();
-    std::fill(store.propertyPublishedVersions.begin(), store.propertyPublishedVersions.end(), -1);
-    std::fill(store.propertyPublished.begin(), store.propertyPublished.end(), char(0));
-    std::fill(store.propertyVersionChanged.begin(), store.propertyVersionChanged.end(), char(0));
+    std::fill(store.propertyPublishedVersions.begin(),
+              store.propertyPublishedVersions.end(), -1);
+    std::fill(store.propertyPublished.begin(), store.propertyPublished.end(),
+              char(0));
+    std::fill(store.propertyVersionChanged.begin(),
+              store.propertyVersionChanged.end(), char(0));
     const auto &records = program->inputState.file->phasedConsumers;
     for (size_t k = 0; k < records.size(); ++k) {
         // The runtime authored API changes the raw upstream layer. It
@@ -538,7 +503,8 @@ RrPropertyBegin(RrProgram *program)
         store.propertyRecordStoodAside[k] = standing ? 1 : 0;
         // The producer owns the value; publication validity follows this
         // generation's override kind even while that producer stays clean.
-        const char valid = store.propertyChainValid[records[k].chain] && !standing;
+        const char valid =
+            store.propertyChainValid[records[k].chain] && !standing;
         if (store.propertyVersionValid[records[k].version] != valid)
             store.propertyVersionChanged[records[k].version] = 1;
         store.propertyVersionValid[records[k].version] = valid;
@@ -550,20 +516,26 @@ RrPropertyPublishFinished(RrProgram *program, const std::vector<char> &finished)
 {
     auto &store = program->store;
     const auto &file = *program->inputState.file;
-    const auto *scratch = static_cast<RrPropertyScratch *>(program->properties.get());
-    if (!scratch) return;
+    const auto *scratch =
+        static_cast<RrPropertyScratch *>(program->properties.get());
+    if (!scratch)
+        return;
     for (size_t c = 0; c < file.propertyChains.size(); ++c) {
-        if (!finished[c] || !store.propertyChainValid[c]) continue;
+        if (!finished[c] || !store.propertyChainValid[c])
+            continue;
         const auto &chain = file.propertyChains[c];
-        const size_t version = size_t(chain.versionBase) + chain.revisions.size();
+        const size_t version =
+            size_t(chain.versionBase) + chain.revisions.size();
         store.propertyPublishedVersions[chain.target] = int32_t(version);
         _RrPublish(program, *scratch, scratch->chains[c].publish,
                    store.propertyVersions[version]);
         for (size_t k = scratch->chains[c].phasedBegin;
              k < scratch->chains[c].phasedEnd; ++k) {
             const auto &record = file.phasedConsumers[k];
-            if (!store.propertyVersionValid[record.version]) continue;
-            store.propertyPublishedVersions[record.consumer] = int32_t(record.version);
+            if (!store.propertyVersionValid[record.version])
+                continue;
+            store.propertyPublishedVersions[record.consumer] =
+                int32_t(record.version);
             _RrPublish(program, *scratch, scratch->phasedPublish[k],
                        store.propertyVersions[record.version]);
         }
@@ -573,7 +545,8 @@ RrPropertyPublishFinished(RrProgram *program, const std::vector<char> &finished)
 void
 RrPropertyPublish(RrProgram *program)
 {
-    const std::vector<char> finished(program->inputState.file->propertyChains.size(), 1);
+    const std::vector<char> finished(
+        program->inputState.file->propertyChains.size(), 1);
     RrPropertyPublishFinished(program, finished);
 }
 
@@ -581,46 +554,20 @@ bool
 RrRunPropertyPart(RrProgram *program, size_t c, size_t part,
                   std::vector<std::string> *diagnostics)
 {
-    auto &store = program->store;
     const auto &file = *program->inputState.file;
-    auto *scratch = static_cast<RrPropertyScratch *>(program->properties.get());
+    const auto *scratch =
+        static_cast<const RrPropertyScratch *>(program->properties.get());
+    // The caller's size_t parameters may contain converted wire sentinels.
     if (!scratch || c >= file.propertyChains.size() ||
-        part > file.propertyChains[c].revisions.size()) return false;
-    const auto &chain = file.propertyChains[c];
-    RrWireValue base;
-    if (part == 0 && !RrChainBase(program, c, scratch->chains[c].baseTag, &base)) {
-        store.propertyChainValid[c] = 0;
-        store.propertyVersionValid[chain.versionBase] = 0;
-        for (const auto &record : file.phasedConsumers)
-            if (record.chain == c && record.applied == 0)
-                store.propertyVersionValid[record.version] = 0;
-        diagnostics->push_back("property chain " + scratch->chains[c].target +
-                              ": target has no authored value; chain skipped");
-        return true;
-    }
-    const auto &previous = store.propertyVersions[
-        size_t(chain.versionBase) + (part ? part - 1 : 0)];
-    switch (chain.valueType) {
-    case RigExecWirePropertyValueType::Float:
-        _RrRunPart(program, scratch, c, part,
-                   part ? previous.f32 : RrWireValueFloat(base), _RrApplyFloat, diagnostics);
-        break;
-    case RigExecWirePropertyValueType::Double: {
-        double value = previous.f64;
-        if (!part) std::memcpy(&value, &base.bits, sizeof(value));
-        _RrRunPart(program, scratch, c, part, value, _RrApplyDouble, diagnostics);
-        break;
-    }
-    case RigExecWirePropertyValueType::Matrix4d:
-        _RrRunPart(program, scratch, c, part,
-                   part ? previous.matrix : _RrMatrix(base.matrix), _RrApplyMatrix, diagnostics);
-        break;
-    case RigExecWirePropertyValueType::Vec3f:
-        _RrRunPart(program, scratch, c, part,
-                   part ? previous.vec : _RrVec3f(base), _RrApplyVec3f, diagnostics);
-        break;
-    }
-    return true;
+        c > size_t(std::numeric_limits<int32_t>::max()) ||
+        part > size_t(std::numeric_limits<int32_t>::max()))
+        return false;
+    const eval::StepRef step{uint32_t(eval::StepKind::PropertyRevision),
+                             int32_t(c), int32_t(part),
+                             size_t(file.propertyChains[c].versionBase) + part};
+    RrPropertyHost host{{*program, file, *scratch},
+                        {program->store, *diagnostics}};
+    return eval::RunValueStep(host, step).outcome != eval::Outcome::Invalid;
 }
 
-}  // namespace rigExec
+} // namespace rigExec
