@@ -911,9 +911,8 @@ class NoodlesLayerEditorWidget(QtWidgets.QWidget):
     def _activeStage(self):
         ng = self._activeNodeGraph()
         if ng is not None:
-            stage = ng.getStage()
-            if stage is not None:
-                return stage
+            # An unbound graph must not display layers from the host stage.
+            return ng.getStage()
         if self._usdviewApi is not None:
             try:
                 return self._usdviewApi.stage
