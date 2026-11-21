@@ -88,6 +88,43 @@ function(rigexec_fp_genex_content entry out_var)
     set(${out_var} "${_rigexec_gc_content}" PARENT_SCOPE)
 endfunction()
 
+# PRIVATE: TRUE when the entry begins with "$<" and the ">" that closes
+# that opening expression is the entry's last character, so the whole
+# value is one expression. "$<1:Pkg::>Fast" and "$<1:a>$<2:b>" are
+# concatenations: the matching close is not the end, and only expanding
+# the entry reveals the dependency it names. The scan matches each
+# opening "$<" to its closing ">" by depth; the final character being
+# ">" is not sufficient.
+function(rigexec_fp_genex_complete entry out_var)
+    string(LENGTH "${entry}" _rigexec_gx_len)
+    set(_rigexec_gx_i 0)
+    set(_rigexec_gx_depth 0)
+    set(_rigexec_gx_close -1)
+    while (_rigexec_gx_i LESS _rigexec_gx_len)
+        string(SUBSTRING "${entry}" ${_rigexec_gx_i} 1 _rigexec_gx_ch)
+        if (_rigexec_gx_ch STREQUAL "$")
+            string(SUBSTRING "${entry}" ${_rigexec_gx_i} 2 _rigexec_gx_pair)
+            if (_rigexec_gx_pair STREQUAL "$<")
+                math(EXPR _rigexec_gx_depth "${_rigexec_gx_depth} + 1")
+                math(EXPR _rigexec_gx_i "${_rigexec_gx_i} + 1")
+            endif ()
+        elseif (_rigexec_gx_ch STREQUAL ">" AND _rigexec_gx_depth GREATER 0)
+            math(EXPR _rigexec_gx_depth "${_rigexec_gx_depth} - 1")
+            if (_rigexec_gx_depth EQUAL 0)
+                set(_rigexec_gx_close ${_rigexec_gx_i})
+                break ()
+            endif ()
+        endif ()
+        math(EXPR _rigexec_gx_i "${_rigexec_gx_i} + 1")
+    endwhile ()
+    math(EXPR _rigexec_gx_last "${_rigexec_gx_len} - 1")
+    if (_rigexec_gx_close EQUAL _rigexec_gx_last)
+        set(${out_var} TRUE PARENT_SCOPE)
+    else ()
+        set(${out_var} "" PARENT_SCOPE)
+    endif ()
+endfunction()
+
 # PRIVATE: the settings belong to the translation units that instantiate the
 # kernels, not to their consumers. A compiler resolves a duplicated family by
 # its last occurrence, so the canonical flags must finish the target's own
@@ -227,7 +264,10 @@ endfunction()
 # is resolved to the property's value instead of queueing the lookup's own
 # operands (the one-operand form reads the property from the consuming
 # target), a mixed literal-and-expression entry such as Pkg::$<1:Fast>
-# expands to a name the link never spells and is rejected, and a computed
+# expands to a name the link never spells and is rejected, a leading
+# expression whose matching close does not consume the whole entry (a
+# concatenation such as $<1:Pkg::>Fast) is rejected the same way because
+# only expanding it reveals the dependency it names, and a computed
 # result that cannot be resolved statically is rejected with the consuming
 # target and the full entry named. Nesting is
 # measured per branch: many shallow branches all get inspected, while a
@@ -301,6 +341,24 @@ function(rigexec_fp_reject_unrankable_conflicts target)
                 if (_rigexec_fp_depth GREATER 5)
                     list(APPEND _rigexec_fp_found
                         "${target}: un-inspectable link expression ${_rigexec_fp_lib}")
+                    continue ()
+                endif ()
+                rigexec_fp_genex_complete("${_rigexec_fp_probe}"
+                    _rigexec_fp_whole)
+                if (NOT _rigexec_fp_whole)
+                    # Concatenated text after the matching close
+                    # ("$<1:Pkg::>Fast") names a dependency only the
+                    # expansion reveals: extracting the operator or
+                    # body of the leading expression would inspect the
+                    # wrong (or no) target. Reject naming the consumer
+                    # and the full original entry.
+                    if (_rigexec_fp_probe STREQUAL _rigexec_fp_lib)
+                        list(APPEND _rigexec_fp_found
+                            "${target}: concatenated link expression ${_rigexec_fp_probe}")
+                    else ()
+                        list(APPEND _rigexec_fp_found
+                            "${target}: concatenated link expression ${_rigexec_fp_probe} in ${_rigexec_fp_lib}")
+                    endif ()
                     continue ()
                 endif ()
                 rigexec_fp_genex_content("${_rigexec_fp_probe}"

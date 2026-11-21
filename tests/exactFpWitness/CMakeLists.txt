@@ -5,12 +5,15 @@
 # WITNESS_FAST_TAIL and WITNESS_CONFLICT_FLAG come from the driver.
 # WITNESS_IF_LINK, WITNESS_PROP_LINK, WITNESS_BRANCH_LINK,
 # WITNESS_UNSUPPORTED_LINK, WITNESS_DEEP_LINK, WITNESS_MIXED_DIRECT,
-# WITNESS_MIXED_IF and WITNESS_ONE_ARG_PROP each add a target whose
-# only route to Pkg::Fast or Pkg::Quiet is a single link expression: a
-# literal IF, a property-computed IF branch, a many-node shallow branch
-# tree, an unresolvable computed result, a chain past the inspection
-# cutoff, a mixed literal-and-expression entry (direct and as an IF
-# result), and a one-operand TARGET_PROPERTY read from the consumer.
+# WITNESS_MIXED_IF, WITNESS_ONE_ARG_PROP, WITNESS_ADJACENT_DIRECT and
+# WITNESS_ADJACENT_IF each add a target whose only route to Pkg::Fast or
+# Pkg::Quiet is a single link expression: a literal IF, a property-computed
+# IF branch, a many-node shallow branch tree, an unresolvable computed
+# result, a chain past the inspection cutoff, a mixed literal-and-
+# expression entry (direct and as an IF result), a one-operand
+# TARGET_PROPERTY read from the consumer, and a concatenation whose
+# leading expression closes before the entry ends (direct and as an IF
+# result).
 cmake_minimum_required(VERSION 3.26)
 project(rigexec_exact_fp_witness LANGUAGES CXX)
 
@@ -54,7 +57,8 @@ target_precompile_headers(witnessExact PRIVATE probePch.h)
 if (NOT WITNESS_IF_LINK AND NOT WITNESS_DEEP_LINK AND NOT WITNESS_PROP_LINK
     AND NOT WITNESS_BRANCH_LINK AND NOT WITNESS_UNSUPPORTED_LINK
     AND NOT WITNESS_MIXED_DIRECT AND NOT WITNESS_MIXED_IF
-    AND NOT WITNESS_ONE_ARG_PROP)
+    AND NOT WITNESS_ONE_ARG_PROP AND NOT WITNESS_ADJACENT_DIRECT
+    AND NOT WITNESS_ADJACENT_IF)
     target_link_libraries(witnessExact PRIVATE $<$<CONFIG:Release>:Pkg::Fast>)
 endif ()
 
@@ -128,6 +132,29 @@ if (WITNESS_ONE_ARG_PROP)
         "${_gen_dir}/generatedProbe.cpp")
     set_target_properties(witnessOneArg PROPERTIES FP_DEP "Pkg::Fast")
     target_link_libraries(witnessOneArg PRIVATE $<TARGET_PROPERTY:FP_DEP>)
+endif ()
+
+if (WITNESS_ADJACENT_DIRECT)
+    # The entry opens with a complete expression but literal text follows
+    # its matching close: "$<1:Pkg::>Fast" expands to Pkg::Fast, while a
+    # pass that assumes the final ">" closes the leading expression
+    # extracts the body "Pkg::>Fas", finds no such target, and accepts
+    # the fast interface un-inspected.
+    add_executable(witnessAdjacent
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+    target_link_libraries(witnessAdjacent PRIVATE $<1:Pkg::>Fast)
+endif ()
+
+if (WITNESS_ADJACENT_IF)
+    # The same concatenation hidden in an IF result branch: the entry
+    # itself has its close at the end, so the boundary check must run on
+    # every nested result too, not only on direct link entries.
+    add_executable(witnessAdjacentIf
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+    target_link_libraries(witnessAdjacentIf PRIVATE
+        $<IF:$<CONFIG:Release>,$<1:Pkg::>Fast,Pkg::Quiet>)
 endif ()
 
 if (WITNESS_UNSUPPORTED_LINK)

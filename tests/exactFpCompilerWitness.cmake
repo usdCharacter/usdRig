@@ -490,5 +490,48 @@ if (NOT WITNESS_LOG MATCHES "Pkg::Fast: .*${_conflict_flag}")
         "on the consumer and name the selected dependency:\n${WITNESS_LOG}")
 endif ()
 
+# Leg 12: a link entry that opens with an expression but keeps literal
+# text after its matching close - $<1:Pkg::>Fast expands to Pkg::Fast -
+# must be rejected naming the consumer and the full original entry.
+# Treating the final '>' as the outer close extracts the body
+# Pkg::>Fas, which names no target, so the fast interface escapes
+# inspection; the only route to Pkg::Fast in this configuration is this
+# entry (the short conditional link is disabled).
+set(_work12 "${BUILD_ROOT}/adjacent-direct")
+_witness_configure("${_work12}" -DWITNESS_CONFLICT=interface
+    -DWITNESS_ADJACENT_DIRECT=ON)
+if (WITNESS_RC EQUAL 0)
+    _witness_fail("concatenated link entry configured without a "
+        "diagnostic:\n${WITNESS_LOG}")
+endif ()
+if (NOT WITNESS_LOG MATCHES "witnessAdjacent: concatenated link expression")
+    _witness_fail("concatenation diagnostic does not name the consumer and "
+        "class:\n${WITNESS_LOG}")
+endif ()
+if (NOT WITNESS_LOG MATCHES "[$]<1:Pkg::>Fast")
+    _witness_fail("concatenation diagnostic drops the full original "
+        "entry:\n${WITNESS_LOG}")
+endif ()
+
+# Leg 13: the same concatenation as an IF result branch: the entry's own
+# close is its final character, so only inspecting every nested result's
+# boundary catches this; the diagnostic must name the consumer, the
+# branch text and the full original expression.
+set(_work13 "${BUILD_ROOT}/adjacent-if")
+_witness_configure("${_work13}" -DWITNESS_CONFLICT=interface
+    -DWITNESS_ADJACENT_IF=ON)
+if (WITNESS_RC EQUAL 0)
+    _witness_fail("concatenated IF result configured without a "
+        "diagnostic:\n${WITNESS_LOG}")
+endif ()
+if (NOT WITNESS_LOG MATCHES "witnessAdjacentIf: concatenated link expression")
+    _witness_fail("concatenated-branch diagnostic does not name the "
+        "consumer and class:\n${WITNESS_LOG}")
+endif ()
+if (NOT WITNESS_LOG MATCHES "[$]<1:Pkg::>Fast in [$]<IF")
+    _witness_fail("concatenated-branch diagnostic drops the branch text "
+        "or the full original expression:\n${WITNESS_LOG}")
+endif ()
+
 message(STATUS "exactFpCompilerWitness: command audit and numeric probes "
     "agree on the exact mode")
