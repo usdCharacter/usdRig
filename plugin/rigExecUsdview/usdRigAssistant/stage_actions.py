@@ -397,11 +397,13 @@ class Applier(object):
             Sdf.Path.absoluteRootPath)
 
     def _capture_define_ancestors(self, scene_path):
-        """Snapshot the over ancestors a define promotes to def.
+        """Snapshot the specifier of each over ancestor a define promotes.
 
         Defining /A/B turns an existing over /A on the edit target into
         a def, while _topmost_absent stops at the child itself. Without
-        these snapshots undo removes the child and leaves /A defined."""
+        these snapshots undo removes the child and leaves /A defined.
+        Only the specifier is captured: a whole-subtree snapshot would
+        also erase a sibling authored on the layer after the reply."""
         if self._capture is None:
             return
         target = self.stage.GetEditTarget()
@@ -414,7 +416,8 @@ class Applier(object):
             spec = layer.GetPrimAtPath(parent)
             if spec is not None and spec.specifier == Sdf.SpecifierOver:
                 self._capture.capture(
-                    rigExecUndo.SpecSnapshot.Capture(layer, parent), parent)
+                    layerOpinionsModel.InfoSnapshot.Capture(
+                        layer, parent, 'specifier'), parent)
             parent = parent.GetParentPath()
 
     # Helpers

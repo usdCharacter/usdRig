@@ -541,12 +541,48 @@ def _DefineUnderOverAncestor():
            "one redo restores the edited layer contents")
 
 
+def _DefineUnderOverAncestorKeepsSibling():
+    """Undoing the define leaves a sibling authored after the reply alone."""
+    layer = _Layer("define_over_ancestor_sibling.usda",
+                   '#usda 1.0\nover "A"\n{\n}\n')
+    stage = Usd.Stage.Open(layer)
+    container = _CountingContainer()
+    box, _api = _Toolbox(stage, container, can_edit=True)
+    text, failed = box.call("change_stage", {"changes": [
+        {"action": "define_prim", "path": "/A/B", "type": "Xform"}]})
+    _Check(not failed, "define_prim under an over is made: %s" % text)
+    box.finish()
+    _Check(len(container.stack.pushed) == 1,
+           "the reply is exactly one host undo entry: %s" %
+           (container.stack.pushed,))
+    stage.DefinePrim("/A/C", "Xform")
+    _Check(layer.GetPrimAtPath("/A/C") is not None,
+           "the sibling is authored on the same layer")
+    container.stack.Undo()
+    _Check(not stage.GetPrimAtPath("/A/B").IsValid(),
+           "undo removes the defined prim")
+    spec = layer.GetPrimAtPath("/A")
+    _Check(spec is not None and spec.specifier == Sdf.SpecifierOver,
+           "undo restores the ancestor to over")
+    _Check(layer.GetPrimAtPath("/A/C") is not None,
+           "undo keeps the sibling the reply did not author")
+    container.stack.Redo()
+    _Check(stage.GetPrimAtPath("/A/B").IsValid(),
+           "redo restores the defined prim")
+    spec = layer.GetPrimAtPath("/A")
+    _Check(spec is not None and spec.specifier == Sdf.SpecifierDef,
+           "redo promotes the ancestor back to def")
+    _Check(layer.GetPrimAtPath("/A/C") is not None,
+           "redo keeps the sibling the reply did not author")
+
+
 def TestReplyTransaction():
     """One reply is one step on the host's undo stack, and nothing else."""
     _OneStepPerReply()
     _OverlappingWrites()
     _CrossLayerReply()
     _DefineUnderOverAncestor()
+    _DefineUnderOverAncestorKeepsSibling()
     _EffectsAreNotUndoable()
     _SaveOnlyReply()
     _MissingUndoStack()
