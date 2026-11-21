@@ -7,15 +7,43 @@
 #include "rigExec/compiledProgram.h"
 #include "rigExec/frozenContext.h"
 #include "rigExec/rigEvaluator.h"
+#include "rigExecSchema/schemaNames.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/usd/sdf/types.h"
 #include "pxr/usd/usd/stage.h"
 #include <cstdio>
 #include <map>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 using namespace rigExec;
+
+// Schema names the skinned-mesh fixture below authors, each declared once;
+// RigExec spellings stay single-sourced in schemaNames.h.
+TF_DEFINE_PRIVATE_TOKENS(
+    _sealedViewTokens,
+    ((points, "points"))
+    ((pointsType, "Points"))
+    ((control, rigExec::SchemaTypeName::RigExecControl))
+    ((avarsTx, rigExec::SchemaAttrText::avarsTx))
+    ((skinMover, rigExec::SchemaTypeName::RigExecSkinMover))
+    ((moverAPI, rigExec::SchemaTypeName::RigExecMoverAPI))
+    ((moves, rigExec::SchemaAttrText::rigExecMoves))
+    ((influences, rigExec::SchemaAttrText::rigExecInfluences))
+    ((elementSize, rigExec::SchemaAttrText::rigExecElementSize))
+    ((jointIndices, rigExec::SchemaAttrText::rigExecJointIndices))
+    ((jointWeights, rigExec::SchemaAttrText::rigExecJointWeights))
+    ((staticWeight, rigExec::SchemaTypeName::RigExecStaticWeight))
+    ((weightTarget, rigExec::SchemaAttrText::rigExecWeightTarget))
+    ((representation, rigExec::SchemaAttrText::rigExecRepresentation))
+    ((sparse, rigExec::SchemaValueText::sparse))
+    ((indices, rigExec::SchemaAttrText::rigExecIndices))
+    ((values, rigExec::SchemaAttrText::rigExecValues))
+    ((weightObject, rigExec::SchemaAttrText::rigExecWeightObject))
+);
+
 namespace {
 int failures = 0;
 #define CHECK(condition)                                                       \
@@ -64,6 +92,62 @@ MakeStage()
     };
     math("AFirst", 1.0f);
     math("BSecond", 2.0f);
+
+    // A skinned mesh, so the chain, revision and weight loops below have
+    // records to compare against rather than running empty.
+    const SdfPath geomPath("/View/Geom/Panel");
+    const SdfPath pointsProp =
+        geomPath.AppendProperty(_sealedViewTokens->points);
+    const UsdPrim mesh =
+        stage->DefinePrim(geomPath, _sealedViewTokens->pointsType);
+    VtVec3fArray panelPoints(4);
+    for (size_t i = 0; i < panelPoints.size(); ++i) {
+        panelPoints[i] = GfVec3f(float(i), float(i % 2), 0.0f);
+    }
+    CHECK(mesh.GetAttribute(_sealedViewTokens->points).Set(panelPoints));
+    const UsdPrim joint = stage->DefinePrim(SdfPath("/View/Rig/Joint"),
+                                            _sealedViewTokens->control);
+    CHECK(joint.GetAttribute(_sealedViewTokens->avarsTx).Set(1.0));
+    const auto skin = [&](const char *name) {
+        UsdPrim prim = stage->DefinePrim(root.AppendChild(TfToken(name)),
+                                         _sealedViewTokens->skinMover);
+        CHECK(prim.ApplyAPI(_sealedViewTokens->moverAPI));
+        CHECK(prim.GetRelationship(_sealedViewTokens->moves)
+                  .SetTargets({pointsProp}));
+        CHECK(prim.CreateRelationship(_sealedViewTokens->influences)
+                  .SetTargets({joint.GetPath()}));
+        CHECK(prim.CreateAttribute(_sealedViewTokens->elementSize,
+                                   SdfValueTypeNames->Int)
+                  .Set(1));
+        CHECK(prim.CreateAttribute(_sealedViewTokens->jointIndices,
+                                   SdfValueTypeNames->IntArray)
+                  .Set(VtIntArray(4, 0)));
+        CHECK(prim.CreateAttribute(_sealedViewTokens->jointWeights,
+                                   SdfValueTypeNames->FloatArray)
+                  .Set(VtFloatArray(4, 1.0f)));
+        return prim;
+    };
+    skin("PanelSkinA");
+    const UsdPrim weight =
+        stage->DefinePrim(SdfPath("/View/Rig/Weights/PanelEdge"),
+                          _sealedViewTokens->staticWeight);
+    CHECK(weight.CreateRelationship(_sealedViewTokens->weightTarget, false)
+              .SetTargets({pointsProp}));
+    CHECK(weight
+              .CreateAttribute(_sealedViewTokens->representation,
+                               SdfValueTypeNames->Token, false)
+              .Set(_sealedViewTokens->sparse));
+    CHECK(weight
+              .CreateAttribute(_sealedViewTokens->indices,
+                               SdfValueTypeNames->IntArray, false)
+              .Set(VtIntArray({0, 1, 2, 3})));
+    CHECK(weight
+              .CreateAttribute(_sealedViewTokens->values,
+                               SdfValueTypeNames->FloatArray, false)
+              .Set(VtFloatArray(4, 1.0f)));
+    CHECK(skin("PanelSkinB")
+              .CreateRelationship(_sealedViewTokens->weightObject, false)
+              .SetTargets({weight.GetPath()}));
     return stage;
 }
 
@@ -150,12 +234,25 @@ TestView()
     for (size_t i = 0; i < B.spaceSwitches.size(); ++i) {
         CHECK(&V.GetSpaceSwitch(i) == &B.spaceSwitches[i]);
     }
+    static_assert(std::is_same<decltype(V.GetChainFacts(size_t(0))),
+                               const RigExecCompiledChainFacts &>::value);
+    static_assert(
+        std::is_same<decltype(V.GetChainRevisionFacts(size_t(0), size_t(0))),
+                     const RigExecCompiledRevisionFacts &>::value);
+    static_assert(std::is_same<decltype(V.GetWeightObjectFacts(size_t(0))),
+                               const RigExecCompiledWeightFacts &>::value);
+
     CHECK(V.GetChainCount() == B.chains.size());
-    for (size_t i = 0; i < B.chains.size(); ++i) {
-        CHECK(&V.GetChain(i) == &B.chains[i]);
+    CHECK(!B.chains.empty());
+    for (size_t i = 0; i < V.GetChainCount(); ++i) {
+        CHECK(V.GetChainFacts(i).target == B.chains[i].target);
         CHECK(V.GetChainRevisionCount(i) == B.chains[i].revisions.size());
-        for (size_t r = 0; r < B.chains[i].revisions.size(); ++r) {
-            CHECK(&V.GetChainRevision(i, r) == &B.chains[i].revisions[r]);
+        for (size_t r = 0; r < V.GetChainRevisionCount(i); ++r) {
+            const RigExecCompiledRevisionFacts &facts =
+                V.GetChainRevisionFacts(i, r);
+            CHECK(facts.moverPath == B.chains[i].revisions[r].moverPath);
+            CHECK(facts.target == B.chains[i].revisions[r].target);
+            CHECK(facts.op == B.chains[i].revisions[r].op);
         }
     }
     CHECK(V.GetRevisionCount() == B.revisionIndex.size());
@@ -167,8 +264,10 @@ TestView()
         CHECK(V.GetDerivedIdentity(i) == B.derivedIndex[i]);
     }
     CHECK(V.GetWeightObjectCount() == B.weightObjects.size());
-    for (size_t i = 0; i < B.weightObjects.size(); ++i) {
-        CHECK(&V.GetWeightObject(i) == &B.weightObjects[i]);
+    CHECK(!B.weightObjects.empty());
+    for (size_t i = 0; i < V.GetWeightObjectCount(); ++i) {
+        CHECK(V.GetWeightObjectFacts(i).path == B.weightObjects[i].path);
+        CHECK(V.GetWeightObjectFacts(i).type == B.weightObjects[i].type);
     }
     CHECK(V.GetConstraintCount() == B.constraints.size());
     for (size_t i = 0; i < B.constraints.size(); ++i) {
