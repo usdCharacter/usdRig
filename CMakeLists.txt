@@ -2973,11 +2973,27 @@ endforeach()
 # Install
 include(CMakePackageConfigHelpers)
 
-install(TARGETS rigExecLzma rigExecGraph rigExecEvalCore rigExecMath rigExec rigExecScene rigExecOracle rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu rigExecFlatBuffers rigExecBinary rigExecBake rigExecRuntime rigExecSampler
+set(RIGEXEC_INSTALL_TARGETS
+    rigExecLzma rigExecGraph rigExecEvalCore rigExecMath rigExec rigExecScene
+    rigExecOracle rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu
+    rigExecFlatBuffers rigExecBinary rigExecBake rigExecRuntime rigExecSampler)
+install(TARGETS ${RIGEXEC_INSTALL_TARGETS}
     EXPORT rigExecTargets
     RUNTIME DESTINATION "${RIGEXEC_INSTALL_LIBDIR}"
     LIBRARY DESTINATION "${RIGEXEC_INSTALL_LIBDIR}"
     ARCHIVE DESTINATION "${RIGEXEC_INSTALL_LIBDIR}")
+
+# A named-target build (the packaging guide, bin/test_changed.sh --run) never
+# reaches the ALL hook, yet the install rules consume the staged manifests.
+# Depend on the producer from every installed artifact and host-facing
+# executable; every test executable links one of these targets, so the
+# manifests are staged before any documented build-then-install path runs.
+foreach (_target ${RIGEXEC_INSTALL_TARGETS} _rigexec rigExecPose rigExecBakeTool
+                 rigExecReplayInputs usdRigView)
+    if (TARGET ${_target})
+        add_dependencies(${_target} rigexecSdkManifests)
+    endif ()
+endforeach ()
 
 install(FILES libs/rigExecScene/sceneLinkAnchor.cpp libs/rigExecOracle/oracleLinkAnchor.cpp
     DESTINATION "${RIGEXEC_INSTALL_CMAKEDIR}")
