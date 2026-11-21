@@ -24,6 +24,7 @@
 #include "rigEvaluator.h"
 #include "types.h"
 #include "rigExecEvalCore/envelope.h"
+#include "rigExecEvalCore/skin.h"
 
 #include "rigExecMath/dualQuat.h"
 #include "rigExecMath/skinAcceptance.h"
@@ -2777,6 +2778,71 @@ FoldInfluences(const RigExecBakedProgramImpl &B,
     return changed;
 }
 
+/// EvalCore's skin bodies (rigExecEvalCore/skin.h) over the core's Gf
+/// numbers: the SIMD blend and narrowed rows are the rigExecMath kernels,
+/// the split is the Gf dual-quaternion palette.
+struct BakedSkinMath {
+    using Vec3f = GfVec3f;
+    using Vec3d = GfVec3d;
+    using Mat4 = GfMatrix4d;
+    using ScaledDualQuat = RigExecScaledDualQuat;
+    static Vec3f ToFloat(const Vec3d &v)
+    {
+        return Vec3f(v);
+    }
+    static Vec3d ToDouble(const Vec3f &v)
+    {
+        return Vec3d(v);
+    }
+    static void NarrowSkinRows(const Mat4 &t, float *rows)
+    {
+        RigExecNarrowSkinRows(t, rows);
+    }
+    static void
+    ApplyLinearBlendSkinSimd(const Vec3f *in, Vec3f *out,
+                             const eval::SkinLayoutViewT<BakedSkinMath> &part,
+                             const float *rows)
+    {
+        RigExecSkinLayout layout;
+        layout.transforms = part.transforms;
+        layout.transformCount = part.transformCount;
+        layout.indices = part.indices;
+        layout.weights = part.weights;
+        layout.indexCount = part.indexCount;
+        layout.elementSize = part.elementSize;
+        layout.pointCount = part.pointCount;
+        RigExecApplyLinearBlendSkinSimd(in, out, layout, rows);
+    }
+};
+
+/// The packet as EvalCore's SkinPacketView: the method classified from
+/// its token, the layout arrays borrowed from the handle or the packet.
+eval::SkinPacketView
+BakedSkinPacket(const RigExecMoverParameters &p)
+{
+    eval::SkinPacketView v;
+    v.method = p.skinningMethod == _tokens->classicLinear
+                   ? eval::kSkinMethodClassicLinear
+                   : (p.skinningMethod == _tokens->dualQuaternion
+                          ? eval::kSkinMethodDualQuaternion
+                          : eval::kSkinMethodUnknown);
+    if (const RigExecSkinTopology *const topology = p.skinTopology.get()) {
+        v.hasTopology = true;
+        v.topologyValidated = topology->validated;
+        v.topologyInfluenceCount = topology->influenceCount;
+        v.topologyIndices = topology->indices.data();
+        v.topologyWeights = topology->weights.data();
+        v.topologyIndexCount = topology->indices.size();
+        v.topologyElementSize = topology->elementSize;
+    }
+    v.indices = p.skinIndices.data();
+    v.weights = p.skinWeights.data();
+    v.indexCount = p.skinIndices.size();
+    v.weightCount = p.skinWeights.size();
+    v.elementSize = p.skinElementSize;
+    return v;
+}
+
 /// The revision's own folded table, in the forms the kernels want it in.
 ///
 /// What a chunk of a revision cut into ONE chunk skins against, and what the
@@ -2784,20 +2850,13 @@ FoldInfluences(const RigExecBakedProgramImpl &B,
 /// chunked revision's chunks keep their own tables beside these and never
 /// read them; the fold writes them anyway, because they are part of the
 /// RevisionTransforms slot and the fuse may only READ that slot.
-RigExecSkinTransformsView
+eval::SkinTransformsViewT<BakedSkinMath>
 WholeTransformsView(RigExecBakedProgramImpl::GeomRevision *revision)
 {
-    RigExecSkinTransformsView view;
-    view.transforms = revision->influences.data();
-    view.transformCount = revision->influences.size();
-    if (!revision->rows.empty()) {
-        view.rows = revision->rows.data();
-    }
-    if (!revision->palette.empty()) {
-        view.palette = revision->palette.data();
-        view.paletteSize = revision->palette.size();
-    }
-    return view;
+    return eval::SkinWholeTransforms<BakedSkinMath>(
+        revision->influences.data(), revision->influences.size(),
+        revision->rows.data(), !revision->rows.empty(),
+        revision->palette.data(), revision->palette.size());
 }
 
 /// Narrows and splits \p revision's folded table for the method its packet
@@ -2810,29 +2869,10 @@ void
 FoldTransformForms(RigExecBakedProgramImpl::GeomRevision *revision,
                    bool useSimd)
 {
-    const size_t count = revision->influences.size();
-    if (revision->parameters.skinningMethod == _tokens->dualQuaternion) {
-        revision->rows.clear();
-        revision->palette.resize(count + 1);
-        for (size_t t = 0; t < count; ++t) {
-            revision->palette[t] =
-                RigExecScaledDualQuatFromMatrix(revision->influences[t]);
-        }
-        // The trailing entry is the weight complement's identity influence,
-        // exactly as RigExecSkinDualQuatPalette appends it.
-        revision->palette[count] = RigExecScaledDualQuat();
-        return;
-    }
-    revision->palette.clear();
-    if (!useSimd) {
-        revision->rows.clear();
-        return;
-    }
-    revision->rows.resize(count * RigExecSkinRowStride);
-    for (size_t t = 0; t < count; ++t) {
-        RigExecNarrowSkinRows(revision->influences[t],
-                              &revision->rows[t * RigExecSkinRowStride]);
-    }
+    eval::FoldSkinTransformForms<BakedSkinMath>(
+        BakedSkinPacket(revision->parameters).method,
+        revision->influences.data(), revision->influences.size(), useSimd,
+        &revision->rows, &revision->palette);
 }
 
 /// Copies \p chunk's OWN influences out of the matrix slots, keeping the
@@ -2848,59 +2888,32 @@ GatherChunkTransforms(const RigExecBakedProgramImpl &B,
                       const RigExecBakedProgramImpl::GeomRevision &revision,
                       RigExecBakedProgramImpl::GeomChunk *chunk)
 {
-    const bool dualQuat =
-        revision.parameters.skinningMethod == _tokens->dualQuaternion;
-    const size_t count = chunk->transforms.size();
-    const bool splitAlready = chunk->palette.size() == count + 1;
-    for (const int position : chunk->key) {
+    const auto matrixAt = [&](int position) -> const GfMatrix4d * {
+        if (position < 0 ||
+            size_t(position) >= revision.influenceSlots.size()) {
+            return nullptr;
+        }
         const int slot = revision.influenceSlots[size_t(position)];
         if (slot < 0) {
-            continue;
+            return nullptr;
         }
-        const GfMatrix4d &matrix = revision.finalPhase
-                                       ? B.finalMatrix[size_t(slot)]
-                                       : B.baseMatrix[size_t(slot)];
-        if (chunk->transforms[size_t(position)] == matrix) {
-            continue;
-        }
-        chunk->transforms[size_t(position)] = matrix;
-        chunk->keyChanged = true;
-        RigExecNarrowSkinRows(
-            matrix, &chunk->rows[size_t(position) * RigExecSkinRowStride]);
-        if (splitAlready) {
-            chunk->palette[size_t(position)] =
-                RigExecScaledDualQuatFromMatrix(matrix);
-        }
-    }
-    if (dualQuat && !splitAlready) {
-        // First run of a dual-quaternion revision: the whole table at once,
-        // which is also what keeps the entries outside the key -- identity,
-        // and never read -- in step with the matrices beside them.
-        chunk->palette.resize(count + 1);
-        for (size_t t = 0; t < count; ++t) {
-            chunk->palette[t] =
-                RigExecScaledDualQuatFromMatrix(chunk->transforms[t]);
-        }
-        chunk->palette[count] = RigExecScaledDualQuat();
-    }
+        return revision.finalPhase ? &B.finalMatrix[size_t(slot)]
+                                   : &B.baseMatrix[size_t(slot)];
+    };
+    eval::GatherSkinChunkTransforms<BakedSkinMath>(
+        BakedSkinPacket(revision.parameters).method, chunk->key, matrixAt,
+        &chunk->transforms, &chunk->rows, &chunk->palette, &chunk->keyChanged);
 }
 
 /// The view onto \p chunk's own tables.
-RigExecSkinTransformsView
+eval::SkinTransformsViewT<BakedSkinMath>
 ChunkTransformsView(const RigExecBakedProgramImpl::GeomChunk &chunk,
                     bool useSimd)
 {
-    RigExecSkinTransformsView view;
-    view.transforms = chunk.transforms.data();
-    view.transformCount = chunk.transforms.size();
-    if (useSimd && !chunk.rows.empty()) {
-        view.rows = chunk.rows.data();
-    }
-    if (!chunk.palette.empty()) {
-        view.palette = chunk.palette.data();
-        view.paletteSize = chunk.palette.size();
-    }
-    return view;
+    return eval::SkinChunkTransforms<BakedSkinMath>(
+        chunk.transforms.data(), chunk.transforms.size(), chunk.rows.data(),
+        !chunk.rows.empty(), useSimd, chunk.palette.data(),
+        chunk.palette.size());
 }
 
 /// The skin kernel's validation over the half RevisionStatic holds: the
@@ -2911,8 +2924,9 @@ ChunkTransformsView(const RigExecBakedProgramImpl::GeomChunk &chunk,
 bool
 SkinPacketIsUsable(const RigExecBakedProgramImpl::GeomRevision &revision)
 {
-    return revision.parameters.valid && revision.parameters.kind == "skin" &&
-           revision.layoutUsable && revision.envelopeOk;
+    return eval::SkinPacketIsUsable(revision.parameters.valid,
+                                    revision.parameters.kind == "skin",
+                                    revision.layoutUsable, revision.envelopeOk);
 }
 
 /// A skin revision's apply-or-fail answer from that half: past it a linear
@@ -2921,20 +2935,10 @@ SkinPacketIsUsable(const RigExecBakedProgramImpl::GeomRevision &revision)
 RigExecRevisionAcceptance
 SkinAcceptance(const RigExecBakedProgramImpl::GeomRevision &revision)
 {
-    if (!SkinPacketIsUsable(revision)) {
-        return RigExecRevisionAcceptance::Refuses;
-    }
-    switch (RigExecSkinMethodOf(revision.parameters)) {
-    case RigExecSkinMethod::ClassicLinear:
-        return RigExecRevisionAcceptance::Applies;
-    case RigExecSkinMethod::DualQuaternion:
-        return revision.role == RigExecBakedRevisionRole::Range
-                   ? RigExecRevisionAcceptance::Applies
-                   : RigExecRevisionAcceptance::Deferred;
-    case RigExecSkinMethod::Unknown:
-        break;
-    }
-    return RigExecRevisionAcceptance::Refuses;
+    return static_cast<RigExecRevisionAcceptance>(
+        eval::SkinAcceptance(SkinPacketIsUsable(revision),
+                             BakedSkinPacket(revision.parameters).method,
+                             revision.role == RigExecBakedRevisionRole::Range));
 }
 
 /// One vertex range of a skin revision: seed the revision's own output buffer
@@ -2951,38 +2955,17 @@ SkinAcceptance(const RigExecBakedProgramImpl::GeomRevision &revision)
 /// \p target is the buffer written, at the full count: staging for a chunk.
 bool
 SkinRange(RigExecBakedProgramImpl::GeomRevision *revision,
-          const GfVec3f *preceding, const RigExecSkinTransformsView &view,
-          size_t begin, size_t end, bool whole, bool useSimd,
-          std::vector<GfVec3f> *target)
+          const GfVec3f *preceding,
+          const eval::SkinTransformsViewT<BakedSkinMath> &view, size_t begin,
+          size_t end, bool whole, bool useSimd, std::vector<GfVec3f> *target)
 {
-    std::vector<GfVec3f> &out = *target;
-    std::copy(preceding + begin, preceding + end, out.begin() + long(begin));
-    if (whole) {
-        if (!RigExecApplySkinKernelWithTransforms(revision->parameters, view,
-                                                  &out, useSimd)) {
-            return false;
-        }
-    } else if (!RigExecApplySkinKernelRange(revision->parameters, view, begin,
-                                            end, &out, useSimd)) {
-        return false;
-    }
     // "Apply once", over the same range: the envelope was resolved at the
     // full count by RevisionStatic, because resolving it is atomic over the
-    // whole array, and every array here is indexed absolutely. The whole
-    // array goes through the kernel's own split for the reason the skinning
-    // above does: an unpartitioned mesh keeps the same threading.
-    if (!revision->fullStrength) {
-        if (whole) {
-            // `whole` means the whole array -- the full-range kernel above
-            // ignores the bounds -- so begin is 0 and the count is `end`.
-            eval::BlendEnvelopeAll(preceding, revision->envelope.data(), end,
-                                   out.data(), RigExecGeometryRanges());
-        } else {
-            eval::BlendEnvelopeRange(preceding, revision->envelope.data(),
-                                     begin, end, out.data());
-        }
-    }
-    return true;
+    // whole array, and every array here is indexed absolutely.
+    return eval::SkinRange<BakedSkinMath>(
+        BakedSkinPacket(revision->parameters), revision->fullStrength,
+        revision->envelope.data(), preceding, view, begin, end, whole, useSimd,
+        !revision->parameters.skinTopology, RigExecGeometryRanges(), target);
 }
 
 /// The test capture (RigExecBakedProgramTesting::CapturePointReads): the
@@ -3897,7 +3880,15 @@ RunGroupStep(RigExecBakedProgramImpl &B,
         RigExecBakedProgramImpl::GeomChunk &chunk = revision->chunks[g];
         chunk.keyChanged = false;
         GatherChunkTransforms(B, *revision, &chunk);
-        view = ChunkTransformsView(chunk, B.useSimd);
+        view.transforms = chunk.transforms.data();
+        view.transformCount = chunk.transforms.size();
+        if (B.useSimd && !chunk.rows.empty()) {
+            view.rows = chunk.rows.data();
+        }
+        if (!chunk.palette.empty()) {
+            view.palette = chunk.palette.data();
+            view.paletteSize = chunk.palette.size();
+        }
     }
     // A smooth or a delta mush reads its halo groups of the entering version
     // beside its own, which its step declares (the scheduler ran their
@@ -4017,13 +4008,12 @@ RunWholeSkinChunk(const RigExecBakedProgramImpl &B,
         return;
     }
     GatherChunkTransforms(B, *revision, &chunk);
-    const RigExecSkinTransformsView view =
-        ChunkTransformsView(chunk, B.useSimd);
     const int k = RigExecGroupScratch(&state, end - begin);
-    const bool ok = RigExecRunRevisionGroup(
-        revision->op, revision->parameters, revision->rangeInputs, &view,
-        entering.data, state.own[size_t(k)]->data(), revision->precedingCount,
-        begin, end, GroupEnvelope(*revision), B.useSimd);
+    const bool ok = eval::ApplySkinGroupRange<BakedSkinMath>(
+        BakedSkinPacket(revision->parameters), revision->fullStrength,
+        revision->envelope.data(), ChunkTransformsView(chunk, B.useSimd),
+        entering.data, revision->precedingCount, begin, end, B.useSimd,
+        state.own[size_t(k)]->data());
     if (ok) {
         RigExecNoteComputedGroup(&state, k);
     }
@@ -5446,8 +5436,9 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
         // would have landed: a revision with one bad influence passes its
         // preceding value through and reports MoverFailed.
         revision.influencesValid =
-            !skin || RigExecSkinTransformsAreUsable(revision.influences.data(),
-                                                    revision.influences.size());
+            !skin ||
+            eval::SkinTransformsAreUsable<BakedSkinMath>(
+                revision.influences.data(), revision.influences.size());
         const bool rangeDq =
             skin && revision.role == RigExecBakedRevisionRole::Range &&
             revision.parameters.skinningMethod == _tokens->dualQuaternion;
@@ -5458,9 +5449,9 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
         if (rangeDq && revision.influencesValid &&
             SkinPacketIsUsable(revision)) {
             const auto &palette = revision.palette;
-            const auto layout = RigExecSkinLayoutForPacket(
-                revision.parameters, WholeTransformsView(&revision),
-                revision.precedingCount);
+            const auto layout = eval::SkinLayoutForPacket<BakedSkinMath>(
+                BakedSkinPacket(revision.parameters),
+                WholeTransformsView(&revision), revision.precedingCount);
             // DQ refusal depends on weights and poses, never entering points.
             revision.influencesValid =
                 (revision.dqWeightsSafe &&
@@ -5645,15 +5636,20 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
             revision.envelopeOk = true;
             revision.fullStrength = true;
             if (skin) {
-                revision.layoutUsable =
-                    RigExecSkinLayoutIsUsable(revision.parameters, count);
+                revision.layoutUsable = eval::SkinLayoutIsUsable(
+                    BakedSkinPacket(revision.parameters), count,
+                    revision.parameters.skinTransforms.size());
                 revision.dqWeightsSafe =
                     revision.layoutUsable &&
                     revision.parameters.skinningMethod ==
                         _tokens->dualQuaternion &&
-                    RigExecDualQuatWeightsSafe(RigExecSkinLayoutForPacket(
-                        revision.parameters,
-                        RigExecSkinTransformsOf(revision.parameters), count));
+                    RigExecDualQuatWeightsSafe(
+                        eval::SkinLayoutForPacket<BakedSkinMath>(
+                            BakedSkinPacket(revision.parameters),
+                            eval::SkinTransformsOf<BakedSkinMath>(
+                                revision.parameters.skinTransforms.data(),
+                                revision.parameters.skinTransforms.size()),
+                            count));
                 revision.fullStrength = eval::EnvelopeIsFullStrength(
                     BakedEnvelopeView(revision.parameters.weights));
                 if (!revision.fullStrength)
@@ -5758,8 +5754,9 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
         }
         // Every skin, Legacy, Whole or Range: a Range skin's group steps
         // share this decision, with DQ blend validity supplied by InfluenceFold.
-        revision.layoutUsable =
-            RigExecSkinLayoutIsUsable(revision.parameters, count);
+        revision.layoutUsable = eval::SkinLayoutIsUsable(
+            BakedSkinPacket(revision.parameters), count,
+            revision.parameters.skinTransforms.size());
         revision.fullStrength = eval::EnvelopeIsFullStrength(
             BakedEnvelopeView(revision.parameters.weights));
         if (!revision.fullStrength) {
@@ -5769,9 +5766,12 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
         revision.dqWeightsSafe =
             revision.layoutUsable &&
             revision.parameters.skinningMethod == _tokens->dualQuaternion &&
-            RigExecDualQuatWeightsSafe(RigExecSkinLayoutForPacket(
-                revision.parameters,
-                RigExecSkinTransformsOf(revision.parameters), count));
+            RigExecDualQuatWeightsSafe(eval::SkinLayoutForPacket<BakedSkinMath>(
+                BakedSkinPacket(revision.parameters),
+                eval::SkinTransformsOf<BakedSkinMath>(
+                    revision.parameters.skinTransforms.data(),
+                    revision.parameters.skinTransforms.size()),
+                count));
         if (revision.chunked) {
             // Whether the keys still describe the vertices. The handle is
             // the identity the SkinTopology op preserves for a binding that
@@ -6982,10 +6982,15 @@ RigExecBakedRunLayoutOp(const RigExecBakedProgramImpl &B,
                                 ? sizeValue->UncheckedGet<int>()
                                 : 1;
     auto built = std::make_shared<RigExecSkinTopology>();
-    RigExecBuildSkinTopology(
-        TfSpan<const int>(indices.cdata(), indices.size()),
-        TfSpan<const float>(weights.cdata(), weights.size()), elementSize,
-        revision->influenceSlots.size(), built.get());
+    built->indices.assign(indices.cdata(), indices.cdata() + indices.size());
+    built->weights.assign(weights.cdata(), weights.cdata() + weights.size());
+    built->elementSize = elementSize;
+    built->influenceCount = revision->influenceSlots.size();
+    const eval::SkinLayoutBuild build = eval::BuildSkinLayout(
+        built->indices.data(), built->indices.size(), built->weights.data(),
+        built->weights.size(), elementSize, built->influenceCount);
+    built->pointCount = build.pointCount;
+    built->validated = build.validated;
     // The same layout keeps its object, so the packet that carries it still
     // compares equal and the kernel does not re-run.
     if (revision->layoutCandidate && *revision->layoutCandidate == *built) {
@@ -7185,11 +7190,13 @@ RigExecBakedVerifyRangeChains(RigExecBakedProgramImpl *program)
                 // blends the envelope RevisionStatic resolved; the decision
                 // is the revision's own.
                 if (decided) {
-                    RigExecSkinTransformsView view;
-                    view.transforms = revision.influences.data();
-                    view.transformCount = revision.influences.size();
-                    applied = RigExecApplySkinKernelWithTransforms(
-                        revision.parameters, view, &whole, B.useSimd);
+                    const auto view = eval::SkinTransformsOf<BakedSkinMath>(
+                        revision.influences.data(), revision.influences.size());
+                    applied =
+                        eval::ApplySkinKernelWithTransforms<BakedSkinMath>(
+                            BakedSkinPacket(revision.parameters), view, &whole,
+                            B.useSimd, !revision.parameters.skinTopology,
+                            RigExecGeometryRanges());
                     if (applied && !revision.fullStrength) {
                         applied = revision.envelopeOk &&
                                   revision.envelope.size() == count;
