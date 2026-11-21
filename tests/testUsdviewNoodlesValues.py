@@ -335,7 +335,9 @@ def testUsdviewInputFunction(appController):
     _pump(app, 20)
 
     checkMungCleared("release")
-    probeDelivery(valuesPrim, valuesNode, delivered=True, phase="release")
+    _Check(valuesNode.value_row_for_property("count", view._currentTimeCode).components[0]
+           == valuesPrim.GetAttribute("count").Get(),
+           "release did not reconcile the count edit made during the drag")
     _Check(view._valueEditTarget is None, "a drag opened the keyboard editor")
     # 2.5 -> ladder_step(2.5) == 0.01 -> 100 px adds exactly 1.0
     got = valuesPrim.GetAttribute("plain").Get()
@@ -354,6 +356,10 @@ def testUsdviewInputFunction(appController):
            "the drag pushed more than one undo entry (%r still there)"
            % undo.undoDescription())
 
+    undo.redo(view)
+    _Check(abs(plainAttr.Get() - 3.5) < 1e-4, "redo did not restore the committed drag")
+    undo.undo(view)
+
     # --- A drag ending under an outer suppression -----------------------
     undo.clear()
     settle()
@@ -369,7 +375,9 @@ def testUsdviewInputFunction(appController):
         probeDelivery(valuesPrim, valuesNode, delivered=False, phase="nested release")
     finally:
         outer.release()
-    probeDelivery(valuesPrim, valuesNode, delivered=True, phase="outer release")
+    _Check(valuesNode.value_row_for_property("count", view._currentTimeCode).components[0]
+           == valuesPrim.GetAttribute("count").Get(),
+           "last release did not reconcile the pending count edit")
     _Check(undo.canUndo() and abs(plainAttr.Get() - 3.5) < 1e-4,
            "nested release did not commit the preview")
     undo.undo(view)
@@ -647,6 +655,22 @@ def testUsdviewInputFunction(appController):
     _Check(view._valueEditTarget is None, "release after failed write opened an editor")
     print("RIGEXEC_NOODLES_VALUES: live-write failure cleanup verified")
 
+    point = cellPoint(valuesNode, "plain")
+    before = plainAttr.Get()
+    press(point)
+    layer = stage.GetEditTarget().GetLayer()
+    layer.SetPermissionToEdit(False)
+    try:
+        with patch.object(view, "_startValueFlash") as flash:
+            move(offset(point, 100.0))
+            release(offset(point, 100.0))
+            _Check(not flash.called, "refused write flashed success")
+    finally:
+        layer.SetPermissionToEdit(True)
+    checkMungCleared("refused write")
+    _Check(plainAttr.Get() == before and not undo.canUndo(),
+           "refused write changed the value or pushed undo")
+
     def startAbandonedDrag(phase):
         point = cellPoint(valuesNode, "plain")
         before = plainAttr.Get()
@@ -655,24 +679,32 @@ def testUsdviewInputFunction(appController):
         _Check(view._mungActive and plainAttr.Get() != before,
                "%s: drag did not preview" % phase)
         probeDelivery(valuesPrim, valuesNode, delivered=False, phase=phase)
-        return point, plainAttr.Get()
+        return point, before
 
     # Keep the target path on the replacement stage to detect stale writes
     # to either stage.
     replacement = Usd.Stage.Open(stage.Flatten())
     replacementAttr = replacement.GetPrimAtPath(VALUES).GetAttribute("plain")
     _Check(replacementAttr.Set(17.0), "failed to seed the replacement value")
-    point, preview = startAbandonedDrag("before switch")
+    originalTarget = stage.GetEditTarget()
+    session = stage.GetSessionLayer()
+    stage.SetEditTarget(session)
+    _Check(not session.GetAttributeAtPath(plainAttr.GetPath()),
+           "preview cancellation requires an initially unauthored session value")
+    point, original = startAbandonedDrag("before switch")
     view.loadStage(replacement)
     checkMungCleared("switch")
     replacementUndo = view._undoHistory
     _Check(view.nodeGraph.getStage() == replacement and replacementUndo is not undo,
            "switch did not install a new stage and history")
     move(offset(point, 150.0))
-    _Check(plainAttr.Get() == preview and replacementAttr.Get() == 17.0,
+    _Check(plainAttr.Get() == original and replacementAttr.Get() == 17.0,
            "switch or the next move wrote to a stage")
     _Check(not undo.canUndo() and not replacementUndo.canUndo(),
            "abandoning the drag at switch pushed undo")
+    spec = session.GetAttributeAtPath(plainAttr.GetPath())
+    _Check(not spec or not spec.HasInfo("default"), "switch left a session default")
+    stage.SetEditTarget(originalTarget)
     probeDelivery(valuesPrim, valuesNode, delivered=False, phase="old sender after switch")
 
     view.loadStage(stage)
@@ -688,18 +720,18 @@ def testUsdviewInputFunction(appController):
     _Check(view._valueEditTarget == (VALUES, "plain", 0),
            "first click on the reloaded graph did not open a fresh editor")
     key(QtCore.Qt.Key_Escape)
-    _Check(plainAttr.Get() == preview and not undo.canUndo(),
+    _Check(plainAttr.Get() == original and not undo.canUndo(),
            "first click after switching authored a value")
     print("RIGEXEC_NOODLES_VALUES: mid-drag stage switch verified")
 
-    point, preview = startAbandonedDrag("before dock close")
+    point, original = startAbandonedDrag("before dock close")
     editor.close()
     _pump(app, 10)
     checkMungCleared("dock close")
     _Check(view._undoHistory is None, "dock close did not detach history")
     probeDelivery(valuesPrim, valuesNode, delivered=False, phase="closed dock")
     move(offset(point, 150.0))
-    _Check(plainAttr.Get() == preview and not undo.canUndo() and not undo.canRedo(),
+    _Check(plainAttr.Get() == original and not undo.canUndo() and not undo.canRedo(),
            "dock close or the next move wrote a value or pushed undo")
     print("RIGEXEC_NOODLES_VALUES: mid-drag dock close verified")
 

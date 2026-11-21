@@ -584,22 +584,21 @@ def write_value(
     if warn:
         _warn_edit_target(stage)
 
-    if time_code is None:
-        time_code = Usd.TimeCode.Default()
-
+    time = value_write_time(attr, time_code, mode)
     try:
         with Sdf.ChangeBlock():
-            if attr.GetVariability() == Sdf.VariabilityUniform:
-                attr.Set(value)
-            elif mode == "default":
-                attr.Set(value)
-            elif mode == "animation" or attr.GetNumTimeSamples() > 0:
-                attr.Set(value, time_code)
-            else:
-                attr.Set(value)
+            if not attr.Set(value, time):
+                return False, "USD refused the value"
     except Exception as e:  # a locked layer USD refuses late, a bad value
         return False, str(e)
     return True, ""
+
+
+def value_write_time(attr, time_code, mode):
+    if (attr.GetVariability() != Sdf.VariabilityUniform and mode != "default"
+            and (mode == "animation" or attr.GetNumTimeSamples() > 0)):
+        return time_code if time_code is not None else Usd.TimeCode.Default()
+    return Usd.TimeCode.Default()
 
 
 def _warn_edit_target(stage):
@@ -709,3 +708,26 @@ def build_value_row(stage, prim, pin_name, property_name, time_code=None):
     if template is None:
         return None
     return build_value_row_from_template(stage, prim, template, time_code)
+
+
+def read_value_opinion(layer, path, time):
+    if time is not None:
+        return layer.QueryTimeSample(path, time)
+    spec = layer.GetAttributeAtPath(path)
+    return spec.default if spec and spec.HasInfo("default") else None
+
+
+def set_value_opinion(layer, path, time, value):
+    spec = layer.GetAttributeAtPath(path)
+    if not spec:
+        return
+    with Sdf.ChangeBlock():
+        if time is not None:
+            if value is None:
+                layer.EraseTimeSample(path, time)
+            else:
+                layer.SetTimeSample(path, time, value)
+        elif value is None:
+            spec.ClearInfo("default")
+        else:
+            spec.default = value

@@ -203,8 +203,9 @@ class LoaderLifecycleTest(unittest.TestCase):
                     self.host.stage = new
 
                 def fail(*args, **kwargs):
-                    self.assertIs(view.nodeGraph.getStage(), new)
-                    self.assertIs(view._undoHistory, history_for_stage(new))
+                    expected = old if failure == 'populate' else new
+                    self.assertIs(view.nodeGraph.getStage(), expected)
+                    self.assertIs(view._undoHistory, history_for_stage(expected))
                     self.assertIsNone(view._stageSync.boundStage())
                     if failure != 'populate':
                         self.assertIn('/Recipe/Visible', view.nodes)
@@ -241,9 +242,9 @@ class LoaderLifecycleTest(unittest.TestCase):
                     self.posts.pop()()
                     self.assertTrue(view.updatesEnabled())
                     self.assertTrue(view.initialized)
-                    self.assertFalse(view._renderCacheClearPending)
-                    view.makeCurrent.assert_called_once()
-                    view.doneCurrent.assert_called_once()
+                    self.assertTrue(view._renderCacheClearPending)
+                    view.makeCurrent.assert_not_called()
+                    view.doneCurrent.assert_not_called()
                 else:
                     self.assertTrue(view.updatesEnabled())
                     self.assertFalse(self.posts)
@@ -254,7 +255,7 @@ class LoaderLifecycleTest(unittest.TestCase):
                 self.assert_dispatch(new, '/Recipe/RecoveryEdit', True)
                 self.assertIn('/Recipe/RecoveryEdit', view.nodes)
 
-    def test_populate_failure_after_model_assignment(self):
+    def test_candidate_load_failure_before_publication(self):
         self._exercise_failed_switch('populate')
 
     def test_scoped_frame_failure(self):

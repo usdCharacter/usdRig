@@ -1577,6 +1577,9 @@ class AfterUsdviewRefreshTest(unittest.TestCase):
 
 
 class _ReloadStubGraphView:
+    nodeGraphReplaced = MagicMock()
+    nodeGraph = property(lambda self: self._nodeGraph,
+                         lambda self, graph: setattr(self, "_nodeGraph", graph))
     """The slice of GraphView that ``_reloadCurrentGraph`` drives.
 
     The loader runs for real against a real stage, because the whole point of
