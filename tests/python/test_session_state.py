@@ -1304,6 +1304,48 @@ def TestContainerEnsureAndRetire():
           "shutdown retires one session")
 
 
+def TestAuxiliaryViewportRetirement():
+    import markingMenuUI
+    import pickerHoverUI
+    import rigExecUsdview
+
+    window, api = _Session()
+    container = rigExecUsdview.RigExecUsdviewContainer.__new__(
+        rigExecUsdview.RigExecUsdviewContainer)
+    container._api = api
+    container._undoStack = object()
+    try:
+        with _Patched(pickerHoverUI, WasEnabled=lambda: True,
+                      LoadLayout=lambda: pickerHoverUI.hoverModel.Layout()):
+            container._RestoreHoverPicker()
+            container._EnsureMarkingMenu()
+            tools = ("hoverPicker", "hoverPickerHotkey", "markingMenu")
+            _Check(all(stageViewReady.GetResult(api, tool) is not None and
+                       stageViewReady.GetResult(api, tool).status == "pending"
+                       for tool in tools), "auxiliary tools share readiness")
+            view = QtWidgets.QWidget(window)
+            _Host(api)._stageView = view
+            stageViewReady.NotifyReady(api)
+            picker = pickerHoverUI.GetController(api)
+            menu = markingMenuUI.GetMenu(api)
+            _Check(picker is not None and menu is not None,
+                   "host readiness installs the auxiliary tools")
+            overlay, panel = picker._overlay, picker._panel
+            _Check(overlay.parent() is view and picker._OnPanel in panel._listeners,
+                   "picker is attached to the viewport and panel")
+            container._Shutdown()
+            _Check(all(stageViewReady.GetResult(api, tool) is None for tool in tools)
+                   and overlay.parent() is None and picker._OnPanel not in panel._listeners
+                   and not menu.HasView(), "shutdown detaches the auxiliary tools")
+            container._RestoreHoverPicker()
+            container._EnsureMarkingMenu()
+            _Check(all(stageViewReady.GetResult(api, tool) is None for tool in tools),
+                   "the retired container cannot requeue them")
+    finally:
+        _Destroy(window)
+    print("  ok: auxiliary viewport tools share readiness and retirement")
+
+
 def TestContainerAdoptsReadyGizmo():
     import ikfkMatch
     import rigExecUsdview
@@ -1550,6 +1592,7 @@ def main():
     TestContainerPerSession()
     TestContainerEnsureAndRetire()
     TestContainerAdoptsReadyGizmo()
+    TestAuxiliaryViewportRetirement()
     TestRegistryDestroyedSlots()
     TestRegistryRemovalHook()
     TestTouchPoseMarqueeUsesOwnSession()

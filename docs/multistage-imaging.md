@@ -367,8 +367,9 @@ its windows, and the plugins keep their state per session.
   tool, create, retries=DEFAULT_RETRIES, onReady=None)` reserves the
   session/tool slot as `pending` before running any external code and returns
   an immutable `InstallResult(status, controller, error)` snapshot; `tool` is
-  one of `gizmo`, `viewCube`, `avarDock`, `viewAxis`. Only `ready` carries a
-  controller; only `failed` carries diagnostic text; `pending` and
+  one of `gizmo`, `viewCube`, `avarDock`, `viewAxis`, `hoverPicker`,
+  `hoverPickerHotkey`, or `markingMenu`. Only `ready` carries a controller;
+  only `failed` carries diagnostic text; `pending` and
   `unavailable` carry neither. `create()` runs synchronously once the broker
   sees the view and must return a non-null controller; `onReady(controller)`
   runs once after publication. Required setup, including gizmo input handoff
@@ -419,15 +420,9 @@ its windows, and the plugins keep their state per session.
 - **Session teardown is not stage replacement.** `Retire(usdviewApi)` removes
   only that session's broker record, idempotently; closing the window drops it
   through the `destroyed` signal, and `ForgetSession(api)` drops it from every
-  registry even when the window is retained, so a later registration on the
-  retained window starts a fresh generation with new inputs. Retirement
-  invalidates the generation first, stops and disposes a live timer, and clears
-  factories and results. It detaches installed tools and rolls back any tool
-  returned by an in-flight factory after retirement. A host losing its view
-  can call `Retire(api)` before removing it.
-  Replacing the USD stage does none of this: ready controllers stay installed,
-  pending work keeps its budget, and a terminal `unavailable` stays terminal
-  until the session is retired.
+  registry even when the window is retained. Call `Retire(api)` before removing
+  a live view: it cancels pending work and detaches installed or in-flight tools.
+  Stage replacement keeps the controllers and the pending probe budget.
 - **Application-wide event filters.** The gizmo hotkeys act only on events
   whose window belongs to their session (`sessionRegistry.SessionOfEvent`).
   The graph editor's hotkeys act only inside its own panel.

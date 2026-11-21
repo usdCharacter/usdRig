@@ -722,63 +722,35 @@ class RigExecUsdviewContainer(PluginContainer):
 
     def _ToggleHoverPicker(self, usdviewApi=None):
         """Menu item: show or hide the hover picker."""
+        if getattr(self, "_viewportRetired", False):
+            return None
         return self._ImportHoverPicker().ToggleHoverPicker(
             usdviewApi or self._api, self._UndoStack())
 
     def _RestoreHoverPicker(self):
-        """Install the P hotkey, and bring the hover picker back if it
-        was on last session."""
-        if (getattr(self, "_viewportRetired", False) or
-                getattr(self, "_hoverPickerRestored", False)):
+        if getattr(self, "_viewportRetired", False):
             return
         try:
             module = self._ImportHoverPicker()
-            module.InstallHotkey(self._api, self._UndoStack())
-            # A scripted session (testusdview --testScript) starts from
-            # defaults, not from the user's saved viewer state.
-            if not module.WasEnabled() or "--testScript" in sys.argv:
-                self._hoverPickerRestored = True
-                return
-            if module.StageView(self._api) is None:
-                tries = getattr(self, "_hoverPickerTries", 0)
-                if tries < 50:
-                    self._hoverPickerTries = tries + 1
-                    from pxr.Usdviewq.qt import QtCore
-                    QtCore.QTimer.singleShot(100, self._RestoreHoverPicker)
-                return
-            self._hoverPickerRestored = True
-            module.InstallHoverPicker(self._api, self._UndoStack())
+            undo = self._UndoStack()
+            module.InstallHotkey(self._api, undo)
+            if (not getattr(self, "_viewportRetired", False) and
+                    "--testScript" not in sys.argv and module.WasEnabled()):
+                module.InstallHoverPicker(self._api, undo)
         except Exception as error:
             Tf.Warn("rigExecUsdview: hover picker unavailable: %s" % error)
 
     def _EnsureMarkingMenu(self):
-        """Install the viewport's right-click marking menu for rig
-        controls, once the stage view exists."""
         if getattr(self, "_viewportRetired", False):
             return None
-        if getattr(self, "_markingMenu", None) is not None or \
-                getattr(self, "_markingMenuFailed", False):
-            return getattr(self, "_markingMenu", None)
         try:
-            try:
-                import markingMenuUI
-            except ImportError:
-                sys.path.insert(
-                    0, os.path.dirname(os.path.abspath(__file__)))
-                import markingMenuUI
-            self._markingMenu = markingMenuUI.InstallMarkingMenu(
+            import markingMenuUI
+            return markingMenuUI.InstallMarkingMenu(
                 self._api, self._UndoStack(), switchIkFk=self.SwitchIkFk,
                 knownLimbs=self._IkFkLimbs)
-            if self._markingMenu is None and                     getattr(self, "_markingMenuTries", 0) < 50:
-                self._markingMenuTries = getattr(
-                    self, "_markingMenuTries", 0) + 1
-                from pxr.Usdviewq.qt import QtCore
-                QtCore.QTimer.singleShot(100, self._EnsureMarkingMenu)
         except Exception as error:
             Tf.Warn("rigExecUsdview: marking menu unavailable: %s" % error)
-            self._markingMenu = None
-            self._markingMenuFailed = True
-        return self._markingMenu
+            return None
 
     def _OpenGraphEditor(self, usdviewApi=None):
         """
