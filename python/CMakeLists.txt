@@ -36,6 +36,13 @@ target_link_libraries(_rigexec PRIVATE
     rigExecGpu
     usd sdf tf gf vt python)
 
+# _rigexec.cpp instantiates the numeric kernels into this module's own
+# translation unit: it includes the rigExecMath headers (pointFrame, rbf,
+# skeleton2d, geometry kernels) whose kernels compile here, so the module
+# must carry the exact-FP settings. The root walk covers only its own
+# directory scope, so apply them directly.
+rigexec_apply_exact_fp_flags(_rigexec)
+
 # The installed extension lands in lib/python while rigExec/rigExecAuthoring land
 # in lib, so the loader-relative rpath inherited from CMAKE_INSTALL_RPATH
 # ($ORIGIN / @loader_path) needs one extra hop up to find its siblings.

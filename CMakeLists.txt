@@ -31,15 +31,15 @@ endif()
 # test (RuntimeMath, RuntimePose, RuntimeGeometry, ImagingPlayback,
 # verify_binary, the Rbf oracle) by an ulp. -fno-fast-math does not cover
 # this; only -ffp-contract=off does. MSVC needs nothing: /fp:precise is
-# its default and it never auto-contracts.
-if (NOT MSVC)
-    add_compile_options(-ffp-contract=off)
-endif()
-
-# The exact-FP settings every translation unit that instantiates the kernels
-# must carry; rigexec_apply_exact_fp_flags adds them without repeating the
-# directory option above. Docs: docs/concepts/baked-vs-dynamic.md.
+# its default and it never auto-contracts. cmake/rigexec_flags.cmake owns
+# the flag spelling; this scope installs only its contraction-family
+# directory policy, so a vendored target compiled in a child scope can
+# still re-declare the fast family and keep its codegen while the exact-FP
+# finalization walk enforces the effective mode on every owned target.
+# Docs: docs/concepts/baked-vs-dynamic.md.
 include(cmake/rigexec_flags.cmake)
+rigexec_get_exact_fp_directory_flags(_rigexec_fp_directory_flags)
+add_compile_options(${_rigexec_fp_directory_flags})
 
 set(RIGEXEC_INSTALL_LIBDIR     "lib"
     CACHE STRING "Install directory for libraries, relative to the prefix")
@@ -81,7 +81,6 @@ add_library(rigExec::rigExecGraph ALIAS rigExecGraph)
 # USD-free headers. The wire enum it reuses is generated against the vendored
 # FlatBuffers headers.
 add_library(rigExecEvalCore STATIC libs/rigExecEvalCore/kinds.cpp)
-rigexec_apply_exact_fp_flags(rigExecEvalCore)
 target_compile_features(rigExecEvalCore PUBLIC cxx_std_17)
 target_include_directories(rigExecEvalCore PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
@@ -109,7 +108,6 @@ target_include_directories(rigExecMath PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
 target_link_libraries(rigExecMath PUBLIC arch tf gf vt)
-rigexec_apply_exact_fp_flags(rigExecMath)
 set_target_properties(rigExecMath PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Keep value-codec template instantiations private to its archive. Only the
@@ -199,9 +197,6 @@ target_link_libraries(rigExec PUBLIC
 
 target_link_libraries(rigExec PRIVATE
     rigExecGraph rigExecMath rigExecEvalCore rigExecInputValues ts)
-# Every rigExec translation unit instantiates the pose, geometry and mover
-# kernels, so the whole archive carries the exact-FP settings.
-rigexec_apply_exact_fp_flags(rigExec)
 # On Windows the consumers of rigExec need those two archives as well.
 
 # Scene translation calls back into the evaluator. The evaluator does not
@@ -444,7 +439,10 @@ add_library(rigExecLzma STATIC
     thirdparty/lzma/C/CpuArch.c)
 target_include_directories(rigExecLzma PRIVATE thirdparty/lzma/C)
 target_compile_definitions(rigExecLzma PRIVATE Z7_ST RIGEXEC_LZMA_PORTABLE_SCALAR)
-set_target_properties(rigExecLzma PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# Vendored code keeps its own floating-point codegen: the exact-FP walk
+# exempts targets by this marker, never by source-path text.
+set_target_properties(rigExecLzma PROPERTIES POSITION_INDEPENDENT_CODE ON
+    RIGEXEC_VENDORED TRUE)
 add_library(rigExec::rigExecLzma ALIAS rigExecLzma)
 
 add_library(rigExecBinary STATIC libs/rigExecBinary/format.cpp
@@ -499,7 +497,6 @@ file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/evalCoreSources.txt"
     CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecEvalCore,SOURCES>,\n>\n")
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/evalCoreIncludes.txt"
     CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecEvalCore,INCLUDE_DIRECTORIES>,\n>\n")
-rigexec_apply_exact_fp_flags(rigExecRuntime)
 
 # What a host that builds these USD-free sources outside CMake needs: the
 # exact-FP flag list and the same source and include manifests this build
@@ -518,6 +515,22 @@ add_test(NAME testRigExecExactFpFragment
         "-DEXPORT_SCRIPT=${CMAKE_CURRENT_LIST_DIR}/cmake/exportManifests.cmake"
         "-DINSTALL_DATADIR=${RIGEXEC_INSTALL_DATADIR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/checkExactFpFragment.cmake")
+# Effective-mode witness: configures and builds a throwaway project through
+# the same helper, then checks the real compiler commands and runs numeric
+# probes proving the exact mode survives generator expressions, per-source
+# options, PCH creation and reuse, a third_party-named generated path, and a
+# relocated build directory. Needs only a C++ compiler.
+add_test(NAME testRigExecExactFpCompiler
+    COMMAND "${CMAKE_COMMAND}"
+        "-DWITNESS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests/exactFpWitness"
+        "-DWITNESS_MODULE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/rigexec_flags.cmake"
+        "-DBUILD_ROOT=${CMAKE_CURRENT_BINARY_DIR}/exactFpWitness"
+        "-DGENERATOR=${CMAKE_GENERATOR}"
+        "-DCXX_COMPILER=${CMAKE_CXX_COMPILER}"
+        "-DCXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/exactFpCompilerWitness.cmake")
+set_tests_properties(testRigExecExactFpCompiler PROPERTIES TIMEOUT 300
+    ENVIRONMENT "CMAKE_BUILD_PARALLEL_LEVEL=2")
 
 # rigExecSampler: hands a .rigexec's Animated inputs the values a stage holds
 # at each new time (RigExecInputSampler), for every consumer that plays the
@@ -2535,6 +2548,10 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
         COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_baked_attribute.py"
         "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
+    add_test(NAME testRigExecSdkSmoke
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_sdk_binding_smoke.py"
+            "$<TARGET_FILE_DIR:_rigexec>")
 
     add_test(NAME testRigExecUndo
         COMMAND ${Python3_EXECUTABLE}
@@ -2702,6 +2719,7 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
                          testAutoClavicle
                          testAvarEditorModel
                          testGizmoPreview testGizmoDeferredRelease testGizmoOwnCommit
+                         testGizmoDocumentEdit
                          testGizmoSettings testGizmoDrag testGizmoSnap
                          testViewCubeMath testRigExecStageEdits
                          testGraphModel testGraphEditorModel testVolumeWeightModel
@@ -2714,6 +2732,7 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
                          testGizmoMarquee testRigExecImagingPublishedPython
                          testRigExecGil testRigExecBakedPsd testRigExecBakedCone
                          testRigExecBakedAttributePython
+                         testRigExecSdkSmoke
                          testRigExecBipedHandPython testRigExecBlinkClearancePython
                          testRigExecDeformerEnabledPython
                          testRigExecDeformerOrderPython testRigExecEyeSymmetryPython
@@ -2941,6 +2960,15 @@ foreach(_rigexec_oracle_exe IN ITEMS
         target_link_libraries(${_rigexec_oracle_exe} PRIVATE rigExecOracle)
     endif()
 endforeach()
+
+# Placement invariant for the exact-FP finalize walk: it must stay the last
+# code in this scope that mutates target options. It runs after every
+# target_precompile_headers producer and REUSE_FROM consumer above and after
+# every compile-affecting target_link_libraries call in this scope, the
+# scene and oracle links just above included, because interface and
+# per-source options reach the command line after the appended exact-FP
+# flags. Only install() rules follow it here.
+rigexec_apply_exact_fp_flags_to_directory_targets()
 
 # Install
 include(CMakePackageConfigHelpers)
