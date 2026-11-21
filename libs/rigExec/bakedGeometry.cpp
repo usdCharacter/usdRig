@@ -25,6 +25,7 @@
 #include "types.h"
 #include "rigExecEvalCore/chain.h"
 #include "rigExecEvalCore/envelope.h"
+#include "rigExecEvalCore/gate.h"
 #include "rigExecEvalCore/skin.h"
 
 #include "rigExecMath/dualQuat.h"
@@ -4517,7 +4518,16 @@ struct BakedChainState {
     bool groupGateHolds(size_t chain, size_t revision, size_t)
     {
         const Revision &rev = revisionAt(chain, revision);
-        return RigExecRevisionGateHolds(rev.op, rev.parameters);
+        // The core consultation of gate.h: packet facts alone, as in
+        // RigExecRevisionGateHolds; NoteGateViolation stays the adapter's.
+        eval::GroupGateFacts facts;
+        facts.enabled = true;
+        facts.op = int(rev.op);
+        facts.envelope = BakedEnvelopeView(rev.parameters.weights);
+        facts.skinMethod = BakedSkinPacket(rev.parameters).method;
+        facts.blendSurfaceFrame = rev.parameters.blendSurfaceFrame;
+        facts.regularGrid = rev.parameters.latticeSettings.regularGrid;
+        return eval::GroupGateHolds(facts);
     }
     void noteGateViolation(size_t, size_t)
     {

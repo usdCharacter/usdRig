@@ -1,6 +1,7 @@
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecEvalCore/chain.h"
 #include "rigExecEvalCore/envelope.h"
+#include "rigExecEvalCore/gate.h"
 #include "rigExecEvalCore/skin.h"
 #include "rigExecMath/blendLayoutKernel.h"
 #include "rigExecMath/blendRangeKernel.h"
@@ -3406,38 +3407,31 @@ RrGeoVersionGatherShared(const RrProgram &program,
 // envelope's size, as the body it replaces did.
 
 // Whether a gated Range revision's packet keeps every point of its unwritten
-// groups at its entering bytes (RigExecRevisionGateHolds, plus the file's
-// promise that every listed index lies in a written group); true for a
-// revision that writes every group.
+// groups at its entering bytes (gate.h, over the decoded written-group
+// flags: the all-written short-circuit and the promise that every listed
+// index lies in a written group).
 bool
 RrGeoGroupGateHolds(const RrGeometryScratch::Chain &chain,
                     const RrGeometryScratch::Revision &rev, size_t count)
 {
-    if (std::find(rev.groupWritten.begin(), rev.groupWritten.end(), char(0)) ==
-        rev.groupWritten.end()) {
-        return true;
-    }
     const RrGeoMoverParameters &p = rev.parameters;
-    if (!RrGeoEnvelopeIsSparseWalk(p.weights) ||
-        (rev.op == RrGeoOpSkin &&
-         RrGeoSkinPacket(p).method != eval::kSkinMethodClassicLinear) ||
-        (rev.op == RrGeoOpBlendShape && p.blendSurfaceFrame)) {
-        return false;
-    }
-    const size_t groups = chain.groupBounds.size() - 1;
-    for (const int index : p.weights.Indices()) {
-        if (index < 0 || size_t(index) >= count) {
-            continue;
-        }
-        size_t g = size_t(std::upper_bound(chain.groupBounds.begin(),
-                                           chain.groupBounds.end(), index) -
-                          chain.groupBounds.begin());
-        g = g == 0 ? 0 : std::min(g - 1, groups - 1);
-        if (!rev.groupWritten[g]) {
-            return false;
-        }
-    }
-    return true;
+    eval::GroupGateFacts facts;
+    facts.enabled = true;
+    facts.op = rev.op;
+    facts.envelope = RrGeoEnvelopeView(p.weights);
+    facts.skinMethod = RrGeoSkinPacket(p).method;
+    facts.blendSurfaceFrame = p.blendSurfaceFrame;
+    facts.regularGrid = false;
+    facts.allWritten =
+        std::find(rev.groupWritten.begin(), rev.groupWritten.end(), char(0)) ==
+        rev.groupWritten.end();
+    facts.hasWrittenProof = true;
+    facts.groupBounds = chain.groupBounds.data();
+    facts.groupBoundCount = chain.groupBounds.size();
+    facts.groupWritten = rev.groupWritten.data();
+    facts.groupWrittenCount = rev.groupWritten.size();
+    facts.pointCount = count;
+    return eval::GroupGateHolds(facts);
 }
 
 // One stage read an assembler makes, resolved at Open: the attribute's path

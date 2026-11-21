@@ -3,6 +3,7 @@
 #include "rigExecGraph/windowHistory.h"
 #include "rigExecMath/blendRangeKernel.h"
 #include "moverGraph.h"
+#include "rigExecEvalCore/gate.h"
 #include "rigExecEvalCore/skin.h"
 #include "parallel.h"
 #include "pathText.h"
@@ -1415,35 +1416,16 @@ RigExecRevisionIsRangeOp(RigExecRevisionOp op)
 bool
 RigExecRevisionGateHolds(RigExecRevisionOp op, const RigExecMoverParameters &p)
 {
-    // Only the listed points of such an envelope weigh above 0, and each op
-    // below leaves a point of weight <= 0 at its entering bytes: the matrix
-    // and wire walks never visit it, and the lattice, linear skin and target
-    // blend take RigExecBlendEnvelope's `weight <= 0` branch, whatever the
-    // deformation computed there.
-    if (!RigExecWireTakesSparseEnvelope(p.weights)) {
-        return false;
-    }
-    switch (op) {
-    case RigExecRevisionOp::Matrix:
-    case RigExecRevisionOp::Wire:
-        return true;
-    case RigExecRevisionOp::Lattice:
-        // A regular grid can fail the revision at any point.
-        return !p.latticeSettings.regularGrid;
-    case RigExecRevisionOp::Skin:
-        // A dual-quaternion blend can fail the revision at any vertex.
-        return RigExecSkinMethodOf(p) == RigExecSkinMethod::ClassicLinear;
-    case RigExecRevisionOp::BlendShape:
-        // The surface-frame transport reads every entering point.
-        return !p.blendSurfaceFrame;
-    case RigExecRevisionOp::Smooth:
-    case RigExecRevisionOp::DeltaMush:
-        // Its separate blend keeps a point of weight <= 0 at its entering
-        // bytes, whatever its neighbours smoothed it to.
-        return true;
-    default:
-        return false;
-    }
+    // The kernel half of a group gate (gate.h): the packet facts alone,
+    // with no written-group proof. The enable half stays with the caller.
+    eval::GroupGateFacts facts;
+    facts.enabled = true;
+    facts.op = int(op);
+    facts.envelope = _EnvelopeView(p.weights);
+    facts.skinMethod = _SkinPacket(p).method;
+    facts.blendSurfaceFrame = p.blendSurfaceFrame;
+    facts.regularGrid = p.latticeSettings.regularGrid;
+    return eval::GroupGateHolds(facts);
 }
 
 RigExecRevisionAcceptance
