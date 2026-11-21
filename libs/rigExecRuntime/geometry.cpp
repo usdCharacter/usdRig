@@ -21,6 +21,7 @@
 #include "rigExecMath/deltaMushKernel.h"
 #include "rigExecMath/deltaMushSettings.h"
 #include "rigExecMath/latticeKernel.h"
+#include "rigExecMath/meshBoundsKernel.h"
 #include "rigExecMath/normalsLayoutKernel.h"
 #include "rigExecMath/pointBlocks.h"
 #include "rigExecMath/skinAcceptance.h"
@@ -30,6 +31,7 @@
 #include "rigExecMath/wireKernelCache.h"
 #include "rigExecMath/wrinkleKernel.h"
 #include "rigExecMath/surfaceProjectorKernel.h"
+#include "rigExecMath/surfaceProjectKernel.h"
 #include "rigExecMath/surfaceSnapKernel.h"
 #include "rigExecMath/rangeRunner.h"
 #include "rigExecMath/smoothKernel.h"
@@ -54,7 +56,6 @@
 #include <memory>
 #include <numeric>
 #include <queue>
-#include <set>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -1270,74 +1271,14 @@ RrGeoApplyDualQuatSkin(const RrVec3f *in, RrVec3f *out,
 double
 RrGeoBoundVolume(const RrVec3f *points, size_t count)
 {
-    if (count < 2) {
-        return 0.0;
-    }
-    RrVec3f lo = points[0], hi = points[0];
-    for (size_t i = 1; i < count; ++i) {
-        for (int a = 0; a < 3; ++a) {
-            lo[a] = std::min(lo[a], points[i][a]);
-            hi[a] = std::max(hi[a], points[i][a]);
-        }
-    }
-    const RrVec3f d = hi - lo;
-    return double(d[0]) * double(d[1]) * double(d[2]);
+    return RigExecBoundVolumeKernel(points, count);
 }
 
 void
 RrGeoApplyVolumeCorrect(std::vector<RrVec3f> *points, double referenceVolume,
                         double strength)
 {
-    if (points->empty() || referenceVolume <= 0.0 || strength <= 0.0) {
-        return;
-    }
-    const double current = RrGeoBoundVolume(points->data(), points->size());
-    if (current <= 0.0) {
-        return; // degenerate bound: no deterministic correction exists
-    }
-    const double full = std::cbrt(referenceVolume / current);
-    const double scale =
-        1.0 + std::min(std::max(strength, 0.0), 1.0) * (full - 1.0);
-    RrVec3f centroid(0.0f);
-    for (const RrVec3f &p : *points) {
-        centroid += p;
-    }
-    centroid /= float(points->size());
-    for (RrVec3f &p : *points) {
-        p = centroid + (p - centroid) * float(scale);
-    }
-}
-
-std::vector<std::vector<int>>
-RrGeoBuildAdjacency(size_t pointCount, const std::vector<int> &faceVertexCounts,
-                    const std::vector<int> &faceVertexIndices)
-{
-    std::vector<std::set<int>> adjacency(pointCount);
-    size_t offset = 0;
-    for (int faceCount : faceVertexCounts) {
-        for (int c = 0; c < faceCount; ++c) {
-            const size_t ia = offset + c;
-            const size_t ib = offset + (c + 1) % faceCount;
-            if (ia >= faceVertexIndices.size() ||
-                ib >= faceVertexIndices.size()) {
-                return {};
-            }
-            const int a = faceVertexIndices[ia];
-            const int b = faceVertexIndices[ib];
-            if (a < 0 || b < 0 || static_cast<size_t>(a) >= pointCount ||
-                static_cast<size_t>(b) >= pointCount) {
-                return {};
-            }
-            adjacency[a].insert(b);
-            adjacency[b].insert(a);
-        }
-        offset += faceCount;
-    }
-    std::vector<std::vector<int>> result(pointCount);
-    for (size_t i = 0; i < pointCount; ++i) {
-        result[i].assign(adjacency[i].begin(), adjacency[i].end());
-    }
-    return result;
+    RigExecApplyVolumeCorrectKernel(points, referenceVolume, strength);
 }
 
 bool
@@ -1358,52 +1299,20 @@ RrGeoApplyLaplacianSmooth(
     const std::vector<int> &faceVertexIndices, double strength,
     RigExecSurfaceKernelCache<RrVec3f, RrVec3d> *cache = nullptr)
 {
-    const double s = std::min(std::max(strength, 0.0), 1.0);
-    if (points->empty() || s <= 0.0) {
+    if (!cache) {
+        RigExecApplyLaplacianSmoothMeshKernel(
+            points, faceVertexCounts.data(), faceVertexCounts.size(),
+            faceVertexIndices.data(), faceVertexIndices.size(), strength);
         return;
     }
-    std::vector<std::vector<int>> built;
-    const RigExecMeshAdjacency *retained =
-        cache ? cache->MeshAdjacency(points->size(), faceVertexCounts,
-                                     faceVertexIndices)
-              : nullptr;
-    if (cache && !retained)
+    if (points->empty() || strength <= 0.0) {
         return;
-    if (!cache)
-        built = RrGeoBuildAdjacency(points->size(), faceVertexCounts,
-                                    faceVertexIndices);
-    const auto &adjacency = cache ? retained->neighbors : built;
-    if (adjacency.empty()) {
-        return; // invalid topology: pass through
     }
-    // No retained adjacency: the source has to be a copy, because the loop
-    // writes the same buffer it reads. A cached adjacency already paid for
-    // its topology; swap a scratch the cache keeps so the points themselves
-    // are not copied. Isolated vertices are assigned from that scratch.
-    std::vector<RrVec3f> copied;
-    std::vector<RrVec3f> *source = nullptr;
-    if (cache) {
-        std::vector<RrVec3f> &held = cache->SmoothSource();
-        held.swap(*points);
-        points->resize(held.size());
-        source = &held;
-    } else {
-        copied = *points;
-        source = &copied;
-    }
-    for (size_t i = 0; i < source->size(); ++i) {
-        if (adjacency[i].empty()) {
-            if (cache) {
-                (*points)[i] = (*source)[i];
-            }
-            continue;
-        }
-        RrVec3f average(0.0f);
-        for (int n : adjacency[i]) {
-            average += (*source)[n];
-        }
-        average /= float(adjacency[i].size());
-        (*points)[i] = (*source)[i] + (average - (*source)[i]) * float(s);
+    if (const auto *adjacency = cache->MeshAdjacency(
+            points->size(), faceVertexCounts, faceVertexIndices)) {
+        RigExecApplyLaplacianSmoothWithAdjacencyKernel(
+            points, *adjacency, strength, static_cast<const RrVec3f *>(nullptr),
+            0, &cache->SmoothSource());
     }
 }
 
@@ -1412,84 +1321,16 @@ RrGeoComputeVertexNormals(const std::vector<RrVec3f> &points,
                           const std::vector<int> &faceVertexCounts,
                           const std::vector<int> &faceVertexIndices)
 {
-    std::vector<RrVec3f> normals(points.size(), RrVec3f(0.0f));
-    std::vector<int> ring;
-    size_t offset = 0;
-    for (int faceCount : faceVertexCounts) {
-        if (faceCount < 3 || offset + static_cast<size_t>(faceCount) >
-                                 faceVertexIndices.size()) {
-            return normals;
-        }
-        ring.clear();
-        for (int k = 0; k < faceCount; ++k) {
-            const int v = faceVertexIndices[offset + k];
-            if (v >= 0 && static_cast<size_t>(v) < points.size()) {
-                ring.push_back(v);
-            }
-        }
-        offset += faceCount;
-        const size_t n = ring.size();
-        if (n < 3) {
-            continue;
-        }
-
-        RrVec3f faceNormal(0.0f);
-        for (size_t k = 0; k < n; ++k) {
-            const RrVec3f &p = points[ring[k]];
-            const RrVec3f &q = points[ring[(k + 1) % n]];
-            faceNormal += RrVec3f((p[1] - q[1]) * (p[2] + q[2]),
-                                  (p[2] - q[2]) * (p[0] + q[0]),
-                                  (p[0] - q[0]) * (p[1] + q[1]));
-        }
-        const float faceLength = faceNormal.GetLength();
-        if (faceLength < 1e-20f) {
-            continue; // a fully degenerate face contributes nothing
-        }
-        faceNormal /= faceLength;
-
-        for (size_t k = 0; k < n; ++k) {
-            const RrVec3f &p = points[ring[k]];
-            const RrVec3f a = points[ring[(k + 1) % n]] - p;
-            const RrVec3f b = points[ring[(k + n - 1) % n]] - p;
-            const float la = a.GetLength(), lb = b.GetLength();
-            float weight = 1.0f;
-            if (la > 1e-20f && lb > 1e-20f) {
-                const RrVec3f ua = a / la, ub = b / lb;
-                weight = std::atan2(RrCross(ua, ub).GetLength(), RrDot(ua, ub));
-            }
-            normals[ring[k]] += faceNormal * weight;
-        }
-    }
-    for (RrVec3f &n : normals) {
-        const float len = n.GetLength();
-        if (len > 1e-12f) {
-            n /= len;
-        }
-    }
-    return normals;
+    return RigExecComputeMeshVertexNormalsKernel(points, faceVertexCounts,
+                                                 faceVertexIndices);
 }
 
 std::vector<RrVec3f>
 RrGeoComputeExtent(const std::vector<RrVec3f> &points,
                    const std::vector<float> &widths)
 {
-    if (points.empty()) {
-        return {};
-    }
-    RrVec3f lo = points[0], hi = points[0];
-    for (size_t i = 0; i < points.size(); ++i) {
-        float pad = 0.0f;
-        if (widths.size() == points.size()) {
-            pad = widths[i] * 0.5f;
-        } else if (widths.size() == 1) {
-            pad = widths[0] * 0.5f;
-        }
-        for (int a = 0; a < 3; ++a) {
-            lo[a] = std::min(lo[a], points[i][a] - pad);
-            hi[a] = std::max(hi[a], points[i][a] + pad);
-        }
-    }
-    return {lo, hi};
+    return RigExecComputeExtentKernel(points.data(), points.size(),
+                                      widths.data(), widths.size());
 }
 
 // The shared lattice kernel (latticeKernel.h); \p cache, the revision's own,
@@ -1508,43 +1349,6 @@ RrGeoApplyLattice(std::vector<RrVec3f> *points,
                               divisions[1], divisions[2], cache);
 }
 
-RrVec3f
-RrGeoClosestPointOnTriangle(const RrVec3f &p, const RrVec3f &a,
-                            const RrVec3f &b, const RrVec3f &c)
-{
-    // Ericson, Real-Time Collision Detection, 5.1.5.
-    const RrVec3f ab = b - a, ac = c - a, ap = p - a;
-    const float d1 = RrDot(ab, ap), d2 = RrDot(ac, ap);
-    if (d1 <= 0 && d2 <= 0)
-        return a;
-    const RrVec3f bp = p - b;
-    const float d3 = RrDot(ab, bp), d4 = RrDot(ac, bp);
-    if (d3 >= 0 && d4 <= d3)
-        return b;
-    const float vc = d1 * d4 - d3 * d2;
-    if (vc <= 0 && d1 >= 0 && d3 <= 0) {
-        const float v = d1 / (d1 - d3);
-        return a + ab * v;
-    }
-    const RrVec3f cp = p - c;
-    const float d5 = RrDot(ab, cp), d6 = RrDot(ac, cp);
-    if (d6 >= 0 && d5 <= d6)
-        return c;
-    const float vb = d5 * d2 - d1 * d6;
-    if (vb <= 0 && d2 >= 0 && d6 <= 0) {
-        const float w = d2 / (d2 - d6);
-        return a + ac * w;
-    }
-    const float va = d3 * d6 - d5 * d4;
-    if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) {
-        const float w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
-        return b + (c - b) * w;
-    }
-    const float denom = 1.0f / (va + vb + vc);
-    const float v = vb * denom, w = vc * denom;
-    return a + ab * v + ac * w;
-}
-
 void
 RrGeoApplySurfaceProject(std::vector<RrVec3f> *points,
                          const std::vector<RrVec3f> &surfacePoints,
@@ -1552,41 +1356,10 @@ RrGeoApplySurfaceProject(std::vector<RrVec3f> *points,
                          const std::vector<int> &faceVertexIndices,
                          double weight)
 {
-    const double w = std::min(std::max(weight, 0.0), 1.0);
-    if (points->empty() || surfacePoints.empty() || w <= 0.0) {
-        return;
-    }
-    for (RrVec3f &p : *points) {
-        float bestDistSq = std::numeric_limits<float>::max();
-        RrVec3f best = p;
-        size_t offset = 0;
-        for (int faceCount : faceVertexCounts) {
-            for (int c = 1; c + 1 < faceCount; ++c) {
-                const size_t i2 = offset + c + 1;
-                if (i2 >= faceVertexIndices.size()) {
-                    return;
-                }
-                const int ia = faceVertexIndices[offset];
-                const int ib = faceVertexIndices[offset + c];
-                const int ic = faceVertexIndices[i2];
-                if (ia < 0 || ib < 0 || ic < 0 ||
-                    size_t(ia) >= surfacePoints.size() ||
-                    size_t(ib) >= surfacePoints.size() ||
-                    size_t(ic) >= surfacePoints.size()) {
-                    continue;
-                }
-                const RrVec3f q = RrGeoClosestPointOnTriangle(
-                    p, surfacePoints[ia], surfacePoints[ib], surfacePoints[ic]);
-                const float distSq = (q - p).GetLengthSq();
-                if (distSq < bestDistSq) {
-                    bestDistSq = distSq;
-                    best = q;
-                }
-            }
-            offset += faceCount;
-        }
-        p = p + (best - p) * float(w);
-    }
+    RigExecApplySurfaceProjectKernel(
+        points, surfacePoints.data(), surfacePoints.size(),
+        faceVertexCounts.data(), faceVertexCounts.size(),
+        faceVertexIndices.data(), faceVertexIndices.size(), weight);
 }
 
 struct RrGeoNurbsCurve {
@@ -7270,10 +7043,6 @@ RrGeoRunProjectorTarget(RrProgram *program, RrGeometryScratch *scratch,
         scratch->chains[chainIndex].result.Read();
     publish.haveMatrix = RigExecSolveSurfaceProjectorT(
         in, basePoints, finalPoints, counts, indices,
-        [](const std::vector<RrVec3f> &points, const std::vector<int> &c,
-           const std::vector<int> &i) {
-            return RrGeoComputeVertexNormals(points, c, i);
-        },
         program->TextOrEmpty(wire.moverPath), &publish.matrix,
         &output->diagnostics, &rev.surfaceCache);
     return true;

@@ -12,6 +12,7 @@
 #ifndef RIGEXEC_MATH_SURFACE_PROJECTOR_KERNEL_H
 #define RIGEXEC_MATH_SURFACE_PROJECTOR_KERNEL_H
 
+#include "normalsLayoutKernel.h"
 #include "spatialAccel.h"
 #include "surfaceKernelCache.h"
 
@@ -545,6 +546,26 @@ RigExecSolveSurfaceProjectorT(
     }
     *shaderMatrix = in.shaderOffset * look * carried;
     return true;
+}
+
+/// Evaluate a resolved target with the shared vertex normals.
+template <class Mat4, class Point, class Double>
+bool
+RigExecSolveSurfaceProjectorT(
+    const RigExecSurfaceProjectorInputs<Mat4, Double> &in,
+    const std::vector<Point> &basePoints, const std::vector<Point> &posedPoints,
+    const std::vector<int> &counts, const std::vector<int> &indices,
+    const std::string &who, Mat4 *shaderMatrix,
+    std::vector<std::string> *diagnostics,
+    RigExecSurfaceKernelCache<Point, Double> *cache = nullptr)
+{
+    using NormalsFn = std::vector<Point> (*)(const std::vector<Point> &,
+                                             const std::vector<int> &,
+                                             const std::vector<int> &);
+    return RigExecSolveSurfaceProjectorT(
+        in, basePoints, posedPoints, counts, indices,
+        static_cast<NormalsFn>(&RigExecComputeMeshVertexNormalsKernel<Point>),
+        who, shaderMatrix, diagnostics, cache);
 }
 
 /// rigExec:shaderDialSources packed row-major into one matrix primvar, at

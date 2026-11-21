@@ -11,6 +11,7 @@
 #include "pointFrame.h"
 #include "wrinkleSettings.h"
 #include "meshConnectivity.h"
+#include "normalsLayoutKernel.h"
 #include "deltaMushSettings.h"
 
 #include "pxr/base/gf/matrix4d.h"
@@ -228,30 +229,6 @@ std::vector<GfVec3f> RigExecComputeVertexNormals(
     const GfVec3f *points, size_t pointsSize, const int *faceVertexCounts,
     size_t faceVertexCountsSize, const int *faceVertexIndices,
     size_t faceVertexIndicesSize, const RigExecRangeRunner *ranges = nullptr);
-
-/// The vertex-normal walk of one topology, built once per compiled rig:
-/// the usable faces before the first malformed one, and per point its
-/// (face, corner) incidences in face order then corner order, which is the
-/// order the serial sum adds them in.
-struct RigExecVertexNormalsTopology {
-    size_t pointCount = 0;
-    size_t faceVertexCountsSize = 0;
-    size_t faceVertexIndicesSize = 0;
-    bool malformed = false;
-    std::vector<size_t> faceOffsets;
-    /// pointCount + 1 offsets into incidenceFaces / incidenceCorners.
-    std::vector<size_t> pointIncidences;
-    std::vector<size_t> incidenceFaces;
-    std::vector<size_t> incidenceCorners;
-
-    /// Whether this walk was built for arrays of these sizes. The contents
-    /// are trusted: a topology that can change is never given a walk.
-    bool Fits(size_t points, size_t counts, size_t indices) const
-    {
-        return pointCount == points && faceVertexCountsSize == counts &&
-               faceVertexIndicesSize == indices;
-    }
-};
 
 RigExecVertexNormalsTopology RigExecBuildVertexNormalsTopology(
     size_t pointsSize, const int *faceVertexCounts, size_t faceVertexCountsSize,
