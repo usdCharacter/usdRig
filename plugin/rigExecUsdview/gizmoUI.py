@@ -21,6 +21,7 @@ try:
     import pathCurveModel
     import editorExtension
     import sessionRegistry
+    import stageViewReady
 except ImportError:                    # loader that did not add our dir
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import gizmoDrag
@@ -36,6 +37,7 @@ except ImportError:                    # loader that did not add our dir
     import pathCurveModel
     import editorExtension
     import sessionRegistry
+    import stageViewReady
 
 
 from gizmoWidgets import (GizmoOverlay, ViewportStatusBar, ViewportToolbar,
@@ -52,16 +54,7 @@ _CAMERA_MODIFIERS = (QtCore.Qt.AltModifier | QtCore.Qt.MetaModifier)
 
 
 def StageView(usdviewApi):
-    """
-    usdview's stage view widget, or None in a headless / pre-view state.
-
-    The private-name mangling is usdview's own (UsdviewApi keeps the app
-    controller as __appController).
-    """
-    try:
-        return usdviewApi._UsdviewApi__appController._stageView
-    except AttributeError:
-        return None
+    return stageViewReady.StageView(usdviewApi)
 
 
 class GizmoController(QtCore.QObject):
@@ -165,6 +158,20 @@ class GizmoController(QtCore.QObject):
         view = StageView(usdviewApi)
         self._view = view
         self._viewDestroyed = False
+        self._connections = []
+        self._controlPicking = self.overlay = self.statusBar = self.toolbar = None
+        self._releaseHover = None
+        try:
+            self._Attach(view)
+        except Exception:
+            stageViewReady._Cleanup("gizmo", self.Detach)
+            raise
+
+    def _Connect(self, owner, signal, slot):
+        getattr(owner, signal).connect(slot)
+        self._connections.append((owner, signal, slot))
+
+    def _Attach(self, view):
         from controlPicking import ControlPicking
         self._controlPicking = ControlPicking(view) if view is not None else None
         self.overlay = GizmoOverlay(self, view) if view is not None else None
@@ -173,24 +180,20 @@ class GizmoController(QtCore.QObject):
 
         self._InstallToolbar()
         self._InstallUndoShortcuts()
-        if installFilters:
+        if self._installFilters:
             self._hotkeys = ViewportHotkeyFilter(self)
         application = QtWidgets.QApplication.instance()
         if application is not None:
             if self._hotkeys is not None:
                 application.installEventFilter(self._hotkeys)
-            # Undo / redo are application-wide shortcuts, and two sessions
-            # in one process would make every Ctrl+Z an ambiguous overload
-            # that fires in neither window. See _ScopeShortcuts.
-            application.focusWindowChanged.connect(
-                self._onFocusWindowChanged)
-            application.aboutToQuit.connect(self.FlushReleasedEdit)
+            self._Connect(application, "focusWindowChanged", self._onFocusWindowChanged)
+            self._Connect(application, "aboutToQuit", self.FlushReleasedEdit)
         if view is not None:
             # The stage view keeps the MOUSE filter; keys go through the
             # application filter above (see ViewportHotkeyFilter).
-            if installFilters:
+            if self._installFilters:
                 view.installEventFilter(self)
-            view.destroyed.connect(self._onViewDestroyed)
+            self._Connect(view, "destroyed", self._onViewDestroyed)
             # WA_Hover, not setMouseTracking: the pre-selection
             # highlight needs mouse moves with no button down, and Qt
             # delivers those to a widget only if it tracks the mouse --
@@ -198,16 +201,15 @@ class GizmoController(QtCore.QObject):
             # pickObject per mouse move (stageView.mouseMoveEvent's
             # "none" camera mode). WA_Hover produces HoverMove events
             # instead, which nothing else in usdview listens for.
-            view.setAttribute(QtCore.Qt.WA_Hover, True)
-            view.signalFrustumChanged.connect(self._onFrustumChanged)
+            self._releaseHover = stageViewReady.ClaimHover(view)
+            self._Connect(view, "signalFrustumChanged", self._onFrustumChanged)
         self.settings.AddListener(self._onSettingsChanged)
         self.undoStack.AddListener(self._onUndoStackChanged)
 
-        model = usdviewApi.dataModel
-        model.selection.signalPrimSelectionChanged.connect(
-            self._onSelectionChanged)
-        model.signalStageReplaced.connect(self._onStageReplaced)
-        model.currentFrameChanged.connect(self._onFrameChanged)
+        model = self.usdviewApi.dataModel
+        self._Connect(model.selection, "signalPrimSelectionChanged", self._onSelectionChanged)
+        self._Connect(model, "signalStageReplaced", self._onStageReplaced)
+        self._Connect(model, "currentFrameChanged", self._onFrameChanged)
         self._ObserveStage(model.stage)
 
         self.RefreshTarget()
@@ -282,74 +284,66 @@ class GizmoController(QtCore.QObject):
             window.addAction(action)
 
     def Detach(self):
-        """
-        Take the application-wide key filter, and the main window's copy
-        of the undo actions, back off.
-
-        Both outlive the widgets they serve, so leaving them installed
-        after usdview has destroyed the stage view would keep answering
-        keys on behalf of a gizmo that no longer has a viewport.
-        """
-        self.FlushReleasedEdit()
+        if getattr(self, "_detached", False):
+            return
+        self._detached = True
+        self._viewDestroyed = True
+        panel = getattr(self, "_panel", None)
+        self._panel = None
+        if panel is not None:
+            ToolSettingsPanel.ForgetInstance(self.usdviewApi, panel)
+            stageViewReady.RemoveWidget(panel)
+        stageViewReady._Cleanup("gizmo", self.FlushReleasedEdit)
+        stageViewReady._Cleanup("gizmo", self.CancelGesture)
+        release, self._releaseHover = self._releaseHover, None
+        stageViewReady.ReleaseHover(release)
         if self._controlPicking is not None:
             self._controlPicking.Detach()
             self._controlPicking = None
-        managed = not getattr(self, "_installFilters", True)
-        if self._hotkeys is None and not managed:
-            return
-        if managed and getattr(self, "_detached", False):
-            return
-        self._detached = True
+        view, self._view = self._view, None
+        if view is not None and self._installFilters:
+            stageViewReady.IgnoreDeleted(lambda: view.removeEventFilter(self))
         application = QtWidgets.QApplication.instance()
-        if application is not None:
-            if self._hotkeys is not None:
-                application.removeEventFilter(self._hotkeys)
-            try:
-                application.focusWindowChanged.disconnect(
-                    self._onFocusWindowChanged)
-                application.aboutToQuit.disconnect(self.FlushReleasedEdit)
-            except (RuntimeError, TypeError):
-                pass
+        if application is not None and self._hotkeys is not None:
+            application.removeEventFilter(self._hotkeys)
         self._hotkeys = None
+        for owner, signal, slot in reversed(self._connections):
+            stageViewReady.Disconnect(owner, signal, slot)
+        self._connections.clear()
+        settings = getattr(self, "settings", None)
+        if settings is not None:
+            settings.RemoveListener(self._onSettingsChanged)
+        remove = getattr(self.undoStack, "RemoveListener", None)
+        if remove is not None:
+            remove(self._onUndoStackChanged)
+        self._ObserveStage(None)
+        if getattr(self, "_extensionNotified", False):
+            editorExtension.EditorRemoved(self.usdviewApi, editorExtension.GIZMO, self)
         window = self._MainWindow()
-        if window is None:
-            return
-        for action in self._UndoActions():
-            try:
-                window.removeAction(action)
-            except RuntimeError:
-                # Detach also runs from the stage view's destroyed
-                # signal at shutdown, by which point the main window's
-                # C++ object can be gone while the wrapper survives.
-                # Qt has already dropped the action with it.
-                return
+        if window is not None:
+            for action in self._UndoActions():
+                stageViewReady.IgnoreDeleted(lambda: window.removeAction(action))
+        for widget in (self._rubber, self.overlay, self.toolbar,
+                       getattr(self, "statusBar", None)):
+            stageViewReady.RemoveWidget(widget)
+        self.overlay = self._rubber = None
+        for controller in stageViewReady.Controllers("gizmo"):
+            scope = getattr(controller, "_ScopeShortcuts", None)
+            if scope is not None:
+                scope()
 
     def _onFocusWindowChanged(self, *args):
         self._ScopeShortcuts()
 
     def _ScopeShortcuts(self):
-        """
-        Keep the toolbar's undo / redo application-wide only while this
-        session owns the active window.
-
-        Qt.ApplicationShortcut is what lets Ctrl+Z work with focus in a
-        panel, but when several usdview sessions share one process every
-        session's Ctrl+Z is the same application shortcut and Qt fires
-        none of them ("Ambiguous shortcut overload"). So, with more than
-        one session, the session in front keeps the application-wide
-        context and every other session's actions become window-scoped
-        (the rule usdOrchestrate's host applies to usdview's own
-        actions). A session alone in its process is exactly as before.
-        A window no session owns changes nothing.
-        """
+        # Application scope reaches owned floating panels; other sessions
+        # must be window-scoped even when the active session is still pending.
+        owner = sessionRegistry.KnownSessionOf(sessionRegistry.ActiveWindow())
         context = QtCore.Qt.ApplicationShortcut
-        if len(_controllers) > 1:
-            owner = _controllers.SessionOf(
-                QtWidgets.QApplication.activeWindow())
-            if owner is None:
-                return
-            if owner is not self._MainWindow():
-                context = QtCore.Qt.WindowShortcut
+        if owner is None and len(stageViewReady.Controllers("gizmo")) > 1:
+            return
+        if owner is not None and owner is not self._MainWindow():
+            context = QtCore.Qt.WindowShortcut
         for action in self._UndoActions():
             try:
                 if action.shortcutContext() != context:
@@ -1212,6 +1206,12 @@ class GizmoController(QtCore.QObject):
         return list(getattr(target, "skippedChildren", []))
 
     # -- undo -----------------------------------------------------------
+
+    def _TriggerUndoRedo(self, operation):
+        # A new session can become known without a Qt focus change.
+        owner = sessionRegistry.KnownSessionOf(sessionRegistry.ActiveWindow())
+        if not self._viewDestroyed and (owner is None or owner is self._MainWindow()):
+            getattr(self, operation)()
 
     def Undo(self):
         self.FlushReleasedEdit()
@@ -2891,77 +2891,44 @@ class GizmoController(QtCore.QObject):
 
 # Installation
 
-# One controller per usdview session, filed under the session's main window.
-# Several sessions can share this module in one process (usdOrchestrate's
-# host), and every one of them gets its own toolbar, overlay and hotkeys.
-# An entry goes away with its window.
-_controllers = sessionRegistry.SessionRegistry("gizmo controllers")
-
-# The pending install flag is per session, like the controller: one
-# session's pending install must not stop another session from queueing
-# its own.
-_INSTALL_RETRIES = 20
-_installPending = sessionRegistry.SessionRegistry("gizmo pending installs")
-
-
-def InstallViewportTools(usdviewApi, undoStack, retries=_INSTALL_RETRIES,
+def InstallViewportTools(usdviewApi, undoStack,
+                         retries=stageViewReady.DEFAULT_RETRIES,
                          openGraphEditor=None):
-    """
-    Put the toolbar and the overlay on this session's stage view once.
+    yielded = False
 
-    `openGraphEditor` is the container's callable for the Graph… button;
-    passing it in rather than importing graphEditorUI here is what keeps
-    this module free of a Qt graph-editor import.
+    def _Create():
+        nonlocal yielded
+        yielded = editorExtension.OwnsInput(usdviewApi)
+        return GizmoController(usdviewApi, undoStack,
+                               openGraphEditor=openGraphEditor,
+                               installFilters=not yielded)
 
-    Returns the controller, or None when there is no stage view yet (in
-    which case an install is queued) or none at all.
-    """
-    controller = _controllers.Get(usdviewApi)
-    if controller is not None:
-        return controller
-    if StageView(usdviewApi) is None:
-        if retries > 0 and not _installPending.Get(usdviewApi, False):
-            _installPending.Set(usdviewApi, True)
+    def _Prepare(controller):
+        module = sys.modules.get("rigExecUsdview")
+        container = module.ContainerFor(usdviewApi) if module is not None else None
+        if container is not None:
+            container._BindViewportTools()
+        if yielded:
+            controller._extensionNotified = True
+            editorExtension.EditorAdded(usdviewApi, editorExtension.GIZMO,
+                                        controller, required=True)
 
-            def _Retry():
-                _installPending.Pop(usdviewApi)
-                InstallViewportTools(usdviewApi, undoStack, retries - 1,
-                                     openGraphEditor)
+    def _OnReady(controller):
+        for installed in stageViewReady.Controllers("gizmo"):
+            scope = getattr(installed, "_ScopeShortcuts", None)
+            if scope is not None:
+                scope()
 
-            QtCore.QTimer.singleShot(0, _Retry)
-        return None
-    yielded = editorExtension.OwnsInput(usdviewApi)
-    controller = GizmoController(usdviewApi, undoStack,
-                                 openGraphEditor=openGraphEditor,
-                                 installFilters=not yielded)
-    _controllers.Set(usdviewApi, controller)
-    if yielded:
-        editorExtension.EditorAdded(usdviewApi, editorExtension.GIZMO,
-                                    controller)
-    # A second session changes which undo / redo may be application-wide.
-    for installed in _controllers.Values():
-        scope = getattr(installed, "_ScopeShortcuts", None)
-        if scope is not None:
-            scope()
-    return controller
+    return stageViewReady.Register(usdviewApi, "gizmo", _Create,
+                                   retries=retries, prepare=_Prepare,
+                                   onReady=_OnReady).controller
 
 
 def GetController(usdviewApi=None):
-    """
-    The controller installed for `usdviewApi`'s session, or None.
-
-    Without an api: the controller of the session that owns the active
-    window, else of the only session there is (a plain usdview), else None.
-    """
-    if usdviewApi is None:
-        return _controllers.Current()
-    return _controllers.Get(usdviewApi)
+    return stageViewReady.Controller(usdviewApi, "gizmo")
 
 
 def __getattr__(name):
-    # `_controller` is a view onto the per-session registry for the
-    # scripts that read it (the testusdview harness): in a plain
-    # usdview, the one controller.
     if name == "_controller":
-        return _controllers.Current()
+        return GetController()
     raise AttributeError("module %r has no attribute %r" % (__name__, name))

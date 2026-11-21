@@ -2702,7 +2702,7 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
                          testAutoClavicle
                          testAvarEditorModel
                          testGizmoPreview testGizmoDeferredRelease testGizmoOwnCommit
-                         testGizmoSettings testGizmoDrag testGizmoSnap
+                         testGizmoDocumentEdit testGizmoSettings testGizmoDrag testGizmoSnap
                          testViewCubeMath testRigExecStageEdits
                          testGraphModel testGraphEditorModel testVolumeWeightModel
                          testPathCurveModel testGraphScreen

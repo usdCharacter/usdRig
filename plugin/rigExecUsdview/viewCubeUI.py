@@ -32,11 +32,11 @@ from pxr import Tf, UsdGeom
 from pxr.Usdviewq.qt import QtCore, QtGui, QtWidgets
 
 try:
-    import sessionRegistry
+    import stageViewReady
     import viewCubeMath
 except ImportError:                    # loader that did not add our dir
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    import sessionRegistry
+    import stageViewReady
     import viewCubeMath
 
 
@@ -74,13 +74,7 @@ _CAMERA_MODIFIERS = (QtCore.Qt.AltModifier | QtCore.Qt.MetaModifier)
 
 
 def StageView(usdviewApi):
-    # Same 6 lines as gizmoUI.StageView: the private-name mangling is
-    # usdview's own (UsdviewApi keeps the app controller as
-    # __appController).
-    try:
-        return usdviewApi._UsdviewApi__appController._stageView
-    except AttributeError:
-        return None
+    return stageViewReady.StageView(usdviewApi)
 
 
 def _EventPoint(event):
@@ -450,22 +444,27 @@ class ViewCubeController(QtCore.QObject):
         self._animClock = None
         self._animStart = None
         self._animTarget = None
-        view = StageView(usdviewApi)
-        self._view = view
+        self._detached = False
+        self._filterInstalled = False
+        self._connections = []
+
+    def _Attach(self):
+        view = self._view = StageView(self.usdviewApi)
         if view is None:
             return
-        widget = self._MakeWidget(view)
-        self._widget = widget
+        widget = self._widget = self._MakeWidget()
+        widget.setParent(view)
         # Resize/Show re-place the widget (and re-raise it on a
         # zero-length timer so it ends above the gizmo overlay, which
         # raises itself synchronously in its own Resize handler).
         view.installEventFilter(self)
-        view.signalFrustumChanged.connect(self._onFrustumChanged)
-        view.destroyed.connect(self._onViewDestroyed)
-        model = usdviewApi.dataModel
-        model.signalStageReplaced.connect(self._onStageReplaced)
-        model.viewSettings.signalSettingChanged.connect(
-            self._onSettingChanged)
+        self._filterInstalled = True
+        self._Connect(view, "signalFrustumChanged", self._onFrustumChanged)
+        self._Connect(view, "destroyed", self._onViewDestroyed)
+        model = self.usdviewApi.dataModel
+        self._Connect(model, "signalStageReplaced", self._onStageReplaced)
+        self._Connect(model.viewSettings, "signalSettingChanged",
+                      self._onSettingChanged)
         self._isZUp = self._ReadUpAxis()
         # Harmless while the view is still hidden: a child is shown
         # with its parent.
@@ -473,12 +472,12 @@ class ViewCubeController(QtCore.QObject):
         widget.show()
         self._RefreshBasis()
 
-    def _MakeWidget(self, view):
-        """The overlay widget; the view axis controller overrides it."""
-        widget = ViewCubeWidget(self, view)
-        widget.resize(int(viewCubeMath.WIDGET_SIZE),
-                      int(viewCubeMath.WIDGET_SIZE))
-        return widget
+    def _Connect(self, owner, name, slot):
+        getattr(owner, name).connect(slot)
+        self._connections.append((owner, name, slot))
+
+    def _MakeWidget(self):
+        return ViewCubeWidget(self, None)
 
     # -- state ----------------------------------------------------------
 
@@ -760,95 +759,49 @@ class ViewCubeController(QtCore.QObject):
         self._RefreshBasis()
 
     def _onViewDestroyed(self, _obj=None):
-        # The view's C++ object is already gone: disconnecting signals
-        # from it would print libpyside warnings, and its child widget
-        # dies with it, so just drop the references. Every later call
-        # is a no-op through the None guards.
+        # Qt removes the view's connections, filter and child widget.
         self.CancelAnimation()
-        self._view = None
+        view, self._view = self._view, None
+        self._filterInstalled = False
+        self._connections = [entry for entry in self._connections
+                             if entry[0] is not view]
         widget, self._widget = self._widget, None
         if widget is not None:
             widget._controller = None
 
     def Detach(self):
-        """Drop the widget and the timer; every later call is a no-op.
-        """
+        if self._detached:
+            return
+        self._detached = True
         self.CancelAnimation()
         view, self._view = self._view, None
-        if view is not None:
-            try:
-                view.removeEventFilter(self)
-            except Exception:
-                pass
-            try:
-                view.signalFrustumChanged.disconnect(
-                    self._onFrustumChanged)
-            except Exception:
-                pass
-            try:
-                view.destroyed.disconnect(self._onViewDestroyed)
-            except Exception:
-                pass
+        if self._filterInstalled:
+            self._filterInstalled = False
+            stageViewReady.IgnoreDeleted(lambda: view.removeEventFilter(self))
+        for owner, name, slot in reversed(self._connections):
+            stageViewReady.Disconnect(owner, name, slot)
+        self._connections.clear()
         widget, self._widget = self._widget, None
         if widget is not None:
             widget._controller = None
-            try:
-                widget.deleteLater()
-            except Exception:
-                pass
+            stageViewReady.RemoveWidget(widget)
 
 
-# Installation
-
-# One view cube per usdview session, filed under the session's main window.
-# Several sessions can share this module in one process (usdOrchestrate's
-# host), and each window gets its own cube. An entry goes away with its
-# window.
-_controllers = sessionRegistry.SessionRegistry("view cube controllers")
-
-# The pending install flag is per session, like the controller.
-_INSTALL_RETRIES = 20
-_installPending = sessionRegistry.SessionRegistry("view cube pending installs")
+def InstallViewCube(usdviewApi, retries=stageViewReady.DEFAULT_RETRIES):
+    return stageViewReady.Register(
+        usdviewApi, "viewCube", lambda: ViewCubeController(usdviewApi),
+        retries=retries, prepare=_AttachOverlay).controller
 
 
-def InstallViewCube(usdviewApi, retries=_INSTALL_RETRIES):
-    """
-    Put the view cube on this session's stage view once.
-
-    Returns the controller, or None when there is no stage view yet (in
-    which case an install is queued) or none at all.
-    """
-    controller = _controllers.Get(usdviewApi)
-    if controller is not None:
-        return controller
-    if StageView(usdviewApi) is None:
-        if retries > 0 and not _installPending.Get(usdviewApi, False):
-            _installPending.Set(usdviewApi, True)
-
-            def _Retry():
-                _installPending.Pop(usdviewApi)
-                InstallViewCube(usdviewApi, retries - 1)
-
-            QtCore.QTimer.singleShot(0, _Retry)
-        return None
-    return _controllers.Set(usdviewApi, ViewCubeController(usdviewApi))
+def _AttachOverlay(controller):
+    controller._Attach()
 
 
 def GetController(usdviewApi=None):
-    """
-    The view cube installed for `usdviewApi`'s session, or None.
-
-    Without an api: the cube of the session that owns the active window,
-    else of the only session there is (a plain usdview), else None.
-    """
-    if usdviewApi is None:
-        return _controllers.Current()
-    return _controllers.Get(usdviewApi)
+    return stageViewReady.Controller(usdviewApi, "viewCube")
 
 
 def __getattr__(name):
-    # `_controller` is a view onto the per-session registry for scripts
-    # that read it.
     if name == "_controller":
-        return _controllers.Current()
+        return GetController()
     raise AttributeError("module %r has no attribute %r" % (__name__, name))

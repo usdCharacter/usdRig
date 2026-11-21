@@ -71,6 +71,8 @@ class Controller(gizmoUI.GizmoController):
         self._drag = self._releasedEdit = self._committing = self._target = None
         self._frame = Usd.TimeCode(1)
         self._view = self.overlay = self._rubber = None
+        self._releaseHover = None
+        self._marqueeAt = None
         self._controlPicking = None; self._viewDestroyed = False
         self._snapGeom = {}; self._solverPosed = types.SimpleNamespace(Clear=lambda: None)
         self._warnings = []; self._hoverRigStage = None
@@ -80,8 +82,9 @@ class Controller(gizmoUI.GizmoController):
         self.undoStack.AddListener(self._onUndoStackChanged)
         self._hotkeys = gizmoUI.ViewportHotkeyFilter(self)
         APP.installEventFilter(self._hotkeys)
-        APP.focusWindowChanged.connect(self._onFocusWindowChanged)
-        APP.aboutToQuit.connect(self.FlushReleasedEdit)
+        self._connections = []
+        self._Connect(APP, "focusWindowChanged", self._onFocusWindowChanged)
+        self._Connect(APP, "aboutToQuit", self.FlushReleasedEdit)
         self.toolbar.Sync()
     def _MainWindow(self): return self.window
     def _RebuildHandles(self): pass

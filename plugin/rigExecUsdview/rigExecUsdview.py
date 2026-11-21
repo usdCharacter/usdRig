@@ -138,7 +138,12 @@ _WARMING_STALL_TICKS = 4
 # (a host runs several usdview sessions in one process), and it is how the
 # other plugin modules find THEIR session's container. It lets go when the
 # session's window is destroyed.
-_containers = sessionRegistry.SessionRegistry("rigExecUsdview containers")
+def _StopViewportStartup(container):
+    container._viewportRetired = True
+
+
+_containers = sessionRegistry.SessionRegistry("rigExecUsdview containers",
+                                              _StopViewportStartup)
 
 
 def ContainerFor(usdviewApi=None):
@@ -186,12 +191,7 @@ class RigExecUsdviewContainer(PluginContainer):
         self._stageNoticeKey = None
         self._activating = False
         self._undoStack = None
-        self._viewportTools = None
-        self._viewportToolsFailed = False
-        self._viewCube = None
-        self._viewCubeFailed = False
-        self._viewAxis = None
-        self._viewAxisFailed = False
+        self._viewportRetired = False
 
         # Release the stage BEFORE the interpreter finalizes.
         #
@@ -722,60 +722,35 @@ class RigExecUsdviewContainer(PluginContainer):
 
     def _ToggleHoverPicker(self, usdviewApi=None):
         """Menu item: show or hide the hover picker."""
+        if getattr(self, "_viewportRetired", False):
+            return None
         return self._ImportHoverPicker().ToggleHoverPicker(
             usdviewApi or self._api, self._UndoStack())
 
     def _RestoreHoverPicker(self):
-        """Install the P hotkey, and bring the hover picker back if it
-        was on last session."""
-        if getattr(self, "_hoverPickerRestored", False):
+        if getattr(self, "_viewportRetired", False):
             return
         try:
             module = self._ImportHoverPicker()
-            module.InstallHotkey(self._api, self._UndoStack())
-            # A scripted session (testusdview --testScript) starts from
-            # defaults, not from the user's saved viewer state.
-            if not module.WasEnabled() or "--testScript" in sys.argv:
-                self._hoverPickerRestored = True
-                return
-            if module.StageView(self._api) is None:
-                tries = getattr(self, "_hoverPickerTries", 0)
-                if tries < 50:
-                    self._hoverPickerTries = tries + 1
-                    from pxr.Usdviewq.qt import QtCore
-                    QtCore.QTimer.singleShot(100, self._RestoreHoverPicker)
-                return
-            self._hoverPickerRestored = True
-            module.InstallHoverPicker(self._api, self._UndoStack())
+            undo = self._UndoStack()
+            module.InstallHotkey(self._api, undo)
+            if (not getattr(self, "_viewportRetired", False) and
+                    "--testScript" not in sys.argv and module.WasEnabled()):
+                module.InstallHoverPicker(self._api, undo)
         except Exception as error:
             Tf.Warn("rigExecUsdview: hover picker unavailable: %s" % error)
 
     def _EnsureMarkingMenu(self):
-        """Install the viewport's right-click marking menu for rig
-        controls, once the stage view exists."""
-        if getattr(self, "_markingMenu", None) is not None or \
-                getattr(self, "_markingMenuFailed", False):
-            return getattr(self, "_markingMenu", None)
+        if getattr(self, "_viewportRetired", False):
+            return None
         try:
-            try:
-                import markingMenuUI
-            except ImportError:
-                sys.path.insert(
-                    0, os.path.dirname(os.path.abspath(__file__)))
-                import markingMenuUI
-            self._markingMenu = markingMenuUI.InstallMarkingMenu(
+            import markingMenuUI
+            return markingMenuUI.InstallMarkingMenu(
                 self._api, self._UndoStack(), switchIkFk=self.SwitchIkFk,
                 knownLimbs=self._IkFkLimbs)
-            if self._markingMenu is None and                     getattr(self, "_markingMenuTries", 0) < 50:
-                self._markingMenuTries = getattr(
-                    self, "_markingMenuTries", 0) + 1
-                from pxr.Usdviewq.qt import QtCore
-                QtCore.QTimer.singleShot(100, self._EnsureMarkingMenu)
         except Exception as error:
             Tf.Warn("rigExecUsdview: marking menu unavailable: %s" % error)
-            self._markingMenu = None
-            self._markingMenuFailed = True
-        return self._markingMenu
+            return None
 
     def _OpenGraphEditor(self, usdviewApi=None):
         """
@@ -827,53 +802,32 @@ class RigExecUsdviewContainer(PluginContainer):
         return self._undoStack
 
     def _EnsureViewportTools(self):
-        """
-        Install the gizmo toolbar on the stage view, once it exists.
-
-        Plugins load BEFORE the stage view is built, so this is driven
-        off stage replacement rather than off registerPlugins. Returns
-        None in any context without Qt or without a viewport, which is
-        how the headless tests get away with loading this container.
-        """
-        # getattr, like _ActivateCurrentStage's _activating guard: a container
-        # built by __new__ for one branch of a test (testUsdviewRigExec.py's
-        # activation-failure case) has only the attributes that branch needs,
-        # and reaching this far through _OnStageReplaced must not depend on
-        # the rest of registerPlugins having run.
-        if getattr(self, "_viewportTools", None) is not None:
-            return self._viewportTools
-        if getattr(self, "_viewportToolsFailed", False):
-            # A headless or Qt-less session fails identically on every
-            # stage replacement; warning each time would bury the one
-            # message that mattered.
+        if getattr(self, "_viewportRetired", False):
             return None
         try:
-            try:
-                import gizmoUI
-            except ImportError:
-                sys.path.insert(
-                    0, os.path.dirname(os.path.abspath(__file__)))
-                import gizmoUI
-            import gizmoMath
-            import gizmoPreview
-            # Both are filed under THIS session: another window's gizmo
-            # reads its own session's frames and previews into its own
-            # stage's imaging context.
-            gizmoMath.SetPublishedControlFrameReader(
-                self._ReadPublishedControlFrame, session=self._api)
-            import ikfkMatch
-            ikfkMatch.SetPublishedValuesReader(
-                self._ReadPublishedValues, session=self._api)
-            gizmoPreview.SetSink(self._PreviewSink(), session=self._api)
-            self._viewportTools = gizmoUI.InstallViewportTools(
+            import gizmoUI
+            controller = gizmoUI.InstallViewportTools(
                 self._api, self._UndoStack(),
                 openGraphEditor=self._OpenGraphEditor)
+            if controller is not None:
+                self._BindViewportTools()
+            return controller
         except Exception as error:
-            Tf.Warn("rigExecUsdview: viewport tools unavailable: %s"
-                    % error)
-            self._viewportTools = None
-            self._viewportToolsFailed = True
-        return self._viewportTools
+            Tf.Warn("rigExecUsdview: viewport tools unavailable: %s" % error)
+            return None
+
+    def _BindViewportTools(self):
+        if getattr(self, "_viewportBound", False):
+            return
+        import gizmoMath
+        import gizmoPreview
+        import ikfkMatch
+
+        gizmoMath.SetPublishedControlFrameReader(
+            self._ReadPublishedControlFrame, session=self._api)
+        ikfkMatch.SetPublishedValuesReader(self._ReadPublishedValues, session=self._api)
+        gizmoPreview.SetSink(self._PreviewSink(), session=self._api)
+        self._viewportBound = True
 
     def _PreviewSink(self):
         """
@@ -1112,36 +1066,14 @@ class RigExecUsdviewContainer(PluginContainer):
         return controller
 
     def _EnsureViewCube(self):
-        """
-        Install the view cube on the stage view, once it exists.
-
-        Plugins load BEFORE the stage view is built, so this is driven
-        off stage replacement rather than off registerPlugins. Returns
-        None in any context without Qt or without a viewport, which is
-        how the headless tests get away with loading this container.
-        """
-        # Same tolerance as _EnsureViewportTools above, for the same reason.
-        if getattr(self, "_viewCube", None) is not None:
-            return self._viewCube
-        if getattr(self, "_viewCubeFailed", False):
-            # A headless or Qt-less session fails identically on every
-            # stage replacement; warning each time would bury the one
-            # message that mattered.
+        if getattr(self, "_viewportRetired", False):
             return None
         try:
-            try:
-                import viewCubeUI
-            except ImportError:
-                sys.path.insert(
-                    0, os.path.dirname(os.path.abspath(__file__)))
-                import viewCubeUI
-            self._viewCube = viewCubeUI.InstallViewCube(self._api)
+            import viewCubeUI
+            return viewCubeUI.InstallViewCube(self._api)
         except Exception as error:
-            Tf.Warn("rigExecUsdview: view cube unavailable: %s"
-                    % error)
-            self._viewCube = None
-            self._viewCubeFailed = True
-        return self._viewCube
+            Tf.Warn("rigExecUsdview: view cube unavailable: %s" % error)
+            return None
 
     def _ToggleViewCube(self):
         """Menu item: show or hide the view cube."""
@@ -1152,24 +1084,14 @@ class RigExecUsdviewContainer(PluginContainer):
         return controller
 
     def _EnsureViewAxis(self):
-        """Install the view axis gizmo; see _EnsureViewCube."""
-        if getattr(self, "_viewAxis", None) is not None:
-            return self._viewAxis
-        if getattr(self, "_viewAxisFailed", False):
+        if getattr(self, "_viewportRetired", False):
             return None
         try:
-            try:
-                import viewAxisUI
-            except ImportError:
-                sys.path.insert(
-                    0, os.path.dirname(os.path.abspath(__file__)))
-                import viewAxisUI
-            self._viewAxis = viewAxisUI.InstallViewAxis(self._api)
+            import viewAxisUI
+            return viewAxisUI.InstallViewAxis(self._api)
         except Exception as error:
             Tf.Warn("rigExecUsdview: view axis unavailable: %s" % error)
-            self._viewAxis = None
-            self._viewAxisFailed = True
-        return self._viewAxis
+            return None
 
     def _ToggleViewAxis(self):
         """Menu item: show or hide the view axis gizmo."""
@@ -1201,15 +1123,11 @@ class RigExecUsdviewContainer(PluginContainer):
         return float(frame)
 
     def _Shutdown(self):
-        """
-        Orderly teardown at interpreter exit: stop the imaging engine and
-        drop our stage reference while Python is still able to run.
-
-        Deliberately swallows everything. This runs during atexit, where
-        an exception is printed but cannot be handled, and where the Qt
-        and USD state it would touch is already half gone -- a noisy
-        traceback on quit teaches an artist nothing.
-        """
+        self._viewportRetired = True
+        ready = sys.modules.get("stageViewReady")
+        api = getattr(self, "_api", None)
+        if ready is not None and api is not None:
+            ready.Retire(api)
         try:
             self._DeactivateImaging()
         except Exception:
