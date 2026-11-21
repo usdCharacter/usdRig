@@ -174,10 +174,9 @@ def TestChangesAreOneUndoStep():
         {"action": "rename_prim", "path": "/Char/Geo", "name": "Mesh"}]})
     renamed = stage.GetPrimAtPath("/Char/Mesh").IsValid()
     _Check(failed or renamed, "rename_prim renames: %s" % text)
-    box.finish()
     _Check(container.stack.CanUndo() and
            container.stack.UndoText() == "AI Assistant changes",
-           "the reply's changes are one undo step")
+           "the reply's changes are one undo step, recorded as they are made")
     container.stack.Undo()
     _Check(not stage.GetPrimAtPath("/Char/Rig").IsValid(),
            "undo removes the new prims and their new parents")
@@ -378,9 +377,8 @@ def TestToolboxRejectsSilentStageReplacement():
     container = _Container()
     fresh, _ = _Toolbox(b, container, can_edit=True)
     text, failed = _SetRotation(fresh, 10)
-    _Check(not failed, "B can author an edit: %s" % text)
-    fresh.finish()
-    container.stack.Undo()
+    _Check(not failed and container.stack.UndoText() == "AI Assistant changes",
+           "B can author an edit: %s" % text)
 
     box, api = _Toolbox(a, container, can_edit=True)
     text, failed = _SetRotation(box, 20)
@@ -394,20 +392,39 @@ def TestToolboxRejectsSilentStageReplacement():
     text, failed = box.call("select_prims", {"paths": ["/Char/Ctl"]})
     _Check(failed and api.selectedPrims == [b.GetPrimAtPath("/Char/Geo")],
            "old toolbox leaves B's selection alone: %s" % text)
-    box.finish()
     _Check(a.GetRootLayer().ExportToString() == a_before and
            b.GetRootLayer().ExportToString() == b_before,
            "rejected edit leaves both authored layers unchanged")
-    _Check(not container.stack.CanUndo() and container.stack.CanRedo(),
-           "stale finish does not push or clear B's redo")
-    api.stage = a
-    box.finish()
-    _Check(not container.stack.CanUndo() and container.stack.CanRedo(),
-           "stale finish drained the old edits without rolling them back")
+    container.stack.Undo()
+    _Check(a.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 0 and
+           b.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 10,
+           "one undo takes back A's edit and leaves B's alone")
+    container.stack.Undo()
+    _Check(b.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 0 and
+           not container.stack.CanUndo(),
+           "the old toolbox pushed no step of its own")
     container.stack.Redo()
-    _Check(b.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 10 and
-           a.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 20,
-           "B's existing redo still affects only B")
+    container.stack.Redo()
+    _Check(a.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 20 and
+           b.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 10,
+           "each step affects only the stage it was opened for")
+    api.stage = a
+    text, failed = _SetRotation(box, 40)
+    # The toolbox answers for the stage object it was opened for. A host
+    # that silently shows that very object again makes it current once more;
+    # only the panel's document generation ends a reply for good
+    # (TestToolboxGenerationAndRetirement, and the A→B→A reopen in
+    # TestProviderSilentSwapAndReopen).
+    _Check(not failed and box.is_current() and
+           a.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 40 and
+           b.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 10,
+           "A is current again, so the toolbox bound to A works on A: %s" % text)
+    container.stack.Undo()
+    _Check(a.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 0 and
+           b.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 10 and
+           _UndoState(container.stack) == (True, "AI Assistant changes", True,
+                                 "AI Assistant changes"),
+           "A's reply is one step, and B's step is untouched beside it")
 
 
 def TestToolboxGenerationAndRetirement():
@@ -416,15 +433,16 @@ def TestToolboxGenerationAndRetirement():
     container = _Container()
     box, api = _Toolbox(stage, container, can_edit=True,
                         document_current=lambda: generation == 0)
-    box.finish()
     text, failed = _SetRotation(box, 10)
-    _Check(not failed and box.is_current(), "finish allows later calls: %s" % text)
-    box.finish()
-    box.finish()
-    container.stack.Undo()
+    _Check(not failed and box.is_current(), "the current generation can edit: %s" % text)
+    text, failed = _SetRotation(box, 20)
+    _Check(not failed, "later calls keep the same step: %s" % text)
     rx = stage.GetAttributeAtPath("/Char/Ctl.avars:rx")
+    _Check(rx.Get() == 20 and container.stack.UndoText() == "AI Assistant changes",
+           "each change is recorded as it is authored")
+    container.stack.Undo()
     _Check(rx.Get() == 0 and not container.stack.CanUndo(),
-           "finish pushes each edit only once")
+           "both changes are one step, pushed once")
     generation += 1
     text, failed = _SetRotation(box, 30)
     _Check(failed and api.stage is box.stage and rx.Get() == 0,
@@ -438,9 +456,113 @@ def TestToolboxGenerationAndRetirement():
     content, failed = live.call_content("select_prims", {"paths": ["/Char/Ctl"]})
     _Check(live.is_current() and failed and content[0]["type"] == "text" and
            content[0]["text"], "cancel closes admission, not document identity")
-    live.finish()
     container.stack.Undo()
-    _Check(rx.Get() == 0, "cancel still lets finish undo a current edit")
+    _Check(rx.Get() == 0, "a cancelled reply's edit is still undone")
+
+
+class _ArtistEdit(object):
+    """A change the artist made, as the editor would record it."""
+
+    label = "Artist rotation"
+
+    def __init__(self, attribute, value):
+        self._attribute = attribute
+        self._before = attribute.Get()
+        self._after = value
+
+    def Undo(self):
+        self._attribute.Set(self._before)
+
+    def Redo(self):
+        self._attribute.Set(self._after)
+
+
+def TestArtistCommitStartsANewStep():
+    stage = _Stage()
+    container = _Container()
+    rx = stage.GetAttributeAtPath("/Char/Ctl.avars:rx")
+    box, _api = _Toolbox(stage, container, can_edit=True)
+    _SetRotation(box, 10)
+    _SetRotation(box, 20)
+    _Check(rx.Get() == 20 and container.stack.UndoText() == "AI Assistant changes",
+           "the reply's edits are one step")
+    container.stack.Undo()
+    _Check(rx.Get() == 0 and container.stack.Redo(), "both edits undo together")
+
+    container.stack.Push(_ArtistEdit(rx, 5))
+    rx.Set(5)
+    _Check(rx.Get() == 5, "the artist turns the control")
+    text, failed = _SetRotation(box, 30)
+    _Check(not failed and rx.Get() == 30,
+           "the same reply can edit again: %s" % text)
+    container.stack.Undo()
+    _Check(rx.Get() == 5 and container.stack.UndoText() == "Artist rotation",
+           "the artist's change is the newest step, not the reply's")
+    container.stack.Undo()
+    _Check(rx.Get() == 20 and container.stack.UndoText() == "AI Assistant changes",
+           "the artist's change comes off before the reply's")
+    container.stack.Undo()
+    _Check(rx.Get() == 0 and not container.stack.CanUndo(),
+           "the reply's two changes are still one step")
+
+
+def TestStageReplacementMidBatchStopsTheRest():
+    a, b = _Stage(), _Stage()
+    container = _Container()
+    box, live = _Toolbox(a, container, can_edit=True)
+
+    class _SelectionOpensAnotherStage(_Selection):
+        def addPrim(self, prim):
+            _Selection.addPrim(self, prim)
+            live.stage = b
+
+    live.dataModel.selection = _SelectionOpensAnotherStage(live)
+    b_before = b.GetRootLayer().ExportToString()
+    text, _failed = box.call("change_stage", {"changes": [
+        {"action": "set_attr", "path": "/Char/Ctl", "name": "avars:rx",
+         "value": 10},
+        {"action": "select", "paths": ["/Char/Ctl"]},
+        {"action": "set_attr", "path": "/Char/Ctl", "name": "avars:ty",
+         "value": 20}]})
+    _Check("Could not: The document is no longer current: 1 of the changes "
+           "were not made" in text and
+           a.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 10 and
+           a.GetAttributeAtPath("/Char/Ctl.avars:ty").Get() == 0 and
+           b.GetRootLayer().ExportToString() == b_before,
+           "the batch stops where the document stops being current: %s" % text)
+    container.stack.Undo()
+    _Check(a.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 0 and
+           live.selectedPrims,
+           "the changes the batch made stay undoable, and the selection is the new one")
+
+
+def TestSharedLayerReplacementMidBatchStopsTheRest():
+    a = _Stage()
+    b = Usd.Stage.Open(a.GetRootLayer())  # another document over the same layer
+    assert a is not b and a.GetRootLayer() == b.GetRootLayer()
+    container = _Container()
+    box, live = _Toolbox(a, container, can_edit=True)
+
+    class _SelectionOpensAnotherStage(_Selection):
+        def addPrim(self, prim):
+            _Selection.addPrim(self, prim)
+            live.stage = b
+
+    live.dataModel.selection = _SelectionOpensAnotherStage(live)
+    text, _failed = box.call("change_stage", {"changes": [
+        {"action": "set_attr", "path": "/Char/Ctl", "name": "avars:rx",
+         "value": 10},
+        {"action": "select", "paths": ["/Char/Ctl"]},
+        {"action": "set_attr", "path": "/Char/Ctl", "name": "avars:ty",
+         "value": 22}]})
+    _Check("The document is no longer current" in text and
+           a.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 10 and
+           b.GetAttributeAtPath("/Char/Ctl.avars:ty").Get() == 0,
+           "the batch stops at the replacement although the layer is shared: %s" % text)
+    container.stack.Undo()
+    _Check(a.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 0 and
+           b.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 0,
+           "the undo reaches back through the shared layer")
 
 
 def TestToolboxSwapDuringActivity():
@@ -538,7 +660,6 @@ def TestPosing():
                1.5) < 1e-9, "a short avar name is found")
     _Check("Could not" in text and "avars:nope" in text,
            "an unknown avar is reported: %s" % text)
-    box.finish()
     container.stack.Undo()
     _Check(abs(rx.Get(10)) < 1e-9, "undo takes the key away: %s" %
            rx.Get(10))
@@ -559,7 +680,6 @@ def TestRunPython():
     text, failed = box.call("run_python", {"code": "raise ValueError('x')"})
     _Check("ValueError" in json.loads(text).get("error", ""),
            "an error in the code is given back: %s" % text)
-    box.finish()
     container.stack.Undo()
     _Check(not stage.GetPrimAtPath("/Char/Made").IsValid(),
            "undo takes back what the Python changed on the edit target")
@@ -658,6 +778,7 @@ _TEXT_ACTIONS = [
 _ACTION_REPLY = ('Here is the translation.\n```usdrig-actions\n' +
                  json.dumps(_TEXT_ACTIONS) + '\n```')
 _FRESH_TEXT = 'This is the replacement document reply.'
+_PLAIN_TEXT = 'Noted.'
 
 
 def _PumpUntil(predicate, message):
@@ -677,6 +798,7 @@ class _LocalReply:
         if not gated:
             self.release.set()
         self.passes = []
+        self.sent = None
         self.job = None
         self.native_result = None
 
@@ -702,6 +824,7 @@ class _LocalProvider(providers.Provider):
     def stream_chat(self, messages, system, model=None, tools=None):
         reply = self.replies[messages[-1]['content']]
         reply.passes.append((model, tools is not None))
+        reply.sent = [message['content'] for message in messages]
         if reply.route == 'fallback' and tools is not None:
             raise providers.ToolsUnsupported('Try without native tools')
         if reply.route in ('native', 'mixed'):
@@ -715,7 +838,6 @@ class _LocalProvider(providers.Provider):
                     reply.job = (job.name, job.args)
                     reply.posted.set()
 
-            # Observe actual submission, not merely arrival at stream_chat.
             with patch.object(tools, '_invoke', ObservedSignal()):
                 reply.native_result = tools.call(
                     'change_stage', {'changes': _NATIVE_ACTIONS})
@@ -724,6 +846,8 @@ class _LocalProvider(providers.Provider):
             yield _FRESH_TEXT
         elif reply.route == 'native':
             yield 'Here is the rotation.'
+        elif reply.route == 'plain':
+            yield _PLAIN_TEXT
         else:
             yield _ACTION_REPLY
         reply.wait_for_release()
@@ -840,7 +964,6 @@ def _TestProviderSwap(route, replacement):
     seed, _ = _Toolbox(b, container, can_edit=True)
     text, failed = _SetRotation(seed, 10)
     assert not failed, text
-    seed.finish()
     container.stack.Undo()
     b.SetEditTarget(Usd.EditTarget(b.GetSessionLayer()))
     baseline_a, baseline_b = _DocumentState(a), _DocumentState(b)
@@ -884,6 +1007,9 @@ def _TestProviderSwap(route, replacement):
             assert [m['shown'] for m in ui.messages] == ['old', 'fresh']
             fresh.release.set()
         _ProviderFinished(ui)
+        _Check(old.sent == ['old'] and
+               (replacement == 'silent' or fresh.sent == ['fresh']),
+               replacement + ': the canceled turn is not sent to the model again')
         if route == 'native':
             _Check(old.native_result is not None and old.native_result[1] and
                    old.native_result not in (_PENDING_EXPIRY, _RUNNING_EXPIRY),
@@ -949,18 +1075,152 @@ def TestProviderFinalTextPermissionsAndStop():
                    'permission changes or Stop leave final text inert')
 
 
+def TestEditToggleRevokesAPendingNativeEdit():
+    stage = _Stage()
+    baseline = _DocumentState(stage)
+    api, container = _Api(stage), _Container()
+    reply = _LocalReply('native', gated=True)
+    with _ProviderPanel(api, container, {'edit': reply}) as ui:
+        ui.send('edit')
+        _WaitForAttempt(ui, reply)
+        ui.edit_check.setChecked(False)
+        reply.release.set()
+        _ProviderFinished(ui)
+        message = ui.messages[-1]
+        _Check(_DocumentState(stage) == baseline and not container.stack.CanUndo(),
+               'turning Edit stage off revokes the change still in the queue')
+        _Check(message['role'] == 'assistant' and
+               message['content'] == 'Here is the rotation.' and
+               any(entry['state'] == 'failed' for entry in message.get('tools', [])) and
+               any('turned off' in problem for problem in message.get('failed', [])),
+               'the reply says the change was not made: %s' % message)
+    offline, _ = _Toolbox(stage, container, can_edit=True,
+                          edit_allowed=lambda: False)
+    text, failed = _SetRotation(offline, 40)
+    _Check(failed and 'turned off' in text and _DocumentState(stage) == baseline,
+           'the consent check sits in dispatch, which is where MCP calls go: %s' % text)
+
+
+def TestReopenedChatExcludesTheCanceledTurn():
+    a, b = _Stage(), _Stage()
+    api, container = _Api(a), _Container()
+    old = _LocalReply('native', gated=True)
+    fresh = _LocalReply('plain', gated=True)
+    with _ProviderPanel(api, container, {'old': old, 'fresh': fresh}) as ui:
+        ui.send('old')
+        _WaitForAttempt(ui, old)
+        api.stage = b
+        ui.set_session(session.Session(api, container))
+        old.release.set()
+        _ProviderFinished(ui)
+        saved = ui.chat_store.load(ui.chat_id)
+        _Check(any(m['role'] == 'user' and m['content'] == 'old' and m.get('canceled')
+                   for m in saved['messages']),
+               'the canceled turn is marked in the saved chat')
+        ui.open_chat(ui.chat_id)
+        _Check([m.get('shown', m['content']) for m in ui.messages] == ['old'],
+               'the reopened chat shows the canceled request')
+        ui.send('fresh')
+        fresh.release.set()
+        _ProviderFinished(ui)
+        _Check(fresh.sent == ['fresh'],
+               'a reopened chat sends only the new question to the model')
+        _Check([m.get('shown', m['content']) for m in ui.messages] ==
+               ['old', 'fresh', _PLAIN_TEXT],
+               'the transcript still shows the canceled request')
+
+
+def TestSendRollsBackWhenTheChatCannotBeSaved():
+    stage = _Stage()
+    api, container = _Api(stage), _Container()
+    lost = _LocalReply('plain', gated=True)
+    again = _LocalReply('plain', gated=False)
+    with _ProviderPanel(api, container, {'hello': lost, 'again': again}) as ui:
+        with patch.object(ui.chat_store, 'save',
+                          side_effect=OSError('the disk is full')):
+            ui.input.setPlainText('hello')
+            ui.send()
+        _Check(not ui.busy and ui.toolbox is None and ui.thread is None and
+               not ui._pending_turn and not ui._settling and ui.messages == [] and
+               ui.input.toPlainText() == 'hello' and
+               'could not be saved' in ui.status_label.text() and
+               bool(ui.status_label.property('error')) and
+               ui.send_button.text() == 'Send',
+               'a chat that cannot be saved leaves no reply in flight')
+        ui.send('again')
+        _ProviderFinished(ui)
+        message = ui.messages[-1]
+        _Check([m.get("shown", m["content"]) for m in ui.messages] ==
+               ["again", _PLAIN_TEXT] and
+               message['role'] == 'assistant' and message['content'] == _PLAIN_TEXT and
+               not message.get('failed'),
+               'the next Send works normally after a failed save')
+
+
+def TestReplyWaitsForItsQueuedCall():
+    stage = _Stage()
+    api, container = _Api(stage), _Container()
+    reply = _LocalReply('native', gated=True)
+    with patch.object(tools, 'CALL_TIMEOUT', 0.5), \
+            _ProviderPanel(api, container, {'edit': reply}) as ui:
+        ui.send('edit')
+        _WaitForAttempt(ui, reply)
+        box = ui.toolbox
+        tool = box.tools['change_stage']
+        author = tool.handler
+
+        def slow_handler(args):
+            result = author(args)
+            time.sleep(1.2)  # past the caller's deadline, so the model moves on
+            QtWidgets.QApplication.processEvents()
+            waiting.append('Writing the changes' in ui.status_label.text()
+                           and ui._settling is box and ui.busy)
+            return result
+
+        tool.handler = slow_handler
+        waiting = []
+        reply.release.set()
+        _PumpUntil(lambda: reply.native_result is not None,
+                   'the model never moved on without its change')
+        _Check(waiting == [True] and reply.native_result == _RUNNING_EXPIRY,
+               'the reply waited while its own change was still being authored')
+        _ProviderFinished(ui)
+        answers = [m for m in ui.messages if m['role'] == 'assistant']
+        _Check(len(answers) == 1 and answers[0]['content'] == 'Here is the rotation.' and
+               answers[0].get('done') == ['Set ' + _CTL + '.avars:rx to 30'],
+               'the reply is recorded once, with the outcome of its queued call')
+        _Check([entry['state'] for entry in answers[0].get('tools', [])] == ['done'],
+               'the saved activity does not stay running: %s' % answers[0])
+        _Check(_Values(stage) == (30.0, 0.0) and
+               container.stack.UndoText() == 'AI Assistant changes',
+               'the queued change was authored as one step')
+        container.stack.Undo()
+        _Check(_Values(stage) == (0, 0) and not container.stack.CanUndo(),
+               'one undo takes back the reply that settled late')
+        _Check(ui._settling is None and not ui.busy and
+               ui.send_button.text() == 'Send', 'the settled reply leaves the panel idle')
+
+
 def main():
     app = QtWidgets.QApplication.instance()
     for test in (TestToolboxNoStageWithoutApp, TestLooking,
                  TestChangesAreOneUndoStep, TestToolboxRejectsSilentStageReplacement,
-                 TestToolboxGenerationAndRetirement, TestToolboxSwapDuringActivity,
+                 TestToolboxGenerationAndRetirement,
+                 TestArtistCommitStartsANewStep,
+                 TestStageReplacementMidBatchStopsTheRest,
+                 TestSharedLayerReplacementMidBatchStopsTheRest,
+                 TestToolboxSwapDuringActivity,
                  TestToolboxFolderGrantAfterPrompt, TestPosing, TestRunPython,
                  TestActionBlocks, TestQueuedEditExpiresBeforeDelivery,
                  TestQueuedEditExpiresBeforeBusyRetry, TestCancelWakesQueuedEdit,
                  TestRunningEditCanCompleteAfterCallerDeadline, TestMcpServer,
                  TestProviderCompletion, TestProviderSwapNative,
                  TestProviderSwapFinalText, TestProviderSilentSwapAndReopen,
-                 TestProviderFinalTextPermissionsAndStop):
+                 TestProviderFinalTextPermissionsAndStop,
+                 TestEditToggleRevokesAPendingNativeEdit,
+                 TestReopenedChatExcludesTheCanceledTurn,
+                 TestReplyWaitsForItsQueuedCall,
+                 TestSendRollsBackWhenTheChatCannotBeSaved):
         if app is None and test is not TestToolboxNoStageWithoutApp:
             app = QtWidgets.QApplication([])
         try:

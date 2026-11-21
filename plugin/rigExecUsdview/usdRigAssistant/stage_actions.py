@@ -189,17 +189,28 @@ class Applier(object):
 
     :param stage: the Usd.Stage
     :param select: called with a list of paths for the select action
+    :param revalidate: called on the owner thread before each action; when
+        it gives back False the rest of the batch is not made
     """
 
-    def __init__(self, stage, select=None):
+    def __init__(self, stage, select=None, revalidate=None):
         self.stage = stage
         self.select = select
+        self.revalidate = revalidate
 
     def apply(self, actions):
         # No Sdf.ChangeBlock: each action reads the stage the one before it
         # made, and a stage does not recompose inside a block.
         done, failed = [], []
-        for action in actions:
+        for left, action in enumerate(actions):
+            if self.revalidate is not None and not self.revalidate():
+                # An action can change what is open (a viewer notice, a
+                # saved layer another stage composes); the actions after it
+                # would land in that document.
+                failed.append('The document is no longer current: {} of the '
+                              'changes were not made'.format(
+                                  len(actions) - left))
+                break
             name = str(action.get('action') or '')
             handler = getattr(self, 'do_' + name, None)
             if handler is None:

@@ -253,20 +253,27 @@ class Toolbox(QtCore.QObject):
         wants to read somewhere new; gives back ONCE, ALWAYS or DENY.
         Without it, nowhere new can be read.
     :param document_current: optional owner-thread generation check
+    :param edit_allowed: optional owner-thread check that "Edit stage" is
+        still on; it can only narrow the can_edit grant made at Send
+    :param run_allowed: the same for "Run code" and can_run
     """
     # {'id', 'name', 'kind', 'label', 'state': 'running', 'done' or
     # 'failed', 'detail'}
     activity = QtCore.Signal(dict)
+    # A call ended and none is left: the owner can settle the reply.
+    settled = QtCore.Signal()
     _invoke = QtCore.Signal(object)
 
     def __init__(self, session, can_edit=False, can_run=False, parent=None,
                  memory=None, chat_folders=None, ask_access=None,
-                 document_current=None):
+                 document_current=None, edit_allowed=None, run_allowed=None):
         super(Toolbox, self).__init__(parent)
         self.session = session
         self._origin_stage = session.stage if session is not None else None
         self._have_stage = self._origin_stage is not None
         self._document_current = document_current
+        self.edit_allowed = edit_allowed
+        self.run_allowed = run_allowed
         self.can_edit = can_edit
         self.can_run = can_run
         self.memory = memory if memory is not None else Memory()
@@ -281,8 +288,9 @@ class Toolbox(QtCore.QObject):
         self._jobs = set()
         self.done = []
         self.failed = []
-        # This reply's undoable edits, pushed as one step by finish().
-        self.edits = []
+        # The reply's undo step on the editor's history, opened by its first
+        # edit and grown by the ones after while it is still the newest.
+        self._history_step = None
         self.calls = 0
         self._running = False
         self._namespace = None
@@ -312,6 +320,28 @@ class Toolbox(QtCore.QObject):
             raise ToolError(_STOPPED)
         if not self.is_current():
             raise ToolError(_STALE)
+
+    def may_edit(self):
+        """Edit consent: granted at Send and still on. Asked on the owner
+        thread, so turning "Edit stage" off takes the edit tools away."""
+        return self.can_edit and (self.edit_allowed is None or
+                                  bool(self.edit_allowed()))
+
+    def may_run(self):
+        return self.can_run and (self.run_allowed is None or
+                                 bool(self.run_allowed()))
+
+    def outstanding_calls(self):
+        """Calls this reply made that have not ended. The owner thread
+        delivers the ones other threads asked for."""
+        with self._job_lock:
+            return len(self._jobs) + (1 if self._running else 0)
+
+    def _settle_if_idle(self):
+        with self._job_lock:
+            idle = not self._jobs and not self._running
+        if idle:
+            self.settled.emit()
 
     # What is offered
     def available(self):
@@ -374,6 +404,8 @@ class Toolbox(QtCore.QObject):
                 return self._call(name, args)
             finally:
                 self._running = was_running
+                if not was_running:
+                    self._settle_if_idle()
         if not isinstance(QtWidgets.QApplication.instance(), QtWidgets.QApplication):
             return 'The toolbox cannot run off its owner thread without Qt.', True
         job = _Job(name, args, self._job_lock)
@@ -448,6 +480,7 @@ class Toolbox(QtCore.QObject):
             self._running = False
             with self._job_lock:
                 self._complete_job_locked(job, _JobState.DONE, result)
+            self._settle_if_idle()
 
     def _job_error(self, job, err):
         logger.exception('Assistant tool %s failed', job.name)
@@ -466,7 +499,8 @@ class Toolbox(QtCore.QObject):
                 label = name
         try:
             self._require_current()
-            if not offered:
+            if not offered or (tool.kind == EDIT and not self.may_edit()) \
+                    or (tool.kind == RUN and not self.may_run()):
                 if tool and tool.kind == EDIT:
                     text = ('Changing the stage is turned off. Ask the user to '
                             'turn on "Edit stage" under the message box.')
@@ -477,6 +511,9 @@ class Toolbox(QtCore.QObject):
                     text = 'No stage is open.'
                 else:
                     text = 'There is no tool called {}.'.format(name)
+                if offered:
+                    # Offered at Send, revoked since: the reply records it.
+                    self.failed.append(text)
                 raise ToolError(text)
             self._tell(call_id, tool, label, 'running')
             self._require_current()
@@ -503,24 +540,6 @@ class Toolbox(QtCore.QObject):
                             'kind': tool.kind if tool else READ,
                             'label': label, 'state': state,
                             'detail': detail})
-
-    def finish(self):
-        """End the reply: its changes become one undo step."""
-        if not self._on_owner_thread():
-            return
-        edits, self.edits = self.edits, []
-        if not edits or self.session is None or not self.is_current():
-            return
-        stack = self.session.undo_stack()
-        if stack is None or not self.is_current():
-            return
-        try:
-            stack.Push(edits[0] if len(edits) == 1 else
-                       session_module.GroupEdit('AI Assistant changes',
-                                                edits))
-        except RuntimeError:
-            logger.warning('Could not add the assistant\'s changes to the '
-                           'undo stack', exc_info=True)
 
     def cancel(self):
         with self._job_lock:
@@ -622,8 +641,34 @@ class Toolbox(QtCore.QObject):
         return None
 
     def _record(self, edit):
-        if edit is not None:
-            self.edits.append(edit)
+        """Add one authored edit to the editor's history, on the owner
+        thread where every edit is authored."""
+        if edit is None or self.session is None:
+            return
+        try:
+            stack = self.session.undo_stack()
+        except RuntimeError:
+            logger.warning('Could not reach the undo stack', exc_info=True)
+            return
+        if stack is None:
+            return
+        step = self._history_step
+        if step is not None and stack.LastEdit() is not step:
+            # The artist, or another reply, recorded something since: this
+            # reply's next change becomes a new step, and the order on the
+            # stack is the order they were made.
+            step = None
+        if step is None:
+            step = session_module.GroupEdit(edit.label, [edit])
+            try:
+                stack.Push(step)
+            except RuntimeError:
+                logger.warning('Could not add the assistant\'s changes to the '
+                               'undo stack', exc_info=True)
+                return
+        else:
+            step.edits.append(edit)
+        self._history_step = step
 
     # The tools
     def _all_tools(self):
@@ -1411,7 +1456,8 @@ class Toolbox(QtCore.QObject):
             raise ToolError('"changes" must be a list of changes')
         specs = _spec_paths(changes,
                             self.stage.GetEditTarget().GetLayer())
-        applier = stage_actions.Applier(self.stage, select=self._select)
+        applier = stage_actions.Applier(self.stage, select=self._select,
+                                        revalidate=self.is_current)
         if specs:
             with rigExecUndo.SpecScope(self.stage, specs, None,
                                        'AI Assistant changes') as scope:
