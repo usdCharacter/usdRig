@@ -345,14 +345,14 @@ class TestReloadLifecycle(unittest.TestCase):
         sync = self.view._stageSync
         outer = sync.acquireSuppression()
         gesture = sync.acquireSuppression(reconcile=True)
-        with patch('UsdNoodles.graphview.stage_sync.applyUsdChanges') as reconcile:
+        with patch('UsdNoodles.graphview.stage_adapter.applyUsdChanges') as reconcile:
             self.stage.GetAttributeAtPath('/Old.testValue').Set(2.0)
             self.stage.DefinePrim('/New', 'Xform')
             gesture.release()
             reconcile.assert_not_called()
             outer.release()
             reconcile.assert_called_once()
-            _, resync, info, _ = reconcile.call_args.args
+            _, resync, info = reconcile.call_args.args
             self.assertEqual(resync, {'/New'})
             self.assertEqual(info, {'/Old.testValue'})
 
@@ -372,10 +372,11 @@ class TestReloadLifecycle(unittest.TestCase):
             self.assertTrue(editor.ApplyEdits())
         self.assertIs(view.nodes['/A/Child'], node)
         token.release()
-        self.assertIs(view.nodes.get('/D'), node)
-        self.assertEqual(node.getUsdPrim(), stage.GetPrimAtPath('/D'))
+        rebuilt = view.nodes['/D']
+        self.assertIsNot(rebuilt, node)
+        self.assertEqual(rebuilt.getUsdPrim(), stage.GetPrimAtPath('/D'))
         self.assertEqual(view._selectedNodes, {'/D'})
-        self.assertEqual(tuple(node.position), (500.0, 300.0))
+        self.assertEqual(tuple(rebuilt.position), (500.0, 300.0))
         self.assertNotIn('/A/Child', view.nodes)
         self.assertNotIn('/B/Child', view.nodes)
 
@@ -521,7 +522,9 @@ class TestReloadLifecycle(unittest.TestCase):
         view._cancelMung()
 
         self.assertFalse(stage.GetPrimAtPath('/A'))
-        self.assertIs(view.nodes.get('/B'), node)
+        rebuilt = view.nodes['/B']
+        self.assertIsNot(rebuilt, node)
+        self.assertEqual(rebuilt.getUsdPrim(), stage.GetPrimAtPath('/B'))
         self.assertEqual(stage.GetAttributeAtPath('/B.x').Get(time), 2.5)
         self.assertEqual(layer.QueryTimeSample('/B.x', 5), 2.5)
         self.assertEqual(layer.ListTimeSamplesForPath('/B.x'), [5.0])
@@ -531,7 +534,7 @@ class TestReloadLifecycle(unittest.TestCase):
         self.assertFalse(history.canRedo())
         self.assertIsNone(view._mungSuppression)
 
-        with patch.object(node, 'invalidate_value_row', wraps=node.invalidate_value_row) as invalidate:
+        with patch.object(rebuilt, 'invalidate_value_row', wraps=rebuilt.invalidate_value_row) as invalidate:
             self.assertTrue(stage.GetAttributeAtPath('/B.x').Set(7.0, time))
             invalidate.assert_called_with('x')
 
