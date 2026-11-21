@@ -28,6 +28,7 @@
 #include "rigExec/bakedProgram.h"
 #include "rigExec/bakedProgramImpl.h"
 #include "rigExec/rigEvaluator.h"
+#include "rigExecSchema/schemaTokens.h"
 #include "rigExecExampleFixtures.h"
 
 #include "pxr/base/gf/matrix4d.h"
@@ -43,6 +44,8 @@
 #include "pxr/usd/usd/primRange.h"
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usd/usd/timeCode.h"
+#include "pxr/usd/usdGeom/tokens.h"
+#include "pxr/usd/usdSkel/tokens.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -55,6 +58,26 @@
 
 using namespace rigExec;
 PXR_NAMESPACE_USING_DIRECTIVE
+
+static const TfToken _dense(SchemaValueText::dense);
+static const TfToken _inputsDefaultWeight(SchemaAttrText::inputsDefaultWeight);
+static const TfToken
+    _rigExecDefaultWeight(SchemaAttrText::rigExecDefaultWeight);
+static const TfToken _rigExecElementSize(SchemaAttrText::rigExecElementSize);
+static const TfToken _rigExecIndices(SchemaAttrText::rigExecIndices);
+static const TfToken _rigExecInfluences(SchemaAttrText::rigExecInfluences);
+static const TfToken _rigExecJointIndices(SchemaAttrText::rigExecJointIndices);
+static const TfToken _rigExecJointWeights(SchemaAttrText::rigExecJointWeights);
+static const TfToken _rigExecMoves(SchemaAttrText::rigExecMoves);
+static const TfToken
+    _rigExecRepresentation(SchemaAttrText::rigExecRepresentation);
+static const TfToken
+    _rigExecSkinningMethod(SchemaAttrText::rigExecSkinningMethod);
+static const TfToken _rigExecTransform(SchemaAttrText::rigExecTransform);
+static const TfToken _rigExecValues(SchemaAttrText::rigExecValues);
+static const TfToken _rigExecWeightObject(SchemaAttrText::rigExecWeightObject);
+static const TfToken _rigExecWeightTarget(SchemaAttrText::rigExecWeightTarget);
+static const TfToken _sparse(SchemaValueText::sparse);
 
 static int failures = 0;
 
@@ -129,7 +152,7 @@ static SdfPath
 _FindRig(const UsdStageRefPtr &stage)
 {
     for (const UsdPrim &prim : stage->TraverseAll()) {
-        if (prim.GetTypeName() == TfToken("RigExecRoot")) {
+        if (prim.GetTypeName() == SchemaType::RigExecRoot) {
             return prim.GetPath();
         }
     }
@@ -612,15 +635,15 @@ _ClassicLinearSkinStage()
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->SetStartTimeCode(1.0);
     stage->SetEndTimeCode(3.0);
-    stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
-    stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
+    stage->DefinePrim(SdfPath("/Asset"), UsdGeomTokens->Scope);
+    stage->DefinePrim(SdfPath("/Asset/Rig"), SchemaType::RigExecRoot);
     SdfPathVector joints;
     for (int j = 0; j < 4; ++j) {
         const UsdPrim joint = stage->DefinePrim(
             SdfPath("/Asset/Rig/Joints/J" + std::to_string(j)),
-            TfToken("RigExecControl"));
+            SchemaType::RigExecControl);
         const UsdAttribute ty = joint.CreateAttribute(
-            TfToken("avars:ty"), SdfValueTypeNames->Double);
+            SchemaAttr::avarsTy, SdfValueTypeNames->Double);
         ty.Set(0.25 * double(j), UsdTimeCode(1.0));
         ty.Set(0.25 * double(j) + 0.5, UsdTimeCode(2.0));
         ty.Set(0.25 * double(j) - 0.25, UsdTimeCode(3.0));
@@ -632,21 +655,20 @@ _ClassicLinearSkinStage()
         points[i] = GfVec3f(0.125f * float(i % 8), 0.25f * float(i / 8),
                             0.0625f * float(i % 5));
     }
-    stage->DefinePrim(SdfPath("/Asset/Geom/Body"), TfToken("Points"))
-        .CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
+    stage->DefinePrim(SdfPath("/Asset/Geom/Body"), UsdGeomTokens->Points)
+        .CreateAttribute(UsdGeomTokens->points, SdfValueTypeNames->Point3fArray)
         .Set(points);
     const UsdPrim skin = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Skin"),
-                                           TfToken("RigExecSkinMover"));
-    skin.ApplyAPI(TfToken("RigExecMoverAPI"));
-    skin.GetRelationship(TfToken("rigExec:moves"))
-        .SetTargets({SdfPath("/Asset/Geom/Body.points")});
-    skin.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
-    skin.CreateRelationship(TfToken("rigExec:influences")).SetTargets(joints);
-    skin.CreateAttribute(TfToken("rigExec:elementSize"), SdfValueTypeNames->Int)
-        .Set(10);
-    skin.CreateAttribute(TfToken("rigExec:skinningMethod"),
-                         SdfValueTypeNames->Token)
-        .Set(TfToken("classicLinear"));
+                                           SchemaType::RigExecSkinMover);
+    skin.ApplyAPI(SchemaType::RigExecMoverAPI);
+    skin.GetRelationship(_rigExecMoves)
+        .SetTargets({SdfPath("/Asset/Geom/Body")
+                         .AppendProperty(UsdGeomTokens->points)});
+    skin.GetAttribute(_inputsDefaultWeight).Set(1.0f);
+    skin.CreateRelationship(_rigExecInfluences).SetTargets(joints);
+    skin.CreateAttribute(_rigExecElementSize, SdfValueTypeNames->Int).Set(10);
+    skin.CreateAttribute(_rigExecSkinningMethod, SdfValueTypeNames->Token)
+        .Set(UsdSkelTokens->classicLinear);
     VtIntArray indices(kPoints * 10, 0);
     VtFloatArray weights(kPoints * 10, 0.0f);
     for (size_t i = 0; i < kPoints; ++i) {
@@ -655,11 +677,9 @@ _ClassicLinearSkinStage()
         weights[i * 10] = 0.625f;
         weights[i * 10 + 1] = 0.375f;
     }
-    skin.CreateAttribute(TfToken("rigExec:jointIndices"),
-                         SdfValueTypeNames->IntArray)
+    skin.CreateAttribute(_rigExecJointIndices, SdfValueTypeNames->IntArray)
         .Set(indices);
-    skin.CreateAttribute(TfToken("rigExec:jointWeights"),
-                         SdfValueTypeNames->FloatArray)
+    skin.CreateAttribute(_rigExecJointWeights, SdfValueTypeNames->FloatArray)
         .Set(weights);
     return stage;
 }
@@ -673,12 +693,12 @@ _EnvelopeStage(bool sparse)
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->SetStartTimeCode(1.0);
     stage->SetEndTimeCode(3.0);
-    stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
-    stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
+    stage->DefinePrim(SdfPath("/Asset"), UsdGeomTokens->Scope);
+    stage->DefinePrim(SdfPath("/Asset/Rig"), SchemaType::RigExecRoot);
     const UsdPrim moving = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Controls/Moving"), TfToken("RigExecControl"));
+        SdfPath("/Asset/Rig/Controls/Moving"), SchemaType::RigExecControl);
     const UsdAttribute tx =
-        moving.CreateAttribute(TfToken("avars:tx"), SdfValueTypeNames->Double);
+        moving.CreateAttribute(SchemaAttr::avarsTx, SdfValueTypeNames->Double);
     tx.Set(0.5, UsdTimeCode(1.0));
     tx.Set(1.0, UsdTimeCode(2.0));
     tx.Set(1.5, UsdTimeCode(3.0));
@@ -688,54 +708,41 @@ _EnvelopeStage(bool sparse)
         points[i] = GfVec3f(0.25f * float(i % 8), 0.5f * float(i / 8),
                             0.125f * float(i % 3));
     }
-    const SdfPath target("/Asset/Geom/Body.points");
-    stage->DefinePrim(target.GetPrimPath(), TfToken("Points"))
-        .CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
+    const SdfPath target =
+        SdfPath("/Asset/Geom/Body").AppendProperty(UsdGeomTokens->points);
+    stage->DefinePrim(target.GetPrimPath(), UsdGeomTokens->Points)
+        .CreateAttribute(UsdGeomTokens->points, SdfValueTypeNames->Point3fArray)
         .Set(points);
     const UsdPrim weight = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Weights/Field"), TfToken("RigExecStaticWeight"));
-    weight.CreateRelationship(TfToken("rigExec:weightTarget"))
-        .SetTargets({target});
-    weight
-        .CreateAttribute(TfToken("rigExec:defaultWeight"),
-                         SdfValueTypeNames->Float)
+        SdfPath("/Asset/Rig/Weights/Field"), SchemaType::RigExecStaticWeight);
+    weight.CreateRelationship(_rigExecWeightTarget).SetTargets({target});
+    weight.CreateAttribute(_rigExecDefaultWeight, SdfValueTypeNames->Float)
         .Set(0.0f);
     const VtIntArray sparseIndices{1, 2, 5, 6, 17, 30};
     const VtFloatArray sparseValues{0.25f, 0.5f, 0.75f, 1.0f, 0.5f, 0.25f};
     if (sparse) {
-        weight
-            .CreateAttribute(TfToken("rigExec:representation"),
-                             SdfValueTypeNames->Token)
-            .Set(TfToken("sparse"));
-        weight
-            .CreateAttribute(TfToken("rigExec:indices"),
-                             SdfValueTypeNames->IntArray)
+        weight.CreateAttribute(_rigExecRepresentation, SdfValueTypeNames->Token)
+            .Set(_sparse);
+        weight.CreateAttribute(_rigExecIndices, SdfValueTypeNames->IntArray)
             .Set(sparseIndices);
-        weight
-            .CreateAttribute(TfToken("rigExec:values"),
-                             SdfValueTypeNames->FloatArray)
+        weight.CreateAttribute(_rigExecValues, SdfValueTypeNames->FloatArray)
             .Set(sparseValues);
     } else {
         VtFloatArray dense(kPoints, 0.0f);
         for (size_t k = 0; k < sparseIndices.size(); ++k) {
             dense[size_t(sparseIndices[k])] = sparseValues[k];
         }
-        weight
-            .CreateAttribute(TfToken("rigExec:representation"),
-                             SdfValueTypeNames->Token)
-            .Set(TfToken("dense"));
-        weight
-            .CreateAttribute(TfToken("rigExec:values"),
-                             SdfValueTypeNames->FloatArray)
+        weight.CreateAttribute(_rigExecRepresentation, SdfValueTypeNames->Token)
+            .Set(_dense);
+        weight.CreateAttribute(_rigExecValues, SdfValueTypeNames->FloatArray)
             .Set(dense);
     }
     const UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Lift"),
-                                            TfToken("RigExecMatrixMover"));
-    mover.ApplyAPI(TfToken("RigExecMoverAPI"));
-    mover.CreateRelationship(TfToken("rigExec:moves")).SetTargets({target});
-    mover.CreateRelationship(TfToken("rigExec:transform"))
-        .SetTargets({moving.GetPath()});
-    mover.CreateRelationship(TfToken("rigExec:weightObject"))
+                                            SchemaType::RigExecMatrixMover);
+    mover.ApplyAPI(SchemaType::RigExecMoverAPI);
+    mover.CreateRelationship(_rigExecMoves).SetTargets({target});
+    mover.CreateRelationship(_rigExecTransform).SetTargets({moving.GetPath()});
+    mover.CreateRelationship(_rigExecWeightObject)
         .SetTargets({weight.GetPath()});
     return stage;
 }
@@ -750,12 +757,14 @@ _CheckDenseSparseEquivalence()
                     _EnvelopeStage(false),
                     SdfPath("/Asset/Rig"),
                     {1.0, 2.0, 3.0},
-                    SdfPath("/Asset/Rig/Controls/Moving.avars:tx")};
+                    SdfPath("/Asset/Rig/Controls/Moving")
+                        .AppendProperty(SchemaAttr::avarsTx)};
     _Case sparseCase{name,
                      _EnvelopeStage(true),
                      SdfPath("/Asset/Rig"),
                      {1.0, 2.0, 3.0},
-                     SdfPath("/Asset/Rig/Controls/Moving.avars:tx")};
+                     SdfPath("/Asset/Rig/Controls/Moving")
+                         .AppendProperty(SchemaAttr::avarsTx)};
     std::vector<RigExecRigPose> densePoses, sparsePoses;
     std::vector<std::vector<RigExecRuntimePoints>> densePlayed, sparsePlayed;
     const _ScopedEnv chunkTarget("RIGEXEC_BAKED_CHUNK_VERTS", "16");
@@ -789,7 +798,7 @@ _CheckDenseSparseEquivalence()
     bool moved = false;
     if (!sparsePlayed.empty() && !sparsePlayed.front().empty()) {
         const UsdAttribute points = sparseCase.stage->GetAttributeAtPath(
-            SdfPath("/Asset/Geom/Body.points"));
+            SdfPath("/Asset/Geom/Body").AppendProperty(UsdGeomTokens->points));
         VtVec3fArray rest;
         moved = points.Get(&rest) &&
                 sparsePlayed.front().front().points.size() == rest.size() &&
@@ -829,16 +838,15 @@ _CheckBipedBodySkin(const _Case &testCase)
     // The case really is the biped body skin at elementSize 10.
     bool found = false;
     for (const UsdPrim &prim : testCase.stage->TraverseAll()) {
-        if (prim.GetTypeName() != TfToken("RigExecSkinMover")) {
+        if (prim.GetTypeName() != SchemaType::RigExecSkinMover) {
             continue;
         }
         int elementSize = 0;
-        const UsdAttribute authored =
-            prim.GetAttribute(TfToken("rigExec:elementSize"));
+        const UsdAttribute authored = prim.GetAttribute(_rigExecElementSize);
         if (authored && authored.Get(&elementSize) && elementSize == 10) {
             TfToken method;
             const UsdAttribute methodAttr =
-                prim.GetAttribute(TfToken("rigExec:skinningMethod"));
+                prim.GetAttribute(_rigExecSkinningMethod);
             if (methodAttr) {
                 methodAttr.Get(&method);
             }
@@ -893,7 +901,8 @@ main(int argc, char **argv)
                        _ClassicLinearSkinStage(),
                        SdfPath("/Asset/Rig"),
                        {1.0, 2.0, 3.0},
-                       SdfPath("/Asset/Rig/Joints/J1.avars:ty")};
+                       SdfPath("/Asset/Rig/Joints/J1")
+                           .AppendProperty(SchemaAttr::avarsTy)};
         _CheckCase(testCase, true);
     }
 

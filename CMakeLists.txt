@@ -1242,6 +1242,8 @@ target_compile_definitions(testRigExecEvalCoreProperties PRIVATE
     RIGEXEC_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples")
 add_test(NAME testRigExecEvalCoreProperties COMMAND testRigExecEvalCoreProperties
     "${CMAKE_CURRENT_SOURCE_DIR}/examples")
+set_tests_properties(testRigExecEvalCoreProperties PROPERTIES
+    LABELS "rigExecRuntime;rigExecBake;rigExecSampler")
 
 add_executable(testRigExecSurfaceKernelCache tests/testRigExecSurfaceKernelCache.cpp)
 target_link_libraries(testRigExecSurfaceKernelCache PRIVATE rigExecMath)
