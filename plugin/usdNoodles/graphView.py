@@ -44,7 +44,11 @@ from ._schema_pin_names import (
 # path helpers are re-exported here for the existing callers and tests that
 # import them from this module.
 from .graphview import editing as _editing
-from .graphview.editing import _make_prim_activation_undo, _make_rename_undo, _push_undo_command
+from .graphview.editing import (
+    _make_value_edit, _make_api_schema_undo,
+    _make_connection_edit, _make_reconnect_edits,
+    _make_prim_activation_undo, _make_rename_undo, _push_undo_command,
+)
 from .graphview import intents as _intents
 from .graphview import selection as _selection
 from .graphview import stage_sync
@@ -162,175 +166,8 @@ def _makeStageSync(view):
     )
 
 
-def _make_value_edit(prim_path, property_name, components, time_code, mode):
-    """Return a callable that authors *components* onto one attribute.
-
-    Named by path rather than by a captured ``Usd.Prim``: ``_performUndo``
-    calls ``_reloadCurrentGraph`` afterwards, which rebuilds every node from
-    the stage, so a prim handle captured here would be talking about an
-    object nobody else is looking at any more.
-    """
-
-    def _fn(
-        gv,
-        _path=str(prim_path),
-        _prop=property_name,
-        _components=tuple(components),
-        _time=time_code,
-        _mode=mode,
-    ):
-        stage = gv.nodeGraph.getStage()
-        if not stage:
-            return
-        prim = stage.GetPrimAtPath(_path)
-        if not prim or not prim.IsValid():
-            Tf.Warn("Value undo: no prim at %s" % _path)
-            return
-        ok, reason = noodlesValues.write_value(
-            stage, prim, _prop, _components, _time, mode=_mode
-        )
-        if not ok:
-            Tf.Warn("Value undo failed on %s.%s: %s" % (_path, _prop, reason))
-            return
-        node = gv.nodes.get(_path)
-        if node is not None and hasattr(node, "invalidate_value_row"):
-            node.invalidate_value_row(_prop)
-
-    return _fn
 
 
-def _make_api_schema_undo(identifier, applied, apply):
-    """Return a callable that applies or removes an API schema.
-
-    The instance names chosen when the schema was first applied are captured
-    here so that redo reuses them instead of generating new ones.
-
-    Args:
-        identifier: USD schema identifier.
-        applied: List of (primPath, instanceName) pairs; instanceName is ""
-            for single-apply schemas.
-        apply: True to apply the schema on redo, False to remove it on undo.
-    """
-
-    def _fn(gv, _identifier=identifier, _applied=list(applied), _apply=apply):
-        from .apiSchemas import apply_named, remove_from_prim
-
-        stage = gv.nodeGraph.getStage()
-        if not stage:
-            return
-        for path_str, instance_name in _applied:
-            prim = stage.GetPrimAtPath(path_str)
-            if not prim or not prim.IsValid():
-                continue
-            if _apply:
-                apply_named(prim, _identifier, instance_name)
-            else:
-                remove_from_prim(prim, _identifier, instance_name)
-        gv._reloadCurrentGraph()
-
-    return _fn
-
-
-def _make_connection_edit(
-    src_id,
-    src_port,
-    tgt_id,
-    tgt_port,
-    create,
-    *,
-    source_property_name="",
-    target_property_name="",
-):
-    """Return a callable that creates or deletes a single USD connection.
-
-    The connection is authored on the stage's current edit target. If the
-    user has selected a sublayer, the connection lands there.
-
-    Args:
-        create: True to create the connection, False to delete it.
-    """
-
-    def _fn(gv):
-        stage = gv.nodeGraph.getStage()
-        if not stage:
-            return
-        out_p = stage.GetPrimAtPath(src_id)
-        in_p = stage.GetPrimAtPath(tgt_id)
-        if not (out_p and in_p):
-            return
-        lib = gv._findLibraryForPrim(in_p)
-        if not lib:
-            return
-        connection_kwargs = {}
-        if source_property_name or target_property_name:
-            connection_kwargs = {
-                "source_property_name": source_property_name,
-                "target_property_name": target_property_name,
-            }
-        if create:
-            lib.create_connection(
-                stage, out_p, src_port, in_p, tgt_port, **connection_kwargs
-            )
-        else:
-            lib.delete_connection(
-                stage, out_p, src_port, in_p, tgt_port, **connection_kwargs
-            )
-
-    return _fn
-
-
-def _make_reconnect_edits(
-    old_src,
-    old_src_port,
-    old_tgt,
-    old_tgt_port,
-    new_src,
-    new_src_port,
-    new_tgt,
-    new_tgt_port,
-    *,
-    sourcePropertyName="",
-    targetPropertyName="",
-):
-    """Return (redo, undo) callables for a reconnection."""
-    delete_old = _make_connection_edit(
-        old_src, old_src_port, old_tgt, old_tgt_port, create=False
-    )
-    create_old = _make_connection_edit(
-        old_src, old_src_port, old_tgt, old_tgt_port, create=True
-    )
-    delete_new = _make_connection_edit(
-        new_src,
-        new_src_port,
-        new_tgt,
-        new_tgt_port,
-        create=False,
-        source_property_name=sourcePropertyName,
-        target_property_name=targetPropertyName,
-    )
-    create_new = _make_connection_edit(
-        new_src,
-        new_src_port,
-        new_tgt,
-        new_tgt_port,
-        create=True,
-        source_property_name=sourcePropertyName,
-        target_property_name=targetPropertyName,
-    )
-
-    def redo(gv):
-        delete_old(gv)
-        create_new(gv)
-        gv.linksChanged = True
-        gv.update()
-
-    def undo(gv):
-        delete_new(gv)
-        create_old(gv)
-        gv.linksChanged = True
-        gv.update()
-
-    return redo, undo
 
 
 class _ProfileSection:
@@ -628,6 +465,7 @@ class GraphView(QGLWidget):
         self._reconnectOldTargetPort = None
         self._reconnectOldSourcePropertyName = ""
         self._reconnectOldTargetPropertyName = ""
+        self._reconnectCapture = None
 
         # Frame in prim tree option - when enabled, selecting nodes will scroll
         # the prim tree view to show the selected prim
@@ -4132,6 +3970,7 @@ class GraphView(QGLWidget):
                 anchorIsOutput = True
 
         self._reconnectingLink = True
+        self._reconnectCapture = _editing._capture_reconnect(self, link)
         self._reconnectOldSourceNodeId = link.sourceNodeId
         self._reconnectOldSourcePort = link.sourcePort
         self._reconnectOldTargetNodeId = link.targetNodeId
@@ -4172,6 +4011,7 @@ class GraphView(QGLWidget):
         self._reconnectOldTargetPort = None
         self._reconnectOldSourcePropertyName = ""
         self._reconnectOldTargetPropertyName = ""
+        self._reconnectCapture = None
 
     def _cancelLinkReconnect(self):
         """Restore the original link when reconnection fails (error recovery)."""
@@ -4181,7 +4021,11 @@ class GraphView(QGLWidget):
         tgtPort = self._reconnectOldTargetPort
         srcPropName = self._reconnectOldSourcePropertyName
         tgtPropName = self._reconnectOldTargetPropertyName
+        capture = getattr(self, "_reconnectCapture", None)
         self._clearReconnectState()
+        if isinstance(capture, _editing.ReconnectCapture):
+            _editing._refresh_connections(self, capture.order)
+            return
 
         srcNode = self.nodes.get(srcId)
         tgtNode = self.nodes.get(tgtId)
@@ -4199,6 +4043,11 @@ class GraphView(QGLWidget):
 
     def _finishReconnectDisconnect(self):
         """Delete the original connection when dropped on empty space."""
+        if isinstance(self.nodeGraph.getStage(), Usd.Stage):
+            capture = _editing._reconnect_endpoints(self)
+            self._clearReconnectState()
+            return _editing._dispatch_connection(self, _intents.Disconnect(
+                capture.endpoints, description="Disconnect", prior_order=capture.order))
         srcId = self._reconnectOldSourceNodeId
         srcPort = self._reconnectOldSourcePort
         tgtId = self._reconnectOldTargetNodeId
@@ -4407,6 +4256,7 @@ class GraphView(QGLWidget):
             existingLink = self._findLinkToInput(nodeId, portName)
             if existingLink and not getattr(existingLink, "isDangling", False):
                 self._reconnectingLink = True
+                self._reconnectCapture = _editing._capture_reconnect(self, existingLink)
                 self._reconnectOldSourceNodeId = existingLink.sourceNodeId
                 self._reconnectOldSourcePort = existingLink.sourcePort
                 self._reconnectOldTargetNodeId = existingLink.targetNodeId
@@ -4761,12 +4611,11 @@ class GraphView(QGLWidget):
             # started during the highlight delay cannot overwrite it.
             reconnect_state = None
             if self._reconnectingLink:
-                reconnect_state = (
-                    self._reconnectOldSourceNodeId,
-                    self._reconnectOldSourcePort,
-                    self._reconnectOldTargetNodeId,
-                    self._reconnectOldTargetPort,
-                )
+                reconnect_state = (_editing._reconnect_endpoints(self)
+                                   if isinstance(self.nodeGraph.getStage(), Usd.Stage) else (
+                                       self._reconnectOldSourceNodeId, self._reconnectOldSourcePort,
+                                       self._reconnectOldTargetNodeId, self._reconnectOldTargetPort,
+                                   ))
                 self._clearReconnectState()
 
             # Use QTimer to remove highlight after 200ms, then create new connection
@@ -4797,49 +4646,6 @@ class GraphView(QGLWidget):
             )
         self._dragLinkSyntheticTarget = None
         self._dragLinkResolvedTarget = None
-
-    def _finishConnectionReplacement(
-        self,
-        oldLink,
-        outputNodeId,
-        outputPortName,
-        inputNodeId,
-        inputPortName,
-        reconnect_state=None,
-        outputPropertyName="",
-        inputPropertyName="",
-    ):
-        """
-        Finish replacing an old connection after highlighting it.
-
-        Args:
-            oldLink: The old link to remove
-            outputNodeId: ID of the new output node
-            outputPortName: Name of the new output port
-            inputNodeId: ID of the new input node
-            inputPortName: Name of the new input port
-            reconnect_state: Captured reconnect endpoints, if this was a
-                reconnect drag.  Passed through to _createConnection so
-                the deferred call is immune to instance-state overwrites.
-        """
-        oldLink.highlighted = False
-        oldLink.highlightColor = None
-        self._linksNeedSync = True
-
-        self._createConnection(
-            outputNodeId,
-            outputPortName,
-            inputNodeId,
-            inputPortName,
-            reconnect_state,
-            sourcePropertyName=outputPropertyName,
-            targetPropertyName=inputPropertyName,
-        )
-
-        # Rebuild links from USD so the UI reflects whether the old
-        # connection was replaced or both coexist (multi-connection pins).
-        self.linksChanged = True
-        self._rebuildLinks()
 
     def _showPinSelectionMenu(self, targetNodeId, pins, targetIsOutput):
         """Show a context menu to select which pin to connect to on a collapsed node."""
@@ -4893,340 +4699,7 @@ class GraphView(QGLWidget):
 
 
 
-    def _deleteLinksInUsd(self, stage, linksToDelete):
-        """Delete connections in USD and remove from local link list.
 
-        Returns (actually_deleted_links, count). Each deleted link record
-        includes '_layer_id' indicating which layer it was deleted from.
-        Deletes are issued via the authoring layer when one is identified;
-        a missing-but-named layer triggers a Tf.Warn via _editOnLayer.
-        """
-        actually_deleted = []
-        count = 0
-        for linkRecord in linksToDelete:
-            record = self._deserializeLinkRecord(linkRecord)
-            srcId = record["sourceNodeId"]
-            srcPort = record["sourcePort"]
-            tgtId = record["targetNodeId"]
-            tgtPort = record["targetPort"]
-            inputNode = self.nodes.get(tgtId)
-            outputNode = self.nodes.get(srcId)
-            if not inputNode or not outputNode:
-                continue
-            inputPrim = inputNode.getUsdPrim()
-            outputPrim = outputNode.getUsdPrim()
-            if not inputPrim or not outputPrim:
-                continue
-            library = self._findLibraryForPrim(inputPrim)
-            if not library:
-                continue
-
-            layer_id = self._findConnectionAuthoringLayer(
-                inputPrim, tgtPort, outputPrim, srcPort
-            )
-            connection_kwargs = self._buildConnectionKwargs(record)
-
-            fallback = stage.GetEditTarget().GetLayer()
-            with self._editOnLayer(stage, layer_id, fallback):
-                success = library.delete_connection(
-                    stage,
-                    outputPrim,
-                    srcPort,
-                    inputPrim,
-                    tgtPort,
-                    **connection_kwargs,
-                )
-
-            if success:
-                record_with_layer = dict(record)
-                record_with_layer["_layer_id"] = layer_id
-                actually_deleted.append(record_with_layer)
-                self._removeLinkFromGraph(
-                    srcId,
-                    srcPort,
-                    tgtId,
-                    tgtPort,
-                    sourcePropertyName=record["sourcePropertyName"],
-                    targetPropertyName=record["targetPropertyName"],
-                )
-                count += 1
-            elif layer_id is None:
-                Tf.Warn(
-                    f"Failed to delete connection {srcId}.{srcPort} -> "
-                    f"{tgtId}.{tgtPort}: authoring layer not found and "
-                    f"fallback deletion returned False"
-                )
-        return actually_deleted, count
-
-    def _abortConnection(self, message, reconnect_state=None):
-        Tf.Warn(message)
-        if self._reconnectingLink:
-            self._cancelLinkReconnect()
-        elif reconnect_state is not None:
-            oldSrcId, oldSrcPort, oldTgtId, oldTgtPort = reconnect_state
-            srcNode = self.nodes.get(oldSrcId)
-            tgtNode = self.nodes.get(oldTgtId)
-            if srcNode and tgtNode:
-                self._addLinkToGraph(
-                    oldSrcId, oldSrcPort, oldTgtId, oldTgtPort, srcNode, tgtNode
-                )
-
-    def _resolveConnectionEndpoints(self, outputNodeId, inputNodeId):
-        outputNode = self.nodes.get(outputNodeId)
-        inputNode = self.nodes.get(inputNodeId)
-        if not outputNode or not inputNode:
-            self._abortConnection("Cannot create connection: invalid node IDs")
-            return None
-
-        outputPrim = outputNode.getUsdPrim()
-        inputPrim = inputNode.getUsdPrim()
-        if not outputPrim or not inputPrim:
-            self._abortConnection("Cannot create connection: invalid USD prims")
-            return None
-
-        library = self._findLibraryForPrim(inputPrim)
-        if not library:
-            self._abortConnection(
-                f"Cannot create connection: no library handles prim type '{inputPrim.GetTypeName()}'"
-            )
-            return None
-
-        return outputNode, inputNode, outputPrim, inputPrim, library
-
-    def _deleteOldConnection(self, stage, oldSrcId, oldSrcPort, oldTgtId, oldTgtPort):
-        oldInputNode = self.nodes.get(oldTgtId)
-        oldOutputNode = self.nodes.get(oldSrcId)
-        if not oldInputNode or not oldOutputNode:
-            return False
-        oldInputPrim = oldInputNode.getUsdPrim()
-        oldOutputPrim = oldOutputNode.getUsdPrim()
-        if not oldInputPrim or not oldOutputPrim:
-            return False
-        oldLib = self._findLibraryForPrim(oldInputPrim)
-        if not oldLib:
-            return False
-        return oldLib.delete_connection(
-            stage, oldOutputPrim, oldSrcPort, oldInputPrim, oldTgtPort
-        )
-
-    def _createConnection(
-        self,
-        outputNodeId,
-        outputPort,
-        inputNodeId,
-        inputPort,
-        reconnect_state=None,
-        *,
-        sourcePropertyName="",
-        targetPropertyName="",
-    ):
-        """Create a connection in USD via the appropriate node library."""
-        resolved = self._resolveConnectionEndpoints(outputNodeId, inputNodeId)
-        if not resolved:
-            self._abortConnection(
-                "Failed to resolve connection endpoints", reconnect_state
-            )
-            return
-
-        outputNode, inputNode, outputPrim, inputPrim, library = resolved
-
-        stage = self.nodeGraph.getStage()
-        if not stage:
-            Tf.Warn("Cannot create connection: no stage")
-            return
-        warn_if_non_persistent_edit_target(stage)
-
-        self._noticeHandler.setEnabled(False)
-        try:
-            connection_kwargs = {}
-            if sourcePropertyName or targetPropertyName:
-                connection_kwargs = {
-                    "source_property_name": sourcePropertyName,
-                    "target_property_name": targetPropertyName,
-                }
-            success = library.create_connection(
-                stage,
-                outputPrim,
-                outputPort,
-                inputPrim,
-                inputPort,
-                **connection_kwargs,
-            )
-
-            if not success:
-                self._abortConnection(
-                    "Failed to create connection in USD", reconnect_state
-                )
-                return
-
-            if reconnect_state is not None:
-                isReconnect = True
-                oldSrcId, oldSrcPort, oldTgtId, oldTgtPort = reconnect_state
-            else:
-                isReconnect = self._reconnectingLink
-                oldSrcId = self._reconnectOldSourceNodeId
-                oldSrcPort = self._reconnectOldSourcePort
-                oldTgtId = self._reconnectOldTargetNodeId
-                oldTgtPort = self._reconnectOldTargetPort
-
-            if isReconnect:
-                self._clearReconnectState()
-
-                if not self._deleteOldConnection(
-                    stage, oldSrcId, oldSrcPort, oldTgtId, oldTgtPort
-                ):
-                    # Old connection may have been implicitly replaced by
-                    # create_connection (e.g. SetConnections on the same
-                    # input attribute). Continue with the new connection.
-                    Tf.Status(
-                        "Reconnect: old connection already removed "
-                        f"({oldSrcId}.{oldSrcPort} -> {oldTgtId}.{oldTgtPort})"
-                    )
-
-            self._addLinkToGraph(
-                outputNodeId,
-                outputPort,
-                inputNodeId,
-                inputPort,
-                outputNode,
-                inputNode,
-                sourcePropertyName=sourcePropertyName,
-                targetPropertyName=targetPropertyName,
-            )
-
-            if isReconnect:
-                redo_fn, undo_fn = _make_reconnect_edits(
-                    oldSrcId,
-                    oldSrcPort,
-                    oldTgtId,
-                    oldTgtPort,
-                    outputNodeId,
-                    outputPort,
-                    inputNodeId,
-                    inputPort,
-                    sourcePropertyName=sourcePropertyName,
-                    targetPropertyName=targetPropertyName,
-                )
-                _push_undo_command("Reconnect", redo_fn, undo_fn, view=self)
-            else:
-                _push_undo_command(
-                    "Create Connection",
-                    _make_connection_edit(
-                        outputNodeId,
-                        outputPort,
-                        inputNodeId,
-                        inputPort,
-                        create=True,
-                        source_property_name=sourcePropertyName,
-                        target_property_name=targetPropertyName,
-                    ),
-                    _make_connection_edit(
-                        outputNodeId,
-                        outputPort,
-                        inputNodeId,
-                        inputPort,
-                        create=False,
-                        source_property_name=sourcePropertyName,
-                        target_property_name=targetPropertyName,
-                    ),
-                    view=self,
-                )
-
-        finally:
-            # The notice handler is suppressed across the authoring window so
-            # _handleUsdChanges cannot drop the cached per-prim link scan that
-            # back-reference resolution reads from.  Drop it explicitly here so
-            # a later re-add of an absent prim does not resurrect a connection
-            # we just authored away.
-            self._invalidateBackReferenceLinkDataCache()
-            self._noticeHandler.setEnabled(True)
-            self.update()
-
-
-
-    def _deleteConnection(
-        self,
-        outputNodeId,
-        outputPort,
-        inputNodeId,
-        inputPort,
-        *,
-        sourcePropertyName="",
-        targetPropertyName="",
-    ):
-        """Delete a connection in USD via the appropriate node library."""
-        inputNode = self.nodes.get(inputNodeId)
-        outputNode = self.nodes.get(outputNodeId)
-        if not inputNode or not outputNode:
-            return
-
-        inputPrim = inputNode.getUsdPrim()
-        outputPrim = outputNode.getUsdPrim()
-        if not inputPrim or not outputPrim:
-            return
-
-        library = self._findLibraryForPrim(inputPrim)
-        if not library:
-            Tf.Warn(
-                f"Cannot delete connection: no library handles prim type '{inputPrim.GetTypeName()}'"
-            )
-            return
-
-        self._noticeHandler.setEnabled(False)
-        try:
-            connection_kwargs = {}
-            if sourcePropertyName or targetPropertyName:
-                connection_kwargs = {
-                    "source_property_name": sourcePropertyName,
-                    "target_property_name": targetPropertyName,
-                }
-            success = library.delete_connection(
-                self.nodeGraph.getStage(),
-                outputPrim,
-                outputPort,
-                inputPrim,
-                inputPort,
-                **connection_kwargs,
-            )
-
-            if success:
-                self._removeLinkFromGraph(
-                    outputNodeId,
-                    outputPort,
-                    inputNodeId,
-                    inputPort,
-                    sourcePropertyName=sourcePropertyName,
-                    targetPropertyName=targetPropertyName,
-                )
-
-                _push_undo_command(
-                    "Delete Connection",
-                    _make_connection_edit(
-                        outputNodeId,
-                        outputPort,
-                        inputNodeId,
-                        inputPort,
-                        create=False,
-                        source_property_name=sourcePropertyName,
-                        target_property_name=targetPropertyName,
-                    ),
-                    _make_connection_edit(
-                        outputNodeId,
-                        outputPort,
-                        inputNodeId,
-                        inputPort,
-                        create=True,
-                        source_property_name=sourcePropertyName,
-                        target_property_name=targetPropertyName,
-                    ),
-                    view=self,
-                )
-        finally:
-            # Mirror _createConnection: drop the back-reference cache while the
-            # notice handler is still suppressed, so a later re-add of an
-            # absent prim does not resurrect the connection we just deleted.
-            self._invalidateBackReferenceLinkDataCache()
-            self._noticeHandler.setEnabled(True)
 
 
     def _reloadLinksFromUSD(self):
@@ -6205,95 +5678,6 @@ class GraphView(QGLWidget):
         self.panY = bounds.GetMin()[1] - offset[1]
 
 
-    def _applyApiSchemaFromHotbox(self, identifier):
-        """Apply an API schema chosen in the hotbox to the selected prims.
-
-        Prims the schema forbids (its canOnlyApplyTo types) are skipped rather
-        than authored, and reported in the summary popup. Multiple-apply
-        schemas get a generated instance name per prim.
-
-        Args:
-            identifier: USD schema identifier, e.g. "PhysicsRigidBodyAPI"
-        """
-        from .apiSchemas import ALREADY_PRESENT, APPLIED, apply_to_prim
-
-        selectedPrims = self._resolveSelectedPrims()
-        if not selectedPrims:
-            self._showWarningPopup(f"Select a prim to apply {identifier}")
-            return
-
-        applied = []  # (primPath, instanceName) pairs, for undo
-        alreadyPresent = 0  # prims that already carried the schema
-        skipped = []  # (primName, reason) pairs, for the summary
-
-        self._noticeHandler.setEnabled(False)
-        try:
-            for prim in selectedPrims:
-                status, instanceName, reason = apply_to_prim(prim, identifier)
-                if status == APPLIED:
-                    applied.append((str(prim.GetPath()), instanceName))
-                elif status == ALREADY_PRESENT:
-                    alreadyPresent += 1
-                else:
-                    skipped.append((prim.GetName(), reason))
-        finally:
-            self._noticeHandler.setEnabled(True)
-
-        # Only the prims this invocation actually authored are undoable.
-        # Reversing a no-op would strip a schema the prim already had.
-        if applied:
-            # Applying a schema changes which properties a prim has, so the
-            # affected nodes need their pins rebuilt from USD.
-            _push_undo_command(
-                f"Apply {identifier}",
-                _make_api_schema_undo(identifier, applied, apply=True),
-                _make_api_schema_undo(identifier, applied, apply=False),
-                view=self,
-            )
-            self._reloadCurrentGraph()
-
-        self._showApiSchemaResult(identifier, applied, alreadyPresent, skipped)
-
-    def _showApiSchemaResult(self, identifier, applied, alreadyPresent, skipped):
-        """Report what an API schema application did.
-
-        Args:
-            identifier: Schema identifier that was applied
-            applied: List of (primPath, instanceName) pairs newly authored
-            alreadyPresent: Count of prims that already carried the schema
-            skipped: List of (primName, reason) pairs that were skipped
-        """
-        if not applied and not alreadyPresent:
-            reason = skipped[0][1] if skipped else "no prims selected"
-            self._showWarningPopup(f"Could not apply {identifier}: {reason}")
-            return
-
-        if applied:
-            noun = "prim" if len(applied) == 1 else "prims"
-            summary = f"Applied {identifier} to {len(applied)} {noun}"
-        else:
-            noun = "prim" if alreadyPresent == 1 else "prims"
-            summary = f"{identifier} already on {alreadyPresent} {noun}"
-
-        notes = []
-        if applied and alreadyPresent:
-            notes.append(f"{alreadyPresent} already had it")
-        if skipped:
-            names = ", ".join(name for name, _ in skipped[:3])
-            if len(skipped) > 3:
-                names += f", +{len(skipped) - 3} more"
-            notes.append(f"skipped {len(skipped)}: {names}")
-
-        if not notes:
-            self._showPopupMessage(summary)
-            return
-
-        message = f"{summary} ({'; '.join(notes)})"
-        if skipped:
-            self._showWarningPopup(message)
-        else:
-            self._showPopupMessage(message)
-
     # Inline attribute values
     #
     # Geometry, hit-testing, the drag, the keyboard editor and the token
@@ -6503,39 +5887,6 @@ class GraphView(QGLWidget):
             cursor += step
         return cursor - x
 
-    def _writeValueComponents(self, state, components, warn=True):
-        """Author *components* and refresh just that node's cells."""
-        stage = self.nodeGraph.getStage()
-        if not stage:
-            return False, "no stage"
-        prim = stage.GetPrimAtPath(state["primPath"])
-        ok, reason = noodlesValues.write_value(
-            stage,
-            prim,
-            state["prop"],
-            components,
-            state.get("time"),
-            mode=self._cachedValueWriteMode,
-            warn=warn,
-        )
-        if not ok:
-            return False, reason
-        node = self.nodes.get(state["nodeId"])
-        if node is not None and hasattr(node, "invalidate_value_row"):
-            node.invalidate_value_row(state["prop"])
-        return True, ""
-
-    def _pushValueUndo(self, primPath, propertyName, oldComponents, newComponents,
-                       timeCode):
-        """One undo entry per committed value edit, whatever gesture made it."""
-        mode = self._cachedValueWriteMode
-        _push_undo_command(
-            "Set %s.%s" % (primPath, propertyName),
-            _make_value_edit(primPath, propertyName, newComponents, timeCode, mode),
-            _make_value_edit(primPath, propertyName, oldComponents, timeCode, mode),
-            view=self,
-        )
-
     def _onValueCellPressed(self, hit, event):
         """A left press landed on a value cell. Decide what it means."""
         row = hit.row
@@ -6573,206 +5924,6 @@ class GraphView(QGLWidget):
         }
         self._mungActive = False
 
-    def _updateMung(self, event):
-        """Drag a number left/right. Live preview, nothing on the undo stack."""
-        state = self._mungState
-        if state is None or not state["mungable"]:
-            return
-        dx = float(event.position().x()) - state["baseScreenX"]
-        if not self._mungActive:
-            if abs(dx) < float(self._cachedMungDragThresholdPx):
-                return
-            self._mungActive = True
-            # Our own writes must not come back to us as notices -- the same
-            # bracket _finalizeNodeDrag uses, for the same reason. USD still
-            # notifies Hydra, so usdview's viewport updates live.
-            self._noticeHandler.setEnabled(False)
-        mods = event.modifiers()
-        mult = noodlesValues.mung_multiplier(
-            bool(mods & QtCore.Qt.ShiftModifier),
-            bool(mods & QtCore.Qt.ControlModifier),
-        )
-        # Absolute, from the press position and the ORIGINAL value, never
-        # incremental: dragging back to where the press landed then restores
-        # exactly the value it started at, instead of accumulating drift.
-        value = state["base"] + dx * state["step"] * mult
-        components = noodlesValues.apply_delta(
-            state["original"], state["comp"], value, state["typeName"]
-        )
-        if components != state["current"]:
-            state["current"] = components
-            self._writeValueComponents(state, components, warn=False)
-
-    def _finishMung(self):
-        """Release: commit the drag as ONE undo entry, or open the editor."""
-        state = self._mungState
-        self._mungState = None
-        if state is None:
-            return
-        if not self._mungActive:
-            # Never crossed the threshold, so nothing was authored and nothing
-            # is on the undo stack: this was a click, and a click types.
-            self._beginValueEdit(state["nodeId"], state["prop"], state["comp"])
-            return
-
-        self._mungActive = False
-        final = tuple(state["current"])
-        original = tuple(state["original"])
-        try:
-            if final != original:
-                # The last write of the drag, this one with the edit-target
-                # sanity check the per-sample writes skipped.
-                self._writeValueComponents(state, final, warn=True)
-        finally:
-            self._noticeHandler.setEnabled(True)
-        if final == original:
-            return
-        self._pushValueUndo(
-            state["primPath"], state["prop"], original, final, state["time"]
-        )
-        self._startValueFlash(state["nodeId"], state["prop"], "commit")
-
-    def _cancelMung(self):
-        """Esc mid-drag: put the value back, leave the undo stack untouched."""
-        state = self._mungState
-        self._mungState = None
-        if state is None:
-            return
-        if self._mungActive:
-            self._mungActive = False
-            try:
-                self._writeValueComponents(
-                    state, tuple(state["original"]), warn=False
-                )
-            finally:
-                self._noticeHandler.setEnabled(True)
-        self.update()
-
-    def _toggleBoolValue(self, hit):
-        """A checkbox: one click, one write, one undo entry."""
-        old = tuple(hit.row.components)
-        new = (not bool(old[0]),)
-        state = {
-            "nodeId": hit.nodeId,
-            "primPath": hit.primPath,
-            "prop": hit.propertyName,
-            "time": self._currentTimeCode,
-        }
-        ok, reason = self._writeValueComponents(state, new, warn=True)
-        if not ok:
-            self._showWarningPopup("%s: %s" % (hit.propertyName, reason))
-            return
-        self._pushValueUndo(
-            hit.primPath, hit.propertyName, old, new, self._currentTimeCode
-        )
-        self._startValueFlash(hit.nodeId, hit.propertyName, "commit")
-
-    def _beginValueEdit(self, nodeId, propertyName, comp):
-        """Open the keyboard editor on one component, seeded unelided."""
-        row = self._findValueRow(nodeId, propertyName)
-        if row is None or not row.editable:
-            return
-        if row.kind == noodlesValues.KIND_BOOL:
-            return
-        comp = max(0, min(int(comp), row.count - 1))
-        text = noodlesValues.format_component(row.components[comp], row.type_name)
-        self._valueEditTarget = (nodeId, propertyName, comp)
-        self._valueEditInput.text = text
-        self._valueEditInput.cursor_position = len(text)
-        self._valueEditFresh = True
-        self._valueEditError = False
-        self.update()
-
-    def _cancelValueEdit(self):
-        """Close the editor without authoring anything."""
-        self._valueEditTarget = None
-        self._valueEditInput.clear()
-        self._valueEditFresh = True
-        self._valueEditError = False
-        self.update()
-
-    def _commitValueEdit(self):
-        """Parse and author the typed value. False means "still open".
-
-        A recoverable objection -- text that is not a number, a token that is
-        not in ``allowedTokens`` -- leaves the editor open so the typo can be
-        fixed, exactly as ``_commitRename`` does for a fixable name.
-        """
-        target = self._valueEditTarget
-        if target is None:
-            return True
-        nodeId, propertyName, comp = target
-        row = self._findValueRow(nodeId, propertyName)
-        if row is None:
-            self._cancelValueEdit()
-            return True
-
-        text = self._valueEditInput.text
-        ok, value = noodlesValues.parse_component(text, row.type_name)
-        if not ok:
-            # The editor stays open with the error tint on its outline: the
-            # typo is fixable, and closing it would throw away what was typed.
-            self._valueEditError = True
-            self._showWarningPopup(
-                "%r is not a %s" % (text.strip(), row.type_name)
-            )
-            return False
-        if row.kind == noodlesValues.KIND_TOKEN_ENUM and row.tokens:
-            if value not in row.tokens:
-                self._valueEditError = True
-                self._showWarningPopup(
-                    "%s is not one of: %s" % (value, ", ".join(row.tokens))
-                )
-                return False
-
-        old = tuple(row.components)
-        new = noodlesValues.apply_delta(old, comp, value, row.type_name)
-        self._valueEditTarget = None
-        self._valueEditInput.clear()
-        self._valueEditFresh = True
-        self._valueEditError = False
-        if new == old:
-            self.update()
-            return True
-
-        state = {
-            "nodeId": nodeId,
-            "primPath": _nodeIdPrimPath(nodeId),
-            "prop": propertyName,
-            "time": self._currentTimeCode,
-        }
-        written, reason = self._writeValueComponents(state, new, warn=True)
-        if not written:
-            self._showWarningPopup("%s: %s" % (propertyName, reason))
-            self._startValueFlash(nodeId, propertyName, "error")
-            return True
-        self._pushValueUndo(
-            state["primPath"], propertyName, old, new, self._currentTimeCode
-        )
-        self._startValueFlash(nodeId, propertyName, "commit")
-        self.update()
-        return True
-
-    def _advanceValueEdit(self, backwards=False):
-        """Tab: commit, then open the next editable cell, wrapping."""
-        target = self._valueEditTarget
-        if target is None:
-            return
-        nodeId, propertyName, comp = target
-        if not self._commitValueEdit():
-            return  # the value did not parse; stay where the typo is
-        cells = self._editableValueCells(nodeId)
-        if not cells:
-            return
-        try:
-            index = cells.index((propertyName, comp))
-        except ValueError:
-            index = -1 if backwards else 0
-        else:
-            index = (index + (-1 if backwards else 1)) % len(cells)
-        nextProp, nextComp = cells[index]
-        self._beginValueEdit(nodeId, nextProp, nextComp)
-
     def _openTokenPopup(self, hit):
         """A token with ``allowedTokens``: pick from exactly those, nothing else."""
         tokens = list(hit.row.tokens)
@@ -6808,31 +5959,6 @@ class GraphView(QGLWidget):
 
     def _closeTokenPopup(self):
         self._tokenPopup = None
-        self.update()
-
-    def _commitTokenPopup(self):
-        popup = self._tokenPopup
-        self._tokenPopup = None
-        if popup is None:
-            return
-        item = self._tokenPopupList.get_selected_item()
-        if item is None:
-            self.update()
-            return
-        new = (str(item.name),)
-        old = tuple(popup["original"])
-        if new == old:
-            self.update()
-            return
-        ok, reason = self._writeValueComponents(popup, new, warn=True)
-        if not ok:
-            self._showWarningPopup("%s: %s" % (popup["prop"], reason))
-            self.update()
-            return
-        self._pushValueUndo(
-            popup["primPath"], popup["prop"], old, new, popup["time"]
-        )
-        self._startValueFlash(popup["nodeId"], popup["prop"], "commit")
         self.update()
 
     def _handleTokenPopupPress(self, screenPos):
@@ -7642,21 +6768,28 @@ class GraphView(QGLWidget):
             }[request.direction])(),
         )
 
-        def link_handler(method):
-            def handle(request):
-                ends = request.endpoints
-                return getattr(self, method)(
-                    ends.source_id, ends.source_port, ends.target_id, ends.target_port,
-                    sourcePropertyName=ends.source_property_name,
-                    targetPropertyName=ends.target_property_name,
-                )
-
-            return handle
-
-        registry.register(_intents.Connect, link_handler("_createConnection"))
-        registry.register(_intents.Disconnect, link_handler("_deleteConnection"))
-        # Integration point for the interaction and editing owners' handlers.
         return registry
+
+    _finishConnectionReplacement = _editing._finishConnectionReplacement
+    _deleteLinksInUsd = _editing._deleteLinksInUsd
+    _abortConnection = _editing._abortConnection
+    _resolveConnectionEndpoints = _editing._resolveConnectionEndpoints
+    _deleteOldConnection = _editing._deleteOldConnection
+    _createConnection = _editing._createConnection
+    _deleteConnection = _editing._deleteConnection
+    _applyApiSchemaFromHotbox = _editing._applyApiSchemaFromHotbox
+    _showApiSchemaResult = _editing._showApiSchemaResult
+    _writeValueComponents = _editing._writeValueComponents
+    _pushValueUndo = _editing._pushValueUndo
+    _updateMung = _editing._updateMung
+    _finishMung = _editing._finishMung
+    _cancelMung = _editing._cancelMung
+    _toggleBoolValue = _editing._toggleBoolValue
+    _beginValueEdit = _editing._beginValueEdit
+    _cancelValueEdit = _editing._cancelValueEdit
+    _commitValueEdit = _editing._commitValueEdit
+    _advanceValueEdit = _editing._advanceValueEdit
+    _commitTokenPopup = _editing._commitTokenPopup
 
     # Legacy link-record and layer-operation descriptors.
     _collectSelectedLinkData = _intents._collectSelectedLinkData

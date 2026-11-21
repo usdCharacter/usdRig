@@ -18,7 +18,7 @@ from weakref import ref
 
 from pxr import Gf, Sdf, Tf, Usd
 
-from .. import primRename
+from .. import noodlesValues, primRename
 from ..nodeActivation import (
     capture_activation, capture_activation_at, prune_activation_ancestors,
     replay_activation,
@@ -122,7 +122,8 @@ class Journal:
 
 
 def _notice_enabled(notice):
-    return notice.isEnabled() if hasattr(notice, 'isEnabled') else True
+    enabled = notice.isEnabled() if hasattr(notice, 'isEnabled') else True
+    return enabled if isinstance(enabled, bool) else True
 
 
 @contextmanager
@@ -209,7 +210,13 @@ _LIST_FIELDS = {'targetPaths': 'targetPathList', 'connectionPaths': 'connectionP
 
 def set_spec_field(spec, key, value):
     """Restore a single authored field, including a full Sdf path list op."""
-    if key in _LIST_FIELDS:
+    if isinstance(key, tuple) and key[0] == "timeSamples":
+        time = key[1]
+        if value is _ABSENT:
+            spec.layer.EraseTimeSample(spec.path, time)
+        else:
+            spec.layer.SetTimeSample(spec.path, time, value)
+    elif key in _LIST_FIELDS:
         proxy = getattr(spec, _LIST_FIELDS[key])
         proxy.ClearEdits()
         if value is _ABSENT:
@@ -242,7 +249,15 @@ def _rename_delta(layer, backup, old_path, new_path):
         for key in sorted(fields.keys() | after[new].keys()):
             old_value = fields.get(key, _ABSENT)
             new_value = after[new].get(key, _ABSENT)
-            if old_value != new_value:
+            if key == 'timeSamples':
+                old_samples = {} if old_value is _ABSENT else old_value
+                new_samples = {} if new_value is _ABSENT else new_value
+                for time in sorted(old_samples.keys() | new_samples.keys()):
+                    previous = old_samples.get(time, _ABSENT)
+                    current = new_samples.get(time, _ABSENT)
+                    if previous != current:
+                        changes.append((path, new, (key, time), previous, current))
+            elif old_value != new_value:
                 changes.append((path, new, key, old_value, new_value))
     created = after.keys() - matched
     existence = []
@@ -277,6 +292,8 @@ def _subtree_fields(layer, root):
     fields = {}
 
     def visit(path):
+        if path.IsTargetPath():
+            return  # List proxies own these child specs.
         spec = layer.GetObjectAtPath(path)
         if spec:
             fields[path] = {key: spec.GetInfo(key) for key in spec.ListInfoKeys()}
@@ -322,7 +339,9 @@ def _apply_patches(steps, forward, journal):
         for old, new, key, before, after in fields:
             path = new if forward else old
             spec = layer.GetObjectAtPath(path)
-            current = spec.GetInfo(key) if spec.HasInfo(key) else _ABSENT
+            current = (spec.GetInfo('timeSamples').get(key[1], _ABSENT)
+                       if isinstance(key, tuple) else
+                       spec.GetInfo(key) if spec.HasInfo(key) else _ABSENT)
             journal.before(partial(_restore_field, layer, path, key, current))
             set_spec_field(spec, key, after if forward else before)
         for path, snapshot, added in existence:
@@ -407,7 +426,12 @@ class Editor:
         for kind, handler in ((intents.Activate, self._activate),
                               (intents.Create, self._create),
                               (intents.Rename, self._rename),
-                              (intents.RemoveVisual, self._remove_visual)):
+                              (intents.RemoveVisual, self._remove_visual),
+                              (intents.SetValue, lambda i: _set_value(self.view(), i)),
+                              (intents.Schema, lambda i: _schema_command(self.view(), i)),
+                              *((kind, lambda i: _edit_connections(self.view(), i))
+                                for kind in (intents.Connect, intents.Disconnect,
+                                             intents.Replace, intents.Reconnect))):
             self.registry.register(kind, handler)
         if registry is None:
             self.registry.register(intents.DeleteSelection, self._delete_selected)
@@ -1038,63 +1062,46 @@ def _selected_node_pairs(view):
     return [(key, node) for key, node in view.nodes.items() if node.selected]
 
 
-def _prepare_link_removals(view, stage, links, target):
+def _prepare_link_removals(view, stage, links):
     prepared = []
+    matched = set()
     for data in links:
         record = view._deserializeLinkRecord(data)
-        source = view.nodes.get(record['sourceNodeId'])
-        dest = view.nodes.get(record['targetNodeId'])
-        if source is None or dest is None:
-            continue
-        source, dest = source.getUsdPrim(), dest.getUsdPrim()
-        if not source or not dest:
-            continue
-        library = view._findLibraryForPrim(dest)
-        if library is None:
-            continue
-        source_port, target_port = record['sourcePort'], record['targetPort']
-        layer_id = view._findConnectionAuthoringLayer(dest, target_port, source, source_port)
-        link_target = target
-        if layer_id and layer_id != target.GetLayer().identifier:
-            link_target = stage.GetEditTargetForLocalLayer(_find_layer(stage, layer_id))
-        changes = library.prepare_connection_removal(
-            source, source_port, dest, target_port, **view._buildConnectionKwargs(record))
-        if not changes:
-            raise RuntimeError(f"Failed to delete connection {source.GetPath()}.{source_port} -> "
-                               f"{dest.GetPath()}.{target_port}")
-        site = EditSite.capture(stage, link_target, tuple(
-            path for prop, endpoints in changes for path in (prop.GetPath(), *endpoints)))
-        writes = []
-        for prop, endpoints in changes:
-            path = link_target.MapToSpecPath(prop.GetPath())
-            mapped = tuple(link_target.MapToSpecPath(end).StripAllVariantSelections()
-                           for end in endpoints)
-            if isinstance(prop, Usd.Relationship):
-                create = partial(Sdf.CreateRelationshipInLayer, link_target.GetLayer(), path,
-                                 Sdf.VariabilityUniform, prop.IsCustom())
-                field = 'targetPathList'
-            else:
-                create = partial(Sdf.CreatePrimAttributeInLayer, link_target.GetLayer(), path,
-                                 prop.GetTypeName(), prop.GetVariability(), prop.IsCustom())
-                field = 'connectionPathList'
-            writes.append((path, create, field, mapped))
-        prepared.append((record, site, tuple(writes)))
+        link = next((link for link in view.links if id(link) not in matched and
+                     all(getattr(link, field, '') == value
+                         for field, value in record.items())), None)
+        if link is not None:
+            matched.add(id(link))
+            ends = _ends_from_link(link)
+        else:
+            ends = intents.LinkEndpoints(*(record[field] for field in (
+                'sourceNodeId', 'sourcePort', 'targetNodeId', 'targetPort',
+                'sourcePropertyName', 'targetPropertyName')))
+        # Legacy records lack owner metadata; retain their layer routing.
+        link_target = None
+        if not ends.owner_property:
+            source = stage.GetPrimAtPath(_nodeIdPrimPath(ends.source_id))
+            dest = stage.GetPrimAtPath(_nodeIdPrimPath(ends.target_id))
+            if source and dest:
+                layer_id = view._findConnectionAuthoringLayer(
+                    dest, ends.target_port, source, ends.source_port)
+                if layer_id:
+                    target = stage.GetEditTarget()
+                    layer = _find_layer(stage, layer_id)
+                    link_target = target if layer == target.GetLayer() else stage.GetEditTargetForLocalLayer(layer)
+        prepared.append((record, _prepare_connection(view, stage, ends, False,
+                                                       removal_target=link_target)))
     return prepared
 
 
 def _apply_link_removals(view, removals, journal):
     layers = {}
-    for record, site, writes in removals:
-        layer = site.target.GetLayer()
-        if layer.identifier not in layers:
-            layers[layer.identifier] = (layer, _journal_layer(journal, layer))
-        for path, create, field, endpoints in writes:
-            spec = layer.GetObjectAtPath(path) or create()
-            if not spec:
-                raise RuntimeError(f"Cannot edit connection spec {path}")
-            proxy = getattr(spec, field)
-            for endpoint in endpoints:
-                proxy.Remove(endpoint)
+    for record, writes in removals:
+        for write in writes:
+            layer = write[0].target.GetLayer()
+            if layer.identifier not in layers:
+                layers[layer.identifier] = (layer, _journal_layer(journal, layer))
+            _write_connection(write)
         view._removeLinkFromGraph(
             record['sourceNodeId'], record['sourcePort'],
             record['targetNodeId'], record['targetPort'],
@@ -1121,8 +1128,8 @@ def _delete_selection(view, *, links_only_when_incident=False):
     if any(prim.IsPseudoRoot() or prim.IsInstanceProxy()
            for prim in (stage.GetPrimAtPath(path) for path in paths)):
         raise RuntimeError("Cannot author activation for this prim")
-    removals = _prepare_link_removals(view, stage, links, target)
-    sites = tuple(link_site for _, link_site, _ in removals)
+    removals = _prepare_link_removals(view, stage, links)
+    sites = tuple(write[0] for _, writes in removals for write in writes)
     link_count = len(removals)
     with _edit_transaction(stage, target, view, batch=True) as journal:
         visual = VisualState.capture(view)
@@ -1557,3 +1564,1228 @@ def _make_rename_undo(parent_path, from_name, to_name):
         gv._remapMovedNodes({oldPath: str(newPath)})
 
     return _fn
+
+
+def _make_value_edit(prim_path, property_name, components, time_code, mode):
+    """Return a callable that authors *components* onto one attribute.
+
+    Named by path rather than by a captured ``Usd.Prim``: ``_performUndo``
+    calls ``_reloadCurrentGraph`` afterwards, which rebuilds every node from
+    the stage, so a prim handle captured here would be talking about an
+    object nobody else is looking at any more.
+    """
+
+    def _fn(
+        gv,
+        _path=str(prim_path),
+        _prop=property_name,
+        _components=tuple(components),
+        _time=time_code,
+        _mode=mode,
+    ):
+        stage = gv.nodeGraph.getStage()
+        if not stage:
+            return
+        prim = stage.GetPrimAtPath(_path)
+        if not prim or not prim.IsValid():
+            Tf.Warn("Value undo: no prim at %s" % _path)
+            return
+        ok, reason = noodlesValues.write_value(
+            stage, prim, _prop, _components, _time, mode=_mode
+        )
+        if not ok:
+            Tf.Warn("Value undo failed on %s.%s: %s" % (_path, _prop, reason))
+            return
+        node = gv.nodes.get(_path)
+        if node is not None and hasattr(node, "invalidate_value_row"):
+            node.invalidate_value_row(_prop)
+
+    return _fn
+
+
+def _make_api_schema_undo(identifier, applied, apply):
+    """Return a callable that applies or removes an API schema.
+
+    The instance names chosen when the schema was first applied are captured
+    here so that redo reuses them instead of generating new ones.
+
+    Args:
+        identifier: USD schema identifier.
+        applied: List of (primPath, instanceName) pairs; instanceName is ""
+            for single-apply schemas.
+        apply: True to apply the schema on redo, False to remove it on undo.
+    """
+
+    def _fn(gv, _identifier=identifier, _applied=list(applied), _apply=apply):
+        from ..apiSchemas import apply_named, remove_from_prim
+
+        stage = gv.nodeGraph.getStage()
+        if not stage:
+            return
+        for path_str, instance_name in _applied:
+            prim = stage.GetPrimAtPath(path_str)
+            if not prim or not prim.IsValid():
+                continue
+            if _apply:
+                apply_named(prim, _identifier, instance_name)
+            else:
+                remove_from_prim(prim, _identifier, instance_name)
+        gv._reloadCurrentGraph()
+
+    return _fn
+
+
+def _make_connection_edit(
+    src_id,
+    src_port,
+    tgt_id,
+    tgt_port,
+    create,
+    *,
+    source_property_name="",
+    target_property_name="",
+):
+    """Return a callable that creates or deletes a single USD connection.
+
+    The connection is authored on the stage's current edit target. If the
+    user has selected a sublayer, the connection lands there.
+
+    Args:
+        create: True to create the connection, False to delete it.
+    """
+
+    def _fn(gv):
+        stage = gv.nodeGraph.getStage()
+        if not stage:
+            return
+        out_p = stage.GetPrimAtPath(src_id)
+        in_p = stage.GetPrimAtPath(tgt_id)
+        if not (out_p and in_p):
+            return
+        lib = gv._findLibraryForPrim(in_p)
+        if not lib:
+            return
+        connection_kwargs = {}
+        if source_property_name or target_property_name:
+            connection_kwargs = {
+                "source_property_name": source_property_name,
+                "target_property_name": target_property_name,
+            }
+        if create:
+            lib.create_connection(
+                stage, out_p, src_port, in_p, tgt_port, **connection_kwargs
+            )
+        else:
+            lib.delete_connection(
+                stage, out_p, src_port, in_p, tgt_port, **connection_kwargs
+            )
+
+    return _fn
+
+
+def _make_reconnect_edits(
+    old_src,
+    old_src_port,
+    old_tgt,
+    old_tgt_port,
+    new_src,
+    new_src_port,
+    new_tgt,
+    new_tgt_port,
+    *,
+    sourcePropertyName="",
+    targetPropertyName="",
+):
+    """Return (redo, undo) callables for a reconnection."""
+    delete_old = _make_connection_edit(
+        old_src, old_src_port, old_tgt, old_tgt_port, create=False
+    )
+    create_old = _make_connection_edit(
+        old_src, old_src_port, old_tgt, old_tgt_port, create=True
+    )
+    delete_new = _make_connection_edit(
+        new_src,
+        new_src_port,
+        new_tgt,
+        new_tgt_port,
+        create=False,
+        source_property_name=sourcePropertyName,
+        target_property_name=targetPropertyName,
+    )
+    create_new = _make_connection_edit(
+        new_src,
+        new_src_port,
+        new_tgt,
+        new_tgt_port,
+        create=True,
+        source_property_name=sourcePropertyName,
+        target_property_name=targetPropertyName,
+    )
+
+    def redo(gv):
+        delete_old(gv)
+        create_new(gv)
+        gv.linksChanged = True
+        gv.update()
+
+    def undo(gv):
+        delete_new(gv)
+        create_old(gv)
+        gv.linksChanged = True
+        gv.update()
+
+    return redo, undo
+
+
+def _finishConnectionReplacement(
+    view,
+    oldLink,
+    outputNodeId,
+    outputPortName,
+    inputNodeId,
+    inputPortName,
+    reconnect_state=None,
+    outputPropertyName="",
+    inputPropertyName="",
+):
+    """
+    Finish replacing an old connection after highlighting it.
+
+    Args:
+        oldLink: The old link to remove
+        outputNodeId: ID of the new output node
+        outputPortName: Name of the new output port
+        inputNodeId: ID of the new input node
+        inputPortName: Name of the new input port
+        reconnect_state: Captured reconnect endpoints, if this was a
+            reconnect drag.  Passed through to _createConnection so
+            the deferred call is immune to instance-state overwrites.
+    """
+    oldLink.highlighted = False
+    oldLink.highlightColor = None
+    view._linksNeedSync = True
+
+    if isinstance(view.nodeGraph.getStage(), Usd.Stage):
+        new = intents.LinkEndpoints(outputNodeId, outputPortName, inputNodeId,
+                                    inputPortName, outputPropertyName, inputPropertyName)
+        old = _ends_from_link(oldLink)
+        command = (intents.Reconnect(*_reconnect_command_args(reconnect_state, new, (old,)))
+                   if reconnect_state is not None else intents.Replace(old, new))
+        return _dispatch_connection(view, command, reconnect_state)
+
+    view._createConnection(
+        outputNodeId,
+        outputPortName,
+        inputNodeId,
+        inputPortName,
+        reconnect_state,
+        sourcePropertyName=outputPropertyName,
+        targetPropertyName=inputPropertyName,
+    )
+
+    # Rebuild links from USD so the UI reflects whether the old
+    # connection was replaced or both coexist (multi-connection pins).
+    view.linksChanged = True
+    view._rebuildLinks()
+
+
+def _deleteLinksInUsd(view, stage, linksToDelete):
+    """Delete connections in USD and remove from local link list.
+
+    Returns (actually_deleted_links, count). Each deleted link record
+    includes '_layer_id' indicating which layer it was deleted from.
+    Deletes are issued via the authoring layer when one is identified;
+    a missing-but-named layer triggers a Tf.Warn via _editOnLayer.
+    """
+    actually_deleted = []
+    count = 0
+    for linkRecord in linksToDelete:
+        record = view._deserializeLinkRecord(linkRecord)
+        srcId = record["sourceNodeId"]
+        srcPort = record["sourcePort"]
+        tgtId = record["targetNodeId"]
+        tgtPort = record["targetPort"]
+        inputNode = view.nodes.get(tgtId)
+        outputNode = view.nodes.get(srcId)
+        if not inputNode or not outputNode:
+            continue
+        inputPrim = inputNode.getUsdPrim()
+        outputPrim = outputNode.getUsdPrim()
+        if not inputPrim or not outputPrim:
+            continue
+        library = view._findLibraryForPrim(inputPrim)
+        if not library:
+            continue
+
+        layer_id = view._findConnectionAuthoringLayer(
+            inputPrim, tgtPort, outputPrim, srcPort
+        )
+        connection_kwargs = view._buildConnectionKwargs(record)
+
+        fallback = stage.GetEditTarget().GetLayer()
+        with view._editOnLayer(stage, layer_id, fallback):
+            success = library.delete_connection(
+                stage,
+                outputPrim,
+                srcPort,
+                inputPrim,
+                tgtPort,
+                **connection_kwargs,
+            )
+
+        if success:
+            record_with_layer = dict(record)
+            record_with_layer["_layer_id"] = layer_id
+            actually_deleted.append(record_with_layer)
+            view._removeLinkFromGraph(
+                srcId,
+                srcPort,
+                tgtId,
+                tgtPort,
+                sourcePropertyName=record["sourcePropertyName"],
+                targetPropertyName=record["targetPropertyName"],
+            )
+            count += 1
+        elif layer_id is None:
+            Tf.Warn(
+                f"Failed to delete connection {srcId}.{srcPort} -> "
+                f"{tgtId}.{tgtPort}: authoring layer not found and "
+                f"fallback deletion returned False"
+            )
+    return actually_deleted, count
+
+
+def _abortConnection(view, message, reconnect_state=None):
+    Tf.Warn(message)
+    if view._reconnectingLink:
+        view._cancelLinkReconnect()
+    elif reconnect_state is not None:
+        oldSrcId, oldSrcPort, oldTgtId, oldTgtPort = reconnect_state[:4]
+        srcNode = view.nodes.get(oldSrcId)
+        tgtNode = view.nodes.get(oldTgtId)
+        if srcNode and tgtNode:
+            view._addLinkToGraph(
+                oldSrcId, oldSrcPort, oldTgtId, oldTgtPort, srcNode, tgtNode
+            )
+
+
+def _resolveConnectionEndpoints(view, outputNodeId, inputNodeId):
+    outputNode = view.nodes.get(outputNodeId)
+    inputNode = view.nodes.get(inputNodeId)
+    if not outputNode or not inputNode:
+        view._abortConnection("Cannot create connection: invalid node IDs")
+        return None
+
+    outputPrim = outputNode.getUsdPrim()
+    inputPrim = inputNode.getUsdPrim()
+    if not outputPrim or not inputPrim:
+        view._abortConnection("Cannot create connection: invalid USD prims")
+        return None
+
+    library = view._findLibraryForPrim(inputPrim)
+    if not library:
+        view._abortConnection(
+            f"Cannot create connection: no library handles prim type '{inputPrim.GetTypeName()}'"
+        )
+        return None
+
+    return outputNode, inputNode, outputPrim, inputPrim, library
+
+
+def _deleteOldConnection(view, stage, oldSrcId, oldSrcPort, oldTgtId, oldTgtPort):
+    oldInputNode = view.nodes.get(oldTgtId)
+    oldOutputNode = view.nodes.get(oldSrcId)
+    if not oldInputNode or not oldOutputNode:
+        return False
+    oldInputPrim = oldInputNode.getUsdPrim()
+    oldOutputPrim = oldOutputNode.getUsdPrim()
+    if not oldInputPrim or not oldOutputPrim:
+        return False
+    oldLib = view._findLibraryForPrim(oldInputPrim)
+    if not oldLib:
+        return False
+    return oldLib.delete_connection(
+        stage, oldOutputPrim, oldSrcPort, oldInputPrim, oldTgtPort
+    )
+
+
+def _createConnection(
+    view,
+    outputNodeId,
+    outputPort,
+    inputNodeId,
+    inputPort,
+    reconnect_state=None,
+    *,
+    sourcePropertyName="",
+    targetPropertyName="",
+):
+    """Create a connection in USD via the appropriate node library."""
+    if isinstance(view.nodeGraph.getStage(), Usd.Stage):
+        new = intents.LinkEndpoints(outputNodeId, outputPort, inputNodeId, inputPort,
+                                    sourcePropertyName, targetPropertyName)
+        if reconnect_state is None and view._reconnectingLink:
+            reconnect_state = _reconnect_endpoints(view)
+        command = (intents.Reconnect(*_reconnect_command_args(reconnect_state, new))
+                   if reconnect_state is not None else intents.Connect(new))
+        return _dispatch_connection(view, command, reconnect_state)
+
+    resolved = view._resolveConnectionEndpoints(outputNodeId, inputNodeId)
+    if not resolved:
+        view._abortConnection(
+            "Failed to resolve connection endpoints", reconnect_state
+        )
+        return
+
+    outputNode, inputNode, outputPrim, inputPrim, library = resolved
+
+    stage = view.nodeGraph.getStage()
+    if not stage:
+        Tf.Warn("Cannot create connection: no stage")
+        return
+    legacy_symbol("warn_if_non_persistent_edit_target")(stage)
+
+    view._noticeHandler.setEnabled(False)
+    try:
+        connection_kwargs = {}
+        if sourcePropertyName or targetPropertyName:
+            connection_kwargs = {
+                "source_property_name": sourcePropertyName,
+                "target_property_name": targetPropertyName,
+            }
+        success = library.create_connection(
+            stage,
+            outputPrim,
+            outputPort,
+            inputPrim,
+            inputPort,
+            **connection_kwargs,
+        )
+
+        if not success:
+            view._abortConnection(
+                "Failed to create connection in USD", reconnect_state
+            )
+            return
+
+        if reconnect_state is not None:
+            isReconnect = True
+            oldSrcId, oldSrcPort, oldTgtId, oldTgtPort = reconnect_state[:4]
+        else:
+            isReconnect = view._reconnectingLink
+            oldSrcId = view._reconnectOldSourceNodeId
+            oldSrcPort = view._reconnectOldSourcePort
+            oldTgtId = view._reconnectOldTargetNodeId
+            oldTgtPort = view._reconnectOldTargetPort
+
+        if isReconnect:
+            view._clearReconnectState()
+
+            if not view._deleteOldConnection(
+                stage, oldSrcId, oldSrcPort, oldTgtId, oldTgtPort
+            ):
+                # Old connection may have been implicitly replaced by
+                # create_connection (e.g. SetConnections on the same
+                # input attribute). Continue with the new connection.
+                Tf.Status(
+                    "Reconnect: old connection already removed "
+                    f"({oldSrcId}.{oldSrcPort} -> {oldTgtId}.{oldTgtPort})"
+                )
+
+        view._addLinkToGraph(
+            outputNodeId,
+            outputPort,
+            inputNodeId,
+            inputPort,
+            outputNode,
+            inputNode,
+            sourcePropertyName=sourcePropertyName,
+            targetPropertyName=targetPropertyName,
+        )
+
+        if isReconnect:
+            redo_fn, undo_fn = _make_reconnect_edits(
+                oldSrcId,
+                oldSrcPort,
+                oldTgtId,
+                oldTgtPort,
+                outputNodeId,
+                outputPort,
+                inputNodeId,
+                inputPort,
+                sourcePropertyName=sourcePropertyName,
+                targetPropertyName=targetPropertyName,
+            )
+            legacy_symbol("_push_undo_command")("Reconnect", redo_fn, undo_fn, view=view)
+        else:
+            legacy_symbol("_push_undo_command")(
+                "Create Connection",
+                _make_connection_edit(
+                    outputNodeId,
+                    outputPort,
+                    inputNodeId,
+                    inputPort,
+                    create=True,
+                    source_property_name=sourcePropertyName,
+                    target_property_name=targetPropertyName,
+                ),
+                _make_connection_edit(
+                    outputNodeId,
+                    outputPort,
+                    inputNodeId,
+                    inputPort,
+                    create=False,
+                    source_property_name=sourcePropertyName,
+                    target_property_name=targetPropertyName,
+                ),
+                view=view,
+            )
+
+    finally:
+        # The notice handler is suppressed across the authoring window so
+        # _handleUsdChanges cannot drop the cached per-prim link scan that
+        # back-reference resolution reads from.  Drop it explicitly here so
+        # a later re-add of an absent prim does not resurrect a connection
+        # we just authored away.
+        view._invalidateBackReferenceLinkDataCache()
+        view._noticeHandler.setEnabled(True)
+        view.update()
+
+
+def _deleteConnection(
+    view,
+    outputNodeId,
+    outputPort,
+    inputNodeId,
+    inputPort,
+    *,
+    sourcePropertyName="",
+    targetPropertyName="",
+):
+    """Delete a connection in USD via the appropriate node library."""
+    if isinstance(view.nodeGraph.getStage(), Usd.Stage):
+        return _dispatch_connection(view, intents.Disconnect(intents.LinkEndpoints(
+            outputNodeId, outputPort, inputNodeId, inputPort,
+            sourcePropertyName, targetPropertyName)))
+
+    inputNode = view.nodes.get(inputNodeId)
+    outputNode = view.nodes.get(outputNodeId)
+    if not inputNode or not outputNode:
+        return
+
+    inputPrim = inputNode.getUsdPrim()
+    outputPrim = outputNode.getUsdPrim()
+    if not inputPrim or not outputPrim:
+        return
+
+    library = view._findLibraryForPrim(inputPrim)
+    if not library:
+        Tf.Warn(
+            f"Cannot delete connection: no library handles prim type '{inputPrim.GetTypeName()}'"
+        )
+        return
+
+    view._noticeHandler.setEnabled(False)
+    try:
+        connection_kwargs = {}
+        if sourcePropertyName or targetPropertyName:
+            connection_kwargs = {
+                "source_property_name": sourcePropertyName,
+                "target_property_name": targetPropertyName,
+            }
+        success = library.delete_connection(
+            view.nodeGraph.getStage(),
+            outputPrim,
+            outputPort,
+            inputPrim,
+            inputPort,
+            **connection_kwargs,
+        )
+
+        if success:
+            view._removeLinkFromGraph(
+                outputNodeId,
+                outputPort,
+                inputNodeId,
+                inputPort,
+                sourcePropertyName=sourcePropertyName,
+                targetPropertyName=targetPropertyName,
+            )
+
+            legacy_symbol("_push_undo_command")(
+                "Delete Connection",
+                _make_connection_edit(
+                    outputNodeId,
+                    outputPort,
+                    inputNodeId,
+                    inputPort,
+                    create=False,
+                    source_property_name=sourcePropertyName,
+                    target_property_name=targetPropertyName,
+                ),
+                _make_connection_edit(
+                    outputNodeId,
+                    outputPort,
+                    inputNodeId,
+                    inputPort,
+                    create=True,
+                    source_property_name=sourcePropertyName,
+                    target_property_name=targetPropertyName,
+                ),
+                view=view,
+            )
+    finally:
+        # Mirror _createConnection: drop the back-reference cache while the
+        # notice handler is still suppressed, so a later re-add of an
+        # absent prim does not resurrect the connection we just deleted.
+        view._invalidateBackReferenceLinkDataCache()
+        view._noticeHandler.setEnabled(True)
+
+
+def _applyApiSchemaFromHotbox(view, identifier):
+    """Apply an API schema chosen in the hotbox to the selected prims.
+
+    Prims the schema forbids (its canOnlyApplyTo types) are skipped rather
+    than authored, and reported in the summary popup. Multiple-apply
+    schemas get a generated instance name per prim.
+
+    Args:
+        identifier: USD schema identifier, e.g. "PhysicsRigidBodyAPI"
+    """
+    selectedPrims = view._resolveSelectedPrims()
+    if not selectedPrims:
+        view._showWarningPopup(f"Select a prim to apply {identifier}")
+        return
+
+    applied, already_present, skipped = _view_editor(view).execute(intents.Schema(
+        tuple(str(prim.GetPath()) for prim in selectedPrims), identifier, 'apply'))
+    view._showApiSchemaResult(identifier, applied, already_present, skipped)
+
+
+def _showApiSchemaResult(view, identifier, applied, alreadyPresent, skipped):
+    """Report what an API schema application did.
+
+    Args:
+        identifier: Schema identifier that was applied
+        applied: List of (primPath, instanceName) pairs newly authored
+        alreadyPresent: Count of prims that already carried the schema
+        skipped: List of (primName, reason) pairs that were skipped
+    """
+    if not applied and not alreadyPresent:
+        reason = skipped[0][1] if skipped else "no prims selected"
+        view._showWarningPopup(f"Could not apply {identifier}: {reason}")
+        return
+
+    if applied:
+        noun = "prim" if len(applied) == 1 else "prims"
+        summary = f"Applied {identifier} to {len(applied)} {noun}"
+    else:
+        noun = "prim" if alreadyPresent == 1 else "prims"
+        summary = f"{identifier} already on {alreadyPresent} {noun}"
+
+    notes = []
+    if applied and alreadyPresent:
+        notes.append(f"{alreadyPresent} already had it")
+    if skipped:
+        names = ", ".join(name for name, _ in skipped[:3])
+        if len(skipped) > 3:
+            names += f", +{len(skipped) - 3} more"
+        notes.append(f"skipped {len(skipped)}: {names}")
+
+    if not notes:
+        view._showPopupMessage(summary)
+        return
+
+    message = f"{summary} ({'; '.join(notes)})"
+    if skipped:
+        view._showWarningPopup(message)
+    else:
+        view._showPopupMessage(message)
+
+
+def _writeValueComponents(view, state, components, warn=True):
+    """Author *components* and refresh just that node's cells."""
+    intent = intents.SetValue(
+        str(Sdf.Path(state['primPath']).AppendProperty(state['prop'])),
+        tuple(components), view._cachedValueWriteMode, state.get('time'))
+    if warn:
+        return _view_editor(view).execute(intent)
+    return _set_value(view, intent, warn=False, preview=state.setdefault('preview', {}))
+
+
+def _pushValueUndo(view, primPath, propertyName, oldComponents, newComponents,
+                   timeCode):
+    """Record the local opinion delta accumulated by a completed drag."""
+    preview = getattr(view, '_finishedValuePreview', None)
+    if preview:
+        site = preview['site']
+        stage = view.nodeGraph.getStage()
+        site.resolve(stage)
+        path = Sdf.Path(primPath).AppendProperty(propertyName)
+        _record_opinions(view, stage, f'Set {path}', (site,), preview['patches'],
+                         partial(_refresh_value, path))
+
+
+def _updateMung(view, event):
+    """Drag a number left/right. Live preview, nothing on the undo stack."""
+    state = view._mungState
+    if state is None or not state["mungable"]:
+        return
+    dx = float(event.position().x()) - state["baseScreenX"]
+    if not view._mungActive:
+        if abs(dx) < float(view._cachedMungDragThresholdPx):
+            return
+        view._mungActive = True
+        state['noticeEnabled'] = _notice_enabled(view._noticeHandler)
+        # Our own writes must not come back to us as notices -- the same
+        # bracket _finalizeNodeDrag uses, for the same reason. USD still
+        # notifies Hydra, so usdview's viewport updates live.
+        view._noticeHandler.setEnabled(False)
+    QtCore = legacy_symbol("QtCore")
+    mods = event.modifiers()
+    mult = noodlesValues.mung_multiplier(
+        bool(mods & QtCore.Qt.ShiftModifier),
+        bool(mods & QtCore.Qt.ControlModifier),
+    )
+    # Absolute, from the press position and the ORIGINAL value, never
+    # incremental: dragging back to where the press landed then restores
+    # exactly the value it started at, instead of accumulating drift.
+    value = state["base"] + dx * state["step"] * mult
+    components = noodlesValues.apply_delta(
+        state["original"], state["comp"], value, state["typeName"]
+    )
+    if components != state["current"]:
+        if view._writeValueComponents(state, components, warn=False)[0]:
+            state["current"] = components
+
+
+def _finishMung(view):
+    """Release: commit the drag as ONE undo entry, or open the editor."""
+    state = view._mungState
+    view._mungState = None
+    if state is None:
+        return
+    if not view._mungActive:
+        # Never crossed the threshold, so nothing was authored and nothing
+        # is on the undo stack: this was a click, and a click types.
+        view._beginValueEdit(state["nodeId"], state["prop"], state["comp"])
+        return
+
+    view._mungActive = False
+    final = tuple(state["current"])
+    original = tuple(state["original"])
+    preview = state.get('preview')
+    if preview:
+        if final == original:
+            _cancel_value_preview(view, state)
+            return
+        try:
+            stage = view.nodeGraph.getStage()
+            preview['site'].resolve(stage)
+            noodlesValues._warn_edit_target(stage)
+            view._finishedValuePreview = preview
+            view._pushValueUndo(state['primPath'], state['prop'], original, final, state['time'])
+        finally:
+            view._finishedValuePreview = None
+            view._noticeHandler.setEnabled(state.get('noticeEnabled', True))
+        view._startValueFlash(state['nodeId'], state['prop'], 'commit')
+    else:
+        view._noticeHandler.setEnabled(state.get('noticeEnabled', True))
+
+
+def _cancel_value_preview(view, state):
+    try:
+        preview = state.get('preview')
+        if preview:
+            path = preview['site'].paths[0][0]
+            _replay_opinions((preview['site'],), preview['patches'],
+                             partial(_refresh_value, path), False, view)
+    finally:
+        view._noticeHandler.setEnabled(state.get('noticeEnabled', True))
+
+
+def _cancelMung(view):
+    """Esc mid-drag: restore the local opinion without recording history."""
+    state = view._mungState
+    view._mungState = None
+    if state is not None:
+        if view._mungActive:
+            view._mungActive = False
+            _cancel_value_preview(view, state)
+        view.update()
+
+
+def _toggleBoolValue(view, hit):
+    """A checkbox: one click, one write, one undo entry."""
+    old = tuple(hit.row.components)
+    new = (not bool(old[0]),)
+    state = {
+        "nodeId": hit.nodeId,
+        "primPath": hit.primPath,
+        "prop": hit.propertyName,
+        "time": view._currentTimeCode,
+    }
+    ok, reason = view._writeValueComponents(state, new, warn=True)
+    if not ok:
+        view._showWarningPopup("%s: %s" % (hit.propertyName, reason))
+        return
+    view._startValueFlash(hit.nodeId, hit.propertyName, "commit")
+
+
+def _beginValueEdit(view, nodeId, propertyName, comp):
+    """Open the keyboard editor on one component, seeded unelided."""
+    row = view._findValueRow(nodeId, propertyName)
+    if row is None or not row.editable:
+        return
+    if row.kind == noodlesValues.KIND_BOOL:
+        return
+    comp = max(0, min(int(comp), row.count - 1))
+    text = noodlesValues.format_component(row.components[comp], row.type_name)
+    view._valueEditTarget = (nodeId, propertyName, comp)
+    view._valueEditInput.text = text
+    view._valueEditInput.cursor_position = len(text)
+    view._valueEditFresh = True
+    view._valueEditError = False
+    view.update()
+
+
+def _cancelValueEdit(view):
+    """Close the editor without authoring anything."""
+    view._valueEditTarget = None
+    view._valueEditInput.clear()
+    view._valueEditFresh = True
+    view._valueEditError = False
+    view.update()
+
+
+def _commitValueEdit(view):
+    """Parse and author the typed value. False means "still open".
+
+    A recoverable objection -- text that is not a number, a token that is
+    not in ``allowedTokens`` -- leaves the editor open so the typo can be
+    fixed, exactly as ``_commitRename`` does for a fixable name.
+    """
+    target = view._valueEditTarget
+    if target is None:
+        return True
+    nodeId, propertyName, comp = target
+    row = view._findValueRow(nodeId, propertyName)
+    if row is None:
+        view._cancelValueEdit()
+        return True
+
+    text = view._valueEditInput.text
+    ok, value = noodlesValues.parse_component(text, row.type_name)
+    if not ok:
+        # The editor stays open with the error tint on its outline: the
+        # typo is fixable, and closing it would throw away what was typed.
+        view._valueEditError = True
+        view._showWarningPopup(
+            "%r is not a %s" % (text.strip(), row.type_name)
+        )
+        return False
+    if row.kind == noodlesValues.KIND_TOKEN_ENUM and row.tokens:
+        if value not in row.tokens:
+            view._valueEditError = True
+            view._showWarningPopup(
+                "%s is not one of: %s" % (value, ", ".join(row.tokens))
+            )
+            return False
+
+    old = tuple(row.components)
+    new = noodlesValues.apply_delta(old, comp, value, row.type_name)
+    view._valueEditTarget = None
+    view._valueEditInput.clear()
+    view._valueEditFresh = True
+    view._valueEditError = False
+    if new == old:
+        view.update()
+        return True
+
+    state = {
+        "nodeId": nodeId,
+        "primPath": _nodeIdPrimPath(nodeId),
+        "prop": propertyName,
+        "time": view._currentTimeCode,
+    }
+    written, reason = view._writeValueComponents(state, new, warn=True)
+    if not written:
+        view._showWarningPopup("%s: %s" % (propertyName, reason))
+        view._startValueFlash(nodeId, propertyName, "error")
+        return True
+    view._startValueFlash(nodeId, propertyName, "commit")
+    view.update()
+    return True
+
+
+def _advanceValueEdit(view, backwards=False):
+    """Tab: commit, then open the next editable cell, wrapping."""
+    target = view._valueEditTarget
+    if target is None:
+        return
+    nodeId, propertyName, comp = target
+    if not view._commitValueEdit():
+        return  # the value did not parse; stay where the typo is
+    cells = view._editableValueCells(nodeId)
+    if not cells:
+        return
+    try:
+        index = cells.index((propertyName, comp))
+    except ValueError:
+        index = -1 if backwards else 0
+    else:
+        index = (index + (-1 if backwards else 1)) % len(cells)
+    nextProp, nextComp = cells[index]
+    view._beginValueEdit(nodeId, nextProp, nextComp)
+
+
+def _commitTokenPopup(view):
+    popup = view._tokenPopup
+    view._tokenPopup = None
+    if popup is None:
+        return
+    item = view._tokenPopupList.get_selected_item()
+    if item is None:
+        view.update()
+        return
+    new = (str(item.name),)
+    old = tuple(popup["original"])
+    if new == old:
+        view.update()
+        return
+    ok, reason = view._writeValueComponents(popup, new, warn=True)
+    if not ok:
+        view._showWarningPopup("%s: %s" % (popup["prop"], reason))
+        view.update()
+        return
+    view._startValueFlash(popup["nodeId"], popup["prop"], "commit")
+    view.update()
+
+def _replay_opinions(sites, patches, refresh, forward, view):
+    stage = view.nodeGraph.getStage()
+    targets = [site.resolve(stage) for site in sites]
+    steps = _resolve_patches(stage, patches, forward)
+    with _edit_transaction(stage, targets[0], view, batch=True) as journal:
+        _apply_patches(steps, forward, journal)
+        journal.defer(partial(refresh, view))
+    return True
+
+
+def _opinion_patches(backups):
+    empty = Sdf.Path.emptyPath
+    return tuple(_rename_delta(layer, backup, empty, empty)
+                 for layer, backup in backups.items())
+
+
+def _record_opinions(view, stage, description, sites, patches, refresh):
+    if any(record[-2] or record[-1] for record in patches):
+        _record(HistoryBridge(stage), view, description,
+                partial(_replay_opinions, sites, patches, refresh))
+
+
+def _refresh_value(path, view):
+    node = view.nodes.get(str(path.GetPrimPath()))
+    if node is not None and hasattr(node, 'invalidate_value_row'):
+        node.invalidate_value_row(path.name)
+
+
+def _set_value(view, intent, *, warn=True, preview=None):
+    stage = view.nodeGraph.getStage()
+    if not stage:
+        return False, 'no stage'
+    path = Sdf.Path(intent.property)
+    target = stage.GetEditTarget()
+    try:
+        site = EditSite.capture(stage, target, (path,))
+        if preview and (preview['site'].layer_id != site.layer_id or
+                        preview['site'].paths != site.paths or
+                        preview['site'].target != site.target):
+            return False, 'edit target changed during drag'
+        layer = target.GetLayer()
+        mode, time = intent.mode, intent.time
+        if time is not None and not isinstance(time, Usd.TimeCode):
+            time = Usd.TimeCode(time)
+        with _edit_transaction(stage, target, view) as journal:
+            backup = _journal_layer(journal, layer)
+            ok, reason = noodlesValues.write_value(
+                stage, stage.GetPrimAtPath(path.GetPrimPath()), path.name,
+                intent.components, time, mode=mode, warn=warn)
+            if not ok:
+                journal.rollback()
+                return False, reason
+            refresh = partial(_refresh_value, path)
+            if preview is not None:
+                if not preview:
+                    preview.update(site=site, backup=backup)
+                preview['patches'] = _opinion_patches({layer: preview['backup']})
+            else:
+                _record_opinions(view, stage, f'Set {path}', (site,),
+                                 _opinion_patches({layer: backup}), refresh)
+            journal.defer(partial(refresh, view))
+    except (RuntimeError, Tf.ErrorException) as error:
+        return False, str(error)
+    return True, ''
+
+
+def _refresh_connections(view, order=()):
+    view._invalidateBackReferenceLinkDataCache()
+    view.linksChanged = True
+    view._rebuildLinks()
+    if order:
+        positions = {key: index for index, key in enumerate(order)}
+        ordered = iter(sorted((link for link in view.links if LinkKey.from_link(link) in positions),
+                              key=lambda link: positions[LinkKey.from_link(link)]))
+        links = [next(ordered) if LinkKey.from_link(link) in positions else link
+                 for link in view.links]
+        if any(a is not b for a, b in zip(links, view.links)):
+            view.links[:] = links
+            _selection.reconcile(view)
+            _refresh_visual_state(view, repaint=False)
+    view.update()
+
+
+def _replay_connections(sites, patches, orders, forward, view):
+    def refresh(invoking_view):
+        _refresh_connections(invoking_view, orders[int(forward)])
+
+    return _replay_opinions(sites, patches, refresh, forward, view)
+
+
+def _ends_from_link(link):
+    key = LinkKey.from_link(link)
+    owner = getattr(link, 'propertyOwnerNodeId', '')
+    return intents.LinkEndpoints(
+        key.source_id, link.sourcePort, key.target_id, link.targetPort,
+        getattr(link, 'sourcePropertyName', ''), getattr(link, 'targetPropertyName', ''),
+        key.owner_property if owner else '', key.kind == 'relationship')
+
+
+def _prepare_connection(view, stage, ends, create, *, removal_target=None):
+    source = stage.GetPrimAtPath(_nodeIdPrimPath(ends.source_id))
+    dest = stage.GetPrimAtPath(_nodeIdPrimPath(ends.target_id))
+    if ((create and (not source or not dest)) or
+            any(prim and prim.IsInstanceProxy() for prim in (source, dest))):
+        raise RuntimeError('Invalid USD connection endpoints')
+    target = stage.GetEditTarget()
+    source_path = Sdf.Path(_nodeIdPrimPath(ends.source_id))
+    dest_path = Sdf.Path(_nodeIdPrimPath(ends.target_id))
+    sp, tp = ends.source_port, ends.target_port
+    sn, tn = ends.source_property_name, ends.target_property_name
+    if not create and ends.owner_property:
+        owner = Sdf.Path(ends.owner_property)
+        prop = (stage.GetRelationshipAtPath(owner) if ends.relationship else
+                stage.GetAttributeAtPath(owner))
+        if not prop:
+            raise RuntimeError(f'Connection owner not found: {owner}')
+        other, name = ((source_path, sn) if owner.GetPrimPath() == dest_path else
+                       (dest_path, tn))
+        endpoint = other.AppendProperty(name) if name else other
+        paths = prop.GetTargets() if ends.relationship else prop.GetConnections()
+        changes = ((prop, (endpoint,)),) if endpoint in paths else ()
+    else:
+        library = view._findLibraryForPrim(dest if dest else source)
+        if not library:
+            raise RuntimeError('No library handles the connection endpoints')
+        if create:
+            for prim, name, other, port, prop, is_input in (
+                    (source, sn or sp, dest, tp, tn, True),
+                    (dest, tn or tp, source, sp, sn, False)):
+                rel = prim.GetRelationship(name) if name else None
+                if rel:
+                    path = library._resolve_endpoint_path(other, port, prop, is_input=is_input)
+                    changes = ((rel, (path,)),)
+                    break
+            else:
+                a = source.GetAttribute(sn) if sn else library._resolve_attr(source, sp, False)
+                b = dest.GetAttribute(tn) if tn else library._resolve_attr(dest, tp, True)
+                if not a or not b:
+                    raise RuntimeError('Failed to resolve connection attributes')
+                changes = ((b, (a.GetPath(),)),)
+        elif source and dest:
+            changes = library.prepare_connection_removal(
+                source, sp, dest, tp, source_property_name=sn, target_property_name=tn)
+        else:
+            changes = ()
+    if not changes:
+        raise RuntimeError('Connection not found in USD')
+    writes = []
+    for prop, paths in changes:
+        relationship = isinstance(prop, Usd.Relationship)
+        field = 'targetPaths' if relationship else 'connectionPaths'
+        for endpoint in paths:
+            if not relationship and not create:
+                owner_is_dest = prop.GetPrim() == dest
+                owner_name, other_name = (tn, sn) if owner_is_dest else (sn, tn)
+                if (owner_name and prop.GetName() != owner_name or
+                        other_name and endpoint.name != other_name):
+                    continue
+            path = prop.GetPath()
+            edit_target = removal_target or target
+            if not create and removal_target is None:
+                for spec in prop.GetPropertyStack():
+                    if not spec.HasInfo(field):
+                        continue
+                    candidate = (target if target.GetLayer() == spec.layer else
+                                 stage.GetEditTargetForLocalLayer(spec.layer)
+                                 if stage.HasLocalLayer(spec.layer) else None)
+                    if candidate is None or candidate.MapToSpecPath(path) != spec.path:
+                        continue
+                    mapped = candidate.MapToSpecPath(endpoint).StripAllVariantSelections()
+                    op = spec.GetInfo(field)
+                    if mapped in (*op.explicitItems, *op.addedItems,
+                                  *op.prependedItems, *op.appendedItems):
+                        edit_target = candidate
+                        break
+            site = EditSite.capture(stage, edit_target, (path, endpoint))
+            mapped_path, mapped_endpoint = (pair[1] for pair in site.paths)
+            layer = edit_target.GetLayer()
+            factory = (partial(Sdf.CreateRelationshipInLayer, layer, mapped_path,
+                               Sdf.VariabilityUniform, prop.IsCustom()) if relationship else
+                       partial(Sdf.CreatePrimAttributeInLayer, layer, mapped_path,
+                               prop.GetTypeName(), prop.GetVariability(), prop.IsCustom()))
+            writes.append((site, mapped_path, mapped_endpoint.StripAllVariantSelections(),
+                           field, factory, create))
+    if not writes:
+        raise RuntimeError('Connection not found at the specified properties')
+    return writes
+
+
+def _write_connection(write):
+    site, path, endpoint, field, factory, create = write
+    layer = site.target.GetLayer()
+    spec = layer.GetObjectAtPath(path) or factory()
+    if not spec:
+        raise RuntimeError(f'Cannot edit {path}')
+    proxy = getattr(spec, _LIST_FIELDS[field])
+    if not create:
+        proxy.Remove(endpoint)
+    elif proxy.isExplicit:
+        if endpoint not in proxy.explicitItems:
+            proxy.explicitItems = [*proxy.explicitItems, endpoint]
+    else:
+        if endpoint in proxy.deletedItems:
+            proxy.deletedItems = [p for p in proxy.deletedItems if p != endpoint]
+        if all(endpoint not in bucket for bucket in
+               (proxy.addedItems, proxy.prependedItems, proxy.appendedItems)):
+            proxy.prependedItems = [*proxy.prependedItems, endpoint]
+
+
+def _edit_connections(view, intent, *, description=None):
+    stage = view.nodeGraph.getStage()
+    if not stage:
+        raise RuntimeError('No stage to edit')
+    target = stage.GetEditTarget()
+    if isinstance(intent, intents.Connect):
+        old, new, label = (), intent.endpoints, 'Create Connection'
+    elif isinstance(intent, intents.Disconnect):
+        old, new, label = (intent.endpoints,), None, intent.description
+    else:
+        old, new = (intent.old, *getattr(intent, 'additional_old', ())), intent.new
+        label = 'Reconnect' if isinstance(intent, intents.Reconnect) else 'Create Connection'
+    legacy_symbol('warn_if_non_persistent_edit_target')(stage)
+    writes = [write for ends in dict.fromkeys(old) if ends != new
+              for write in _prepare_connection(view, stage, ends, False)]
+    if new is not None:
+        writes.extend(_prepare_connection(view, stage, new, True))
+    sites = tuple(write[0] for write in writes)
+    orders = [getattr(intent, "prior_order", ()) or tuple(map(LinkKey.from_link, view.links)), ()]
+
+    def refresh(view):
+        _refresh_connections(view)
+        orders[1] = tuple(map(LinkKey.from_link, view.links))
+
+    with _edit_transaction(stage, target, view, batch=True) as journal:
+        backups = {}
+        for site in sites:
+            layer = site.target.GetLayer()
+            if layer not in backups:
+                backups[layer] = _journal_layer(journal, layer)
+        for write in writes:
+            _write_connection(write)
+        patches = _opinion_patches(backups)
+        if any(record[-2] or record[-1] for record in patches):
+            _record(HistoryBridge(stage), view, description or label,
+                    partial(_replay_connections, sites, patches, orders))
+        journal.defer(partial(refresh, view))
+    return True
+
+
+def _schema_command(view, intent):
+    from ..apiSchemas import ALREADY_PRESENT, APPLIED, apply_to_prim, remove_from_prim
+
+    stage = view.nodeGraph.getStage()
+    paths = (intent.path,) if isinstance(intent.path, str) else intent.path
+    target = stage.GetEditTarget()
+    site = EditSite.capture(stage, target, paths)
+    applied, skipped, already = [], [], 0
+    with _edit_transaction(stage, target, view) as journal:
+        layer = target.GetLayer()
+        backup = _journal_layer(journal, layer)
+        for path in paths:
+            prim = stage.GetPrimAtPath(path)
+            if not prim or prim.IsInstanceProxy():
+                skipped.append((path, 'prim is not editable'))
+                continue
+            if intent.action == 'remove':
+                api, _, instance = intent.api.partition(':')
+                if remove_from_prim(prim, api, instance):
+                    applied.append((path, instance))
+                continue
+            status, instance, reason = apply_to_prim(prim, intent.api)
+            if status == APPLIED:
+                applied.append((path, instance))
+            elif status == ALREADY_PRESENT:
+                already += 1
+            else:
+                skipped.append((prim.GetName(), reason))
+        if applied:
+            refresh = _reload_schema_graph
+            _record_opinions(view, stage, f'{intent.action.title()} {intent.api}', (site,),
+                             _opinion_patches({layer: backup}), refresh)
+            journal.defer(partial(refresh, view))
+    return applied, already, skipped
+
+
+def _reload_schema_graph(view):
+    view._reloadCurrentGraph()
+
+
+@dataclass(frozen=True)
+class ReconnectCapture:
+    endpoints: intents.LinkEndpoints
+    order: tuple[LinkKey, ...]
+
+
+def _capture_reconnect(view, link):
+    graph = getattr(view, 'nodeGraph', None)
+    if graph is not None and isinstance(graph.getStage(), Usd.Stage):
+        return ReconnectCapture(_ends_from_link(link), tuple(map(LinkKey.from_link, view.links)))
+    return None
+
+
+def _reconnect_command_args(capture, new, additional_old=()):
+    if not isinstance(capture, ReconnectCapture):
+        capture = ReconnectCapture(intents.LinkEndpoints(*capture), ())
+    return capture.endpoints, new, additional_old, capture.order
+
+
+def _reconnect_endpoints(view):
+    capture = getattr(view, '_reconnectCapture', None)
+    if isinstance(capture, ReconnectCapture):
+        return capture
+    return ReconnectCapture(intents.LinkEndpoints(
+        view._reconnectOldSourceNodeId, view._reconnectOldSourcePort,
+        view._reconnectOldTargetNodeId, view._reconnectOldTargetPort,
+        view._reconnectOldSourcePropertyName, view._reconnectOldTargetPropertyName), ())
+
+
+def _dispatch_connection(view, intent, reconnect_state=None):
+    try:
+        result = _view_editor(view).execute(intent)
+    except (RuntimeError, Tf.ErrorException) as error:
+        Tf.Warn(str(error))
+        _refresh_connections(view, getattr(intent, "prior_order", ()))
+        result = False
+    if reconnect_state is not None and view._reconnectingLink:
+        view._clearReconnectState()
+    return result

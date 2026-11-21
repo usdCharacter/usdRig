@@ -113,7 +113,7 @@ class SetValue:
 
 @dataclass(frozen=True)
 class Schema:
-    path: str
+    path: str | tuple[str, ...]
     api: str
     action: Literal["apply", "remove"]
 
@@ -126,6 +126,8 @@ class LinkEndpoints:
     target_port: str
     source_property_name: str = ""
     target_property_name: str = ""
+    owner_property: str = ""
+    relationship: bool = False
 
 
 @dataclass(frozen=True)
@@ -136,6 +138,8 @@ class Connect:
 @dataclass(frozen=True)
 class Disconnect:
     endpoints: LinkEndpoints
+    description: str = "Delete Connection"
+    prior_order: tuple[LinkKey, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -148,6 +152,8 @@ class Replace:
 class Reconnect:
     old: LinkEndpoints
     new: LinkEndpoints
+    additional_old: tuple[LinkEndpoints, ...] = ()
+    prior_order: tuple[LinkKey, ...] = ()
 
 
 _INTENT_TYPES = frozenset((
