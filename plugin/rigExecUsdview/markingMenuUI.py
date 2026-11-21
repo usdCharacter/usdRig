@@ -586,6 +586,8 @@ class ControlMarkingMenu(QtCore.QObject):
         self._controls = []
         self._pressed = False
         self._window = None
+        self._ownsMouseGrab = False
+        self._enabledHover = False
         # The item the gesture's direction last lit, which a label under
         # the cursor overrides.
         self._sectorLit = None
@@ -605,7 +607,9 @@ class ControlMarkingMenu(QtCore.QObject):
         # the machine draws.
         self.clock = None
         if self._view is not None:
-            self._view.setAttribute(QtCore.Qt.WA_Hover, True)
+            if not self._view.testAttribute(QtCore.Qt.WA_Hover):
+                self._enabledHover = True
+                self._view.setAttribute(QtCore.Qt.WA_Hover, True)
             if installFilters:
                 self._view.installEventFilter(self)
 
@@ -769,7 +773,8 @@ class ControlMarkingMenu(QtCore.QObject):
         application = QtWidgets.QApplication.instance()
         if application is not None:
             application.removeEventFilter(self._escape)
-        if self._view is not None and \
+        ownsMouseGrab, self._ownsMouseGrab = self._ownsMouseGrab, False
+        if ownsMouseGrab and self._view is not None and \
                 QtWidgets.QWidget.mouseGrabber() is self._view:
             self._view.releaseMouse()
 
@@ -777,8 +782,12 @@ class ControlMarkingMenu(QtCore.QObject):
         stageViewReady.IgnoreDeleted(self._Close)
         view, self._view = self._view, None
         window, self._window = self._window, None
-        if view is not None and self._installFilters:
-            stageViewReady.IgnoreDeleted(lambda: view.removeEventFilter(self))
+        if view is not None:
+            if self._installFilters:
+                stageViewReady.IgnoreDeleted(lambda: view.removeEventFilter(self))
+            if self._enabledHover:
+                stageViewReady.IgnoreDeleted(lambda: view.setAttribute(
+                    QtCore.Qt.WA_Hover, False))
         stageViewReady.RemoveWidget(window)
         if not self._installFilters:
             editorExtension.EditorRemoved(self._api, editorExtension.MARKING_MENU, self)
@@ -809,6 +818,7 @@ class ControlMarkingMenu(QtCore.QObject):
                     # Up for clicking: every click, even one outside the
                     # viewport, is the menu's to take or dismiss.
                     self._view.grabMouse()
+                    self._ownsMouseGrab = QtWidgets.QWidget.mouseGrabber() is self._view
             elif kind == mm.HIGHLIGHT:
                 self._sectorLit = emission.item.id if emission.item else None
                 window.lit = self._sectorLit

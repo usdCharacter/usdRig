@@ -1404,6 +1404,98 @@ def TestAuxiliaryViewportRetirement():
     print("  ok: auxiliary viewport tools share readiness and retirement")
 
 
+def TestMarkingMenuPreservesHostInput():
+    import markingMenuUI
+
+    extension = markingMenuUI.editorExtension
+    hover = QtCore.Qt.WA_Hover
+    grabber = QtWidgets.QWidget.mouseGrabber
+    failures = []
+
+    class _RejectHandoff(extension.EditorExtension):
+        def OwnsInput(self, api):
+            return True
+
+        def EditorAdded(self, api, kind, menu):
+            _Check(kind == extension.MARKING_MENU and not menu.IsOpen() and
+                   view.testAttribute(hover) and grabber() is view,
+                   "host rejects an attached but unopened menu")
+            raise RuntimeError("test host rejected marking menu")
+
+    for reject in (False, True):
+        for initialHover in (False, True):
+            window, api = _Session()
+            view = QtWidgets.QWidget()
+            window.setCentralWidget(view)
+            _Host(api)._stageView = view
+            window.show()
+            view.setAttribute(hover, initialHover)
+            view.grabMouse()
+            try:
+                _Check(grabber() is view, "the host owns the StageView grab")
+                with _Patched(extension, _extension=_RejectHandoff() if reject else None):
+                    menu = markingMenuUI.InstallMarkingMenu(api)
+                    if reject:
+                        result = stageViewReady.GetResult(api, "markingMenu")
+                        _Check(menu is None and result.status == "failed" and
+                               "test host rejected marking menu" in result.error,
+                               "the failed host handoff rolled back")
+                    else:
+                        _Check(menu is not None and not menu.IsOpen() and
+                               view.testAttribute(hover), "the menu never opened")
+                        sessionRegistry.ForgetSession(api)
+                        _Check(not menu.HasView(), "retirement detached the menu")
+
+                problems = [name for name, changed in (
+                    ("StageView grab", grabber() is not view),
+                    ("hover state", view.testAttribute(hover) != initialHover),
+                ) if changed]
+                if problems:
+                    failures.append("%s (hover=%s): %s" % (
+                        "handoff" if reject else "retirement", initialHover,
+                        ", ".join(problems)))
+            finally:
+                if grabber() is view:
+                    view.releaseMouse()
+                _Destroy(window)
+    _Check(not failures, "marking menu changed host input: " + "; ".join(failures))
+    print("  ok: marking-menu retirement and failed handoff preserve host input")
+
+
+def TestMarkingMenuReleasesItsOwnGrab():
+    import markingMenuUI
+
+    window, api = _Session()
+    view = QtWidgets.QWidget()
+    window.setCentralWidget(view)
+    _Host(api)._stageView = view
+    window.show()
+    other = QtWidgets.QWidget(window)
+    other.show()
+    grabber = QtWidgets.QWidget.mouseGrabber
+    try:
+        menu = markingMenuUI.InstallMarkingMenu(api)
+        menu.clock = lambda: 0
+        for expected in (None, other, view):
+            if expected is view:
+                view.grabMouse()
+            menu.Open((20, 20), [])
+            menu._Handle(menu._gesture.Release(20, 20))
+            _Check(menu.IsOpen() and grabber() is view, "the click menu has a view grab")
+            if expected is other:
+                other.grabMouse()
+                _Check(grabber() is other, "the other widget took over the grab")
+            menu.Cancel()
+            _Check(not menu.IsOpen() and grabber() is expected,
+                   "closing releases only a grab acquired and still held by the menu")
+    finally:
+        if grabber() in (view, other):
+            grabber().releaseMouse()
+        sessionRegistry.ForgetSession(api)
+        _Destroy(window)
+    print("  ok: marking-menu cancellation releases only its own grab")
+
+
 def TestHoverPickerAttachmentRollback():
     import pickerHoverUI
 
@@ -1708,11 +1800,13 @@ def main():
     TestContainerEnsureAndRetire()
     TestContainerAdoptsReadyGizmo()
     TestAuxiliaryViewportRetirement()
+    TestMarkingMenuPreservesHostInput()
+    TestMarkingMenuReleasesItsOwnGrab()
     TestHoverPickerAttachmentRollback()
     TestRegistryDestroyedSlots()
     TestRegistryRemovalHook()
     TestTouchPoseMarqueeUsesOwnSession()
-    print("SESSION_STATE_OK (24 groups)")
+    print("SESSION_STATE_OK (26 groups)")
     return 0
 
 
