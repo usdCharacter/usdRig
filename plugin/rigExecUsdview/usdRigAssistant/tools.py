@@ -43,6 +43,12 @@ MAX_LOG_LINES = 400
 CALL_TIMEOUT = 600
 RIG_ROOT = 'RigExecRoot'
 CAPTURE_DIR = os.path.join(host.PREF_DIR, 'captures')
+# Said plainly when a reply changed the stage and had nowhere to record it:
+# the change stands and Ctrl+Z does not take it back.
+NO_UNDO_STACK = ('There is no undo stack, so these changes cannot be '
+                 'taken back')
+NO_UNDO_PUSH = ('The undo stack went away while the reply was working, so '
+                'these changes may have no usable undo')
 
 INSTRUCTIONS = '''
 You have tools for the stage and rigs open in usdview. Look before you
@@ -250,8 +256,16 @@ class Toolbox(QtCore.QObject):
         self.cancelled = threading.Event()
         self.done = []
         self.failed = []
+        # What the reply did that no undo step can take back: what it
+        # saved, selected, or switched the edit target to.
+        self.effects = []
         # This reply's undoable edits, pushed as one step by finish().
         self.edits = []
+        # The host undo stack this reply records against, pinned by
+        # undo_stack(). There is no Assistant stack of our own.
+        self._stack = None
+        self._stack_pinned = False
+        self._finished = False
         self.calls = 0
         self._running = False
         self._namespace = None
@@ -396,21 +410,50 @@ class Toolbox(QtCore.QObject):
                             'label': label, 'state': state,
                             'detail': detail})
 
+    def undo_stack(self):
+        """The host stack this reply records against, resolved once.
+
+        Pinned on the first undoable authoring of the reply and kept for
+        the rest of it, so all of a reply's changes land on one stack even
+        if the host swaps it partway through. None means there is nothing
+        to undo against; there is no Assistant stack to fall back to.
+        """
+        if not self._stack_pinned:
+            self._stack_pinned = True
+            self._stack = self.session.undo_stack() \
+                if self.session is not None else None
+        return self._stack
+
     def finish(self):
-        """End the reply: its changes become one undo step."""
+        """End the reply: its changes become one step on the host stack.
+
+        Only the first call does anything, so the last change of a reply
+        commits the reply and a later call cannot open a new transaction.
+        """
+        if self._finished:
+            return
+        self._finished = True
         edits, self.edits = self.edits, []
-        if not edits or self.session is None:
+        if not edits:
             return
-        stack = self.session.undo_stack()
+        stack = self.undo_stack()
         if stack is None:
+            if NO_UNDO_STACK not in self.failed:
+                self._warn(NO_UNDO_STACK)
             return
+        if (self.session is not None and self.session.undo_stack() is not
+                stack):
+            # The host is looking at another stack now. The step still goes
+            # on the one this reply was recorded against, and the user is
+            # told it may not be reachable.
+            self._warn(NO_UNDO_PUSH)
         try:
             stack.Push(edits[0] if len(edits) == 1 else
-                       session_module.GroupEdit('AI Assistant changes',
+                       session_module.GroupEdit(stage_actions.UNDO_LABEL,
                                                 edits))
-        except RuntimeError:
-            logger.warning('Could not add the assistant\'s changes to the '
-                           'undo stack', exc_info=True)
+        except Exception as error:
+            self._warn('Could not add the changes to the undo stack: '
+                       '{}'.format(error))
 
     def cancel(self):
         self.cancelled.set()
@@ -506,8 +549,28 @@ class Toolbox(QtCore.QObject):
         return None
 
     def _record(self, edit):
+        """Hold one action's edit; finish() puts the reply's on the stack."""
+        self.undo_stack()
         if edit is not None:
             self.edits.append(edit)
+
+    def _effect(self, text):
+        """Note what the reply did that undo will not take back."""
+        if text:
+            self.effects.append(text)
+
+    def _warn(self, text):
+        """Tell the chat and the log that something needs the user's eye."""
+        self.failed.append(text)
+        logger.warning(text)
+
+    def _undo_note(self, made):
+        """The warning line a change tool adds when its change has nowhere
+        to be undone: the change stands, and Ctrl+Z does not take it back."""
+        if not made or self.undo_stack() is not None:
+            return ''
+        self._warn(NO_UNDO_STACK)
+        return 'Warning: ' + NO_UNDO_STACK
 
     # The tools
     def _all_tools(self):
@@ -1176,9 +1239,12 @@ class Toolbox(QtCore.QObject):
         paths = [self.path({'path': p}) for p in paths]
         found = self.session.select(paths, frame=bool(args.get('frame')))
         missing = [str(p) for p in paths if str(p) not in found]
-        text = 'Selected {}.'.format(_short(found, 10))
+        made = 'Selected {}'.format(_short(found, 10))
+        text = made + '.'
         if missing:
             text += ' Not found: {}.'.format(', '.join(missing))
+        if found:
+            self._effect(made)
         return text
 
     def set_frame(self, args):
@@ -1237,6 +1303,7 @@ class Toolbox(QtCore.QObject):
                      for c, v in planned]
             warnings = [w for w in model.ApplyPlans(plans) if w]
         self._record(scope.edit)
+        note = self._undo_note(scope.edit is not None)
         when = '' if time_code.IsDefault() else ' at frame {:g}'.format(
             time_code.GetValue())
         for channel, value in planned:
@@ -1248,6 +1315,7 @@ class Toolbox(QtCore.QObject):
             ' as keys' if key else ' as defaults', when)]
         lines += ['Warning: ' + w for w in warnings]
         lines += ['Could not: ' + p for p in problems]
+        lines += [note] if note else []
         return '\n'.join(lines)
 
     def reset_avars(self, args):
@@ -1272,33 +1340,31 @@ class Toolbox(QtCore.QObject):
             model.ApplyPlans([model.PlanReset(c, time_code, mode)
                               for c in channels])
         self._record(scope.edit)
+        note = self._undo_note(scope.edit is not None)
         self.done.append('Reset {} avars on {}'.format(len(channels),
                                                         _short(paths)))
-        return 'Reset {} avars.'.format(len(channels))
+        lines = ['Reset {} avars.'.format(len(channels))]
+        lines += [note] if note else []
+        return '\n'.join(lines)
 
     def change_stage(self, args):
-        import rigExecUndo
         changes = args.get('changes')
         if isinstance(changes, dict):
             changes = [changes]
         if not isinstance(changes, list) or not changes:
             raise ToolError('"changes" must be a list of changes')
-        specs = _spec_paths(changes,
-                            self.stage.GetEditTarget().GetLayer())
+        before, effects = len(self.edits), len(self.effects)
         applier = stage_actions.Applier(
-            self.stage, select=lambda paths: self.session.select(paths))
-        if specs:
-            with rigExecUndo.SpecScope(self.stage, specs, None,
-                                       'AI Assistant changes') as scope:
-                done, failed = applier.apply(changes)
-            self._record(scope.edit)
-        else:
-            done, failed = applier.apply(changes)
+            self.stage, select=lambda paths: self.session.select(paths),
+            record=self._record, effect=self._effect)
+        done, failed = applier.apply(changes)
         self.done += done
         self.failed += failed
-        lines = ['Done: ' + d for d in done] + \
-            ['Could not: ' + f for f in failed]
-        return '\n'.join(lines) or 'Nothing changed.'
+        lines = ['Done: ' + d for d in done]
+        lines += ['Also: ' + e for e in self.effects[effects:]]
+        lines += ['Could not: ' + f for f in failed]
+        lines += [self._undo_note(len(self.edits) > before)]
+        return '\n'.join(line for line in lines if line) or 'Nothing changed.'
 
     def save_layers(self, args):
         stage = self.stage
@@ -1326,7 +1392,7 @@ class Toolbox(QtCore.QObject):
                 saved.append(layer.identifier)
             else:
                 problems.append('Could not save {}'.format(layer.identifier))
-        self.done += ['Saved ' + s for s in saved]
+        self.effects += ['Saved ' + s for s in saved]
         self.failed += problems
         lines = ['Saved ' + s for s in saved] + problems
         return '\n'.join(lines) or 'Nothing needed saving.'
@@ -1421,66 +1487,6 @@ class Toolbox(QtCore.QObject):
         if not self.memory.remove(str(args.get('id') or '')):
             raise ToolError('There is no note {}'.format(args.get('id')))
         return 'Forgotten.'
-
-
-_PROPERTY_ACTIONS = ('set_attr', 'clear_attr', 'block_attr',
-                     'set_connections', 'set_relationship', 'set_metadata')
-
-
-def _spec_paths(changes, layer=None):
-    """The prim and property paths a list of changes can touch, so their
-    specs can be snapshotted for undo before the change. layer is the edit
-    target's, to find where a new prim's missing parents begin."""
-    paths = set()
-
-    def add(text):
-        text = str(text or '').strip()
-        if text and not text.startswith('/'):
-            text = '/' + text
-        if text and Sdf.Path.IsValidPathString(text):
-            paths.add(Sdf.Path(text))
-            return Sdf.Path(text)
-        return None
-
-    for change in changes:
-        if not isinstance(change, dict):
-            continue
-        action = change.get('action')
-        name = str(change.get('name') or '')
-        if action in _PROPERTY_ACTIONS and name:
-            text = str(change.get('path') or '').strip()
-            if text and not text.startswith('/'):
-                text = '/' + text
-            if Sdf.Path.IsValidPathString(text) and \
-                    Sdf.Path.IsValidNamespacedIdentifier(name):
-                paths.add(Sdf.Path(text).AppendProperty(name))
-            continue
-        prim = add(change.get('path'))
-        if prim is not None and action == 'rename_prim' and change.get(
-                'name') and Sdf.Path.IsValidIdentifier(str(change['name'])):
-            paths.add(prim.GetParentPath().AppendChild(str(change['name'])))
-            paths.add(prim.GetParentPath())
-        if prim is not None and action == 'reparent_prim':
-            parent = add(change.get('parent'))
-            if parent is not None:
-                paths.add(parent.AppendChild(prim.name))
-            paths.add(prim.GetParentPath())
-        if prim is not None and layer is not None and action in (
-                'define_prim', 'override_prim', 'set_active',
-                'add_reference'):
-            # The topmost ancestor the edit brings into being on the layer,
-            # so undo takes the whole new chain away.
-            top = prim
-            parent = prim.GetParentPath()
-            while parent != Sdf.Path.absoluteRootPath and \
-                    layer.GetPrimAtPath(parent) is None:
-                top = parent
-                parent = parent.GetParentPath()
-            paths.add(top)
-    # A prim's snapshot holds its subtree, so its descendants need none.
-    kept = [p for p in paths
-            if not any(p != q and p.HasPrefix(q) for q in paths)]
-    return sorted(kept)
 
 
 def _namespace(session):

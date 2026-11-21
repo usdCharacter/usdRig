@@ -27,8 +27,8 @@ from pxr.Usdviewq.qt import QtWidgets  # noqa: E402
 
 import rigExecUndo  # noqa: E402
 import layerOpinionsModel  # noqa: E402
-from usdRigAssistant import mcp_server, session, stage_actions  # noqa: E402
-from usdRigAssistant import tools  # noqa: E402
+from usdRigAssistant import chats, mcp_server, session  # noqa: E402
+from usdRigAssistant import stage_actions, tools  # noqa: E402
 
 _failures = []
 
@@ -85,6 +85,46 @@ class _Container(object):
 
     def ImagingHandle(self):
         return None
+
+
+class _CountingStack(rigExecUndo.UndoStack):
+    """A real stack that keeps what was pushed, to count the steps."""
+
+    def __init__(self):
+        rigExecUndo.UndoStack.__init__(self)
+        self.pushed = []
+
+    def Push(self, edit):
+        self.pushed.append(edit)
+        rigExecUndo.UndoStack.Push(self, edit)
+
+
+class _CountingContainer(_Container):
+    def __init__(self):
+        _Container.__init__(self)
+        self.stack = _CountingStack()
+
+
+class _StacklessContainer(_Container):
+    """A host with no undo stack to record on."""
+
+    def _UndoStack(self):
+        return None
+
+
+class _SwappingContainer(_Container):
+    """A host that swaps its undo stack partway through a reply."""
+
+    def __init__(self):
+        _Container.__init__(self)
+        self.replacement = rigExecUndo.UndoStack()
+        self._swapped = False
+
+    def swap(self):
+        self._swapped = True
+
+    def _UndoStack(self):
+        return self.replacement if self._swapped else self.stack
 
 
 _LAYER = """#usda 1.0
@@ -237,6 +277,248 @@ def TestRunPython():
     container.stack.Undo()
     _Check(not stage.GetPrimAtPath("/Char/Made").IsValid(),
            "undo takes back what the Python changed on the edit target")
+
+
+def _OneStepPerReply():
+    """Several tool calls, one host undo step, and finish() only once."""
+    stage = _Stage()
+    container = _CountingContainer()
+    box, _api = _Toolbox(stage, container, can_edit=True)
+    box.call("set_avars", {"values": [
+        {"path": "/Char/Ctl", "name": "avars:rx", "value": 45}]})
+    box.call("change_stage", {"changes": [
+        {"action": "define_prim", "path": "/Char/Rig/Extra",
+         "type": "Xform"}]})
+    box.call("change_stage", {"changes": [
+        {"action": "set_attr", "path": "/Char/Ctl", "name": "avars:tz",
+         "type": "double", "value": 1.0}]})
+    box.finish()
+    box.finish()
+    pushed = container.stack.pushed
+    _Check(len(pushed) == 1,
+           "the calls of a reply are one step on the host stack: %s" % pushed)
+    group = pushed[0] if pushed else None
+    _Check(isinstance(group, session.GroupEdit) and len(group.edits) == 3,
+           "the three edits are one group: %s" % (
+               getattr(group, "edits", None),))
+    _Check(getattr(group, "label", "") == stage_actions.UNDO_LABEL,
+           "the step carries the assistant's label: %s" %
+           getattr(group, "label", ""))
+    box.call("change_stage", {"changes": [
+        {"action": "set_attr", "path": "/Char/Ctl", "name": "avars:rz",
+         "type": "double", "value": 1.0}]})
+    box.finish()
+    _Check(len(container.stack.pushed) == 1,
+           "finish is terminal: a later call does not open a new step")
+    container.stack.Undo()
+    ctl = stage.GetPrimAtPath("/Char/Ctl")
+    _Check(abs(stage.GetAttributeAtPath("/Char/Ctl.avars:rx").Get()) < 1e-9
+           and not stage.GetPrimAtPath("/Char/Rig").IsValid()
+           and not ctl.HasAttribute("avars:tz"),
+           "one undo takes the whole reply back")
+    _Check(ctl.HasAttribute("avars:rz"),
+           "the change made after finish was never part of the step")
+
+
+def _OverlappingWrites():
+    stage = _Stage()
+    container = _CountingContainer()
+    box, _api = _Toolbox(stage, container, can_edit=True)
+    text, failed = box.call("change_stage", {"changes": [
+        {"action": "set_attr", "path": "/Char/Ctl", "name": "avars:rx",
+         "value": 30},
+        {"action": "set_attr", "path": "/Char/Ctl", "name": "avars:rx",
+         "value": 50}]})
+    text2, failed2 = box.call("change_stage", {"changes": [
+        {"action": "define_prim", "path": "/Char/Rig/New", "type": "Xform"},
+        {"action": "set_attr", "path": "/Char/Rig/New", "name": "x",
+         "type": "double", "value": 3.0}]})
+    _Check(not failed and not failed2,
+           "writes over the same spec are made: %s %s" % (text, text2))
+    _Check(stage.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 50,
+           "the last write to a spec wins")
+    box.finish()
+    _Check(len(container.stack.pushed) == 1,
+           "overlapping writes are still one step: %s" %
+           container.stack.pushed)
+    container.stack.Undo()
+    _Check(stage.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 0,
+           "one undo puts the original value back through both writes")
+    _Check(not stage.GetPrimAtPath("/Char/Rig").IsValid(),
+           "undo takes the new prim, its attribute and its new parents")
+    container.stack.Redo()
+    _Check(stage.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 50 and
+           stage.GetPrimAtPath("/Char/Rig/New").IsValid() and
+           stage.GetAttributeAtPath("/Char/Rig/New.x").Get() == 3.0,
+           "redo makes the writes again in their order")
+
+
+def _CrossLayerReply():
+    root = _Layer("reply_root.usda", _CAPTURE_USDA)
+    over = _Layer("reply_over.usda")
+    root.subLayerPaths.append(over.identifier)
+    stage = Usd.Stage.Open(root)
+    container = _CountingContainer()
+    box, _api = _Toolbox(stage, container, can_edit=True)
+    text, failed = box.call("change_stage", {"changes": [
+        {"action": "set_attr", "path": "/Char/Ctl", "name": "x",
+         "value": 2.0},
+        {"action": "set_edit_target", "layer": over.identifier},
+        {"action": "set_attr", "path": "/Char/Ctl", "name": "y",
+         "type": "double", "value": 7.0}]})
+    _Check(not failed, "one reply writes two layers: %s" % text)
+    _Check(root.GetAttributeAtPath("/Char/Ctl.x").default == 2.0 and
+           over.GetAttributeAtPath("/Char/Ctl.y").default == 7.0,
+           "each write went to the layer that was the edit target")
+    box.finish()
+    pushed = container.stack.pushed
+    _Check(len(pushed) == 1, "the cross-layer reply is one step: %s" % pushed)
+    edit = pushed[0] if pushed else None
+    edits = ([edit] if hasattr(edit, "entries")
+             else list(getattr(edit, "edits", [])))
+    layers = {entry.layer.identifier
+              for e in edits for entry in e.entries}
+    _Check(layers == {root.identifier, over.identifier},
+           "one step carries both layers: %s" % (layers,))
+    container.stack.Undo()
+    _Check(root.GetAttributeAtPath("/Char/Ctl.x").default == 1.0 and
+           over.GetAttributeAtPath("/Char/Ctl.y") is None,
+           "one undo puts both layers back")
+    _Check(any(e.startswith("Edits now go to") for e in box.effects),
+           "the edit target switch is an effect: %s" % box.effects)
+
+
+def _EffectsAreNotUndoable():
+    stage = _Stage()
+    container = _CountingContainer()
+    box, api = _Toolbox(stage, container, can_edit=True)
+    text, failed = box.call("select_prims", {"paths": ["/Char/Ctl"]})
+    _Check(not failed and any(e.startswith("Selected /Char/Ctl")
+                              for e in box.effects),
+           "a selection is an effect: %s" % box.effects)
+    text, failed = box.call("change_stage", {"changes": [
+        {"action": "select", "paths": ["/Char/Geo"]}]})
+    _Check(not failed and "Also: Selected /Char/Geo" in text,
+           "a select action reports what it did: %s" % text)
+    box.finish()
+    _Check(not container.stack.pushed and not container.stack.CanUndo(),
+           "a select-only reply leaves the undo history untouched")
+    _Check([str(p.GetPath()) for p in api.selectedPrims] == ["/Char/Geo"],
+           "the selection stands: %s" % box.effects)
+
+
+def _SaveOnlyReply():
+    folder = tempfile.mkdtemp(prefix="usdrig_reply_")
+    path = os.path.join(folder, "reply.usda")
+    with open(path, "w") as handle:
+        handle.write(_LAYER)
+    stage = Usd.Stage.Open(path)
+    container = _CountingContainer()
+    box, _api = _Toolbox(stage, container, can_edit=True)
+    stage.GetAttributeAtPath("/Char/Ctl.avars:rx").Set(4)
+    text, failed = box.call("save_layers", {"all": True})
+    _Check(not failed and "Saved" in text,
+           "save_layers saves the dirty layer: %s" % text)
+    _Check(any(e.startswith("Saved ") for e in box.effects),
+           "a save is an effect, not an undoable change: %s" % box.effects)
+    box.finish()
+    _Check(not container.stack.pushed and not container.stack.CanUndo(),
+           "a save-only reply leaves the undo history untouched")
+    with open(path) as handle:
+        _Check("avars:rx = 4" in handle.read(),
+               "the save wrote through the undo step")
+
+
+def _MissingUndoStack():
+    stage = _Stage()
+    container = _StacklessContainer()
+    box, _api = _Toolbox(stage, container, can_edit=True)
+    text, failed = box.call("change_stage", {"changes": [
+        {"action": "define_prim", "path": "/Char/Rig/Extra",
+         "type": "Xform"}]})
+    _Check(not failed and stage.GetPrimAtPath("/Char/Rig/Extra").IsValid(),
+           "the change is still made without a stack: %s" % text)
+    _Check("undo stack" in text and "cannot be taken back" in text,
+           "the answer says there is no undo: %s" % text)
+    _Check(any("undo stack" in f for f in box.failed),
+           "the toolbox says it too: %s" % box.failed)
+    text, failed = box.call("set_avars", {"values": [
+        {"path": "/Char/Ctl", "name": "avars:rx", "value": 45}]})
+    _Check("undo stack" in text, "posing says the same: %s" % text)
+    box.finish()
+    _Check(stage.GetPrimAtPath("/Char/Rig/Extra").IsDefined() and
+           stage.GetAttributeAtPath("/Char/Ctl.avars:rx").Get(1) == 45,
+           "finish with no stack does not raise and leaves the work in place")
+
+
+def _ReplacedUndoStack():
+    stage = _Stage()
+    container = _SwappingContainer()
+    box, _api = _Toolbox(stage, container, can_edit=True)
+    box.call("change_stage", {"changes": [
+        {"action": "set_attr", "path": "/Char/Ctl", "name": "avars:rx",
+         "value": 30}]})
+    pinned = container.stack
+    container.swap()
+    box.finish()
+    _Check(pinned.CanUndo() and
+           pinned.UndoText() == stage_actions.UNDO_LABEL,
+           "the step went to the stack the reply was recorded against")
+    _Check(not container.replacement.CanUndo(),
+           "the new stack did not get the reply's changes")
+    _Check(any("undo stack" in f for f in box.failed),
+           "the toolbox says the stack went away: %s" % box.failed)
+
+
+class _ThrowingStack(rigExecUndo.UndoStack):
+    def Push(self, edit):
+        raise RuntimeError("the host stack is closed")
+
+
+def _PushThatThrows():
+    stage = _Stage()
+    container = _Container()
+    container.stack = _ThrowingStack()
+    box, _api = _Toolbox(stage, container, can_edit=True)
+    box.call("change_stage", {"changes": [
+        {"action": "define_prim", "path": "/Char/Rig/Extra",
+         "type": "Xform"}]})
+    box.finish()
+    _Check(any("closed" in f for f in box.failed),
+           "a throwing Push is reported on the toolbox: %s" % box.failed)
+    text, failed = box.call("get_prim", {"path": "/Char/Ctl"})
+    _Check(not failed and "avars:rx" in json.loads(text)["attributes"],
+           "the reply keeps working after a failed Push: %s" % text)
+
+
+def _ChatKeepsEffects():
+    """The reply report survives reopening the chat: a chat keeps a fixed
+    set of message keys, so "effects" has to be one of them."""
+    store = chats.ChatStore(folder=None)
+    chat_id = chats.ChatStore.new_id()
+    store.save({"id": chat_id, "messages": [
+        {"role": "user", "content": "save it"},
+        {"role": "assistant", "content": "Saved.",
+         "done": ["Created /World/Box"],
+         "effects": ["Saved /tmp/reply.usda"]}]})
+    kept = store.load(chat_id)["messages"][1]
+    _Check(kept.get("effects") == ["Saved /tmp/reply.usda"],
+           "the effect did not survive the chat: %s" % kept)
+    _Check(kept.get("done") == ["Created /World/Box"],
+           "the change did not survive the chat: %s" % kept)
+
+
+def TestReplyTransaction():
+    """One reply is one step on the host's undo stack, and nothing else."""
+    _OneStepPerReply()
+    _OverlappingWrites()
+    _CrossLayerReply()
+    _EffectsAreNotUndoable()
+    _SaveOnlyReply()
+    _MissingUndoStack()
+    _ReplacedUndoStack()
+    _PushThatThrows()
+    _ChatKeepsEffects()
 
 
 _CAPTURE_USDA = """#usda 1.0
@@ -685,7 +967,7 @@ def main():
     _ = app
     for test in (TestLooking, TestChangesAreOneUndoStep, TestPosing,
                  TestRunPython, TestActionCapture, TestActionBlocks,
-                 TestMcpServer):
+                 TestReplyTransaction, TestMcpServer):
         try:
             test()
         except Exception as err:

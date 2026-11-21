@@ -19,7 +19,7 @@ CHATS_DIR = os.path.join(host.PREF_DIR, 'ai_chats')
 TITLE_LENGTH = 60
 # What a message keeps, the rest is only for this session.
 KEPT = ('role', 'content', 'shown', 'who', 'time', 'note', 'done',
-        'failed', 'tools')
+        'effects', 'failed', 'tools')
 
 
 def title_for(messages):

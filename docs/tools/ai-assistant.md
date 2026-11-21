@@ -44,7 +44,9 @@ you ask it something.
 
 All the changes in one reply are one step on the RigExec undo stack, so
 ++ctrl+z++ takes the whole reply back. Python it runs can be undone too, as
-long as it only changed the edit target.
+long as it only changed the edit target. What a reply saved to a file,
+selected, or switched the edit target to is listed under the reply too:
+++ctrl+z++ does not take those back.
 
 ## Signing in
 

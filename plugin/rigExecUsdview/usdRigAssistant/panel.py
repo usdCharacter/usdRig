@@ -657,9 +657,11 @@ class AiAssistant(QtWidgets.QDockWidget):
                        'time': self.reply_time or time.time()}
             if self.reply_tools:
                 message['tools'] = self.tools_record(self.reply_tools)
-            if toolbox is not None and (toolbox.done or toolbox.failed):
+            if toolbox is not None and (toolbox.done or toolbox.failed or
+                                        toolbox.effects):
                 message['done'] = list(toolbox.done)
                 message['failed'] = list(toolbox.failed)
+                message['effects'] = list(toolbox.effects)
             self.messages.append(message)
             self.apply_changes(message)
         elif self.messages and self.messages[-1]['role'] == 'user':
@@ -746,6 +748,8 @@ class AiAssistant(QtWidgets.QDockWidget):
         done, failed = toolbox.done, problems + toolbox.failed
         message['done'] = message.get('done', []) + done
         message['failed'] = message.get('failed', []) + failed
+        message['effects'] = message.get('effects', []) + list(
+            toolbox.effects)
         if failed:
             self.show_error('{} of the changes could not be made.'.format(
                 len(failed)))
@@ -847,9 +851,11 @@ class AiAssistant(QtWidgets.QDockWidget):
                 'note': 'Stopped when you left the chat.'}
             if self.reply_tools:
                 message['tools'] = self.tools_record(self.reply_tools)
-            if toolbox is not None and (toolbox.done or toolbox.failed):
+            if toolbox is not None and (toolbox.done or toolbox.failed or
+                                        toolbox.effects):
                 message['done'] = list(toolbox.done)
                 message['failed'] = list(toolbox.failed)
+                message['effects'] = list(toolbox.effects)
             self.messages.append(message)
         elif self.messages and self.messages[-1]['role'] == 'user':
             self.messages.pop()
