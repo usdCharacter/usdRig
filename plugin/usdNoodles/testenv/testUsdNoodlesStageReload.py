@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, Mock, call, patch
 
-from pxr import Sdf, Tf, Usd
+from pxr import Gf, Sdf, Tf, Usd
 from pxr.Usdviewq.qt import QtCore, QtWidgets
 from UsdNoodles.undoHistory import history_for_stage
 from UsdNoodles.graphView import GraphView
@@ -355,6 +355,101 @@ class TestReloadLifecycle(unittest.TestCase):
             _, resync, info, _ = reconcile.call_args.args
             self.assertEqual(resync, {'/New'})
             self.assertEqual(info, {'/Old.testValue'})
+
+    def test_final_release_follows_parent_move_then_child_reparent(self):
+        stage, view = self.stage, self.view
+        prim = stage.DefinePrim('/A/Child', 'Xform')
+        view.loadStage(stage)
+        self.assertTrue(view._addPrimAsNode(prim, stage, []))
+        node = view.nodes['/A/Child']
+        node.setDisplayPosition(Gf.Vec2d(500, 300))
+        view._selectedNodes = {'/A/Child'}
+        token = view._stageSync.acquireSuppression(reconcile=True)
+        self.addCleanup(token.release)
+        editor = Usd.NamespaceEditor(stage)
+        for source, destination in (('/A', '/B'), ('/B/Child', '/D')):
+            self.assertTrue(editor.MovePrimAtPath(source, destination))
+            self.assertTrue(editor.ApplyEdits())
+        self.assertIs(view.nodes['/A/Child'], node)
+        token.release()
+        self.assertIs(view.nodes.get('/D'), node)
+        self.assertEqual(node.getUsdPrim(), stage.GetPrimAtPath('/D'))
+        self.assertEqual(view._selectedNodes, {'/D'})
+        self.assertEqual(tuple(node.position), (500.0, 300.0))
+        self.assertNotIn('/A/Child', view.nodes)
+        self.assertNotIn('/B/Child', view.nodes)
+
+    def test_first_preview_can_be_canceled_by_synchronous_notice(self):
+        for action in ('switch', 'close'):
+            with self.subTest(action=action):
+                view = self.view
+                stage = Usd.Stage.CreateInMemory()
+                attr = stage.DefinePrim('/Value').CreateAttribute('number', Sdf.ValueTypeNames.Float)
+                attr.Set(2.5)
+                replacement = Usd.Stage.CreateInMemory()
+                replacement_attr = replacement.DefinePrim('/Value').CreateAttribute(
+                    'number', Sdf.ValueTypeNames.Float)
+                replacement_attr.Set(9.0)
+                view.loadStage(stage)
+                history = view._undoHistory
+                hit = SimpleNamespace(
+                    row=SimpleNamespace(editable=True, kind='numeric', mungable=True,
+                                        components=(2.5,), type_name='float'),
+                    comp=0, nodeId='/Value', primPath='/Value', propertyName='number',
+                )
+                view._onValueCellPressed(hit, SimpleNamespace(position=lambda: QtCore.QPointF()))
+                gesture = view._mungState
+                observed = []
+
+                def during_write(notice, sender):
+                    if observed:
+                        return
+                    observed.append(attr.Get())
+                    key.Revoke()
+                    if action == 'switch':
+                        view.loadStage(replacement)
+                    else:
+                        view.close()
+
+                key = Tf.Notice.Register(Usd.Notice.ObjectsChanged, during_write, stage)
+                self.addCleanup(key.Revoke)
+                view._updateMung(SimpleNamespace(position=lambda: QtCore.QPointF(100, 0),
+                                                modifiers=lambda: QtCore.Qt.NoModifier))
+                self.assertEqual(observed, [3.5])
+                self.assertEqual(stage.GetRootLayer().GetAttributeAtPath(attr.GetPath()).default, 2.5)
+                self.assertEqual(gesture['current'], (2.5,))
+                self.assertFalse(history.canUndo())
+                self.assertEqual(replacement_attr.Get(), 9.0)
+                self.assertIsNone(view._mungState)
+                self.assertIsNone(view._mungSuppression)
+                self.assertIs(view._stageSync.boundStage(), replacement if action == 'switch' else None)
+
+    def test_refused_first_preview_does_not_record_undo_or_flash(self):
+        stage, view = self.stage, self.view
+        attr = stage.DefinePrim('/Value').CreateAttribute('number', Sdf.ValueTypeNames.Float)
+        attr.Set(2.5)
+        view.loadStage(stage)
+        hit = SimpleNamespace(
+            row=SimpleNamespace(editable=True, kind='numeric', mungable=True,
+                                components=(2.5,), type_name='float'),
+            comp=0, nodeId='/Value', primPath='/Value', propertyName='number',
+        )
+        view._onValueCellPressed(hit, SimpleNamespace(position=lambda: QtCore.QPointF()))
+        layer = stage.GetRootLayer()
+        layer.SetPermissionToEdit(False)
+        self.addCleanup(layer.SetPermissionToEdit, True)
+        with patch.object(view, '_showWarningPopup') as warning, \
+                patch.object(view, '_startValueFlash') as flash:
+            view._updateMung(SimpleNamespace(position=lambda: QtCore.QPointF(100, 0),
+                                            modifiers=lambda: QtCore.Qt.NoModifier))
+            warning.assert_called_once_with('number: edit target is locked')
+            self.assertIsNone(view._mungState.get('opinion'))
+            self.assertEqual(view._mungState['current'], (2.5,))
+            view._finishMung()
+            flash.assert_not_called()
+        self.assertEqual(attr.Get(), 2.5)
+        self.assertFalse(view._undoHistory.canUndo())
+        self.assertIsNone(view._mungSuppression)
 
     def test_canceled_preview_restores_original_mapped_sample(self):
         stage, view = self.stage, self.view
