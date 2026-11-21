@@ -1,7 +1,9 @@
 # Guards cmake/rigexec_flags.cmake as the single authority for the exact-FP
 # settings and for the USD-free file lists: the flag list the build writes
 # must be the fragment's, and the manifests the SDK ships must be the same
-# paths, relocated against a checkout root.
+# entries, relocated into the installed-manifest grammar of
+# cmake/rigExecConfig.cmake.in and resolvable under the root their reserved
+# first component selects.
 
 if (NOT SOURCE_DIR OR NOT BINARY_DIR OR NOT EXPORT_SCRIPT OR NOT INSTALL_DATADIR)
     message(FATAL_ERROR
@@ -39,6 +41,7 @@ if (NOT _expected_text STREQUAL _generated_text)
 endif ()
 
 set(_export_dir "${BINARY_DIR}/exactFpFragmentCheck")
+set(_manifest_dir "${_export_dir}/${INSTALL_DATADIR}")
 file(REMOVE_RECURSE "${_export_dir}")
 execute_process(COMMAND "${CMAKE_COMMAND}"
     "-DSOURCE_ROOT=${SOURCE_DIR}" "-DBUILD_DIR=${BINARY_DIR}"
@@ -48,37 +51,73 @@ if (NOT _status EQUAL 0)
     message(FATAL_ERROR "cmake/exportManifests.cmake failed: ${_status}")
 endif ()
 
+# A staged install ships the generated payload beside the manifests, so the
+# scratch export mirrors that install(FILES) payload from the build tree
+# before resolving runtime-generated/ entries under the manifest dir.
+if (NOT IS_DIRECTORY "${BINARY_DIR}/runtime-generated")
+    message(FATAL_ERROR
+        "${BINARY_DIR}/runtime-generated is missing: configure and build rigExecRuntime first")
+endif ()
+file(COPY "${BINARY_DIR}/runtime-generated" DESTINATION "${_manifest_dir}")
+
+# One shipped entry against the installed grammar: never absolute, never a
+# '..' segment; the reserved runtime-generated/ component resolves with its
+# kind under the manifest directory, every other entry under the checkout.
+function (check_installed_entry entry manifest kind root manifest_dir)
+    cmake_path(SET _path "${entry}")
+    cmake_path(IS_ABSOLUTE _path _absolute)
+    if (_absolute)
+        message(FATAL_ERROR "${manifest}.txt ships an absolute path: ${entry}")
+    endif ()
+    if (entry MATCHES "(^|/)\.\.(/|$)")
+        message(FATAL_ERROR "${manifest}.txt ships a '..' segment: ${entry}")
+    endif ()
+    if (entry MATCHES "^runtime-generated(/|$)")
+        set(_resolved "${manifest_dir}/${entry}")
+    else ()
+        set(_resolved "${root}/${entry}")
+    endif ()
+    if (kind STREQUAL "file")
+        if (NOT EXISTS "${_resolved}" OR IS_DIRECTORY "${_resolved}")
+            message(FATAL_ERROR
+                "${manifest}.txt source does not resolve to a file: ${entry} -> ${_resolved}")
+        endif ()
+    else ()
+        if (NOT IS_DIRECTORY "${_resolved}")
+            message(FATAL_ERROR
+                "${manifest}.txt include does not resolve to a directory: ${entry} -> ${_resolved}")
+        endif ()
+    endif ()
+endfunction ()
+
 foreach (_manifest runtimeSources evalCoreSources)
     file(STRINGS "${BINARY_DIR}/${_manifest}.txt" _built)
-    file(STRINGS "${_export_dir}/${INSTALL_DATADIR}/${_manifest}.txt" _shipped)
+    file(STRINGS "${_manifest_dir}/${_manifest}.txt" _shipped)
     list(LENGTH _built _built_count)
     list(LENGTH _shipped _shipped_count)
     if (NOT _built_count EQUAL _shipped_count OR NOT _built_count)
         message(FATAL_ERROR "${_manifest}.txt: ${_built_count} built, ${_shipped_count} shipped")
     endif ()
+    set(_generated_seen FALSE)
     foreach (_entry IN LISTS _shipped)
-        if (IS_ABSOLUTE "${_entry}")
-            message(FATAL_ERROR "${_manifest}.txt ships an absolute path: ${_entry}")
-        endif ()
-        if (NOT EXISTS "${SOURCE_DIR}/${_entry}")
-            message(FATAL_ERROR "${_manifest}.txt path does not resolve from the checkout root: ${_entry}")
+        check_installed_entry("${_entry}" "${_manifest}" file "${SOURCE_DIR}" "${_manifest_dir}")
+        if (_entry MATCHES "^runtime-generated(/|$)")
+            set(_generated_seen TRUE)
         endif ()
     endforeach ()
+    if (_manifest STREQUAL runtimeSources AND NOT _generated_seen)
+        message(FATAL_ERROR "${_manifest}.txt ships no runtime-generated/ entry")
+    endif ()
 endforeach ()
 
 foreach (_manifest runtimeIncludes evalCoreIncludes)
-    file(STRINGS "${_export_dir}/${INSTALL_DATADIR}/${_manifest}.txt" _shipped)
+    file(STRINGS "${_manifest_dir}/${_manifest}.txt" _shipped)
     list(LENGTH _shipped _shipped_count)
     if (NOT _shipped_count)
         message(FATAL_ERROR "${_manifest}.txt ships no include directory")
     endif ()
     foreach (_entry IN LISTS _shipped)
-        if (IS_ABSOLUTE "${_entry}")
-            message(FATAL_ERROR "${_manifest}.txt ships an absolute path: ${_entry}")
-        endif ()
-        if (NOT IS_DIRECTORY "${SOURCE_DIR}/${_entry}")
-            message(FATAL_ERROR "${_manifest}.txt include does not resolve from the checkout root: ${_entry}")
-        endif ()
+        check_installed_entry("${_entry}" "${_manifest}" directory "${SOURCE_DIR}" "${_manifest_dir}")
     endforeach ()
 endforeach ()
 
