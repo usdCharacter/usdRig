@@ -7,7 +7,9 @@
 #include "rigExec/compiledProgram.h"
 #include "rigExec/frozenContext.h"
 #include "rigExec/rigEvaluator.h"
+#include "rigExecSchema/schemaNames.h"
 #include "pxr/base/plug/registry.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/usd/sdf/types.h"
 #include "pxr/usd/usd/stage.h"
 #include <cstdio>
@@ -18,6 +20,31 @@
 
 PXR_NAMESPACE_USING_DIRECTIVE
 using namespace rigExec;
+
+// Schema names the skinned-mesh fixture below authors, each declared once;
+// RigExec spellings stay single-sourced in schemaNames.h.
+TF_DEFINE_PRIVATE_TOKENS(
+    _sealedViewTokens,
+    ((points, "points"))
+    ((pointsType, "Points"))
+    ((control, rigExec::SchemaTypeName::RigExecControl))
+    ((avarsTx, rigExec::SchemaAttrText::avarsTx))
+    ((skinMover, rigExec::SchemaTypeName::RigExecSkinMover))
+    ((moverAPI, rigExec::SchemaTypeName::RigExecMoverAPI))
+    ((moves, rigExec::SchemaAttrText::rigExecMoves))
+    ((influences, rigExec::SchemaAttrText::rigExecInfluences))
+    ((elementSize, rigExec::SchemaAttrText::rigExecElementSize))
+    ((jointIndices, rigExec::SchemaAttrText::rigExecJointIndices))
+    ((jointWeights, rigExec::SchemaAttrText::rigExecJointWeights))
+    ((staticWeight, rigExec::SchemaTypeName::RigExecStaticWeight))
+    ((weightTarget, rigExec::SchemaAttrText::rigExecWeightTarget))
+    ((representation, rigExec::SchemaAttrText::rigExecRepresentation))
+    ((sparse, rigExec::SchemaValueText::sparse))
+    ((indices, rigExec::SchemaAttrText::rigExecIndices))
+    ((values, rigExec::SchemaAttrText::rigExecValues))
+    ((weightObject, rigExec::SchemaAttrText::rigExecWeightObject))
+);
+
 namespace {
 int failures = 0;
 #define CHECK(condition)                                                       \
@@ -70,54 +97,57 @@ MakeStage()
     // A skinned mesh, so the chain, revision and weight loops below have
     // records to compare against rather than running empty.
     const SdfPath geomPath("/View/Geom/Panel");
-    const SdfPath pointsProp = geomPath.AppendProperty(TfToken("points"));
-    const UsdPrim mesh = stage->DefinePrim(geomPath, TfToken("Points"));
+    const SdfPath pointsProp =
+        geomPath.AppendProperty(_sealedViewTokens->points);
+    const UsdPrim mesh =
+        stage->DefinePrim(geomPath, _sealedViewTokens->pointsType);
     VtVec3fArray panelPoints(4);
     for (size_t i = 0; i < panelPoints.size(); ++i) {
         panelPoints[i] = GfVec3f(float(i), float(i % 2), 0.0f);
     }
-    CHECK(mesh.GetAttribute(TfToken("points")).Set(panelPoints));
+    CHECK(mesh.GetAttribute(_sealedViewTokens->points).Set(panelPoints));
     const UsdPrim joint = stage->DefinePrim(SdfPath("/View/Rig/Joint"),
-                                            TfToken("RigExecControl"));
-    CHECK(joint.GetAttribute(TfToken("avars:tx")).Set(1.0));
+                                            _sealedViewTokens->control);
+    CHECK(joint.GetAttribute(_sealedViewTokens->avarsTx).Set(1.0));
     const auto skin = [&](const char *name) {
         UsdPrim prim = stage->DefinePrim(root.AppendChild(TfToken(name)),
-                                         TfToken("RigExecSkinMover"));
-        CHECK(prim.ApplyAPI(TfToken("RigExecMoverAPI")));
-        CHECK(prim.GetRelationship(TfToken("rigExec:moves"))
+                                         _sealedViewTokens->skinMover);
+        CHECK(prim.ApplyAPI(_sealedViewTokens->moverAPI));
+        CHECK(prim.GetRelationship(_sealedViewTokens->moves)
                   .SetTargets({pointsProp}));
-        CHECK(prim.CreateRelationship(TfToken("rigExec:influences"))
+        CHECK(prim.CreateRelationship(_sealedViewTokens->influences)
                   .SetTargets({joint.GetPath()}));
-        CHECK(prim.CreateAttribute(TfToken("rigExec:elementSize"),
+        CHECK(prim.CreateAttribute(_sealedViewTokens->elementSize,
                                    SdfValueTypeNames->Int)
                   .Set(1));
-        CHECK(prim.CreateAttribute(TfToken("rigExec:jointIndices"),
+        CHECK(prim.CreateAttribute(_sealedViewTokens->jointIndices,
                                    SdfValueTypeNames->IntArray)
                   .Set(VtIntArray(4, 0)));
-        CHECK(prim.CreateAttribute(TfToken("rigExec:jointWeights"),
+        CHECK(prim.CreateAttribute(_sealedViewTokens->jointWeights,
                                    SdfValueTypeNames->FloatArray)
                   .Set(VtFloatArray(4, 1.0f)));
         return prim;
     };
     skin("PanelSkinA");
-    const UsdPrim weight = stage->DefinePrim(
-        SdfPath("/View/Rig/Weights/PanelEdge"), TfToken("RigExecStaticWeight"));
-    CHECK(weight.CreateRelationship(TfToken("rigExec:weightTarget"), false)
+    const UsdPrim weight =
+        stage->DefinePrim(SdfPath("/View/Rig/Weights/PanelEdge"),
+                          _sealedViewTokens->staticWeight);
+    CHECK(weight.CreateRelationship(_sealedViewTokens->weightTarget, false)
               .SetTargets({pointsProp}));
     CHECK(weight
-              .CreateAttribute(TfToken("rigExec:representation"),
+              .CreateAttribute(_sealedViewTokens->representation,
                                SdfValueTypeNames->Token, false)
-              .Set(TfToken("sparse")));
+              .Set(_sealedViewTokens->sparse));
     CHECK(weight
-              .CreateAttribute(TfToken("rigExec:indices"),
+              .CreateAttribute(_sealedViewTokens->indices,
                                SdfValueTypeNames->IntArray, false)
               .Set(VtIntArray({0, 1, 2, 3})));
     CHECK(weight
-              .CreateAttribute(TfToken("rigExec:values"),
+              .CreateAttribute(_sealedViewTokens->values,
                                SdfValueTypeNames->FloatArray, false)
               .Set(VtFloatArray(4, 1.0f)));
     CHECK(skin("PanelSkinB")
-              .CreateRelationship(TfToken("rigExec:weightObject"), false)
+              .CreateRelationship(_sealedViewTokens->weightObject, false)
               .SetTargets({weight.GetPath()}));
     return stage;
 }
