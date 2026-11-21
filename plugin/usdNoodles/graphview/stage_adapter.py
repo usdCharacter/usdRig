@@ -188,6 +188,11 @@ def _movedDestinationForPath(pathStr, movedPaths):
     """
     if not movedPaths:
         return None
+    if not isinstance(movedPaths, dict):
+        destination = pathStr
+        for moves in movedPaths:
+            destination = _movedDestinationForPath(destination, moves) or destination
+        return destination if destination != pathStr else None
     try:
         candidate = Sdf.Path(pathStr)
     except Exception:

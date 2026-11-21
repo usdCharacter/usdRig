@@ -273,7 +273,7 @@ class StageSync:
             self._enabledBeforeSuppression = self._handler.isEnabled()
             self._handler.setEnabled(False)
         if reconcile and self._enabledBeforeSuppression and self._pendingChanges is None:
-            self._pendingChanges = (self._epoch, set(), set(), {})
+            self._pendingChanges = (self._epoch, set(), set(), [])
         self._suppressionTokens.add(token)
         return token
 
@@ -293,13 +293,8 @@ class StageSync:
             return
         pending[1].update(resynced)
         pending[2].update(info)
-        for source, destination in (moved or {}).items():
-            for original, intermediate in tuple(pending[3].items()):
-                if intermediate == source:
-                    pending[3][original] = destination
-                    break
-            else:
-                pending[3][source] = destination
+        if moved:
+            pending[3].append(moved)
 
     @contextmanager
     def suppressed(self):
