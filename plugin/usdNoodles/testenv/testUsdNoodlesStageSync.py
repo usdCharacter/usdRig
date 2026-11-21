@@ -8,9 +8,9 @@
 
 
 """
-Direct tests for the graphview/stage_sync layer.
+Direct tests for the graphview stage policy and adapter.
 
-The module functions run against real in-memory Usd.Stages with a recording
+The adapter functions run against real in-memory Usd.Stages with a recording
 stub standing in for the view side -- the same split the reconciliation code
 already assumes: it reads the view's state attributes and calls its hooks,
 so a stub that records the hooks sees exactly the decisions the shipped
@@ -46,7 +46,7 @@ except ImportError as error:  # pragma: no cover - OpenUSD not installed
     _has_usd = False
 
 if _has_usd:
-    from UsdNoodles.graphview import stage_sync
+    from UsdNoodles.graphview import stage_adapter, stage_sync
     from UsdNoodles.graphView import _makeStageSync, GraphView
     from UsdNoodles.usdNoticeHandler import UsdNoticeHandler
 
@@ -93,8 +93,9 @@ def _layer_text(stage):
 def _node_for(stage, path):
     """The slice of NodeModel the reconciliation reads.
 
-    ``getUsdPrim`` tracks the model's current ``_primPath``, like the real
-    NodeModel does after ``remapMovedNodes`` repoints it.
+    ``getUsdPrim`` resolves the model's ``_primPath`` against the live stage,
+    so a namespace edit expires exactly the nodes whose paths are gone --
+    the expired-prim signal validation drops.
     """
     node = SimpleNamespace(
         id=path,
@@ -103,6 +104,9 @@ def _node_for(stage, path):
         _prim=stage.GetPrimAtPath(path),
         _primPath=Sdf.Path(path),
         _position=(0.0, 0.0),
+        position=(0.0, 0.0),
+        _authoredPosition=False,
+        zOrder=0,
         _title_collapsed=False,
         titleCollapsed=False,
         _cachedType="Sphere",
@@ -110,6 +114,13 @@ def _node_for(stage, path):
         invalidate_value_row=MagicMock(),
     )
     node.getUsdPrim = lambda: stage.GetPrimAtPath(node._primPath)
+    node.hasAuthoredPosition = lambda: node._authoredPosition
+
+    def _setDisplayPosition(value):
+        node._position = value
+        node.position = value
+
+    node.setDisplayPosition = _setDisplayPosition
     return node
 
 
@@ -175,7 +186,7 @@ class _KeyedOnlyNodes(dict):
 
 
 class _StubView:
-    """The context surface stage_sync reads, with recording hooks.
+    """The view surface stage_adapter reads, with recording hooks.
 
     Mirrors the real GraphView: ``nodes`` reads through to
     ``nodeGraph.nodes``, so a wholesale re-key is visible from both sides.
@@ -191,19 +202,6 @@ class _StubView:
         self._selectedNodes = set()
         self._marqueeBaseSelectedNodes = set()
         self._marqueePrevSelectedNodes = set()
-        self._reconciledPositionVersions = {}
-        self.nodeIdUnderCursor = ""
-        self._renamingNodeId = ""
-        self._valueEditTarget = None
-        self._mungState = None
-        self._tokenPopup = None
-        self._hoveredPort = None
-        self._tooltipProperty = None
-        self._dragLinkSourceNode = None
-        self._dragLinkSyntheticTarget = None
-        self._dragLinkResolvedTarget = None
-        self._reconnectOldSourceNodeId = None
-        self._reconnectOldTargetNodeId = None
         self._currentPrimPath = None if scope == "/" else scope
         self._syncingSelection = False
         self._cachedShowAttributeValues = False
@@ -229,7 +227,7 @@ class _StubView:
         return self.nodeGraph.nodes
 
     def _graphScopeParentPath(self):
-        return stage_sync.graphScopeParentPath(self)
+        return stage_adapter.graphScopeParentPath(self)
 
     def _valueRowOnlyChange(self, node, propertyName):
         return False
@@ -277,83 +275,77 @@ class _ClosedHostReads(_StubView):
         return object.__getattribute__(self, name)
 
 
-class _LifecycleView:
-    """A headless editor: the model a reload mutates, recorded.
+class _RecordingHandler:
+    __slots__ = ("events", "enabled")
 
-    The service's ``read``/``apply`` contract against plain state -- no Qt,
-    no GL -- so the lifecycle cases below see exactly the epoch gating,
-    scheduling and suppression the shipped editor gets.
-    """
+    def __init__(self, events):
+        self.events = events
+        self.enabled = True
+
+    def register(self, stage):
+        self.events.append(("register", stage))
+
+    def unregister(self):
+        self.events.append(("unregister",))
+
+    def isEnabled(self):
+        return self.enabled
+
+    def setEnabled(self, enabled):
+        self.events.append(("setEnabled", enabled))
+        self.enabled = enabled
+
+
+class _RecordingHooks:
+    """Record the service boundary without emulating an editor."""
+
+    __slots__ = (
+        "stage_context", "notice_context", "events", "queued", "load_error",
+        "receiver", "handler", "sync",
+    )
 
     def __init__(self, node_ids=()):
-        self.nodes = {node_id: object() for node_id in node_ids}
-        self.stage = None
-        self.mode = "stage"
-        self.prim_path = None
-        self.syncing = False
-        self._deferRenderCacheClear = False
-        self.initialized = True
-        self.updates_enabled = True
-        self.history = ["undo-record"]
-        self.loaded = None
-        self.fail_loads = False
-        self.frames = []
-        self.applied = []
-        self.finishes = 0
+        self.stage_context = stage_sync.StageContext(node_ids)
+        self.notice_context = stage_sync.NoticeContext(False)
+        self.events = []
+        self.queued = []
+        self.load_error = None
+        self.handler = _RecordingHandler(self.events)
+        self.sync = stage_sync.StageSync(
+            self.read, self.notice, self.apply, self.post, self.listen,
+            warn=self.warn, sink=self.publish, reconcile=self.reconcile,
+        )
 
     def read(self):
-        return stage_sync.StageContext(
-            view=self,
-            stage=self.stage,
-            mode=self.mode,
-            prim_path=self.prim_path,
-            node_ids=tuple(self.nodes),
-            syncing_selection=self.syncing,
-        )
+        self.events.append(("read", self.stage_context))
+        return self.stage_context
 
-    def readNotice(self):
-        return stage_sync.NoticeContext(
-            view=self, syncing_selection=self.syncing
-        )
+    def notice(self):
+        self.events.append(("notice", self.notice_context))
+        return self.notice_context
 
     def apply(self, delta):
-        self.applied.append(delta)
-        if isinstance(delta, stage_sync.BeginReload):
-            self.updates_enabled = False
-            self.frames.append(delta.frame)
-        elif isinstance(delta, stage_sync.Load):
-            if self.fail_loads:
-                raise RuntimeError("load boom")
-            self.loaded = (delta.stage, delta.mode, delta.prim_path)
-        elif isinstance(delta, stage_sync.ClearHistory):
-            self.history = None
-        elif isinstance(delta, stage_sync.FinishReload):
-            self.finishes += 1
-            self.updates_enabled = True
+        self.events.append(("apply", delta))
+        if isinstance(delta, stage_sync.Load) and self.load_error is not None:
+            raise self.load_error
 
+    def post(self, callback):
+        self.events.append(("post", callback))
+        self.queued.append(callback)
 
-class _LifecycleHarness:
-    """A StageSync over a _LifecycleView with recording sink and scheduler."""
+    def listen(self, receiver):
+        self.events.append(("listen", receiver))
+        self.receiver = receiver
+        return self.handler
 
-    def __init__(self, view):
-        self.view = view
-        self.deltas = []
-        self.queued = []
-        self.warnings = []
-        self.sync = stage_sync.StageSync(
-            read=view.read,
-            notice=view.readNotice,
-            apply=view.apply,
-            post=lambda callback: self.queued.append(callback),
-            listen=lambda receiver: UsdNoticeHandler(receiver),
-            warn=self.warnings.append,
-            sink=self.deltas.append,
-        )
+    def warn(self, message):
+        self.events.append(("warn", message))
 
-    def run_queued(self):
-        queued, self.queued = self.queued, []
-        for callback in queued:
-            callback()
+    def publish(self, delta):
+        self.events.append(("publish", delta))
+
+    def reconcile(self, resynced, info, trace, moved):
+        self.events.append(("reconcile", resynced, info, trace, moved))
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
@@ -363,7 +355,7 @@ class GraphScopeParentPathTest(unittest.TestCase):
     def test_a_plain_graph_scopes_to_the_pseudo_root(self):
         stage = Usd.Stage.CreateInMemory()
         view = _StubView(stage)
-        self.assertEqual(stage_sync.graphScopeParentPath(view), "/")
+        self.assertEqual(stage_adapter.graphScopeParentPath(view), "/")
 
     @unittest.skipUnless(_has_blueprint, "nodeGraphBlueprint not importable")
     def test_a_blueprint_graph_scopes_to_its_own_prim(self):
@@ -372,7 +364,7 @@ class GraphScopeParentPathTest(unittest.TestCase):
         view.nodeGraph = NodeGraphBlueprint()
         view.nodeGraph.setStage(stage)
         view._currentPrimPath = Sdf.Path("/Keeper")
-        self.assertEqual(stage_sync.graphScopeParentPath(view), "/Keeper")
+        self.assertEqual(stage_adapter.graphScopeParentPath(view), "/Keeper")
 
     @unittest.skipUnless(_has_blueprint, "nodeGraphBlueprint not importable")
     def test_a_scope_without_a_prim_reconciles_nothing(self):
@@ -380,7 +372,7 @@ class GraphScopeParentPathTest(unittest.TestCase):
         view = _StubView(stage)
         view.nodeGraph = NodeGraphBlueprint()
         view._currentPrimPath = None
-        self.assertIsNone(stage_sync.graphScopeParentPath(view))
+        self.assertIsNone(stage_adapter.graphScopeParentPath(view))
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
@@ -398,7 +390,7 @@ class ValidateNodesAgainstStageTest(unittest.TestCase):
         edit.Add("/Alpha", "/Renamed")
         self.assertTrue(self.stage.GetEditTarget().GetLayer().Apply(edit))
 
-        removed = stage_sync.validateNodesAgainstStage(view)
+        removed = stage_adapter.validateNodesAgainstStage(view)
 
         self.assertEqual(removed, ["/Alpha"])
         self.assertEqual(sorted(view.nodes), ["/Keeper"])
@@ -415,7 +407,7 @@ class ValidateNodesAgainstStageTest(unittest.TestCase):
         self.stage.RemovePrim("/Alpha")
         self.stage.GetPrimAtPath("/Keeper").SetActive(False)
 
-        removed = stage_sync.validateNodesAgainstStage(view)
+        removed = stage_adapter.validateNodesAgainstStage(view)
 
         self.assertEqual(removed, ["/Alpha", "/Keeper"])
         self.assertEqual(view.nodes, {})
@@ -427,7 +419,7 @@ class ValidateNodesAgainstStageTest(unittest.TestCase):
 
     def test_a_healthy_graph_is_left_alone(self) -> None:
         view = _StubView(self.stage, ["/Alpha", "/Keeper"])
-        self.assertEqual(stage_sync.validateNodesAgainstStage(view), [])
+        self.assertEqual(stage_adapter.validateNodesAgainstStage(view), [])
         self.assertEqual(sorted(view.nodes), ["/Alpha", "/Keeper"])
 
     def test_synthesized_io_nodes_are_never_dropped(self) -> None:
@@ -435,7 +427,7 @@ class ValidateNodesAgainstStageTest(unittest.TestCase):
         view = _StubView(self.stage, ["/Alpha"])
         view.nodes["/Bp#input"] = _synthetic_node("/Bp#input")
 
-        self.assertEqual(stage_sync.validateNodesAgainstStage(view), [])
+        self.assertEqual(stage_adapter.validateNodesAgainstStage(view), [])
         self.assertIn("/Bp#input", view.nodes)
 
 
@@ -451,7 +443,7 @@ class AdoptPrimsNewToScopeTest(unittest.TestCase):
         UsdGeom.Sphere.Define(self.stage, "/Renamed")
         view = _StubView(self.stage, ["/Keeper"])
 
-        added = stage_sync.adoptPrimsNewToScope(view, {"/Renamed"})
+        added = stage_adapter.adoptPrimsNewToScope(view, {"/Renamed"})
 
         self.assertEqual(added, ["/Renamed"])
 
@@ -462,7 +454,7 @@ class AdoptPrimsNewToScopeTest(unittest.TestCase):
         view = _StubView(self.stage, ["/Keeper"])
 
         self.assertEqual(
-            stage_sync.adoptPrimsNewToScope(
+            stage_adapter.adoptPrimsNewToScope(
                 view, {"/Gone", "/Keeper.radius", "/Keeper/Child", "/Keeper"}
             ),
             [],
@@ -474,7 +466,7 @@ class AdoptPrimsNewToScopeTest(unittest.TestCase):
         self.stage.GetPrimAtPath("/Hidden").SetActive(False)
         view = _StubView(self.stage, ["/Keeper"])
 
-        self.assertEqual(stage_sync.adoptPrimsNewToScope(view, {"/Hidden"}), [])
+        self.assertEqual(stage_adapter.adoptPrimsNewToScope(view, {"/Hidden"}), [])
 
     @unittest.skipUnless(_has_blueprint, "nodeGraphBlueprint not importable")
     def test_container_scope_adopts_only_its_own_children(self) -> None:
@@ -484,7 +476,7 @@ class AdoptPrimsNewToScopeTest(unittest.TestCase):
         view.nodeGraph = NodeGraphBlueprint()
         view.nodeGraph.setStage(self.stage)
 
-        added = stage_sync.adoptPrimsNewToScope(
+        added = stage_adapter.adoptPrimsNewToScope(
             view, {"/Keeper/Child", "/Elsewhere"}
         )
 
@@ -492,8 +484,14 @@ class AdoptPrimsNewToScopeTest(unittest.TestCase):
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
-class RemapMovedNodesTest(unittest.TestCase):
-    """A namespace move re-keys the graph instead of dropping it."""
+class AdoptRenamedPrimTest(unittest.TestCase):
+    """A rename drops the old node and rebuilds from the live prim.
+
+    Node identity always comes from the current stage: the model at the new
+    path is built fresh from the prim there, never re-keyed from the old
+    one. Only display-only state (a grid placement, the draw slot) is
+    carried across, from a snapshot the caller took before the edit.
+    """
 
     def setUp(self) -> None:
         self.stage = Usd.Stage.CreateInMemory()
@@ -506,114 +504,140 @@ class RemapMovedNodesTest(unittest.TestCase):
         ):
             UsdGeom.Sphere.Define(self.stage, path)
 
-    def test_a_move_rekeys_descendants_and_spares_name_prefixes(self) -> None:
-        view = _StubView(
-            self.stage, ["/World", "/World/A", "/World/AB", "/WorldTwo"]
-        )
+    def _rename(self, oldPath, newPath):
         edit = Sdf.BatchNamespaceEdit()
-        edit.Add("/World", "/Moved")
-        self.stage.GetEditTarget().GetLayer().Apply(edit)
+        edit.Add(oldPath, newPath)
+        self.assertTrue(self.stage.GetEditTarget().GetLayer().Apply(edit))
+
+    def test_the_new_node_is_built_from_the_stage_not_rekeyed(self) -> None:
+        view = _StubView(self.stage, ["/World/A", "/Zebra"])
+        oldNode = view.nodes["/World/A"]
+        oldNode.setDisplayPosition((9.0, 9.0))
+        oldNode.zOrder = 3
+        placement = stage_adapter.savedRenamePlacement(view.nodes, "/World/A")
+        self._rename("/World/A", "/World/Renamed")
         before = _layer_text(self.stage)
 
-        remap = stage_sync.remapMovedNodes(view, {"/World": "/Moved"})
+        nodeId = stage_adapter.adoptRenamedPrim(
+            view, "/World/A", "/World/Renamed", *placement
+        )
 
-        self.assertEqual(
-            remap,
-            {
-                "/World": "/Moved",
-                "/World/A": "/Moved/A",
-                "/World/AB": "/Moved/AB",
-            },
-        )
-        # Iteration order IS draw order: a pop/re-insert would reorder.
-        self.assertEqual(
-            list(view.nodes), ["/Moved", "/Moved/A", "/Moved/AB", "/WorldTwo"]
-        )
-        node = view.nodes["/Moved/A"]
-        self.assertEqual(node.id, "/Moved/A")
-        self.assertEqual(node._primPath, Sdf.Path("/Moved/A"))
-        self.assertTrue(node._prim.IsValid())
-        self.assertEqual(node.name, "A")
+        self.assertEqual(nodeId, "/World/Renamed")
+        self.assertNotIn("/World/A", view.nodes)
+        # The distinguishing assertion: a re-key would hand back the same
+        # object under a new id; a stage-derived node is a fresh model.
+        self.assertIsNot(view.nodes["/World/Renamed"], oldNode)
+        view._addNewNodeFast.assert_called_once()
+        adoptedPrim, _stage = view._addNewNodeFast.call_args[0]
+        self.assertEqual(str(adoptedPrim.GetPath()), "/World/Renamed")
+        node = view.nodes["/World/Renamed"]
+        self.assertEqual(node.id, "/World/Renamed")
+        self.assertEqual(node._primPath, Sdf.Path("/World/Renamed"))
+        self.assertTrue(node.getUsdPrim().IsValid())
+        self.assertEqual(tuple(node._position), (9.0, 9.0))
+        self.assertEqual(node.zOrder, 3)
         # The namespace edit was the test's; reconciliation adds no opinion
         # of its own.
         self.assertEqual(_layer_text(self.stage), before)
 
-    def test_every_endpoint_adjacent_cache_and_gesture_id_moves(self) -> None:
-        view = _StubView(self.stage, ["/World", "/World/A"])
-        view._selectedNodes.add("/World/A")
-        view._marqueeBaseSelectedNodes.add("/World/A")
-        view._marqueePrevSelectedNodes.add("/World")
-        view._reconciledPositionVersions["/World/A"] = 7
-        view.nodeIdUnderCursor = "/World/A"
-        view._renamingNodeId = "/World"
-        view._valueEditTarget = ("/World/A", "radius", 0, 0)
-        view._mungState = {"nodeId": "/World/A", "primPath": "/World/A"}
-        view._tokenPopup = {"nodeId": "/World", "primPath": "/World"}
-        view._hoveredPort = ("/World/A", "input:x")
-        view._tooltipProperty = ("/World/A", "radius")
-        view._dragLinkSourceNode = "/World/A"
-        view._dragLinkSyntheticTarget = ("/World", "output:x")
-        view._dragLinkResolvedTarget = ("/World/A", "input:x")
-        view._reconnectOldSourceNodeId = "/World"
-        view._reconnectOldTargetNodeId = "/World/A"
+    def test_the_fresh_model_lands_in_the_vacated_draw_slot(self) -> None:
+        view = _StubView(self.stage, ["/World", "/World/A", "/Zebra"])
+        placement = stage_adapter.savedRenamePlacement(view.nodes, "/World/A")
+        self._rename("/World/A", "/World/Renamed")
 
-        stage_sync.remapMovedNodes(view, {"/World": "/Outer/Moved"})
-
-        self.assertEqual(view._selectedNodes, {"/Outer/Moved/A"})
-        self.assertEqual(view._marqueeBaseSelectedNodes, {"/Outer/Moved/A"})
-        self.assertEqual(view._marqueePrevSelectedNodes, {"/Outer/Moved"})
-        self.assertEqual(view._reconciledPositionVersions, {"/Outer/Moved/A": 7})
-        self.assertEqual(view.nodeIdUnderCursor, "/Outer/Moved/A")
-        self.assertEqual(view._renamingNodeId, "/Outer/Moved")
-        self.assertEqual(
-            view._valueEditTarget, ("/Outer/Moved/A", "radius", 0, 0)
+        stage_adapter.adoptRenamedPrim(
+            view, "/World/A", "/World/Renamed", *placement
         )
+
+        # Iteration order IS draw order: the adoption appended the fresh
+        # model, so it moves back to the slot the rename vacated.
         self.assertEqual(
-            view._mungState,
-            {"nodeId": "/Outer/Moved/A", "primPath": "/Outer/Moved/A"},
+            list(view.nodes), ["/World", "/World/Renamed", "/Zebra"]
         )
+
+    def test_an_authored_position_is_left_to_usd(self) -> None:
+        def _adoptAuthored(prim, _stage):
+            node = view._adopt(prim)
+            view.nodes[node]._authoredPosition = True
+            view.nodes[node].setDisplayPosition((1.0, 2.0))
+            return node
+
+        view = _StubView(self.stage, ["/World/A"])
+        view._addNewNodeFast = MagicMock(side_effect=_adoptAuthored)
+        view.nodes["/World/A"].setDisplayPosition((9.0, 9.0))
+        placement = stage_adapter.savedRenamePlacement(view.nodes, "/World/A")
+        self._rename("/World/A", "/World/Renamed")
+
+        stage_adapter.adoptRenamedPrim(
+            view, "/World/A", "/World/Renamed", *placement
+        )
+
+        # The rename carries the attribute to the new path; the snapshot is
+        # display-only state and must not overwrite it.
         self.assertEqual(
-            view._tokenPopup,
-            {"nodeId": "/Outer/Moved", "primPath": "/Outer/Moved"},
+            tuple(view.nodes["/World/Renamed"]._position), (1.0, 2.0)
         )
-        self.assertEqual(view._hoveredPort, ("/Outer/Moved/A", "input:x"))
-        self.assertEqual(view._tooltipProperty, ("/Outer/Moved/A", "radius"))
-        self.assertEqual(view._dragLinkSourceNode, "/Outer/Moved/A")
-        self.assertEqual(
-            view._dragLinkSyntheticTarget, ("/Outer/Moved", "output:x")
+
+    def test_an_already_adopted_prim_is_not_added_twice(self) -> None:
+        """The notice adopts inside the scope before the authoring site runs;
+        the follow-up restores the placement onto that model."""
+        view = _StubView(self.stage, ["/World/A", "/Zebra"])
+        view.nodes["/World/A"].setDisplayPosition((9.0, 9.0))
+        view.nodes["/World/A"].zOrder = 3
+        placement = stage_adapter.savedRenamePlacement(view.nodes, "/World/A")
+        self._rename("/World/A", "/World/Renamed")
+        # What the synchronous notice left behind: the old node dropped, the
+        # new prim adopted at the back without the display-only placement.
+        del view.nodes["/World/A"]
+        view._adopt(self.stage.GetPrimAtPath("/World/Renamed"))
+        view._addNewNodeFast.reset_mock()
+
+        nodeId = stage_adapter.adoptRenamedPrim(
+            view, "/World/A", "/World/Renamed", *placement
         )
-        self.assertEqual(
-            view._dragLinkResolvedTarget, ("/Outer/Moved/A", "input:x")
+
+        self.assertEqual(nodeId, "/World/Renamed")
+        self.assertEqual(list(view.nodes), ["/World/Renamed", "/Zebra"])
+        view._addNewNodeFast.assert_not_called()
+        node = view.nodes["/World/Renamed"]
+        self.assertEqual(tuple(node._position), (9.0, 9.0))
+        self.assertEqual(node.zOrder, 3)
+
+    def test_a_dead_destination_drops_the_old_node_and_returns_none(
+        self,
+    ) -> None:
+        view = _StubView(self.stage, ["/World/A", "/Zebra"])
+        placement = stage_adapter.savedRenamePlacement(view.nodes, "/World/A")
+        self.stage.RemovePrim("/World/A")
+
+        nodeId = stage_adapter.adoptRenamedPrim(
+            view, "/World/A", "/World/A", *placement
         )
-        self.assertEqual(view._reconnectOldSourceNodeId, "/Outer/Moved")
-        self.assertEqual(view._reconnectOldTargetNodeId, "/Outer/Moved/A")
 
-    def test_a_moved_scope_parent_moves_with_it(self) -> None:
-        view = _StubView(self.stage, ["/World/A"], scope="/World")
+        self.assertIsNone(nodeId)
+        self.assertEqual(list(view.nodes), ["/Zebra"])
+        view._addNewNodeFast.assert_not_called()
 
-        stage_sync.remapMovedNodes(view, {"/World": "/Outer/Moved"})
+    def test_descendant_nodes_whose_prims_expired_are_dropped(self) -> None:
+        """Renaming an ancestor expires every prim under it; only the renamed
+        prim itself is adopted, from its live path."""
+        view = _StubView(self.stage, ["/World", "/World/A", "/Zebra"])
+        placement = stage_adapter.savedRenamePlacement(view.nodes, "/World")
+        self._rename("/World", "/Moved")
 
-        self.assertEqual(view._currentPrimPath, Sdf.Path("/Outer/Moved"))
+        nodeId = stage_adapter.adoptRenamedPrim(
+            view, "/World", "/Moved", *placement
+        )
 
-    def test_synthesized_ids_move_their_key_but_stay_unprimmed(self) -> None:
-        UsdGeom.Sphere.Define(self.stage, "/Bp")
-        view = _StubView(self.stage, ["/Bp"])
-        view.nodes["/Bp#input:drive"] = _synthetic_node("/Bp#input:drive")
+        self.assertEqual(nodeId, "/Moved")
+        self.assertEqual(sorted(view.nodes), ["/Moved", "/Zebra"])
 
-        stage_sync.remapMovedNodes(view, {"/Bp": "/Bp2"})
-
-        node = view.nodes["/Bp2#input:drive"]
-        self.assertEqual(node.id, "/Bp2#input:drive")
-        # The id only borrows the blueprint's path; the model's prim data is
-        # its pin, not any prim at the new path.
-        self.assertEqual(node._primPath, Sdf.Path("/Bp"))
-        self.assertIsNone(node._prim)
-        self.assertEqual(node.name, "input:drive")
-
-    def test_the_invalidation_order_and_the_spatial_index_sweep(self) -> None:
+    def test_the_invalidation_tail_and_the_spatial_index_sweep(self) -> None:
         view = _StubView(self.stage, ["/World", "/Zebra"])
+        placement = stage_adapter.savedRenamePlacement(view.nodes, "/World")
+        self._rename("/World", "/Moved")
 
-        stage_sync.remapMovedNodes(view, {"/World": "/Moved"})
+        stage_adapter.adoptRenamedPrim(view, "/World", "/Moved", *placement)
 
         view._spatialIndex.removeNode.assert_called_once_with("/World")
         self.assertEqual(
@@ -625,14 +649,19 @@ class RemapMovedNodesTest(unittest.TestCase):
             ],
         )
 
-    def test_a_move_with_no_nodes_behind_it_is_a_no_op(self) -> None:
-        view = _StubView(self.stage, ["/Zebra"])
+    def test_saved_placement_reads_the_node_or_nothing(self) -> None:
+        view = _StubView(self.stage, ["/World/A"])
+        view.nodes["/World/A"].setDisplayPosition((9.0, 9.0))
+        view.nodes["/World/A"].zOrder = 3
 
         self.assertEqual(
-            stage_sync.remapMovedNodes(view, {"/Nothing": "/Here"}), {}
+            stage_adapter.savedRenamePlacement(view.nodes, "/World/A"),
+            ((9.0, 9.0), 3, 0),
         )
-        self.assertEqual(list(view.nodes), ["/Zebra"])
-        view._hooks.resetRenderCaches.assert_not_called()
+        self.assertEqual(
+            stage_adapter.savedRenamePlacement(view.nodes, "/World/Missing"),
+            (None, None, None),
+        )
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
@@ -649,44 +678,33 @@ class ApplyUsdChangesTest(unittest.TestCase):
         view._syncingSelection = True
         self.stage.RemovePrim("/Alpha")
 
-        stage_sync.applyUsdChanges(view, {"/Alpha"}, set(), {})
+        stage_adapter.applyUsdChanges(view, {"/Alpha"}, set())
 
         self.assertIn("/Alpha", view.nodes)
         self.assertFalse(view.linksChanged)
         view._hooks.update.assert_not_called()
 
-    def test_a_reported_move_is_followed_not_rebuilt(self) -> None:
+    def test_a_rename_drops_the_old_node_and_adopts_from_the_stage(
+        self,
+    ) -> None:
+        """The notice path never re-keys: the old node is dropped and the new
+        prim adopted, so the model at the new path is built from the live
+        stage rather than carried across the edit."""
         view = _StubView(self.stage, ["/Alpha", "/Keeper"])
+        oldNode = view.nodes["/Alpha"]
         edit = Sdf.BatchNamespaceEdit()
         edit.Add("/Alpha", "/Renamed")
         self.stage.GetEditTarget().GetLayer().Apply(edit)
         before = _layer_text(self.stage)
 
-        stage_sync.applyUsdChanges(
-            view, {"/Alpha", "/Renamed"}, set(), {"/Alpha": "/Renamed"}
-        )
+        stage_adapter.applyUsdChanges(view, {"/Alpha", "/Renamed"}, set())
 
-        # No stale node and no duplicate: the old node rode across, and
-        # adoption then found the new path already shown.
-        self.assertEqual(list(view.nodes), ["/Renamed", "/Keeper"])
-        view._addNewNodeFast.assert_not_called()
+        self.assertEqual(sorted(view.nodes), ["/Keeper", "/Renamed"])
+        self.assertIsNot(view.nodes["/Renamed"], oldNode)
+        view._addNewNodeFast.assert_called_once()
         self.assertTrue(view.linksChanged)
         self.assertTrue(view.textChanged)
         view._hooks.update.assert_called_once()
-        self.assertEqual(_layer_text(self.stage), before)
-
-    def test_a_rename_without_a_move_map_drops_and_adopts(self) -> None:
-        """USD without GetPrimResyncType: delete-and-create reconciliation."""
-        view = _StubView(self.stage, ["/Alpha", "/Keeper"])
-        edit = Sdf.BatchNamespaceEdit()
-        edit.Add("/Alpha", "/Renamed")
-        self.stage.GetEditTarget().GetLayer().Apply(edit)
-        before = _layer_text(self.stage)
-
-        stage_sync.applyUsdChanges(view, {"/Alpha", "/Renamed"}, set())
-
-        self.assertEqual(sorted(view.nodes), ["/Keeper", "/Renamed"])
-        self.assertTrue(view.linksChanged)
         self.assertEqual(_layer_text(self.stage), before)
 
     def test_a_deletion_drops_the_node_and_rebuilds_links(self) -> None:
@@ -694,7 +712,7 @@ class ApplyUsdChangesTest(unittest.TestCase):
         self.stage.RemovePrim("/Alpha")
         before = _layer_text(self.stage)
 
-        stage_sync.applyUsdChanges(view, {"/Alpha"}, set())
+        stage_adapter.applyUsdChanges(view, {"/Alpha"}, set())
 
         self.assertEqual(sorted(view.nodes), ["/Keeper"])
         self.assertTrue(view.linksChanged)
@@ -709,7 +727,7 @@ class ApplyUsdChangesTest(unittest.TestCase):
         view._valueRowOnlyChange = lambda node, propertyName: True
         before = _layer_text(self.stage)
 
-        stage_sync.applyUsdChanges(view, set(), {"/Alpha.radius"})
+        stage_adapter.applyUsdChanges(view, set(), {"/Alpha.radius"})
 
         view.nodes["/Alpha"].invalidate_value_row.assert_called_once_with(
             "radius"
@@ -730,7 +748,7 @@ class ApplyUsdChangesTest(unittest.TestCase):
         view._valueRowOnlyChange = probe
         view._isPinPropertyChange = lambda propertyName: True
 
-        stage_sync.applyUsdChanges(view, set(), {"/Alpha.inputs:x"})
+        stage_adapter.applyUsdChanges(view, set(), {"/Alpha.inputs:x"})
 
         probe.assert_not_called()
         self.assertTrue(view.linksChanged)
@@ -738,7 +756,7 @@ class ApplyUsdChangesTest(unittest.TestCase):
 
     def test_a_position_change_repaints_only(self) -> None:
         view = _StubView(self.stage, ["/Alpha"])
-        stage_sync.applyUsdChanges(
+        stage_adapter.applyUsdChanges(
             view, set(), {"/Alpha.ui:nodegraph:node:pos"}
         )
 
@@ -756,7 +774,7 @@ class ApplyUsdChangesTest(unittest.TestCase):
         api.CreateExpansionStateAttr().Set("closed")
         before = _layer_text(self.stage)
 
-        stage_sync.applyUsdChanges(
+        stage_adapter.applyUsdChanges(
             view, set(), {"/Alpha.ui:nodegraph:node:expansionState"}
         )
 
@@ -773,7 +791,7 @@ class ApplyUsdChangesTest(unittest.TestCase):
         view = _StubView(self.stage, ["/Alpha"])
         before = _layer_text(self.stage)
 
-        stage_sync.applyUsdChanges(
+        stage_adapter.applyUsdChanges(
             view, set(), {"/Alpha.ui:nodegraph:node:expansionState"}
         )
 
@@ -787,7 +805,7 @@ class ApplyUsdChangesTest(unittest.TestCase):
         view = _StubView(self.stage, ["/Alpha"])
         view.nodes["/Alpha"]._cachedType = "Sphere"
 
-        stage_sync.applyUsdChanges(
+        stage_adapter.applyUsdChanges(
             view, set(), {"/Alpha.info:implementationSource"}
         )
 
@@ -805,7 +823,7 @@ class ApplyUsdChangesTest(unittest.TestCase):
         failure."""
         view = _StubView(self.stage, ["/Alpha"])
 
-        stage_sync.applyUsdChanges(view, set(), {"/Alpha"})
+        stage_adapter.applyUsdChanges(view, set(), {"/Alpha"})
 
         # Survived, and treated as a plain repaint.
         view.nodes["/Alpha"].invalidateCache.assert_called_once()
@@ -814,159 +832,350 @@ class ApplyUsdChangesTest(unittest.TestCase):
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
+class ScopeMoveTest(unittest.TestCase):
+    """A namespace move retargets the scope, its pins and displayed nodes.
+
+    The blueprint/container scope is the prim the graph was opened on:
+    when it -- or one of its ancestors -- moves, reconciliation follows
+    the live scope before adopting children, and the synthetic I/O nodes
+    are generated from the destination loader inputs -- stale view-only
+    pins are dropped. Displayed ids at or under a classified source are
+    rebuilt fresh from their live destinations; a prim the canvas never
+    showed is never admitted, and a delete plus an unrelated create
+    never retargets.
+    """
+
+    def setUp(self) -> None:
+        self.stage = Usd.Stage.CreateInMemory()
+        for path in ("/World", "/World/Bp", "/World/Bp/A", "/Other"):
+            UsdGeom.Sphere.Define(self.stage, path)
+
+    def _scopedView(self, paths, scope="/World/Bp"):
+        view = _StubView(self.stage, paths, scope=scope)
+        nodes = view.nodeGraph.nodes
+        view.nodeGraph = NodeGraphBlueprint()
+        view.nodeGraph.setStage(self.stage)
+        view.nodeGraph.nodes.update(nodes)
+        return view
+
+    def _move(self, old, new):
+        edit = Sdf.BatchNamespaceEdit()
+        edit.Add(old, new)
+        self.assertTrue(self.stage.GetEditTarget().GetLayer().Apply(edit))
+
+    @unittest.skipUnless(_has_blueprint, "nodeGraphBlueprint not importable")
+    def test_a_moved_scope_is_retargeted_before_child_adoption(self) -> None:
+        view = self._scopedView(["/World/Bp/A"])
+        oldNode = view.nodes["/World/Bp/A"]
+        self._move("/World/Bp", "/World/Bp2")
+        before = _layer_text(self.stage)
+
+        stage_adapter.applyUsdChanges(
+            view,
+            {"/World/Bp", "/World/Bp2"},
+            set(),
+            movedPaths={"/World/Bp": "/World/Bp2"},
+        )
+
+        self.assertEqual(str(view._currentPrimPath), "/World/Bp2")
+        self.assertEqual(_layer_text(self.stage), before)
+        self.assertNotIn("/World/Bp/A", view.nodes)
+        self.assertIsNot(view.nodes["/World/Bp2/A"], oldNode)
+        # A child created afterwards appears under the new scope.
+        UsdGeom.Sphere.Define(self.stage, "/World/Bp2/B")
+        stage_adapter.applyUsdChanges(view, {"/World/Bp2/B"}, set())
+        self.assertIn("/World/Bp2/B", view.nodes)
+
+    @unittest.skipUnless(_has_blueprint, "nodeGraphBlueprint not importable")
+    def test_scope_pins_exist_only_at_the_new_path(self) -> None:
+        self.stage.GetPrimAtPath("/World/Bp").CreateAttribute(
+            "input:x", Sdf.ValueTypeNames.Float
+        ).Set(1.0)
+        view = self._scopedView([])
+        pin = _synthetic_node("/World/Bp#input:x")
+        view.nodes[pin.id] = pin
+        view.nodes["/World/Bp#input:stale"] = _synthetic_node(
+            "/World/Bp#input:stale"
+        )
+        keep = _synthetic_node("/Other#input:y")
+        view.nodes[keep.id] = keep
+        self._move("/World/Bp", "/World/Bp2")
+
+        stage_adapter.applyUsdChanges(
+            view,
+            {"/World/Bp", "/World/Bp2"},
+            set(),
+            movedPaths={"/World/Bp": "/World/Bp2"},
+        )
+
+        self.assertNotIn("/World/Bp#input:x", view.nodes)
+        self.assertNotIn("/World/Bp#input:stale", view.nodes)
+        self.assertNotIn("/World/Bp2#input:stale", view.nodes)
+        rebuilt = view.nodes["/World/Bp2#input:x"]
+        self.assertIsNot(rebuilt, pin)
+        self.assertEqual(rebuilt.name, "x")
+        self.assertEqual(rebuilt.outputPins, ["x"])
+        self.assertIs(view.nodes["/Other#input:y"], keep)
+
+    @unittest.skipUnless(_has_blueprint, "nodeGraphBlueprint not importable")
+    def test_an_ancestor_move_retargets_the_scope(self) -> None:
+        self.stage.GetPrimAtPath("/World/Bp").CreateAttribute(
+            "input:x", Sdf.ValueTypeNames.Float
+        ).Set(1.0)
+        UsdGeom.Sphere.Define(self.stage, "/World/Bp/Sibling")
+        view = self._scopedView(["/World/Bp/A"])
+        oldNode = view.nodes["/World/Bp/A"]
+        pin = _synthetic_node("/World/Bp#input:x")
+        view.nodes[pin.id] = pin
+        view.nodes["/World/Bp#input:stale"] = _synthetic_node(
+            "/World/Bp#input:stale"
+        )
+        self._move("/World", "/Elsewhere")
+
+        stage_adapter.applyUsdChanges(
+            view,
+            {"/World", "/Elsewhere"},
+            set(),
+            movedPaths={"/World": "/Elsewhere"},
+        )
+
+        self.assertEqual(
+            str(view._currentPrimPath), "/Elsewhere/Bp"
+        )
+        self.assertNotIn("/World/Bp#input:x", view.nodes)
+        self.assertNotIn("/Elsewhere/Bp#input:stale", view.nodes)
+        rebuilt = view.nodes["/Elsewhere/Bp#input:x"]
+        self.assertIsNot(rebuilt, pin)
+        self.assertEqual(rebuilt.name, "x")
+        self.assertEqual(rebuilt.outputPins, ["x"])
+        self.assertNotIn("/World/Bp/A", view.nodes)
+        self.assertIsNot(view.nodes["/Elsewhere/Bp/A"], oldNode)
+        self.assertNotIn("/Elsewhere/Bp/Sibling", view.nodes)
+
+    @unittest.skipUnless(_has_blueprint, "nodeGraphBlueprint not importable")
+    def test_a_delete_plus_create_never_retargets_the_scope(self) -> None:
+        """Without a USD-classified pair, two resyncs are just a delete
+        and an unrelated create: the scope and its pins stay put."""
+        view = self._scopedView([])
+        pin = _synthetic_node("/World/Bp#input:x")
+        view.nodes[pin.id] = pin
+        self.stage.RemovePrim("/World/Bp")
+        UsdGeom.Sphere.Define(self.stage, "/World/Bp2")
+
+        stage_adapter.applyUsdChanges(
+            view, {"/World/Bp", "/World/Bp2"}, set(), movedPaths={}
+        )
+
+        self.assertEqual(str(view._currentPrimPath), "/World/Bp")
+        self.assertIs(view.nodes["/World/Bp#input:x"], pin)
+
+    def test_a_displayed_move_source_outside_scope_is_rebuilt_fresh(
+        self,
+    ) -> None:
+        UsdGeom.Sphere.Define(self.stage, "/World/Deep")
+        UsdGeom.Sphere.Define(self.stage, "/World/Deep/Node")
+        view = _StubView(self.stage, ["/World/Deep/Node"])
+        oldNode = view.nodes["/World/Deep/Node"]
+        oldNode.setDisplayPosition((500.0, 300.0))
+        oldNode.zOrder = 7
+        self._move("/World/Deep/Node", "/World/Deep/Elsewhere")
+        before = _layer_text(self.stage)
+
+        stage_adapter.applyUsdChanges(
+            view,
+            {"/World/Deep/Node", "/World/Deep/Elsewhere"},
+            set(),
+            movedPaths={"/World/Deep/Node": "/World/Deep/Elsewhere"},
+        )
+
+        self.assertNotIn("/World/Deep/Node", view.nodes)
+        rebuilt = view.nodes["/World/Deep/Elsewhere"]
+        self.assertIsNot(rebuilt, oldNode)
+        self.assertEqual(rebuilt.position, (500.0, 300.0))
+        self.assertEqual(rebuilt.zOrder, 7)
+        self.assertTrue(view.linksChanged)
+        self.assertEqual(_layer_text(self.stage), before)
+
+    def test_an_undisplayed_move_source_is_not_admitted(self) -> None:
+        UsdGeom.Sphere.Define(self.stage, "/World/Deep")
+        UsdGeom.Sphere.Define(self.stage, "/World/Deep/Node")
+        view = _StubView(self.stage, ["/Other"])
+        self._move("/World/Deep/Node", "/World/Deep/Elsewhere")
+
+        stage_adapter.applyUsdChanges(
+            view,
+            {"/World/Deep/Node", "/World/Deep/Elsewhere"},
+            set(),
+            movedPaths={"/World/Deep/Node": "/World/Deep/Elsewhere"},
+        )
+
+        self.assertNotIn("/World/Deep/Node", view.nodes)
+        self.assertNotIn("/World/Deep/Elsewhere", view.nodes)
+        self.assertEqual(sorted(view.nodes), ["/Other"])
+        view._addNewNodeFast.assert_not_called()
+
+
+@unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
 class ReplaceStalenessTest(unittest.TestCase):
     """Only the latest generation's deferred work may touch the model."""
 
     def test_replace_a_b_none_before_any_callback_runs(self) -> None:
-        stageA = Usd.Stage.CreateInMemory()
-        stageB = Usd.Stage.CreateInMemory()
-        view = _LifecycleView(["/Alpha", "/Bp#input:drive"])
-        env = _LifecycleHarness(view)
+        stageA, stageB = object(), object()
+        idsA = ("/Alpha", "/Bp#input:drive")
+        idsB = ("/Beta",)
+        hooks = _RecordingHooks(idsA)
+        snapshotA = hooks.stage_context
+        sync = hooks.sync
 
-        env.sync.replace(stageA, "stage", None, "frame-A")
-        env.sync.replace(stageB, "stage", None, "frame-B")
-        env.sync.replace(None, "stage", None, "frame-None")
+        sync.replace(stageA, "stage", None, "frame-A")
+        hooks.stage_context = snapshotB = stage_sync.StageContext(idsB)
+        sync.replace(stageB, "blueprint", "/Beta", "frame-B")
+        sync.replace(None, "stage", None, "frame-None")
 
-        # Nothing deferred has run yet: three finishes are queued, and every
-        # emitted delta carries the epoch that produced it.
-        self.assertEqual(len(env.queued), 3)
-        self.assertEqual(
-            [type(delta).__name__ for delta in env.deltas],
-            [
-                "BeginReload",
-                "Remove",
-                "Load",
-                "BeginReload",
-                "Remove",
-                "Load",
-                "BeginReload",
-                "ClearHistory",
-            ],
-        )
-        self.assertEqual(
-            [delta.epoch for delta in env.deltas], [1, 1, 1, 2, 2, 2, 3, 3]
-        )
-        self.assertEqual(view.frames, ["frame-A", "frame-B", "frame-None"])
-        # The reload records the whole graph it tore down, synthetic ids
-        # included.
-        self.assertEqual(env.deltas[1].ids, ("/Alpha", "/Bp#input:drive"))
+        finishA, finishB, finishNone = hooks.queued
+        beginA = stage_sync.BeginReload(1, "frame-A")
+        beginB = stage_sync.BeginReload(2, "frame-B")
+        beginNone = stage_sync.BeginReload(3, "frame-None")
+        loadA = stage_sync.Load(1, stageA, "stage", None)
+        loadB = stage_sync.Load(2, stageB, "blueprint", "/Beta")
+        clear = stage_sync.ClearHistory(3)
+        self.assertEqual(hooks.events, [
+            ("listen", hooks.receiver),
+            ("read", snapshotA),
+            ("publish", beginA), ("apply", beginA),
+            ("publish", stage_sync.Remove(1, idsA)),
+            ("publish", loadA), ("apply", loadA), ("post", finishA),
+            ("read", snapshotB),
+            ("publish", beginB), ("apply", beginB),
+            ("publish", stage_sync.Remove(2, idsB)),
+            ("publish", loadB), ("apply", loadB), ("post", finishB),
+            ("read", snapshotB),
+            ("publish", beginNone), ("apply", beginNone),
+            ("publish", clear), ("apply", clear), ("post", finishNone),
+        ])
+        self.assertEqual(sync.epoch(), 3)
+        self.assertIs(sync.handler(), hooks.handler)
 
-        # A notice stamped with an older generation never reaches the model.
-        applied = list(view.applied)
-        env.sync.changed(1, {"/Alpha"}, set())
-        env.sync.changed(2, {"/Alpha"}, set())
-        self.assertEqual(view.applied, applied)
-        self.assertEqual(len(env.deltas), 8)
+        events = hooks.events[:]
+        sync.changed(1, {"/Alpha"}, set())
+        sync.changed(2, {"/Beta"}, set())
+        finishA()
+        finishB()
+        self.assertEqual(hooks.events, events)
 
-        env.run_queued()
-
-        # The two stale finishes did nothing at all; the null-stage finish
-        # ran exactly once.
-        finishes = [
-            delta
-            for delta in env.deltas
-            if isinstance(delta, stage_sync.FinishReload)
-        ]
-        self.assertEqual(finishes, [stage_sync.FinishReload(3)])
-        self.assertEqual(view.finishes, 1)
-        self.assertTrue(view.updates_enabled)
-        # No third load ran; the null stage cleared the history instead.
-        self.assertEqual(view.loaded[0], stageB)
-        self.assertIsNone(view.history)
+        finishNone()
+        finish = stage_sync.FinishReload(3)
+        self.assertEqual(hooks.events, events + [
+            ("publish", finish), ("apply", finish),
+        ])
 
     def test_finish_from_a_rebound_stage_is_dropped(self) -> None:
-        """The queued callback checks its source binding, not just its
-        epoch."""
-        stageA = Usd.Stage.CreateInMemory()
-        stageB = Usd.Stage.CreateInMemory()
-        env = _LifecycleHarness(_LifecycleView())
-
-        env.sync.replace(stageA, "stage", None, "frame")
-        env.sync.bind(stageB)
-        env.run_queued()
-
-        self.assertEqual(env.view.finishes, 0)
-        self.assertEqual(
-            [
-                delta
-                for delta in env.deltas
-                if isinstance(delta, stage_sync.FinishReload)
-            ],
-            [],
-        )
+        # Equal but distinct bindings distinguish identity from equality.
+        stageA, stageB = [], []
+        hooks = _RecordingHooks()
+        hooks.sync.replace(stageA, "stage", None, "frame")
+        hooks.sync.bind(stageB)
+        events = hooks.events[:]
+        hooks.queued[0]()
+        self.assertEqual(hooks.events, events)
 
     def test_selection_sync_suppresses_a_live_notice(self) -> None:
-        stageA = Usd.Stage.CreateInMemory()
-        view = _LifecycleView()
-        view.syncing = True
-        env = _LifecycleHarness(view)
-        env.sync.replace(stageA, "stage", None, "frame")
+        hooks = _RecordingHooks()
+        hooks.sync.replace(object(), "stage", None, "frame")
+        hooks.events.clear()
+        paths = ({"/Alpha"}, {"/Keeper.radius"})
+        hooks.notice_context = muted = stage_sync.NoticeContext(True)
+        hooks.receiver._handleUsdChanges(*paths)
+        self.assertEqual(hooks.events, [("notice", muted)])
 
-        applied = list(view.applied)
-        env.sync.changed(1, {"/Alpha"}, set())
+        hooks.notice_context = admitted = stage_sync.NoticeContext(False)
+        hooks.receiver._handleUsdChanges(*paths)
+        self.assertEqual(hooks.events[:2], [("notice", muted), ("notice", admitted)])
+        self.assertEqual(len(hooks.events), 3)
+        kind, resynced, info, trace, moved = hooks.events[2]
+        self.assertEqual(kind, "reconcile")
+        for original, received in zip(paths, (resynced, info)):
+            self.assertIs(received, original)
+        self.assertIsNotNone(trace)
+        self.assertIsNone(moved)
 
-        self.assertEqual(view.applied, applied)
-        self.assertEqual(len(env.deltas), 3)
+    def test_move_pairs_reach_reconciliation_untouched(self) -> None:
+        """The receiver carries the notice's own move classification to
+        reconciliation without interpreting it."""
+        hooks = _RecordingHooks()
+        hooks.sync.replace(object(), "stage", None, "frame")
+        hooks.events.clear()
+        moved = {"/Alpha": "/Renamed"}
+        hooks.receiver._handleUsdChanges(
+            {"/Alpha", "/Renamed"}, set(), moved
+        )
+        kind, _, _, _, received = hooks.events[-1]
+        self.assertEqual(kind, "reconcile")
+        self.assertIs(received, moved)
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
 class LoadFailureTest(unittest.TestCase):
     """A failing load must not strand the editor or the next replace."""
 
-    def test_a_failing_load_warns_restores_and_still_finishes(self) -> None:
-        stageA = Usd.Stage.CreateInMemory()
-        stageB = Usd.Stage.CreateInMemory()
-        view = _LifecycleView()
-        view.fail_loads = True
-        env = _LifecycleHarness(view)
+    def test_a_failing_load_warns_and_still_finishes_then_recovers(self) -> None:
+        stageA, stageB = object(), object()
+        hooks = _RecordingHooks()
+        hooks.load_error = RuntimeError("load boom")
+        hooks.sync.replace(stageA, "stage", None, "frame-A")
 
-        env.sync.replace(stageA, "stage", None, "frame")
+        (finishA,) = hooks.queued
+        self.assertEqual(hooks.events[-3:], [
+            ("apply", stage_sync.Load(1, stageA, "stage", None)),
+            ("warn", "Failed to reload graph after stage replace: load boom"),
+            ("post", finishA),
+        ])
+        finishA()
+        self.assertEqual(hooks.events[-2:], [
+            ("publish", stage_sync.FinishReload(1)),
+            ("apply", stage_sync.FinishReload(1)),
+        ])
 
-        self.assertEqual(len(env.warnings), 1)
-        self.assertIn("load boom", env.warnings[0])
-        self.assertFalse(view._deferRenderCacheClear)
-        self.assertEqual(len(env.queued), 1)
-
-        env.run_queued()
-        self.assertEqual(view.finishes, 1)
-
-        view.fail_loads = False
-        env.sync.replace(stageB, "stage", None, "frame")
-        env.run_queued()
-
-        self.assertEqual(view.loaded[0], stageB)
-        self.assertEqual(view.finishes, 2)
-        self.assertEqual(
-            [delta.epoch for delta in env.deltas], [1, 1, 1, 1, 2, 2, 2, 2]
-        )
+        hooks.events.clear()
+        hooks.load_error = None
+        hooks.sync.replace(stageB, "container", "/Box", "frame-B")
+        _, finishB = hooks.queued
+        finishB()
+        begin = stage_sync.BeginReload(2, "frame-B")
+        load = stage_sync.Load(2, stageB, "container", "/Box")
+        finish = stage_sync.FinishReload(2)
+        self.assertEqual(hooks.events, [
+            ("read", hooks.stage_context),
+            ("publish", begin), ("apply", begin),
+            ("publish", stage_sync.Remove(2, ())),
+            ("publish", load), ("apply", load), ("post", finishB),
+            ("publish", finish), ("apply", finish),
+        ])
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
 class ReloadModeTest(unittest.TestCase):
-    """Each mode reaches the loader it names."""
-
-    def test_each_mode_reaches_the_loader_it_names(self) -> None:
+    def test_each_mode_emits_a_successful_load_and_finish(self) -> None:
         for mode, prim_path in (
             ("stage", None),
             ("blueprint", "/Bp"),
             ("container", "/Box"),
         ):
             with self.subTest(mode=mode):
-                stage = Usd.Stage.CreateInMemory()
-                view = _LifecycleView()
-                env = _LifecycleHarness(view)
+                stage, frame = object(), object()
+                hooks = _RecordingHooks()
+                hooks.sync.replace(stage, mode, prim_path, frame)
+                (callback,) = hooks.queued
+                callback()
 
-                env.sync.replace(stage, mode, prim_path, "frame")
-
-                loads = [
-                    delta
-                    for delta in env.deltas
-                    if isinstance(delta, stage_sync.Load)
-                ]
-                self.assertEqual(len(loads), 1)
-                self.assertIs(loads[0].stage, stage)
-                self.assertEqual(loads[0].mode, mode)
-                self.assertEqual(view.loaded, (stage, mode, prim_path))
+                effects = [event[1] for event in hooks.events if event[0] == "apply"]
+                self.assertEqual(effects, [
+                    stage_sync.BeginReload(1, frame),
+                    stage_sync.Load(1, stage, mode, prim_path),
+                    stage_sync.FinishReload(1),
+                ])
+                self.assertIs(effects[1].stage, stage)
+                self.assertFalse(any(event[0] == "warn" for event in hooks.events))
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
@@ -974,33 +1183,32 @@ class SuppressionTest(unittest.TestCase):
     """Suppression lives on the editor's handler and always restores."""
 
     def test_suppression_restores_on_the_normal_path(self) -> None:
-        env = _LifecycleHarness(_LifecycleView())
-        handler = env.sync.handler()
-
+        hooks = _RecordingHooks()
+        handler = hooks.sync.handler()
         self.assertTrue(handler.isEnabled())
-        with env.sync.suppressed():
+        with hooks.sync.suppressed():
             self.assertFalse(handler.isEnabled())
         self.assertTrue(handler.isEnabled())
 
     def test_suppression_restores_on_exception(self) -> None:
-        env = _LifecycleHarness(_LifecycleView())
-        handler = env.sync.handler()
-
-        with self.assertRaises(RuntimeError):
-            with env.sync.suppressed():
+        hooks = _RecordingHooks()
+        with self.assertRaisesRegex(RuntimeError, "edit boom"):
+            with hooks.sync.suppressed():
                 raise RuntimeError("edit boom")
-        self.assertTrue(handler.isEnabled())
+        self.assertTrue(hooks.handler.isEnabled())
 
     def test_nested_suppression_restores_the_outer_state(self) -> None:
-        env = _LifecycleHarness(_LifecycleView())
-        handler = env.sync.handler()
-
-        with env.sync.suppressed():
-            with self.assertRaises(RuntimeError):
-                with env.sync.suppressed():
+        hooks = _RecordingHooks()
+        with hooks.sync.suppressed():
+            with self.assertRaisesRegex(RuntimeError, "inner boom"):
+                with hooks.sync.suppressed():
                     raise RuntimeError("inner boom")
-            self.assertFalse(handler.isEnabled())
-        self.assertTrue(handler.isEnabled())
+            self.assertFalse(hooks.handler.isEnabled())
+        self.assertTrue(hooks.handler.isEnabled())
+        self.assertEqual(hooks.events[1:], [
+            ("setEnabled", False), ("setEnabled", False),
+            ("setEnabled", False), ("setEnabled", True),
+        ])
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
@@ -1008,35 +1216,24 @@ class CloseTest(unittest.TestCase):
     """Close revokes the receiver and invalidates anything still queued."""
 
     def test_close_drops_queued_finishes_and_later_notices(self) -> None:
-        stageA = Usd.Stage.CreateInMemory()
-        stageB = Usd.Stage.CreateInMemory()
-        view = _LifecycleView()
-        env = _LifecycleHarness(view)
-        env.sync.replace(stageA, "stage", None, "frame")
-        env.run_queued()
-        self.assertEqual(view.finishes, 1)
-
-        env.sync.replace(stageB, "stage", None, "frame")
-        live = env.sync.epoch()
-        env.sync.handler().register(stageB)
-        self.assertIs(env.sync.handler().getStage(), stageB)
-        env.sync.close()
-
-        self.assertTrue(env.sync.isClosed())
-        self.assertIsNone(env.sync.handler().getStage())
-        env.run_queued()
-        self.assertEqual(view.finishes, 1)
-        applied = list(view.applied)
-        env.sync.changed(live, {"/Alpha"}, set())
-        self.assertEqual(view.applied, applied)
-        self.assertEqual(
-            [
-                delta
-                for delta in env.deltas
-                if isinstance(delta, stage_sync.FinishReload)
-            ],
-            [stage_sync.FinishReload(1)],
-        )
+        hooks = _RecordingHooks()
+        stage = object()
+        hooks.sync.replace(stage, "stage", None, "frame")
+        handler = hooks.sync.handler()
+        self.assertIs(handler, hooks.handler)
+        self.assertFalse(any(event[0] == "register" for event in hooks.events))
+        handler.register(stage)
+        live = hooks.sync.epoch()
+        hooks.sync.close()
+        self.assertTrue(hooks.sync.isClosed())
+        self.assertEqual(hooks.sync.epoch(), live + 1)
+        self.assertEqual(hooks.events[-2:], [("register", stage), ("unregister",)])
+        events = hooks.events[:]
+        hooks.queued[0]()
+        hooks.receiver._handleUsdChanges({"/Alpha"}, set())
+        hooks.sync.changed(live, {"/Alpha"}, set())
+        hooks.sync.changed(live + 1, {"/Alpha"}, set())
+        self.assertEqual(hooks.events, events)
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
@@ -1063,22 +1260,18 @@ class NoticeRegistrationTest(unittest.TestCase):
         view = _StubView(stage, ["/Alpha", "/Keeper"])
         deltas = []
         service = stage_sync.StageSync(
-            read=lambda: stage_sync.StageContext(
-                view=view,
-                stage=stage,
-                mode="stage",
-                prim_path=None,
-                node_ids=tuple(view.nodes),
-                syncing_selection=view._syncingSelection,
-            ),
-            notice=lambda: stage_sync.NoticeContext(
-                view=view, syncing_selection=view._syncingSelection
-            ),
+            read=lambda: stage_sync.StageContext(tuple(view.nodes)),
+            notice=lambda: stage_sync.NoticeContext(view._syncingSelection),
             apply=lambda delta: None,
             post=lambda callback: None,
             listen=lambda receiver: UsdNoticeHandler(receiver),
             warn=lambda message: None,
             sink=deltas.append,
+            reconcile=lambda resynced, info, trace, moved: (
+                stage_adapter.applyUsdChanges(
+                    view, resynced, info, trace=trace, movedPaths=moved
+                )
+            ),
         )
         service.bind(stage)
         service.handler().register(stage)
@@ -1089,12 +1282,14 @@ class NoticeRegistrationTest(unittest.TestCase):
         # The same rename, with and without the service listening: the layer
         # texts match, so reconciliation authored no opinion of its own.
         self.assertEqual(_layer_text(stage), _layer_text(twin))
-        # And the graph followed the prim through the real notice.
-        self.assertEqual(list(view.nodes), ["/Renamed", "/Keeper"])
+        # And the graph reflects the stage through the real notice: the old
+        # node dropped, the new prim adopted.
+        self.assertEqual(list(view.nodes), ["/Keeper", "/Renamed"])
         self.assertEqual(
             deltas,
             [
-                stage_sync.Remap(0, (("/Alpha", "/Renamed"),)),
+                stage_sync.Remove(0, ("/Alpha",)),
+                stage_sync.Adopt(0, ("/Renamed",)),
                 stage_sync.Invalidate(
                     0, ("/Alpha", "/Renamed"), True, True, True
                 ),
@@ -1117,42 +1312,18 @@ class ReplaceAfterCloseTest(unittest.TestCase):
     """
 
     def test_close_then_replace_touches_nothing(self) -> None:
-        stageA = Usd.Stage.CreateInMemory()
-        stageB = Usd.Stage.CreateInMemory()
-        view = _LifecycleView(["/Alpha"])
-        env = _LifecycleHarness(view)
-        env.sync.replace(stageA, "stage", None, "frame")
-        env.run_queued()
-        handler = env.sync.handler()
-        handler.register(stageA)
-        self.assertIs(handler.getStage(), stageA)
+        hooks = _RecordingHooks(("/Alpha",))
+        hooks.sync.replace(object(), "stage", None, "frame")
+        (callback,) = hooks.queued
+        callback()
+        hooks.sync.close()
+        closed_epoch = hooks.sync.epoch()
+        events = hooks.events[:]
 
-        live = env.sync.epoch()
-        applied = list(view.applied)
-        published = list(env.deltas)
+        hooks.sync.replace(object(), "blueprint", "/Bp", "late-frame")
 
-        env.sync.close()
-        env.sync.replace(stageB, "blueprint", "/Bp", "late-frame")
-
-        # No delta published, no delta applied: the view was not read, so no
-        # BeginReload tore down its state and no Load replaced its graph.
-        self.assertEqual(env.deltas, published)
-        self.assertEqual(view.applied, applied)
-        self.assertEqual(view.frames, ["frame"])
-        self.assertEqual(view.loaded, (stageA, "stage", None))
-        self.assertEqual(list(view.nodes), ["/Alpha"])
-        # No listener on the late stage, and the editor's own is gone.
-        self.assertIsNone(handler.getStage())
-        # Nothing queued for the owner thread, and the live finish is the
-        # only one that ever ran.
-        self.assertEqual(env.queued, [])
-        self.assertEqual(view.finishes, 1)
-        # close() moved the epoch; the late replace did not, and its epoch is
-        # stale with it -- so a notice stamped with the live generation still
-        # cannot reach the model.
-        self.assertEqual(env.sync.epoch(), live + 1)
-        env.sync.changed(live, {"/Alpha"}, set())
-        self.assertEqual(view.applied, applied)
+        self.assertEqual(hooks.events, events)
+        self.assertEqual(hooks.sync.epoch(), closed_epoch)
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
@@ -1165,15 +1336,58 @@ class ProductionAdapterTest(unittest.TestCase):
     """
 
     def _view(self, stage, paths, view_class=_StubView):
-        """A stub view whose node map refuses to be walked (see
-        ``_KeyedOnlyNodes``), plus the usdview api ``readStageContext`` reads.
-        """
+        """A keyed-only node map plus the host API used by the slot."""
         view = view_class(stage, paths)
         view.nodeGraph.nodes = _KeyedOnlyNodes(view.nodeGraph.nodes)
         view._usdviewApi = SimpleNamespace(
             stage=stage, frame=Usd.TimeCode.Default()
         )
         return view
+
+    def test_snapshot_readers_borrow_only_their_input(self) -> None:
+        stage = stage_adapter.readStageContext(SimpleNamespace(nodes={"/Alpha": None}))
+        notice = stage_adapter.readNoticeContext(SimpleNamespace(_syncingSelection=True))
+        for snapshot, fields, values in (
+            (stage, ("node_ids",), (("/Alpha",),)),
+            (notice, ("syncing_selection",), (True,)),
+        ):
+            with self.subTest(snapshot=type(snapshot).__name__):
+                self.assertEqual(tuple(field.name for field in dataclasses.fields(snapshot)), fields)
+                self.assertEqual(dataclasses.astuple(snapshot), values)
+                self.assertFalse(hasattr(snapshot, "__dict__"))
+                with self.assertRaises(dataclasses.FrozenInstanceError):
+                    setattr(snapshot, fields[0], None)
+
+    def test_load_effect_brackets_the_selected_loader_even_on_failure(self) -> None:
+        for mode, loader, args in (
+            ("stage", "loadStage", ()),
+            ("blueprint", "loadBlueprint", ("/Bp",)),
+            ("container", "loadContainer", ("/Box",)),
+        ):
+            for fail in (False, True):
+                with self.subTest(mode=mode, fail=fail):
+                    stage = Usd.Stage.CreateInMemory()
+                    view = _StubView(stage)
+                    view._deferRenderCacheClear = False
+                    view.initialized = False
+                    calls = []
+
+                    def load(*received):
+                        calls.append((received, view._deferRenderCacheClear))
+                        view.initialized = True  # Loader may initialize GL.
+                        if fail:
+                            raise RuntimeError("loader boom")
+
+                    setattr(view, loader, load)
+                    delta = stage_sync.Load(1, stage, mode, args[0] if args else None)
+                    if fail:
+                        with self.assertRaisesRegex(RuntimeError, "loader boom"):
+                            stage_adapter.applyStageDelta(view, delta)
+                    else:
+                        stage_adapter.applyStageDelta(view, delta)
+                    self.assertEqual(calls, [((stage, *args), True)])
+                    self.assertFalse(view._deferRenderCacheClear)
+                    self.assertFalse(view.initialized)
 
     def test_a_single_property_notice_never_walks_the_graph(self) -> None:
         """The notice path reads the view for the notice, not for a reload.
@@ -1227,7 +1441,7 @@ class ProductionAdapterTest(unittest.TestCase):
         def capture(*_args, **kwargs):
             traces.append(kwargs.get("trace"))
 
-        with patch.object(stage_sync, "applyUsdChanges", capture):
+        with patch.object(stage_adapter, "applyUsdChanges", capture):
             stage.GetPrimAtPath("/Alpha").GetAttribute("radius").Set(3.0)
 
         self.assertEqual(len(traces), 1)
@@ -1408,7 +1622,7 @@ class DockWindowCloseTest(unittest.TestCase):
             # editor would have run, so an unwired finish is visible rather
             # than silent.
             with patch.object(
-                stage_sync,
+                stage_adapter,
                 "_finishReloadOnView",
                 lambda view: ran.append("finish"),
             ):
@@ -1458,7 +1672,6 @@ class DeltaRecordsTest(unittest.TestCase):
             stage_sync.BeginReload(7, "frame"),
             stage_sync.Load(7, object(), "blueprint", "/Bp"),
             stage_sync.ClearHistory(7),
-            stage_sync.Remap(7, (("/A", "/B"),)),
             stage_sync.Remove(7, ("/A",)),
             stage_sync.Adopt(7, ("/B",)),
             stage_sync.Invalidate(7, ("/A",), True, False, True),

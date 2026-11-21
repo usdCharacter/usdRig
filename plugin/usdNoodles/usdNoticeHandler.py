@@ -110,8 +110,9 @@ class UsdNoticeHandler:
                 continue
             resyncedPaths.add(pathStr)
 
-        # Prims that moved rather than came and went, so the graph can carry
-        # their nodes across instead of dropping and re-adding them.
+        # Prims that moved rather than came and went, so reconciliation
+        # can rebuild their displayed nodes from the live destinations --
+        # even outside the loader's scope -- instead of dropping them.
         movedPaths = self._movedPaths(notice)
 
         # Collect info-only changes (property value changes)

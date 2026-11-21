@@ -267,11 +267,12 @@ class _Node:
 class _StubGraphView:
     """The slice of GraphView state the inline rename touches.
 
-    The node re-keying runs for real (``_remapMovedNodes`` is the production
-    method, not a mock), because a stub of it would assert nothing about the
-    thing that actually broke. Only the widget-level edges -- popups, repaint,
-    the prim-tree sync -- are mocked. ``_reloadCurrentGraph`` stays a mock so
-    tests can assert it is NOT reached; reaching it is the bug.
+    The rename follow-up runs for real (``_adoptRenamedPrim`` is the
+    production method, not a mock), because a stub of it would assert nothing
+    about the thing that actually broke. Only the widget-level edges --
+    popups, repaint, the prim-tree sync -- are mocked. ``_reloadCurrentGraph``
+    stays a mock so tests can assert it is NOT reached; reaching it is the
+    bug.
     """
 
     def __init__(self, stage):
@@ -285,9 +286,9 @@ class _StubGraphView:
 
         # The inline VALUE editor shares every handler the rename goes
         # through -- keyPressEvent asks it first, mousePressEvent commits it
-        # on click-away, and _remapMovedNodes carries it across a move -- so
-        # the slice of state mirrored here has to include it. Nothing in
-        # these tests opens one; they all stay at "not in progress".
+        # on click-away -- so the slice of state mirrored here has to include
+        # it. Nothing in these tests opens one; they all stay at
+        # "not in progress".
         self._valueEditTarget = None
         self._valueEditInput = TextInputWidget()
         self._valueEditFresh = True
@@ -303,18 +304,11 @@ class _StubGraphView:
         self.nodeGraph.nodes = {}
         GraphView._initUndoTracking(self, stage)
 
-        # Everything else _remapMovedNodes carries across a move.
+        # Reconciliation drops stale ids from the selection sets and the
+        # spatial index; the adopted model is indexed by _addNewNodeFast.
         self._marqueeBaseSelectedNodes = set()
         self._marqueePrevSelectedNodes = set()
-        self._reconciledPositionVersions = {}
         self.nodeIdUnderCursor = ""
-        self._hoveredPort = None
-        self._tooltipProperty = None
-        self._dragLinkSourceNode = None
-        self._dragLinkSyntheticTarget = None
-        self._dragLinkResolvedTarget = None
-        self._reconnectOldSourceNodeId = None
-        self._reconnectOldTargetNodeId = None
         self._currentPrimPath = None
         self._spatialIndex = MagicMock()
 
@@ -351,7 +345,8 @@ class _StubGraphView:
         self.update = MagicMock()
 
     # Mirrors the real GraphView.nodes: a read-only view of nodeGraph.nodes,
-    # which _remapMovedNodes replaces wholesale when it re-keys.
+    # which _adoptRenamedPrim replaces wholesale when it restores the draw
+    # order.
     @property
     def nodes(self):
         return self.nodeGraph.nodes
@@ -370,14 +365,18 @@ class _StubGraphView:
     def _commitRename(self):
         return GraphView._commitRename(self)
 
-    def _remapMovedNodes(self, movedPaths):
-        return GraphView._remapMovedNodes(self, movedPaths)
+    def _adoptRenamedPrim(self, oldNodeId, newPathStr, *placement):
+        return GraphView._adoptRenamedPrim(
+            self, oldNodeId, newPathStr, *placement
+        )
 
     def _resetRenderCachesAfterBulkMove(self, rebuild_links=True):
         return GraphView._resetRenderCachesAfterBulkMove(self, rebuild_links)
 
     def _handleUsdChanges(self, resynced, infoOnly, movedPaths=None):
-        return GraphView._handleUsdChanges(self, resynced, infoOnly, movedPaths)
+        return GraphView._handleUsdChanges(
+            self, resynced, infoOnly, movedPaths
+        )
 
     def _validateNodesAgainstStage(self):
         return GraphView._validateNodesAgainstStage(self)
@@ -412,7 +411,8 @@ class InlineRenameEditorTest(unittest.TestCase):
         self.stage = _wiredStage()
         self.view = _StubGraphView(self.stage)
         # Only the source node. The destination is NOT pre-seeded: the commit
-        # has to move this node there itself, which is the whole point.
+        # has to adopt the renamed prim from the stage itself, which is the
+        # whole point.
         self.view.nodes["/World/Old"] = _Node("/World/Old")
 
     def test_begin_seeds_the_field_with_the_current_name(self):
@@ -545,6 +545,51 @@ def _curatedStage():
     return stage
 
 
+def _fieldnameStage(scopeType):
+    """A scope with fieldname-bearing connections on both sides.
+
+    ``Node`` is the displayed child; ``Hidden`` never reaches the canvas,
+    but its connections and authored position still shape the endpoints
+    on a fresh load.
+    """
+    stage = Usd.Stage.CreateInMemory()
+    scope = stage.DefinePrim("/Scope", scopeType)
+    scope.CreateAttribute("input:drive", Sdf.ValueTypeNames.Float).Set(1.0)
+    scope.CreateAttribute("output:result", Sdf.ValueTypeNames.Float)
+    node = stage.DefinePrim("/Scope/Node", "ExecNode")
+    x = node.CreateAttribute("input:x", Sdf.ValueTypeNames.Float)
+    x.AddConnection(Sdf.Path("/Scope.input:drive"))
+    x.SetCustomDataByKey("assetInfo", {"fieldname": "weight"})
+    y = node.CreateAttribute("output:y", Sdf.ValueTypeNames.Float)
+    y.AddConnection(Sdf.Path("/Scope.output:result"))
+    y.SetCustomDataByKey("assetInfo", {"fieldname": "total"})
+    hidden = stage.DefinePrim("/Scope/Hidden", "ExecNode")
+    hidden.CreateAttribute("ui:nodegraph:node:pos", Sdf.ValueTypeNames.Float2).Set(
+        Gf.Vec2f(-0.25, -0.5)
+    )
+    h = hidden.CreateAttribute("input:h", Sdf.ValueTypeNames.Float)
+    h.AddConnection(Sdf.Path("/Scope.input:drive"))
+    h.SetCustomDataByKey("assetInfo", {"fieldname": "shadow"})
+    extra = hidden.CreateAttribute("input:extra", Sdf.ValueTypeNames.Float)
+    extra.AddConnection(Sdf.Path("/Scope.input:drive"))
+    extra.SetCustomDataByKey("assetInfo", {"fieldname": "secondary"})
+    return stage
+
+
+def _fieldnameMeasure(text, size):
+    return len(text) * size * 0.5
+
+
+def _fieldnameFontMetrics():
+    from UsdNoodles import _usdNoodles as _noodles
+
+    fontMetrics = _noodles.FontMetrics()
+    fontMetrics.ascender = 0.8
+    fontMetrics.descender = -0.2
+    fontMetrics.lineHeight = 1.2
+    return fontMetrics
+
+
 @unittest.skipUnless(
     _has_graph_view and _has_prim_rename, "graphView module not available"
 )
@@ -555,8 +600,9 @@ class RenameKeepsTheGraphTest(unittest.TestCase):
     takes them off, neither of which touches USD, so no loader can re-derive
     it. Answering a rename by re-running a loader therefore replaces the user's
     graph with the loader's -- for a stage graph, the stage's top-level prims
-    and nothing else. These tests hold the line on the alternative: the node
-    follows its prim and everything else stays put.
+    and nothing else. These tests hold the line on the alternative: the
+    renamed prim is adopted from the stage under its new path and everything
+    else stays put.
 
     Real NodeModels over a real in-memory stage, because the failure modes are
     all in USD-facing state -- an expired prim, a position with no authored
@@ -587,7 +633,7 @@ class RenameKeepsTheGraphTest(unittest.TestCase):
         self.view._renameInput.text = newName
         self.view._commitRename()
 
-    def test_the_node_follows_its_prim(self):
+    def test_the_graph_shows_the_prim_under_its_new_name(self):
         self._rename("/World/Deep/Node", "Renamed")
 
         self.assertEqual(
@@ -601,12 +647,18 @@ class RenameKeepsTheGraphTest(unittest.TestCase):
         self.assertEqual(tuple(self.other.position), (500.0, 300.0))
         self.assertEqual(self.other.name, "Other")
 
-    def test_it_is_the_same_node_not_a_replacement(self):
-        """Identity, not equality: _lastSelectedNode and friends hold the
-        object, so a rebuilt model would strand them on a discarded one."""
+    def test_the_node_is_rebuilt_from_the_stage_not_rekeyed(self):
+        """The regression that separates the two designs: a re-key hands back
+        the same object under a new id, while a stage-derived node is a fresh
+        model built from the live prim -- the old id names nothing."""
         self._rename("/World/Deep/Node", "Renamed")
 
-        self.assertIs(self.view.nodes["/World/Deep/Renamed"], self.node)
+        self.assertNotIn("/World/Deep/Node", self.view.nodes)
+        rebuilt = self.view.nodes["/World/Deep/Renamed"]
+        self.assertIsNot(rebuilt, self.node)
+        prim = rebuilt.getUsdPrim()
+        self.assertTrue(prim.IsValid())
+        self.assertEqual(str(prim.GetPath()), "/World/Deep/Renamed")
 
     def test_the_graph_is_never_reloaded(self):
         self._rename("/World/Deep/Node", "Renamed")
@@ -653,38 +705,37 @@ class RenameKeepsTheGraphTest(unittest.TestCase):
         self.assertEqual(tuple(node.position), (1000.0, 2000.0))
 
     def test_the_title_becomes_the_new_name(self):
-        """Read it first, so the cache actually holds the OLD name: an
-        unprimed getter would fall through to the (now-repointed) prim and
-        report the right answer whether or not the re-key updated it."""
-        self.assertEqual(self.node.name, "Node")
-        self.assertEqual(self.node._name, "Node")
-
+        """The fresh model reads its title from the live prim, which carries
+        the new name -- no cached title is carried across the edit."""
         self._rename("/World/Deep/Node", "Renamed")
 
-        self.assertEqual(self.view.nodes["/World/Deep/Renamed"]._name, "Renamed")
-        self.assertEqual(self.view.nodes["/World/Deep/Renamed"].name, "Renamed")
+        node = self.view.nodes["/World/Deep/Renamed"]
+        self.assertEqual(node.name, "Renamed")
+        self.assertEqual(node._name, "Renamed")
 
-    def test_the_model_is_repointed_at_the_live_prim(self):
-        """The Usd.Prim captured at construction expires on the namespace edit.
-        Left expired, the next resync has _validateNodesAgainstStage drop the
-        node as 'its prim is gone'."""
+    def test_the_model_is_built_from_the_live_prim(self):
+        """The Usd.Prim captured at construction expires on the namespace
+        edit, which is exactly why the old node is dropped: the fresh model
+        captures the prim at its new home instead."""
         self._rename("/World/Deep/Node", "Renamed")
 
         prim = self.view.nodes["/World/Deep/Renamed"].getUsdPrim()
         self.assertTrue(prim.IsValid())
         self.assertEqual(str(prim.GetPath()), "/World/Deep/Renamed")
 
-    def test_descendant_nodes_move_with_their_ancestor(self):
-        """USD reports only the prim that moved; the children move silently."""
-        child = self._addNode("/World/Deep/Child")
+    def test_descendant_nodes_are_dropped_with_their_ancestor(self):
+        """Renaming an ancestor expires every prim under it. The renamed prim
+        itself is adopted; its descendants' nodes name paths that no longer
+        exist, so they are dropped like any other stale node."""
+        self._addNode("/World/Deep/Child")
 
         self._rename("/World/Deep", "Deeper")
 
-        self.assertIs(self.view.nodes["/World/Deeper/Child"], child)
-        self.assertIs(self.view.nodes["/World/Deeper/Node"], self.node)
-        self.assertTrue(
-            self.view.nodes["/World/Deeper/Child"].getUsdPrim().IsValid()
+        self.assertEqual(
+            set(self.view.nodes), {"/World/Deeper", "/Other"}
         )
+        prim = self.view.nodes["/World/Deeper"].getUsdPrim()
+        self.assertTrue(prim.IsValid())
 
     def test_a_sibling_sharing_a_name_prefix_is_not_dragged_along(self):
         """/World/Deep/Node is not an ancestor of /World/Deep/NodeTwo, however
@@ -697,21 +748,18 @@ class RenameKeepsTheGraphTest(unittest.TestCase):
         self.assertIs(self.view.nodes["/World/Deep/NodeTwo"], sibling)
         self.assertEqual(tuple(sibling.position), (500.0, 300.0))
 
-    def test_selection_and_hover_state_follow_the_node(self):
+    def test_stale_ids_leave_the_selection_sets(self):
+        """The dropped id is forgotten everywhere the view keys by it; the
+        commit then selects the adopted node explicitly."""
         self.view._selectedNodes.add("/World/Deep/Node")
         self.view._marqueeBaseSelectedNodes.add("/World/Deep/Node")
         self.view._marqueePrevSelectedNodes.add("/World/Deep/Node")
-        self.view.nodeIdUnderCursor = "/World/Deep/Node"
-        self.view._hoveredPort = ("/World/Deep/Node", "out", True)
 
         self._rename("/World/Deep/Node", "Renamed")
 
-        self.assertEqual(self.view._marqueeBaseSelectedNodes, {"/World/Deep/Renamed"})
-        self.assertEqual(self.view._marqueePrevSelectedNodes, {"/World/Deep/Renamed"})
-        self.assertEqual(self.view.nodeIdUnderCursor, "/World/Deep/Renamed")
-        self.assertEqual(
-            self.view._hoveredPort, ("/World/Deep/Renamed", "out", True)
-        )
+        self.assertEqual(self.view._selectedNodes, {"/World/Deep/Renamed"})
+        self.assertEqual(self.view._marqueeBaseSelectedNodes, set())
+        self.assertEqual(self.view._marqueePrevSelectedNodes, set())
 
     def test_the_dead_id_leaves_the_spatial_index_immediately(self):
         """The link rebuild that refills the index is deferred to the next
@@ -733,63 +781,28 @@ class RenameKeepsTheGraphTest(unittest.TestCase):
 
         self.assertEqual(self.view._selectedNodes, {"/World/Deep/Renamed"})
 
-    def test_a_graph_scope_that_moved_is_retargeted(self):
-        """A blueprint/container graph measures reconciliation against
-        _currentPrimPath; leaving it on a dead path empties the graph."""
-        self.view._currentPrimPath = Sdf.Path("/World/Deep")
-
-        self.view._remapMovedNodes({"/World": "/World2"})
-
-        self.assertEqual(str(self.view._currentPrimPath), "/World2/Deep")
-
-    def test_several_independent_moves_apply_in_one_pass(self):
-        sibling = self._addNode("/World/Deep/NodeTwo")
-
-        self.view._remapMovedNodes(
-            {
-                "/World/Deep/Node": "/World/Deep/Alpha",
-                "/World/Deep/NodeTwo": "/World/Deep/Beta",
-            }
-        )
-
-        self.assertIs(self.view.nodes["/World/Deep/Alpha"], self.node)
-        self.assertIs(self.view.nodes["/World/Deep/Beta"], sibling)
-        self.assertNotIn("/World/Deep/Node", self.view.nodes)
-        self.assertNotIn("/World/Deep/NodeTwo", self.view.nodes)
-
-    def test_a_move_whose_destination_is_another_moves_source(self):
-        """A shuffle in one pass must not have one entry eat the other."""
-        sibling = self._addNode("/World/Deep/NodeTwo")
-
-        self.view._remapMovedNodes(
-            {
-                "/World/Deep/Node": "/World/Deep/NodeTwo",
-                "/World/Deep/NodeTwo": "/World/Deep/Child",
-            }
-        )
-
-        self.assertIs(self.view.nodes["/World/Deep/NodeTwo"], self.node)
-        self.assertIs(self.view.nodes["/World/Deep/Child"], sibling)
-        self.assertEqual(len(self.view.nodes), 3)
-
-    def test_remapping_the_same_move_twice_is_a_no_op(self):
-        """The notice and the authoring site both call it; whichever runs
-        second must not double-apply."""
+    def test_adopting_twice_does_not_duplicate(self):
+        """The notice adopts inside the scope before the authoring site runs;
+        the follow-up restores the placement onto that model, not a second
+        node."""
         self._rename("/World/Deep/Node", "Renamed")
         before = dict(self.view.nodes)
 
-        applied = self.view._remapMovedNodes(
-            {"/World/Deep/Node": "/World/Deep/Renamed"}
+        nodeId = self.view._adoptRenamedPrim(
+            "/World/Deep/Node", "/World/Deep/Renamed", Gf.Vec2d(1.0, 1.0), 9
         )
 
-        self.assertEqual(applied, {})
+        self.assertEqual(nodeId, "/World/Deep/Renamed")
         self.assertEqual(self.view.nodes, before)
+        node = self.view.nodes["/World/Deep/Renamed"]
+        self.assertEqual(tuple(node.position), (1.0, 1.0))
+        self.assertEqual(node.zOrder, 9)
 
     def test_the_node_order_is_preserved(self):
-        """Dict order is draw and iteration order; a pop-and-re-insert would
-        send every renamed node to the back of the graph."""
-        first = self._addNode("/World/Deep/NodeTwo")
-        last = self._addNode("/World/Deep/Child")
+        """Dict order is draw and iteration order: the fresh model moves back
+        to the slot the rename vacated instead of landing at the back."""
+        self._addNode("/World/Deep/NodeTwo")
+        self._addNode("/World/Deep/Child")
         before = list(self.view.nodes)
 
         self._rename("/World/Deep/NodeTwo", "Renamed")
@@ -797,21 +810,13 @@ class RenameKeepsTheGraphTest(unittest.TestCase):
         expected = ["/World/Deep/Renamed" if n == "/World/Deep/NodeTwo" else n
                     for n in before]
         self.assertEqual(list(self.view.nodes), expected)
-        self.assertIs(self.view.nodes["/World/Deep/Renamed"], first)
-        self.assertIs(self.view.nodes["/World/Deep/Child"], last)
 
-    def test_a_synthesized_io_node_keeps_its_pin_name(self):
-        """Blueprint I/O nodes borrow the blueprint's path for their id but are
-        not prim-backed; only the id moves."""
-        io = self.NodeModel()
-        io.id = "/World/Deep#input:drive:x"
-        io.name = "x"
-        self.view.nodes[io.id] = io
+    def test_the_draw_order_is_restored_onto_the_fresh_model(self):
+        self.node.zOrder = 7
 
-        self.view._remapMovedNodes({"/World/Deep": "/World/Deeper"})
+        self._rename("/World/Deep/Node", "Renamed")
 
-        self.assertIn("/World/Deeper#input:drive:x", self.view.nodes)
-        self.assertEqual(self.view.nodes["/World/Deeper#input:drive:x"].name, "x")
+        self.assertEqual(self.view.nodes["/World/Deep/Renamed"].zOrder, 7)
 
 
 @unittest.skipUnless(
@@ -821,8 +826,11 @@ class RenameFromOutsideTheEditorTest(unittest.TestCase):
     """A rename authored anywhere on the stage, arriving only as a notice.
 
     usdview, a script, or a second editor window can rename a prim without
-    going through _commitRename. USD classifies the resync pair for us
-    (RenameSource / RenameDestination), so the same re-key applies.
+    going through _commitRename. The notice carries USD's own move
+    classification, so a displayed move source is dropped and rebuilt
+    fresh from its live destination -- inside or outside the loader's
+    scope -- never re-keyed, while a prim that was never displayed is
+    never admitted by the move alone.
     """
 
     def setUp(self):
@@ -831,14 +839,46 @@ class RenameFromOutsideTheEditorTest(unittest.TestCase):
 
         self.stage = _curatedStage()
         self.view = _StubGraphView(self.stage)
-        node = NodeModel(stage=self.stage, primPath=Sdf.Path("/World/Deep/Node"))
-        node.setDisplayPosition(Gf.Vec2d(500.0, 300.0))
-        self.view.nodes["/World/Deep/Node"] = node
-        self.node = node
+        self.NodeModel = NodeModel
 
         self.handler = UsdNoticeHandler(self.view)
         self.handler.register(self.stage)
         self.addCleanup(self.handler.unregister)
+
+    def _addNode(self, path, displayPosition=(500.0, 300.0)):
+        node = self.NodeModel(stage=self.stage, primPath=Sdf.Path(path))
+        if displayPosition is not None:
+            node.setDisplayPosition(Gf.Vec2d(*displayPosition))
+        self.view.nodes[path] = node
+        return node
+
+    def _addSyntheticPin(self, nodeId, position=(10.0, 20.0)):
+        """A blueprint I/O node as the loader builds one: synthesized, with
+        pins borrowed from the scope prim's attributes."""
+        pin = nodeId.split("#", 1)[1]
+        node = self.NodeModel()
+        node.id = nodeId
+        node.name = pin
+        node.type = "BlueprintInput"
+        node.outputPins = [pin]
+        node.setDisplayPosition(Gf.Vec2d(*position))
+        self.view.nodes[nodeId] = node
+        return node
+
+    def _scopeViewTo(self, scope):
+        """Serve this stub through a blueprint graph on *scope*.
+
+        Reconciliation reads the scope path and the destination prim's
+        authored attributes (the loader inputs), never the prim type --
+        so a plain Xform stands in for the blueprint prim.
+        """
+        from UsdNoodles.nodeGraphBlueprint import NodeGraphBlueprint
+
+        graph = NodeGraphBlueprint()
+        graph.setStage(self.stage)
+        graph.nodes.update(self.view.nodes)
+        self.view.nodeGraph = graph
+        self.view._currentPrimPath = Sdf.Path(scope)
 
     def _renameOnTheStage(self, path, newName):
         options = Usd.NamespaceEditor.EditOptions()
@@ -847,38 +887,331 @@ class RenameFromOutsideTheEditorTest(unittest.TestCase):
         editor.RenamePrim(self.stage.GetPrimAtPath(path), newName)
         self.assertTrue(editor.ApplyEdits())
 
-    def test_usd_reports_the_pair_as_a_rename(self):
-        """The whole design rests on this classification being available."""
+    def test_an_in_scope_rename_is_dropped_and_adopted_fresh(self):
+        node = self._addNode("/Other")
+
+        self._renameOnTheStage("/Other", "Elsewhere")
+
+        self.assertNotIn("/Other", self.view.nodes)
+        rebuilt = self.view.nodes["/Elsewhere"]
+        self.assertIsNot(rebuilt, node)
+        self.assertTrue(rebuilt.getUsdPrim().IsValid())
+
+    def test_an_out_of_scope_rename_is_rebuilt_from_the_live_destination(self):
+        """The curated canvas is the user's, not the loader's: a displayed
+        prim that moves outside the loader's scope keeps its node,
+        rebuilt fresh from the live destination with no stale source id."""
+        node = self._addNode("/World/Deep/Node")
+        node.zOrder = 7
+
         self._renameOnTheStage("/World/Deep/Node", "Elsewhere")
 
-        self.assertIn("/World/Deep/Elsewhere", self.view.nodes)
+        self.assertNotIn("/World/Deep/Node", self.view.nodes)
+        rebuilt = self.view.nodes["/World/Deep/Elsewhere"]
+        self.assertIsNot(rebuilt, node)
+        prim = rebuilt.getUsdPrim()
+        self.assertTrue(prim.IsValid())
+        self.assertEqual(str(prim.GetPath()), "/World/Deep/Elsewhere")
+        self.assertEqual(tuple(rebuilt.position), (500.0, 300.0))
+        self.assertEqual(rebuilt.zOrder, 7)
 
-    def test_the_node_is_not_dropped_as_stale(self):
+    def test_an_undisplayed_move_source_is_not_admitted(self):
+        """The move classification follows displayed nodes; it must not
+        adopt an out-of-scope prim the canvas never showed."""
+        self._addNode("/Other")
+
         self._renameOnTheStage("/World/Deep/Node", "Elsewhere")
 
-        self.assertIs(self.view.nodes["/World/Deep/Elsewhere"], self.node)
-        self.assertEqual(len(self.view.nodes), 1)
+        self.assertNotIn("/World/Deep/Node", self.view.nodes)
+        self.assertNotIn("/World/Deep/Elsewhere", self.view.nodes)
+        self.assertEqual(set(self.view.nodes), {"/Other"})
 
-    def test_the_display_position_survives_the_resync(self):
-        """_handleUsdChanges invalidates the node's cache right after the
-        re-key; a display-only position has nothing in USD to come back from."""
-        self._renameOnTheStage("/World/Deep/Node", "Elsewhere")
+    def test_a_moved_scope_is_retargeted_with_fresh_pins(self):
+        """Renaming the scope prim retargets the blueprint graph onto the
+        live scope: the displayed descendant survives as a fresh model,
+        pins are generated from the destination loader inputs, and a
+        child created afterwards appears under the new scope."""
+        self.stage.GetPrimAtPath("/World/Deep").CreateAttribute(
+            "input:drive", Sdf.ValueTypeNames.Float
+        ).Set(1.0)
+        self._scopeViewTo("/World/Deep")
+        node = self._addNode("/World/Deep/Node")
+        pin = self._addSyntheticPin("/World/Deep#input:drive")
+        self._addSyntheticPin("/World/Deep#input:stale")
+        unrelated = self._addSyntheticPin("/Other#input:keep")
+
+        self._renameOnTheStage("/World/Deep", "Deeper")
+
+        self.assertEqual(str(self.view._currentPrimPath), "/World/Deeper")
+        self.assertNotIn("/World/Deep/Node", self.view.nodes)
+        fresh = self.view.nodes["/World/Deeper/Node"]
+        self.assertIsNot(fresh, node)
+        prim = fresh.getUsdPrim()
+        self.assertTrue(prim.IsValid())
+        self.assertEqual(str(prim.GetPath()), "/World/Deeper/Node")
+        self.assertNotIn("/World/Deeper/NodeTwo", self.view.nodes)
+        self.assertNotIn("/World/Deeper/Child", self.view.nodes)
+        self.assertNotIn("/World/Deep#input:drive", self.view.nodes)
+        self.assertNotIn("/World/Deep#input:stale", self.view.nodes)
+        self.assertNotIn("/World/Deeper#input:stale", self.view.nodes)
+        rebuilt = self.view.nodes["/World/Deeper#input:drive"]
+        self.assertIsNot(rebuilt, pin)
+        self.assertEqual(rebuilt.name, "drive")
+        self.assertEqual(rebuilt.type, "BlueprintInput")
+        self.assertEqual(rebuilt.outputPins, ["drive"])
+        self.assertEqual(tuple(rebuilt.position), (10.0, 20.0))
+        self.assertFalse(
+            [nodeId for nodeId in self.view.nodes if "#input" in nodeId
+             and nodeId.startswith("/World/Deep#")]
+        )
+        self.assertIs(self.view.nodes["/Other#input:keep"], unrelated)
+
+        self.stage.DefinePrim("/World/Deeper/Newborn", "Xform")
+
+        self.assertIn("/World/Deeper/Newborn", self.view.nodes)
+
+    def test_an_ancestor_move_retargets_the_scope(self):
+        """The scope follows its prim even when the move happened above
+        it: displayed descendants resolve through the classified ancestor
+        pair, pins are generated from the destination loader inputs, and
+        the stale ids are gone."""
+        self.stage.GetPrimAtPath("/World/Deep").CreateAttribute(
+            "input:drive", Sdf.ValueTypeNames.Float
+        ).Set(1.0)
+        self._scopeViewTo("/World/Deep")
+        node = self._addNode("/World/Deep/Node")
+        pin = self._addSyntheticPin("/World/Deep#input:drive")
+        self._addSyntheticPin("/World/Deep#input:stale")
+
+        self._renameOnTheStage("/World", "Elsewhere")
 
         self.assertEqual(
-            tuple(self.view.nodes["/World/Deep/Elsewhere"].position), (500.0, 300.0)
+            str(self.view._currentPrimPath), "/Elsewhere/Deep"
         )
+        self.assertNotIn("/World/Deep/Node", self.view.nodes)
+        fresh = self.view.nodes["/Elsewhere/Deep/Node"]
+        self.assertIsNot(fresh, node)
+        prim = fresh.getUsdPrim()
+        self.assertTrue(prim.IsValid())
+        self.assertEqual(str(prim.GetPath()), "/Elsewhere/Deep/Node")
+        self.assertNotIn("/Elsewhere/Deep/NodeTwo", self.view.nodes)
+        self.assertNotIn("/Elsewhere/Deep/Child", self.view.nodes)
+        self.assertNotIn("/World/Deep#input:drive", self.view.nodes)
+        self.assertNotIn("/World/Deep#input:stale", self.view.nodes)
+        self.assertNotIn("/Elsewhere/Deep#input:stale", self.view.nodes)
+        rebuilt = self.view.nodes["/Elsewhere/Deep#input:drive"]
+        self.assertIsNot(rebuilt, pin)
+        self.assertEqual(rebuilt.name, "drive")
+        self.assertEqual(rebuilt.type, "BlueprintInput")
+        self.assertEqual(rebuilt.outputPins, ["drive"])
+        self.assertEqual(tuple(rebuilt.position), (10.0, 20.0))
 
     def test_an_unrelated_delete_still_drops_its_node(self):
         """The rename handling must not blunt ordinary reconciliation."""
-        from UsdNoodles.models import NodeModel
-
-        self.view.nodes["/Other"] = NodeModel(
-            stage=self.stage, primPath=Sdf.Path("/Other")
-        )
+        self._addNode("/World/Deep/Node")
+        self._addNode("/Other")
 
         self.stage.RemovePrim("/Other")
 
         self.assertNotIn("/Other", self.view.nodes)
+        self.assertIn("/World/Deep/Node", self.view.nodes)
+
+    def test_an_inline_rename_with_a_live_notice_adopts_once(self):
+        """Production runs both halves: the notice adopts during the
+        namespace edit and the commit follows up. The follow-up must
+        find the adopted model -- not build a second node -- and
+        restore its draw slot and placement."""
+        self._addNode("/World/Deep/Node")
+        self._addNode("/Other")
+        before = list(self.view.nodes)
+
+        self.view._beginRename("/World/Deep/Node")
+        self.view._renameInput.text = "Renamed"
+        self.view._commitRename()
+
+        expected = [
+            "/World/Deep/Renamed" if n == "/World/Deep/Node" else n
+            for n in before
+        ]
+        self.assertEqual(list(self.view.nodes), expected)
+        node = self.view.nodes["/World/Deep/Renamed"]
+        self.assertEqual(tuple(node.position), (500.0, 300.0))
+        self.assertEqual(self.view._selectedNodes, {"/World/Deep/Renamed"})
+
+
+@unittest.skipUnless(
+    _has_graph_view and _has_prim_rename, "graphView module not available"
+)
+class MovedScopeFieldnameEndpointsTest(unittest.TestCase):
+    """A moved scope's synthetic pins match a fresh load at the destination.
+
+    Fieldname-qualified endpoints (``/Scope#input:drive:weight``) come
+    from the children's connection metadata, not the scope prim's
+    attributes alone, so reconciliation derives them through the same
+    shared endpoints the loaders use. Each graph type renames its scope
+    through ``Usd.NamespaceEditor`` and compares the resulting synthetic
+    IDs, names, types, pins and new endpoint geometry with a fresh load.
+    """
+
+    def setUp(self):
+        from UsdNoodles.models import NodeModel
+        from UsdNoodles.usdNoticeHandler import UsdNoticeHandler
+
+        self.NodeModel = NodeModel
+        self.UsdNoticeHandler = UsdNoticeHandler
+
+    def _openScope(self, scopeType, graphClass):
+        self.stage = _fieldnameStage(scopeType)
+        self.view = _StubGraphView(self.stage)
+        self.view.fontAtlas = _fieldnameFontMetrics()
+        self.view.textRenderer.calculateTextWidth = _fieldnameMeasure
+        handler = self.UsdNoticeHandler(self.view)
+        handler.register(self.stage)
+        self.addCleanup(handler.unregister)
+        graph = graphClass()
+        graph.setStage(self.stage)
+        graph.nodes.update(self.view.nodes)
+        self.view.nodeGraph = graph
+        self.view._currentPrimPath = Sdf.Path("/Scope")
+
+    def _addNode(self, path, displayPosition=(500.0, 300.0)):
+        node = self.NodeModel(stage=self.stage, primPath=Sdf.Path(path))
+        if displayPosition is not None:
+            node.setDisplayPosition(Gf.Vec2d(*displayPosition))
+        self.view.nodes[path] = node
+        return node
+
+    def _addSyntheticPin(self, nodeId, nodeType, position=(10.0, 20.0),
+                         zOrder=None):
+        node = self.NodeModel()
+        node.id = nodeId
+        node.name = nodeId.split("#", 1)[1]
+        node.type = nodeType
+        node.setDisplayPosition(Gf.Vec2d(*position))
+        if zOrder is not None:
+            node.zOrder = zOrder
+        self.view.nodes[nodeId] = node
+        return node
+
+    def _renameOnTheStage(self, path, newName):
+        options = Usd.NamespaceEditor.EditOptions()
+        options.allowRelocatesAuthoring = False
+        editor = Usd.NamespaceEditor(self.stage, options)
+        editor.RenamePrim(self.stage.GetPrimAtPath(path), newName)
+        self.assertTrue(editor.ApplyEdits())
+
+    def _independentSynthetic(self, graphClass, scopePath):
+        """What a normal load at *scopePath* emits for synthetic ids."""
+        graph = graphClass()
+        graph.load(
+            self.stage,
+            Sdf.Path(scopePath),
+            _fieldnameMeasure,
+            _fieldnameFontMetrics(),
+        )
+        return {
+            nodeId: node
+            for nodeId, node in graph.nodes.items()
+            if "#" in nodeId
+        }
+
+    def _movedScopeMatchesFreshLoad(self, scopeType, graphClass, inputType,
+                                    outputType):
+        self._openScope(scopeType, graphClass)
+        node = self._addNode("/Scope/Node")
+        inPin = self._addSyntheticPin(
+            "/Scope#input:drive:weight", inputType,
+            position=(10.0, 20.0), zOrder=3,
+        )
+        outPin = self._addSyntheticPin(
+            "/Scope#output:result:total", outputType,
+            position=(30.0, 40.0), zOrder=5,
+        )
+        self._addSyntheticPin("/Scope#input:stale", inputType)
+        unrelated = self._addSyntheticPin("/Other#input:keep", inputType)
+
+        self._renameOnTheStage("/Scope", "Moved")
+
+        self.assertEqual(str(self.view._currentPrimPath), "/Moved")
+        self.assertNotIn("/Scope/Node", self.view.nodes)
+        fresh = self.view.nodes["/Moved/Node"]
+        self.assertIsNot(fresh, node)
+        prim = fresh.getUsdPrim()
+        self.assertTrue(prim.IsValid())
+        self.assertEqual(str(prim.GetPath()), "/Moved/Node")
+        self.assertNotIn("/Scope/Hidden", self.view.nodes)
+        self.assertNotIn("/Moved/Hidden", self.view.nodes)
+
+        self.assertNotIn("/Scope#input:drive:weight", self.view.nodes)
+        self.assertNotIn("/Scope#output:result:total", self.view.nodes)
+        self.assertNotIn("/Scope#input:stale", self.view.nodes)
+        self.assertNotIn("/Moved#input:stale", self.view.nodes)
+        self.assertNotIn("/Moved#input:drive", self.view.nodes)
+        self.assertNotIn("/Moved#output:result", self.view.nodes)
+
+        self.assertIn("/Moved#input:drive:weight", self.view.nodes)
+        self.assertIn("/Moved#input:drive:shadow", self.view.nodes)
+        self.assertIn("/Moved#output:result:total", self.view.nodes)
+
+        rebuilt = self.view.nodes["/Moved#input:drive:weight"]
+        self.assertIsNot(rebuilt, inPin)
+        self.assertEqual(tuple(rebuilt.position), (10.0, 20.0))
+        self.assertEqual(rebuilt.zOrder, 3)
+        rebuiltOut = self.view.nodes["/Moved#output:result:total"]
+        self.assertIsNot(rebuiltOut, outPin)
+        self.assertEqual(tuple(rebuiltOut.position), (30.0, 40.0))
+        self.assertEqual(rebuiltOut.zOrder, 5)
+        self.assertIs(self.view.nodes["/Other#input:keep"], unrelated)
+
+        expected = self._independentSynthetic(graphClass, "/Moved")
+        self.assertEqual(
+            set(expected),
+            {
+                "/Moved#input:drive:secondary",
+                "/Moved#input:drive:shadow",
+                "/Moved#input:drive:weight",
+                "/Moved#output:result:total",
+            },
+        )
+        got = {
+            nodeId: node
+            for nodeId, node in self.view.nodes.items()
+            if nodeId.startswith("/Moved#")
+        }
+        self.assertEqual(set(got), set(expected))
+        for nodeId, want in expected.items():
+            have = got[nodeId]
+            self.assertEqual(have.name, want.name, nodeId)
+            self.assertEqual(have.type, want.type, nodeId)
+            self.assertEqual(have.size, want.size, nodeId)
+            self.assertEqual(
+                list(have.inputPins), list(want.inputPins), nodeId
+            )
+            self.assertEqual(
+                list(have.outputPins), list(want.outputPins), nodeId
+            )
+
+        newIds = ("/Moved#input:drive:secondary", "/Moved#input:drive:shadow")
+        for nodeId in newIds:
+            with self.subTest(nodeId=nodeId):
+                self.assertEqual(got[nodeId].position, expected[nodeId].position)
+        self.assertNotEqual(got[newIds[0]].position, got[newIds[1]].position)
+
+    def test_a_moved_blueprint_scope_matches_a_fresh_load(self):
+        from UsdNoodles.nodeGraphBlueprint import NodeGraphBlueprint
+
+        self._movedScopeMatchesFreshLoad(
+            "Blueprint", NodeGraphBlueprint, "BlueprintInput",
+            "BlueprintOutput",
+        )
+
+    def test_a_moved_container_scope_matches_a_fresh_load(self):
+        from UsdNoodles.nodeGraphBpContainer import NodeGraphBpContainer
+
+        self._movedScopeMatchesFreshLoad(
+            "Container", NodeGraphBpContainer, "ContainerInput",
+            "ContainerOutput",
+        )
 
 
 @unittest.skipUnless(_has_graph_view, "graphView module not available")
@@ -1006,19 +1339,19 @@ class RenameUndoTest(unittest.TestCase):
         _make_rename_undo("/World", "New", "Old")(self.gv)
 
         self.gv._reloadCurrentGraph.assert_not_called()
-        self.gv._remapMovedNodes.assert_called_once_with(
-            {"/World/New": "/World/Old"}
-        )
+        self.gv._adoptRenamedPrim.assert_called_once()
+        adopted = self.gv._adoptRenamedPrim.call_args[0]
+        self.assertEqual(adopted[:2], ("/World/New", "/World/Old"))
 
 
 @unittest.skipUnless(
     _has_graph_view and _has_prim_rename, "graphView module not available"
 )
 class RenameUndoKeepsTheGraphTest(unittest.TestCase):
-    """Undo and redo of a rename move the node, like the rename itself did.
+    """Undo and redo of a rename adopt from the stage, like the rename did.
 
     Driven against a real view stub rather than a bare MagicMock, so the
-    re-keying actually happens and can be asserted on.
+    drop-and-adopt actually happens and can be asserted on.
     """
 
     def setUp(self):
@@ -1045,14 +1378,18 @@ class RenameUndoKeepsTheGraphTest(unittest.TestCase):
         self._undo("Renamed", "Node")
 
         self.assertEqual(set(self.view.nodes), {"/World/Deep/Node", "/Other"})
-        self.assertIs(self.view.nodes["/World/Deep/Node"], self.node)
+        rebuilt = self.view.nodes["/World/Deep/Node"]
+        self.assertIsNot(rebuilt, self.node)
+        self.assertTrue(rebuilt.getUsdPrim().IsValid())
 
     def test_redo_takes_it_forward_again(self):
         self._undo("Renamed", "Node")
         self._undo("Node", "Renamed")
 
         self.assertEqual(set(self.view.nodes), {"/World/Deep/Renamed", "/Other"})
-        self.assertIs(self.view.nodes["/World/Deep/Renamed"], self.node)
+        rebuilt = self.view.nodes["/World/Deep/Renamed"]
+        self.assertIsNot(rebuilt, self.node)
+        self.assertTrue(rebuilt.getUsdPrim().IsValid())
 
     def test_the_graph_is_never_reloaded(self):
         self._undo("Renamed", "Node")

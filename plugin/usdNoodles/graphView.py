@@ -41,10 +41,8 @@ from ._schema_pin_names import (
     resolve_property_name_for_display_pin,
 )
 
-# The stage reconciliation algorithms live in graphview/stage_sync; the two
-# path helpers are re-exported here for the existing callers and tests that
-# import them from this module.
-from .graphview import stage_sync
+from .graphview import stage_adapter, stage_sync
+# Re-export the legacy path helpers.
 from .graphview.stage_sync import _isPathRelated, _nodeIdPrimPath
 from .constants import MAX_RENDER_DEPTH, node_content_depth
 from .linkRenderer import computeLinkCurveBounds, LinkRenderer, sampleLinkCurve
@@ -191,13 +189,14 @@ def _make_rename_undo(parent_path, from_name, to_name):
         if not prim or not prim.IsValid():
             Tf.Warn("Rename undo: no prim named %s under %s" % (_from, _parent))
             return
+        placement = stage_adapter.savedRenamePlacement(gv.nodes, oldPath)
         status, newPath, message = rename_prim(stage, prim, _to)
         if status != RENAMED:
             Tf.Warn("Rename undo failed (%s): %s" % (status, message))
             return
         # Follow the node across, exactly as the forward rename does. Reloading
         # instead would undo the name and lose the graph in the same gesture.
-        gv._remapMovedNodes({oldPath: str(newPath)})
+        gv._adoptRenamedPrim(oldPath, str(newPath), *placement)
 
     return _fn
 
@@ -225,17 +224,18 @@ def _frameOf(value):
 def _makeStageSync(view):
     """This editor's stage-lifecycle service, bound to *view*.
 
-    Policy lives in graphview/stage_sync, which imports no Qt or GL; the
-    widget-owned post and warn resolve this module's ``QtCore`` and ``Tf``
-    at call time, so the StageReload patch points keep intercepting them.
+    Resolve adapter effects and Qt/Tf patch points at call time.
     """
     return stage_sync.StageSync(
-        read=lambda: stage_sync.readStageContext(view),
-        notice=lambda: stage_sync.readNoticeContext(view),
-        apply=lambda delta: stage_sync.applyStageDelta(view, delta),
+        read=lambda: stage_adapter.readStageContext(view),
+        notice=lambda: stage_adapter.readNoticeContext(view),
+        apply=lambda delta: stage_adapter.applyStageDelta(view, delta),
         post=lambda callback: QtCore.QTimer.singleShot(0, callback),
         listen=lambda receiver: UsdNoticeHandler(receiver),
         warn=lambda message: Tf.Warn(message),
+        reconcile=lambda resynced, info, trace, moved: stage_adapter.applyUsdChanges(
+            view, resynced, info, trace=trace, movedPaths=moved
+        ),
     )
 
 
@@ -1633,7 +1633,7 @@ class GraphView(QGLWidget):
         self._valueFitCache.clear()
 
     def closeEvent(self, event):
-        stage_sync.closeStageLifecycle(self)
+        stage_adapter.closeStageLifecycle(self)
         super().closeEvent(event)
 
     def _onStageReplaced(self):
@@ -1653,7 +1653,7 @@ class GraphView(QGLWidget):
         )
         stage = self._usdviewApi.stage if self._usdviewApi else None
         sync.replace(
-            stage, stage_sync.stageLoadMode(self), self._currentPrimPath, frame
+            stage, stage_adapter.stageLoadMode(self), self._currentPrimPath, frame
         )
 
     def _finishStageReload(self, epoch=None):
@@ -1779,21 +1779,22 @@ class GraphView(QGLWidget):
             self._syncingSelection = False
 
     def _graphScopeParentPath(self):
-        return stage_sync.graphScopeParentPath(self)
+        return stage_adapter.graphScopeParentPath(self)
 
     def _validateNodesAgainstStage(self):
-        return stage_sync.validateNodesAgainstStage(self)
+        return stage_adapter.validateNodesAgainstStage(self)
 
     def _adoptPrimsNewToScope(self, resyncedPaths):
-        return stage_sync.adoptPrimsNewToScope(self, resyncedPaths)
+        return stage_adapter.adoptPrimsNewToScope(self, resyncedPaths)
 
-    def _remapMovedNodes(self, movedPaths):
-        return stage_sync.remapMovedNodes(self, movedPaths)
+    def _adoptRenamedPrim(self, oldNodeId, newPathStr, *placement):
+        return stage_adapter.adoptRenamedPrim(
+            self, oldNodeId, newPathStr, *placement
+        )
 
     def _handleUsdChanges(self, resyncedPaths, infoChangedPaths, movedPaths=None):
-        stage_sync.applyUsdChanges(
-            self, resyncedPaths, infoChangedPaths, movedPaths
-        )
+        stage_adapter.applyUsdChanges(self, resyncedPaths, infoChangedPaths,
+                                      movedPaths=movedPaths)
 
     def _syncSelectionToPrimtree(self):
         with _ProfileSection(self._profiler, "Sync Selection to Primtree"):
@@ -11222,6 +11223,7 @@ class GraphView(QGLWidget):
             return
 
         oldName = prim.GetName()
+        placement = stage_adapter.savedRenamePlacement(self.nodes, nodeId)
         status, newPath, message = rename_prim(stage, prim, newName)
 
         if status == UNCHANGED:
@@ -11240,12 +11242,10 @@ class GraphView(QGLWidget):
         self._renamingNodeId = ""
         self._renameInput.clear()
 
-        # The resync notice the rename emitted has already moved the node to its
-        # new path (USD classifies the pair as RenameSource / RenameDestination,
-        # and _handleUsdChanges follows it). This call is the belt-and-braces
-        # half for the cases where it did not -- notices suppressed by an
-        # enclosing edit, or a USD build without GetPrimResyncType -- and is a
-        # no-op when the node is already where it belongs.
+        # The resync notice the rename emitted already dropped the old node
+        # and, inside the loader's scope, adopted the new prim. This call is
+        # the belt-and-braces half for suppressed notices and out-of-scope
+        # renames, and re-applies the display-only placement otherwise.
         #
         # What must NOT happen here is a reload. Graph membership is the user's
         # ('A' adds prims at any depth, 'D' takes them off, neither touches USD)
@@ -11253,7 +11253,7 @@ class GraphView(QGLWidget):
         # rename by emptying the canvas down to whatever the loader's scope
         # holds.
         newNodeId = str(newPath)
-        self._remapMovedNodes({nodeId: newNodeId})
+        self._adoptRenamedPrim(nodeId, newNodeId, *placement)
 
         self.clearSelection()
         if newNodeId in self.nodes:

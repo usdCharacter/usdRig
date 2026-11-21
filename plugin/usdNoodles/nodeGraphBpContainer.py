@@ -6,15 +6,19 @@
 #
 
 from UsdNoodles.core import LinkData
-from pxr import Gf, Tf
+from pxr import Tf
 
 from .models import NodeModel
 from .nodeGraph import createNodeRenderer
 from .nodeGraphBlueprint import NodeGraphBlueprint
-from .pinUtils import (
-    collect_links_for_prim,
-    infer_bare_link_direction,
-    split_direction_hint,
+from .pinUtils import collect_links_for_prim
+from .scopeEndpoints import (
+    accept_container_child,
+    endpoint_origins,
+    endpoint_position,
+    endpoint_specs,
+    scope_child_connections,
+    scope_pin_names,
 )
 
 
@@ -65,6 +69,10 @@ class NodeGraphBpContainer(NodeGraphBlueprint):
         # Clear existing data
         self.clear()
 
+        # The fieldname mode this load ran under; moved-scope
+        # reconciliation reads it back so its pins match this emission.
+        self._useFieldnames = useFieldnames
+
         # Store stage reference for USD-aware nodes
         self._stage = stage
 
@@ -85,29 +93,8 @@ class NodeGraphBpContainer(NodeGraphBlueprint):
 
         containerPathStr = str(primPath)
 
-        # Track bounds of nodes to position virtual nodes
-        minX = float("inf")
-        maxX = float("-inf")
-        minY = float("inf")
-        maxY = float("-inf")
-
         # First pass: Collect Container inputs and outputs for virtual nodes
-        containerInputs = []
-        containerOutputs = []
-
-        for attr in containerPrim.GetAttributes():
-            attrName = attr.GetName()
-            side, pinName = split_direction_hint(attrName)
-            if side == "input":
-                containerInputs.append(pinName)
-            elif side == "output":
-                containerOutputs.append(pinName)
-            elif ":" not in attrName:
-                # Bare attributes appear as both input and output
-                if attrName not in containerInputs:
-                    containerInputs.append(attrName)
-                if attrName not in containerOutputs:
-                    containerOutputs.append(attrName)
+        containerInputs, containerOutputs = scope_pin_names(containerPrim)
 
         # Collect deferred connections to Container I/O
         deferredContainerConnections = []
@@ -119,7 +106,7 @@ class NodeGraphBpContainer(NodeGraphBlueprint):
             childType = child.GetTypeName()
 
             # Process ExecNodes, nested Containers, and Shaders
-            if childType not in ["ExecNode", "Container", "Shader"]:
+            if not accept_container_child(child):
                 continue
 
             # Create USD-aware node that reads from the prim directly
@@ -140,10 +127,6 @@ class NodeGraphBpContainer(NodeGraphBlueprint):
                     stage=stage, primPath=childPath, renderer=createNodeRenderer()
                 )
 
-            # Node will read name, type, position, and pins from USD on demand
-            # We just need to track the bounds for virtual node positioning
-            nodePos = node.position
-
             # Force lazy-load of name, type, and pins so that the underlying
             # C++ NodeData fields are populated before calculateNodeSize and
             # generateVertices read them directly from the struct.
@@ -155,103 +138,49 @@ class NodeGraphBpContainer(NodeGraphBlueprint):
             _ = node.inputPinTypes
             _ = node.outputPinTypes
 
-            # Track bounds
-            minX = min(minX, nodePos[0])
-            maxX = max(maxX, nodePos[0])
-            minY = min(minY, nodePos[1])
-            maxY = max(maxY, nodePos[1])
-
             # Process connections on USD attributes
-            for attr in child.GetAttributes():
-                attrName = attr.GetName()
+            for conn in scope_child_connections(child, useFieldnames):
+                pinName = conn["pin_name"]
+                isInput = conn["is_input"]
+                fieldname = conn["fieldname"]
+                targetPrimPath = conn["target_prim_path"]
+                targetPinName = conn["target_pin_name"]
+                targetIsInput = conn["target_is_input"]
 
-                # Extract pin name and determine if input or output
-                isBare = False
-                side, pinName = split_direction_hint(attrName)
-                if side == "input":
-                    isInput = True
-                elif side == "output":
-                    isInput = False
-                elif ":" not in attrName:
-                    isBare = True
-                    isInput = True  # placeholder
-                else:
-                    continue
+                # Check if this connection is to the Container itself (virtual node)
+                if targetPrimPath == containerPathStr:
+                    deferredContainerConnections.append(
+                        {
+                            "sourceNodeId": node.id,
+                            "sourcePinName": pinName,
+                            "sourceIsInput": isInput,
+                            "targetPinName": targetPinName,
+                            "targetIsInput": targetIsInput,
+                            "fieldname": fieldname,
+                        }
+                    )
 
-                # Check for connections on this attribute
-                connections = attr.GetConnections()
-                if not connections:
-                    continue
-
-                # Get fieldname from assetInfo metadata if useFieldnames mode is enabled
-                fieldname = None
-                if useFieldnames:
-                    assetInfo = attr.GetCustomDataByKey("assetInfo")
-                    if assetInfo and isinstance(assetInfo, dict):
-                        fieldname = assetInfo.get("fieldname")
-                    else:
-                        metadata = attr.GetAllMetadata()
-                        if metadata and "assetInfo" in metadata:
-                            assetInfo = metadata["assetInfo"]
-                            if isinstance(assetInfo, dict):
-                                fieldname = assetInfo.get("fieldname")
-
-                for connPath in connections:
-                    connPathStr = str(connPath)
-
-                    if "." in connPathStr:
-                        targetPrimPath, targetPropName = connPathStr.rsplit(".", 1)
-                    else:
-                        continue
-
-                    side, targetPinName = split_direction_hint(targetPropName)
-                    if side == "input":
-                        targetIsInput = True
-                    elif side == "output":
-                        targetIsInput = False
-                    else:
-                        targetIsInput = True  # default for bare/namespaced targets
-
-                    if isBare:
-                        isInput = infer_bare_link_direction(targetPropName)
-
-                    # Check if this connection is to the Container itself (virtual node)
-                    if targetPrimPath == containerPathStr:
-                        deferredContainerConnections.append(
-                            {
-                                "sourceNodeId": node.id,
-                                "sourcePinName": pinName,
-                                "sourceIsInput": isInput,
-                                "targetPinName": targetPinName,
-                                "targetIsInput": targetIsInput,
-                                "fieldname": fieldname,
-                            }
-                        )
-
-                        if useFieldnames and fieldname:
-                            if targetIsInput:
-                                fieldnameInputs.add((targetPinName, fieldname))
-                            else:
-                                fieldnameOutputs.add((targetPinName, fieldname))
-                    else:
-                        link = LinkData()
-                        link.sourceNodeId = node.id
-                        link.sourcePort = pinName
-                        link.targetNodeId = targetPrimPath
-                        link.targetPort = targetPinName
-
-                        if isInput:
-                            node.inputLinks.append(link)
+                    if useFieldnames and fieldname:
+                        if targetIsInput:
+                            fieldnameInputs.add((targetPinName, fieldname))
                         else:
-                            node.outputLinks.append(link)
+                            fieldnameOutputs.add((targetPinName, fieldname))
+                else:
+                    link = LinkData()
+                    link.sourceNodeId = node.id
+                    link.sourcePort = pinName
+                    link.targetNodeId = targetPrimPath
+                    link.targetPort = targetPinName
+
+                    if isInput:
+                        node.inputLinks.append(link)
+                    else:
+                        node.outputLinks.append(link)
 
             _append_relationship_links(node, child, containerPathStr)
 
             # Calculate node size
             self._calculateNodeSize(node, calculateTextWidth, fontMetrics)
-
-            # Update maxX with node width
-            maxX = max(maxX, node.position[0] + node.size[0])
 
             self.nodes[node.id] = node
 
@@ -264,75 +193,41 @@ class NodeGraphBpContainer(NodeGraphBlueprint):
                 self.stickers.append(sticker)
 
         # Create virtual nodes for Container inputs (positioned to the left)
-        inputNodeSpacing = 150.0
-        inputStartY = minY if minY != float("inf") else 0.0
-        inputX = (minX - 400.0) if minX != float("inf") else -400.0
+        inputX, outputX, startY = endpoint_origins(self.nodes.values())
 
-        if useFieldnames and fieldnameInputs:
-            sortedFieldnameInputs = sorted(fieldnameInputs, key=lambda x: (x[0], x[1]))
-            for i, (containerPinName, fieldname) in enumerate(sortedFieldnameInputs):
-                virtualNodeId = (
-                    f"{containerPathStr}#input:{containerPinName}:{fieldname}"
-                )
+        inputSpecs, outputSpecs = endpoint_specs(
+            containerInputs,
+            containerOutputs,
+            fieldnameInputs,
+            fieldnameOutputs,
+            useFieldnames,
+        )
+        for i, (suffix, displayName) in enumerate(inputSpecs):
+            virtualNodeId = containerPathStr + suffix
 
-                node = NodeModel(renderer=createNodeRenderer())
-                node.id = virtualNodeId
-                node.name = fieldname
-                node.type = "ContainerInput"
-                node.position = Gf.Vec2d(inputX, inputStartY + i * inputNodeSpacing)
-                node.outputPins = [fieldname]
+            node = NodeModel(renderer=createNodeRenderer())
+            node.id = virtualNodeId
+            node.name = displayName
+            node.type = "ContainerInput"
+            node.position = endpoint_position(inputX, startY, i)
+            node.outputPins = [displayName]
 
-                self._calculateNodeSize(node, calculateTextWidth, fontMetrics)
-                self.nodes[virtualNodeId] = node
-        else:
-            for i, inputPinName in enumerate(containerInputs):
-                virtualNodeId = f"{containerPathStr}#input:{inputPinName}"
-
-                node = NodeModel(renderer=createNodeRenderer())
-                node.id = virtualNodeId
-                node.name = inputPinName
-                node.type = "ContainerInput"
-                node.position = Gf.Vec2d(inputX, inputStartY + i * inputNodeSpacing)
-                node.outputPins = [inputPinName]
-
-                self._calculateNodeSize(node, calculateTextWidth, fontMetrics)
-                self.nodes[virtualNodeId] = node
+            self._calculateNodeSize(node, calculateTextWidth, fontMetrics)
+            self.nodes[virtualNodeId] = node
 
         # Create virtual nodes for Container outputs (positioned to the right)
-        outputStartY = minY if minY != float("inf") else 0.0
-        outputX = (maxX + 200.0) if maxX != float("-inf") else 400.0
+        for i, (suffix, displayName) in enumerate(outputSpecs):
+            virtualNodeId = containerPathStr + suffix
 
-        if useFieldnames and fieldnameOutputs:
-            sortedFieldnameOutputs = sorted(
-                fieldnameOutputs, key=lambda x: (x[0], x[1])
-            )
-            for i, (containerPinName, fieldname) in enumerate(sortedFieldnameOutputs):
-                virtualNodeId = (
-                    f"{containerPathStr}#output:{containerPinName}:{fieldname}"
-                )
+            node = NodeModel(renderer=createNodeRenderer())
+            node.id = virtualNodeId
+            node.name = displayName
+            node.type = "ContainerOutput"
+            node.position = endpoint_position(outputX, startY, i)
+            node.inputPins = [displayName]
 
-                node = NodeModel(renderer=createNodeRenderer())
-                node.id = virtualNodeId
-                node.name = fieldname
-                node.type = "ContainerOutput"
-                node.position = Gf.Vec2d(outputX, outputStartY + i * inputNodeSpacing)
-                node.inputPins = [fieldname]
-
-                self._calculateNodeSize(node, calculateTextWidth, fontMetrics)
-                self.nodes[virtualNodeId] = node
-        else:
-            for i, outputPinName in enumerate(containerOutputs):
-                virtualNodeId = f"{containerPathStr}#output:{outputPinName}"
-
-                node = NodeModel(renderer=createNodeRenderer())
-                node.id = virtualNodeId
-                node.name = outputPinName
-                node.type = "ContainerOutput"
-                node.position = Gf.Vec2d(outputX, outputStartY + i * inputNodeSpacing)
-                node.inputPins = [outputPinName]
-
-                self._calculateNodeSize(node, calculateTextWidth, fontMetrics)
-                self.nodes[virtualNodeId] = node
+            self._calculateNodeSize(node, calculateTextWidth, fontMetrics)
+            self.nodes[virtualNodeId] = node
 
         # Process deferred Container I/O connections
         for conn in deferredContainerConnections:

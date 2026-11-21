@@ -20,7 +20,7 @@ from pxr.Usdviewq import plugin
 from pxr.Usdviewq.qt import QtCore, QtGui, QtWidgets
 
 from .graphView import GraphView
-from .graphview import stage_sync
+from .graphview import stage_adapter
 from .noodlesConfig import NoodlesConfig
 from .utils import M, MenuBuilder
 from .widgets.keyBindingDialog import KeyBindingDialog
@@ -545,7 +545,7 @@ class NoodlesEditorWindow(QtWidgets.QDockWidget):
         # a queued reload finish or a live notice receiver left behind keeps
         # writing to an editor nobody is displaying. The closed stage service
         # is the guard, so the widget's own close later changes nothing.
-        stage_sync.closeStageLifecycle(self.graphView)
+        stage_adapter.closeStageLifecycle(self.graphView)
         self.windowClosed.emit(self._windowId)
         super().closeEvent(event)
 

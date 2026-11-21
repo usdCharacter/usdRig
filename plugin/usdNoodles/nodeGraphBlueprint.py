@@ -6,14 +6,18 @@
 #
 
 from UsdNoodles.core import LinkData
-from pxr import Gf, Tf
+from pxr import Tf
 
 from .models import NodeModel
 from .nodeGraph import createNodeRenderer, NodeGraph
-from .pinUtils import (
-    collect_links_for_prim,
-    infer_bare_link_direction,
-    split_direction_hint,
+from .pinUtils import collect_links_for_prim
+from .scopeEndpoints import (
+    accept_blueprint_child,
+    endpoint_origins,
+    endpoint_position,
+    endpoint_specs,
+    scope_child_connections,
+    scope_pin_names,
 )
 
 
@@ -56,6 +60,10 @@ class NodeGraphBlueprint(NodeGraph):
         # Clear existing data
         self.clear()
 
+        # The fieldname mode this load ran under; moved-scope
+        # reconciliation reads it back so its pins match this emission.
+        self._useFieldnames = useFieldnames
+
         # Store stage reference for USD-aware nodes
         self._stage = stage
 
@@ -76,29 +84,8 @@ class NodeGraphBlueprint(NodeGraph):
 
         blueprintPathStr = str(primPath)
 
-        # Track bounds of ExecNodes to position virtual nodes
-        minX = float("inf")
-        maxX = float("-inf")
-        minY = float("inf")
-        maxY = float("-inf")
-
         # First pass: Collect Blueprint inputs and outputs for virtual nodes
-        blueprintInputs = []
-        blueprintOutputs = []
-
-        for attr in blueprintPrim.GetAttributes():
-            attrName = attr.GetName()
-            side, pinName = split_direction_hint(attrName)
-            if side == "input":
-                blueprintInputs.append(pinName)
-            elif side == "output":
-                blueprintOutputs.append(pinName)
-            elif ":" not in attrName:
-                # Bare attributes appear as both input and output
-                if attrName not in blueprintInputs:
-                    blueprintInputs.append(attrName)
-                if attrName not in blueprintOutputs:
-                    blueprintOutputs.append(attrName)
+        blueprintInputs, blueprintOutputs = scope_pin_names(blueprintPrim)
 
         # Collect deferred connections to Blueprint I/O (will be processed after we know bounds)
         # Also collect unique fieldnames when useFieldnames is True
@@ -113,7 +100,7 @@ class NodeGraphBlueprint(NodeGraph):
             # Skip prims that are clearly not nodes (e.g. relationship targets,
             # property specs).  Accept any typed or typeless prim so that the
             # node factory can attempt to create a node from it.
-            if childType in ("", None) and not child.GetAttributes():
+            if not accept_blueprint_child(child):
                 continue
 
             # Create USD-aware node that reads from the prim directly
@@ -134,10 +121,6 @@ class NodeGraphBlueprint(NodeGraph):
                     stage=stage, primPath=childPath, renderer=createNodeRenderer()
                 )
 
-            # Node will read name, type, position, and pins from USD on demand
-            # We just need to track the bounds for virtual node positioning
-            nodePos = node.position
-
             # Force lazy-load of name, type, and pins so that the underlying
             # C++ NodeData fields are populated before calculateNodeSize and
             # generateVertices read them directly from the struct.
@@ -149,126 +132,67 @@ class NodeGraphBlueprint(NodeGraph):
             _ = node.inputPinTypes
             _ = node.outputPinTypes
 
-            # Track bounds
-            minX = min(minX, nodePos[0])
-            maxX = max(maxX, nodePos[0])
-            minY = min(minY, nodePos[1])
-            maxY = max(maxY, nodePos[1])
-
             # Process connections on USD attributes
             # Note: Pins are read from USD automatically via node properties
-            for attr in child.GetAttributes():
-                attrName = attr.GetName()
+            for conn in scope_child_connections(child, useFieldnames):
+                pinName = conn["pin_name"]
+                isInput = conn["is_input"]
+                fieldname = conn["fieldname"]
+                targetPrimPath = conn["target_prim_path"]
+                targetPinName = conn["target_pin_name"]
+                targetIsInput = conn["target_is_input"]
 
-                # Extract pin name and determine if input or output
-                isBare = False
-                side, pinName = split_direction_hint(attrName)
-                if side == "input":
-                    isInput = True
-                elif side == "output":
-                    isInput = False
-                elif ":" not in attrName:
-                    isBare = True
-                    isInput = True  # placeholder
+                # Check if this connection is to the Blueprint itself (virtual node)
+                if targetPrimPath == blueprintPathStr:
+                    # Defer Blueprint I/O connections until we know the bounds
+                    deferredBlueprintConnections.append(
+                        {
+                            "sourceNodeId": node.id,
+                            "sourcePinName": pinName,
+                            "sourceIsInput": isInput,
+                            "targetPinName": targetPinName,
+                            "targetIsInput": targetIsInput,
+                            "fieldname": fieldname,
+                        }
+                    )
+
+                    # Collect unique fieldnames for virtual node generation
+                    if useFieldnames and fieldname:
+                        if targetIsInput:
+                            fieldnameInputs.add((targetPinName, fieldname))
+                        else:
+                            fieldnameOutputs.add((targetPinName, fieldname))
                 else:
-                    continue
+                    # Regular connection to another ExecNode
+                    link = LinkData()
 
-                # Check for connections on this attribute
-                connections = attr.GetConnections()
-                if not connections:
-                    continue
-
-                # Get fieldname from assetInfo metadata if useFieldnames mode is enabled
-                fieldname = None
-                if useFieldnames:
-                    # Try customData first, then fall back to metadata
-                    assetInfo = attr.GetCustomDataByKey("assetInfo")
-                    if assetInfo and isinstance(assetInfo, dict):
-                        fieldname = assetInfo.get("fieldname")
+                    # Handle both authoring conventions:
+                    # - If connection is on INPUT: input connects TO output (swap needed)
+                    # - If connection is on OUTPUT: output connects TO input (no swap)
+                    if isInput:
+                        # Connection on INPUT side: input connects TO output
+                        # Current node is target, connection points to source
+                        link.sourceNodeId = targetPrimPath
+                        link.sourcePort = targetPinName
+                        link.targetNodeId = node.id
+                        link.targetPort = pinName
                     else:
-                        # Try getting assetInfo from metadata
-                        metadata = attr.GetAllMetadata()
-                        if metadata and "assetInfo" in metadata:
-                            assetInfo = metadata["assetInfo"]
-                            if isinstance(assetInfo, dict):
-                                fieldname = assetInfo.get("fieldname")
+                        # Connection on OUTPUT side: output connects TO input
+                        # Current node is source, connection points to target
+                        link.sourceNodeId = node.id
+                        link.sourcePort = pinName
+                        link.targetNodeId = targetPrimPath
+                        link.targetPort = targetPinName
 
-                for connPath in connections:
-                    # Parse the target path to get node and pin
-                    connPathStr = str(connPath)
-
-                    # Split into prim path and property name
-                    if "." in connPathStr:
-                        targetPrimPath, targetPropName = connPathStr.rsplit(".", 1)
+                    if isInput:
+                        node.inputLinks.append(link)
                     else:
-                        continue
-
-                    # Extract target pin name
-                    side, targetPinName = split_direction_hint(targetPropName)
-                    if side == "input":
-                        targetIsInput = True
-                    elif side == "output":
-                        targetIsInput = False
-                    else:
-                        targetIsInput = True  # default for bare/namespaced targets
-
-                    if isBare:
-                        isInput = infer_bare_link_direction(targetPropName)
-
-                    # Check if this connection is to the Blueprint itself (virtual node)
-                    if targetPrimPath == blueprintPathStr:
-                        # Defer Blueprint I/O connections until we know the bounds
-                        deferredBlueprintConnections.append(
-                            {
-                                "sourceNodeId": node.id,
-                                "sourcePinName": pinName,
-                                "sourceIsInput": isInput,
-                                "targetPinName": targetPinName,
-                                "targetIsInput": targetIsInput,
-                                "fieldname": fieldname,
-                            }
-                        )
-
-                        # Collect unique fieldnames for virtual node generation
-                        if useFieldnames and fieldname:
-                            if targetIsInput:
-                                fieldnameInputs.add((targetPinName, fieldname))
-                            else:
-                                fieldnameOutputs.add((targetPinName, fieldname))
-                    else:
-                        # Regular connection to another ExecNode
-                        link = LinkData()
-
-                        # Handle both authoring conventions:
-                        # - If connection is on INPUT: input connects TO output (swap needed)
-                        # - If connection is on OUTPUT: output connects TO input (no swap)
-                        if isInput:
-                            # Connection on INPUT side: input connects TO output
-                            # Current node is target, connection points to source
-                            link.sourceNodeId = targetPrimPath
-                            link.sourcePort = targetPinName
-                            link.targetNodeId = node.id
-                            link.targetPort = pinName
-                        else:
-                            # Connection on OUTPUT side: output connects TO input
-                            # Current node is source, connection points to target
-                            link.sourceNodeId = node.id
-                            link.sourcePort = pinName
-                            link.targetNodeId = targetPrimPath
-                            link.targetPort = targetPinName
-
-                        if isInput:
-                            node.inputLinks.append(link)
-                        else:
-                            node.outputLinks.append(link)
+                        node.outputLinks.append(link)
 
             _append_relationship_links(node, child, blueprintPathStr)
 
             # Calculate node size
             self._calculateNodeSize(node, calculateTextWidth, fontMetrics)
-
-            # Update maxX with node width
-            maxX = max(maxX, node.position[0] + node.size[0])
 
             self.nodes[node.id] = node
 
@@ -281,91 +205,49 @@ class NodeGraphBlueprint(NodeGraph):
                 self.stickers.append(sticker)
 
         # Create virtual nodes for Blueprint inputs (positioned to the left)
-        inputNodeSpacing = 150.0
-        inputStartY = minY if minY != float("inf") else 0.0
-        inputX = (minX - 400.0) if minX != float("inf") else -400.0
+        inputX, outputX, startY = endpoint_origins(self.nodes.values())
 
-        if useFieldnames and fieldnameInputs:
-            # Create virtual nodes for each unique fieldname
-            sortedFieldnameInputs = sorted(fieldnameInputs, key=lambda x: (x[0], x[1]))
-            for i, (bpPinName, fieldname) in enumerate(sortedFieldnameInputs):
-                virtualNodeId = f"{blueprintPathStr}#input:{bpPinName}:{fieldname}"
+        inputSpecs, outputSpecs = endpoint_specs(
+            blueprintInputs,
+            blueprintOutputs,
+            fieldnameInputs,
+            fieldnameOutputs,
+            useFieldnames,
+        )
+        for i, (suffix, displayName) in enumerate(inputSpecs):
+            virtualNodeId = blueprintPathStr + suffix
 
-                node = NodeModel()
-                node.id = virtualNodeId
-                node.name = fieldname
-                node.type = "BlueprintInput"
-                node.position = Gf.Vec2d(inputX, inputStartY + i * inputNodeSpacing)
+            node = NodeModel()
+            node.id = virtualNodeId
+            node.name = displayName
+            node.type = "BlueprintInput"
+            node.position = endpoint_position(inputX, startY, i)
 
-                # Blueprint input nodes have one output pin (the input value flows out to ExecNodes)
-                node.outputPins = [fieldname]
+            # Blueprint input nodes have one output pin (the input value flows out to ExecNodes)
+            node.outputPins = [displayName]
 
-                # Calculate node size
-                self._calculateNodeSize(node, calculateTextWidth, fontMetrics)
+            # Calculate node size
+            self._calculateNodeSize(node, calculateTextWidth, fontMetrics)
 
-                self.nodes[virtualNodeId] = node
-        else:
-            # Original mode: single virtual node per Blueprint input
-            for i, inputPinName in enumerate(blueprintInputs):
-                virtualNodeId = f"{blueprintPathStr}#input:{inputPinName}"
-
-                node = NodeModel()
-                node.id = virtualNodeId
-                node.name = inputPinName
-                node.type = "BlueprintInput"
-                node.position = Gf.Vec2d(inputX, inputStartY + i * inputNodeSpacing)
-
-                # Blueprint input nodes have one output pin (the input value flows out to ExecNodes)
-                node.outputPins = [inputPinName]
-
-                # Calculate node size
-                self._calculateNodeSize(node, calculateTextWidth, fontMetrics)
-
-                self.nodes[virtualNodeId] = node
+            self.nodes[virtualNodeId] = node
 
         # Create virtual nodes for Blueprint outputs (positioned to the right)
-        outputStartY = minY if minY != float("inf") else 0.0
-        outputX = (maxX + 200.0) if maxX != float("-inf") else 400.0
+        for i, (suffix, displayName) in enumerate(outputSpecs):
+            virtualNodeId = blueprintPathStr + suffix
 
-        if useFieldnames and fieldnameOutputs:
-            # Create virtual nodes for each unique fieldname
-            sortedFieldnameOutputs = sorted(
-                fieldnameOutputs, key=lambda x: (x[0], x[1])
-            )
-            for i, (bpPinName, fieldname) in enumerate(sortedFieldnameOutputs):
-                virtualNodeId = f"{blueprintPathStr}#output:{bpPinName}:{fieldname}"
+            node = NodeModel()
+            node.id = virtualNodeId
+            node.name = displayName
+            node.type = "BlueprintOutput"
+            node.position = endpoint_position(outputX, startY, i)
 
-                node = NodeModel()
-                node.id = virtualNodeId
-                node.name = fieldname
-                node.type = "BlueprintOutput"
-                node.position = Gf.Vec2d(outputX, outputStartY + i * inputNodeSpacing)
+            # Blueprint output nodes have one input pin (values flow in from ExecNodes)
+            node.inputPins = [displayName]
 
-                # Blueprint output nodes have one input pin (values flow in from ExecNodes)
-                node.inputPins = [fieldname]
+            # Calculate node size
+            self._calculateNodeSize(node, calculateTextWidth, fontMetrics)
 
-                # Calculate node size
-                self._calculateNodeSize(node, calculateTextWidth, fontMetrics)
-
-                self.nodes[virtualNodeId] = node
-        else:
-            # Original mode: single virtual node per Blueprint output
-            for i, outputPinName in enumerate(blueprintOutputs):
-                virtualNodeId = f"{blueprintPathStr}#output:{outputPinName}"
-
-                node = NodeModel()
-                node.id = virtualNodeId
-                node.name = outputPinName
-                node.type = "BlueprintOutput"
-                node.position = Gf.Vec2d(outputX, outputStartY + i * inputNodeSpacing)
-
-                # Blueprint output nodes have one input pin (values flow in from ExecNodes)
-                node.inputPins = [outputPinName]
-
-                # Calculate node size
-                self._calculateNodeSize(node, calculateTextWidth, fontMetrics)
-
-                self.nodes[virtualNodeId] = node
+            self.nodes[virtualNodeId] = node
 
         # Now process deferred Blueprint I/O connections
         for conn in deferredBlueprintConnections:
