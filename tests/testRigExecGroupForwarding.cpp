@@ -505,26 +505,30 @@ TestTwoGroupGate()
     TfUnsetenv("RIGEXEC_BAKED_GROUP_VERTS");
     TfUnsetenv("RIGEXEC_BAKED_CHUNK_VERTS");
     CHECK(compiled);
-    if (!compiled)
+    if (!compiled) {
         return;
+    }
     const RigExecRigPose native = evaluator.Evaluate(UsdTimeCode(1));
     CHECK(native.valid);
     const Program &program = evaluator.GetBakedProgram()->GetStepGraph();
     const int chainId = FindChain(program, SdfPath("/Asset/Shape.points"));
     CHECK(chainId >= 0);
-    if (chainId < 0)
+    if (chainId < 0) {
         return;
+    }
     const Chain &chain = program.chains[size_t(chainId)];
     const int revisionId = FindRevision(chain, "Gated");
     CHECK(revisionId >= 0);
-    if (revisionId < 0)
+    if (revisionId < 0) {
         return;
+    }
     const Revision &revision = chain.revisions[size_t(revisionId)];
     CHECK(chain.groupBounds.size() == 3);
     CHECK(revision.groupWritten == std::vector<char>({1, 0}));
     if (chain.groupBounds.size() != 3 ||
-        revision.groupWritten != std::vector<char>({1, 0}))
+        revision.groupWritten != std::vector<char>({1, 0})) {
         return;
+    }
     std::string error;
     CHECK(RigExecFrozenMatchesLive(&evaluator, SdfPath(kRig), UsdTimeCode(1),
                                    &error));
@@ -538,8 +542,9 @@ TestTwoGroupGate()
     TfUnsetenv("RIGEXEC_BAKED_CHUNK_VERTS");
     const bool opened = exported && player.Open(bytes, stage, &error);
     CHECK(opened);
-    if (!opened)
+    if (!opened) {
         return;
+    }
     CHECK(player.Play(1, &error));
     std::vector<std::string> diffs;
     CHECK(RigExecCompareRuntimeOutputs(native, player.Reader(), &diffs));
@@ -557,8 +562,9 @@ TestTwoGroupGate()
                 const uint32_t value = file->inputs[size_t(slot)].value();
                 auto &indices = file->intArrays[file->values[value].array].v;
                 CHECK(!indices.empty());
-                if (!indices.empty())
+                if (!indices.empty()) {
                     indices[0] = int32_t(chain.groupBounds[1]);
+                }
             }
         });
     std::string refusal;

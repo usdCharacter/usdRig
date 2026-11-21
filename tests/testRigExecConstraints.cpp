@@ -4831,13 +4831,28 @@ struct ConstraintsSourcePlayback {
     }
 };
 
+static const TfToken kRigExecSolverMode(SchemaAttrText::rigExecSolverMode);
+static const TfToken kRigExecFirstJoint(SchemaAttrText::rigExecFirstJoint);
+static const TfToken kInputsSourceWeights(SchemaAttrText::inputsSourceWeights);
+static const TfToken kRigExecSources(SchemaAttrText::rigExecSources);
+static const TfToken
+    kInputsTranslationOffsets(SchemaAttrText::inputsTranslationOffsets);
+static const TfToken
+    kRigExecPoleVectorMode(SchemaAttrText::rigExecPoleVectorMode);
+static const TfToken
+    kRigExecPoleVectorObjects(SchemaAttrText::rigExecPoleVectorObjects);
+static const TfToken
+    kInputsPoleVectorWeights(SchemaAttrText::inputsPoleVectorWeights);
+static const TfToken kSingleChain("singleChain");
+static const TfToken kObject("object");
+
 static void
 TestInvalidSingleChainPlayback()
 {
     const UsdStageRefPtr stage = BuildConstraintStage(nullptr);
     const UsdPrim ik = stage->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/IK"));
-    ik.GetAttribute(TfToken("rigExec:solverMode")).Set(TfToken("singleChain"));
-    ik.GetRelationship(TfToken("rigExec:firstJoint"))
+    ik.GetAttribute(kRigExecSolverMode).Set(kSingleChain);
+    ik.GetRelationship(kRigExecFirstJoint)
         .SetTargets({SdfPath("/Missing/Joint")});
     RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
     std::vector<std::string> errors;
@@ -4879,40 +4894,41 @@ TestConstraintTableNormalizationAcrossHosts()
             const UsdPrim position =
                 stage->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/Position"));
             const UsdAttribute weights =
-                position.GetAttribute(TfToken("inputs:sourceWeights"));
+                position.GetAttribute(kInputsSourceWeights);
             CHECK(weights);
             const UsdPrim parent =
                 stage->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/Parent"));
-            parent.GetRelationship(TfToken("rigExec:sources"))
+            parent.GetRelationship(kRigExecSources)
                 .SetTargets({SdfPath("/Asset/Sources/Parent"),
                              SdfPath("/Asset/Sources/A")});
             const UsdAttribute offsets =
-                parent.GetAttribute(TfToken("inputs:translationOffsets"));
+                parent.GetAttribute(kInputsTranslationOffsets);
             const UsdPrim ik =
                 stage->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/IK"));
-            ik.GetAttribute(TfToken("rigExec:poleVectorMode"))
-                .Set(TfToken("object"));
-            ik.GetRelationship(TfToken("rigExec:poleVectorObjects"))
+            ik.GetAttribute(kRigExecPoleVectorMode).Set(kObject);
+            ik.GetRelationship(kRigExecPoleVectorObjects)
                 .SetTargets(
                     {SdfPath("/Asset/Sources/A"), SdfPath("/Asset/Sources/B")});
-            const UsdAttribute poleWeights =
-                ik.CreateAttribute(TfToken("inputs:poleVectorWeights"),
-                                   SdfValueTypeNames->FloatArray);
+            const UsdAttribute poleWeights = ik.CreateAttribute(
+                kInputsPoleVectorWeights, SdfValueTypeNames->FloatArray);
             const auto size = [&](int selected) {
                 return size_t(channel == selected ? std::max(entries, 0) : 2);
             };
-            if (entries < 0 && channel == 0)
+            if (entries < 0 && channel == 0) {
                 weights.Clear();
-            else
+            } else {
                 CHECK(weights.Set(VtFloatArray(size(0), 1.0f)));
-            if (entries < 0 && channel == 1)
+            }
+            if (entries < 0 && channel == 1) {
                 offsets.Clear();
-            else
+            } else {
                 CHECK(offsets.Set(VtVec3dArray(size(1), GfVec3d(0))));
-            if (entries < 0 && channel == 2)
+            }
+            if (entries < 0 && channel == 2) {
                 poleWeights.Clear();
-            else
+            } else {
                 CHECK(poleWeights.Set(VtFloatArray(size(2), 1.0f)));
+            }
             RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
             std::vector<std::string> errors;
             CHECK(evaluator.Compile(&errors));

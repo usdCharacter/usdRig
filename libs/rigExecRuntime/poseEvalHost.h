@@ -1446,7 +1446,7 @@ public:
                 channel == 0 ? arrays.diagnostics : arrays.poleDiagnostics;
             auto &values = channel == 0 ? arrays.weights : arrays.poleWeights;
             return eval::NormalizeConstraintArray<double>(
-                count, raw ? raw->size() : 0, raw != nullptr, 1.0,
+                channel, count, raw ? raw->size() : 0, raw != nullptr,
                 [&](size_t k) { return double((*raw)[k]); },
                 [&](size_t size, size_t expected) {
                     lines.push_back(arrayPath + " " + name + " has " +
@@ -1455,10 +1455,11 @@ public:
                 },
                 &values);
         };
-        const auto offsets = [&](size_t channel, size_t count) {
+        const auto offsets = [&](size_t channel, size_t count, bool enabled) {
             const int slot = arrayWire.rawSlots[channel];
             const auto *raw =
-                slot >= 0 && RrInputHasValue(_program, uint32_t(slot))
+                enabled && slot >= 0 &&
+                        RrInputHasValue(_program, uint32_t(slot))
                     ? RrInputArray<RigExecWireVec3d>(_program, uint32_t(slot))
                     : nullptr;
             const char *name = channel == 1
@@ -1467,7 +1468,7 @@ public:
             auto &values = channel == 1 ? arrays.translationOffsets
                                         : arrays.rotationOffsets;
             return eval::NormalizeConstraintArray<RrVec3d>(
-                count, raw ? raw->size() : 0, raw != nullptr, RrVec3d(0),
+                channel, count, raw ? raw->size() : 0, raw != nullptr,
                 [&](size_t k) {
                     return RrVec3d((*raw)[k][0], (*raw)[k][1], (*raw)[k][2]);
                 },
@@ -1482,10 +1483,6 @@ public:
         eval::NormalizeConstraintTables(
             size_t(arrayWire.sourceCount), size_t(arrayWire.poleCount),
             arrayWire.parentOffsets, arrayWire.readPole, weights, offsets,
-            [&](size_t count) {
-                arrays.translationOffsets.assign(count, RrVec3d(0));
-                arrays.rotationOffsets.assign(count, RrVec3d(0));
-            },
             &arrays.ok, &arrays.poleOk);
         return true;
     }

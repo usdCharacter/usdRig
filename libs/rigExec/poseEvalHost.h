@@ -37,7 +37,7 @@ PrepareConstraintArrays(RigExecBakedProgramImpl::ConstraintArrays *arrays)
         auto &diagnostics = channel == 0 ? a.diagnostics : a.poleDiagnostics;
         auto &values = channel == 0 ? a.weights : a.poleWeights;
         return eval::NormalizeConstraintArray<double>(
-            count, raw ? raw->size() : 0, raw != nullptr, 1.0,
+            channel, count, raw ? raw->size() : 0, raw != nullptr,
             [&](size_t k) { return double((*raw)[k]); },
             [&](size_t size, size_t expected) {
                 diagnostics.push_back(a.pathText + " " + name + " has " +
@@ -46,8 +46,8 @@ PrepareConstraintArrays(RigExecBakedProgramImpl::ConstraintArrays *arrays)
             },
             &values);
     };
-    const auto offsets = [&](size_t channel, size_t count) {
-        const auto *raw = a.raw[channel].IsHolding<VtVec3dArray>()
+    const auto offsets = [&](size_t channel, size_t count, bool enabled) {
+        const auto *raw = enabled && a.raw[channel].IsHolding<VtVec3dArray>()
                               ? &a.raw[channel].UncheckedGet<VtVec3dArray>()
                               : nullptr;
         const char *name = channel == 1
@@ -55,7 +55,7 @@ PrepareConstraintArrays(RigExecBakedProgramImpl::ConstraintArrays *arrays)
                                : SchemaAttrText::inputsRotationOffsets;
         auto &values = channel == 1 ? a.translationOffsets : a.rotationOffsets;
         return eval::NormalizeConstraintArray<GfVec3d>(
-            count, raw ? raw->size() : 0, raw != nullptr, GfVec3d(0),
+            channel, count, raw ? raw->size() : 0, raw != nullptr,
             [&](size_t k) { return (*raw)[k]; },
             [&](size_t size, size_t expected) {
                 a.diagnostics.push_back(a.pathText + " " + name + " has " +
@@ -64,14 +64,9 @@ PrepareConstraintArrays(RigExecBakedProgramImpl::ConstraintArrays *arrays)
             },
             &values);
     };
-    eval::NormalizeConstraintTables(
-        a.sourceCount, a.poleCount, a.parentOffsets, a.readPole, weights,
-        offsets,
-        [&](size_t count) {
-            a.translationOffsets.assign(count, GfVec3d(0));
-            a.rotationOffsets.assign(count, GfVec3d(0));
-        },
-        &a.ok, &a.poleOk);
+    eval::NormalizeConstraintTables(a.sourceCount, a.poleCount, a.parentOffsets,
+                                    a.readPole, weights, offsets, &a.ok,
+                                    &a.poleOk);
 }
 
 struct BakedPoseMath {

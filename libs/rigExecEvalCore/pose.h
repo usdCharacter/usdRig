@@ -4986,15 +4986,15 @@ RunIkFkArm(Host &host, size_t object)
 // Absent and empty tables use defaults; a nonempty table must name every source.
 template <class Value, class Read, class Diagnose>
 inline bool
-NormalizeConstraintArray(size_t count, size_t rawCount, bool present,
-                         const Value &fallback, Read read, Diagnose diagnose,
+NormalizeConstraintArray(size_t channel, size_t count, size_t rawCount,
+                         bool present, Read read, Diagnose diagnose,
                          std::vector<Value> *values)
 {
     if (present && rawCount != 0 && rawCount != count) {
         diagnose(rawCount, count);
         return false;
     }
-    values->assign(count, fallback);
+    values->assign(count, Value(channel == 0 || channel == 3 ? 1.0 : 0.0));
     if (present) {
         for (size_t k = 0; k < rawCount; ++k) {
             (*values)[k] = read(k);
@@ -5005,19 +5005,16 @@ NormalizeConstraintArray(size_t count, size_t rawCount, bool present,
 
 // Keep the source, optional offsets and pole channels in the same order on
 // both hosts; decoding and diagnostic text remain with their adapters.
-template <class Weights, class Offsets, class DefaultOffsets>
+template <class Weights, class Offsets>
 inline void
 NormalizeConstraintTables(size_t sourceCount, size_t poleCount,
                           bool parentOffsets, bool readPole, Weights weights,
-                          Offsets offsets, DefaultOffsets defaultOffsets,
-                          bool *ok, bool *poleOk)
+                          Offsets offsets, bool *ok, bool *poleOk)
 {
-    *ok = weights(0, sourceCount);
-    if (parentOffsets) {
-        *ok = *ok && offsets(1, sourceCount) && offsets(2, sourceCount);
-    } else {
-        defaultOffsets(sourceCount);
-    }
+    const bool weightsOk = weights(0, sourceCount);
+    const bool translationOk = offsets(1, sourceCount, parentOffsets);
+    const bool rotationOk = offsets(2, sourceCount, parentOffsets);
+    *ok = weightsOk && translationOk && rotationOk;
     if (readPole) {
         *poleOk = weights(3, poleCount);
     }
