@@ -3,41 +3,61 @@
 _SUBMENU_RANKS = {"Viewport": 10, "General Editors": 20,
                   "Animation Editors": 30}
 _MENU_RANK = "rigExecMenuRank"
+_COMMAND = "usdRigCommandPlugin"
 
 
-def _PlaceByRank(qMenu, action, rank):
-    action.setProperty(_MENU_RANK, rank)
-    for other in qMenu.actions():
-        if other == action:
-            return
-        otherRank = other.property(_MENU_RANK)
-        if otherRank is not None and otherRank > rank:
+def _Rank(action):
+    submenu = action.menu()
+    if submenu is not None and submenu.title() in _SUBMENU_RANKS:
+        rank = _SUBMENU_RANKS[submenu.title()]
+        action.setProperty(_MENU_RANK, rank)
+        return rank
+    return action.property(_MENU_RANK)
+
+
+def _OrderTopLevel(qMenu):
+    actions = qMenu.actions()
+    ranks = [_Rank(action) for action in actions]
+    ranked = sorted((action for action, rank in zip(actions, ranks)
+                     if rank is not None), key=_Rank)
+    # Keep unranked actions in their slots while sorting ranked siblings.
+    slots = iter(ranked)
+    ordered = [action if rank is None else next(slots)
+               for action, rank in zip(actions, ranks)]
+    if ordered == actions:
+        return
+    before = None
+    for action in reversed(ordered):
+        if _Rank(action) is not None:
             qMenu.removeAction(action)
-            qMenu.insertAction(other, action)
-            return
+            qMenu.insertAction(before, action)
+        before = action
 
 
 def AddToRigExecMenu(plugUIBuilder, submenu, commandPlugin, rank):
-    """Return the command's action in RigExec or its named submenu.
+    """Return the live command action in RigExec or its named submenu.
 
-    Use None for a direct child. Ranks apply only on insertion; ties keep
-    insertion order, and adding the same command again returns its action.
+    Use None for a direct child. Command ranks apply only on insertion;
+    ties keep insertion order.
     """
-    menu = plugUIBuilder.findOrCreateMenu("RigExec")
-    if submenu is not None:
-        menu = menu.findOrCreateSubmenu(submenu)
-
-    actions = getattr(menu, "_usdRigCommandActions", None)
-    if actions is None:
-        actions = menu._usdRigCommandActions = {}
-    if commandPlugin in actions:
-        return actions[commandPlugin]
+    top = plugUIBuilder.findOrCreateMenu("RigExec")
+    menu = top if submenu is None else top.findOrCreateSubmenu(submenu)
+    qMenu = menu._qMenu
+    for action in qMenu.actions():
+        if action.property(_COMMAND) is commandPlugin:
+            _OrderTopLevel(top._qMenu)
+            return action
 
     action = menu.addItem(commandPlugin)
-    qMenu = action.parent()
-    _PlaceByRank(qMenu, action, rank)
-    submenuRank = _SUBMENU_RANKS.get(submenu)
-    if submenuRank is not None:
-        _PlaceByRank(qMenu.parent(), qMenu.menuAction(), submenuRank)
-    actions[commandPlugin] = action
+    action.setProperty(_COMMAND, commandPlugin)
+    action.setProperty(_MENU_RANK, rank)
+    for other in qMenu.actions():
+        if other == action:
+            break
+        otherRank = _Rank(other)
+        if otherRank is not None and otherRank > rank:
+            qMenu.removeAction(action)
+            qMenu.insertAction(other, action)
+            break
+    _OrderTopLevel(top._qMenu)
     return action

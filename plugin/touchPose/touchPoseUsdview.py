@@ -1,9 +1,5 @@
 #
 # TouchPose's usdview plugin container.
-#
-# The panel is imported lazily inside the callback, as every panel in
-# rigExecUsdview is, so that this module stays importable with no Qt.
-#
 import os
 import sys
 

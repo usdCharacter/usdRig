@@ -112,6 +112,9 @@ def validate(args) -> list[str]:
         problems.append(f"OpenUSD install has no bin/usdview: {usd}")
     if not any((rig / "lib" / name).is_file() for name in IMAGING_NAMES):
         problems.append(f"RigExec install has no imaging library: {rig}/lib")
+    menu = rig / "lib" / "python" / "usdRigViewMenu.py"
+    if not menu.is_file():
+        problems.append(f"RigExec install is missing {menu}")
     for plug in ("rigExecSchema", "rigExecImaging"):
         info = rig / "lib" / "usd" / plug / "resources" / "plugInfo.json"
         if not info.is_file():

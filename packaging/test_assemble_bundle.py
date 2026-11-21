@@ -60,6 +60,7 @@ def make_trees(base: Path, platform: str) -> dict:
     for plug in ("rigExecSchema", "rigExecImaging"):
         touch(rig / "lib" / "usd" / plug / "resources" / "plugInfo.json",
               "{}\n")
+    touch(rig / "lib" / "python" / "usdRigViewMenu.py")
     touch(rig / "lib" / "python" / "rigexec" / "__init__.py")
     touch(rig / "lib" / "python" / "rigExecUsdview" / "editorExtension.py")
     python_home = base / "python-home"
@@ -394,6 +395,16 @@ class AssembleBundleTest(unittest.TestCase):
                        "Python home", "launcher not found", "touchPose"):
             self.assertIn(needle, proc.stderr)
 
+    def test_missing_shared_menu_rejected(self):
+        def remove_menu(trees):
+            (trees["rig"] / "lib" / "python" / "usdRigViewMenu.py").unlink()
+
+        proc, output, _ = assemble(self.base, HOST_PLATFORM, self._launcher(),
+                                   archive=False, customize=remove_menu)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("usdRigViewMenu.py", proc.stderr)
+        self.assertFalse(output.exists())
+
     def test_real_launcher_check_mode(self):
         if not self.launcher:
             self.skipTest("no usdRigView binary passed")
@@ -440,6 +451,16 @@ class AssembleBundleTest(unittest.TestCase):
                           [Path(entry).resolve() for entry in
                            env_values["PXR_USD_WINDOWS_DLL_PATH"]
                            .split(os.pathsep)])
+        shared_menu = imaging.parent / "python" / "usdRigViewMenu.py"
+        self.assertIn(shared_menu.parent.resolve(),
+                      [Path(entry).resolve() for entry in
+                       env_values["PYTHONPATH"].split(os.pathsep)])
+        shared_menu.unlink()
+        broken = subprocess.run([str(exe), "--usdRig-check"],
+                                capture_output=True, text=True)
+        self.assertEqual(broken.returncode, 2)
+        self.assertIn("usdRigViewMenu.py", broken.stderr)
+        touch(shared_menu)
         imaging.unlink()
         broken = subprocess.run([str(exe), "--usdRig-check"],
                                 capture_output=True, text=True)

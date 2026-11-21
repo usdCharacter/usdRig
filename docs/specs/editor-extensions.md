@@ -168,16 +168,13 @@ commandPlugin, rank)`. That name stays public; it is the shared
 entries follow one ordering contract.
 
 `submenu=None` adds a direct child of the RigExec menu; otherwise the entry
-goes to `RigExec -> submenu`. Insertion moves the new `QAction` ahead of
-the first entry ranked strictly higher, so plugin load order never decides
-the layout. Equal ranks keep insertion order, and entries another plugin
-added without a rank stay where they are. The three submenus are ranked too
-(`Viewport` 10, `General Editors` 20, `Animation Editors` 30); an unlisted
-submenu name still takes ranked entries but is not itself ordered. The rank
-applies only on insertion. The call returns the `QAction`, and adding the
-same registered command to the same destination again returns that original
-action instead of a second entry. Destinations do not share entries, and the
-record lives on the menu wrapper, so it ends with the builder session.
+goes to `RigExec -> submenu`. New commands go ahead of the first entry
+ranked strictly higher; equal ranks keep insertion order. The three
+submenus are ranked even if the host creates them first (`Viewport` 10,
+`General Editors` 20, `Animation Editors` 30). Unranked actions are not
+reordered. An unlisted submenu can still contain ranked commands. Adding
+the same registered command to the same destination returns its live
+`QAction`; if removed or cleared, the command gets a new action.
 
 Menu setup needs only the selected container directories, each on both
 `PYTHONPATH` and `PXR_PLUGINPATH_NAME`, plus the shared module directory on

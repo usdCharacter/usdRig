@@ -368,6 +368,13 @@ LocateBundle()
     bundle.usdSitePackages = FindUsdSitePackages(app / "usd");
     bundle.imagingLibrary = app / "rig" / "lib" / ImagingFileName();
 
+    const fs::path sharedMenu =
+        app / "rig" / "lib" / "python" / "usdRigViewMenu.py";
+    if (!IsFile(sharedMenu)) {
+        bundle.problems.push_back("missing shared viewer menu: " +
+                                  sharedMenu.string());
+    }
+
     struct Requirement {
         fs::path path;
         const char *what;

@@ -1,9 +1,5 @@
 #
 # The Shape Editor's usdview plugin container.
-#
-# The panel is imported lazily inside the callback so this module stays
-# importable with no Qt.
-#
 import os
 import sys
 

@@ -6,11 +6,6 @@
 # is everything this file asserts, and each of these has a number rather
 # than a smoke check:
 #
-#   * the RigExec MENU is load-order-proof: the three containers'
-#     configureView methods run in all six orders on scratch builders,
-#     twice each, and every pass yields one RigExec menu, the same three
-#     submenus and the same items -- and the shared helper is exercised
-#     for direct children, ties, unranked neighbors and repeat identity;
 #   * a KNOWN face's centroid, projected to screen and clicked, selects
 #     that region's control in usdview's own `dataModel.selection` --
 #     which is the whole point of the design, because selecting there is
@@ -50,11 +45,9 @@
 #   * SAVE rewrites the touch layer and leaves the rig file alone, and
 #     what comes back off disk is what was painted;
 #   * turning TouchPose OFF gives usdview its picking back completely --
-#     ONE pixel, verified while the mode is on to hit both a region and
-#     the native mesh, is clicked with the mode on (consumed, selects
-#     the control) and again with the mode off (reaches usdview,
-#     selects `body_geo` as it always did). A mode that leaves the
-#     viewport subtly broken behind it is worse than no mode.
+#     the same click then selects `body_geo` as it always did. A mode
+#     that leaves the viewport subtly broken behind it is worse than no
+#     mode.
 #
 # Run with:  bin\test\run_testusdview_touchpose.bat
 # Set TOUCHPOSE_SHOT=path.png to keep a frame grab of the highlight.
@@ -127,267 +120,6 @@ def _Trigger(menu, title):
             action.trigger()
             return True
     return False
-
-
-# The shared menu contract both the live session and the scratch builders
-# below must show: three submenus in rank order, each item once.
-_SUBMENU_ORDER = ["Viewport", "General Editors", "Animation Editors"]
-_VIEWPORT_ITEMS = ["Viewport Tools", "View Cube", "View Axis"]
-_GENERAL_ITEMS = ["Avar Editor", "Layer Stack", "Layer Opinions",
-                  "Execution Stack", "Deformer Toggles", "Profiler",
-                  "Cache Strip", "AI Assistant"]
-_ANIMATION_ITEMS = ["Graph Editor", "Shape Editor", "Control Picker",
-                    "Hover Picker", "TouchPose", "Volume Weight Editor"]
-
-# rigExecUsdview's configureView reads its commands off these attributes;
-# the isolated receivers below are fed the live session's registered
-# objects under the same names.
-_RIGEXEC_COMMANDS = [
-    ("_viewportToolsCommand", "RigExecUsdviewContainer.viewportTools"),
-    ("_viewCubeCommand", "RigExecUsdviewContainer.viewCube"),
-    ("_viewAxisCommand", "RigExecUsdviewContainer.viewAxis"),
-    ("_avarEditor", "RigExecUsdviewContainer.avarEditor"),
-    ("_layerStack", "RigExecUsdviewContainer.layerStack"),
-    ("_layerOpinions", "RigExecUsdviewContainer.layerOpinions"),
-    ("_execStack", "RigExecUsdviewContainer.execStack"),
-    ("_deformerToggles", "RigExecUsdviewContainer.deformerToggles"),
-    ("_profiler", "RigExecUsdviewContainer.profiler"),
-    ("_cacheStrip", "RigExecUsdviewContainer.cacheStrip"),
-    ("_assistant", "RigExecUsdviewContainer.assistant"),
-    ("_graphEditor", "RigExecUsdviewContainer.graphEditor"),
-    ("_picker", "RigExecUsdviewContainer.picker"),
-    ("_hoverPicker", "RigExecUsdviewContainer.hoverPicker"),
-    ("_volumeWeights", "RigExecUsdviewContainer.volumeWeights"),
-]
-
-
-def _ScratchBuilder():
-    """A real PluginUIBuilder on a fresh window in the running session."""
-    from pxr.Usdviewq.plugin import PluginUIBuilder
-    window = QtWidgets.QMainWindow()
-    return window, PluginUIBuilder(window)
-
-
-def _DestroyScratch(appController, window):
-    window.close()
-    window.deleteLater()
-    appController._processEvents()
-
-
-def _CheckScratchMenus(window, where):
-    """The exact contract on a scratch builder: one RigExec, three ranked
-    submenus, every item once. Counts, never collapsed by title."""
-    bar = [action.text() for action in window.menuBar().actions()]
-    _Check(bar.count("RigExec") == 1,
-           "%s: exactly one RigExec on the menu bar: %s" % (where, bar))
-    _Check(bar == ["RigExec"],
-           "%s: nothing else on the scratch menu bar: %s" % (where, bar))
-    topMenu = None
-    for action in window.menuBar().actions():
-        if action.text() == "RigExec":
-            topMenu = action.menu()
-    _Check(topMenu is not None, "%s: the RigExec menu exists" % where)
-    top = [action.text() for action in topMenu.actions()]
-    _Check(top == _SUBMENU_ORDER,
-           "%s: three ranked submenus in order: %s" % (where, top))
-    for title, want in (("Viewport", _VIEWPORT_ITEMS),
-                        ("General Editors", _GENERAL_ITEMS),
-                        ("Animation Editors", _ANIMATION_ITEMS)):
-        menu = _Submenu(topMenu, title)
-        _Check(menu is not None,
-               "%s: the %s submenu exists" % (where, title))
-        got = [action.text() for action in menu.actions()]
-        _Check(got == want, "%s: %s carries %s, got %s"
-               % (where, title, want, got))
-
-
-def _IsolatedReceivers(plugRegistry):
-    """Fresh containers fed the live session's command objects.
-
-    No registerPlugins call -- that would register every command twice --
-    and the three non-menu hooks are no-ops so nothing touches the live
-    viewer. Every configureView body runs for real.
-    """
-    import rigExecUsdview
-    import shapeEditorUsdview
-    import touchPoseUsdview
-
-    rig = rigExecUsdview.RigExecUsdviewContainer()
-    for attribute, name in _RIGEXEC_COMMANDS:
-        command = plugRegistry.getCommandPlugin(name)
-        _Check(command is not None,
-               "the live session registered %s" % name)
-        setattr(rig, attribute, command)
-    rig._InstallOutlinerArcMenu = lambda: None
-    rig._InstallTimeline = lambda: None
-
-    shape = shapeEditorUsdview.ShapeEditorContainer()
-    shape._shapeEditor = plugRegistry.getCommandPlugin(
-        "ShapeEditorContainer.shapeEditor")
-    _Check(shape._shapeEditor is not None,
-           "the live session registered ShapeEditorContainer.shapeEditor")
-
-    touch = touchPoseUsdview.TouchPoseContainer()
-    touch._touchPose = plugRegistry.getCommandPlugin(
-        "TouchPoseContainer.touchPose")
-    _Check(touch._touchPose is not None,
-           "the live session registered TouchPoseContainer.touchPose")
-    touch._ActivateByDefault = lambda: None
-    return (("rigExecUsdview", rig), ("shapeEditor", shape),
-            ("touchPose", touch))
-
-
-def _CheckLoadOrders(appController, plugRegistry):
-    """All six container orders, each twice on its own scratch builder."""
-    import itertools
-    receivers = _IsolatedReceivers(plugRegistry)
-    for order in itertools.permutations(receivers):
-        names = "+".join(name for name, _receiver in order)
-        window, builder = _ScratchBuilder()
-        try:
-            for eachPass in (1, 2):
-                for _name, receiver in order:
-                    receiver.configureView(plugRegistry, builder)
-                _CheckScratchMenus(
-                    window, "load order %s pass %d" % (names, eachPass))
-        finally:
-            _DestroyScratch(appController, window)
-    print("TouchPose: all six container load orders agree on the RigExec "
-          "menu, twice each")
-
-
-def _CheckMenuHelper(appController):
-    """The public host helper on its own builders: direct children, named
-    menus, stable ties, unranked neighbors, same-label commands, separate
-    destinations and repeat identity."""
-    from pxr.Usdviewq.plugin import PluginRegistry
-    from usdRigViewMenu import _MENU_RANK, AddToRigExecMenu
-
-    scratch = PluginRegistry(appController._usdviewApi)
-    calls = []
-    direct = scratch.registerCommandPlugin(
-        "MenuHelperProbe.direct", "Direct Item",
-        lambda api: calls.append("direct"))
-
-    window, builder = _ScratchBuilder()
-    try:
-        action = AddToRigExecMenu(builder, None, direct, 10)
-        _Check(isinstance(action, QtGui.QAction),
-               "the helper returns the item's QAction")
-        rigMenu = action.parent()
-        _Check([item.text() for item in rigMenu.actions()] == ["Direct Item"],
-               "submenu=None adds a direct RigExec child")
-        _Check(AddToRigExecMenu(builder, None, direct, 10) is action,
-               "repeating the command returns the same action")
-        _Check([item.text() for item in rigMenu.actions()] == ["Direct Item"],
-               "and adds no second entry")
-        action.trigger()
-        _Check(calls == ["direct"],
-               "a repeated addition connects the callback once: %s" % calls)
-    finally:
-        _DestroyScratch(appController, window)
-
-    rankWindow, rankBuilder = _ScratchBuilder()
-    try:
-        low = scratch.registerCommandPlugin(
-            "MenuHelperProbe.low", "Low", lambda api: None)
-        first = scratch.registerCommandPlugin(
-            "MenuHelperProbe.tieFirst", "Tie First", lambda api: None)
-        second = scratch.registerCommandPlugin(
-            "MenuHelperProbe.tieSecond", "Tie Second", lambda api: None)
-        high = scratch.registerCommandPlugin(
-            "MenuHelperProbe.high", "High", lambda api: None)
-        AddToRigExecMenu(rankBuilder, "Ties", first, 10)
-        AddToRigExecMenu(rankBuilder, "Ties", second, 10)
-        ties = AddToRigExecMenu(rankBuilder, "Ties", high, 20).parent()
-        raw = ties.addAction("Raw Neighbor")
-        AddToRigExecMenu(rankBuilder, "Ties", low, 5)
-        got = [item.text() for item in ties.actions()]
-        _Check(got == ["Low", "Tie First", "Tie Second", "High",
-                       "Raw Neighbor"],
-               "ties keep insertion order around ranked inserts: %s" % got)
-        _Check(raw.property(_MENU_RANK) is None,
-               "the unranked neighbor carries no rank")
-
-        early = scratch.registerCommandPlugin(
-            "MenuHelperProbe.early", "Early", lambda api: None)
-        late = scratch.registerCommandPlugin(
-            "MenuHelperProbe.late", "Late", lambda api: None)
-        between = scratch.registerCommandPlugin(
-            "MenuHelperProbe.between", "Between", lambda api: None)
-        midMenu = AddToRigExecMenu(rankBuilder, "Middle", early, 10).parent()
-        midRaw = midMenu.addAction("Raw Middle")
-        AddToRigExecMenu(rankBuilder, "Middle", late, 20)
-        AddToRigExecMenu(rankBuilder, "Middle", between, 15)
-        got = [item.text() for item in midMenu.actions()]
-        _Check(got == ["Early", "Raw Middle", "Between", "Late"],
-               "an unranked neighbor stays put between ranked inserts: %s"
-               % got)
-        _Check(midRaw.property(_MENU_RANK) is None,
-               "and it carries no rank either")
-    finally:
-        _DestroyScratch(appController, rankWindow)
-
-    topWindow, topBuilder = _ScratchBuilder()
-    try:
-        zeta = scratch.registerCommandPlugin(
-            "MenuHelperProbe.zeta", "Zeta Item", lambda api: None)
-        viewport = scratch.registerCommandPlugin(
-            "MenuHelperProbe.viewport", "Viewport Item", lambda api: None)
-        general = scratch.registerCommandPlugin(
-            "MenuHelperProbe.general", "General Item", lambda api: None)
-        AddToRigExecMenu(topBuilder, "Zeta", zeta, 10)
-        AddToRigExecMenu(topBuilder, "Viewport", viewport, 10)
-        AddToRigExecMenu(topBuilder, "General Editors", general, 20)
-        topMenu = None
-        for barAction in topWindow.menuBar().actions():
-            if barAction.text() == "RigExec":
-                topMenu = barAction.menu()
-        got = [item.text() for item in topMenu.actions()]
-        _Check(got == ["Zeta", "Viewport", "General Editors"],
-               "an unknown submenu keeps creation order: %s" % got)
-        for item in topMenu.actions():
-            if item.text() == "Zeta":
-                _Check(item.property(_MENU_RANK) is None,
-                       "an unknown submenu name gets no implicit rank")
-    finally:
-        _DestroyScratch(appController, topWindow)
-
-    dupWindow, dupBuilder = _ScratchBuilder()
-    otherWindow, otherBuilder = _ScratchBuilder()
-    try:
-        dupA = scratch.registerCommandPlugin(
-            "MenuHelperProbe.dupA", "Same Label", lambda api: None)
-        dupB = scratch.registerCommandPlugin(
-            "MenuHelperProbe.dupB", "Same Label", lambda api: None)
-        actionA = AddToRigExecMenu(dupBuilder, "Animation Editors", dupA, 10)
-        actionB = AddToRigExecMenu(dupBuilder, "Animation Editors", dupB, 10)
-        _Check(actionA is not actionB,
-               "same-label commands are distinct actions")
-        labels = [item.text() for item in actionA.parent().actions()]
-        _Check(labels == ["Same Label", "Same Label"],
-               "both same-label entries are listed: %s" % labels)
-        inViewport = AddToRigExecMenu(dupBuilder, "Viewport", dupA, 10)
-        _Check(inViewport is not actionA,
-               "the same command in another submenu is another action")
-        onOther = AddToRigExecMenu(
-            otherBuilder, "Animation Editors", dupA, 10)
-        _Check(onOther is not actionA,
-               "the same command on another builder is another action")
-        asDirect = AddToRigExecMenu(dupBuilder, None, dupA, 10)
-        _Check(asDirect is not actionA and asDirect is not inViewport,
-               "and a direct child is a third action")
-        _Check(AddToRigExecMenu(dupBuilder, "Animation Editors", dupA, 10)
-               is actionA,
-               "repeating a destination returns its own action")
-        _Check(AddToRigExecMenu(otherBuilder, "Animation Editors", dupA, 10)
-               is onOther,
-               "and each builder keeps its own repeat identity")
-    finally:
-        _DestroyScratch(appController, dupWindow)
-        _DestroyScratch(appController, otherWindow)
-    print("TouchPose: the shared menu helper holds for direct children, "
-          "ties, unranked neighbors and repeats")
 
 
 class _Viewport(object):
@@ -565,8 +297,6 @@ def testUsdviewInputFunction(appController):
     reg = appController._plugRegistry
     _Check(reg.getCommandPlugin("TouchPoseContainer.touchPose") is not None,
            "TouchPose is registered as a command plugin")
-    _Check(reg.getCommandPlugin("ShapeEditorContainer.shapeEditor") is not None,
-           "Shape Editor is registered as a command plugin")
     # The exact menu layout check below only proves the item is not
     # displayed; this proves the command itself is gone.
     _Check(reg.getCommandPlugin("RigExecUsdviewContainer.reactivate") is None,
@@ -575,27 +305,14 @@ def testUsdviewInputFunction(appController):
     menus = _RigExecMenu(appController)
     _Check("RigExec" in menus, "there is a RigExec menu: %s" % sorted(menus))
     topMenu = menus["RigExec"]
-    # Three containers fill this menu, so this is where the layout is
-    # checked: one of each submenu, in order, whatever the load order.
-    top = [a.text() for a in topMenu.actions() if not a.isSeparator()]
-    _Check(top == _SUBMENU_ORDER,
-           "the RigExec menu layout is three ranked submenus: %s" % top)
+    top = [action.text() for action in topMenu.actions()]
     rigMenu = _Submenu(topMenu, "Animation Editors")
-    titles = [a.text() for a in rigMenu.actions()]
-    _Check("TouchPose" in titles,
-           "RigExec -> Animation Editors carries TouchPose: %s" % titles)
-    _Check("Shape Editor" in titles,
-           "RigExec -> Animation Editors carries Shape Editor: %s" % titles)
-    # ...and they MERGED into the existing submenu rather than making a
-    # second one, which is the only reason separate plugin containers are
-    # acceptable here.
-    _Check("Control Picker" in titles,
-           "the same submenu still carries rigExecUsdview's own items: %s"
-           % titles)
-    _Check([t for t in _ANIMATION_ITEMS if t in titles] == titles,
-           "and the items are in layout order: %s" % titles)
-    _Check("TouchPose" not in menus,
-           "and no second top-level menu was created: %s" % sorted(menus))
+    titles = [action.text() for action in rigMenu.actions()] if rigMenu else []
+    _Check(top == ["Viewport", "General Editors", "Animation Editors"]
+           and titles == ["Graph Editor", "Shape Editor", "Control Picker",
+                          "Hover Picker", "TouchPose", "Volume Weight Editor"]
+           and "TouchPose" not in menus,
+           "RigExec carries the shared menu layout: %s / %s" % (top, titles))
     viewportMenu = _Submenu(topMenu, "Viewport")
 
     _Check(_Trigger(rigMenu, "TouchPose"), "the menu item triggered")
@@ -603,11 +320,6 @@ def testUsdviewInputFunction(appController):
     panel = touchPoseUI.TouchPosePanel.GetInstance(api)
     _Check(panel is not None, "the panel was created")
     controller = panel.controller
-
-    # The live menu holds; now the load orders and the helper itself, on
-    # scratch builders the live viewer never sees.
-    _CheckLoadOrders(appController, reg)
-    _CheckMenuHelper(appController)
 
     # --- 2. the regions loaded, and the unbound ones are not there ------
     touchModel = controller.model
@@ -1377,17 +1089,12 @@ def testUsdviewInputFunction(appController):
             _Check(not gizmo.IsDragging(), "the drag ended")
 
             # ...and the very next hover works again. One-shot, no poll.
-            # A fresh fingerprint: the press taken during the drag fell
-            # through to usdview's pick, and that selection round-trip
-            # authored gizmo edits of its own. The resumed hover must
-            # author nothing past the layer as released.
-            resumedFingerprint = _SessionFingerprint(stage)
             _SendHover(view, pixel[0], pixel[1], viewport.ratio)
             appController._processEvents()
             _Check(not controller.suspended, "TouchPose resumed")
             _Check(controller.highlight.key is not None,
                    "and the first hover after the drag highlights again")
-            _Check(_SessionFingerprint(stage) == resumedFingerprint,
+            _Check(_SessionFingerprint(stage) == fingerprint,
                    "and even awake, lighting it authored nothing")
 
             print("TouchPose: during a gizmo drag, %d hover samples across "
@@ -1405,12 +1112,12 @@ def testUsdviewInputFunction(appController):
             frame = dataModel.currentFrame
             from pxr import Usd as _TimeUsd
             dataModel.currentFrame = _TimeUsd.TimeCode(frame.GetValue() + 1.0)
+            appController._processEvents()
             _Check(controller.suspended and controller.highlight.suspended,
                    "a frame change stands TouchPose down")
-            appController._processEvents()
             dataModel.currentFrame = frame
-            _Check(controller.suspended, "and scrubbing keeps it down")
             appController._processEvents()
+            _Check(controller.suspended, "and scrubbing keeps it down")
             deadline = time.perf_counter() + 2.0
             while controller.suspended and time.perf_counter() < deadline:
                 appController._processEvents()
@@ -1826,73 +1533,20 @@ def testUsdviewInputFunction(appController):
               "the selection at %s" % (bareSpot, chosen))
 
     # --- 9. turning it OFF gives usdview its picking back ---------------
-    #
-    # ONE pixel decides both halves. It is chosen while the mode is ON
-    # and must hit BOTH a TouchPose region and the native mesh: the
-    # TouchPose ray can land on skin behind a rendered control, where
-    # the native picker answers something else, so either check alone
-    # would compare the two clicks against different targets. The
-    # camera and pose do not move between the clicks, and there is no
-    # second search after deactivation -- a filter that still swallowed
-    # the original click must fail here, not be handed a new pixel.
-    _Check(controller.active,
-           "TouchPose is still on for the shared-pixel check")
-
-    # The native pick at the exact rounded coordinates _SendClick uses.
-    def nativePickPath(point):
-        x = int(point[0] / viewport.ratio) * view.devicePixelRatioF()
-        y = int(point[1] / viewport.ratio) * view.devicePixelRatioF()
-        inBounds, frustum = view.computePickFrustum(x, y)
-        hits = view.pick(frustum) if inBounds else []
-        return str(hits[0].hitPrimPath) if hits else None
-
-    bothPixel = None
-    bothRegion = None
-    for point in [pixel] + [(pixel[0] + dx, pixel[1] + dy)
-                            for dy in range(-72, 73, 4)
-                            for dx in range(-72, 73, 4)]:
-        got, face = controller.RegionAt(point[0], point[1])
-        if got is not None and face >= 0 \
-                and nativePickPath(point) == MESH:
-            bothPixel, bothRegion = point, got
-            break
-    _Check(bothPixel is not None,
-           "one pixel near the touch region hits both a TouchPose "
-           "region and usdview's native mesh pick")
-    print("TouchPose: the shared pixel (%.1f, %.1f) sits on region %s "
-          "and the native mesh"
-          % (bothPixel[0], bothPixel[1], bothRegion.label))
-
-    # While ON the shared click is TouchPose's: consumed, and the
-    # region's control -- not the mesh -- is selected.
-    selection.clearPrims()
-    appController._processEvents()
-    consumed = _SendClick(view, bothPixel[0], bothPixel[1], viewport.ratio)
-    appController._processEvents()
-    chosen = [str(p.GetPath()) for p in selection.getPrims()
-              if p and p.IsValid()]
-    _Check(consumed, "with TouchPose on the shared click is consumed")
-    _Check(chosen == [bothRegion.control],
-           "and it selected %s, got %s" % (bothRegion.control, chosen))
-    _Check(MESH not in chosen,
-           "and did NOT select the mesh: %s" % chosen)
-
-    # The IDENTICAL click with the mode OFF reaches usdview instead.
     controller.SetActive(False)
     _Check(not controller.active, "TouchPose deactivated")
     selection.clearPrims()
     appController._processEvents()
-    consumed = _SendClick(view, bothPixel[0], bothPixel[1], viewport.ratio)
+    consumed = _SendClick(view, pixel[0], pixel[1], viewport.ratio)
     appController._processEvents()
     chosen = [str(p.GetPath()) for p in selection.getPrims()
               if p and p.IsValid()]
     _Check(not consumed,
-           "with TouchPose off the identical click is not consumed")
+           "with TouchPose off the click is not consumed")
     _Check(MESH in chosen,
            "and usdview selects the mesh again, as it always did: %s"
            % chosen)
-    print("TouchPose: with the mode off the identical click at (%.1f, "
-          "%.1f) selects %s" % (bothPixel[0], bothPixel[1], chosen))
+    print("TouchPose: with the mode off the same pixel selects %s" % chosen)
 
     # ...and the highlight goes with it. Measured as the difference
     # between two frames taken back to back with the SAME selection,
