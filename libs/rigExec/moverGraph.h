@@ -495,15 +495,7 @@ RigExecPoseWireDrivers(const std::vector<GfMatrix4d> &table, size_t t, size_t s,
 
 /// Whether a wire applies its envelope itself: a valid sparse field with a
 /// zero default, where only the named points are worth evaluating.
-inline bool
-RigExecWireTakesSparseEnvelope(const RigExecWeightPacket &w)
-{
-    return w.valid && w.representation == SchemaValueText::sparse &&
-           w.defaultWeight == 0.0f && w.indices.size() == w.values.size() &&
-           (w.rangePolicy.IsEmpty() ||
-            w.rangePolicy == SchemaValueText::strict ||
-            w.rangePolicy == SchemaValueText::clamp);
-}
+bool RigExecWireTakesSparseEnvelope(const RigExecWeightPacket &w);
 
 /// RIGEXEC_ENABLE_SIMD (default true), read once when the library loads.
 /// The kernels below take the choice as \p useSimd, so a step body passes
@@ -770,17 +762,7 @@ bool RunDiscardableRevisionKernel(RigExecRevisionOp,
 /// geometry loop: two hand-copied predicates could disagree about when the
 /// skip is safe, and the only rigs that would show it are the ones no
 /// fixture happened to have (a partial constant envelope on a skin mover).
-inline bool
-RigExecEnvelopeIsFullStrength(const RigExecWeightPacket &envelope)
-{
-    return envelope.valid &&
-           envelope.representation == SchemaValueText::constant &&
-           envelope.values.empty() && envelope.indices.empty() &&
-           envelope.defaultWeight == 1.0f &&
-           (envelope.rangePolicy.IsEmpty() ||
-            envelope.rangePolicy == SchemaValueText::strict ||
-            envelope.rangePolicy == SchemaValueText::clamp);
-}
+bool RigExecEnvelopeIsFullStrength(const RigExecWeightPacket &envelope);
 
 /// A revision's apply-or-fail answer, decided from its packet before any
 /// point is written. `Refuses`: the kernel refuses the packet. `Applies`: it
