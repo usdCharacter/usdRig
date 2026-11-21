@@ -680,6 +680,26 @@ jobs:
           test -e "$P/lib/librigExecMath.a" || test -e "$P/lib/librigExecMath.so" \
             || { echo "missing: $P/lib/librigExecMath.{a,so}"; exit 1; }
 
+      # Packagers install into a DESTDIR staging tree: every manifest must land
+      # under <stage><prefix>, and the logical prefix must stay empty.
+      - name: Install into a DESTDIR staging tree
+        run: |
+          DESTDIR="$GITHUB_WORKSPACE/stage" cmake --install build --prefix "$GITHUB_WORKSPACE/unstaged-prefix"
+          S="$GITHUB_WORKSPACE/stage/$GITHUB_WORKSPACE/unstaged-prefix/share/rigExec"
+          for f in \
+            exactFpFlags.txt \
+            runtimeSources.txt \
+            runtimeIncludes.txt \
+            evalCoreSources.txt \
+            evalCoreIncludes.txt
+          do
+            test -e "$S/$f" || { echo "missing from staging tree: $S/$f"; exit 1; }
+          done
+          ls "$S"
+          test -e "$GITHUB_WORKSPACE/unstaged-prefix" \
+            && { echo "staged install wrote into the unstaged prefix $GITHUB_WORKSPACE/unstaged-prefix"; exit 1; }
+          python3 tools/check_licenses.py --install "$GITHUB_WORKSPACE/stage/$GITHUB_WORKSPACE/unstaged-prefix"
+
       - name: Validate installed plugInfo.json files (python3)
         run: |
           python3 - "$GITHUB_WORKSPACE/usdrig-install" <<'PY'
@@ -749,6 +769,16 @@ jobs:
           export USD="${GITHUB_WORKSPACE}/usd-install"
           source bin/_env.sh
           ctest --test-dir installed-scene-build --output-on-failure
+
+      # CMakeLists.txt keeps cmake_minimum_required at 3.26; this last step is
+      # the deliberate check of that declared minimum, isolated in a throwaway
+      # venv so the steps above still use the runner's own cmake.
+      - name: Staging test at the declared minimum CMake
+        run: |
+          python3 -m venv /tmp/cm326
+          /tmp/cm326/bin/pip install --disable-pip-version-check "cmake==3.26.*"
+          /tmp/cm326/bin/cmake --version
+          /tmp/cm326/bin/cmake -DSOURCE_DIR="$GITHUB_WORKSPACE" -DBINARY_DIR="$GITHUB_WORKSPACE/build" -DSCRATCH_DIR="$GITHUB_WORKSPACE/install-staging-326" -DINSTALL_DATADIR=share/rigExec -P tests/checkInstallStaging.cmake
 
 
   platform-cpp:
