@@ -52,6 +52,7 @@ from .graphview.editing import (
 from .graphview import intents as _intents
 from .graphview import interaction as _interaction
 from .graphview import render as _render
+from .graphview import render_nodes as _render_nodes
 from .graphview import resources as _resources
 from .graphview import selection as _selection
 from .graphview import stage_sync
@@ -1007,112 +1008,6 @@ class GraphView(_interaction.GraphWidgetBase):
     def currentPrimPath(self):
         return self._currentPrimPath
 
-    def _drawNodeVertices(
-        self,
-        vertexData,
-        projection,
-        cornerRadius,
-        strokeColor,
-        generation=0,
-        selectionChanged=False,
-    ):
-        """
-        Draw vertex data using the node shader (used by UI overlays).
-
-        This is a simplified version for drawing dynamic UI overlays like status bars,
-        hotkey popups, and marquee selections. Does not use caching since overlay
-        data changes every frame.
-
-        Args:
-            vertexData: List of NodeVertex objects to render
-            projection: Projection matrix for rendering
-            cornerRadius: Corner radius for rounded corners
-            strokeColor: Stroke color tuple (r, g, b, a)
-            generation: Ignored (kept for API compatibility)
-            selectionChanged: Ignored (kept for API compatibility)
-        """
-        if not vertexData or not self.shaderLibrary:
-            return
-
-        shader = self.shaderLibrary.get("node")
-        if not shader:
-            return
-
-        packedData = b"".join(v.pack() for v in vertexData)
-        vertexCount = len(vertexData)
-
-        vbo = None
-        vao = None
-        try:
-            vbo = GL.glGenBuffers(1)
-            vao = GL.glGenVertexArrays(1)
-
-            GL.glBindVertexArray(vao)
-            GL.glBindBuffer(GL.GL_ARRAY_BUFFER, vbo)
-            GL.glBufferData(
-                GL.GL_ARRAY_BUFFER, len(packedData), packedData, GL.GL_STREAM_DRAW
-            )
-
-            # Configure vertex attributes
-            stride = NodeVertex.size()
-            for (
-                index,
-                numComponents,
-                glTypeName,
-                normalized,
-                _stride,
-                offset,
-            ) in NODE_VERTEX_ATTRIB_LAYOUT:
-                glType = getattr(GL, glTypeName)
-                GL.glVertexAttribPointer(
-                    index,
-                    numComponents,
-                    glType,
-                    normalized,
-                    stride,
-                    ctypes.c_void_p(offset),
-                )
-                GL.glEnableVertexAttribArray(index)
-
-            # Set up shader and draw
-            shader.use()
-
-            matrixData = projection.data()
-            matrix = (ctypes.c_float * 16)(*matrixData)
-            projLoc = shader.getUniformLocation("uProjection")
-            if projLoc >= 0:
-                GL.glUniformMatrix4fv(projLoc, 1, GL.GL_FALSE, matrix)
-
-            radiusLoc = shader.getUniformLocation("uCornerRadius")
-            if radiusLoc >= 0:
-                GL.glUniform1f(radiusLoc, cornerRadius)
-
-            strokeLoc = shader.getUniformLocation("uInnerStrokeColor")
-            if strokeLoc >= 0:
-                GL.glUniform4f(
-                    strokeLoc,
-                    strokeColor[0],
-                    strokeColor[1],
-                    strokeColor[2],
-                    strokeColor[3],
-                )
-
-            GL.glEnable(GL.GL_BLEND)
-            GL.glBlendFunc(GL.GL_SRC_ALPHA, GL.GL_ONE_MINUS_SRC_ALPHA)
-            GL.glDrawArrays(GL.GL_TRIANGLES, 0, vertexCount)
-        except GLError as e:
-            Tf.Warn(f"GL error during node rendering: {e}")
-        finally:
-            # Clean up temporary resources
-            GL.glBindVertexArray(0)
-            GL.glBindBuffer(GL.GL_ARRAY_BUFFER, 0)
-            shader.release()
-            if vbo is not None:
-                GL.glDeleteBuffers(1, [vbo])
-            if vao is not None:
-                GL.glDeleteVertexArrays(1, [vao])
-
-
     @staticmethod
     def _valueRowOnlyChange(node, propertyName):
         """Whether a property change is *only* a value an inline cell shows.
@@ -1161,63 +1056,6 @@ class GraphView(_interaction.GraphWidgetBase):
             return False
         hide_ui = bool(NoodlesConfig.get("hideUiNamespacePins", True))
         return not is_hidden_namespace_pin(propertyName, hide_ui=hide_ui)
-
-    def _renderPortHighlightsCpp(self):
-        """C++-owned port-highlight pass.
-
-        Delegates the entire port-circle / relationship-triangle assembly to
-        NodeRenderManager.renderPortHighlightsFromGraph, which reads the
-        authoritative GraphModel snapshot (synced in paintNodes/paintLinks) and
-        the C++ connection index. This is the sole port-highlight render path.
-        """
-        graph = self.nodeGraph
-        config = self._renderConfig()
-        # Push the cached port appearance onto the shared render config (cheap and
-        # idempotent); the C++ producer reads these instead of the Python caches.
-        # These writes intentionally persist after useCppPortHighlights is toggled
-        # off: the fields have no other consumers, so leaving them set is harmless.
-        config.nodePortRingThickness = self._cachedPortRingThickness
-        config.portConnectedFillColor = list(self._cachedPortConnectedFillColor)
-        config.portConnectedRingColor = list(self._cachedPortConnectedRingColor)
-        config.portDisconnectedFillColor = list(self._cachedPortDisconnectedFillColor)
-        config.portDisconnectedRingColor = list(self._cachedPortDisconnectedRingColor)
-        config.portHoverColor = list(self._cachedPortHoverColor)
-
-        projList = list(self._worldSpaceProjectionMatrix().data())
-        cornerRadius = config.nodePortWidth * 0.5
-
-        hovered = self._hoveredPort
-        # Rebuild the highlight geometry only when something it depends on
-        # changed: an in-place connection change (_portHighlightsDirty), a
-        # content / color / relayout / move change (textChanged is still set this
-        # frame -- paintText clears it later), or an in-progress node / link drag
-        # (the circles bake the live drag offset, so they must rebuild each drag
-        # frame). Hover and link-drag-state changes are detected C++-side by
-        # comparing PortHighlightState, so they need not be flagged here. A plain
-        # pan / zoom changes none of these, so the C++ side skips the O(ports)
-        # build + hash and just redraws the cached geometry.
-        port_geometry_changed = bool(
-            self._portHighlightsDirty
-            or self.textChanged
-            or self.draggingNodes
-            or self._draggingLink
-        )
-        self._nodeRenderManager.renderPortHighlightsFromGraph(
-            graph,
-            config,
-            projList,
-            cornerRadius,
-            hovered is not None,
-            hovered[0] if hovered else "",
-            hovered[1] if hovered else "",
-            bool(hovered[2]) if hovered else False,
-            bool(self._draggingLink),
-            self._dragLinkSourceNode or "",
-            self._dragLinkSourcePort or "",
-            bool(self._dragLinkSourceIsOutput),
-            port_geometry_changed,
-        )
-        self._portHighlightsDirty = False
 
     def _paintHotkeyPopups(self):
         """Render hotkey popup overlays."""
@@ -1656,22 +1494,6 @@ class GraphView(_interaction.GraphWidgetBase):
             selectedColor,
         )
 
-    def _relationshipLinkColor(self, link, hoveredColor, selectedColor):
-        if getattr(link, "hovered", False):
-            return tuple(hoveredColor)
-        if getattr(link, "selected", False):
-            return tuple(selectedColor)
-        c = self._cachedLinkRelationshipBaseColor
-        return (c[0], c[1], c[2], 1.0)
-
-    @staticmethod
-    def _isPrimTargetRelationshipLink(link):
-        return (
-            bool(getattr(link, "is_relationship_link", False))
-            and not str(getattr(link, "targetPort", ""))
-            and not str(getattr(link, "targetPropertyName", ""))
-        )
-
     @staticmethod
     def _relationshipArrowheadPoints(
         link,
@@ -2000,92 +1822,6 @@ class GraphView(_interaction.GraphWidgetBase):
                 strokeColor,
                 strokeWidth,
             )
-
-    def paintNodes(self):
-        if not self.nodes or not self.shaderLibrary or not self.fontAtlas:
-            return
-
-        try:
-            projection = self._worldSpaceProjectionMatrix()
-            projList = list(projection.data())
-            graph = self.nodeGraph
-
-            # Node-quad appearance depends on selection (colors, stroke, and the
-            # graffi highlight quad), so a selection-set change must regenerate.
-            # Detecting it here covers every selection path (click, marquee,
-            # selectAll, clearSelection, prim-tree sync) without flagging each.
-            current_selection = frozenset(self._selectedNodes)
-            if current_selection != getattr(
-                self, "_lastNodeQuadSelection", frozenset()
-            ):
-                self._nodeRenderManager.markNodeQuadDirty(True)
-            self._lastNodeQuadSelection = current_selection
-
-            content_changed = self.textChanged
-            needs_rebuild = (
-                content_changed or self._nodeRenderManager.needsNodeRebuild()
-            )
-
-            # A content change can move a node's rows (pins added/removed, fold
-            # toggled, font sizing). Run the single C++ layout producer for every
-            # node here — the one chokepoint right before the authoritative
-            # snapshot — so each node's display pins, row slots, size, and per-pin
-            # centers are recomputed together in one pass from the current
-            # content. This closes the stale-cache window for every mutation path
-            # (creation, fold, USD-notice/invalidateCache, font change) and is
-            # what makes the text/pin/stripe vertical drift structurally
-            # impossible. Gated on content_changed so selection-only rebuilds stay
-            # cheap (no relayout).
-            if content_changed and self.fontAtlas:
-                calcWidth = (
-                    self.textRenderer.calculateTextWidth
-                    if self.textRenderer
-                    else lambda t, s: s * 5
-                )
-                for node in self.nodes.values():
-                    # Force the lazy pin getters so an invalidated node reloads
-                    # its raw content before we lay it out from that content.
-                    _ = node.inputPins
-                    _ = node.outputPins
-                    self.nodeGraph._calculateNodeSize(node, calcWidth, self.fontAtlas)
-
-            # GraphModel.nodes is the authoritative render snapshot; re-sync from
-            # the Python models only when geometry will be regenerated, then
-            # render from it. Keep sync and render adjacent — the freshness
-            # invariant depends on no frame boundary between them.
-            if needs_rebuild:
-                graph.syncNodesFromModels(graph.nodes)
-
-            config = self._renderConfig()
-            self._nodeRenderManager.renderNodesFromGraph(
-                graph,
-                config,
-                self.fontAtlas,
-                projList,
-                config.nodeCornerRadius,
-                self._cachedNodeSelectedStrokeColor,
-                content_changed,
-            )
-
-        except Exception as e:
-            Tf.Warn(f"Error rendering nodes: {e}")
-            import traceback
-
-            traceback.print_exc()
-
-    def paintGroupStickers(self):
-        if not self.groupStickers or not self.shaderLibrary:
-            return
-
-        try:
-            projection = self._worldSpaceProjectionMatrix()
-            self._groupStickerRenderer.renderStickers(self.groupStickers, projection)
-
-        except Exception as e:
-            Tf.Warn(f"Error rendering group stickers: {e}")
-            import traceback
-
-            traceback.print_exc()
 
     def paintText(self):
         if not self.nodes or not self.shaderLibrary or not self.fontAtlas:
@@ -3462,3 +3198,15 @@ class GraphView(_interaction.GraphWidgetBase):
     _seedNodeZOrders = _render._seedNodeZOrders
     _worldSpaceProjectionMatrix = _render._worldSpaceProjectionMatrix
     _screenSpaceProjectionMatrix = _render._screenSpaceProjectionMatrix
+
+    # Node, port and sticker primitives moved to graphview/render_nodes.py
+    # (nv-render-nodes). Explicit bindings, never forwarding bodies, so
+    # unbound GraphView._method(duck_self, ...) calls keep working.
+    paintNodes = _render_nodes.paintNodes
+    _drawNodeVertices = _render_nodes._drawNodeVertices
+    _renderPortHighlightsCpp = _render_nodes._renderPortHighlightsCpp
+    paintGroupStickers = _render_nodes.paintGroupStickers
+    _relationshipLinkColor = _render_nodes._relationshipLinkColor
+    _isPrimTargetRelationshipLink = staticmethod(
+        _render_nodes._isPrimTargetRelationshipLink
+    )
