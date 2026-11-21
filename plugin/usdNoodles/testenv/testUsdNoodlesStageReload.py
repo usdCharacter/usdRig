@@ -737,7 +737,7 @@ class TestReloadLifecycle(unittest.TestCase):
         self.assertIs(view._stageSync.boundStage(), replacement)
 
     def test_layered_drag_removes_preview_specs_and_redoes_at_mapped_site(self):
-        for action in ('cancel', 'undo', 'cancel_with_edits', 'undo_with_edits',
+        for action in ('cancel', 'undo', 'undo_two_drags', 'cancel_with_edits', 'undo_with_edits',
                        'cancel_with_parent_edit', 'undo_after_rename', 'undo_then_rename',
                        'undo_then_replace', 'undo_then_replace_property',
                        'undo_then_replace_property_in_batch', 'undo_with_existing_declaration',
@@ -788,6 +788,33 @@ class TestReloadLifecycle(unittest.TestCase):
                 parent_edit = action == 'cancel_with_parent_edit'
                 if parent_edit:
                     self.assertTrue(stage.GetPrimAtPath('/Group').SetDocumentation('keep me'))
+                if action == 'undo_two_drags':
+                    view._finishMung()
+                    after_first = layer.ExportToString()
+                    hit.row.components = (3.5,)
+                    view._onValueCellPressed(hit, SimpleNamespace(position=lambda: QtCore.QPointF()))
+                    view._updateMung(SimpleNamespace(position=lambda: QtCore.QPointF(200, 0),
+                                                     modifiers=lambda: QtCore.Qt.NoModifier))
+                    view._finishMung()
+                    self.assertEqual(layer.QueryTimeSample(path, 5), 5.5)
+                    stage.SetEditTarget(root)
+                    active_target = stage.GetEditTarget()
+                    history.undo(view)
+                    self.assertEqual(layer.QueryTimeSample(path, 5), 3.5)
+                    self.assertEqual(layer.ExportToString(), after_first)
+                    self.assertEqual(stage.GetEditTarget(), active_target)
+                    history.undo(view)
+                    self.assertEqual(layer.ExportToString(), before)
+                    self.assertEqual(stage.GetEditTarget(), active_target)
+                    for expected in (3.5, 5.5):
+                        history.redo(view)
+                        self.assertTrue(layer.GetAttributeAtPath(path))
+                        self.assertEqual(layer.ListTimeSamplesForPath(path), [5.0])
+                        self.assertEqual(layer.QueryTimeSample(path, 5), expected)
+                        self.assertEqual(attr.Get(time), expected)
+                        self.assertEqual(stage.GetEditTarget(), active_target)
+                        self.assertFalse(root.GetAttributeAtPath(path))
+                    continue
                 stage.SetEditTarget(root)
                 commit = action.startswith('undo')
                 group_path, prim_path = '/Group', '/Group/Value'

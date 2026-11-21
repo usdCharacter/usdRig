@@ -20,6 +20,7 @@ whitelist below IS that rule; nothing else in the feature re-decides it.
 
 import math
 from collections import namedtuple
+from contextlib import ExitStack, nullcontext
 
 from pxr import Gf, Sdf, Usd
 
@@ -764,16 +765,19 @@ class ValuePreviewOpinion:
     def matches(self, path):
         return path is not None and read_value_opinion(self.layer, path, self.time) == self.preview
 
-    def restore(self):
+    def restore(self, replay_declaration=None):
         path = self.path
         if not self.matches(path):
             return
-        with Sdf.ChangeBlock():
+        # The replay marker must outlive synchronous notice delivery at block exit.
+        with ExitStack() as replay, Sdf.ChangeBlock():
             set_value_opinion(self.layer, path, self.time, self.original)
             spec = self._spec
             if (self._created and spec
                     and set(spec.ListInfoKeys()) <= {"typeName", "variability", "custom"}
                     and (spec.typeName, spec.variability, spec.custom) == self._declaration):
+                if replay_declaration is not None:
+                    replay.enter_context(replay_declaration(path, creating=False))
                 spec.owner.RemoveProperty(spec)
                 self._spec = None
             # Keep handles rather than old paths so namespace edits cannot
@@ -804,7 +808,7 @@ class ValuePreviewOpinion:
             return None
         return self._target.MapToSpecPath(attr.GetPath())
 
-    def redo(self, stage, scene_path):
+    def redo(self, stage, scene_path, replay_declaration=None):
         if not (scene_path and stage and self.layer.permissionToEdit
                 and self.layer in stage.GetUsedLayers()):
             return
@@ -821,8 +825,10 @@ class ValuePreviewOpinion:
             return
         retained_prims = tuple(prim for prim in self._prims if prim)
         was_created = self._created and spec == self._spec
-        with Sdf.ChangeBlock():
-            self._record_site(path)
+        self._record_site(path)
+        replay = (replay_declaration(path, creating=True)
+                  if self._created and replay_declaration is not None else nullcontext())
+        with replay, Sdf.ChangeBlock():
             if self._created:
                 owner = Sdf.CreatePrimInLayer(self.layer, path.GetPrimOrPrimVariantSelectionPath())
                 type_name, variability, custom = self._declaration

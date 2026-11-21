@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from threading import get_ident
 from weakref import WeakSet
 
+from pxr import Sdf
+
 
 # ---------------------------------------------------------------------------
 # The published trace of one lifecycle step.
@@ -174,19 +176,38 @@ _DISCARD_NOTICE = object()
 class _PropertyContinuity:
     """A resync can replace a property without invalidating its Sdf handle."""
 
-    def __init__(self, path):
+    def __init__(self, path, target):
         self.path = str(path)
-        self._replayThread = None
+        self._target = target
+        self._transition = None
+
+    def _site(self, path):
+        return self._target.GetLayer(), self._target.MapToSpecPath(Sdf.Path(path))
 
     @contextmanager
-    def replay(self):
-        self._replayThread = get_ident()
+    def replayDeclaration(self, path, *, creating):
+        scene = self.path
+        if scene is not None:
+            layer, mapped = self._site(scene)
+            if mapped == path and bool(layer.GetAttributeAtPath(path)) != creating:
+                self._transition = (scene, layer, path, creating, get_ident())
         try:
             yield
         finally:
-            self._replayThread = None
+            self._transition = None
 
-    def resynced(self, paths, moves):
+    def takeReplaySite(self, paths):
+        transition = self._transition
+        if transition is None:
+            return None
+        scene, layer, path, creating, thread = transition
+        if (self.path == scene and paths == {scene} and thread == get_ident()
+                and bool(layer.GetAttributeAtPath(path)) == creating):
+            self._transition = None
+            return layer, path
+        return None
+
+    def resynced(self, paths, moves, replaySite):
         path = self.path
         if path is None:
             return
@@ -200,13 +221,10 @@ class _PropertyContinuity:
                 ):
                     self.path = moved
                     return
-        related = {changed for changed in paths if _isPathRelated(changed, path)}
-        if not related:
+        if not any(_isPathRelated(changed, path) for changed in paths):
             return
-        # The replay's own Sdf change block may resync the declaration.
-        if related == {path} and self._replayThread == get_ident():
-            self._replayThread = None
-        else:
+        # Only the verified declaration transition at this mapped site is shared.
+        if replaySite is None or paths != {path} or self._site(path) != replaySite:
             self.path = None
 
 
@@ -238,8 +256,11 @@ class _NoticeReceiver:
 
         def observe(paths, moves):
             if self._binding is binding:
-                for watch in tuple(watches):
-                    watch.resynced(paths, moves)
+                live = tuple(watches)
+                replaySite = next((site for watch in live
+                                   if (site := watch.takeReplaySite(paths)) is not None), None)
+                for watch in live:
+                    watch.resynced(paths, moves, replaySite)
 
         return observe
 
@@ -462,8 +483,8 @@ class StageSync:
         """The stage that actually owns the adapter's live notice key."""
         return self._handler.getStage()
 
-    def watchProperty(self, stage, path):
-        watch = _PropertyContinuity(path)
+    def watchProperty(self, stage, path, target):
+        watch = _PropertyContinuity(path, target)
         if self._closed or self.boundStage() is not stage:
             watch.path = None
         else:

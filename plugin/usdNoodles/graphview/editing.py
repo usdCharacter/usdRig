@@ -2322,14 +2322,13 @@ def _recordMungOpinion(view, state):
     if opinion.preview == opinion.original or not opinion.matches(path):
         return False
     stage = view.nodeGraph.getStage()
-    watch = view._stageSync.watchProperty(stage, opinion.scene_path)
+    watch = view._stageSync.watchProperty(stage, opinion.scene_path, state["editTarget"])
 
     def replay(forward, view):
-        with watch.replay():
-            if forward:
-                opinion.redo(view.nodeGraph.getStage(), watch.path)
-            else:
-                opinion.restore()
+        if forward:
+            opinion.redo(view.nodeGraph.getStage(), watch.path, watch.replayDeclaration)
+        else:
+            opinion.restore(watch.replayDeclaration)
 
     legacy_symbol("_push_undo_command")(
         "Set %s" % path, _Replay(replay, True), _Replay(replay, False), view=view,
