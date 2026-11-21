@@ -185,6 +185,21 @@ def to_json(value):
     return [to_json(v) for v in items]
 
 
+# The actions whose change is one opinion on a prim or attribute that is
+# already there, so the assistant can snapshot the layer and record the
+# change before the action's USD notice runs (see Applier's bracket). Each
+# action here leaves the same layer and fires the same one notice sealed or
+# not. define_prim, override_prim and add_reference are left out: they read
+# back a prim they bring into being, and a stage does not recompose inside a
+# change block. add_sublayer and set_edit_target author no opinion the
+# history would record.
+DEFER_NOTICE_ACTIONS = frozenset((
+    'set_attr', 'clear_attr', 'block_attr', 'set_connections',
+    'set_relationship', 'apply_schema', 'remove_schema', 'set_variant',
+    'set_active', 'reorder_children', 'set_metadata', 'remove_prim',
+    'rename_prim', 'reparent_prim'))
+
+
 class Applier(object):
     """Applies actions to stage, each one to the current edit target.
 
@@ -195,7 +210,9 @@ class Applier(object):
     :param bracket: called with the action before it runs, giving back a
         context manager around that one action. The assistant uses it to
         snapshot and record each change as it is made, so the history keeps
-        the order the changes were made.
+        the order the changes were made, and to hold the action's USD notice
+        until that record is made; DEFER_NOTICE_ACTIONS lists the actions
+        whose notice can be held without changing what the action does.
     """
 
     def __init__(self, stage, select=None, revalidate=None, bracket=None):

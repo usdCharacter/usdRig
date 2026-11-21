@@ -737,8 +737,9 @@ class Toolbox(QtCore.QObject):
         scope = rigExecUndo.SpecScope(self.stage, paths, None, label)
         closed = False
         try:
-            # A value write can fire a USD notice whose handler authors a
-            # second edit. Seal this edit before dispatching that notice.
+            # An authored write can fire a USD notice whose handler
+            # authors a second edit. Seal this edit before dispatching
+            # that notice.
             block = Sdf.ChangeBlock() if defer_notice else contextlib.nullcontext()
             with block:
                 with scope:
@@ -1555,7 +1556,8 @@ class Toolbox(QtCore.QObject):
             paths = _spec_paths([change], layer) if layer is not None else []
             return self._authored_edit(
                 stack, paths, 'AI Assistant changes',
-                defer_notice=change.get('action') == 'set_attr')
+                defer_notice=change.get('action') in
+                stage_actions.DEFER_NOTICE_ACTIONS)
 
         applier = stage_actions.Applier(self.stage, select=self._select,
                                         revalidate=self.is_current,

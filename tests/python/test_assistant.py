@@ -745,6 +745,51 @@ def TestAResetCommitFromAStageNoticeKeepsTheAuthoredOrder():
     _Check(not container.stack.CanRedo(), 'redo stops at the newest change')
 
 
+def TestAClearCommitFromAStageNoticeKeepsTheAuthoredOrder():
+    """Clearing is sealed the same way as the pose and reset writes: the
+    value the base layer reveals is recorded, and the artist commit the
+    clear's notice carries follows it in history."""
+    stage = _LayeredStage(4)
+    container = _Container()
+    box, _api = _Toolbox(stage, container, can_edit=True)
+    channel = stage.GetAttributeAtPath('/Char/Ctl.avars:rx')
+    channel.Set(11)  # the control sits at 11 already
+    _Check(channel.Get() == 11, 'the clear starts from eleven')
+    made = []
+
+    def artist_writes_after_the_clear(notice, sender):
+        if made or channel.Get() != 4:
+            return
+        made.append(channel.Get())
+        container.stack.Push(_ArtistEdit(channel, 23))
+        channel.Set(23)
+
+    listener = Tf.Notice.Register(Usd.Notice.ObjectsChanged,
+                                  artist_writes_after_the_clear, stage)
+    text, failed = box.call('change_stage', {'changes': [
+        {'action': 'clear_attr', 'path': '/Char/Ctl',
+         'name': 'avars:rx'}]})
+    listener.Revoke()
+    _Check(not failed and made == [4] and channel.Get() == 23,
+           'the artist commit came from the notice the clear fired: %s'
+           % text)
+    _Check([step.label for step in container.stack._undo] ==
+           ['AI Assistant changes', 'Artist rotation'],
+           'the clear is on the history before the artist commit, with no '
+           'empty step between them')
+    _Check(container.stack.Undo() and channel.Get() == 4 and
+           container.stack.UndoText() == 'AI Assistant changes',
+           'the first undo takes back the change made last')
+    _Check(container.stack.Undo() and channel.Get() == 11 and
+           not container.stack.CanUndo(),
+           'the next undo takes back the clear that began first, and the '
+           'history stops there')
+    for wanted in (4, 23):
+        _Check(container.stack.Redo() and channel.Get() == wanted,
+               'redo puts the changes back in the order they were made')
+    _Check(not container.stack.CanRedo(), 'redo stops at the newest change')
+
+
 def TestACallThatChangesNothingLeavesHistoryAlone():
     """A read-only call, a change that cannot be made and a write of the
     value that is already there record no undo step: the redo branch an
@@ -1844,6 +1889,7 @@ def main():
                  TestACommitFromAStageNoticeKeepsTheAuthoredOrder,
                  TestAPoseCommitFromAStageNoticeKeepsTheAuthoredOrder,
                  TestAResetCommitFromAStageNoticeKeepsTheAuthoredOrder,
+                 TestAClearCommitFromAStageNoticeKeepsTheAuthoredOrder,
                  TestACallThatChangesNothingLeavesHistoryAlone,
                  TestAWriteAfterAnUndoDoesNotGrowAnOlderStep,
                  TestHostUndoStackWithoutLastEdit,
