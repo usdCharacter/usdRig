@@ -50,9 +50,11 @@
 #   * SAVE rewrites the touch layer and leaves the rig file alone, and
 #     what comes back off disk is what was painted;
 #   * turning TouchPose OFF gives usdview its picking back completely --
-#     a native mesh hit then selects `body_geo` as it always did. A mode
-#     that leaves the viewport subtly broken behind it is worse than no
-#     mode.
+#     ONE pixel, verified while the mode is on to hit both a region and
+#     the native mesh, is clicked with the mode on (consumed, selects
+#     the control) and again with the mode off (reaches usdview,
+#     selects `body_geo` as it always did). A mode that leaves the
+#     viewport subtly broken behind it is worse than no mode.
 #
 # Run with:  bin\test\run_testusdview_touchpose.bat
 # Set TOUCHPOSE_SHOT=path.png to keep a frame grab of the highlight.
@@ -1824,13 +1826,19 @@ def testUsdviewInputFunction(appController):
               "the selection at %s" % (bareSpot, chosen))
 
     # --- 9. turning it OFF gives usdview its picking back ---------------
-    controller.SetActive(False)
-    _Check(not controller.active, "TouchPose deactivated")
-    selection.clearPrims()
-    appController._processEvents()
+    #
+    # ONE pixel decides both halves. It is chosen while the mode is ON
+    # and must hit BOTH a TouchPose region and the native mesh: the
+    # TouchPose ray can land on skin behind a rendered control, where
+    # the native picker answers something else, so either check alone
+    # would compare the two clicks against different targets. The
+    # camera and pose do not move between the clicks, and there is no
+    # second search after deactivation -- a filter that still swallowed
+    # the original click must fail here, not be handed a new pixel.
+    _Check(controller.active,
+           "TouchPose is still on for the shared-pixel check")
 
-    # The earlier TouchPose ray can hit skin behind a rendered control.
-    # Check the native pick at the exact rounded coordinates _SendClick uses.
+    # The native pick at the exact rounded coordinates _SendClick uses.
     def nativePickPath(point):
         x = int(point[0] / viewport.ratio) * view.devicePixelRatioF()
         y = int(point[1] / viewport.ratio) * view.devicePixelRatioF()
@@ -1838,25 +1846,53 @@ def testUsdviewInputFunction(appController):
         hits = view.pick(frustum) if inBounds else []
         return str(hits[0].hitPrimPath) if hits else None
 
-    meshPixel = next(
-        (point for point in [pixel] + [
-            (pixel[0] + dx, pixel[1] + dy)
-            for dy in range(-72, 73, 4)
-            for dx in range(-72, 73, 4)]
-         if nativePickPath(point) == MESH), None)
-    _Check(meshPixel is not None,
-           "usdview's native picker sees the mesh near the touch region")
-    consumed = _SendClick(view, meshPixel[0], meshPixel[1], viewport.ratio)
+    bothPixel = None
+    bothRegion = None
+    for point in [pixel] + [(pixel[0] + dx, pixel[1] + dy)
+                            for dy in range(-72, 73, 4)
+                            for dx in range(-72, 73, 4)]:
+        got, face = controller.RegionAt(point[0], point[1])
+        if got is not None and face >= 0 \
+                and nativePickPath(point) == MESH:
+            bothPixel, bothRegion = point, got
+            break
+    _Check(bothPixel is not None,
+           "one pixel near the touch region hits both a TouchPose "
+           "region and usdview's native mesh pick")
+    print("TouchPose: the shared pixel (%.1f, %.1f) sits on region %s "
+          "and the native mesh"
+          % (bothPixel[0], bothPixel[1], bothRegion.label))
+
+    # While ON the shared click is TouchPose's: consumed, and the
+    # region's control -- not the mesh -- is selected.
+    selection.clearPrims()
+    appController._processEvents()
+    consumed = _SendClick(view, bothPixel[0], bothPixel[1], viewport.ratio)
+    appController._processEvents()
+    chosen = [str(p.GetPath()) for p in selection.getPrims()
+              if p and p.IsValid()]
+    _Check(consumed, "with TouchPose on the shared click is consumed")
+    _Check(chosen == [bothRegion.control],
+           "and it selected %s, got %s" % (bothRegion.control, chosen))
+    _Check(MESH not in chosen,
+           "and did NOT select the mesh: %s" % chosen)
+
+    # The IDENTICAL click with the mode OFF reaches usdview instead.
+    controller.SetActive(False)
+    _Check(not controller.active, "TouchPose deactivated")
+    selection.clearPrims()
+    appController._processEvents()
+    consumed = _SendClick(view, bothPixel[0], bothPixel[1], viewport.ratio)
     appController._processEvents()
     chosen = [str(p.GetPath()) for p in selection.getPrims()
               if p and p.IsValid()]
     _Check(not consumed,
-           "with TouchPose off the click is not consumed")
+           "with TouchPose off the identical click is not consumed")
     _Check(MESH in chosen,
            "and usdview selects the mesh again, as it always did: %s"
            % chosen)
-    print("TouchPose: with the mode off a native mesh pixel %s selects %s"
-          % (meshPixel, chosen))
+    print("TouchPose: with the mode off the identical click at (%.1f, "
+          "%.1f) selects %s" % (bothPixel[0], bothPixel[1], chosen))
 
     # ...and the highlight goes with it. Measured as the difference
     # between two frames taken back to back with the SAME selection,
