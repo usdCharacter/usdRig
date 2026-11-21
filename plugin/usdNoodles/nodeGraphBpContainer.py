@@ -6,7 +6,7 @@
 #
 
 from UsdNoodles.core import LinkData
-from pxr import Gf, Tf
+from pxr import Tf
 
 from .models import NodeModel
 from .nodeGraph import createNodeRenderer
@@ -14,6 +14,8 @@ from .nodeGraphBlueprint import NodeGraphBlueprint
 from .pinUtils import collect_links_for_prim
 from .scopeEndpoints import (
     accept_container_child,
+    endpoint_origins,
+    endpoint_position,
     endpoint_specs,
     scope_child_connections,
     scope_pin_names,
@@ -91,12 +93,6 @@ class NodeGraphBpContainer(NodeGraphBlueprint):
 
         containerPathStr = str(primPath)
 
-        # Track bounds of nodes to position virtual nodes
-        minX = float("inf")
-        maxX = float("-inf")
-        minY = float("inf")
-        maxY = float("-inf")
-
         # First pass: Collect Container inputs and outputs for virtual nodes
         containerInputs, containerOutputs = scope_pin_names(containerPrim)
 
@@ -131,10 +127,6 @@ class NodeGraphBpContainer(NodeGraphBlueprint):
                     stage=stage, primPath=childPath, renderer=createNodeRenderer()
                 )
 
-            # Node will read name, type, position, and pins from USD on demand
-            # We just need to track the bounds for virtual node positioning
-            nodePos = node.position
-
             # Force lazy-load of name, type, and pins so that the underlying
             # C++ NodeData fields are populated before calculateNodeSize and
             # generateVertices read them directly from the struct.
@@ -145,12 +137,6 @@ class NodeGraphBpContainer(NodeGraphBlueprint):
             _ = node.outputPins
             _ = node.inputPinTypes
             _ = node.outputPinTypes
-
-            # Track bounds
-            minX = min(minX, nodePos[0])
-            maxX = max(maxX, nodePos[0])
-            minY = min(minY, nodePos[1])
-            maxY = max(maxY, nodePos[1])
 
             # Process connections on USD attributes
             for conn in scope_child_connections(child, useFieldnames):
@@ -196,9 +182,6 @@ class NodeGraphBpContainer(NodeGraphBlueprint):
             # Calculate node size
             self._calculateNodeSize(node, calculateTextWidth, fontMetrics)
 
-            # Update maxX with node width
-            maxX = max(maxX, node.position[0] + node.size[0])
-
             self.nodes[node.id] = node
 
         # Load Backdrop prims as group stickers
@@ -210,9 +193,7 @@ class NodeGraphBpContainer(NodeGraphBlueprint):
                 self.stickers.append(sticker)
 
         # Create virtual nodes for Container inputs (positioned to the left)
-        inputNodeSpacing = 150.0
-        inputStartY = minY if minY != float("inf") else 0.0
-        inputX = (minX - 400.0) if minX != float("inf") else -400.0
+        inputX, outputX, startY = endpoint_origins(self.nodes.values())
 
         inputSpecs, outputSpecs = endpoint_specs(
             containerInputs,
@@ -228,16 +209,13 @@ class NodeGraphBpContainer(NodeGraphBlueprint):
             node.id = virtualNodeId
             node.name = displayName
             node.type = "ContainerInput"
-            node.position = Gf.Vec2d(inputX, inputStartY + i * inputNodeSpacing)
+            node.position = endpoint_position(inputX, startY, i)
             node.outputPins = [displayName]
 
             self._calculateNodeSize(node, calculateTextWidth, fontMetrics)
             self.nodes[virtualNodeId] = node
 
         # Create virtual nodes for Container outputs (positioned to the right)
-        outputStartY = minY if minY != float("inf") else 0.0
-        outputX = (maxX + 200.0) if maxX != float("-inf") else 400.0
-
         for i, (suffix, displayName) in enumerate(outputSpecs):
             virtualNodeId = containerPathStr + suffix
 
@@ -245,7 +223,7 @@ class NodeGraphBpContainer(NodeGraphBlueprint):
             node.id = virtualNodeId
             node.name = displayName
             node.type = "ContainerOutput"
-            node.position = Gf.Vec2d(outputX, outputStartY + i * inputNodeSpacing)
+            node.position = endpoint_position(outputX, startY, i)
             node.inputPins = [displayName]
 
             self._calculateNodeSize(node, calculateTextWidth, fontMetrics)

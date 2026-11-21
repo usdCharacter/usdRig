@@ -549,8 +549,8 @@ def _fieldnameStage(scopeType):
     """A scope with fieldname-bearing connections on both sides.
 
     ``Node`` is the displayed child; ``Hidden`` never reaches the canvas,
-    but its connection still shapes the scope's endpoints, exactly as a
-    fresh load would read them.
+    but its connections and authored position still shape the endpoints
+    on a fresh load.
     """
     stage = Usd.Stage.CreateInMemory()
     scope = stage.DefinePrim("/Scope", scopeType)
@@ -564,9 +564,15 @@ def _fieldnameStage(scopeType):
     y.AddConnection(Sdf.Path("/Scope.output:result"))
     y.SetCustomDataByKey("assetInfo", {"fieldname": "total"})
     hidden = stage.DefinePrim("/Scope/Hidden", "ExecNode")
+    hidden.CreateAttribute("ui:nodegraph:node:pos", Sdf.ValueTypeNames.Float2).Set(
+        Gf.Vec2f(-0.25, -0.5)
+    )
     h = hidden.CreateAttribute("input:h", Sdf.ValueTypeNames.Float)
     h.AddConnection(Sdf.Path("/Scope.input:drive"))
     h.SetCustomDataByKey("assetInfo", {"fieldname": "shadow"})
+    extra = hidden.CreateAttribute("input:extra", Sdf.ValueTypeNames.Float)
+    extra.AddConnection(Sdf.Path("/Scope.input:drive"))
+    extra.SetCustomDataByKey("assetInfo", {"fieldname": "secondary"})
     return stage
 
 
@@ -1044,7 +1050,7 @@ class MovedScopeFieldnameEndpointsTest(unittest.TestCase):
     attributes alone, so reconciliation derives them through the same
     shared endpoints the loaders use. Each graph type renames its scope
     through ``Usd.NamespaceEditor`` and compares the resulting synthetic
-    ids, names, types and pin lists with an independent normal load.
+    IDs, names, types, pins and new endpoint geometry with a fresh load.
     """
 
     def setUp(self):
@@ -1057,6 +1063,8 @@ class MovedScopeFieldnameEndpointsTest(unittest.TestCase):
     def _openScope(self, scopeType, graphClass):
         self.stage = _fieldnameStage(scopeType)
         self.view = _StubGraphView(self.stage)
+        self.view.fontAtlas = _fieldnameFontMetrics()
+        self.view.textRenderer.calculateTextWidth = _fieldnameMeasure
         handler = self.UsdNoticeHandler(self.view)
         handler.register(self.stage)
         self.addCleanup(handler.unregister)
@@ -1159,6 +1167,7 @@ class MovedScopeFieldnameEndpointsTest(unittest.TestCase):
         self.assertEqual(
             set(expected),
             {
+                "/Moved#input:drive:secondary",
                 "/Moved#input:drive:shadow",
                 "/Moved#input:drive:weight",
                 "/Moved#output:result:total",
@@ -1174,12 +1183,19 @@ class MovedScopeFieldnameEndpointsTest(unittest.TestCase):
             have = got[nodeId]
             self.assertEqual(have.name, want.name, nodeId)
             self.assertEqual(have.type, want.type, nodeId)
+            self.assertEqual(have.size, want.size, nodeId)
             self.assertEqual(
                 list(have.inputPins), list(want.inputPins), nodeId
             )
             self.assertEqual(
                 list(have.outputPins), list(want.outputPins), nodeId
             )
+
+        newIds = ("/Moved#input:drive:secondary", "/Moved#input:drive:shadow")
+        for nodeId in newIds:
+            with self.subTest(nodeId=nodeId):
+                self.assertEqual(got[nodeId].position, expected[nodeId].position)
+        self.assertNotEqual(got[newIds[0]].position, got[newIds[1]].position)
 
     def test_a_moved_blueprint_scope_matches_a_fresh_load(self):
         from UsdNoodles.nodeGraphBlueprint import NodeGraphBlueprint

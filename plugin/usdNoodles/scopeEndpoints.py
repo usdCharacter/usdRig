@@ -15,6 +15,8 @@ metadata and fieldname-mode rule for inputs and outputs -- or the
 reconciled pins disagree with the stage they reflect.
 """
 
+from pxr import Gf
+
 from .pinUtils import infer_bare_link_direction, split_direction_hint
 
 
@@ -185,3 +187,19 @@ def scope_endpoints(scopePrim, scopePathStr, useFieldnames, acceptChild):
     return endpoint_specs(
         inputs, outputs, fieldnameInputs, fieldnameOutputs, useFieldnames
     )
+
+
+def endpoint_origins(nodes):
+    """Return the left and right column X coordinates and their starting Y."""
+    bounds = [(node.position, node.size[0]) for node in nodes]
+    if not bounds:
+        return -400.0, 400.0, 0.0
+    return (
+        min(pos[0] for pos, _ in bounds) - 400.0,
+        max(pos[0] + max(0.0, width) for pos, width in bounds) + 200.0,
+        min(pos[1] for pos, _ in bounds),
+    )
+
+
+def endpoint_position(x, startY, index):
+    return Gf.Vec2d(x, startY + index * 150.0)

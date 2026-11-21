@@ -246,12 +246,16 @@ def rebuiltScopePins(view, oldScope, newScope):
     Returns:
         dict[str, tuple]: ``{oldId: (newId, freshModel)}``.
     """
+    from UsdNoodles.core import FontMetrics
+
     from ..models import NodeModel
     from ..nodeGraphBlueprint import NodeGraphBlueprint
     from ..nodeGraphBpContainer import NodeGraphBpContainer
     from ..scopeEndpoints import (
         accept_blueprint_child,
         accept_container_child,
+        endpoint_origins,
+        endpoint_position,
         scope_endpoints,
     )
 
@@ -286,9 +290,52 @@ def rebuiltScopePins(view, oldScope, newScope):
     except Exception:
         return {}
 
+    if not (inputSpecs or outputSpecs):
+        return {}
+
+    fontAtlas = getattr(view, "fontAtlas", None)
+    fontMetrics = fontAtlas if fontAtlas is not None else FontMetrics()
+    measure = (
+        view.textRenderer.calculateTextWidth
+        if fontAtlas is not None
+        else _measureScopeTextWithoutAtlas
+    )
+    sizeNode = view.nodeGraph._calculateNodeSize
+    factory = getattr(view, "_nodeFactory", None)
+
+    # Use destination child bounds, including children not on the canvas.
+    # These temporary models are never installed or used for adoption.
+    children = []
+    for child in scopePrim.GetChildren():
+        if not acceptChild(child):
+            continue
+        if factory is not None:
+            node = factory.create_node_from_prim(child, stage)
+            if node is None:
+                continue
+        else:
+            node = NodeModel(stage=stage, primPath=child.GetPath())
+        # Populate the lazy USD fields consumed by the native layout pass.
+        _ = (
+            node.position,
+            node.name,
+            node.type,
+            node.schemaTypeName,
+            node.inputPins,
+            node.outputPins,
+            node.inputPinTypes,
+            node.outputPinTypes,
+        )
+        sizeNode(node, measure, fontMetrics)
+        children.append(node)
+    inputX, outputX, startY = endpoint_origins(children)
+
     rebuilt = {}
-    for isInput, specs in ((True, inputSpecs), (False, outputSpecs)):
-        for suffix, displayName in specs:
+    for isInput, specs, x in (
+        (True, inputSpecs, inputX),
+        (False, outputSpecs, outputX),
+    ):
+        for index, (suffix, displayName) in enumerate(specs):
             newId = newScopeStr + suffix
             oldId = oldScopeStr + suffix
             node = NodeModel()
@@ -300,6 +347,8 @@ def rebuiltScopePins(view, oldScope, newScope):
             else:
                 node.type = outputType
                 node.inputPins = [displayName]
+            node.setDisplayPosition(endpoint_position(x, startY, index))
+            sizeNode(node, measure, fontMetrics)
             old = view.nodes.get(oldId)
             if old is not None:
                 position = getattr(old, "position", None)
@@ -316,6 +365,10 @@ def rebuiltScopePins(view, oldScope, newScope):
                         pass
             rebuilt[oldId] = (newId, node)
     return rebuilt
+
+
+def _measureScopeTextWithoutAtlas(text, fontSize):
+    return len(text) * fontSize * 0.5
 
 
 def installScopePins(view, rebuilt, oldScope=None):

@@ -6,13 +6,15 @@
 #
 
 from UsdNoodles.core import LinkData
-from pxr import Gf, Tf
+from pxr import Tf
 
 from .models import NodeModel
 from .nodeGraph import createNodeRenderer, NodeGraph
 from .pinUtils import collect_links_for_prim
 from .scopeEndpoints import (
     accept_blueprint_child,
+    endpoint_origins,
+    endpoint_position,
     endpoint_specs,
     scope_child_connections,
     scope_pin_names,
@@ -82,12 +84,6 @@ class NodeGraphBlueprint(NodeGraph):
 
         blueprintPathStr = str(primPath)
 
-        # Track bounds of ExecNodes to position virtual nodes
-        minX = float("inf")
-        maxX = float("-inf")
-        minY = float("inf")
-        maxY = float("-inf")
-
         # First pass: Collect Blueprint inputs and outputs for virtual nodes
         blueprintInputs, blueprintOutputs = scope_pin_names(blueprintPrim)
 
@@ -125,10 +121,6 @@ class NodeGraphBlueprint(NodeGraph):
                     stage=stage, primPath=childPath, renderer=createNodeRenderer()
                 )
 
-            # Node will read name, type, position, and pins from USD on demand
-            # We just need to track the bounds for virtual node positioning
-            nodePos = node.position
-
             # Force lazy-load of name, type, and pins so that the underlying
             # C++ NodeData fields are populated before calculateNodeSize and
             # generateVertices read them directly from the struct.
@@ -139,12 +131,6 @@ class NodeGraphBlueprint(NodeGraph):
             _ = node.outputPins
             _ = node.inputPinTypes
             _ = node.outputPinTypes
-
-            # Track bounds
-            minX = min(minX, nodePos[0])
-            maxX = max(maxX, nodePos[0])
-            minY = min(minY, nodePos[1])
-            maxY = max(maxY, nodePos[1])
 
             # Process connections on USD attributes
             # Note: Pins are read from USD automatically via node properties
@@ -208,9 +194,6 @@ class NodeGraphBlueprint(NodeGraph):
             # Calculate node size
             self._calculateNodeSize(node, calculateTextWidth, fontMetrics)
 
-            # Update maxX with node width
-            maxX = max(maxX, node.position[0] + node.size[0])
-
             self.nodes[node.id] = node
 
         # Load Backdrop prims as group stickers
@@ -222,9 +205,7 @@ class NodeGraphBlueprint(NodeGraph):
                 self.stickers.append(sticker)
 
         # Create virtual nodes for Blueprint inputs (positioned to the left)
-        inputNodeSpacing = 150.0
-        inputStartY = minY if minY != float("inf") else 0.0
-        inputX = (minX - 400.0) if minX != float("inf") else -400.0
+        inputX, outputX, startY = endpoint_origins(self.nodes.values())
 
         inputSpecs, outputSpecs = endpoint_specs(
             blueprintInputs,
@@ -240,7 +221,7 @@ class NodeGraphBlueprint(NodeGraph):
             node.id = virtualNodeId
             node.name = displayName
             node.type = "BlueprintInput"
-            node.position = Gf.Vec2d(inputX, inputStartY + i * inputNodeSpacing)
+            node.position = endpoint_position(inputX, startY, i)
 
             # Blueprint input nodes have one output pin (the input value flows out to ExecNodes)
             node.outputPins = [displayName]
@@ -251,9 +232,6 @@ class NodeGraphBlueprint(NodeGraph):
             self.nodes[virtualNodeId] = node
 
         # Create virtual nodes for Blueprint outputs (positioned to the right)
-        outputStartY = minY if minY != float("inf") else 0.0
-        outputX = (maxX + 200.0) if maxX != float("-inf") else 400.0
-
         for i, (suffix, displayName) in enumerate(outputSpecs):
             virtualNodeId = blueprintPathStr + suffix
 
@@ -261,7 +239,7 @@ class NodeGraphBlueprint(NodeGraph):
             node.id = virtualNodeId
             node.name = displayName
             node.type = "BlueprintOutput"
-            node.position = Gf.Vec2d(outputX, outputStartY + i * inputNodeSpacing)
+            node.position = endpoint_position(outputX, startY, i)
 
             # Blueprint output nodes have one input pin (values flow in from ExecNodes)
             node.inputPins = [displayName]
