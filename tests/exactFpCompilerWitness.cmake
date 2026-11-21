@@ -335,5 +335,41 @@ if (NOT WITNESS_LOG MATCHES "source .*probe\\.cpp: ${_fast_head}")
         "flag:\n${WITNESS_LOG}")
 endif ()
 
+# Leg 4: an $<IF:cond,Pkg::Fast,Pkg::Quiet> link entry is the only route to
+# both namespaced targets (the short-conditional witness link is absent in
+# this configuration), and its comma-separated body must not be treated as
+# one value: the pass must inspect both result branches and reject the fast
+# one, naming the consuming target and the flag.
+set(_work4 "${BUILD_ROOT}/iflink-conflict")
+_witness_configure("${_work4}" -DWITNESS_CONFLICT=interface -DWITNESS_IF_LINK=ON)
+if (WITNESS_RC EQUAL 0)
+    _witness_fail("IF-link conflict configured without a diagnostic")
+endif ()
+if (NOT WITNESS_LOG MATCHES "witnessIf")
+    _witness_fail("IF-link diagnostic does not name the consuming target:\n"
+        "${WITNESS_LOG}")
+endif ()
+if (NOT WITNESS_LOG MATCHES "Pkg::Fast: .*${_conflict_flag}")
+    _witness_fail("IF-link diagnostic does not name the fast branch and its "
+        "flag:\n${WITNESS_LOG}")
+endif ()
+
+# Leg 5: an interface nested past the inspection cutoff must be rejected
+# with the consuming target and the whole expression named, never silently
+# accepted at the nesting limit.
+set(_work5 "${BUILD_ROOT}/deep-conflict")
+_witness_configure("${_work5}" -DWITNESS_CONFLICT=interface -DWITNESS_DEEP_LINK=ON)
+if (WITNESS_RC EQUAL 0)
+    _witness_fail("deeply nested conflict configured without a diagnostic")
+endif ()
+if (NOT WITNESS_LOG MATCHES "witnessDeep: un-inspectable link expression")
+    _witness_fail("deep nesting diagnostic does not name the target and the "
+        "expression:\n${WITNESS_LOG}")
+endif ()
+if (NOT WITNESS_LOG MATCHES "Pkg::Fast")
+    _witness_fail("deep nesting diagnostic drops the expression interior:\n"
+        "${WITNESS_LOG}")
+endif ()
+
 message(STATUS "exactFpCompilerWitness: command audit and numeric probes "
     "agree on the exact mode")
