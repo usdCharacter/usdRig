@@ -288,6 +288,11 @@ class GizmoController(QtCore.QObject):
             return
         self._detached = True
         self._viewDestroyed = True
+        panel = getattr(self, "_panel", None)
+        self._panel = None
+        if panel is not None:
+            ToolSettingsPanel.ForgetInstance(self.usdviewApi, panel)
+            stageViewReady.RemoveWidget(panel)
         stageViewReady._Cleanup("gizmo", self.FlushReleasedEdit)
         stageViewReady._Cleanup("gizmo", self.CancelGesture)
         release, self._releaseHover = self._releaseHover, None

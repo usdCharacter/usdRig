@@ -586,19 +586,37 @@ def TestRetireRealTools():
     stack = rigExecUndo.UndoStack()
     requests = _Requests(api, stack, retries=0)
     with _Patched(gizmoUI.GizmoController, RefreshTarget=lambda self: None):
-        for _ in range(2):
-            gizmo, cube, dock, axis = [request() for request in requests]
+        gizmo, cube, dock, axis = [request() for request in requests]
+        settingsType = gizmoUI.ToolSettingsPanel
+        for retire in (stageViewReady.Retire, sessionRegistry.ForgetSession):
+            settings = gizmo.ShowToolSettings()
+            settings._size.setValue(110)
+            _Check(gizmo.settings.manipulatorSize == 110 and
+                   window.findChildren(settingsType) == [settings],
+                   "the open settings panel edits the installed gizmo")
             panel = QtWidgets.QWidget(window)
             dock.Dock(panel)
             _Check(len(window.actions()) == 2 and layout.count() == 3,
                    "one pair of shortcuts and one toolbar")
-            sessionRegistry.ForgetSession(api)
+            retire(api)
             _Check(not window.actions() and layout.count() == 1 and
                    not view.findChildren(QtWidgets.QWidget) and
                    panel.parentWidget() is window and not stack._listeners,
                    "retirement unparents widgets, returns the panel and removes listeners")
             _Check(view.pick == originalPick, "original picking restored")
             model.signalStageReplaced.emit()
+
+            retired = gizmo
+            gizmo, cube, dock, axis = [request() for request in requests]
+            replacement = gizmo.ShowToolSettings()
+            replacement._size.setValue(130)
+            _Check(gizmo.settings.manipulatorSize == 130 and
+                   retired.settings.manipulatorSize == 110,
+                   f"only the new gizmo receives settings edits after {retire.__name__}")
+            _Check(retired._panel is None and replacement is not settings and
+                   window.findChildren(settingsType) == [replacement],
+                   f"only the new settings panel remains after {retire.__name__}")
+        sessionRegistry.ForgetSession(api)
 
         def _Retire(api):
             stageViewReady.Retire(api)

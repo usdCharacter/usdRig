@@ -961,6 +961,11 @@ class ToolSettingsPanel(QtWidgets.QWidget):
                                       ToolSettingsPanel(controller))
         return panel
 
+    @classmethod
+    def ForgetInstance(cls, usdviewApi, panel):
+        if cls._sessions.Get(usdviewApi) is panel:
+            cls._sessions.Pop(usdviewApi)
+
     def __init__(self, controller):
         super(ToolSettingsPanel, self).__init__(
             controller.usdviewApi.qMainWindow, QtCore.Qt.WindowType.Window)
