@@ -402,6 +402,52 @@ class TestReloadLifecycle(unittest.TestCase):
             self.assertEqual(resync, {'/New'})
             self.assertEqual(info, {'/Old.testValue'})
 
+    def test_worker_notice_selected_during_gesture_acquisition(self):
+        attr = self.stage.DefinePrim('/Value').CreateAttribute(
+            'number', Sdf.ValueTypeNames.Float)
+        sync = self.view._stageSync
+        sync.bind(self.stage)
+        owner = get_ident()
+        acquiring, written = Event(), Event()
+        writes, reconciliations = [], []
+        setEnabled = sync._handler.setEnabled
+
+        def pauseAcquisition(enabled):
+            setEnabled(enabled)
+            if not enabled:
+                # Let Tf select the delivery route before acquisition returns.
+                acquiring.set()
+                self.assertTrue(written.wait(5))
+
+        def write():
+            try:
+                if acquiring.wait(5):
+                    writes.append(attr.Set(2.0))
+            finally:
+                written.set()
+
+        def reconcile(_view, resync, info, **kwargs):
+            reconciliations.append((get_ident(), resync, info))
+
+        with patch.object(sync._handler, 'setEnabled', side_effect=pauseAcquisition), \
+             patch('UsdNoodles.graphview.stage_adapter.applyUsdChanges',
+                   side_effect=reconcile):
+            worker = Thread(target=write, daemon=True)
+            worker.start()
+            try:
+                token = sync.acquireSuppression(reconcile=True)
+                try:
+                    self.app.processEvents()
+                    self.assertEqual(reconciliations, [])
+                finally:
+                    token.release()
+            finally:
+                worker.join(5)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(writes, [True])
+            self.app.processEvents()
+            self.assertEqual(reconciliations, [(owner, set(), {'/Value.number'})])
+
     def test_worker_notice_selected_before_release(self):
         for action in ('deliver', 'rebind', 'replace', 'close', 'scoped'):
             with self.subTest(action=action):

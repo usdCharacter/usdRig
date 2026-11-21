@@ -166,6 +166,9 @@ class _ReconcileTrace:
         )
 
 
+_DISCARD_NOTICE = object()
+
+
 class _NoticeReceiver:
     """What the UsdNoticeHandler calls, stamped with a stage generation.
 
@@ -191,9 +194,9 @@ class _NoticeReceiver:
         if binding is None or binding[0] is not sender:
             return None
         service = self._service
-        # Capture the batch before path extraction can outlive its last token.
-        pending = service._pendingChanges
-        if pending is None and not service._handler.isEnabled():
+        # One snapshot selects normal delivery, a particular batch, or discard.
+        pending = service._noticeDelivery
+        if pending is _DISCARD_NOTICE:
             return None
 
         def deliver(resynced, info, moved=None):
@@ -264,7 +267,7 @@ class StageSync:
         self._warn = warn
         self._sink = sink
         self._graphReplaced = graphReplaced
-        self._pendingChanges = None
+        self._noticeDelivery = None
         self._epoch = 0
         self._finishPending = False
         self._closed = False
@@ -284,12 +287,19 @@ class StageSync:
         if self._closed:
             return _SuppressionToken(None)
         token = _SuppressionToken(self)
-        if not self._suppressionTokens:
+        first = not self._suppressionTokens
+        if first:
             self._enabledBeforeSuppression = self._handler.isEnabled()
-            self._handler.setEnabled(False)
-        if reconcile and self._enabledBeforeSuppression and self._pendingChanges is None:
-            self._pendingChanges = (self._epoch, set(), set(), [])
+        if reconcile and self._enabledBeforeSuppression and (
+            first or self._noticeDelivery is _DISCARD_NOTICE
+        ):
+            self._noticeDelivery = (self._epoch, set(), set(), [])
+        elif first:
+            self._noticeDelivery = _DISCARD_NOTICE
         self._suppressionTokens.add(token)
+        if first:
+            # Keep the handler flag for compatibility, not for callback selection.
+            self._handler.setEnabled(False)
         return token
 
     def _releaseSuppression(self, token):
@@ -297,15 +307,19 @@ class StageSync:
             return
         self._suppressionTokens.remove(token)
         if not self._suppressionTokens:
-            self._handler.setEnabled(self._enabledBeforeSuppression)
-            pending, self._pendingChanges = self._pendingChanges, None
-            if pending is not None and (pending[1] or pending[2]):
+            pending = self._noticeDelivery
+            enabled = self._enabledBeforeSuppression
+            self._noticeDelivery = None if enabled else _DISCARD_NOTICE
+            self._handler.setEnabled(enabled)
+            if pending is not None and pending is not _DISCARD_NOTICE and (
+                pending[1] or pending[2]
+            ):
                 self.changed(*pending)
 
     def _deliverNotice(self, epoch, pending, resynced, info, moved):
         if epoch != self._epoch or self._closed:
             return
-        if pending is None or pending is not self._pendingChanges:
+        if pending is None or pending is not self._noticeDelivery:
             # A released batch cannot collect these paths or pass them to a new gesture.
             self.changed(epoch, resynced, info, moved)
             return
@@ -357,7 +371,8 @@ class StageSync:
     def _transition(self, stage, populate, reset, begin=None):
         self._epoch += 1
         epoch = self._epoch
-        self._pendingChanges = None
+        if self._suppressionTokens:
+            self._noticeDelivery = _DISCARD_NOTICE
         if begin is not None:
             self._finishPending = True
         if self._finishPending and self._defer is not None:
@@ -397,11 +412,16 @@ class StageSync:
         if self._closed:
             return None
         self._receiver.revoke()
-        self._pendingChanges = None
+        if self._suppressionTokens:
+            self._noticeDelivery = _DISCARD_NOTICE
         if stage is None:
             self._handler.unregister()
         else:
             self._handler.register(stage)
+            if not self._suppressionTokens:
+                self._noticeDelivery = (
+                    None if self._handler.isEnabled() else _DISCARD_NOTICE
+                )
             self._receiver.rebind(stage, self._epoch)
         return self.boundStage()
 
@@ -426,7 +446,7 @@ class StageSync:
         for token in self._suppressionTokens:
             token._owner = None
         self._suppressionTokens.clear()
-        self._pendingChanges = None
+        self._noticeDelivery = _DISCARD_NOTICE
         # Past every queued finish and every receiver stamp: the epoch moving
         # is what makes the deferred callbacks return without touching the
         # model.
