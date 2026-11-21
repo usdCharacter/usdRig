@@ -82,7 +82,6 @@ add_library(rigExec::rigExecGraph ALIAS rigExecGraph)
 # USD-free headers. The wire enum it reuses is generated against the vendored
 # FlatBuffers headers.
 add_library(rigExecEvalCore STATIC libs/rigExecEvalCore/kinds.cpp)
-rigexec_apply_exact_fp_flags(rigExecEvalCore)
 target_compile_features(rigExecEvalCore PUBLIC cxx_std_17)
 target_include_directories(rigExecEvalCore PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
@@ -110,7 +109,6 @@ target_include_directories(rigExecMath PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
 target_link_libraries(rigExecMath PUBLIC arch tf gf vt)
-rigexec_apply_exact_fp_flags(rigExecMath)
 set_target_properties(rigExecMath PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Keep value-codec template instantiations private to its archive. Only the
@@ -200,9 +198,10 @@ target_link_libraries(rigExec PUBLIC
 
 target_link_libraries(rigExec PRIVATE
     rigExecGraph rigExecMath rigExecEvalCore rigExecInputValues ts)
-# Every rigExec translation unit instantiates the pose, geometry and mover
-# kernels, so the whole archive carries the exact-FP settings.
-rigexec_apply_exact_fp_flags(rigExec)
+# The facade's own sources and the composed layer objects compile through
+# separate targets with separate options; the exact-FP settings for this
+# facade and every layer are enforced by the one finalization walk below.
+# See docs/concepts/baked-vs-dynamic.md.
 # On Windows the consumers of rigExec need those two archives as well.
 
 # Scene translation calls back into the evaluator. The evaluator does not
@@ -500,7 +499,6 @@ file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/evalCoreSources.txt"
     CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecEvalCore,SOURCES>,\n>\n")
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/evalCoreIncludes.txt"
     CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecEvalCore,INCLUDE_DIRECTORIES>,\n>\n")
-rigexec_apply_exact_fp_flags(rigExecRuntime)
 
 set(RIGEXEC_SDK_MANIFEST_DIR "${CMAKE_CURRENT_BINARY_DIR}/sdkManifests")
 rigexec_add_sdk_manifest_export(
@@ -2919,6 +2917,18 @@ if (MSVC AND NOT CMAKE_DISABLE_PRECOMPILE_HEADERS)
         target_precompile_headers(${_target} REUSE_FROM rigExecUsdPch)
     endforeach()
 endif()
+
+# One exact-FP walk covers every owned target of this directory, placed after
+# the endif() above because that conditional PCH block declares the last
+# root-scope targets: the rigExecUsdPch producer and its REUSE_FROM consumers
+# (rigExec, rigExecScene, rigExecOracle, rigExecImaging and its imaging
+# OBJECT libs, rigExecBake, the four rigExec layer OBJECT libs, and the
+# discovered test|bench|probe executables) then all end up with the same
+# mode. The cmake/rigExec*Sources.cmake files are include()d, so their
+# OBJECT targets live in this scope and the single walk covers them; child
+# scopes keep their rigexec_add_mover / rigexec_add_mover_plugin coverage.
+# See docs/concepts/baked-vs-dynamic.md.
+rigexec_apply_exact_fp_flags_to_directory_targets()
 
 # Executables that compile a stage through rigExec alone name the scene
 # library, so the hooks are loaded. Imaging, bake, and the standalone
