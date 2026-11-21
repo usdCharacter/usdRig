@@ -83,6 +83,10 @@ class _OpenStubView:
         self.update = MagicMock()
         self._stage = stage
 
+    nodeGraph = property(lambda self: self._nodeGraph,
+                         lambda self, graph: setattr(self, "_nodeGraph", graph))
+    nodeGraphReplaced = MagicMock()
+
     @property
     def nodes(self):
         return self.nodeGraph.nodes

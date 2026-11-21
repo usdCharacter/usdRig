@@ -49,6 +49,9 @@ class _View:
     def bind(self, stage):
         GraphView.loadStage(self, stage)
 
+    nodeGraph = property(lambda self: self._nodeGraph,
+                         lambda self, graph: setattr(self, "_nodeGraph", graph))
+
     @property
     def nodes(self):
         return self.nodeGraph.nodes

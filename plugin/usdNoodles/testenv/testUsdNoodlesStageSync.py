@@ -1627,7 +1627,7 @@ class DockWindowCloseTest(unittest.TestCase):
             with patch.object(
                 stage_adapter,
                 "_finishReloadOnView",
-                lambda view: ran.append("finish"),
+                lambda view, epoch: ran.append("finish"),
             ):
                 for callback in queued:
                     callback()

@@ -1069,10 +1069,9 @@ def _beginReloadOnView(view, frame):
     # handling still touches the GL surface before paintGL() runs, and on
     # NVIDIA Windows drivers this can crash if the stageView's context was
     # just destroyed/recreated on the same thread.
-    view.setUpdatesEnabled(False)
     view.initialized = False
-
     view._currentTimeCode = frame
+    view.setUpdatesEnabled(False)
 
 
 def _loadOnView(view, delta):
@@ -1084,7 +1083,7 @@ def _loadOnView(view, delta):
         view._populateStage(delta.stage)
 
 
-def _finishReloadOnView(view):
+def _finishReloadOnView(view, epoch):
     # Do NOT set view.fontAtlas/view.shaderLibrary to None here.
     # CPython's refcounting would immediately call their C++
     # destructors (which call glDelete*) with no GL context
@@ -1092,23 +1091,11 @@ def _finishReloadOnView(view):
     # initializeGL() replace them while the context IS current --
     # the old destructors then run safely.
 
-    # Run the render-cache clear that the loaders deferred, now that the
-    # driver state has stabilized.  Doing it during BeginReload would race
-    # with the stageView's renderer teardown and crash the NVIDIA driver on
-    # its worker thread.
-    try:
-        if view._renderCacheClearPending:
-            view.makeCurrent()
-            try:
-                view._nodeRenderManager.clearCache()
-                view._renderCacheClearPending = False
-            finally:
-                view.doneCurrent()
-    finally:
-        view.linksChanged = True
-        view.textChanged = True
-        view.initialized = True
-        view.setUpdatesEnabled(True)
+    view.linksChanged = True
+    view.textChanged = True
+    view.initialized = True
+    view.setUpdatesEnabled(True)
+    if not view._stageSync.isClosed() and view._stageSync.epoch() == epoch:
         view.update()
 
 
@@ -1125,7 +1112,7 @@ def applyStageDelta(view, delta):
     elif isinstance(delta, ClearHistory):
         view._undoHistory = None
     elif isinstance(delta, FinishReload):
-        _finishReloadOnView(view)
+        _finishReloadOnView(view, delta.epoch)
 
 
 def closeStageLifecycle(view):
@@ -1140,10 +1127,10 @@ def closeStageLifecycle(view):
     service = view._stageSync
     if service.isClosed():
         return
-    service.close()
     try:
         view._clearValueInteractionState()
     finally:
+        service.close()
         view._undoHistory = None
         unsubscribe_edit_target_warning(view._showWarningPopup)
     dispose = getattr(view, "_disposeView", None)

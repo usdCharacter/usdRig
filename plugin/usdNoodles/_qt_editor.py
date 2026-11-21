@@ -777,29 +777,39 @@ class NoodlesEditorManager:
         if not testGraphPath:
             return
 
-        def loadDeferred():
-            graphView = window.graphView
-            if graphView.initialized:
-                graphView._loadSampleGraph(str(testGraphPath))
-                graphView.textChanged = True
-                if graphView.nodes:
-                    graphView.frameScene()
-                window.setWindowTitle(f"{window._windowTitle} - {testGraphPath.name}")
-            else:
-                QtCore.QTimer.singleShot(50, loadDeferred)
+        def load(graphView):
+            graphView._loadSampleGraph(str(testGraphPath))
+            window.setWindowTitle(f"{window._windowTitle} - {testGraphPath.name}")
 
-        QtCore.QTimer.singleShot(100, loadDeferred)
+        self._whenGraphReady(window, load)
 
     def _loadStageInWindow(self, window):
         stage = self._usdviewApi.stage
         if not stage:
             return
 
-        def loadDeferred():
-            graphView = window.graphView
-            if graphView.initialized:
+        def load(graphView):
+            if self._usdviewApi.stage is stage:
                 graphView.loadStage(stage)
                 window._updateWindowTitle()
+
+        self._whenGraphReady(window, load)
+
+    def _whenGraphReady(self, window, load):
+        graphView = window.graphView
+        sync = graphView._stageSync
+        # The explicit request owns startup; initializeGL must not load a sample first.
+        graphView._startupSamplePending = False
+        epoch = sync.epoch()
+        request = window._graphReadyRequest = object()
+
+        def loadDeferred():
+            if (sync.isClosed() or sync.epoch() != epoch
+                    or window._graphReadyRequest is not request):
+                return
+            if graphView.initialized:
+                window._graphReadyRequest = None
+                load(graphView)
             else:
                 QtCore.QTimer.singleShot(50, loadDeferred)
 

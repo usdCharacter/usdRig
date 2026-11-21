@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 try:
-    from pxr import Gf
+    from pxr import Gf, Sdf, Usd
     from UsdNoodles.graphView import GraphView, _makeStageSync
     from UsdNoodles.nodeGraphBlueprint import (
         _append_relationship_links as append_blueprint_relationship_links,
@@ -441,29 +441,53 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
             targetPropertyName="affects",
         )
 
-    def test_reconnect_continues_when_delete_old_returns_false(self):
-        """When _deleteOldConnection returns False (implicit replacement by
-        create_connection), the reconnect must still succeed: link added,
-        undo pushed, no abort."""
-        view, _library, _output_node, _input_node = make_connection_view(
-            delete_old_returns=False
-        )
+    def test_reconnect_checks_usd_when_delete_old_returns_false(self):
+        for old_remains in (False, True):
+            with self.subTest(old_remains=old_remains):
+                stage = Usd.Stage.CreateInMemory()
+                source = stage.DefinePrim('/A')
+                target = stage.DefinePrim('/B')
+                old_out = source.CreateAttribute('outputs:out', Sdf.ValueTypeNames.Float)
+                old_in = target.CreateAttribute('inputs:inp', Sdf.ValueTypeNames.Float)
+                old_in.AddConnection(old_out.GetPath())
+                new_source = stage.DefinePrim('/C')
+                new_target = stage.DefinePrim('/D')
+                new_out = new_source.CreateAttribute('outputs:out', Sdf.ValueTypeNames.Float)
+                new_in = new_target.CreateAttribute('inputs:inp', Sdf.ValueTypeNames.Float)
 
-        with patched_graph_symbol("_push_undo_command") as mock_push:
-            GraphView._createConnection(
-                view,
-                "/C",
-                "out",
-                "/D",
-                "inp",
-                reconnect_state=("/A", "out", "/B", "inp"),
-            )
+                def create(*args, **kwargs):
+                    new_in.AddConnection(new_out.GetPath())
+                    if not old_remains:
+                        old_in.RemoveConnection(old_out.GetPath())
+                    return True
 
-        view._addLinkToGraph.assert_called_once()
-        view._abortConnection.assert_not_called()
-        view._clearReconnectState.assert_called_once()
-        mock_push.assert_called_once()
-        self.assertEqual(mock_push.call_args[0][0], "Reconnect")
+                library = Mock()
+                library.create_connection.side_effect = create
+                library.delete_connection.side_effect = (
+                    lambda *args, **kwargs: new_in.RemoveConnection(new_out.GetPath())
+                )
+                view = SimpleNamespace(
+                    _resolveConnectionEndpoints=Mock(return_value=(
+                        object(), object(), new_source, new_target, library)),
+                    nodeGraph=SimpleNamespace(getStage=lambda: stage),
+                    _stageSync=_makeStageSync(None),
+                    _abortConnection=Mock(),
+                    _deleteOldConnection=Mock(return_value=False),
+                    _addLinkToGraph=Mock(),
+                    _clearReconnectState=Mock(),
+                    _invalidateBackReferenceLinkDataCache=Mock(),
+                    update=Mock(),
+                )
+                with patch('UsdNoodles.graphView._push_undo_command') as push:
+                    GraphView._createConnection(
+                        view, '/C', 'out', '/D', 'inp',
+                        reconnect_state=('/A', 'out', '/B', 'inp', 'outputs:out', 'inputs:inp'),
+                    )
+                self.assertEqual(old_in.GetConnections(), [old_out.GetPath()] if old_remains else [])
+                self.assertEqual(new_in.GetConnections(), [] if old_remains else [new_out.GetPath()])
+                self.assertEqual(view._abortConnection.call_count, int(old_remains))
+                self.assertEqual(view._addLinkToGraph.call_count, int(not old_remains))
+                self.assertEqual(push.call_count, int(not old_remains))
 
     def test_create_connection_invalidates_back_reference_cache(self):
 

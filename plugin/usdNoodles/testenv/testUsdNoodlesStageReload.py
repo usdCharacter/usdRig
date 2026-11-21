@@ -16,8 +16,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, Mock, call, patch
 
-from pxr import Tf, Usd
-from pxr.Usdviewq.qt import QtWidgets
+from pxr import Sdf, Tf, Usd
+from pxr.Usdviewq.qt import QtCore, QtWidgets
+from UsdNoodles.undoHistory import history_for_stage
 from UsdNoodles.graphView import GraphView
 from UsdNoodles.graphview.stage_sync import FinishReload
 from UsdNoodles.nodeGraphBpContainer import NodeGraphBpContainer
@@ -113,10 +114,18 @@ class TestReloadLifecycle(unittest.TestCase):
         self.assertTrue(view.updatesEnabled())
         self.assertTrue(view.linksChanged)
         self.assertTrue(view.textChanged)
+        self.assertTrue(view._renderCacheClearPending)
+        view._clearPendingRenderCache()
+        view.makeCurrent.assert_not_called()
+        view._nodeRenderManager.clearCache.assert_not_called()
+        self.assertTrue(view._renderCacheClearPending)
+        with patch.object(view, '_hasCurrentRenderContext', return_value=True):
+            view._nodeRenderManager.clearCache.side_effect = RuntimeError('clear failed')
+            with self.assertRaisesRegex(RuntimeError, 'clear failed'):
+                view._clearPendingRenderCache()
+            view._clearPendingRenderCache()
+            view._nodeRenderManager.clearCache.assert_called_once()
         self.assertFalse(view._renderCacheClearPending)
-        view.makeCurrent.assert_called_once()
-        view._nodeRenderManager.clearCache.assert_called_once()
-        view.doneCurrent.assert_called_once()
 
     def _queueReplacement(self):
         view = self.view
@@ -169,12 +178,11 @@ class TestReloadLifecycle(unittest.TestCase):
         surviving()
         self.assertEqual(self.effects.mock_calls, [
             call.finish(FinishReload(replacedEpoch + 1)),
-            call.makeCurrent(), call.clearCache(), call.doneCurrent(),
             call.setUpdatesEnabled(True), call.update(),
         ])
         self.assertTrue(view.updatesEnabled())
         self.assertTrue(view.initialized)
-        self.assertFalse(view._renderCacheClearPending)
+        self.assertTrue(view._renderCacheClearPending)
         self.assertFalse(self.posts)
         self.effects.reset_mock()
         surviving()
@@ -250,6 +258,148 @@ class TestReloadLifecycle(unittest.TestCase):
             self.assertFalse(self.view.updatesEnabled())
             self.assertFalse(self.view.initialized)
         self.assertFalse(self.posts)
+
+    def test_reentrant_graph_signal_sees_committed_stage_and_sender(self):
+        view = self.view
+        other = Usd.Stage.CreateInMemory()
+        seen = []
+
+        def replaced():
+            stage = view.nodeGraph.getStage()
+            self.assertIs(view._stageSync.boundStage(), stage)
+            self.assertIs(view._undoHistory, history_for_stage(stage))
+            seen.append(stage)
+            if stage is other:
+                view.loadStage(self.stage)
+
+        # Qt swallows exceptions from Python slots; check each observation outside.
+        view.nodeGraphReplaced.connect(replaced)
+        view.loadStage(other)
+        self.assertEqual(seen, [other, self.stage])
+        with patch.object(view, '_addNewNodeFast', return_value=None) as adopt:
+            other.DefinePrim('/Retired', 'Xform')
+            adopt.assert_not_called()
+            self.stage.DefinePrim('/Live', 'Xform')
+            adopt.assert_called_once()
+
+    def test_interrupted_load_failure_does_not_reset_newer_graph(self):
+        view = self.view
+        populate = view._populateStage
+        other = Usd.Stage.CreateInMemory()
+
+        def interrupt(stage):
+            if stage is other:
+                view.loadStage(self.stage)
+                raise RuntimeError('interrupted')
+            populate(stage)
+
+        with patch.object(view, '_populateStage', side_effect=interrupt):
+            with self.assertRaisesRegex(RuntimeError, 'interrupted'):
+                view.loadStage(other)
+        self.assertIs(view.nodeGraph.getStage(), self.stage)
+        self.assertIs(view._stageSync.boundStage(), self.stage)
+        self.assertIs(view._undoHistory, history_for_stage(self.stage))
+
+    def test_stale_startup_retry_cannot_reinstall_replaced_stage(self):
+        view = self.view
+        manager = NoodlesEditorManager()
+        startup = Usd.Stage.CreateInMemory()
+        manager._usdviewApi = SimpleNamespace(stage=startup)
+        window = SimpleNamespace(graphView=view, _updateWindowTitle=Mock())
+        view.initialized = False
+        manager._loadStageInWindow(window)
+        self.posts.pop(0)()
+        retry = self.posts.pop(0)
+        manager._usdviewApi.stage = self.stage
+        view._onStageReplaced()
+        self.posts.pop(0)()
+        self.assertTrue(view.initialized)
+        retry()
+        self.assertIs(view.nodeGraph.getStage(), self.stage)
+        self.assertIs(view._stageSync.boundStage(), self.stage)
+        window._updateWindowTitle.assert_not_called()
+        self.assertFalse(self.posts)
+
+    def test_ready_request_is_superseded_or_closed(self):
+        manager = NoodlesEditorManager()
+        first, second = Mock(), Mock()
+        window = SimpleNamespace(graphView=self.view)
+        self.assertTrue(self.view._startupSamplePending)
+        manager._whenGraphReady(window, first)
+        manager._whenGraphReady(window, second)
+        self.assertFalse(self.view._startupSamplePending)
+        self.view.initialized = True
+        self.posts.pop(0)()
+        self.posts.pop(0)()
+        first.assert_not_called()
+        second.assert_called_once_with(self.view)
+        manager._whenGraphReady(window, first)
+        self.view.close()
+        self.posts.pop(0)()
+        first.assert_not_called()
+
+    def test_final_gesture_release_delivers_info_and_resync(self):
+        self.stage.DefinePrim('/Old', 'Xform').CreateAttribute(
+            'testValue', Sdf.ValueTypeNames.Float).Set(1.0)
+        self.view.loadStage(self.stage)
+        sync = self.view._stageSync
+        outer = sync.acquireSuppression()
+        gesture = sync.acquireSuppression(reconcile=True)
+        with patch('UsdNoodles.graphview.stage_sync.applyUsdChanges') as reconcile:
+            self.stage.GetAttributeAtPath('/Old.testValue').Set(2.0)
+            self.stage.DefinePrim('/New', 'Xform')
+            gesture.release()
+            reconcile.assert_not_called()
+            outer.release()
+            reconcile.assert_called_once()
+            _, resync, info, _ = reconcile.call_args.args
+            self.assertEqual(resync, {'/New'})
+            self.assertEqual(info, {'/Old.testValue'})
+
+    def test_canceled_preview_restores_original_mapped_sample(self):
+        stage, view = self.stage, self.view
+        layer = Sdf.Layer.CreateAnonymous()
+        root = stage.GetRootLayer()
+        root.subLayerPaths.append(layer.identifier)
+        root.subLayerOffsets[0] = Sdf.LayerOffset(10, 2)
+        stage.SetEditTarget(stage.GetEditTargetForLocalLayer(layer))
+        attr = stage.DefinePrim('/Value').CreateAttribute('number', Sdf.ValueTypeNames.Float)
+        time = Usd.TimeCode(20)
+        self.assertTrue(attr.Set(2.5, time))
+        view.loadStage(stage)
+        history = view._undoHistory
+        view._currentTimeCode = time
+        view._cachedValueWriteMode = 'animation'
+        hit = SimpleNamespace(
+            row=SimpleNamespace(editable=True, kind='numeric', mungable=True,
+                                components=(2.5,), type_name='float'),
+            comp=0, nodeId='/Value', primPath='/Value', propertyName='number',
+        )
+        view._onValueCellPressed(hit, SimpleNamespace(position=lambda: QtCore.QPointF()))
+        view._updateMung(SimpleNamespace(position=lambda: QtCore.QPointF(100, 0),
+                                        modifiers=lambda: QtCore.Qt.NoModifier))
+        self.assertAlmostEqual(layer.QueryTimeSample(attr.GetPath(), 5), 3.5)
+        stage.SetEditTarget(root)
+        replacement = Usd.Stage.CreateInMemory()
+        view.loadStage(replacement)
+        self.assertEqual(layer.QueryTimeSample(attr.GetPath(), 5), 2.5)
+        self.assertEqual(layer.ListTimeSamplesForPath(attr.GetPath()), [5.0])
+        self.assertFalse(history.canUndo())
+        self.assertIsNone(view._mungSuppression)
+        self.assertIs(view._stageSync.boundStage(), replacement)
+
+    def test_history_reload_surfaces_missing_scope_without_publishing(self):
+        self.stage.DefinePrim('/Scope', 'Blueprint')
+        self.view.loadBlueprint(self.stage, '/Scope')
+        old = self.view.nodeGraph
+        self.stage.RemovePrim('/Scope')
+        replaced = Mock()
+        self.view.nodeGraphReplaced.connect(replaced)
+        with self.assertRaisesRegex(RuntimeError, '/Scope'):
+            self.view._reloadCurrentGraph()
+        self.assertIs(self.view.nodeGraph, old)
+        self.assertIs(self.view._stageSync.boundStage(), self.stage)
+        replaced.assert_not_called()
 
     def test_missing_scoped_prim_leaves_no_graph_or_binding(self):
         for loader in (self.view.loadBlueprint, self.view.loadContainer):

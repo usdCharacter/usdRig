@@ -170,10 +170,10 @@ class _NoticeReceiver:
     """What the UsdNoticeHandler calls, stamped with a stage generation.
 
     ``UsdNoticeHandler`` keeps its protocol -- an object with
-    ``_handleUsdChanges(resyncedPaths, infoChangedPaths, movedPaths)`` --
-    but in production the object behind it is this receiver, not the
-    widget. It carries the epoch of its binding, so a delivery that no
-    longer matches the live generation never reaches the model.
+    ``_handleUsdChanges(resyncedPaths, infoChangedPaths, movedPaths=None)`` --
+    but in production the object behind it is this receiver, not the widget.
+    It carries the epoch of its binding, so a delivery that no longer matches
+    the live generation never reaches the model.
     """
 
     def __init__(self, service):
@@ -188,7 +188,13 @@ class _NoticeReceiver:
     def revoke(self):
         self._revoked = True
 
-    def _handleUsdChanges(self, resyncedPaths, infoChangedPaths, movedPaths=None):
+    def _handleSuppressedUsdChanges(self, resynced, info, moved):
+        if not self._revoked:
+            self._service._recordSuppressed(self._epoch, resynced, info, moved)
+
+    def _handleUsdChanges(
+        self, resyncedPaths, infoChangedPaths, movedPaths=None
+    ):
         if self._revoked:
             return
         self._service.changed(
@@ -216,9 +222,9 @@ class StageSync:
     narrower read a USD notice needs, ``apply(delta)`` to perform a mutation
     synchronously on the owner thread, ``post(callback)`` to schedule on the
     widget owner thread, ``listen(receiver)`` to build the editor's
-    UsdNoticeHandler, and ``warn(message)`` for diagnostics.
-    ``reconcile(resyncedPaths, infoChangedPaths, trace, movedPaths)`` runs
-    synchronously on the owner thread for an admitted notice.
+    UsdNoticeHandler, and ``warn(message)`` for the diagnostics channel. None
+    of them may import Qt or GL here, which is what lets the whole lifecycle
+    run headless against a recording stub.
 
     Every replace moves one *epoch*. Deferred callbacks and notice deliveries
     carry the epoch they were produced under, and anything that no longer
@@ -227,7 +233,8 @@ class StageSync:
     """
 
     def __init__(
-        self, read, notice, apply, post, listen, warn=None, sink=None, *, reconcile=None, prepare=None, reset=None, defer=None
+        self, read, notice, apply, post, listen, warn=None, sink=None, *,
+        reconcile=None, prepare=None, reset=None, defer=None, graphReplaced=None,
     ):
         self._read = read
         self._notice = notice
@@ -241,6 +248,8 @@ class StageSync:
         self._post_notice = post_notice or post
         self._warn = warn
         self._sink = sink
+        self._graphReplaced = graphReplaced
+        self._pendingChanges = None
         self._epoch = 0
         self._finishPending = False
         self._closed = False
@@ -255,7 +264,7 @@ class StageSync:
     def isClosed(self):
         return self._closed
 
-    def acquireSuppression(self):
+    def acquireSuppression(self, *, reconcile=False):
         """Inhibit this editor's notices until its last live token is released."""
         if self._closed:
             return _SuppressionToken(None)
@@ -263,6 +272,8 @@ class StageSync:
         if not self._suppressionTokens:
             self._enabledBeforeSuppression = self._handler.isEnabled()
             self._handler.setEnabled(False)
+        if reconcile and self._enabledBeforeSuppression and self._pendingChanges is None:
+            self._pendingChanges = (self._epoch, set(), set(), {})
         self._suppressionTokens.add(token)
         return token
 
@@ -272,6 +283,23 @@ class StageSync:
         self._suppressionTokens.remove(token)
         if not self._suppressionTokens:
             self._handler.setEnabled(self._enabledBeforeSuppression)
+            pending, self._pendingChanges = self._pendingChanges, None
+            if pending is not None and (pending[1] or pending[2]):
+                self.changed(*pending)
+
+    def _recordSuppressed(self, epoch, resynced, info, moved):
+        pending = self._pendingChanges
+        if pending is None or pending[0] != epoch or epoch != self._epoch:
+            return
+        pending[1].update(resynced)
+        pending[2].update(info)
+        for source, destination in (moved or {}).items():
+            for original, intermediate in tuple(pending[3].items()):
+                if intermediate == source:
+                    pending[3][original] = destination
+                    break
+            else:
+                pending[3][source] = destination
 
     @contextmanager
     def suppressed(self):
@@ -291,16 +319,16 @@ class StageSync:
         ctx = self._read()
         reset = self._reset
 
-        def begin():
-            self._dispatch(BeginReload(self._epoch, frame))
+        def begin(epoch):
+            self._dispatch(BeginReload(epoch, frame))
 
-        def populate():
+        def populate(epoch):
             if stage is None:
                 reset()
-                self._dispatch(ClearHistory(self._epoch))
+                self._dispatch(ClearHistory(epoch))
             else:
-                self._publish(Remove(self._epoch, ctx.node_ids))
-                self._dispatch(Load(self._epoch, stage, mode, prim_path))
+                self._publish(Remove(epoch, ctx.node_ids))
+                self._dispatch(Load(epoch, stage, mode, prim_path))
 
         try:
             self._transition(stage, populate, reset, begin)
@@ -311,31 +339,40 @@ class StageSync:
     def loadGraph(self, stage, populate, reset):
         """Switch graphs synchronously; a successful sample can stay unbound."""
         if not self._closed:
-            self._transition(stage, populate, reset)
+            self._transition(stage, lambda epoch: populate(), reset)
 
     def _transition(self, stage, populate, reset, begin=None):
         self._epoch += 1
         epoch = self._epoch
+        self._pendingChanges = None
         if begin is not None:
             self._finishPending = True
         defer = self._defer(True) if self._finishPending and self._defer else None
         try:
             self.bind(None)
             if begin is not None:
-                begin()
+                begin(epoch)
+            if self._closed or epoch != self._epoch:
+                return
             if self._prepare:
                 self._prepare()
-            populate()
-            if stage is not None:
+            if self._closed or epoch != self._epoch:
+                return
+            populate(epoch)
+            if not self._closed and epoch == self._epoch and stage is not None:
                 self.bind(stage)
         except Exception:
-            reset()
+            if not self._closed and epoch == self._epoch:
+                reset()
             raise
         finally:
-            if defer is not None:
-                self._defer(defer)
+            if not self._closed and epoch == self._epoch:
+                if defer is not None:
+                    self._defer(False)
             if not self._closed and epoch == self._epoch and self._finishPending:
                 self._scheduleFinish(epoch)
+            if not self._closed and epoch == self._epoch and self._graphReplaced:
+                self._graphReplaced()
 
     def boundStage(self):
         """The stage that actually owns the adapter's live notice key."""
@@ -374,6 +411,7 @@ class StageSync:
         for token in self._suppressionTokens:
             token._owner = None
         self._suppressionTokens.clear()
+        self._pendingChanges = None
         # Past every queued finish and every receiver stamp: the epoch moving
         # is what makes the deferred callbacks return without touching the
         # model.
@@ -398,11 +436,7 @@ class StageSync:
         self._reconcile(
             resyncedPaths,
             infoChangedPaths,
-            (
-                _ReconcileTrace(self._sink, epoch)
-                if self._sink is not None
-                else None
-            ),
+            _ReconcileTrace(self._sink, epoch) if self._sink is not None else None,
             movedPaths,
         )
 
@@ -414,7 +448,8 @@ class StageSync:
 
     def _dispatch(self, delta):
         self._publish(delta)
-        self._apply(delta)
+        if not self._closed and delta.epoch == self._epoch:
+            self._apply(delta)
 
     def _scheduleFinish(self, epoch):
         """Post a finish for the transition that now owns the pending reload.
