@@ -8,8 +8,9 @@ the panel what it did so the chat can show it.
 
 Looking needs nothing turned on. Changing the stage (posing included)
 needs "Edit stage", and running Python needs "Run code", both toggles
-under the message box. All the changes in one reply are one step on the
-RigExec undo stack.
+under the message box. The changes one reply makes are recorded on the RigExec
+undo stack in the order they were made, and share a step while that step is
+still the newest thing there.
 
 Files are read as in Claude Code: the open stage's folder is free to read,
 and anywhere else the user is asked first (see memory).
@@ -288,8 +289,9 @@ class Toolbox(QtCore.QObject):
         self._jobs = set()
         self.done = []
         self.failed = []
-        # The reply's undo step on the editor's history, opened by its first
-        # edit and grown by the ones after while it is still the newest.
+        # The reply's undo step on the editor's history: the first change
+        # opens it and the ones after join it while it is still the newest
+        # thing there.
         self._history_step = None
         self.calls = 0
         self._running = False
@@ -640,35 +642,66 @@ class Toolbox(QtCore.QObject):
             prim = prim.GetParent()
         return None
 
-    def _record(self, edit):
-        """Add one authored edit to the editor's history, on the owner
-        thread where every edit is authored."""
-        if edit is None or self.session is None:
-            return
+    def _undo_stack(self):
+        """The editor's history, or None when it cannot be reached."""
+        if self.session is None:
+            return None
         try:
-            stack = self.session.undo_stack()
+            return self.session.undo_stack()
         except RuntimeError:
             logger.warning('Could not reach the undo stack', exc_info=True)
+            return None
+
+    def _groups_edits(self, stack):
+        """Gathering a reply's edits into one step is only safe when the
+        stack says which edit is newest, so a step still being written can
+        be recognised. The documented host protocol does not require that
+        hook; such a stack gets each change pushed on its own."""
+        return getattr(stack, 'LastEdit', None) is not None
+
+    def _add_edit(self, stack, edit):
+        """Record one authored edit as soon as its change is made, on the
+        owner thread where every edit is authored. The reply's step grows
+        while it is still the newest thing on the history; when the artist,
+        another reply, or an undo took that place, the next change opens a
+        step of its own, so the history keeps the order the changes were
+        made. A stack that cannot say which edit is newest (see
+        _groups_edits) gets one push per change."""
+        if edit is None or stack is None:
             return
-        if stack is None:
-            return
+        groups = self._groups_edits(stack)
         step = self._history_step
-        if step is not None and stack.LastEdit() is not step:
-            # The artist, or another reply, recorded something since: this
-            # reply's next change becomes a new step, and the order on the
-            # stack is the order they were made.
+        if step is not None and (not groups or stack.LastEdit() is not step):
             step = None
+            self._history_step = None
         if step is None:
-            step = session_module.GroupEdit(edit.label, [edit])
+            if not groups:
+                try:
+                    stack.Push(edit)
+                except RuntimeError:
+                    logger.warning('Could not add the assistant\'s changes '
+                                   'to the undo stack', exc_info=True)
+                return
+            step = session_module.GroupEdit(edit.label, [])
             try:
                 stack.Push(step)
             except RuntimeError:
-                logger.warning('Could not add the assistant\'s changes to the '
-                               'undo stack', exc_info=True)
+                logger.warning('Could not add the assistant\'s changes to '
+                               'the undo stack', exc_info=True)
                 return
-        else:
-            step.edits.append(edit)
-        self._history_step = step
+            self._history_step = step
+        step.edits.append(edit)
+
+    @contextlib.contextmanager
+    def _authored_edit(self, stack, paths, label):
+        """One change, recorded when it is made rather than when the batch
+        holding it is finished. A change that turns out to touch nothing
+        records no undo."""
+        import rigExecUndo
+        scope = rigExecUndo.SpecScope(self.stage, paths, None, label)
+        with scope:
+            yield scope
+        self._add_edit(stack, scope.edit)
 
     # The tools
     def _all_tools(self):
@@ -1402,12 +1435,13 @@ class Toolbox(QtCore.QObject):
             raise ToolError('; '.join(problems))
         channels = [c for c, _ in planned]
         warnings = []
+        stack = self._undo_stack()
         with model.EditScope(self.stage, channels, None,
                              'AI Assistant pose') as scope:
             plans = [model.PlanWrite(c, v, time_code, mode)
                      for c, v in planned]
             warnings = [w for w in model.ApplyPlans(plans) if w]
-        self._record(scope.edit)
+        self._add_edit(stack, scope.edit)
         when = '' if time_code.IsDefault() else ' at frame {:g}'.format(
             time_code.GetValue())
         for channel, value in planned:
@@ -1438,33 +1472,33 @@ class Toolbox(QtCore.QObject):
                          c.shortName in names]
         if not channels:
             raise ToolError('No avars to reset')
+        stack = self._undo_stack()
         with model.EditScope(self.stage, channels, None,
                              'AI Assistant reset') as scope:
             model.ApplyPlans([model.PlanReset(c, time_code, mode)
                               for c in channels])
-        self._record(scope.edit)
+        self._add_edit(stack, scope.edit)
         self.done.append('Reset {} avars on {}'.format(len(channels),
                                                         _short(paths)))
         return 'Reset {} avars.'.format(len(channels))
 
     def change_stage(self, args):
-        import rigExecUndo
         changes = args.get('changes')
         if isinstance(changes, dict):
             changes = [changes]
         if not isinstance(changes, list) or not changes:
             raise ToolError('"changes" must be a list of changes')
-        specs = _spec_paths(changes,
-                            self.stage.GetEditTarget().GetLayer())
+        layer = self.stage.GetEditTarget().GetLayer() if self.stage else None
+        stack = self._undo_stack()
+
+        def guard(change):
+            paths = _spec_paths([change], layer) if layer is not None else []
+            return self._authored_edit(stack, paths, 'AI Assistant changes')
+
         applier = stage_actions.Applier(self.stage, select=self._select,
-                                        revalidate=self.is_current)
-        if specs:
-            with rigExecUndo.SpecScope(self.stage, specs, None,
-                                       'AI Assistant changes') as scope:
-                done, failed = applier.apply(changes)
-            self._record(scope.edit)
-        else:
-            done, failed = applier.apply(changes)
+                                        revalidate=self.is_current,
+                                        bracket=guard)
+        done, failed = applier.apply(changes)
         self.done += done
         self.failed += failed
         lines = ['Done: ' + d for d in done] + \
@@ -1529,7 +1563,8 @@ class Toolbox(QtCore.QObject):
         if before is not None:
             after = session_module.snapshot(layer)
             if not session_module.same_content(before, after):
-                self._record(session_module.LayerSnapshotEdit(
+                stack = self._undo_stack()
+                self._add_edit(stack, session_module.LayerSnapshotEdit(
                     'AI Assistant Python', layer, before, after))
                 self.done.append('Changed {} with Python'.format(
                     layer.identifier))

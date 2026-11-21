@@ -506,6 +506,156 @@ def TestArtistCommitStartsANewStep():
            "the reply's two changes are still one step")
 
 
+def TestEditsUndoInTheOrderTheyWereMade():
+    """The history undoes and redoes in the order the changes were made,
+    even when the editor commits one of its own while a change the reply
+    is still authoring is in flight."""
+    stage = _Stage()
+    container = _Container()
+    rx = stage.GetAttributeAtPath("/Char/Ctl.avars:rx")
+    box, _api = _Toolbox(stage, container, can_edit=True)
+    _SetRotation(box, 11)
+    _Check(rx.Get() == 11 and
+           _UndoState(container.stack) == (True, "AI Assistant changes",
+                                          False, ""),
+           "the reply keys the control and has one step")
+    made = []
+
+    def select_with_an_artist_commit(paths):
+        # The editor commits a change of its own in the middle of the
+        # reply's batch, as a queued slider commit does.
+        made.append(rx.Get())
+        container.stack.Push(_ArtistEdit(rx, 23))
+        rx.Set(23)
+
+    box._select = select_with_an_artist_commit
+    text, failed = box.call("change_stage", {"changes": [
+        {"action": "set_attr", "path": "/Char/Ctl", "name": "avars:ty",
+         "value": 5},
+        {"action": "select", "paths": ["/Char/Ctl"]},
+        {"action": "set_attr", "path": "/Char/Ctl", "name": "avars:rx",
+         "value": 30},
+    ]})
+    _Check(not failed and made == [11] and _Values(stage) == (30.0, 5.0),
+           "the artist commit lands between the reply's changes: %s" % text)
+    _Check(_UndoState(container.stack) == (True, "AI Assistant changes",
+                                          False, ""),
+           "the step written after the artist commit is the newest")
+    container.stack.Undo()
+    _Check(_Values(stage) == (23.0, 5.0) and
+           container.stack.UndoText() == "Artist rotation",
+           "the first undo takes back the change made after the artist")
+    container.stack.Undo()
+    _Check(_Values(stage) == (11.0, 5.0) and
+           container.stack.UndoText() == "AI Assistant changes",
+           "the next undo takes back the artist's commit")
+    container.stack.Undo()
+    _Check(_Values(stage) == (0.0, 0.0) and not container.stack.CanUndo(),
+           "the last undo takes back what the reply made first")
+    for wanted in ((11.0, 5.0), (23.0, 5.0), (30.0, 5.0)):
+        _Check(container.stack.Redo() and _Values(stage) == wanted,
+               "redo puts the changes back in the order they were made")
+    _Check(not container.stack.CanRedo(), "redo stops at the newest change")
+    container.stack.Undo()
+    _Check(container.stack.CanRedo(), "undo leaves a redo branch")
+    _SetRotation(box, 40)
+    _Check(not container.stack.CanRedo(),
+           "a new write after undo discards the stale redo branch")
+
+
+class _ProtocolStack(object):
+    """An undo stack that implements the documented host protocol and
+    nothing more, so it cannot say which edit is newest."""
+
+    def __init__(self):
+        self._undo = []
+        self._redo = []
+
+    def Push(self, edit):
+        self._undo.append(edit)
+        self._redo = []
+
+    def Undo(self):
+        if not self._undo:
+            return False
+        edit = self._undo.pop()
+        edit.Undo()
+        self._redo.append(edit)
+        return True
+
+    def Redo(self):
+        if not self._redo:
+            return False
+        edit = self._redo.pop()
+        edit.Redo()
+        self._undo.append(edit)
+        return True
+
+    def CanUndo(self):
+        return bool(self._undo)
+
+    def CanRedo(self):
+        return bool(self._redo)
+
+    def UndoText(self):
+        return self._undo[-1].label if self._undo else ""
+
+    def RedoText(self):
+        return self._redo[-1].label if self._redo else ""
+
+    def Clear(self):
+        self._undo = []
+        self._redo = []
+
+    def AddListener(self, fn):
+        pass
+
+    def AddFlusher(self, fn):
+        pass
+
+
+class _ProtocolContainer(object):
+    def __init__(self):
+        self.stack = _ProtocolStack()
+
+    def _UndoStack(self):
+        return self.stack
+
+    def IsRigActive(self):
+        return False
+
+    def ImagingHandle(self):
+        return None
+
+
+def TestHostUndoStackWithoutLastEdit():
+    """A host stack following the documented protocol, which does not
+    include LastEdit, still has every change the assistant makes."""
+    stage = _Stage()
+    container = _ProtocolContainer()
+    box, _api = _Toolbox(stage, container, can_edit=True)
+    _SetRotation(box, 11)
+    _Check(box.is_current() and _Values(stage) == (11.0, 0.0) and
+           len(container.stack._undo) == 1 and
+           container.stack.UndoText() == "AI Assistant changes",
+           "the first change is pushed on its own")
+    _SetRotation(box, 23)
+    _Check(_Values(stage) == (23.0, 0.0) and
+           len(container.stack._undo) == 2 and
+           container.stack.UndoText() == "AI Assistant changes",
+           "the second change is a separate edit, not a lost one")
+    container.stack.Undo()
+    _Check(_Values(stage) == (11.0, 0.0) and container.stack.CanUndo(),
+           "the first undo takes back the second write")
+    container.stack.Undo()
+    _Check(_Values(stage) == (0.0, 0.0) and not container.stack.CanUndo() and
+           container.stack.CanRedo(),
+           "the second undo takes back the first write")
+    _Check(container.stack.Redo() and _Values(stage) == (11.0, 0.0) and
+           container.stack.Redo() and _Values(stage) == (23.0, 0.0),
+           "both writes come back on redo")
+
+
 def TestStageReplacementMidBatchStopsTheRest():
     a, b = _Stage(), _Stage()
     container = _Container()
@@ -1157,6 +1307,104 @@ def TestSendRollsBackWhenTheChatCannotBeSaved():
                'the next Send works normally after a failed save')
 
 
+def TestSendRollsBackWhenTheRequestCannotStart():
+    stage = _Stage()
+    api, container = _Api(stage), _Container()
+    again = _LocalReply('plain', gated=False)
+    with _ProviderPanel(api, container, {'start me': again}) as ui:
+        attempts = []
+
+        def failing_init(self, *args, **kwargs):
+            attempts.append(1)
+            raise RuntimeError('no thread left')
+
+        with patch.object(panel.ChatThread, '__init__', failing_init):
+            ui.input.setPlainText('start me')
+            ui.send()
+        _Check(len(attempts) == 1 and not ui.busy and ui.thread is None and
+               not ui._pending_turn and not ui._settling and
+               ui.messages == [] and
+               ui.input.toPlainText() == 'start me' and
+               'could not start' in ui.status_label.text() and
+               bool(ui.status_label.property('error')) and
+               ui.send_button.text() == 'Send',
+               'a request that cannot start leaves nothing in flight')
+        saved = ui.chat_store.load(ui.chat_id)
+        _Check(saved is None or
+               all(message['content'] != 'start me'
+                   for message in saved['messages']),
+               'the rolled back turn is not kept in the saved chat')
+        ui.send('start me')
+        _ProviderFinished(ui)
+        _Check(again.sent == ['start me'],
+               'the first retry starts exactly one request')
+
+
+def TestMcpEditLosesConsentBeforeDispatch():
+    """An MCP tools/call queued while Edit stage is on is refused, and
+    authors nothing, when consent goes off before the owner thread runs it."""
+    stage = _Stage()
+    baseline = _DocumentState(stage)
+    api, container = _Api(stage), _Container()
+    held = _LocalReply('plain', gated=True)
+    server = mcp_server.McpServer()
+    try:
+        with _ProviderPanel(api, container, {'hold': held}) as ui:
+            ui.send('hold')
+            _PumpUntil(lambda: held.sent is not None,
+                       'the reply never started')
+            box = ui.toolbox
+            token = server.open(box)
+            answers = {}
+
+            def post():
+                call = {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
+                        'params': {'name': 'change_stage', 'arguments': {
+                            'changes': [{'action': 'set_attr', 'path': _CTL,
+                                         'name': 'avars:rx',
+                                         'value': 30}]}}}
+                request = urllib.request.Request(
+                    server.url,
+                    data=json.dumps(call).encode('utf-8'),
+                    headers={'Content-Type': 'application/json',
+                             'Authorization': 'Bearer ' + token})
+                try:
+                    with urllib.request.urlopen(request, timeout=10) as answer:
+                        raw = answer.read()
+                    answers['response'] = json.loads(raw or b'null')
+                except urllib.error.HTTPError as err:
+                    answers['status'] = err.code
+
+            worker = threading.Thread(target=post, daemon=True)
+            worker.start()
+            deadline = time.monotonic() + _QUEUE_BOUND
+            while box.outstanding_calls() == 0 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            _Check(box.outstanding_calls() == 1,
+                   'the MCP edit waits for the owner thread')
+            ui.edit_check.setChecked(False)
+            _PumpUntil(lambda: 'response' in answers,
+                       'the MCP edit never answered')
+            worker.join(_QUEUE_BOUND)
+            result = (answers.get('response') or {}).get('result') or {}
+            texts = [item.get('text', '')
+                     for item in result.get('content') or []]
+            _Check(result.get('isError') and
+                   any('turned off' in text for text in texts),
+                   'the queued MCP edit is refused: %s' % answers)
+            _Check(_DocumentState(stage) == baseline and
+                   not container.stack.CanUndo(),
+                   'the refused MCP edit authored nothing and recorded '
+                   'nothing')
+            held.release.set()
+            _ProviderFinished(ui)
+            _Check(_Values(stage) == (0.0, 0.0) and
+                   not container.stack.CanUndo(),
+                   'the reply closes with the stage untouched')
+    finally:
+        server.stop()
+
+
 def TestReplyWaitsForItsQueuedCall():
     stage = _Stage()
     api, container = _Api(stage), _Container()
@@ -1207,6 +1455,8 @@ def main():
                  TestChangesAreOneUndoStep, TestToolboxRejectsSilentStageReplacement,
                  TestToolboxGenerationAndRetirement,
                  TestArtistCommitStartsANewStep,
+                 TestEditsUndoInTheOrderTheyWereMade,
+                 TestHostUndoStackWithoutLastEdit,
                  TestStageReplacementMidBatchStopsTheRest,
                  TestSharedLayerReplacementMidBatchStopsTheRest,
                  TestToolboxSwapDuringActivity,
@@ -1220,7 +1470,9 @@ def main():
                  TestEditToggleRevokesAPendingNativeEdit,
                  TestReopenedChatExcludesTheCanceledTurn,
                  TestReplyWaitsForItsQueuedCall,
-                 TestSendRollsBackWhenTheChatCannotBeSaved):
+                 TestSendRollsBackWhenTheChatCannotBeSaved,
+                 TestSendRollsBackWhenTheRequestCannotStart,
+                 TestMcpEditLosesConsentBeforeDispatch):
         if app is None and test is not TestToolboxNoStageWithoutApp:
             app = QtWidgets.QApplication([])
         try:

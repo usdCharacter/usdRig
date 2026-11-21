@@ -49,9 +49,14 @@ you ask it something.
 
 Neither **Stop** nor replacing the stage rolls back changes already made or
 forcibly interrupts a tool that has started. When the changes can be recorded
-on the RigExec undo stack, they are grouped into one ++ctrl+z++ step per reply.
-Python changes can be undone when they only affect the edit target. Undo
-entries from the old reply are not added to the replacement stage's stack.
+on the RigExec undo stack, they go on it as labelled ++ctrl+z++ steps ("AI
+Assistant changes", "AI Assistant pose", "AI Assistant Python") in the order
+the changes were made. A reply that changes the stage in more than one go, or
+that goes on after the editor committed something of its own, leaves more than
+one step; Undo and Redo move through them in that order, and a new Assistant
+write after an Undo discards what that Undo had taken back. Python changes can
+be undone when they only affect the edit target. Undo entries from the old
+reply are not added to the replacement stage's stack.
 
 ## Signing in
 

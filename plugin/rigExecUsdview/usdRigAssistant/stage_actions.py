@@ -5,6 +5,7 @@ calling, which end their answer with a fenced ```usdrig-actions block of
 JSON that the panel applies. Every edit goes to the stage's current edit
 target. Qt-free.
 """
+import contextlib
 import json
 import logging
 import re
@@ -191,12 +192,17 @@ class Applier(object):
     :param select: called with a list of paths for the select action
     :param revalidate: called on the owner thread before each action; when
         it gives back False the rest of the batch is not made
+    :param bracket: called with the action before it runs, giving back a
+        context manager around that one action. The assistant uses it to
+        snapshot and record each change as it is made, so the history keeps
+        the order the changes were made.
     """
 
-    def __init__(self, stage, select=None, revalidate=None):
+    def __init__(self, stage, select=None, revalidate=None, bracket=None):
         self.stage = stage
         self.select = select
         self.revalidate = revalidate
+        self.bracket = bracket or (lambda action: contextlib.nullcontext())
 
     def apply(self, actions):
         # No Sdf.ChangeBlock: each action reads the stage the one before it
@@ -217,7 +223,8 @@ class Applier(object):
                 failed.append('There is no action {}'.format(name))
                 continue
             try:
-                done.append(handler(action))
+                with self.bracket(action):
+                    done.append(handler(action))
             except ActionError as err:
                 failed.append('{}: {}'.format(name, err))
             except Exception as err:

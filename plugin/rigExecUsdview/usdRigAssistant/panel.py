@@ -11,6 +11,7 @@ toggles under the message box it may also change the stage and run Python.
 """
 # Builtin
 import json
+import logging
 import time
 
 # External
@@ -21,6 +22,8 @@ from . import (chat_render, chats, claude_code, codex, context, host,
                providers, stage_actions, tools)
 from .memory import Memory
 from .workers import ChatThread, TaskThread
+
+logger = logging.getLogger(host.LOGGER_NAME)
 
 ACCENT = '#4f86d6'
 STYLE = host.fill('''
@@ -299,8 +302,9 @@ class AiAssistant(QtWidgets.QDockWidget):
         self.edit_check = _chip(
             'Edit stage', 'The assistant can pose and key controls, and '
             'make, change and delete prims, attributes, connections and '
-            'layers on the edit target, and save layers. All the changes '
-            'in a reply are one undo step, so Ctrl+Z takes them back.')
+            'layers on the edit target, and save layers. The changes go on '
+            'the undo history in the order they were made, so Ctrl+Z takes '
+            'them back.')
         self.edit_check.setChecked(bool(self.prefs.get(
             host.USER_PREF.AI_ALLOW_EDITS, True)))
         self.edit_check.toggled.connect(self.on_edit_toggled)
@@ -536,55 +540,70 @@ class AiAssistant(QtWidgets.QDockWidget):
         toolbox.settled.connect(self.on_tools_settled)
 
         content = text
-        if self.include_check.isChecked():
-            selection = context.describe_selection(session)
-            if selection:
-                content = '{}\n\nThe selected prims:\n\n{}'.format(
-                    text, selection)
-        if not self._can_start_reply(toolbox):
-            return
-        fallback = context.system_prompt()
-        if toolbox.can_edit:
-            fallback += '\n\n' + stage_actions.instructions()
-            fallback += '\n\nThe stage as it is now:\n\n{}'.format(
-                stage_actions.describe_stage(stage))
-        remembered = self.memory.describe()
-        if remembered:
-            fallback += '\n\n' + remembered
-        system = context.system_prompt() + '\n\n' + tools.instructions()
-        if remembered:
-            system += '\n\n' + remembered
-        if not self._can_start_reply(toolbox):
-            return
-
-        self.messages.append({'role': 'user', 'content': content,
-                              'shown': text, 'time': time.time()})
-        self._pending_turn = self.messages[-1]
         try:
-            self.save_chat()
+            if self.include_check.isChecked():
+                selection = context.describe_selection(session)
+                if selection:
+                    content = '{}\n\nThe selected prims:\n\n{}'.format(
+                        text, selection)
+            if not self._can_start_reply(toolbox):
+                return
+            fallback = context.system_prompt()
+            if toolbox.can_edit:
+                fallback += '\n\n' + stage_actions.instructions()
+                fallback += '\n\nThe stage as it is now:\n\n{}'.format(
+                    stage_actions.describe_stage(stage))
+            remembered = self.memory.describe()
+            if remembered:
+                fallback += '\n\n' + remembered
+            system = context.system_prompt() + '\n\n' + tools.instructions()
+            if remembered:
+                system += '\n\n' + remembered
+            if not self._can_start_reply(toolbox):
+                return
+
+            self.messages.append({'role': 'user', 'content': content,
+                                  'shown': text, 'time': time.time()})
+            self._pending_turn = self.messages[-1]
+            try:
+                self.save_chat()
+            except Exception as err:
+                # The Send reservation is this reply's only one: a chat that
+                # cannot be saved leaves no reply in flight.
+                self._abandon_reply()
+                self.show_error('The chat could not be saved: {}'.format(err))
+                return
+            self.input.clear()
+            if not self._can_start_reply(toolbox):
+                return
+            self.reply_time = time.time()
+            self.speaker = '{} \u00b7 {}'.format(provider.label, model)
+            self.clear_error()
+            self.status_label.setText('{} is answering...'.format(
+                provider.label))
+            sent = [{'role': m['role'], 'content': m['content']}
+                    for m in self.messages if not m.get('canceled')]
+            self.thread = ChatThread(provider, sent, system, model, parent=self,
+                                     tools=toolbox,
+                                     fallback_system=fallback)
+            self._pending_turn = None
+            self.thread.chunk.connect(self.on_chunk)
+            self.thread.failed.connect(self.on_failed)
+            self.thread.tools_dropped.connect(self.on_tools_dropped)
+            self.thread.finished.connect(self.on_finished)
+            self.thread.start()
         except Exception as err:
-            # The Send reservation is this reply's only one: a chat that
-            # cannot be saved leaves no reply in flight.
-            self._abandon_reply()
-            self.show_error('The chat could not be saved: {}'.format(err))
+            # From the reservation to the worker starting, everything this
+            # Send holds is its own: whatever failed, only this reply is
+            # released, and the question stays where the artist can send it
+            # again.
+            logger.exception('The assistant request could not start')
+            if toolbox is self.toolbox:
+                self._abandon_reply()
+            if not self.input.toPlainText().strip():
+                self.input.setPlainText(text)
+            self.show_error('The request could not start: {}'.format(err))
             return
-        self.input.clear()
-        if not self._can_start_reply(toolbox):
-            return
-        self.reply_time = time.time()
-        self.speaker = '{} \u00b7 {}'.format(provider.label, model)
-        self.clear_error()
-        self.status_label.setText('{} is answering...'.format(provider.label))
-        sent = [{'role': m['role'], 'content': m['content']}
-                for m in self.messages if not m.get('canceled')]
-        self.thread = ChatThread(provider, sent, system, model, parent=self,
-                                 tools=toolbox, fallback_system=fallback)
-        self._pending_turn = None
-        self.thread.chunk.connect(self.on_chunk)
-        self.thread.failed.connect(self.on_failed)
-        self.thread.tools_dropped.connect(self.on_tools_dropped)
-        self.thread.finished.connect(self.on_finished)
-        self.thread.start()
         self.render()
         if self._current_reply(toolbox):
             self.update_buttons()

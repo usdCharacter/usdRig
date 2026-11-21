@@ -180,6 +180,12 @@ implementation is `rigExecUndo.UndoStack`. The protocol:
 - `AddFlusher(fn)` (optional): `fn` takes no arguments and runs before every
   `Undo()` and `Redo()`. The graph editor and the avar editor register
   their queued commits here.
+- `LastEdit()` (optional): the edit `Push` left newest, or None. A consumer
+  that groups several edits into one step (the AI Assistant) joins its open
+  step only while `LastEdit()` still returns it, and starts a new step when
+  something else took the newest place. A stack that does not answer
+  `LastEdit()` is treated as a protocol-only stack and gets one `Push` per
+  change, so nothing is dropped.
 - `LIMIT`
 
 With an input owner, RigExec registers no Undo/Redo shortcuts (gizmo toolbar,
