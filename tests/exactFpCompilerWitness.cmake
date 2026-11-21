@@ -174,23 +174,38 @@ function(_witness_audit work)
                 endif ()
             endforeach ()
         endif ()
-        # PCH creation and reuse: the producer compiles the header, the
-        # consumer names it on its own command line, and a consumer behind
-        # a conditional interface link keeps the exact mode after the
-        # walk rewrites its option list.
-        if (NOT _msvc AND _cmd MATCHES "witnessReuse|witnessPchReuse"
-            AND NOT _cmd MATCHES "cmake_pch|autogen")
-            _witness_fail("reuse command lacks the PCH include: ${_cmd}")
-        endif ()
-        if (_msvc AND _cmd MATCHES "witnessExact|witnessPch")
-            if (NOT _cmd MATCHES "/Yc")
-                _witness_fail("PCH producer lacks /Yc: ${_cmd}")
+        # PCH classification by exact target directory and input
+        # translation unit: the creation TU compiles the generated PCH
+        # source, and every ordinary source of a PCH-using target consumes
+        # it. Target-name patterns anchor on ".dir/" so witnessPch never
+        # matches witnessPchReuse commands.
+        if (NOT _msvc)
+            if (_cmd MATCHES "CMakeFiles/(witnessReuse|witnessPchReuse)\\.dir/"
+                AND NOT _cmd MATCHES "cmake_pch|autogen")
+                _witness_fail("reuse command lacks the PCH include: ${_cmd}")
+            endif ()
+        else ()
+            if (_file MATCHES "cmake_pch\\.(cxx|hxx)$")
+                if (NOT _cmd MATCHES "/Yc")
+                    _witness_fail("PCH creation TU lacks /Yc: ${_cmd}")
+                endif ()
+            elseif (_cmd MATCHES "CMakeFiles/(witnessExact|witnessReuse|witnessPch|witnessPchReuse)\\.dir/")
+                if (NOT _cmd MATCHES "/Yu")
+                    _witness_fail("PCH-consuming TU lacks /Yu: ${_cmd}")
+                endif ()
             endif ()
         endif ()
-        if (_msvc AND _cmd MATCHES "witnessReuse|witnessPchReuse")
-            if (NOT _cmd MATCHES "/Yu")
-                _witness_fail("PCH consumer lacks /Yu: ${_cmd}")
-            endif ()
+        # Grouped SHELL: options: the conflicting flag was scrubbed from
+        # inside the grouping while both definitions survived as separate
+        # options of the same command.
+        if (_cmd MATCHES "CMakeFiles/witnessGrouped\\.dir/")
+            foreach (_keep "-DKEEP1" "-DKEEP2")
+                _witness_count("${_cmd}" "${_keep}" _n)
+                if (NOT _n EQUAL 1)
+                    _witness_fail("grouped command lost ${_keep} "
+                        "(${_n} copies): ${_cmd}")
+                endif ()
+            endforeach ()
         endif ()
         if (_file MATCHES "third_party[\\\\/]+generated[\\\\/]+generatedProbe\\.cpp")
             math(EXPR _generated "${_generated} + 1")
@@ -255,9 +270,25 @@ if (NOT _rc EQUAL 0)
     _witness_fail("enforcement leg failed to build: ${_out}${_err}")
 endif ()
 _witness_audit("${_work1}")
-foreach (_exact_exe witnessExact witnessReuse witnessPch witnessPchReuse)
+foreach (_exact_exe witnessExact witnessReuse witnessPch witnessPchReuse
+                   witnessGrouped)
     _witness_run_and_check_exact("${_work1}${_cfgdir}/${_exact_exe}")
 endforeach ()
+
+# The grouped witness must carry BOTH definitions independently: a scrub
+# that re-joins tokens without the SHELL: prefix loses them as options and
+# these lines disappear.
+execute_process(COMMAND "${_work1}${_cfgdir}/witnessGrouped${_exe}"
+    RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
+if (NOT _rc EQUAL 0)
+    _witness_fail("witnessGrouped exited ${_rc}: ${_err}")
+endif ()
+if (NOT _out MATCHES "probe keep1 1")
+    _witness_fail("witnessGrouped lost KEEP1: ${_out}")
+endif ()
+if (NOT _out MATCHES "probe keep2 2")
+    _witness_fail("witnessGrouped lost KEEP2: ${_out}")
+endif ()
 
 # The vendored leg must discriminate: a fast-mode build of the same probes
 # prints a different reassociation pattern, so the exact patterns above are
@@ -273,9 +304,10 @@ if (_out MATCHES "probe reassoc 00000000")
     _witness_fail("witnessVendored did not reassociate: ${_out}")
 endif ()
 
-# Leg 2: a conflict owned by a conditionally linked interface target
-# ($<$<CONFIG:Release>:fpIface>) cannot be scrubbed or ordered away, so
-# configuration must abort with the actionable diagnostic naming the flag.
+# Leg 2: a conflict owned by a conditionally linked namespaced interface
+# target ($<$<CONFIG:Release>:Pkg::Fast>, no unqualified counterpart)
+# cannot be scrubbed or ordered away, so configuration must abort with the
+# actionable diagnostic naming the flag.
 set(_work2 "${BUILD_ROOT}/interface-conflict")
 _witness_configure("${_work2}" -DWITNESS_CONFLICT=interface)
 if (WITNESS_RC EQUAL 0)
