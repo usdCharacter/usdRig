@@ -10,13 +10,16 @@
 """Test the stage lifecycle and the host's GL teardown guards."""
 
 import os
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, call, patch
 
 from pxr import Tf, Usd
 from pxr.Usdviewq.qt import QtWidgets
 from UsdNoodles.graphView import GraphView
+from UsdNoodles.graphview.stage_sync import FinishReload
 from UsdNoodles.nodeGraphBpContainer import NodeGraphBpContainer
 from UsdNoodles.nodeGraphBlueprint import NodeGraphBlueprint
 from UsdNoodles.nodeGraphStage import NodeGraphStage
@@ -114,6 +117,139 @@ class TestReloadLifecycle(unittest.TestCase):
         view.makeCurrent.assert_called_once()
         view._nodeRenderManager.clearCache.assert_called_once()
         view.doneCurrent.assert_called_once()
+
+    def _queueReplacement(self):
+        view = self.view
+        self.effects = Mock()
+        self.effects.attach_mock(view.update, 'update')
+        self.effects.attach_mock(view.makeCurrent, 'makeCurrent')
+        self.effects.attach_mock(view.doneCurrent, 'doneCurrent')
+        self.effects.attach_mock(view._nodeRenderManager.clearCache, 'clearCache')
+        setUpdatesEnabled = self.enterContext(patch.object(
+            view, 'setUpdatesEnabled', wraps=view.setUpdatesEnabled))
+        self.effects.attach_mock(setUpdatesEnabled, 'setUpdatesEnabled')
+
+        def record(delta):
+            if isinstance(delta, FinishReload):
+                self.effects.finish(delta)
+
+        self.enterContext(patch.object(view._stageSync, '_sink', record))
+        view.loadStage(Usd.Stage.CreateInMemory())
+        self.assertFalse(self.posts)
+        view._onStageReplaced()
+        self.assertEqual(len(self.posts), 1)
+        self.assertIs(view._stageSync.boundStage(), self.stage)
+        return view._stageSync.epoch()
+
+    def _takePendingFinishes(self, replacedEpoch):
+        view = self.view
+        self.assertEqual(view._stageSync.epoch(), replacedEpoch + 1)
+        self.assertEqual(len(self.posts), 2)
+        self.assertFalse(view.updatesEnabled())
+        self.assertFalse(view.initialized)
+        self.assertTrue(view._renderCacheClearPending)
+        self.assertFalse(view._deferRenderCacheClear)
+        self.effects.setUpdatesEnabled.assert_called_once_with(False)
+        self.effects.makeCurrent.assert_not_called()
+        self.effects.clearCache.assert_not_called()
+        self.effects.doneCurrent.assert_not_called()
+        self.effects.finish.assert_not_called()
+        return self.posts.pop(0), self.posts.pop(0)
+
+    def _assertOnlySurvivingFinishPaints(self, replacedEpoch):
+        view = self.view
+        stale, surviving = self._takePendingFinishes(replacedEpoch)
+        self.effects.reset_mock()
+        stale()
+        self.assertEqual(self.effects.mock_calls, [])
+        self.assertFalse(view.updatesEnabled())
+        self.assertFalse(view.initialized)
+        self.assertTrue(view._renderCacheClearPending)
+
+        surviving()
+        self.assertEqual(self.effects.mock_calls, [
+            call.finish(FinishReload(replacedEpoch + 1)),
+            call.makeCurrent(), call.clearCache(), call.doneCurrent(),
+            call.setUpdatesEnabled(True), call.update(),
+        ])
+        self.assertTrue(view.updatesEnabled())
+        self.assertTrue(view.initialized)
+        self.assertFalse(view._renderCacheClearPending)
+        self.assertFalse(self.posts)
+        self.effects.reset_mock()
+        surviving()
+        self.assertEqual(self.effects.mock_calls, [])
+
+    def test_pending_finish_moves_to_different_stage(self):
+        replacedEpoch = self._queueReplacement()
+        directStage = Usd.Stage.CreateInMemory()
+        self.view.loadStage(directStage)
+        self.assertIs(self.view.nodeGraph.getStage(), directStage)
+        self.assertIs(self.view._stageSync.boundStage(), directStage)
+        self._assertOnlySurvivingFinishPaints(replacedEpoch)
+
+    def test_pending_finish_moves_to_same_stage_blueprint(self):
+        self.stage.DefinePrim('/Scope', 'Blueprint')
+        replacedEpoch = self._queueReplacement()
+        clearRenderCache = self.view._clearRenderCache
+
+        def clearWhileDeferred():
+            self.assertTrue(self.view._deferRenderCacheClear)
+            clearRenderCache()
+
+        with patch.object(self.view, '_clearRenderCache', side_effect=clearWhileDeferred):
+            self.view.loadBlueprint(self.stage, '/Scope')
+        self.assertIsInstance(self.view.nodeGraph, NodeGraphBlueprint)
+        self.assertEqual(self.view._currentPrimPath, '/Scope')
+        self.assertIs(self.view.nodeGraph.getStage(), self.stage)
+        self.assertIs(self.view._stageSync.boundStage(), self.stage)
+        self._assertOnlySurvivingFinishPaints(replacedEpoch)
+
+    def test_failed_direct_load_takes_over_pending_finish(self):
+        self.stage.DefinePrim('/Scope', 'Container')
+        replacedEpoch = self._queueReplacement()
+        with (patch.object(self.view, '_seedNodeZOrders',
+                           side_effect=RuntimeError('load failed')),
+              self.assertRaisesRegex(RuntimeError, 'load failed')):
+            self.view.loadContainer(self.stage, '/Scope')
+        self.assertUnbound()
+        self._assertOnlySurvivingFinishPaints(replacedEpoch)
+
+    def test_direct_null_load_takes_over_pending_finish(self):
+        replacedEpoch = self._queueReplacement()
+        self.view.loadStage(None)
+        self.assertUnbound()
+        self._assertOnlySurvivingFinishPaints(replacedEpoch)
+
+    def test_sample_load_takes_over_pending_finish_without_binding(self):
+        replacedEpoch = self._queueReplacement()
+        with TemporaryDirectory() as directory:
+            sample = Path(directory) / 'empty.json'
+            sample.write_text('{"nodes": []}', encoding='utf-8')
+            self.view._loadSampleGraph(str(sample))
+        stage = self.view.nodeGraph.getStage()
+        self.assertIsNotNone(stage)
+        self.assertIsNot(stage, self.stage)
+        self.assertIsNone(self.view._stageSync.boundStage())
+        self._assertOnlySurvivingFinishPaints(replacedEpoch)
+
+    def test_close_cancels_both_pending_finishes(self):
+        replacedEpoch = self._queueReplacement()
+        directStage = Usd.Stage.CreateInMemory()
+        self.view.loadStage(directStage)
+        self.assertIs(self.view._stageSync.boundStage(), directStage)
+        callbacks = self._takePendingFinishes(replacedEpoch)
+        self.view.close()
+        self.assertTrue(self.view._stageSync.isClosed())
+        self.assertIsNone(self.view._stageSync.boundStage())
+        self.assertEqual(self.view._stageSync.epoch(), replacedEpoch + 2)
+        self.effects.reset_mock()
+        for callback in callbacks:
+            callback()
+            self.assertEqual(self.effects.mock_calls, [])
+            self.assertFalse(self.view.updatesEnabled())
+            self.assertFalse(self.view.initialized)
+        self.assertFalse(self.posts)
 
     def test_missing_scoped_prim_leaves_no_graph_or_binding(self):
         for loader in (self.view.loadBlueprint, self.view.loadContainer):
