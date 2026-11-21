@@ -28,6 +28,8 @@ add_library(fpIface INTERFACE)
 # that splits a generator-expression link entry at its last colon sees only
 # "Fast" and misses this dependency entirely.
 add_library(Pkg::Fast ALIAS fpIface)
+add_library(fpQuiet INTERFACE)
+add_library(Pkg::Quiet ALIAS fpQuiet)
 if (WITNESS_CONFLICT STREQUAL "interface")
     # A conflict owned by a linked interface target cannot be scrubbed or
     # reordered, so the helper must abort configuration. The link itself is
@@ -41,7 +43,32 @@ add_executable(witnessExact
     probe.cpp
     "${_gen_dir}/generatedProbe.cpp")
 target_precompile_headers(witnessExact PRIVATE probePch.h)
-target_link_libraries(witnessExact PRIVATE $<$<CONFIG:Release>:Pkg::Fast>)
+if (NOT WITNESS_IF_LINK AND NOT WITNESS_DEEP_LINK)
+    target_link_libraries(witnessExact PRIVATE $<$<CONFIG:Release>:Pkg::Fast>)
+endif ()
+
+if (WITNESS_IF_LINK)
+    # An $<IF:cond,true,false> link entry is comma-separated, so an
+    # inspection pass that treats the expression body as one value queues
+    # neither branch and the fast branch's interface reaches the command
+    # line unchallenged in Release. This is the only path to Pkg::Fast and
+    # Pkg::Quiet, so the short-conditional witness above cannot mask it.
+    add_executable(witnessIf
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+    target_link_libraries(witnessIf PRIVATE
+        $<IF:$<CONFIG:Release>,Pkg::Fast,Pkg::Quiet>)
+endif ()
+
+if (WITNESS_DEEP_LINK)
+    # Nested one level past the inspection cutoff: the helper must not
+    # silently give up and accept the interface behind the nesting.
+    add_executable(witnessDeep
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+    target_link_libraries(witnessDeep PRIVATE
+        $<$<CONFIG:Release>:$<$<CONFIG:Release>:$<$<CONFIG:Release>:$<$<CONFIG:Release>:$<$<CONFIG:Release>:$<$<CONFIG:Release>:Pkg::Fast>>>>>>)
+endif ()
 
 # Own options grouped through SHELL:, so the conflicting flag and the two
 # independent definitions share one property entry. The scrub must drop the
@@ -73,7 +100,6 @@ target_precompile_headers(witnessReuse REUSE_FROM witnessExact)
 # A second producer/consumer PCH pair behind a conditional interface link
 # that carries no options: creation and reuse must both keep the exact
 # mode after the walk rewrites the consumer's option list.
-add_library(fpQuiet INTERFACE)
 add_executable(witnessPch
     probe.cpp
     "${_gen_dir}/generatedProbe.cpp")

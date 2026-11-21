@@ -150,6 +150,41 @@ function(rigexec_apply_exact_fp_flags target)
     target_compile_options("${target}" PRIVATE ${_rigexec_fp_flags})
 endfunction()
 
+# PRIVATE: the top-level segments of a generator-expression body, split at
+# commas and semicolons outside nested expressions: the body
+# $<CONFIG:Release>,Pkg::Fast,Pkg::Quiet of an $<IF:...> yields three
+# segments so both result branches are inspectable, while a colon inside
+# $<CONFIG:Release> is not a boundary.
+function(rigexec_fp_genex_segments body out_var)
+    string(LENGTH "${body}" _rigexec_gs_len)
+    set(_rigexec_gs_i 0)
+    set(_rigexec_gs_depth 0)
+    set(_rigexec_gs_cur "")
+    set(_rigexec_gs_segs "")
+    while (_rigexec_gs_i LESS _rigexec_gs_len)
+        string(SUBSTRING "${body}" ${_rigexec_gs_i} 1 _rigexec_gs_ch)
+        if (_rigexec_gs_ch STREQUAL "$")
+            string(SUBSTRING "${body}" ${_rigexec_gs_i} 2 _rigexec_gs_pair)
+            if (_rigexec_gs_pair STREQUAL "$<")
+                math(EXPR _rigexec_gs_depth "${_rigexec_gs_depth} + 1")
+            endif ()
+            string(APPEND _rigexec_gs_cur "$")
+        elseif ((_rigexec_gs_ch STREQUAL "," OR _rigexec_gs_ch STREQUAL ";")
+                AND _rigexec_gs_depth EQUAL 0)
+            list(APPEND _rigexec_gs_segs "${_rigexec_gs_cur}")
+            set(_rigexec_gs_cur "")
+        elseif (_rigexec_gs_ch STREQUAL ">" AND _rigexec_gs_depth GREATER 0)
+            math(EXPR _rigexec_gs_depth "${_rigexec_gs_depth} - 1")
+            string(APPEND _rigexec_gs_cur ">")
+        else ()
+            string(APPEND _rigexec_gs_cur "${_rigexec_gs_ch}")
+        endif ()
+        math(EXPR _rigexec_gs_i "${_rigexec_gs_i} + 1")
+    endwhile ()
+    list(APPEND _rigexec_gs_segs "${_rigexec_gs_cur}")
+    set(${out_var} "${_rigexec_gs_segs}" PARENT_SCOPE)
+endfunction()
+
 # PRIVATE: floating-point options that no ordering can outrank abort
 # configuration with the owning target, flag and source named: per-source
 # COMPILE_OPTIONS entries (last on the real command line, and shared by
@@ -157,7 +192,10 @@ endfunction()
 # of the direct requirements and their transitive link closure. A conditional
 # link entry ($<$<CONFIG:Release>:Pkg::Fast>, $<BUILD_INTERFACE:lib>) still
 # names a target whose interface applies in some configuration, so generator
-# expressions are unwrapped to their full content, namespaced names included.
+# expressions are unwrapped to their full content, namespaced names
+# included; an $<IF:cond,true,false> entry queues both result branches, and
+# an expression nested past the inspection cutoff is reported with the
+# consuming target and the expression named, never accepted.
 function(rigexec_fp_reject_unrankable_conflicts target)
     rigexec_get_exact_fp_flags(_rigexec_fp_canonical)
     rigexec_get_exact_fp_conflict_regex(_rigexec_fp_conflict)
@@ -188,24 +226,36 @@ function(rigexec_fp_reject_unrankable_conflicts target)
         if (_rigexec_fp_lib MATCHES "^\\$<")
             # Unwrap generator expressions to their real content: a
             # conditional link still smuggles its target's interface into
-            # the configurations where the condition holds, and the target
-            # name may be namespaced or nested in another expression.
-            set(_rigexec_fp_probe "${_rigexec_fp_lib}")
+            # the configurations where the condition holds, the target
+            # name may be namespaced or nested in another expression, and
+            # an $<IF:...> body is comma-separated so both result branches
+            # must be queued. Nesting past the cutoff is reported, not
+            # silently accepted.
+            set(_rigexec_fp_local "${_rigexec_fp_lib}")
             set(_rigexec_fp_depth 0)
-            while (_rigexec_fp_probe MATCHES "^\\$<"
-                   AND _rigexec_fp_depth LESS 5)
+            while (_rigexec_fp_local)
+                list(POP_FRONT _rigexec_fp_local _rigexec_fp_probe)
+                if (NOT _rigexec_fp_probe MATCHES "^\\$<")
+                    continue ()
+                endif ()
                 math(EXPR _rigexec_fp_depth "${_rigexec_fp_depth} + 1")
+                if (_rigexec_fp_depth GREATER 5)
+                    list(APPEND _rigexec_fp_found
+                        "${target}: un-inspectable link expression ${_rigexec_fp_lib}")
+                    continue ()
+                endif ()
                 rigexec_fp_genex_content("${_rigexec_fp_probe}"
                     _rigexec_fp_body)
                 if (NOT _rigexec_fp_body)
-                    break ()
+                    continue ()
                 endif ()
-                set(_rigexec_fp_probe "")
-                foreach (_rigexec_fp_part IN LISTS _rigexec_fp_body)
+                rigexec_fp_genex_segments("${_rigexec_fp_body}"
+                    _rigexec_fp_segs)
+                foreach (_rigexec_fp_part IN LISTS _rigexec_fp_segs)
                     if (TARGET "${_rigexec_fp_part}")
                         list(APPEND _rigexec_fp_queue "${_rigexec_fp_part}")
                     elseif (_rigexec_fp_part MATCHES "^\\$<")
-                        set(_rigexec_fp_probe "${_rigexec_fp_part}")
+                        list(APPEND _rigexec_fp_local "${_rigexec_fp_part}")
                     endif ()
                 endforeach ()
             endwhile ()
@@ -237,7 +287,8 @@ function(rigexec_fp_reject_unrankable_conflicts target)
         list(JOIN _rigexec_fp_found "\n  " _rigexec_fp_text)
         message(FATAL_ERROR
             "rigexec exact-FP: target ${target} carries floating-point mode "
-            "options that CMake can place after the exact-FP settings:\n  "
+            "options or link expressions that CMake can place after the "
+            "exact-FP settings:\n  "
             "${_rigexec_fp_text}\nCMake orders per-source COMPILE_OPTIONS "
             "after the target's own options and shared interface options "
             "after both. Remove them, or mark the owning target "
