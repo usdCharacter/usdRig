@@ -1,37 +1,11 @@
-// rigExecRuntime weight family:WeightPacket, VolumePlacements, and
-// the weight oracle (RrResolveWeightOracle) that constraint envelopes and
-// current-phase fields resolve through, ported near the end of this file.
-// A bit-identical port of RigExecBakedRunWeightStep
-// (libs/rigExec/bakedWeights.cpp) with its builders
-// (libs/rigExec/weightPackets.cpp, libs/rigExecMath/weightFields.cpp).
-// Gf -> Rr, TfToken comparisons -> token text comparisons, the
-// arithmetic untouched: float stays float, in the same order.
-// Where the baked step reads the stage per frame, the runtime reads the
-// stage values the bake captured (RrStatic), or the array inputs the file
-// lists in their place (painted values and indices, the oracle's points).
-// Scalar inputs are read over the input slots (ReadWeight, the runtime
-// form of RigExecBakedRead); the point arrays a volume measures resolve at
-// Open through two layers, in order: a live (non-rest) path-read row for
-// the attribute, else the chain base of the chain whose target IS that
-// attribute path, each read through its input slot when it has one. Chain
-// targets are attribute paths (the prologue builds the base query on
-// GetAttributeAtPath of the target), so the second layer matches by
-// exact id, not by heuristics. Its values equal the baked gather's when
-// the attribute carries no connections and no overlay entry -- the
-// overlay holds scalars only during capture, so arrays never hit it --
-// and the parity test proves it per fixture by comparing every packet
-// bit for bit. The rows come from the bake's path-read enumeration of
-// the gather (RigExecBakeEnumerateWeightReads).
-// Unknown weight object TYPES and unknown structural tokens stay
-// exactly what the baked builders return for them: invalid packets
-// (bare for an unknown type, carrying the object's tokens
-// otherwise), never a defaulted valid field.
+// Bind decoded weight inputs and publish to the existing producer slots.
 #include "stageArrayInputs.h"
 #include "rigExecRuntime/labels.h"
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecRuntime/store.h"
 #include "rigExecRuntime/spaces.h"
 #include "rigExecMath/volumeFieldCheck.h"
+#include "rigExecEvalCore/weights.h"
 
 #include <algorithm>
 #include <cmath>
@@ -87,15 +61,17 @@ struct RrWeightSupportCache {
 struct RrWeightPacketScratch {
     std::vector<std::pair<int32_t, float>> pairs;
     std::vector<int32_t> support;
-    std::vector<size_t> order;
-    bool unique = false;
-    std::vector<float> field;
-    std::vector<uint8_t> representations;
+    std::vector<size_t> supportOrder;
+    bool uniqueSupport = false;
+    std::vector<float> combineField;
+    std::array<std::vector<RrVec3f>, 3> points;
+    std::vector<RrVec3f> localCurve;
 };
 struct RrWeightFieldScratch {
     std::deque<std::vector<float>> children;
     std::vector<uint32_t> seen;
-    uint32_t generation = 0;
+    uint32_t seenGeneration = 0;
+    std::vector<RrVec3f> localCurve;
     std::vector<std::array<RrWeightSupportCache, 2>> supports;
     std::vector<float> result;
 };
@@ -436,350 +412,6 @@ _RrClassifyRepresentation(const RrProgram *program, uint32_t id)
     return _RrRepOther;
 }
 
-// Effective weight for logical element i of a count-element target, or
-// -1 for a cardinality mismatch. An unknown representation answers as
-// constant, which is the baked else arm.
-float
-_RrResolvePacket(_RrRepresentation representation, const RrWeightPacket &packet,
-                 size_t i, size_t count)
-{
-    switch (representation) {
-    case _RrRepDense:
-        if (packet.values.size() != count || i >= count) {
-            return -1.0f;
-        }
-        return packet.values[i];
-    case _RrRepSparse: {
-        if (packet.indices.size() != packet.values.size()) {
-            return -1.0f;
-        }
-        const auto it = std::lower_bound(packet.indices.begin(),
-                                         packet.indices.end(), int32_t(i));
-        if (it != packet.indices.end() && *it == int32_t(i)) {
-            return packet.values[size_t(it - packet.indices.begin())];
-        }
-        return packet.defaultWeight;
-    }
-    case _RrRepConstant:
-    case _RrRepOther:
-        break;
-    }
-    return packet.defaultWeight;
-}
-
-bool
-_RrApplyRangePolicy(bool clamp, float *w)
-{
-    if (!std::isfinite(*w)) {
-        return false;
-    }
-    if (*w < 0.0f || *w > 1.0f) {
-        if (clamp) {
-            *w = std::min(std::max(*w, 0.0f), 1.0f);
-            return true;
-        }
-        return false;
-    }
-    return true;
-}
-
-// Volumetric field kernels (rigExecMath/weightFields.cpp).
-
-float
-_RrClamp01(float x)
-{
-    return std::min(1.0f, std::max(0.0f, x));
-}
-
-float
-_RrSampleFalloffLut(const std::vector<float> &curve, float r)
-{
-    if (curve.size() < 2) {
-        return r;
-    }
-    const float x = _RrClamp01(r) * float(curve.size() - 1);
-    const size_t i = std::min(curve.size() - 2, size_t(std::floor(x)));
-    const float t = x - float(i);
-    return curve[i] + (curve[i + 1] - curve[i]) * t;
-}
-
-float
-_RrEvaluateFalloff(float distance, float falloffMin, float falloffMax,
-                   float invert, float strength,
-                   const std::vector<float> &curve)
-{
-    const float span = falloffMax - falloffMin;
-    float u;
-    if (std::abs(span) <= std::numeric_limits<float>::min()) {
-        u = distance < falloffMin ? 0.0f : 1.0f;
-    } else {
-        u = _RrClamp01((distance - falloffMin) / span);
-    }
-    u = u + (1.0f - 2.0f * u) * invert;
-    const float w = _RrSampleFalloffLut(curve, 1.0f - u);
-    return w * strength;
-}
-
-RrVec3f
-_RrToLocal(const RrMat4d &worldToLocal, const RrVec3f &p)
-{
-    const RrVec3d wide{double(p[0]), double(p[1]), double(p[2])};
-    const RrVec3d local = worldToLocal.TransformAffine(wide);
-    return RrVec3f(float(local[0]), float(local[1]), float(local[2]));
-}
-
-float
-_RrSegmentDistance(const RrVec3f &p, const RrVec3f &a, const RrVec3f &b)
-{
-    const RrVec3f ab = b - a;
-    const float lengthSq = ab.GetLengthSq();
-    if (lengthSq <= 1e-20f) {
-        return (p - a).GetLength();
-    }
-    const float t = _RrClamp01(RrDot(p - a, ab) / lengthSq);
-    return (p - (a + ab * t)).GetLength();
-}
-
-float
-_RrCurveDistance(const RrVec3f &p, const RrVec3f *curvePoints, size_t count)
-{
-    if (count == 0 || !curvePoints) {
-        return std::numeric_limits<float>::infinity();
-    }
-    if (count == 1) {
-        return (p - curvePoints[0]).GetLength();
-    }
-    float best = std::numeric_limits<float>::infinity();
-    for (size_t i = 0; i + 1 < count; ++i) {
-        best = std::min(
-            best, _RrSegmentDistance(p, curvePoints[i], curvePoints[i + 1]));
-    }
-    return best;
-}
-
-bool
-_RrPlaneWithinBounds(const RrVec3f &p, int axis, float extentU, float extentV)
-{
-    if (axis < 0 || axis > 2) {
-        return false;
-    }
-    const float u = p[size_t((axis + 1) % 3)];
-    const float v = p[size_t((axis + 2) % 3)];
-    return std::abs(u) <= extentU && std::abs(v) <= extentV;
-}
-
-void
-_RrSphereWeightField(const std::vector<RrVec3f> &points,
-                     const RrMat4d &worldToLocal, float falloffMin,
-                     float falloffMax, float invert, float strength,
-                     const std::vector<float> &curve,
-                     std::vector<float> *weights, const RrVec3f &positiveScales,
-                     const RrVec3f &negativeScales)
-{
-    weights->resize(points.size());
-    for (size_t i = 0; i < points.size(); ++i) {
-        RrVec3f local = _RrToLocal(worldToLocal, points[i]);
-        for (int axis = 0; axis < 3; ++axis) {
-            local[axis] /= local[axis] < 0.0f ? negativeScales[axis]
-                                              : positiveScales[axis];
-        }
-        const float d = local.GetLength();
-        (*weights)[i] = _RrEvaluateFalloff(d, falloffMin, falloffMax, invert,
-                                           strength, curve);
-    }
-}
-
-void
-_RrPlaneWeightField(const std::vector<RrVec3f> &points,
-                    const RrMat4d &worldToLocal, int axis, float falloffMin,
-                    float falloffMax, float invert, float strength,
-                    const std::vector<float> &curve,
-                    std::vector<float> *weights, bool bounded, float extentU,
-                    float extentV)
-{
-    weights->resize(points.size());
-    for (size_t i = 0; i < points.size(); ++i) {
-        const RrVec3f local = _RrToLocal(worldToLocal, points[i]);
-        if (bounded && !_RrPlaneWithinBounds(local, axis, extentU, extentV)) {
-            (*weights)[i] = 0.0f;
-            continue;
-        }
-        float d = 0.0f;
-        if (axis >= 0 && axis <= 2) {
-            d = local[size_t(axis)];
-        }
-        (*weights)[i] = _RrEvaluateFalloff(d, falloffMin, falloffMax, invert,
-                                           strength, curve);
-    }
-}
-
-void
-_RrCurveWeightField(const std::vector<RrVec3f> &points,
-                    const std::vector<RrVec3f> &curvePoints,
-                    const RrMat4d &worldToLocal, float falloffMin,
-                    float falloffMax, float invert, float strength,
-                    const std::vector<float> &curve,
-                    std::vector<float> *weights)
-{
-    weights->resize(points.size());
-    if (curvePoints.empty()) {
-        std::fill(weights->begin(), weights->end(), 0.0f);
-        return;
-    }
-    std::vector<RrVec3f> localCurve(curvePoints.size());
-    for (size_t k = 0; k < curvePoints.size(); ++k) {
-        localCurve[k] = _RrToLocal(worldToLocal, curvePoints[k]);
-    }
-    for (size_t i = 0; i < points.size(); ++i) {
-        const float d = _RrCurveDistance(_RrToLocal(worldToLocal, points[i]),
-                                         localCurve.data(), localCurve.size());
-        (*weights)[i] = _RrEvaluateFalloff(d, falloffMin, falloffMax, invert,
-                                           strength, curve);
-    }
-}
-
-// How one weight field folds into the accumulated result, in
-// RigExecWeightCombine order.
-enum _RrCombineMode {
-    _RrCombineMultiply,
-    _RrCombineAdd,
-    _RrCombineSubtract,
-    _RrCombineMax,
-    _RrCombineMin,
-    _RrCombineAverage,
-    _RrCombineOverlay,
-};
-
-float
-_RrCombineIdentity(_RrCombineMode mode)
-{
-    switch (mode) {
-    case _RrCombineMultiply:
-    case _RrCombineMin:
-        return 1.0f;
-    case _RrCombineAdd:
-    case _RrCombineSubtract:
-    case _RrCombineMax:
-    case _RrCombineAverage:
-    case _RrCombineOverlay:
-        break;
-    }
-    return 0.0f;
-}
-
-float
-_RrFoldWeight(_RrCombineMode mode, float acc, float value)
-{
-    switch (mode) {
-    case _RrCombineMultiply:
-        return acc * value;
-    case _RrCombineAdd:
-        return acc + value;
-    case _RrCombineSubtract:
-        return acc - value;
-    case _RrCombineMax:
-        return std::max(acc, value);
-    case _RrCombineMin:
-        return std::min(acc, value);
-    case _RrCombineAverage:
-        return acc + value;
-    case _RrCombineOverlay:
-        return acc < 0.5f ? 2.0f * acc * value
-                          : 1.0f - 2.0f * (1.0f - acc) * (1.0f - value);
-    }
-    return acc;
-}
-
-template <class Resolve>
-bool
-_RrCombineWeightFieldsStreamed(_RrCombineMode mode, size_t inputCount,
-                               size_t elementCount, Resolve &&resolve,
-                               std::vector<float> *out)
-{
-    if (!inputCount) {
-        out->assign(elementCount, _RrCombineIdentity(mode));
-        return true;
-    }
-    const bool seed = mode == _RrCombineSubtract || mode == _RrCombineOverlay;
-    size_t first = 0, size = 0;
-    const float *data = nullptr;
-    if (seed) {
-        if (!resolve(0, &data, &size) || size != elementCount) {
-            out->clear();
-            return false;
-        }
-        if (elementCount)
-            out->assign(data, data + elementCount);
-        else
-            out->clear();
-        first = 1;
-    } else
-        out->assign(elementCount, _RrCombineIdentity(mode));
-    for (size_t k = first; k < inputCount; ++k) {
-        if (!resolve(k, &data, &size) || size != elementCount) {
-            out->clear();
-            return false;
-        }
-        for (size_t i = 0; i < elementCount; ++i)
-            (*out)[i] = _RrFoldWeight(mode, (*out)[i], data[i]);
-    }
-    if (mode == _RrCombineAverage) {
-        const float inv = 1.0f / float(inputCount);
-        for (float &w : *out)
-            w *= inv;
-    }
-    return true;
-}
-
-bool
-_RrResolveCombineInput(_RrRepresentation representation,
-                       const RrWeightPacket &input, size_t count,
-                       std::vector<float> *scratch, const float **data,
-                       size_t *size)
-{
-    if (representation == _RrRepDense) {
-        if (input.values.size() != count)
-            return false;
-        for (float w : input.values)
-            if (w < 0.0f)
-                return false;
-        *data = input.values.data();
-        *size = input.values.size();
-        return true;
-    }
-    if (representation != _RrRepSparse) {
-        if (input.defaultWeight < 0.0f)
-            return false;
-        scratch->assign(count, input.defaultWeight);
-    } else {
-        if (input.indices.size() != input.values.size())
-            return false;
-        scratch->assign(count, input.defaultWeight);
-        if (!std::is_sorted(input.indices.begin(), input.indices.end())) {
-            for (size_t i = 0; i < count; ++i)
-                (*scratch)[i] =
-                    _RrResolvePacket(representation, input, i, count);
-        } else {
-            size_t p = 0;
-            for (size_t i = 0; i < count; ++i) {
-                const int32_t index = int32_t(i);
-                if (i && index < int32_t(i - 1))
-                    p = 0;
-                while (p < input.indices.size() && input.indices[p] < index)
-                    ++p;
-                if (p < input.indices.size() && input.indices[p] == index)
-                    (*scratch)[i] = input.values[p++];
-            }
-        }
-        for (float w : *scratch)
-            if (w < 0.0f)
-                return false;
-    }
-    *data = scratch->data();
-    *size = scratch->size();
-    return true;
-}
-
 // Rigid placement (RigExecRigidWorldToLocal, weightPackets.cpp, over
 // GfMatrix4d::RemoveScaleShear from pxr/base/gf/matrix4d.cpp).
 
@@ -952,122 +584,6 @@ _RrRemoveScaleShear(const RrMat4d &self)
     return factoredRotMat * translate;
 }
 
-bool
-_RrRigidWorldToLocal(const RrPointFrame &posed, RrMat4d *result)
-{
-    if (!posed.IsValid() || posed.IsDegenerate()) {
-        return false;
-    }
-    RrMat4d placement(1.0);
-    if (!RrPointsToMatrix(RrIdentityLandmarks(), posed.points, &placement)) {
-        return false;
-    }
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            if (!std::isfinite(placement[size_t(i)][size_t(j)])) {
-                return false;
-            }
-        }
-    }
-    const RrMat4d rigid = _RrRemoveScaleShear(placement);
-    const double det = rigid.GetDeterminant();
-    if (!std::isfinite(det) || std::abs(det) < 1e-12) {
-        return false;
-    }
-    *result = rigid.GetInverse();
-    return true;
-}
-
-// The volume's structural prologue: representation, range policy,
-// placement and (for sphere and curve) the per-axis divisors. Reads
-// nothing it costs anything to gather, so the step asks before copying
-// a whole mesh -- exactly RigExecVolumeWeightCanBuild's contract.
-bool
-_RrVolumeCanBuild(const RrProgram *program, const RigExecWireWeightObject &wire,
-                  bool usesScales, const RrPointFrame *placement,
-                  bool hasPlacement, const RrVec3f &scales,
-                  RrMat4d *worldToLocal)
-{
-    if (!program->TokenEquals(wire.representation, SchemaValueText::dense)) {
-        return false;
-    }
-    if (!program->TokenEquals(wire.rangePolicy, SchemaValueText::strict) &&
-        !program->TokenEquals(wire.rangePolicy, SchemaValueText::clamp)) {
-        return false;
-    }
-    if (!hasPlacement || !_RrRigidWorldToLocal(*placement, worldToLocal)) {
-        return false;
-    }
-    if (usesScales) {
-        for (int a = 0; a < 3; ++a) {
-            if (!std::isfinite(scales[size_t(a)]) ||
-                scales[size_t(a)] <= 0.0f) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
-bool
-_RrBeginVolumeWeight(const RrProgram *program,
-                     const RigExecWireWeightObject &wire, bool usesScales,
-                     const RrPointFrame *placement, bool hasPlacement,
-                     const RrVec3f &scales,
-                     const std::vector<RrVec3f> &targetPoints,
-                     const std::vector<RrVec3f> &samplePoints,
-                     RrWeightPacket *packet, RrMat4d *worldToLocal,
-                     const std::vector<RrVec3f> **points)
-{
-    packet->representation = wire.representation;
-    packet->rangePolicy = wire.rangePolicy;
-    if (!_RrVolumeCanBuild(program, wire, usesScales, placement, hasPlacement,
-                           scales, worldToLocal)) {
-        return false;
-    }
-    if (targetPoints.empty()) {
-        return false;
-    }
-    if (!samplePoints.empty() && samplePoints.size() != targetPoints.size()) {
-        return false;
-    }
-    *points = samplePoints.empty() ? &targetPoints : &samplePoints;
-    return true;
-}
-
-// The shared epilogue: range policy over the generated field. A
-// violation returns a BARE packet, which is the baked shape for this
-// failure rather than the token-carrying one above.
-bool
-_RrFinishVolumeWeight(const RrProgram *program, const RrWeightPacket *packet,
-                      std::vector<float> *weights, RrWeightPacket *out)
-{
-    const bool clamp =
-        program->TokenEquals(packet->rangePolicy, SchemaValueText::clamp);
-    for (float &w : *weights) {
-        if (!_RrApplyRangePolicy(clamp, &w)) {
-            *out = RrWeightPacket();
-            return false;
-        }
-    }
-    out->representation = packet->representation;
-    out->rangePolicy = packet->rangePolicy;
-    out->values = std::move(*weights);
-    out->defaultWeight = 0.0f;
-    out->valid = true;
-    return true;
-}
-
-RrMat4d
-_RrApplyAxisScales(const RrMat4d &worldToLocal, const RrVec3f &scales)
-{
-    RrMat4d divide(1.0);
-    divide.Set(1.0 / double(scales[0]), 0.0, 0.0, 0.0, 0.0,
-               1.0 / double(scales[1]), 0.0, 0.0, 0.0, 0.0,
-               1.0 / double(scales[2]), 0.0, 0.0, 0.0, 0.0, 1.0);
-    return worldToLocal * divide;
-}
-
 const std::vector<float> &
 _RrFalloffSamples(const RrProgram *program, const RigExecWireWeightObject &wire)
 {
@@ -1102,377 +618,416 @@ _RrPainted(const RrProgram *program, int32_t slot, const std::vector<T> &none,
     return read ? *read : none;
 }
 
-RrWeightPacket
-_RrBuildStaticPacket(const RrProgram *program,
-                     const RigExecWireWeightObject &wire, float defaultWeight)
-{
-    // The packet reads the painted arrays at Default.
-    const std::vector<float> noValues;
-    const std::vector<int32_t> noIndices;
-    const std::vector<float> &values =
-        _RrPainted(program, wire.valuesSlot, noValues, true);
-    const std::vector<int32_t> &indices =
-        _RrPainted(program, wire.indicesSlot, noIndices, true);
-    RrWeightPacket packet;
-    packet.representation = wire.representation;
-    packet.rangePolicy = wire.rangePolicy;
-    if (_RrClassifyRepresentation(program, packet.representation) ==
-        _RrRepOther) {
-        return packet;
-    }
-    const bool clamp =
-        program->TokenEquals(wire.rangePolicy, SchemaValueText::clamp);
-    if (!clamp &&
-        !program->TokenEquals(wire.rangePolicy, SchemaValueText::strict)) {
-        return packet;
-    }
-    packet.defaultWeight = defaultWeight;
-    auto &work =
-        _RrScratch(program)
-            ->packets[size_t(&wire - program->geometry->weightObjects.data())];
+struct _RrOracleFieldContext {
+    const RigExecWireWeightField *field;
+    const RrOracleReadContext *reads;
+    const std::vector<RrMat4d> *placements;
+    const std::vector<char> *placed;
+};
 
-    if (_RrClassifyRepresentation(program, packet.representation) ==
-        _RrRepSparse) {
-        const size_t paired = std::min(values.size(), indices.size());
-        auto &pairs = work.pairs;
-        pairs.clear();
-        for (size_t i = 0; i < paired; ++i) {
-            pairs.emplace_back(indices[i], values[i]);
+const std::vector<RrVec3f> *
+_RrFieldPoints(const RrProgram *program, size_t object, int leaf,
+               const _RrOracleFieldContext *context, bool *declared)
+{
+    *declared = false;
+    if (!context)
+        return nullptr;
+    const auto found =
+        context->reads->pointReadIndices.find({int32_t(object), leaf});
+    if (found == context->reads->pointReadIndices.end())
+        return nullptr;
+    *declared = true;
+    return RrResolveDeclaredPoints(
+        program, *context->field->pointReads[found->second].binding);
+}
+
+// The points the oracle reads raw at the evaluation time (its samples, or
+// a curve's points): input slot \p slot's elements when the file lists
+// one and it holds a value; null when it reads none.
+const std::vector<RrVec3f> *
+_RrOraclePoints(const RrProgram *program, int32_t slot)
+{
+    return slot >= 0 && RrInputHasValue(program, uint32_t(slot))
+               ? RrInputArray<RrVec3f>(program, uint32_t(slot))
+               : nullptr;
+}
+
+struct RrWeightMath {
+    using Vec3f = RrVec3f;
+    using Vec3d = RrVec3d;
+    using Mat4 = RrMat4d;
+    static Vec3d ToDouble(const Vec3f &p)
+    {
+        return {p[0], p[1], p[2]};
+    }
+    static Vec3f ToFloat(const Vec3d &p)
+    {
+        return {float(p[0]), float(p[1]), float(p[2])};
+    }
+    static float Dot(const Vec3f &a, const Vec3f &b)
+    {
+        return RrDot(a, b);
+    }
+    static Mat4 RemoveScaleShear(const Mat4 &m)
+    {
+        return _RrRemoveScaleShear(m);
+    }
+    static constexpr auto PointsToMatrix = static_cast<bool (*)(
+        const std::array<Vec3d, 4> &, const std::array<Vec3d, 4> &, Mat4 *)>(
+        RrPointsToMatrix);
+};
+
+struct RrWeightInputs {
+    const RrProgram *program;
+    const _RrOracleFieldContext *context = nullptr;
+    const RrPointFrame *frame = nullptr;
+    RrWeightFieldScratch *work = nullptr;
+    const RigExecWireWeightObject &wire(size_t i) const
+    {
+        return program->geometry->weightObjects[i];
+    }
+    eval::WeightObjectFacts weightFacts(size_t i) const
+    {
+        const auto &w = wire(i);
+        const auto &s = *_RrScratch(program);
+        const auto &k = s.oracleKinds[i];
+        eval::WeightObjectFacts f;
+        f.kind = k.type == RrWeightOracleKind::Type::Unknown ? -1 : int(k.type);
+        f.representation =
+            k.representation == RrWeightOracleKind::Representation::Other
+                ? -1
+                : int(k.representation);
+        f.rangePolicy = k.clamp    ? eval::kWeightPolicyClamp
+                        : k.strict ? eval::kWeightPolicyStrict
+                                   : eval::kWeightPolicyUnknown;
+        f.strict = k.strict;
+        f.clamp = k.clamp;
+        f.combineMode = k.combineMode;
+        f.base = w.base;
+        f.inputCount = w.inputs.size();
+        f.inputIndices = w.inputs.data();
+        f.samplesInFlight = w.samplesInFlight;
+        f.blocked = s.oracleBlocked[i];
+        f.checkDynamicSupport = w.indicesSlot >= 0;
+        return f;
+    }
+    std::string weightName(size_t i) const
+    {
+        return program->TextOrEmpty(wire(i).path);
+    }
+    std::string weightTypeText(size_t i) const
+    {
+        return program->TextOrEmpty(wire(i).type);
+    }
+    std::string weightCombineText(size_t i) const
+    {
+        return program->TextOrEmpty(wire(i).combineMode);
+    }
+    const std::string &weightStaticError(size_t i) const
+    {
+        return wire(i).oracleStaticError;
+    }
+    const std::string &weightPhaseError(size_t i) const
+    {
+        return wire(i).oraclePhaseError;
+    }
+
+    bool dynamicSupportMatches(size_t i, size_t base) const
+    {
+        const std::vector<int32_t> none;
+        auto normalized =
+            [&](size_t id,
+                RrWeightSupportCache &cache) -> const std::vector<int32_t> & {
+            const auto &source =
+                _RrPainted(program, wire(id).indicesSlot, none, false);
+            if (!cache.initialized || cache.source != source) {
+                cache.source = source;
+                cache.normalized = source;
+                std::sort(cache.normalized.begin(), cache.normalized.end());
+                cache.normalized.erase(std::unique(cache.normalized.begin(),
+                                                   cache.normalized.end()),
+                                       cache.normalized.end());
+                cache.initialized = true;
+            }
+            return cache.normalized;
+        };
+        if (!fieldIndices(i).second)
+            return true;
+        auto &support = work->supports[i];
+        return normalized(i, support[0]) == normalized(base, support[1]);
+    }
+
+    float fieldScalar(size_t i, int m, float fallback) const
+    {
+        if (context) {
+            const auto &reads = *context->reads;
+            const auto found = reads.scalarReadIndices.find({int32_t(i), m});
+            return found == reads.scalarReadIndices.end()
+                       ? fallback
+                       : RrReadOracleFloat(
+                             program,
+                             context->field->scalarReads[found->second], reads,
+                             fallback);
         }
-        if (values.size() != indices.size()) {
-            return packet;
+        const auto &w = wire(i);
+        const std::unique_ptr<RigExecWireInput> *members[] = {
+            &w.defaultWeight, &w.driver,    &w.scale,      &w.bias,
+            &w.strength,      &w.invert,    &w.falloffMin, &w.falloffMax,
+            &w.scaleX,        &w.scaleY,    &w.scaleZ,     &w.scaleXPos,
+            &w.scaleYPos,     &w.scaleZPos, &w.scaleXNeg,  &w.scaleYNeg,
+            &w.scaleZNeg,     &w.extentU,   &w.extentV};
+        const auto &input = *members[m];
+        return input ? RrReadResolvedFloat(program, *input, fallback)
+                     : fallback;
+    }
+    auto fieldValues(size_t i) const
+    {
+        const std::vector<float> none;
+        const auto &v = _RrPainted(program, wire(i).valuesSlot, none, false);
+        return std::make_pair(v.empty() ? nullptr : v.data(), v.size());
+    }
+    std::pair<const int32_t *, size_t> fieldIndices(size_t i) const
+    {
+        const std::vector<int32_t> none;
+        const auto &v = _RrPainted(program, wire(i).indicesSlot, none, false);
+        return std::make_pair(v.empty() ? nullptr : v.data(), v.size());
+    }
+    const RrMat4d *fieldPlacement(size_t i) const
+    {
+        const auto &store = program->store;
+        const auto &placements =
+            context ? *context->placements : store.volumePlacement;
+        const auto &placed = context ? *context->placed : store.volumePlaced;
+        const size_t slot = size_t(_RrScratch(program)->volumeSlot[i]);
+        return slot < store.volumePlaced.size() && slot < placements.size() &&
+                       placed[slot]
+                   ? &placements[slot]
+                   : nullptr;
+    }
+    eval::WeightFieldPoint<RrWeightMath> fieldPoints(size_t i, int leaf,
+                                                     bool phased) const
+    {
+        bool declared = false;
+        const std::vector<RrVec3f> *points = nullptr;
+        if (phased) {
+            points = _RrFieldPoints(program, i, leaf, context, &declared);
+        } else {
+            const auto &fallback = _RrScratch(program)->oracleFallbackSlots;
+            const auto &w = wire(i);
+            const int32_t slot = leaf == 0             ? w.oracleSamplesSlot
+                                 : leaf == 2           ? w.oracleCurveSlot
+                                 : i < fallback.size() ? fallback[i]
+                                                       : -1;
+            points = _RrOraclePoints(program, slot);
         }
-        const bool same = work.support == indices;
-        if (!same) {
-            work.support = indices;
-            work.order.resize(indices.size());
-            std::iota(work.order.begin(), work.order.end(), size_t(0));
-            std::sort(
-                work.order.begin(), work.order.end(),
-                [&](size_t a, size_t b) { return indices[a] < indices[b]; });
-            work.unique = true;
-            for (size_t i = 1; i < indices.size(); ++i)
-                if (indices[work.order[i - 1]] == indices[work.order[i]]) {
-                    work.unique = false;
-                    break;
+        return {declared, points != nullptr, points ? points->data() : nullptr,
+                points ? points->size() : 0};
+    }
+    auto fieldFalloff(size_t i) const
+    {
+        const auto &v = _RrFalloffSamples(program, wire(i));
+        return std::make_pair(v.data(), v.size());
+    }
+    std::string fieldPlaneToken(size_t i, bool bounds) const
+    {
+        const auto &w = wire(i);
+        const int32_t slot =
+            bounds ? w.oraclePlaneBoundsSlot : w.oraclePlaneAxisSlot;
+        if (!context || slot < 0)
+            return program->TextOrEmpty(bounds ? w.oraclePlaneBounds
+                                               : w.oraclePlaneAxis);
+        const auto &state = program->inputState;
+        return state.slotHasValue[size_t(slot)]
+                   ? program->TextOrEmpty(
+                         uint32_t(state.slotCurrent[size_t(slot)].bits))
+                   : std::string();
+    }
+
+    eval::WeightPacketFacts<RrWeightMath> packetFacts(size_t i) const
+    {
+        const auto &w = wire(i);
+        eval::WeightPacketFacts<RrWeightMath> f;
+        static_cast<eval::WeightObjectFacts &>(f) = weightFacts(i);
+        const auto read = [&](size_t member, int field) {
+            f.scalars[member] = _RrReadWeightFloat(program, i, field);
+        };
+        if (f.kind == eval::kWeightKindStatic) {
+            read(0, RrWeightDefaultWeight);
+            const std::vector<float> noValues;
+            const std::vector<int32_t> noIndices;
+            const auto &values =
+                _RrPainted(program, w.valuesSlot, noValues, true);
+            const auto &indices =
+                _RrPainted(program, w.indicesSlot, noIndices, true);
+            f.paintedValues = values.empty() ? nullptr : values.data();
+            f.paintedValueCount = values.size();
+            f.paintedIndices = indices.empty() ? nullptr : indices.data();
+            f.paintedIndexCount = indices.size();
+        } else if (f.kind == eval::kWeightKindDynamic) {
+            read(1, RrWeightDriver);
+            read(2, RrWeightScale);
+            read(3, RrWeightBias);
+        } else if (f.kind == eval::kWeightKindCombine) {
+            const auto &targets =
+                _RrScratch(program)->gathers[i].combineTargets;
+            for (size_t k = 0; k < targets.size(); ++k)
+                if (k >= w.combineTargetValid.size() || w.combineTargetValid[k])
+                    f.combineTargetCount +=
+                        _RrGatherPointCount(program, targets[k]);
+            read(4, RrWeightStrength);
+            read(5, RrWeightInvert);
+        } else if (f.kind >= eval::kWeightKindSphere) {
+            if (frame) {
+                f.framePoints = &frame->points;
+                f.frameValid = frame->IsValid();
+                f.frameDegenerate = frame->IsDegenerate();
+            }
+            read(4, RrWeightStrength);
+            read(5, RrWeightInvert);
+            read(6, RrWeightFalloffMin);
+            read(7, RrWeightFalloffMax);
+            if (f.kind == eval::kWeightKindPlane) {
+                f.planeAxis =
+                    eval::WeightAxis(program->TextOrEmpty(w.planeAxis));
+                f.planeBounds =
+                    eval::WeightBounds(program->TextOrEmpty(w.planeBounds));
+                if (f.planeBounds == eval::kWeightBoundsBounded) {
+                    read(17, RrWeightExtentU);
+                    read(18, RrWeightExtentV);
                 }
-        }
-        if (work.unique)
-            for (size_t i = 0; i < indices.size(); ++i) {
-                const size_t source = work.order[i];
-                pairs[i] = {indices[source], values[source]};
+            } else {
+                for (int k = 0; k < 3; ++k)
+                    read(8 + k, RrWeightScaleX + k);
+                if (f.kind == eval::kWeightKindSphere)
+                    for (int k = 0; k < 6; ++k)
+                        read(11 + k, RrWeightScaleXPos + k);
             }
+            const auto &falloff = _RrFalloffSamples(program, w);
+            f.falloffCurve = falloff.data();
+            f.falloffCurveCount = falloff.size();
+        }
+        return f;
+    }
+    eval::WeightPointViewT<RrWeightMath> volumePoints(size_t i,
+                                                      size_t leaf) const
+    {
+        const auto &w = wire(i);
+        const auto &g = _RrScratch(program)->gathers[i];
+        auto &out = _RrScratch(program)->packets[i].points[leaf];
+        out.clear();
+        if (leaf == 0)
+            _RrGatherPointList(program, g.samples, w.sampleValid, &out);
+        else if (leaf == 1)
+            _RrGatherPointList(program, g.targets, w.targetValid, &out);
         else
-            std::sort(pairs.begin(), pairs.end());
-        packet.indices.reserve(pairs.size());
-        packet.values.reserve(pairs.size());
-        for (size_t i = 0; i < pairs.size(); ++i) {
-            if (i > 0 && pairs[i].first == pairs[i - 1].first) {
-                return packet;
-            }
-            packet.indices.push_back(pairs[i].first);
-            packet.values.push_back(pairs[i].second);
-        }
-    } else {
-        packet.values = values;
+            _RrGatherPointList(program, g.curves, w.curveValid, &out);
+        return {out.data(), out.size()};
     }
-    if (_RrClassifyRepresentation(program, packet.representation) ==
-            _RrRepDense &&
-        packet.defaultWeight != 0.0f) {
-        return packet;
+    eval::WeightFrameView<RrWeightMath> volumePlacementFacts(size_t, bool) const
+    {
+        return {&frame->points, frame->IsValid(), frame->IsDegenerate()};
     }
-    for (float &w : packet.values) {
-        if (!_RrApplyRangePolicy(clamp, &w)) {
-            return packet;
-        }
-    }
-    if (!_RrApplyRangePolicy(clamp, &packet.defaultWeight)) {
-        return packet;
-    }
-    packet.valid = true;
-    return packet;
-}
+};
 
-RrWeightPacket
-_RrBuildDynamicPacket(const RrProgram *program,
-                      const RigExecWireWeightObject &wire, float driver,
-                      float scale, float bias, const RrStore &store)
-{
-    RrWeightPacket packet;
-    packet.representation = wire.representation;
-    packet.rangePolicy = wire.rangePolicy;
-    if (_RrClassifyRepresentation(program, packet.representation) ==
-        _RrRepOther) {
-        return packet;
+struct RrWeightState {
+    const RrProgram *program;
+    RrStore *store;
+    RrWeightFieldScratch *work;
+    size_t packetCount() const
+    {
+        return store->weightPackets.size();
     }
-    const bool clamp =
-        program->TokenEquals(wire.rangePolicy, SchemaValueText::clamp);
-    if (!clamp &&
-        !program->TokenEquals(wire.rangePolicy, SchemaValueText::strict)) {
-        return packet;
+    size_t weightObjectCount() const
+    {
+        return program->geometry->weightObjects.size();
     }
-
-    const float d = driver;
-    const float s = scale;
-    const float a = bias;
-
-    if (wire.base < 0) {
-        if (!program->TokenEquals(packet.representation,
-                                  SchemaValueText::constant)) {
-            return packet;
+    auto &fieldWorkspace() const
+    {
+        return *work;
+    }
+    std::vector<RrVec3f> *fieldCurveScratch() const
+    {
+        return &work->localCurve;
+    }
+    auto *packetScratch(size_t i) const
+    {
+        return &_RrScratch(program)->packets[i];
+    }
+    std::vector<RrVec3f> *packetCurveScratch(size_t i) const
+    {
+        return &packetScratch(i)->localCurve;
+    }
+    eval::WeightPacketView packetView(size_t i) const
+    {
+        const auto &p = store->weightPackets[i];
+        return {p.valid,
+                _RrClassifyRepresentation(program, p.representation),
+                p.defaultWeight,
+                p.values.data(),
+                p.values.size(),
+                p.indices.data(),
+                p.indices.size()};
+    }
+    void storePacket(size_t i, eval::WeightPacketResult p) const
+    {
+        RrWeightPacket out;
+        if (!p.bare) {
+            const auto &w = program->geometry->weightObjects[i];
+            out.representation = w.representation;
+            out.rangePolicy = w.rangePolicy;
+            out.defaultWeight = p.defaultWeight;
+            out.valid = p.valid;
+            out.values = std::move(p.values);
+            out.indices = std::move(p.indices);
         }
-        packet.defaultWeight = (1.0f * d) * s + a;
-        if (!_RrApplyRangePolicy(clamp, &packet.defaultWeight)) {
-            return packet;
-        }
-        packet.valid = true;
-        return packet;
+        store->weightPackets[i] = std::move(out);
     }
-    if (size_t(wire.base) >= store.weightPackets.size()) {
-        return packet;
+    void setVolumePlacement(size_t slot, bool base,
+                            const RrMat4d &placement) const
+    {
+        (base ? store->volumePlacementBase : store->volumePlacement)[slot] =
+            placement;
+        (base ? store->volumePlacedBase : store->volumePlaced)[slot] = 1;
     }
-    const RrWeightPacket &base = store.weightPackets[size_t(wire.base)];
-    // A token's text is one Token node of the file, so id inequality is
-    // token inequality -- the same comparison the baked TfToken one is.
-    if (!base.valid || base.representation != packet.representation) {
-        return packet;
-    }
-    packet.indices = base.indices;
-    packet.values.reserve(base.values.size());
-    for (float b : base.values) {
-        float r = (b * d) * s + a;
-        if (!_RrApplyRangePolicy(clamp, &r)) {
-            return packet;
-        }
-        packet.values.push_back(r);
-    }
-    if (program->TokenEquals(packet.representation, SchemaValueText::dense)) {
-        packet.defaultWeight = 0.0f;
-    } else {
-        packet.defaultWeight = (base.defaultWeight * d) * s + a;
-        if (!_RrApplyRangePolicy(clamp, &packet.defaultWeight)) {
-            return packet;
-        }
-    }
-    packet.valid = true;
-    return packet;
-}
+};
 
-RrWeightPacket
-_RrBuildCombinePacket(const RrProgram *program,
-                      const RigExecWireWeightObject &wire, const RrStore &store,
-                      size_t targetCount, float strength, float invert)
-{
-    RrWeightPacket packet;
-    packet.representation = wire.representation;
-    packet.rangePolicy = wire.rangePolicy;
-    if (!program->TokenEquals(packet.representation, SchemaValueText::dense)) {
-        return packet;
+struct RrWeightHost {
+    using Math = RrWeightMath;
+    using Inputs = RrWeightInputs;
+    using State = RrWeightState;
+    using EvalValueFamily = eval::WeightValueFamily;
+    Inputs in;
+    State out;
+    const Inputs &inputs() const
+    {
+        return in;
     }
-    const bool clamp =
-        program->TokenEquals(wire.rangePolicy, SchemaValueText::clamp);
-    if (!clamp &&
-        !program->TokenEquals(wire.rangePolicy, SchemaValueText::strict)) {
-        return packet;
-    }
-
-    _RrCombineMode mode = _RrCombineMultiply;
-    if (program->TokenEquals(wire.combineMode, SchemaValueText::multiply)) {
-        mode = _RrCombineMultiply;
-    } else if (program->TokenEquals(wire.combineMode, SchemaValueText::add)) {
-        mode = _RrCombineAdd;
-    } else if (program->TokenEquals(wire.combineMode,
-                                    SchemaValueText::subtract)) {
-        mode = _RrCombineSubtract;
-    } else if (program->TokenEquals(wire.combineMode, SchemaValueText::max)) {
-        mode = _RrCombineMax;
-    } else if (program->TokenEquals(wire.combineMode, SchemaValueText::min)) {
-        mode = _RrCombineMin;
-    } else if (program->TokenEquals(wire.combineMode,
-                                    SchemaValueText::average)) {
-        mode = _RrCombineAverage;
-    } else if (program->TokenEquals(wire.combineMode,
-                                    SchemaValueText::overlay)) {
-        mode = _RrCombineOverlay;
-    } else {
-        return packet;
-    }
-
-    auto &work =
-        _RrScratch(program)
-            ->packets[size_t(&wire - program->geometry->weightObjects.data())];
-    work.representations.clear();
-    work.representations.reserve(wire.inputs.size());
-    for (int32_t input : wire.inputs) {
-        if (input < 0 || size_t(input) >= store.weightPackets.size() ||
-            !store.weightPackets[size_t(input)].valid)
-            return packet;
-        work.representations.push_back(uint8_t(_RrClassifyRepresentation(
-            program, store.weightPackets[size_t(input)].representation)));
-    }
-    size_t elementCount = 0;
-    for (size_t k = 0; k < wire.inputs.size(); ++k) {
-        const auto &in = store.weightPackets[size_t(wire.inputs[k])];
-        if (work.representations[k] == _RrRepDense) {
-            if (elementCount && in.values.size() != elementCount)
-                return packet;
-            elementCount = in.values.size();
-        }
-    }
-    if (!elementCount) {
-        elementCount = targetCount;
-    }
-    if (!elementCount) {
-        return packet;
-    }
-
-    std::vector<float> folded;
-    if (!_RrCombineWeightFieldsStreamed(
-            mode, wire.inputs.size(), elementCount,
-            [&](size_t k, const float **data, size_t *size) {
-                return _RrResolveCombineInput(
-                    _RrRepresentation(work.representations[k]),
-                    store.weightPackets[size_t(wire.inputs[k])], elementCount,
-                    &work.field, data, size);
-            },
-            &folded))
-        return packet;
-    for (float &w : folded) {
-        w = (w + (1.0f - 2.0f * w) * invert) * strength;
-        if (!_RrApplyRangePolicy(clamp, &w)) {
-            return RrWeightPacket();
-        }
-    }
-    packet.values = std::move(folded);
-    packet.defaultWeight = 0.0f;
-    packet.valid = true;
-    return packet;
-}
-
-RrWeightPacket
-_RrBuildSpherePacket(const RrProgram *program,
-                     const RigExecWireWeightObject &wire,
-                     const RrPointFrame *placement, bool hasPlacement,
-                     float falloffMin, float falloffMax, float invert,
-                     float strength, const RrVec3f &scales,
-                     const RrVec3f &positiveScales,
-                     const RrVec3f &negativeScales,
-                     const std::vector<RrVec3f> &targetPoints,
-                     const std::vector<RrVec3f> &samplePoints)
-{
-    RrWeightPacket packet;
-    RrMat4d worldToLocal;
-    const std::vector<RrVec3f> *points = nullptr;
-    if (!_RrBeginVolumeWeight(program, wire, /* usesScales = */ true, placement,
-                              hasPlacement, scales, targetPoints, samplePoints,
-                              &packet, &worldToLocal, &points)) {
-        return packet;
-    }
-    std::vector<float> weights;
-    for (int axis = 0; axis < 3; ++axis) {
-        if (!std::isfinite(positiveScales[axis]) || positiveScales[axis] <= 0 ||
-            !std::isfinite(negativeScales[axis]) || negativeScales[axis] <= 0)
-            return packet;
-    }
-    _RrSphereWeightField(*points, _RrApplyAxisScales(worldToLocal, scales),
-                         falloffMin, falloffMax, invert, strength,
-                         _RrFalloffSamples(program, wire), &weights,
-                         positiveScales, negativeScales);
-    RrWeightPacket out;
-    if (!_RrFinishVolumeWeight(program, &packet, &weights, &out)) {
+    State &state()
+    {
         return out;
     }
-    return out;
-}
+    const RigExecRangeRunner *ranges() const
+    {
+        return nullptr;
+    }
+};
 
-RrWeightPacket
-_RrBuildPlanePacket(const RrProgram *program,
-                    const RigExecWireWeightObject &wire,
-                    const RrPointFrame *placement, bool hasPlacement,
-                    float falloffMin, float falloffMax, float invert,
-                    float strength, const std::vector<RrVec3f> &targetPoints,
-                    const std::vector<RrVec3f> &samplePoints, bool bounded,
-                    float extentU, float extentV)
+bool
+_RrResolveField(const RrProgram *program, size_t object, size_t count,
+                const std::vector<RrVec3f> *current, std::vector<float> *values,
+                std::string *error, const _RrOracleFieldContext *context,
+                RrWeightFieldScratch &work)
 {
-    RrWeightPacket packet;
-    RrMat4d worldToLocal;
-    const std::vector<RrVec3f> *points = nullptr;
-    if (!_RrBeginVolumeWeight(program, wire, /* usesScales = */ false,
-                              placement, hasPlacement, RrVec3f(1.0f),
-                              targetPoints, samplePoints, &packet,
-                              &worldToLocal, &points)) {
-        return packet;
-    }
-    int axisIndex = 1;
-    if (program->TokenEquals(wire.planeAxis, SchemaValueText::x)) {
-        axisIndex = 0;
-    } else if (program->TokenEquals(wire.planeAxis, SchemaValueText::y)) {
-        axisIndex = 1;
-    } else if (program->TokenEquals(wire.planeAxis, SchemaValueText::z)) {
-        axisIndex = 2;
-    } else {
-        return packet;
-    }
-
-    if (!bounded) {
-        if (!program->TokenEquals(wire.planeBounds,
-                                  SchemaValueText::unbounded)) {
-            return packet;
-        }
-    } else if (!std::isfinite(extentU) || extentU <= 0.0f ||
-               !std::isfinite(extentV) || extentV <= 0.0f) {
-        return packet;
-    }
-
-    std::vector<float> weights;
-    _RrPlaneWeightField(*points, worldToLocal, axisIndex, falloffMin,
-                        falloffMax, invert, strength,
-                        _RrFalloffSamples(program, wire), &weights, bounded,
-                        extentU, extentV);
-    RrWeightPacket out;
-    if (!_RrFinishVolumeWeight(program, &packet, &weights, &out)) {
-        return out;
-    }
-    return out;
+    RrWeightHost host{{program, context, nullptr, &work},
+                      {program, nullptr, &work}};
+    const eval::WeightPointViewT<RrWeightMath> view =
+        current ? eval::WeightPointViewT<RrWeightMath>{current->data(),
+                                                       current->size()}
+                : eval::WeightPointViewT<RrWeightMath>{};
+    return eval::RunWeightField(host, object, count, current ? &view : nullptr,
+                                values, error);
 }
 
-RrWeightPacket
-_RrBuildCurvePacket(const RrProgram *program,
-                    const RigExecWireWeightObject &wire,
-                    const RrPointFrame *placement, bool hasPlacement,
-                    float falloffMin, float falloffMax, float invert,
-                    float strength, const RrVec3f &scales,
-                    const std::vector<RrVec3f> &targetPoints,
-                    const std::vector<RrVec3f> &samplePoints,
-                    const std::vector<RrVec3f> &curvePoints)
-{
-    RrWeightPacket packet;
-    RrMat4d worldToLocal;
-    const std::vector<RrVec3f> *points = nullptr;
-    if (!_RrBeginVolumeWeight(program, wire, /* usesScales = */ true, placement,
-                              hasPlacement, scales, targetPoints, samplePoints,
-                              &packet, &worldToLocal, &points)) {
-        return packet;
-    }
-    if (curvePoints.empty()) {
-        return packet;
-    }
-    std::vector<float> weights;
-    _RrCurveWeightField(*points, curvePoints,
-                        _RrApplyAxisScales(worldToLocal, scales), falloffMin,
-                        falloffMax, invert, strength,
-                        _RrFalloffSamples(program, wire), &weights);
-    RrWeightPacket out;
-    if (!_RrFinishVolumeWeight(program, &packet, &weights, &out)) {
-        return out;
-    }
-    return out;
-}
-
-// One WeightPacket step: rebuilds the object's packet from its bound
-// inputs and its (already built) composed inputs. No packet is carried
-// over: the step assigns unconditionally, exactly as the baked one
-// does, whatever the cone skipped.
 bool
 _RrRunWeightPacket(RrProgram *program, size_t step, std::string *error)
 {
@@ -1492,144 +1047,34 @@ _RrRunWeightPacket(RrProgram *program, size_t step, std::string *error)
         program->geometry->weightObjects[index];
     RrWeightScratch *scratch = _RrScratch(program);
 
-    if (program->TokenEquals(wire.type, SchemaTypeName::RigExecStaticWeight)) {
-        store.weightPackets[index] = _RrBuildStaticPacket(
-            program, wire,
-            _RrReadWeightFloat(program, index, RrWeightDefaultWeight));
-        return true;
-    }
-    if (program->TokenEquals(wire.type, SchemaTypeName::RigExecDynamicWeight)) {
-        store.weightPackets[index] = _RrBuildDynamicPacket(
-            program, wire, _RrReadWeightFloat(program, index, RrWeightDriver),
-            _RrReadWeightFloat(program, index, RrWeightScale),
-            _RrReadWeightFloat(program, index, RrWeightBias), store);
-        return true;
-    }
-    if (index >= scratch->gathers.size()) {
-        if (error) {
+    const auto type = scratch->oracleKinds[index].type;
+    using Type = RrWeightOracleKind::Type;
+    const RrPointFrame *frame = nullptr;
+    if (type != Type::Static && type != Type::Dynamic &&
+        index >= scratch->gathers.size()) {
+        if (error)
             *error = "weight step " + _RrStepLabel(program, step) +
                      " names a weight object Open did not resolve";
-        }
         return false;
     }
-    const RrWeightScratch::Gathers &gathers = scratch->gathers[index];
-    if (program->TokenEquals(wire.type, SchemaTypeName::RigExecCombineWeight)) {
-        size_t targetCount = 0;
-        for (size_t i = 0; i < gathers.combineTargets.size(); ++i) {
-            if (i < wire.combineTargetValid.size() &&
-                !wire.combineTargetValid[i]) {
-                continue;
-            }
-            targetCount +=
-                _RrGatherPointCount(program, gathers.combineTargets[i]);
+    if ((type == Type::Sphere || type == Type::Plane || type == Type::Curve) &&
+        wire.providerSlot >= 0) {
+        const size_t slot = size_t(wire.providerSlot);
+        if (slot >= store.baseLast.size() ||
+            size_t(store.baseLast[slot]) >= store.base.size()) {
+            if (error)
+                *error = "weight step " + _RrStepLabel(program, step) +
+                         " is placed by no provider slot";
+            return false;
         }
-        store.weightPackets[index] = _RrBuildCombinePacket(
-            program, wire, store, targetCount,
-            _RrReadWeightFloat(program, index, RrWeightStrength),
-            _RrReadWeightFloat(program, index, RrWeightInvert));
-        return true;
+        frame = &store.base[size_t(store.baseLast[slot])];
     }
-    const bool isSphere =
-        program->TokenEquals(wire.type, SchemaTypeName::RigExecSphereWeight);
-    const bool isPlane =
-        program->TokenEquals(wire.type, SchemaTypeName::RigExecPlaneWeight);
-    const bool isCurve =
-        program->TokenEquals(wire.type, SchemaTypeName::RigExecCurveWeight);
-    if (isSphere || isPlane || isCurve) {
-        // The volume's BASE frame: the last base version of the
-        // provider slot, which is what the authoritative snapshot
-        // carries for every seeded provider.
-        const RrPointFrame *placement = nullptr;
-        bool hasPlacement = false;
-        if (wire.providerSlot >= 0) {
-            const size_t slot = size_t(wire.providerSlot);
-            if (slot >= store.baseLast.size() ||
-                size_t(store.baseLast[slot]) >= store.base.size()) {
-                if (error) {
-                    *error = "weight step " + _RrStepLabel(program, step) +
-                             " is placed by no provider slot";
-                }
-                return false;
-            }
-            placement = &store.base[size_t(store.baseLast[slot])];
-            hasPlacement = true;
-        }
-        const float falloffMin =
-            _RrReadWeightFloat(program, index, RrWeightFalloffMin);
-        const float falloffMax =
-            _RrReadWeightFloat(program, index, RrWeightFalloffMax);
-        const float invert = _RrReadWeightFloat(program, index, RrWeightInvert);
-        const float strength =
-            _RrReadWeightFloat(program, index, RrWeightStrength);
-        RrVec3f scales(1.0f);
-        bool bounded = false;
-        float extentU = 1.0f, extentV = 1.0f;
-        if (!isPlane) {
-            scales =
-                RrVec3f(_RrReadWeightFloat(program, index, RrWeightScaleX),
-                        _RrReadWeightFloat(program, index, RrWeightScaleY),
-                        _RrReadWeightFloat(program, index, RrWeightScaleZ));
-        } else if (program->TokenEquals(wire.planeBounds,
-                                        SchemaValueText::bounded)) {
-            bounded = true;
-            extentU = _RrReadWeightFloat(program, index, RrWeightExtentU);
-            extentV = _RrReadWeightFloat(program, index, RrWeightExtentV);
-        }
-        // The points are a whole mesh, gathered only once the
-        // structural half has said the volume can produce a field.
-        std::vector<RrVec3f> targetPoints, samplePoints, curvePoints;
-        RrMat4d worldToLocal;
-        if (_RrVolumeCanBuild(program, wire, !isPlane, placement, hasPlacement,
-                              scales, &worldToLocal)) {
-            _RrGatherPointList(program, gathers.targets, wire.targetValid,
-                               &targetPoints);
-            _RrGatherPointList(program, gathers.samples, wire.sampleValid,
-                               &samplePoints);
-            if (isCurve) {
-                _RrGatherPointList(program, gathers.curves, wire.curveValid,
-                                   &curvePoints);
-            }
-        }
-        if (isSphere) {
-            const RrVec3f positiveScales(
-                _RrReadWeightFloat(program, index, RrWeightScaleXPos),
-                _RrReadWeightFloat(program, index, RrWeightScaleYPos),
-                _RrReadWeightFloat(program, index, RrWeightScaleZPos));
-            const RrVec3f negativeScales(
-                _RrReadWeightFloat(program, index, RrWeightScaleXNeg),
-                _RrReadWeightFloat(program, index, RrWeightScaleYNeg),
-                _RrReadWeightFloat(program, index, RrWeightScaleZNeg));
-            store.weightPackets[index] = _RrBuildSpherePacket(
-                program, wire, placement, hasPlacement, falloffMin, falloffMax,
-                invert, strength, scales, positiveScales, negativeScales,
-                targetPoints, samplePoints);
-        } else if (isPlane) {
-            store.weightPackets[index] = _RrBuildPlanePacket(
-                program, wire, placement, hasPlacement, falloffMin, falloffMax,
-                invert, strength, targetPoints, samplePoints, bounded, extentU,
-                extentV);
-        } else {
-            store.weightPackets[index] = _RrBuildCurvePacket(
-                program, wire, placement, hasPlacement, falloffMin, falloffMax,
-                invert, strength, scales, targetPoints, samplePoints,
-                curvePoints);
-        }
-        return true;
-    }
-    // Every weight object type the compiled rig can hold has an arm above; an
-    // unknown type is an invalid packet, which is a MoverFailed
-    // pass-through rather than a plausible wrong deformation.
-    store.weightPackets[index] = RrWeightPacket();
-    return true;
+    RrWeightHost host{{program, nullptr, frame}, {program, &store, nullptr}};
+    return eval::RunValueStep(host, {uint32_t(wireStep.kind), wireStep.object,
+                                     wireStep.part, index})
+               .outcome == eval::Outcome::Applied;
 }
 
-// One VolumePlacements step: where the volume weight at provider slot
-// `object` ended up, over the frame the walk ended with, written to that
-// slot of the program's slot-indexed volumePlacement. It mirrors the
-// shared RigExecVolumePlacement: the identity unless the frame is valid,
-// non-degenerate and finite, and then the identity-landmark map, a
-// failed decomposition leaving the identity seed. Every other volume
-// keeps what its own step last wrote.
 bool
 _RrRunVolumePlacements(RrProgram *program, size_t step, std::string *error)
 {
@@ -1666,513 +1111,10 @@ _RrRunVolumePlacements(RrProgram *program, size_t step, std::string *error)
         return false;
     }
     const RrPointFrame &frame = frames[size_t(last[slot])];
-    RrMat4d placement(1.0);
-    if (RrFrameUsable(frame)) {
-        RrPointsToMatrix(RrIdentityLandmarks(), frame.points, &placement);
-    }
-    (base ? store.volumePlacementBase : store.volumePlacement)[slot] =
-        placement;
-    (base ? store.volumePlacedBase : store.volumePlaced)[slot] = 1;
-    return true;
-}
-
-// The weight oracle: RigExecRigEvaluator::_ResolveWeights and
-// _ResolveVolumeWeights (rigEvaluatorGeometry.cpp), statement for
-// statement, over the file's weight objects. What the evaluator reads
-// off the stage arrives as follows: the object's composition and tokens
-// from its entry (tokens classified at Open), each scalar through
-// RrReadResolvedFloat with the oracle's own fallback at that read site
-// (the _ResolvedRead image), a volume's placement from the store's
-// volumePlacement (the program's slot-indexed volumePlacement, which the
-// VolumePlacements steps write) at the volume slot Open resolved from the
-// object's path, and the structural answers the bake recorded --
-// oracleStaticError, oraclePhaseError and the static sample and curve
-// points -- each consulted where the oracle would have computed it. Error
-// text is the oracle's, verbatim. A successful resolve leaves `weights`
-// holding the field; after a failure its contents are unspecified, and no
-// caller reads them.
-
-struct _RrOracleFieldContext {
-    const RigExecWireWeightField *field;
-    const RrOracleReadContext *reads;
-    const std::vector<RrMat4d> *placements;
-    const std::vector<char> *placed;
-};
-
-const std::vector<RrVec3f> *
-_RrFieldPoints(const RrProgram *program, size_t object, int leaf,
-               const _RrOracleFieldContext *context, bool *declared)
-{
-    *declared = false;
-    if (!context)
-        return nullptr;
-    const auto found =
-        context->reads->pointReadIndices.find({int32_t(object), leaf});
-    if (found == context->reads->pointReadIndices.end())
-        return nullptr;
-    *declared = true;
-    return RrResolveDeclaredPoints(
-        program, *context->field->pointReads[found->second].binding);
-}
-
-float
-_RrOracleRead(const RrProgram *program, size_t object,
-              const std::unique_ptr<RigExecWireInput> &input, float fallback,
-              const _RrOracleFieldContext *context)
-{
-    if (!context)
-        return RrReadResolvedFloat(program, *input, fallback);
-    const auto &wire = program->geometry->weightObjects[object];
-    const std::unique_ptr<RigExecWireInput> *members[] = {
-        &wire.defaultWeight, &wire.driver,     &wire.scale,
-        &wire.bias,          &wire.strength,   &wire.invert,
-        &wire.falloffMin,    &wire.falloffMax, &wire.scaleX,
-        &wire.scaleY,        &wire.scaleZ,     &wire.scaleXPos,
-        &wire.scaleYPos,     &wire.scaleZPos,  &wire.scaleXNeg,
-        &wire.scaleYNeg,     &wire.scaleZNeg,  &wire.extentU,
-        &wire.extentV};
-    int member = -1;
-    for (size_t m = 0; m < 19; ++m)
-        if (members[m] == &input)
-            member = int(m);
-    const auto &field = *context->field;
-    const auto found = context->reads->scalarReadIndices.find(
-        std::make_pair(int32_t(object), int32_t(member)));
-    if (found != context->reads->scalarReadIndices.end()) {
-        return RrReadOracleFloat(program, field.scalarReads[found->second],
-                                 *context->reads, fallback);
-    }
-    return fallback; // An absent scalar is the oracle's fallback, not another origin.
-}
-
-bool _RrOracle(const RrProgram *program, const RrWeightScratch &scratch,
-               size_t object, size_t count, const std::vector<RrVec3f> *current,
-               std::vector<float> *weights, std::string *error,
-               const _RrOracleFieldContext *context, RrWeightFieldScratch &,
-               size_t);
-
-// The points the oracle reads raw at the evaluation time (its samples, or
-// a curve's points): input slot \p slot's elements when the file lists
-// one and it holds a value; null when it reads none.
-const std::vector<RrVec3f> *
-_RrOraclePoints(const RrProgram *program, int32_t slot)
-{
-    return slot >= 0 && RrInputHasValue(program, uint32_t(slot))
-               ? RrInputArray<RrVec3f>(program, uint32_t(slot))
-               : nullptr;
-}
-
-// _ResolveVolumeWeights: a combine folds its inputs; a volume measures the
-// samples about its rigid placement.
-bool
-_RrOracleVolume(const RrProgram *program, const RrWeightScratch &scratch,
-                size_t object, size_t count,
-                const std::vector<RrVec3f> *current,
-                std::vector<float> *weights, std::string *error,
-                const _RrOracleFieldContext *context,
-                RrWeightFieldScratch &work, size_t depth)
-{
-    using Kind = RrWeightOracleKind;
-    if (scratch.oracleBlocked[object]) {
-        *error = "operation cycle";
-        return false;
-    }
-    const RigExecWireWeightObject &wire =
-        program->geometry->weightObjects[object];
-    const Kind &kind = scratch.oracleKinds[object];
-    const auto who = [&]() { return program->TextOrEmpty(wire.path); };
-    const auto read = [&](const std::unique_ptr<RigExecWireInput> &input,
-                          float fallback) {
-        return _RrOracleRead(program, object, input, fallback, context);
-    };
-
-    if (kind.type == Kind::Type::Combine) {
-        if (kind.combineMode < 0) {
-            *error = who() + ": unknown rigExec:combineMode " +
-                     program->TextOrEmpty(wire.combineMode);
-            return false;
-        }
-        // Authored order: subtract and overlay depend on it.
-        auto &child = work.children[depth];
-        if (!_RrCombineWeightFieldsStreamed(
-                _RrCombineMode(kind.combineMode), wire.inputs.size(), count,
-                [&](size_t k, const float **data, size_t *size) {
-                    if (!_RrOracle(program, scratch, size_t(wire.inputs[k]),
-                                   count, current, &child, error, context, work,
-                                   depth + 1))
-                        return false;
-                    *data = child.data();
-                    *size = child.size();
-                    return true;
-                },
-                weights)) {
-            if (error->empty())
-                *error = who() + ": combine inputs disagree on element count";
-            return false;
-        }
-        const float strength = read(wire.strength, 1.0f);
-        const float invert = read(wire.invert, 0.0f);
-        for (float &w : *weights) {
-            w = (w + (1.0f - 2.0f * w) * invert) * strength;
-        }
-        return true;
-    }
-
-    // The placement, scale and shear removed: the object's volume slot,
-    // once that slot's VolumePlacements step has run.
-    const RrStore &store = program->store;
-    const int32_t slot = scratch.volumeSlot[object];
-    if (slot < 0 || size_t(slot) >= store.volumePlaced.size() ||
-        size_t(slot) >= (context ? context->placements->size()
-                                 : store.volumePlacement.size()) ||
-        !(context ? *context->placed : store.volumePlaced)[size_t(slot)]) {
-        *error = who() + ": no resolved placement for this volume weight";
-        return false;
-    }
-    const RrMat4d rigid = _RrRemoveScaleShear(
-        (context ? *context->placements : store.volumePlacement)[size_t(slot)]);
-    const double det = rigid.GetDeterminant();
-    if (!std::isfinite(det) || std::abs(det) < 1e-12) {
-        *error = who() + ": degenerate volume placement";
-        return false;
-    }
-    RrMat4d worldToLocal = rigid.GetInverse();
-
-    // Which points the distance function measures.
-    if (!wire.oraclePhaseError.empty()) {
-        *error = wire.oraclePhaseError;
-        return false;
-    }
-    const std::vector<RrVec3f> *samples = nullptr;
-    bool targetDeclared = false;
-    samples = _RrFieldPoints(program, object, 1, context, &targetDeclared);
-    if (targetDeclared) {
-        if (!samples) {
-            *error = who() + ": could not read the points to sample";
-            return false;
-        }
-    } else if (wire.samplesInFlight) {
-        if (!current) {
-            *error = who() + ": rigExec:weightTarget reads `preceding` but no "
-                             "in-flight points were supplied";
-            return false;
-        }
-        samples = current;
-    } else {
-        bool primaryDeclared = false;
-        samples = _RrFieldPoints(program, object, 0, context, &primaryDeclared);
-        if (!primaryDeclared)
-            samples = _RrOraclePoints(program, wire.oracleSamplesSlot);
-        if (!samples && object < scratch.oracleFallbackSlots.size())
-            samples =
-                _RrOraclePoints(program, scratch.oracleFallbackSlots[object]);
-        if (!samples) {
-            *error = who() + ": could not read the points to sample";
-            return false;
-        }
-    }
-    if (samples->size() != count) {
-        *error = who() + ": sampled point count does not match the target";
-        return false;
-    }
-
-    const float falloffMin = read(wire.falloffMin, 0.0f);
-    const float falloffMax = read(wire.falloffMax, 1.0f);
-    const float invert = read(wire.invert, 0.0f);
-    const float strength = read(wire.strength, 1.0f);
-    const std::vector<float> &curve = _RrFalloffSamples(program, wire);
-
-    if (kind.type == Kind::Type::Plane) {
-        const auto token = [&](int32_t slot, uint32_t captured) {
-            if (!context || slot < 0)
-                return program->TextOrEmpty(captured);
-            const auto &state = program->inputState;
-            return state.slotHasValue[size_t(slot)]
-                       ? program->TextOrEmpty(
-                             uint32_t(state.slotCurrent[size_t(slot)].bits))
-                       : std::string();
-        };
-        const std::string axisName =
-            token(wire.oraclePlaneAxisSlot, wire.oraclePlaneAxis);
-        const std::string boundsName =
-            token(wire.oraclePlaneBoundsSlot, wire.oraclePlaneBounds);
-        const int axis = axisName == SchemaValueText::x   ? 0
-                         : axisName == SchemaValueText::y ? 1
-                         : axisName == SchemaValueText::z ? 2
-                                                          : -1;
-        if (axis < 0) {
-            *error = who() + ": unknown rigExec:planeAxis " + axisName;
-            return false;
-        }
-        // The extents are read only in the bounded arm.
-        bool bounded = false;
-        float extentU = 1.0f;
-        float extentV = 1.0f;
-        if (boundsName == SchemaValueText::bounded) {
-            extentU = read(wire.extentU, 1.0f);
-            extentV = read(wire.extentV, 1.0f);
-            if (!RigExecVolumeExtentsOk(who(), extentU, extentV, error)) {
-                return false;
-            }
-            bounded = true;
-        } else if (boundsName != SchemaValueText::unbounded) {
-            *error = RigExecUnknownPlaneBoundsMessage(who(), boundsName);
-            return false;
-        }
-        _RrPlaneWeightField(*samples, worldToLocal, axis, falloffMin,
-                            falloffMax, invert, strength, curve, weights,
-                            bounded, extentU, extentV);
-        return true;
-    }
-
-    // Sphere and curve fold the per-axis divisors into the matrix.
-    const float sx = read(wire.scaleX, 1.0f);
-    const float sy = read(wire.scaleY, 1.0f);
-    const float sz = read(wire.scaleZ, 1.0f);
-    if (!RigExecVolumeAxisScalesOk(who(), sx, sy, sz, error)) {
-        return false;
-    }
-    worldToLocal = _RrApplyAxisScales(worldToLocal, RrVec3f(sx, sy, sz));
-
-    if (kind.type == Kind::Type::Sphere) {
-        const RrVec3f positiveScales(read(wire.scaleXPos, 1.0f),
-                                     read(wire.scaleYPos, 1.0f),
-                                     read(wire.scaleZPos, 1.0f));
-        const RrVec3f negativeScales(read(wire.scaleXNeg, 1.0f),
-                                     read(wire.scaleYNeg, 1.0f),
-                                     read(wire.scaleZNeg, 1.0f));
-        if (!RigExecSignedAxisScalesOk(who(), positiveScales, negativeScales,
-                                       error)) {
-            return false;
-        }
-        _RrSphereWeightField(*samples, worldToLocal, falloffMin, falloffMax,
-                             invert, strength, curve, weights, positiveScales,
-                             negativeScales);
-        return true;
-    }
-    if (kind.type == Kind::Type::Curve) {
-        // An empty curve reads as none.
-        bool curveDeclared = false;
-        const std::vector<RrVec3f> *curvePoints =
-            _RrFieldPoints(program, object, 2, context, &curveDeclared);
-        if (!curveDeclared)
-            curvePoints = _RrOraclePoints(program, wire.oracleCurveSlot);
-        if (!curvePoints || curvePoints->empty()) {
-            *error =
-                who() + ": rigExec:curve must name exactly one points source";
-            return false;
-        }
-        _RrCurveWeightField(*samples, *curvePoints, worldToLocal, falloffMin,
-                            falloffMax, invert, strength, curve, weights);
-        return true;
-    }
-    // Defensive, as in the oracle: _RrOracle hands only combine and volume
-    // types to this function.
-    *error = who() + ": not a volumetric weight object";
-    return false;
-}
-
-// _ResolveWeights.
-bool
-_RrOracle(const RrProgram *program, const RrWeightScratch &scratch,
-          size_t object, size_t count, const std::vector<RrVec3f> *current,
-          std::vector<float> *weights, std::string *error,
-          const _RrOracleFieldContext *context, RrWeightFieldScratch &work,
-          size_t depth)
-{
-    using Kind = RrWeightOracleKind;
-    const RigExecWireWeightObject &wire =
-        program->geometry->weightObjects[object];
-    const Kind &kind = scratch.oracleKinds[object];
-    const auto who = [&]() { return program->TextOrEmpty(wire.path); };
-    const auto read = [&](const std::unique_ptr<RigExecWireInput> &input,
-                          float fallback) {
-        return _RrOracleRead(program, object, input, fallback, context);
-    };
-
-    // The structural failures (a missing prim, an unknown type, combine
-    // mode or range policy, the dynamic descriptor checks, a static field
-    // with samples or connections) precede every read and every recursion
-    // of this object.
-    if (!wire.oracleStaticError.empty()) {
-        *error = wire.oracleStaticError;
-        return false;
-    }
-    // The bake records an unknown type as a static error; this guards an
-    // entry whose type token and facts disagree.
-    if (kind.type == Kind::Type::Unknown) {
-        *error = "unknown weight object type " +
-                 program->TextOrEmpty(wire.type) + " on " + who();
-        return false;
-    }
-
-    if (kind.type == Kind::Type::Combine || kind.type == Kind::Type::Sphere ||
-        kind.type == Kind::Type::Plane || kind.type == Kind::Type::Curve) {
-        // Resolved in place: the oracle's separate vector only keeps a
-        // failure out of *weights, which no caller reads after one.
-        if (!_RrOracleVolume(program, scratch, object, count, current, weights,
-                             error, context, work, depth)) {
-            return false;
-        }
-        // Anything but clamp is strict here.
-        for (float &w : *weights) {
-            if (!std::isfinite(w)) {
-                *error = "non-finite weight on " + who();
-                return false;
-            }
-            if (w < 0.0f || w > 1.0f) {
-                if (!kind.clamp) {
-                    *error = "strict range violation on " + who();
-                    return false;
-                }
-                w = std::min(std::max(w, 0.0f), 1.0f);
-            }
-        }
-        return true;
-    }
-
-    const float defaultWeight = read(wire.defaultWeight, 0.0f);
-    if (!kind.strict && !kind.clamp) {
-        *error = "unknown rangePolicy on " + who();
-        return false;
-    }
-
-    if (kind.type == Kind::Type::Dynamic) {
-        // A sparse dynamic weight that paints its own support must paint
-        // the base's, read at the evaluation time. The bake records a
-        // mismatch of its own arrays as the static error; a listed indices
-        // input is checked here, as it stands this run.
-        if (wire.base >= 0 && wire.indicesSlot >= 0 &&
-            kind.representation == Kind::Representation::Sparse) {
-            const std::vector<int32_t> none;
-            const std::vector<int32_t> &mine =
-                _RrPainted(program, wire.indicesSlot, none, false);
-            if (!mine.empty()) {
-                const RigExecWireWeightObject &baseWire =
-                    program->geometry->weightObjects[size_t(wire.base)];
-                const std::vector<int32_t> &theirs =
-                    _RrPainted(program, baseWire.indicesSlot, none, false);
-                auto normalized = [](const std::vector<int32_t> &source,
-                                     RrWeightSupportCache &cache)
-                    -> const std::vector<int32_t> & {
-                    if (!cache.initialized || cache.source != source) {
-                        cache.source = source;
-                        cache.normalized = source;
-                        std::sort(cache.normalized.begin(),
-                                  cache.normalized.end());
-                        cache.normalized.erase(
-                            std::unique(cache.normalized.begin(),
-                                        cache.normalized.end()),
-                            cache.normalized.end());
-                        cache.initialized = true;
-                    }
-                    return cache.normalized;
-                };
-                auto &support = work.supports[object];
-                if (normalized(mine, support[0]) !=
-                    normalized(theirs, support[1])) {
-                    *error = "dynamic/base sparse support mismatch on " + who();
-                    return false;
-                }
-            }
-        }
-        // Base field first (forwarding the in-flight points), then
-        // r_i = (b_i * d) * s + a.
-        if (wire.base >= 0) {
-            if (!_RrOracle(program, scratch, size_t(wire.base), count, current,
-                           weights, error, context, work, depth))
-                return false;
-        } else
-            weights->assign(count, 1.0f);
-        const float driver = read(wire.driver, 1.0f);
-        const float scale = read(wire.scale, 1.0f);
-        const float bias = read(wire.bias, 0.0f);
-        for (size_t i = 0; i < count; ++i) {
-            float r = ((*weights)[i] * driver) * scale + bias;
-            if (!std::isfinite(r)) {
-                *error = "non-finite dynamic weight on " + who();
-                return false;
-            }
-            if (r < 0.0f || r > 1.0f) {
-                if (kind.clamp) {
-                    r = std::min(std::max(r, 0.0f), 1.0f);
-                } else {
-                    *error = "strict range violation on " + who();
-                    return false;
-                }
-            }
-            (*weights)[i] = r;
-        }
-        return true;
-    }
-
-    // Static: the authored table, its painted arrays read raw at the
-    // evaluation time.
-    const std::vector<float> noValues;
-    const std::vector<int32_t> noIndices;
-    const std::vector<float> &values =
-        _RrPainted(program, wire.valuesSlot, noValues, false);
-    if (kind.representation == Kind::Representation::Constant) {
-        if (!values.empty()) {
-            *error = "constant weight must not author values on " + who();
-            return false;
-        }
-        weights->assign(count, defaultWeight);
-    } else if (kind.representation == Kind::Representation::Dense) {
-        if (values.size() != count) {
-            *error = "dense weight cardinality mismatch on " + who();
-            return false;
-        }
-        if (defaultWeight != 0.0f) {
-            *error =
-                "dense weight requires canonical defaultWeight 0 on " + who();
-            return false;
-        }
-        weights->assign(values.begin(), values.end());
-    } else if (kind.representation == Kind::Representation::Sparse) {
-        const std::vector<int32_t> &indices =
-            _RrPainted(program, wire.indicesSlot, noIndices, false);
-        if (indices.size() != values.size()) {
-            *error = "sparse index/value size mismatch on " + who();
-            return false;
-        }
-        weights->assign(count, defaultWeight);
-        // Pair order: each index is range-checked, then checked unseen.
-        auto &seen = work.seen;
-        seen.resize(count, 0);
-        if (++work.generation == 0) {
-            std::fill(seen.begin(), seen.end(), 0);
-            work.generation = 1;
-        }
-        const uint32_t generation = work.generation;
-        for (size_t i = 0; i < indices.size(); ++i) {
-            if (indices[i] < 0 || static_cast<size_t>(indices[i]) >= count) {
-                *error = "sparse index out of range on " + who();
-                return false;
-            }
-            if (seen[size_t(indices[i])] == generation) {
-                *error = "duplicate sparse index on " + who();
-                return false;
-            }
-            seen[size_t(indices[i])] = generation;
-            (*weights)[size_t(indices[i])] = values[i];
-        }
-    } else {
-        *error = "unknown weight representation on " + who();
-        return false;
-    }
-    for (float w : *weights) {
-        if (!std::isfinite(w) || (kind.strict && (w < 0.0f || w > 1.0f))) {
-            *error = "weight range violation on " + who();
-            return false;
-        }
-    }
-    if (kind.clamp) {
-        for (float &w : *weights) {
-            w = std::min(std::max(w, 0.0f), 1.0f);
-        }
-    }
-    return true;
+    RrWeightHost host{{program, nullptr, &frame}, {program, &store, nullptr}};
+    return eval::RunValueStep(
+               host, {uint32_t(wire.kind), wire.object, wire.part, slot})
+               .outcome == eval::Outcome::Applied;
 }
 
 } // namespace
@@ -2200,8 +1142,8 @@ RrResolveWeightOracle(const RrProgram *program, size_t object, size_t count,
     RrWeightFieldScratch work;
     work.children.resize(scratch->oracleKinds.size() + 1);
     work.supports.resize(scratch->oracleKinds.size());
-    const bool ok = _RrOracle(program, *scratch, object, count, current,
-                              weights, why, nullptr, work, 0);
+    const bool ok = _RrResolveField(program, object, count, current, weights,
+                                    why, nullptr, work);
     if (!ok)
         weights->clear();
     return ok;
@@ -2223,9 +1165,8 @@ RrResolveDeclaredWeightField(RrProgram *program, size_t fieldIndex,
     auto &work = _RrScratch(program)->fields[fieldIndex];
     auto &values = work.result;
     std::string error;
-    const bool ok =
-        _RrOracle(program, *_RrScratch(program), size_t(field.object), count,
-                  current, &values, &error, &context, work, 0);
+    const bool ok = _RrResolveField(program, size_t(field.object), count,
+                                    current, &values, &error, &context, work);
     // A failed result never exposes the preceding successful value.
     result.count = count;
     result.ok = ok;
