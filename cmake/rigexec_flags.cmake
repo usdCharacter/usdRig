@@ -246,13 +246,124 @@ function(rigexec_fp_genex_operator entry out_var)
     set(${out_var} "${_rigexec_go_op}" PARENT_SCOPE)
 endfunction()
 
+# PRIVATE: the complete compiler arguments an entry that leads with a
+# generator expression can produce. A conditional body may contribute
+# its payload or nothing; both cases include any trailing text. Unsupported
+# operators leave the set unestablished.
+function(rigexec_fp_option_arguments entry depth out_var)
+    if (NOT entry MATCHES "[$]<")
+        set(${out_var} "${entry}" PARENT_SCOPE)
+        return ()
+    endif ()
+    if (${depth} GREATER 5 OR NOT entry MATCHES "^[$]<")
+        set(${out_var} "RIGEXEC_UNESTABLISHED" PARENT_SCOPE)
+        return ()
+    endif ()
+    rigexec_fp_genex_close_index("${entry}" _rigexec_og_close)
+    if (_rigexec_og_close LESS 0)
+        set(${out_var} "RIGEXEC_UNESTABLISHED" PARENT_SCOPE)
+        return ()
+    endif ()
+    math(EXPR _rigexec_og_len "${_rigexec_og_close} + 1")
+    string(SUBSTRING "${entry}" 0 ${_rigexec_og_len} _rigexec_og_expr)
+    string(SUBSTRING "${entry}" ${_rigexec_og_len} -1 _rigexec_og_tail)
+    rigexec_fp_genex_operator("${_rigexec_og_expr}" _rigexec_og_op)
+    rigexec_fp_genex_content("${_rigexec_og_expr}" _rigexec_og_body)
+    math(EXPR _rigexec_og_child "${depth} + 1")
+    if (_rigexec_og_op STREQUAL "0")
+        rigexec_fp_option_arguments("${_rigexec_og_tail}"
+            ${_rigexec_og_child} _rigexec_og_out)
+        set(${out_var} "${_rigexec_og_out}" PARENT_SCOPE)
+        return ()
+    endif ()
+    set(_rigexec_og_branches "")
+    set(_rigexec_og_nb 0)
+    if (_rigexec_og_op STREQUAL "IF")
+        rigexec_fp_genex_segments("${_rigexec_og_body}" _rigexec_og_segs)
+        list(LENGTH _rigexec_og_segs _rigexec_og_nb)
+        if (NOT _rigexec_og_nb EQUAL 3)
+            set(${out_var} "RIGEXEC_UNESTABLISHED" PARENT_SCOPE)
+            return ()
+        endif ()
+    elseif (_rigexec_og_op STREQUAL "1")
+        set(_rigexec_og_branches "${_rigexec_og_body}")
+        set(_rigexec_og_nb 1)
+    elseif (_rigexec_og_op MATCHES "^[$]<")
+        rigexec_fp_genex_complete("${_rigexec_og_op}" _rigexec_og_predicate)
+        if (NOT _rigexec_og_predicate)
+            set(${out_var} "RIGEXEC_UNESTABLISHED" PARENT_SCOPE)
+            return ()
+        endif ()
+        set(_rigexec_og_branches "${_rigexec_og_body}")
+        set(_rigexec_og_nb 1)
+    else ()
+        set(${out_var} "RIGEXEC_UNESTABLISHED" PARENT_SCOPE)
+        return ()
+    endif ()
+    if (_rigexec_og_nb LESS 1)
+        # A branch list with nothing to contribute still leaves the
+        # trailing text as the false-branch argument.
+        rigexec_fp_option_arguments("${_rigexec_og_tail}"
+            ${_rigexec_og_child} _rigexec_og_out)
+        set(${out_var} "${_rigexec_og_out}" PARENT_SCOPE)
+        return ()
+    endif ()
+    set(_rigexec_og_out "")
+    set(_rigexec_og_seen 0)
+    if (_rigexec_og_op STREQUAL "IF")
+        # Empty result branches still yield the trailing text; iterate
+        # by index so foreach does not drop them from the list.
+        math(EXPR _rigexec_og_last "${_rigexec_og_nb} - 1")
+        set(_rigexec_og_i 1)
+        while (_rigexec_og_i LESS_EQUAL _rigexec_og_last)
+            list(GET _rigexec_og_segs ${_rigexec_og_i} _rigexec_og_branch)
+            rigexec_fp_option_arguments("${_rigexec_og_branch}${_rigexec_og_tail}"
+                ${_rigexec_og_child} _rigexec_og_sub)
+            if (_rigexec_og_sub STREQUAL "RIGEXEC_UNESTABLISHED")
+                set(${out_var} "RIGEXEC_UNESTABLISHED" PARENT_SCOPE)
+                return ()
+            endif ()
+            list(APPEND _rigexec_og_out "${_rigexec_og_sub}")
+            math(EXPR _rigexec_og_seen "${_rigexec_og_seen} + 1")
+            math(EXPR _rigexec_og_i "${_rigexec_og_i} + 1")
+        endwhile ()
+    else ()
+        rigexec_fp_option_arguments("${_rigexec_og_branches}${_rigexec_og_tail}"
+            ${_rigexec_og_child} _rigexec_og_sub)
+        if (_rigexec_og_sub STREQUAL "RIGEXEC_UNESTABLISHED")
+            set(${out_var} "RIGEXEC_UNESTABLISHED" PARENT_SCOPE)
+            return ()
+        endif ()
+        list(APPEND _rigexec_og_out "${_rigexec_og_sub}")
+        math(EXPR _rigexec_og_seen "${_rigexec_og_seen} + 1")
+    endif ()
+    if (_rigexec_og_op MATCHES "^[$]<")
+        rigexec_fp_option_arguments("${_rigexec_og_tail}"
+            ${_rigexec_og_child} _rigexec_og_false)
+        if (_rigexec_og_false STREQUAL "RIGEXEC_UNESTABLISHED")
+            set(${out_var} "RIGEXEC_UNESTABLISHED" PARENT_SCOPE)
+            return ()
+        endif ()
+        list(APPEND _rigexec_og_out "${_rigexec_og_false}")
+    endif ()
+    list(LENGTH _rigexec_og_out _rigexec_og_count)
+    if (_rigexec_og_count GREATER 16)
+        set(${out_var} "RIGEXEC_UNESTABLISHED" PARENT_SCOPE)
+        return ()
+    endif ()
+    set(${out_var} "${_rigexec_og_out}" PARENT_SCOPE)
+endfunction()
+
 # PRIVATE: reason text when a compile-option entry could contribute a
 # conflicting floating-point option, empty when it is provably safe. A
 # bare $<TARGET_PROPERTY:...> entry is judged per value item; a lookup
 # concatenated into text is substituted into the entry and the complete
 # compiler argument is judged, so a split spelling cannot re-form a
-# conflicting option. Unresolvable lookups, multi-value concatenations
-# and values past the nesting cutoff are rejected.
+# conflicting option. An entry leading with an expression is accepted
+# only when every complete argument it can expand to is judged safe;
+# unresolvable lookups, multi-value concatenations, expressions with no
+# established argument set and values past the nesting cutoff are
+# rejected naming the full entry.
 function(rigexec_fp_option_conflict_reason entry ctx_target depth out_var)
     rigexec_get_exact_fp_flags(_rigexec_fp_canonical)
     rigexec_get_exact_fp_conflict_regex(_rigexec_fp_conflict)
@@ -273,12 +384,35 @@ function(rigexec_fp_option_conflict_reason entry ctx_target depth out_var)
     endif ()
     string(FIND "${entry}" "$<TARGET_PROPERTY:" _rigexec_or_pos)
     if (_rigexec_or_pos EQUAL -1)
-        if (entry MATCHES "[$]<" AND NOT entry MATCHES "^[$]<")
+        if (NOT entry MATCHES "[$]<")
+            return ()
+        endif ()
+        if (NOT entry MATCHES "^[$]<")
             # Literal text around an expression: the joined argument is
             # not spelled by any part, and no lookup resolves it.
             set(${out_var} "concatenated option expression (${entry})"
                 PARENT_SCOPE)
+            return ()
         endif ()
+        # The entry leads with an expression: judge every complete
+        # argument it can produce, and reject the entry itself when an
+        # argument cannot be established.
+        math(EXPR _rigexec_or_child "${depth} + 1")
+        rigexec_fp_option_arguments("${entry}" ${_rigexec_or_child}
+            _rigexec_or_args)
+        if (_rigexec_or_args STREQUAL "RIGEXEC_UNESTABLISHED")
+            set(${out_var} "unestablished option expression (${entry})"
+                PARENT_SCOPE)
+            return ()
+        endif ()
+        foreach (_rigexec_or_arg IN LISTS _rigexec_or_args)
+            rigexec_fp_option_conflict_reason("${_rigexec_or_arg}"
+                "${ctx_target}" ${_rigexec_or_child} _rigexec_or_sub)
+            if (_rigexec_or_sub)
+                set(${out_var} "${_rigexec_or_sub}" PARENT_SCOPE)
+                return ()
+            endif ()
+        endforeach ()
         return ()
     endif ()
     string(SUBSTRING "${entry}" ${_rigexec_or_pos} -1 _rigexec_or_from)
@@ -357,6 +491,36 @@ function(rigexec_fp_option_conflict_reason entry ctx_target depth out_var)
     set(${out_var} "" PARENT_SCOPE)
 endfunction()
 
+# PRIVATE: CMake stores semicolons inside an interface generator expression
+# as list separators. Reassemble only fragments whose opening expression
+# has not closed before inspecting its complete option entry.
+function(rigexec_fp_option_entries values out_var)
+    set(_rigexec_oe_entries "")
+    set(_rigexec_oe_pending "")
+    foreach (_rigexec_oe_part IN LISTS values)
+        if (_rigexec_oe_pending STREQUAL "")
+            set(_rigexec_oe_pending "${_rigexec_oe_part}")
+        else ()
+            string(APPEND _rigexec_oe_pending ";${_rigexec_oe_part}")
+        endif ()
+        if (_rigexec_oe_pending MATCHES "^[$]<")
+            rigexec_fp_genex_close_index("${_rigexec_oe_pending}"
+                _rigexec_oe_close)
+            if (_rigexec_oe_close LESS 0)
+                continue ()
+            endif ()
+        endif ()
+        string(REPLACE ";" "\\;" _rigexec_oe_escaped "${_rigexec_oe_pending}")
+        list(APPEND _rigexec_oe_entries "${_rigexec_oe_escaped}")
+        set(_rigexec_oe_pending "")
+    endforeach ()
+    if (NOT _rigexec_oe_pending STREQUAL "")
+        string(REPLACE ";" "\\;" _rigexec_oe_escaped "${_rigexec_oe_pending}")
+        list(APPEND _rigexec_oe_entries "${_rigexec_oe_escaped}")
+    endif ()
+    set(${out_var} "${_rigexec_oe_entries}" PARENT_SCOPE)
+endfunction()
+
 # PRIVATE: options no ordering can outrank abort configuration naming
 # the consuming target, option source and entry: per-source
 # COMPILE_OPTIONS and the INTERFACE_COMPILE_OPTIONS of the transitive
@@ -372,7 +536,8 @@ function(rigexec_fp_reject_unrankable_conflicts target)
     foreach (_rigexec_fp_src IN LISTS _rigexec_fp_srcs)
         get_source_file_property(_rigexec_fp_sopts "${_rigexec_fp_src}"
             COMPILE_OPTIONS)
-        foreach (_rigexec_fp_flag IN LISTS _rigexec_fp_sopts)
+        rigexec_fp_option_entries("${_rigexec_fp_sopts}" _rigexec_fp_entries)
+        foreach (_rigexec_fp_flag IN LISTS _rigexec_fp_entries)
             rigexec_fp_option_conflict_reason("${_rigexec_fp_flag}"
                 "${target}" 1 _rigexec_fp_reason)
             if (_rigexec_fp_reason)
@@ -526,7 +691,8 @@ function(rigexec_fp_reject_unrankable_conflicts target)
         endif ()
         get_target_property(_rigexec_fp_iopts
             "${_rigexec_fp_lib}" INTERFACE_COMPILE_OPTIONS)
-        foreach (_rigexec_fp_flag IN LISTS _rigexec_fp_iopts)
+        rigexec_fp_option_entries("${_rigexec_fp_iopts}" _rigexec_fp_entries)
+        foreach (_rigexec_fp_flag IN LISTS _rigexec_fp_entries)
             rigexec_fp_option_conflict_reason("${_rigexec_fp_flag}"
                 "${target}" 1 _rigexec_fp_reason)
             if (_rigexec_fp_reason)

@@ -6,7 +6,10 @@
 # each WITNESS_*_LINK, WITNESS_*_OPTION and WITNESS_MIXED/ADJACENT/
 # DEEP/ONE_ARG mode adds a target whose only route to a fast option is
 # that one link- or compile-option shape. The WITNESS_CONCAT_*_OPTION
-# modes split the fast flag across literal text and a property lookup.
+# modes split the fast flag across literal text and a property lookup;
+# the WITNESS_EXPR_*_OPTION modes start that split with a constant
+# generator expression, and WITNESS_EXPR_SAFE_OPTION adds only
+# expression options whose every expanded argument is harmless.
 cmake_minimum_required(VERSION 3.26)
 project(rigexec_exact_fp_witness LANGUAGES CXX)
 
@@ -54,7 +57,11 @@ if (NOT WITNESS_IF_LINK AND NOT WITNESS_DEEP_LINK AND NOT WITNESS_PROP_LINK
     AND NOT WITNESS_ADJACENT_IF AND NOT WITNESS_PROP_IFACE_OPTION
     AND NOT WITNESS_PROP_SOURCE_OPTION
     AND NOT WITNESS_CONCAT_IFACE_OPTION
-    AND NOT WITNESS_CONCAT_SOURCE_OPTION)
+    AND NOT WITNESS_CONCAT_SOURCE_OPTION
+    AND NOT WITNESS_EXPR_IFACE_OPTION
+    AND NOT WITNESS_EXPR_SOURCE_OPTION
+    AND NOT WITNESS_EXPR_SAFE_OPTION
+    AND NOT WITNESS_EXPR_CONDITIONAL_OPTION)
     target_link_libraries(witnessExact PRIVATE $<$<CONFIG:Release>:Pkg::Fast>)
 endif ()
 
@@ -187,6 +194,56 @@ if (WITNESS_CONCAT_SOURCE_OPTION)
         COMPILE_OPTIONS
         "${WITNESS_CONCAT_HEAD}$<TARGET_PROPERTY:fpIface,FP_MODE>")
     add_executable(witnessSourceConcat probeSrcOpt.cpp)
+endif ()
+
+if (WITNESS_EXPR_IFACE_OPTION)
+    # The split flag written as an expression-leading option: the
+    # constant $<1:...> closes before the entry ends, so no part spells
+    # the fast flag and the entry begins with an expression; only the
+    # fully expanded argument names it.
+    add_executable(witnessExprIface
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+    set_target_properties(fpIface PROPERTIES
+        FP_MODE "${WITNESS_CONCAT_TAIL}")
+    target_compile_options(fpIface INTERFACE
+        "$<1:${WITNESS_EXPR_HEAD}>$<TARGET_PROPERTY:fpIface,FP_MODE>")
+    target_link_libraries(witnessExprIface PRIVATE fpIface)
+endif ()
+
+if (WITNESS_EXPR_SOURCE_OPTION)
+    # The same expression-leading split on a per-source option of the
+    # dedicated witnessExprSource translation unit.
+    set_target_properties(fpIface PROPERTIES
+        FP_MODE "${WITNESS_CONCAT_TAIL}")
+    set_source_files_properties(probeSrcOpt.cpp PROPERTIES
+        COMPILE_OPTIONS
+        "$<1:${WITNESS_EXPR_HEAD}>$<TARGET_PROPERTY:fpIface,FP_MODE>")
+    add_executable(witnessExprSource probeSrcOpt.cpp)
+endif ()
+
+if (WITNESS_EXPR_CONDITIONAL_OPTION)
+    add_executable(witnessExprConditional probe.cpp)
+    target_compile_options(fpIface INTERFACE
+        "$<$<AND:$<CONFIG:Debug>,$<COMPILE_LANGUAGE:CXX>>:${WITNESS_EXPR_HEAD}>${WITNESS_CONCAT_TAIL}")
+    target_link_libraries(witnessExprConditional PRIVATE fpIface)
+endif ()
+
+if (WITNESS_EXPR_SAFE_OPTION)
+    # Expressions whose every possible expanded argument is harmless:
+    # a constant split across expression and literal, a constant
+    # nothing, and a nested conditional interface option whose Release
+    # branch is a property lookup. The walk must accept this rig untouched.
+    add_executable(witnessExprSafe
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+    set_target_properties(fpIface PROPERTIES FP_MODE "-DEXPR_LOOKUP")
+    target_compile_options(fpIface INTERFACE
+        "$<1:-DEXPR_HEAD>tail"
+        "$<0:-DEXPR_DROPPED>"
+        "$<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:CXX>>:$<TARGET_PROPERTY:fpIface,FP_MODE>>"
+        "$<$<CONFIG:Release>:-DEXPR_FIRST;-DEXPR_SECOND>")
+    target_link_libraries(witnessExprSafe PRIVATE fpIface)
 endif ()
 
 if (WITNESS_UNSUPPORTED_LINK)

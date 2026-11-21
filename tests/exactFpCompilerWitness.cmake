@@ -597,5 +597,106 @@ foreach (_w_needle IN ITEMS
     endif ()
 endforeach ()
 
+# Leg 18: the split flag led by a constant expression in an interface
+# option: no part spells the fast flag and the entry begins with an
+# expression, so only the fully expanded argument can be judged.
+set(_work18 "${BUILD_ROOT}/expr-iface-option")
+_witness_configure("${_work18}"
+    "-DWITNESS_CONCAT_HEAD=${_concat_head}"
+    "-DWITNESS_CONCAT_TAIL=${_concat_tail}"
+    "-DWITNESS_EXPR_HEAD=${_concat_head}"
+    -DWITNESS_EXPR_IFACE_OPTION=ON)
+if (WITNESS_RC EQUAL 0)
+    _witness_fail("expression-leading interface compile option "
+        "configured without a diagnostic (rc=0)")
+endif ()
+foreach (_w_needle IN ITEMS
+    "target witnessExprIface carries"
+    "fpIface: [$]<1:${_concat_head}>[$]<TARGET_PROPERTY:fpIface,FP_MODE>"
+    "via FP_MODE of fpIface: conflicting option \\(${_conflict_flag}\\)")
+    if (NOT WITNESS_LOG MATCHES "${_w_needle}")
+        _witness_fail("leg18 diagnostic lacks '${_w_needle}':\n${WITNESS_LOG}")
+    endif ()
+endforeach ()
+
+# Leg 19: the same expression-leading split through per-source
+# COMPILE_OPTIONS on the dedicated witnessExprSource translation unit.
+set(_work19 "${BUILD_ROOT}/expr-source-option")
+_witness_configure("${_work19}"
+    "-DWITNESS_CONCAT_HEAD=${_concat_head}"
+    "-DWITNESS_CONCAT_TAIL=${_concat_tail}"
+    "-DWITNESS_EXPR_HEAD=${_concat_head}"
+    -DWITNESS_EXPR_SOURCE_OPTION=ON)
+if (WITNESS_RC EQUAL 0)
+    _witness_fail("expression-leading per-source compile option "
+        "configured without a diagnostic (rc=0)")
+endif ()
+foreach (_w_needle IN ITEMS
+    "target witnessExprSource carries"
+    "source .*probeSrcOpt\\.cpp: [$]<1:${_concat_head}>[$]<TARGET_PROPERTY:fpIface,FP_MODE>"
+    "via FP_MODE of fpIface: conflicting option \\(${_conflict_flag}\\)")
+    if (NOT WITNESS_LOG MATCHES "${_w_needle}")
+        _witness_fail("leg19 diagnostic lacks '${_w_needle}':\n${WITNESS_LOG}")
+    endif ()
+endforeach ()
+
+# Leg 20: the acceptance boundary - every possible expansion of the
+# interface options is harmless, so the rig must configure untouched and
+# keep the exact mode.
+set(_work20 "${BUILD_ROOT}/third_party-expr-safe")
+_witness_configure("${_work20}" -DWITNESS_EXPR_SAFE_OPTION=ON)
+if (NOT WITNESS_RC EQUAL 0)
+    _witness_fail("harmless computed interface options rejected:\n"
+        "${WITNESS_LOG}")
+endif ()
+execute_process(COMMAND "${CMAKE_COMMAND}" --build "${_work20}"
+    ${_build_config}
+    RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
+if (NOT _rc EQUAL 0)
+    _witness_fail("expression-safe leg failed to build: ${_out}${_err}")
+endif ()
+_witness_audit("${_work20}")
+_witness_run_and_check_exact("${_work20}${_cfgdir}/witnessExprSafe")
+if (EXISTS "${_work20}/compile_commands.json")
+    file(READ "${_work20}/compile_commands.json" _cc20)
+    _witness_count("${_cc20}" "-DEXPR_HEADtail" _n)
+    if (_n LESS 1)
+        _witness_fail("expanded constant option missing from commands")
+    endif ()
+    _witness_count("${_cc20}" "-DEXPR_LOOKUP" _n)
+    if (_n LESS 1)
+        _witness_fail("expanded conditional lookup option missing")
+    endif ()
+    foreach (_flag IN ITEMS -DEXPR_FIRST -DEXPR_SECOND)
+        _witness_count("${_cc20}" "${_flag}" _n)
+        if (_n LESS 1)
+            _witness_fail("expanded multi-option expression lacks ${_flag}")
+        endif ()
+    endforeach ()
+    _witness_count("${_cc20}" "-DEXPR_DROPPED" _n)
+    if (NOT _n EQUAL 0)
+        _witness_fail("$<0:...> option reached the command line")
+    endif ()
+endif ()
+
+# The nested predicate can omit its payload in Release. The trailing text
+# is safe alone but can combine with the payload into a fast-math option.
+set(_work21 "${BUILD_ROOT}/expr-conditional-option")
+_witness_configure("${_work21}"
+    "-DWITNESS_CONCAT_TAIL=${_concat_tail}"
+    "-DWITNESS_EXPR_HEAD=${_concat_head}"
+    -DWITNESS_EXPR_CONDITIONAL_OPTION=ON)
+if (WITNESS_RC EQUAL 0)
+    _witness_fail("conditional interface option configured without a diagnostic")
+endif ()
+foreach (_w_needle IN ITEMS
+    "target witnessExprConditional carries"
+    "fpIface: [$]<[$]<AND:[$]<CONFIG:Debug>,[$]<COMPILE_LANGUAGE:CXX>>:${_concat_head}>${_concat_tail}"
+    "conflicting option \\(${_conflict_flag}\\)")
+    if (NOT WITNESS_LOG MATCHES "${_w_needle}")
+        _witness_fail("leg21 diagnostic lacks '${_w_needle}':\n${WITNESS_LOG}")
+    endif ()
+endforeach ()
+
 message(STATUS "exactFpCompilerWitness: command audit and numeric probes "
     "agree on the exact mode")
