@@ -339,18 +339,98 @@ its windows, and the plugins keep their state per session.
   `SessionRegistry` files one value per session. Its key is the session's main
   window (`usdviewApi.qMainWindow`), held weakly, and the entry is dropped when
   the window is destroyed. The state kept this way: the rigExec, TouchPose and
-  shape editor containers (`rigExecUsdview.ContainerFor(api)`), the gizmo and
-  view cube controllers and their pending installs
-  (`gizmoUI.GetController(api)`, `viewCubeUI.GetController(api)`), gizmo tool
-  settings, `gizmoMath`'s published-frame readers, `gizmoPreview`'s channels,
-  and every panel's `_instance`.
+  shape editor containers (`rigExecUsdview.ContainerFor(api)`), the four
+  viewport-tool controllers (`gizmoUI`, `viewCubeUI`, `avarDock`, `viewAxisUI`,
+  each via `GetController(api)`), the StageView readiness records below
+  (`stageViewReady`, keyed by `SessionKey(api)`), gizmo tool settings,
+  `gizmoMath`'s published-frame readers, `gizmoPreview`'s channels, and every
+  panel's `_instance`.
   A caller that passes no api gets the session that owns
   `QApplication.activeWindow()`, else the only session, else None. No session
   wins by registering last. The old module attributes (`gizmoUI._controller`,
-  `viewCubeUI._controller`, `rigExecUsdview._container`) can still be read,
-  and give that same answer. `sessionRegistry.ForgetSession(api)` drops a
-  session from every registry at once; usdOrchestrate's host calls it when a
-  session closes.
+  `viewCubeUI._controller`, `avarDock._controller`,
+  `viewAxisUI._controller`, `rigExecUsdview._container`) can still be read
+  (read-only; the tool lookups answer ready sessions only, see below).
+  `sessionRegistry.ForgetSession(api)` drops a session from every registry at
+  once; usdOrchestrate's host calls it when a session closes.
+- **StageView readiness** (`plugin/rigExecUsdview/stageViewReady.py`). OpenUSD
+  26.08 loads plugins before `_stageView` exists: assigning the stage emits
+  `signalStageReplaced` before `_reloadVaryingUI` creates the widget, and a
+  `_noRender` host skips that creation even with a main window.
+  `usdviewApi` reads the private field but offers no ready notification, so
+  neither `configureView` nor stage replacement is a ready signal. The broker
+  is the one bounded fallback instead of a poll in each consumer: each session
+  owns one record with one single-shot `QTimer`, its pending factories and its
+  completed results, all on the Qt owner thread.
+  `StageView(usdviewApi)` returns the host's actual
+  `_UsdviewApi__appController._stageView` or `None`. `Register(usdviewApi,
+  tool, create, retries=DEFAULT_RETRIES, onReady=None)` reserves the
+  session/tool slot as `pending` before running any external code and returns
+  an immutable `InstallResult(status, controller, error)` snapshot; `tool` is
+  one of `gizmo`, `viewCube`, `avarDock`, `viewAxis`. Only `ready` carries a
+  controller; only `failed` carries diagnostic text; `pending` and
+  `unavailable` carry neither. `create()` runs synchronously once the broker
+  sees the view and must return a non-null controller; `onReady(controller)`
+  runs once after publication. First registration wins, including its inputs;
+  reentrant or repeated registrations never replace the factory or run it
+  twice.
+  The first request probes immediately. A known `_noRender` host with no view
+  settles to `unavailable` at once. Otherwise the broker probes once per queued
+  event-loop turn for the whole session, not per factory. The first request
+  sets the shared maximum deferred probe count (`max(0, retries)`); later
+  arrivals join the remaining budget and never extend it. The shared default is
+  `DEFAULT_RETRIES = 40`; an explicit `0` from the request that starts the wait
+  means synchronous-only. The last allowed probe still runs before exhaustion
+  is declared, and `unavailable` is then cached for the session generation,
+  including later tool registrations, with no `QTimer` left behind and no
+  rearming on stage changes. Once the view appears, waiting factories drain in
+  insertion order; later tools probe synchronously.
+- **Status snapshots and controller lookups.** `GetResult(usdviewApi, tool)` is
+  a side-effect-free read of the latest snapshot, or `None` for an
+  unregistered or retired session/tool. Snapshots never mutate: async consumers
+  re-query. The four compatibility installers keep their signatures and return
+  `Register(...).controller`, a controller-or-`None` answer:
+  `InstallViewportTools(usdviewApi, undoStack, retries=40,
+  openGraphEditor=None)`, `InstallViewCube(usdviewApi, retries=40)`,
+  `InstallAvarDock(usdviewApi, undoStack=None, retries=40)`,
+  `InstallViewAxis(usdviewApi, retries=40)`, each default bound to
+  `stageViewReady.DEFAULT_RETRIES`. New code that needs the reason calls
+  `GetResult`. Each module also keeps `GetController(usdviewApi=None)`,
+  delegating to the shared `Controller(usdviewApi, tool)` lookup: an explicit
+  api or window names only that session and never falls back, while a `None`
+  api answers the session that owns the active window (through its window
+  chain), else the sole ready session of that tool, else `None`.
+  `Controllers(tool)` lists every ready controller of that tool for shortcut
+  rescoping.
+  ```python
+  first = gizmoUI.InstallViewportTools(api, undoStack)  # None: view missing
+  pending = stageViewReady.GetResult(api, "gizmo")      # InstallResult("pending")
+  # ... the host creates the view; the broker drains the queue ...
+  controller = gizmoUI.InstallViewportTools(api, undoStack)
+  ready = stageViewReady.GetResult(api, "gizmo")
+  assert pending.status == "pending"  # the first snapshot never mutates
+  assert ready.status == "ready" and ready.controller is controller
+  sessionRegistry.ForgetSession(api)
+  assert stageViewReady.GetResult(api, "gizmo") is None
+  ```
+- **Session teardown is not stage replacement.** `Retire(usdviewApi)` removes
+  only that session's broker record, idempotently; closing the window drops it
+  through the `destroyed` signal, and `ForgetSession(api)` drops it from every
+  registry even when the window is retained, so a later registration on the
+  retained window starts a fresh generation with new inputs. Retirement
+  invalidates the generation first, stops and disposes a live timer, and clears
+  factories and results, so no stale construction, `onReady`, or obsolete
+  publication runs afterwards, and surviving sessions are unaffected.
+  Replacing the USD stage does none of this: ready controllers stay installed,
+  pending work keeps its budget, and a terminal `unavailable` stays terminal
+  until the session is retired.
+  Covered by the offscreen `tests/python/test_session_state.py` groups "all
+  four installers are immediate and idempotent", "staggered readiness, FIFO,
+  delegation, and ready-only lookups", "final probe, bounded retries, zero,
+  and no-render outcomes", "constructor isolation and shared probe/timer
+  failures", and "close, forget/re-register, and retirement during creation"
+  (`ctest -R '^testSessionState$'`); this prose edit runs no test target, so
+  no verified result is claimed here.
 - **Application-wide event filters.** The gizmo hotkeys act only on events
   whose window belongs to their session (`sessionRegistry.SessionOfEvent`).
   The graph editor's hotkeys act only inside its own panel.
