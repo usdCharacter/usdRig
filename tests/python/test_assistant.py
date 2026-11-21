@@ -508,11 +508,45 @@ def _ChatKeepsEffects():
            "the change did not survive the chat: %s" % kept)
 
 
+def _DefineUnderOverAncestor():
+    """Defining /A/B under an existing over /A promotes /A to def, and
+    one undo restores the layer's original contents byte for byte."""
+    layer = _Layer("define_over_ancestor.usda",
+                   '#usda 1.0\nover "A"\n{\n}\n')
+    original = layer.ExportToString()
+    stage = Usd.Stage.Open(layer)
+    container = _CountingContainer()
+    box, _api = _Toolbox(stage, container, can_edit=True)
+    text, failed = box.call("change_stage", {"changes": [
+        {"action": "define_prim", "path": "/A/B", "type": "Xform"}]})
+    _Check(not failed, "define_prim under an over is made: %s" % text)
+    spec = layer.GetPrimAtPath("/A")
+    _Check(spec is not None and spec.specifier == Sdf.SpecifierDef,
+           "the define promoted the over ancestor to def")
+    _Check(stage.GetPrimAtPath("/A/B").IsValid(),
+           "the new prim reads back composed")
+    box.finish()
+    _Check(len(container.stack.pushed) == 1,
+           "the reply is exactly one host undo entry: %s" %
+           (container.stack.pushed,))
+    edited = layer.ExportToString()
+    _Check(edited != original, "the edit changed the layer")
+    container.stack.Undo()
+    _Check(layer.ExportToString() == original,
+           "one undo restores the original layer contents")
+    _Check(not stage.GetPrimAtPath("/A/B").IsValid(),
+           "undo removes the defined prim")
+    container.stack.Redo()
+    _Check(layer.ExportToString() == edited,
+           "one redo restores the edited layer contents")
+
+
 def TestReplyTransaction():
     """One reply is one step on the host's undo stack, and nothing else."""
     _OneStepPerReply()
     _OverlappingWrites()
     _CrossLayerReply()
+    _DefineUnderOverAncestor()
     _EffectsAreNotUndoable()
     _SaveOnlyReply()
     _MissingUndoStack()

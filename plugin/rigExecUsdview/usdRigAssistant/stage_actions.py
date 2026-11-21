@@ -396,6 +396,27 @@ class Applier(object):
                 layer, Sdf.Path.absoluteRootPath, key),
             Sdf.Path.absoluteRootPath)
 
+    def _capture_define_ancestors(self, scene_path):
+        """Snapshot the over ancestors a define promotes to def.
+
+        Defining /A/B turns an existing over /A on the edit target into
+        a def, while _topmost_absent stops at the child itself. Without
+        these snapshots undo removes the child and leaves /A defined."""
+        if self._capture is None:
+            return
+        target = self.stage.GetEditTarget()
+        layer = target.GetLayer()
+        spec_path = target.MapToSpecPath(scene_path)
+        if not spec_path:
+            return
+        parent = spec_path.GetParentPath()
+        while parent and not parent.IsAbsoluteRootPath():
+            spec = layer.GetPrimAtPath(parent)
+            if spec is not None and spec.specifier == Sdf.SpecifierOver:
+                self._capture.capture(
+                    rigExecUndo.SpecSnapshot.Capture(layer, parent), parent)
+            parent = parent.GetParentPath()
+
     # Helpers
     def path(self, action, key='path'):
         text = str(action.get(key) or '').strip()
@@ -438,6 +459,7 @@ class Applier(object):
         path = self.path(action)
         type_name = str(action.get('type') or '')
         self._capture_spec(path)
+        self._capture_define_ancestors(path)
         prim = self.stage.DefinePrim(path, type_name)
         if not prim:
             raise ActionError('Could not define {}'.format(path))
