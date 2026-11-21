@@ -1,17 +1,6 @@
 #
 # TouchPose's usdview plugin container.
 #
-# A SECOND container rather than another item in rigExecUsdview's, for
-# one reason: `plugin/touchPose` is a self-contained port -- the importer,
-# the `.touch` reader, the pick loop and the spikes all live here -- and
-# reaching into `plugin/rigExecUsdview/rigExecUsdview.py` to register it
-# would make the two directories mutually dependent for the sake of one
-# menu line. `findOrCreateMenu("RigExec")` is exactly the seam that makes
-# the separation free: both containers ask for the same menu, usdview
-# hands them the same QMenu, and the item lands under
-# RigExec -> Animation Editors -> TouchPose whichever container loads
-# first.
-#
 # The panel is imported lazily inside the callback, as every panel in
 # rigExecUsdview is, so that this module stays importable with no Qt.
 #
@@ -21,33 +10,7 @@ import sys
 from pxr import Tf
 from pxr.Usdviewq.plugin import PluginContainer
 
-
-# RigExec -> submenu placement by rank.
-_SUBMENU_RANKS = {"Viewport": 10, "General Editors": 20,
-                  "Animation Editors": 30}
-_MENU_RANK = "rigExecMenuRank"
-
-
-def _PlaceByRank(qMenu, action, rank):
-    action.setProperty(_MENU_RANK, rank)
-    for other in qMenu.actions():
-        if other == action:
-            return
-        otherRank = other.property(_MENU_RANK)
-        if otherRank is not None and otherRank > rank:
-            qMenu.removeAction(action)
-            qMenu.insertAction(other, action)
-            return
-
-
-def _AddToRigExecMenu(plugUIBuilder, submenu, commandPlugin, rank):
-    menu = plugUIBuilder.findOrCreateMenu("RigExec").findOrCreateSubmenu(
-        submenu)
-    action = menu.addItem(commandPlugin)
-    qMenu = action.parent()
-    _PlaceByRank(qMenu, action, rank)
-    _PlaceByRank(qMenu.parent(), qMenu.menuAction(), _SUBMENU_RANKS[submenu])
-    return action
+from usdRigViewMenu import AddToRigExecMenu as _AddToRigExecMenu
 
 
 # usdview's plugin loader does not retain a container that registers no

@@ -45,7 +45,7 @@
 #   * SAVE rewrites the touch layer and leaves the rig file alone, and
 #     what comes back off disk is what was painted;
 #   * turning TouchPose OFF gives usdview its picking back completely --
-#     the same click then selects `body_geo` as it always did. A mode
+#     a native mesh hit then selects `body_geo` as it always did. A mode
 #     that leaves the viewport subtly broken behind it is worse than no
 #     mode.
 #
@@ -1102,12 +1102,17 @@ def testUsdviewInputFunction(appController):
             _Check(not gizmo.IsDragging(), "the drag ended")
 
             # ...and the very next hover works again. One-shot, no poll.
+            # A fresh fingerprint: the press taken during the drag fell
+            # through to usdview's pick, and that selection round-trip
+            # authored gizmo edits of its own. The resumed hover must
+            # author nothing past the layer as released.
+            resumedFingerprint = _SessionFingerprint(stage)
             _SendHover(view, pixel[0], pixel[1], viewport.ratio)
             appController._processEvents()
             _Check(not controller.suspended, "TouchPose resumed")
             _Check(controller.highlight.key is not None,
                    "and the first hover after the drag highlights again")
-            _Check(_SessionFingerprint(stage) == fingerprint,
+            _Check(_SessionFingerprint(stage) == resumedFingerprint,
                    "and even awake, lighting it authored nothing")
 
             print("TouchPose: during a gizmo drag, %d hover samples across "
@@ -1125,12 +1130,12 @@ def testUsdviewInputFunction(appController):
             frame = dataModel.currentFrame
             from pxr import Usd as _TimeUsd
             dataModel.currentFrame = _TimeUsd.TimeCode(frame.GetValue() + 1.0)
-            appController._processEvents()
             _Check(controller.suspended and controller.highlight.suspended,
                    "a frame change stands TouchPose down")
-            dataModel.currentFrame = frame
             appController._processEvents()
+            dataModel.currentFrame = frame
             _Check(controller.suspended, "and scrubbing keeps it down")
+            appController._processEvents()
             deadline = time.perf_counter() + 2.0
             while controller.suspended and time.perf_counter() < deadline:
                 appController._processEvents()
@@ -1550,7 +1555,25 @@ def testUsdviewInputFunction(appController):
     _Check(not controller.active, "TouchPose deactivated")
     selection.clearPrims()
     appController._processEvents()
-    consumed = _SendClick(view, pixel[0], pixel[1], viewport.ratio)
+
+    # The earlier TouchPose ray can hit skin behind a rendered control.
+    # Check the native pick at the exact rounded coordinates _SendClick uses.
+    def nativePickPath(point):
+        x = int(point[0] / viewport.ratio) * view.devicePixelRatioF()
+        y = int(point[1] / viewport.ratio) * view.devicePixelRatioF()
+        inBounds, frustum = view.computePickFrustum(x, y)
+        hits = view.pick(frustum) if inBounds else []
+        return str(hits[0].hitPrimPath) if hits else None
+
+    meshPixel = next(
+        (point for point in [pixel] + [
+            (pixel[0] + dx, pixel[1] + dy)
+            for dy in range(-72, 73, 4)
+            for dx in range(-72, 73, 4)]
+         if nativePickPath(point) == MESH), None)
+    _Check(meshPixel is not None,
+           "usdview's native picker sees the mesh near the touch region")
+    consumed = _SendClick(view, meshPixel[0], meshPixel[1], viewport.ratio)
     appController._processEvents()
     chosen = [str(p.GetPath()) for p in selection.getPrims()
               if p and p.IsValid()]
@@ -1559,7 +1582,8 @@ def testUsdviewInputFunction(appController):
     _Check(MESH in chosen,
            "and usdview selects the mesh again, as it always did: %s"
            % chosen)
-    print("TouchPose: with the mode off the same pixel selects %s" % chosen)
+    print("TouchPose: with the mode off a native mesh pixel %s selects %s"
+          % (meshPixel, chosen))
 
     # ...and the highlight goes with it. Measured as the difference
     # between two frames taken back to back with the SAME selection,
