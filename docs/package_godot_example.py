@@ -1,9 +1,11 @@
 """Package the sibling Godot tutorial for docs; omit caches and stale binaries.
 
 The packaged SConstruct ships from this checkout (docs/godot_example/SConstruct):
-it consumes the SDK's installed cmake/rigexec_flags.cmake fragment and the
-share/rigExec source and include manifests, which this repository owns, so the
-build-surface contract stays with the build it describes.
+it consumes the SDK's installed lib/cmake/rigExec/rigexec_flags.cmake fragment and
+the share/rigExec source and include manifests, which this repository owns, so the
+build-surface contract stays with the build it describes. Those manifests reserve
+the first path component: runtime-generated/ entries resolve under the manifest
+directory, every other entry under the matching usdRig checkout.
 """
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -35,8 +37,10 @@ python demo/setup_rolling.py --build
 The SConstruct takes its exact-FP flags and its USD-free source and include
 lists from the installed SDK (lib/cmake/rigExec/rigexec_flags.cmake and
 share/rigExec/runtimeSources.txt, evalCoreSources.txt, runtimeIncludes.txt
-and evalCoreIncludes.txt); pass sdk_root=<usd-install> if it is not the
-sibling usd-install.
+and evalCoreIncludes.txt). A manifest entry starting runtime-generated/
+resolves beside the manifests under share/rigExec; every other entry
+resolves under the usdRig checkout. Pass sdk_root=<usd-install> and
+usdrig_root=<usdRig> when those siblings are not the right pair.
 
 No Godot cache, editor state, credentials, or platform binaries other than
 the tested Windows x86-64 pair are included. Source is included; other
@@ -99,7 +103,8 @@ def main():
     members = {name: path for name, path, _ in legal}
     members.update({_member(path.relative_to(PLUGIN).as_posix()): path for path in payload})
     # The packer ships the SConstruct owned by this checkout; it reads the SDK's
-    # flag fragment and manifests instead of spelling flags or file lists out.
+    # flag fragment and manifests, which resolve generated entries under the
+    # manifest directory and the rest under the checkout.
     members[_member("SConstruct")] = SCONSTRUCT
     # The demo folder ships the add-on again so the demo opens standalone;
     # the manifest already names the legal copies it needs.

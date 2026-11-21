@@ -169,13 +169,34 @@ The packaged `SConstruct` spells out no compiler flags and no runtime file
 list. It reads the exact-FP settings from the SDK's installed
 `lib/cmake/rigExec/rigexec_flags.cmake` fragment
 (`rigexec_get_exact_fp_flags`) and the USD-free source and include lists
-from the installed `share/rigExec/runtimeSources.txt`, `evalCoreSources.txt`,
-`runtimeIncludes.txt` and `evalCoreIncludes.txt` manifests, whose relative
-paths join with the usdRig checkout. The extension therefore compiles the
-same translation units with the same settings as the CMake build; see
-[Evaluation and independent checks](../concepts/baked-vs-dynamic.md). Point
-scons at another install prefix with `sdk_root=<path>`; the default is the
-sibling `usd-install`.
+from the four manifests the SDK installs under `share/rigExec/`:
+`runtimeSources.txt`, `evalCoreSources.txt`, `runtimeIncludes.txt` and
+`evalCoreIncludes.txt`. Each holds one forward-slash path per line, in
+order; the two source manifests name files and the two include manifests
+name directories. Let **M** be the directory holding those manifests and
+**C** the usdRig checkout that matches the SDK. The first path component
+is reserved: an entry starting `runtime-generated/` names payload the SDK
+ships beside the manifests — the generated mover kernels, mover schemas,
+mover registrations and `moverCatalog.cpp` — and resolves under **M**,
+while every other entry, such as `libs/rigExecRuntime/open.cpp`, resolves
+under **C**. An installed entry is never absolute and never carries a `..`
+segment, and only the root its spelling names is searched. Pass
+`sdk_root=<install prefix>` and `usdrig_root=<checkout>` when the sibling
+`usd-install` and `usdRig` defaults are not the right pair. With no
+installed SDK, the script reads the same four files from a configured
+usdRig build tree, where an absolute entry is accepted only inside that
+tree. The extension therefore compiles the same translation units with the
+same settings as the CMake build; see
+[Evaluation and independent checks](../concepts/baked-vs-dynamic.md).
+
+A manifest exported by an older SDK is not portable: its entries name paths
+in the tree that built it, so the generated units resolve nowhere. The
+SConstruct reports the manifest, the entry and the attempted path instead
+of searching the other root; install an SDK built from the same usdRig,
+whose mover generation writes the `runtime-generated/` payload. A build
+script of your own that reads these lists has to dispatch on the reserved
+component: joining every line to the checkout resolves the generated units
+under the wrong root.
 
 Setup exports the presentation, then compiles the execution program with it
 embedded, installs the addon, imports the project and runs the checks. The
