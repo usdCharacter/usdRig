@@ -350,9 +350,9 @@ def _apply_patches(steps, forward, journal):
             spec = layer.GetObjectAtPath(path)
             if forward == added:
                 if spec:
-                    raise RuntimeError(f"Cannot replace existing spec {path} on {identifier}")
+                    raise RuntimeError(f"Cannot replace existing spec {path} on {layer.identifier}")
             elif not spec or _subtree_fields(layer, path) != _subtree_fields(snapshot, path):
-                raise RuntimeError(f"Cannot remove modified or missing spec {path} on {identifier}")
+                raise RuntimeError(f"Cannot remove modified or missing spec {path} on {layer.identifier}")
             if forward == added:
                 journal.before(partial(_remove_spec, layer, path))
                 _copy_spec(snapshot, layer, path)

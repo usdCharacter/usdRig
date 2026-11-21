@@ -319,6 +319,41 @@ class EditingCoreTest(unittest.TestCase):
         self.assertEqual(self.session.ExportToString(), after)
         self.assertEqual(self.stage.GetRelationshipAtPath(path).GetTargets(), [])
 
+    def test_redo_rejects_an_occupied_relationship_spec(self):
+        view, _, b, _ = self._delete_fixture(self.session)
+        Sdf.CreatePrimInLayer(self.session, b)
+        path = b + '.peer'
+        view.editor.execute(intents.DeleteSelection())
+        view.history.undo(view)
+        self.assertIsNone(self.session.GetRelationshipAtPath(path))
+        self.stage.GetRelationshipAtPath(path).SetTargets(['/Intervening'])
+        before = self.session.ExportToString()
+
+        with self.assertRaises(RuntimeError) as error:
+            view.history.redo(view)
+
+        self.assertIn(path, str(error.exception))
+        self.assertIn(self.session.identifier, str(error.exception))
+        self.assertEqual(self.session.ExportToString(), before)
+        self.assertTrue(view.history.history.canRedo())
+
+    def test_undo_rejects_a_modified_relationship_spec(self):
+        view, _, b, _ = self._delete_fixture(self.session)
+        Sdf.CreatePrimInLayer(self.session, b)
+        path = b + '.peer'
+        view.editor.execute(intents.DeleteSelection())
+        self.assertIsNotNone(self.session.GetRelationshipAtPath(path))
+        self.stage.GetRelationshipAtPath(path).SetTargets(['/Intervening'])
+        before = self.session.ExportToString()
+
+        with self.assertRaises(RuntimeError) as error:
+            view.history.undo(view)
+
+        self.assertIn(path, str(error.exception))
+        self.assertIn(self.session.identifier, str(error.exception))
+        self.assertEqual(self.session.ExportToString(), before)
+        self.assertTrue(view.history.history.canUndo())
+
     def test_create_notice_is_atomic_on_model_failure(self):
         before = (self.root.ExportToString(), self.session.ExportToString())
         observed = []
