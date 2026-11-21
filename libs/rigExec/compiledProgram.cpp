@@ -124,23 +124,10 @@ RigExecCompiledProgram::GetChainCount() const noexcept
     return _chainFacts.size();
 }
 
-const RigExecBakedGeomChain &
-RigExecCompiledProgram::GetChain(size_t index) const noexcept
-{
-    return _compiled->chains[index];
-}
-
 size_t
 RigExecCompiledProgram::GetChainRevisionCount(size_t chainIndex) const noexcept
 {
     return _chainRevisionFacts[chainIndex].size();
-}
-
-const RigExecBakedGeomRevision &
-RigExecCompiledProgram::GetChainRevision(size_t chainIndex,
-                                         size_t revisionIndex) const noexcept
-{
-    return _compiled->chains[chainIndex].revisions[revisionIndex];
 }
 
 const RigExecCompiledChainFacts &
@@ -190,12 +177,6 @@ size_t
 RigExecCompiledProgram::GetWeightObjectCount() const noexcept
 {
     return _weightFacts.size();
-}
-
-const RigExecBakedWeightObject &
-RigExecCompiledProgram::GetWeightObject(size_t index) const noexcept
-{
-    return _compiled->weightObjects[index];
 }
 
 size_t

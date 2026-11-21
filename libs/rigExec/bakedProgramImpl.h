@@ -44,6 +44,7 @@
 #include "rigExecMath/singleChainIk.h"
 #include "rigExecMath/solvers.h"
 #include "rigExecMath/splineIk.h"
+#include "rigExecMath/surfaceKernelCache.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/rotation.h"
@@ -482,9 +483,659 @@ struct RigExecBakedSparseInputs {
     uint64_t pass = 0;
 };
 
+/// The evaluator's execution records: the geometry chain, its revisions and
+/// the weight objects a run mutates. Only the compiled program's own storage
+/// holds these; the sealed view answers their identity with facts.
+struct RigExecBakedGeomRevision {
+    RigExecGeometryRecord kernelRecord;
+    RigExecSceneGeometryDescriptor sceneGeometry;
+    SdfPath moverPath;
+    /// moverPath spelled at Build, for the bodies' diagnostics and
+    /// status addresses.
+    std::string moverPathText;
+    SdfPath target;
+    UsdPrim moverPrim;
+    RigExecRevisionOp op = RigExecRevisionOp::Skin;
+    RigExecRevisionBinding binding;
+    /// This revision's blend channels, in `binding.blendInputs` order.
+    /// Empty for every operation but a blend shape.
+    std::vector<RigExecBakedGeomBlendChannel> blendChannels;
+    bool blendChunked = false;
+    std::vector<RigExecBlendChannel> blendSamples;
+    std::vector<int> influenceSlots;
+    int transformSlot = -1;
+    /// The rigExec:transformSpace provider's slot, or -1.
+    int transformSpaceSlot = -1;
+    /// The rigExec:space provider's slot, or -1: the prim whose own
+    /// rest->pose map carries the whole rig, normally a TRS master.
+    /// Read out of the SAME base/final matrix table the two above come
+    /// from, because that table is what computeMatrix publishes and
+    /// the dynamic path's carry tap reads computeMatrix.
+    int carrySpaceSlot = -1;
+    /// The geometry-domain constraint whose delta IS this revision's
+    /// transform, as an index into the dense delta tables, or -1. Joined
+    /// on the mover path at Build, because that is the key the dynamic
+    /// walk's own hand-off uses.
+    int constraintDelta = -1;
+    /// The solver whose aggregate supplies values.driverFrames, as an
+    /// index into `solvers`, or -1 when this revision reads none. The
+    /// dynamic path takes it off a per-revision tap on the solver's
+    /// computePointFrameArray; the program already holds that aggregate,
+    /// so the tap becomes a slot. Nothing fills it yet: IsBakeable still
+    /// refuses "driver frames on mover".
+    int driverFramesSolver = -1;
+    bool finalPhase = false;
+    /// rigExec:pointFrame == "posed": a skin already carried
+    /// this cluster's points into the rig's posed frame, so the
+    /// measured offset is conjugated by the rig's carry -- or, with no
+    /// rigExec:space named, by the measuring space's own scale.
+    bool posedPoints = false;
+    /// Compile's judgement that none of this skin mover's layout arrays
+    /// can change within the compiled rig, so the packet may carry the layout
+    /// by handle out of the evaluator's cache instead of re-reading and
+    /// re-validating 105k elements every frame.
+    bool skinTopologyFixed = false;
+    /// The node's last published status, which outlives an evaluation it
+    /// did not take part in -- so does its diagnostic.
+    TfToken resultStatus;
+    /// The revision's applied points, which `currentSource` publishes,
+    /// and the buffer its chunks write. An applying fuse swaps an
+    /// unchunked revision's two buffers instead of copying one into the
+    /// other; a chunked skin keeps its ranges in staging.
+    std::vector<GfVec3f> output;
+    std::vector<GfVec3f> stagingOutput;
+    // Last evaluated packet/status and result, so an unchanged input
+    // re-publishes instead of re-running -- which is the accounting the
+    // VdfNetwork performs for the dynamic path.
+    RigExecMoverParameters lastParameters;
+    /// A DERIVED revision's `auxPoints` -- the chain's final points, up
+    /// to 315KB of them -- held here as the handle the chain published
+    /// rather than copied into `lastParameters` above, which is left
+    /// with that field empty. The comparison agrees with the elementwise
+    /// one by construction: VtArray is copy-on-write and its operator==
+    /// short-circuits on a shared buffer, so this is the same test with
+    /// the identity case taken first. Empty, and never read, for every
+    /// other revision.
+    VtVec3fArray lastAuxPoints;
+    RigExecMoverStatus lastStatus;
+    bool ran = false;
+    /// The chain runs as one GPU program (RigExecBakedGeomChain::gpu): this
+    /// revision's chunks and fuse move no points, and a blend keeps its
+    /// channels unsummed in `gpuChannels` for the translation. `gpuApplies`
+    /// is the fuse's apply decision.
+    bool gpuOwned = false;
+    std::vector<RigExecBlendChannel> gpuChannels;
+    bool gpuApplies = false;
+    /// A step that feeds the program (its packet, its influence table or
+    /// its fuse) ran this run: the boundary translates the chain. Each step
+    /// writes only its own revision's flag.
+    bool gpuTouched = false;
+    /// This revision's own wire-basis memo: only its step runs its
+    /// kernel (a range-pipelined revision's RevisionStatic, which its
+    /// range steps follow), so nothing else touches it. A clone shares
+    /// the entries.
+    RigExecWireBasisCache wireBasis;
+    /// Mutated only by this revision's unchunked body/projector, or by a
+    /// range-pipelined revision's RevisionStatic; its range steps only
+    /// read it. Copies share immutable entries; each clone replaces its
+    /// own cache slots. AssignChainRoles decides whether it pins topology.
+    RigExecSurfaceKernelCache<GfVec3f, GfVec3d> surfaceCache;
+    /// A read phase named this revision as the point in the chain it
+    /// wants the target's points from (the dynamic walk records them
+    /// after it). Decided at bake out of the evaluator's
+    /// _nativePhaseCheckpoints; BindPointReads binds `preceding` reads of
+    /// another chain and AtPrim reads to it. The plan also names the
+    /// predecessor of an own-chain `preceding` reader, but that read
+    /// binds to the version entering the reader and reads no record.
+    bool snapshotAfter = false;
+    /// One per `binding.phases` entry, in the map's order.
+    std::vector<RigExecBakedPointsBinding> pointBindings;
+    /// For an AtPrim `binding.transformPhase` only: the `frameRecords`
+    /// of the transform provider whose writer (constraint or solver) is
+    /// the phase's prim or under it, newest first. The fold takes the first valid one,
+    /// and otherwise keeps the dense-table matrix. `influenceRecords`
+    /// is the same per `influenceSlots` entry.
+    std::vector<int> transformRecords;
+    std::vector<std::vector<int>> influenceRecords;
+    /// This node is new to the rig's geometry state and its creation has
+    /// not been reported yet. Cleared by AdoptGeometryStateFrom for a
+    /// node the outgoing program already held, which is the same
+    /// bookkeeping the dynamic walk does when it reconnects a surviving
+    /// VdfNetwork node instead of adding one.
+    bool created = true;
+
+    /// The influence table the PACKET carries, which for a skin revision
+    /// is identity and nothing else: the packet is assembled before the
+    /// matrices are folded, precisely so a chunk can start on its own
+    /// joints without waiting for every joint of the rig. The assembler
+    /// checks the table's shape and its elements' finiteness, which
+    /// identities pass; the real table's check is the fold's, and the
+    /// fuse ANDs it in where the assembler's would have landed. Written
+    /// once, at Build.
+    std::vector<GfMatrix4d> packetInfluences;
+    /// InfluenceFold writes these; every operation but a skin assembles
+    /// against them. Sized at Build, never resized in the region.
+    std::vector<GfMatrix4d> influences;
+    GfMatrix4d transform{1.0};
+    /// Whether `transform` holds one at all this run: a bound transform
+    /// provider, or a geometry-domain constraint's delta. Written by the
+    /// fold beside the table, because "there is a matrix" is part of what
+    /// the table says.
+    bool haveTransform = false;
+    /// rigExec:space's matrix this run, out of the same base/final
+    /// table as `transform`, and whether the revision named one at all.
+    /// Written by the fold, because the fold is the step that declares
+    /// the matrix reads; the assemble only reads what the fold wrote.
+    /// A cluster conjugates its offset by it, a posed transform-driven
+    /// wire carries its control polygons by it.
+    GfMatrix4d carry{1.0};
+    bool haveCarry = false;
+    /// The resolved inputs overlaid with what this revision's point
+    /// bindings resolve to (RigExecBakedOverlayPointReads), built only
+    /// when the revision declares a read phase. Per revision, never one
+    /// buffer shared by the walk.
+    RigExecResolvedInputs revisionInputs;
+    /// RevisionStatic writes these three.
+    ///
+    /// `status` is the status OF THE PACKET, which for a skin revision
+    /// is not the whole answer: the packet carries identities where the
+    /// influence matrices would be, so a table the dynamic path's
+    /// assembler would have failed leaves this saying "ok" and
+    /// `influencesValid` below saying otherwise. The fuse ANDs the two
+    /// and publishes `moverFailed` where the dynamic path publishes it;
+    /// read `influencesValid` beside this one, never this one alone.
+    RigExecMoverParameters parameters;
+    RigExecMoverStatus status;
+    /// Whether this revision has to run at all: chain dirty so far, or
+    /// it never ran, or its packet or status moved. A VALUE comparison,
+    /// never a dirtiness flag -- a control dragged back to where it
+    /// started must not count as executed.
+    bool executed = false;
+    /// The revision's vertex chunks, in vertex order, covering
+    /// [0, pointCount) exactly once. Always at least one; more only for
+    /// a skin revision whose layout the compiled rig fixed (see
+    /// RigExecBakedPartitionRevision).
+    std::vector<RigExecBakedGeomChunk> chunks;
+    /// Where this revision's chunks start in the RevisionOut domain.
+    int chunkBase = 0;
+    /// The handle the chunk keys describe, so a frame can tell in O(1)
+    /// whether they still describe the vertices: null until the first
+    /// adoption, then the last handle whose arrays were Build's
+    /// (RigExecBakedAdoptPartition). The keys themselves never move
+    /// after Build.
+    std::shared_ptr<const RigExecSkinTopology> partitionTopology;
+    /// The `jointIndices` and element size Build cut the keys from.
+    /// The indices are held only while the revision is chunked.
+    VtIntArray partitionIndices;
+    int partitionElementSize = 0;
+    size_t partitionIndexCount = 0;
+    size_t partitionPointCount = 0;
+    /// The keys are used -- more than one chunk, so an influence outside
+    /// a chunk's key is an influence that chunk will not see.
+    bool chunked = false;
+    /// The natural vertex cut and its exact typed matrix producer sets.
+    /// Bounds count distinct producers, independently of graph scheduling.
+    size_t partitionCandidates = 0;
+    int partitionProducerMin = 0;
+    int partitionProducerMax = 0;
+    size_t partitionDistinctReads = 0;
+    std::vector<std::vector<std::pair<uint8_t, int>>> partitionProducerSets;
+
+    /// The layout half of the skin kernel's validation (the matrix half
+    /// is `influencesValid` below).
+    bool layoutUsable = false;
+    bool dqWeightsSafe = false;
+    /// The envelope, resolved ONCE at the full point count because it
+    /// resolves atomically, and the predicate that says the blend is the
+    /// identity and the resolution therefore dead. A skin's, and a dense
+    /// wire's separate blend.
+    std::vector<float> envelope;
+    bool envelopeOk = false;
+    bool fullStrength = false;
+    /// Whether the revision applies, decided by RevisionStatic over
+    /// `precedingCount` points from the validation its kernel runs first
+    /// (RigExecRevisionKernelAcceptance; a skin's from the packet half,
+    /// the fuse ANDing in the fold's `influencesValid`). Part of the
+    /// packet: the fuse selects by it and every chunk's `ok` agrees with
+    /// it. Deferred leaves the answer to the chunks.
+    RigExecRevisionAcceptance acceptance = RigExecRevisionAcceptance::Refuses;
+    /// The points this revision is applied to, which is the size every
+    /// chunk writes within.
+    size_t precedingCount = 0;
+    /// The packet or the status moved, or the revision never ran. The
+    /// chain's sticky bit and the influence table's compare are ORed in
+    /// by the fuse; this is only what the static half saw.
+    bool staticDirty = false;
+    /// `inputs:defaultWeight` as the stage reads it, and the value the
+    /// last run read.
+    ///
+    /// The one number the FUSE would otherwise have to read off the
+    /// stage, for the one diagnostic it can emit. A source reads it
+    /// instead, and compares it, so that the fuse is a pure function of
+    /// its declared slots and a run that skips the fuse is a run in
+    /// which this did not move either.
+    float defaultWeight = 0, lastDefaultWeight = 0;
+    /// The partition no longer describes the layout the packet carries,
+    /// so the keys cannot be trusted and the fuse runs the revision
+    /// whole rather than a chunk deforming a vertex against an identity.
+    bool partitionStale = false;
+
+    /// rigExec:weightObject as an index into `weightObjects`, or -1.
+    /// The packet itself is shared -- one per object per frame, however
+    /// many movers bind it -- so what a revision holds is the index.
+    int weightObject = -1;
+    int weightField = -1;
+    /// Whether the weight object weights the MOVER (one declared target,
+    /// and it is this mover) rather than the points. Decided at Build
+    /// because it is a relationship read, and the relationship is compiled rig
+    /// state; the condition is the dynamic path's, verbatim.
+    bool weightOperationDomain = false;
+    /// The property the published field says it weights: the mover for
+    /// an operation-domain object, the chain's target otherwise.
+    SdfPath weightFieldTarget;
+    /// The field is measured against the points ENTERING this revision,
+    /// so the shared packet is not this revision's answer: it patches a
+    /// copy of its own, exactly the fields the dynamic path patches, and
+    /// assembles against that.
+    bool weightCurrentPhase = false;
+    RigExecWeightPacket currentPhasePacket;
+    /// The field this revision published this run, and whether it
+    /// published one at all. Written by RevisionStatic -- which is where
+    /// the dynamic path publishes it, from the packet the mover is about
+    /// to consume -- and drained by the epilogue in chain order, which
+    /// shares the array rather than copying it.
+    VtFloatArray publishedWeightValues;
+    bool weightFieldPublished = false;
+    /// The content versions the RevisionPacket key carries in place of
+    /// `envelope`'s and `publishedWeightValues`' bytes: RevisionStatic
+    /// bumps each exactly when it leaves its array holding other bytes
+    /// than it published last (RigExecBakedNoteFloats).
+    uint64_t envelopeVersion = 0, weightValuesVersion = 0;
+    /// `publishedWeightValues` holds the resolve of WeightPacket op
+    /// value `weightPacketValue` at its revision
+    /// `weightValuesPacketRevision` over `weightValuesCount` points
+    /// (`weightValuesHeld`), which RevisionStatic reuses while both
+    /// stand. Never held for a current-phase revision. The value id is
+    /// set at compile, which drops the claim.
+    int weightPacketValue = -1;
+    bool weightValuesHeld = false;
+    uint64_t weightValuesPacketRevision = 0;
+    size_t weightValuesCount = 0;
+    /// RevisionStatic's resolve buffer: compared with the published
+    /// array before it replaces it. Contents are not state.
+    std::vector<float> resolveScratch;
+
+    /// Every influence matrix finite and affine. For a skin revision the
+    /// packet cannot answer this -- it is assembled before the matrices
+    /// are folded -- so the fuse ANDs this in where the dynamic path's
+    /// assembler would have failed the packet.
+    bool influencesValid = false;
+    /// The table moved since the last run, which is the half of the
+    /// executed decision the packet comparison does not carry.
+    bool influencesChanged = false;
+    /// The table in the two forms the kernels want it in, written by
+    /// the fold for every skin revision: an unchunked one's single
+    /// chunk skins against them, and so does the fuse when it has to run
+    /// a revision whole. A chunked revision's chunks keep their own
+    /// beside these and never read them -- but the fuse may only READ
+    /// this slot, so the fold writes them regardless.
+    std::vector<float> rows;
+    std::vector<RigExecScaledDualQuat> palette;
+    /// Which buffer holds the chain's points AFTER this revision: this
+    /// revision's index when its own output was kept, the index of an
+    /// earlier revision when it was not, and -1 for the chain's base.
+    int currentSource = -1;
+    /// An unchunked revision's chunk wrote `stagingOutput` and no fuse
+    /// has applied it yet; while false, `output` holds the chunk's
+    /// latest result.
+    bool stagingFresh = false;
+    /// An exact copy of the points the last RevisionDone publication
+    /// carried when the revision passed through: the baseline the next
+    /// publication is compared against. While it applied, the baseline
+    /// is `output` itself.
+    std::vector<GfVec3f> passedPoints;
+    /// The content version RevisionDone and ChainDirty key the points
+    /// by: the fuse bumps it exactly when the points it publishes differ,
+    /// byte for byte, from the ones its previous publication carried.
+    uint64_t doneVersion = 0;
+    /// The compiled rig skin layout the packet carries: the SkinTopology
+    /// op's `layoutHandle`, adopted where the geometry prologue resolves
+    /// a topology (a chain revision whose chain read a base, a derived
+    /// revision with a base). Null is a refused layout, which is why
+    /// `topologyResolved` and not the pointer says whether the prologue
+    /// answered. Both are exported.
+    std::shared_ptr<const RigExecSkinTopology> topology;
+    bool topologyResolved = false;
+    /// The SkinTopology head op of a `skinTopologyFixed` revision.
+    /// `layoutLeaves` are the layout's three reads
+    /// (RigExecDeclareSkinLayoutLeaves), sampled on the owning thread
+    /// before the op runs, and `layoutOverlay` the overlay entry each
+    /// last saw at its path. `layoutFixed` is RigExecSkinLayoutIsFixed:
+    /// its topology half (`layoutTopologyFixed`) asked at Build only, as
+    /// an edit to either path rebuilds the program, and its weights half
+    /// asked at Build and again when a value edit reaches the weights or
+    /// the program stamp moves; `layoutFixedChanged` says
+    /// the last sample moved it. `layoutHandle` is the op's output: null
+    /// while the layout is not compiled rig state, else the layout the leaves
+    /// describe, the same object for as long as they describe the same
+    /// layout. `layoutCandidate` is the last non-null handle, handed back
+    /// when a rebuild finds the same layout so that the packet still
+    /// compares equal; AdoptGeometryStateFrom carries it into a rebuilt
+    /// program.
+    RigExecBakedPathLeaves layoutLeaves;
+    std::vector<VtValue> layoutOverlay;
+    bool layoutTopologyFixed = false;
+    bool layoutFixed = false;
+    bool layoutFixedChanged = false;
+    bool layoutRan = false;
+    bool layoutOutputChanged = false;
+    std::shared_ptr<const RigExecSkinTopology> layoutHandle;
+    std::shared_ptr<const RigExecSkinTopology> layoutCandidate;
+    /// Every read RevisionStatic and the packet assembly make, sampled
+    /// in the geometry prologue. For an operation the leaves assemble
+    /// (`leaves.decl.assembles`), the assembler's reads and the blend
+    /// gather's; for every chain revision, `defaultWeightLeaf`.
+    RigExecBakedPathLeaves leaves;
+    /// RevisionStatic's `inputs:defaultWeight` read, as a key of
+    /// `leaves`; -1 for a derived revision, which reads none.
+    int defaultWeightLeaf = -1;
+    /// An External revision's payload leaf: what the plugin's
+    /// assembleExternal answered in the geometry prologue, on the owning
+    /// thread. Volatile: the plugin's reads are opaque, so it is
+    /// assembled on every run that reaches the prologue, and
+    /// `externalPayloadChanged` says only whether it differs
+    /// (operator==) from the last one; RevisionStatic still decides by
+    /// comparing the whole packet. Held only where the leaves assemble
+    /// the revision (`leaves.decl.assembles`): a plugin revision bound
+    /// to a value the region computes (a declared phase, a weight
+    /// object, a transform, a carry, influences, driver frames, a
+    /// constraint delta or blend channels) calls the plugin from
+    /// RevisionStatic through the stage assembler.
+    RigExecExternalPayload externalPayload;
+    bool externalPayloadChanged = false;
+    /// A windowed external revision's entry in `windowedOps`, or -1;
+    /// the run its chunk body hands the kernel; and the compiled rig
+    /// build its solve keeps, owned by that body (a clone shares it).
+    int window = -1;
+    RigExecWindowRun windowRun;
+    std::shared_ptr<const void> windowCache;
+    /// The live program solves this windowed revision on a device at
+    /// the publication boundary (RigExecBakedSelectWindowDevices): its
+    /// chunk body captures and leaves the ticks it would solve over in
+    /// `deviceTicks`, and `devicePending` until the boundary solves.
+    bool windowDevice = false;
+    bool devicePending = false;
+    std::vector<RigExecWindowPacketPtr> deviceTicks;
+    /// The chain's resultVersion the boundary last published.
+    uint64_t deviceResultVersion = ~uint64_t(0);
+    /// Range-pipelined (Build state): `chunks` are the chain's partition
+    /// (chunked false, keys empty); range step k writes range k of
+    /// `output`, which always holds this revision's full version, so
+    /// `currentSource` is the revision itself; the fuse is a join that
+    /// publishes RevisionDone from the range versions without reading
+    /// points.
+    bool rangeRole = false;
+    /// Filled by RevisionStatic (RigExecPrepareRevisionRanges), read by
+    /// the range steps. A memo: never shadowed, restored or compared.
+    RigExecRevisionRangeInputs rangeInputs;
+    /// The range versions the join last published, one per chunk.
+    std::vector<uint64_t> joinSeen;
+    /// Ranges whose kernel refused after an Applies acceptance this run (an
+    /// invariant violation; they passed through). Written by the join.
+    uint32_t rangeRefusals = 0;
+    /// A cycle set aside one of its ranges or its join (compile state,
+    /// set before each region by the set-aside reset): the revision
+    /// passes the base through like an excluded fuse, `currentSource`
+    /// -1, and its join publishes that version.
+    bool rangeSetAside = false;
+    RigExecBakedRevisionRole role = RigExecBakedRevisionRole::Legacy;
+    /// Range/Whole: per chain group (size G), whether this revision
+    /// publishes it (a Range revision's gated groups; every group of a
+    /// Whole one).
+    std::vector<char> groupWritten;
+    /// Range/Whole: per chain group, the chain index of the revision whose
+    /// slot holds group g of the version entering this one; -1 the base.
+    std::vector<int> enteringWriter;
+    /// Range Smooth and DeltaMush (Build): per group, ascending, the
+    /// other groups holding a point its results read. Its group step
+    /// reads those groups of the entering version beside its own.
+    std::vector<std::vector<int>> haloGroups;
+    /// Range Smooth and DeltaMush: per group, its step's table of
+    /// entering group points (size G, null where not read); only that
+    /// step writes it.
+    std::vector<std::vector<const GfVec3f *>> haloPoints;
+    /// Range DeltaMush: per group, its step's plan and scratch.
+    std::vector<RigExecDeltaMushGroupState<GfVec3f, GfVec3d>> mushGroups;
+    /// Range/Whole: size G, indexed by group; only written groups are ever
+    /// published. Range: written by the group's step; Whole: chunk g owns
+    /// the computed half, the fuse the published half (pointBlocks.h).
+    std::vector<RigExecGroupState<GfVec3f>> groups;
+    /// The join's or fuse's last publication: the content id of each group
+    /// of version r + 1. Read by the next join or fuse and by ChainStatus.
+    std::vector<RigExecGroupSource> groupIds;
+    /// Whole non-per-point op: the entering version gathered for its chunk.
+    std::vector<GfVec3f> wholeEntering;
+    /// Build: what the role and the gate rest on.
+    std::vector<RigExecBakedRolePin> pins;
+    /// RevisionStatic, BlendShape of a range chain: content version of
+    /// parameters.blendDeltas (memcmp), keyed in place of the bytes.
+    uint64_t deltasVersion = 0;
+    /// The blend delta buffer the next assembly sums into: the one the
+    /// packet before last held. Private to this revision's static step,
+    /// never published; a clone drops it.
+    std::vector<GfVec3f> deltasSpare;
+    /// RevisionStatic, Lattice: parameters.restPoints holds the base at
+    /// `restBaseVersion` (kept without a copy while it stands).
+    bool restBaseHeld = false;
+    uint64_t restBaseVersion = 0;
+    /// SkinTopology op: bumped when `layoutHandle` becomes another object;
+    /// the SkinTopology and RevisionPacket keys carry it, not the bytes.
+    uint64_t layoutSerial = 0;
+};
+
+struct RigExecBakedGeomChain {
+    SdfPath target;
+    UsdAttributeQuery baseQuery;
+    std::vector<RigExecBakedGeomRevision> revisions;
+    VtVec3fArray sampledBase;
+    bool sampledHaveBase = false;
+    VtVec3fArray lastBase;
+    VtVec3fArray result;
+    /// ChainInput, ChainBase and ChainPoints key their points by these
+    /// content versions, each bumped exactly when the array's bytes
+    /// differ from the ones last published. `publishedInput` is the
+    /// sampled base ChainInput last published, held by handle.
+    VtVec3fArray publishedInput;
+    uint64_t inputVersion = 0, baseVersion = 0, resultVersion = 0;
+    /// The other half of the published double buffer. Publication
+    /// alternates between `result` and this one, so the array a consumer
+    /// may still hold from last frame is never the one being written --
+    /// which is the COW aliasing rule VtArray leaves to its callers.
+    VtVec3fArray spare;
+    bool haveResult = false;
+    /// The base attribute read at this time, by the prologue. False
+    /// skips every step of the chain, including its counters.
+    bool haveBase = false;
+    /// Whether the chain's points moved before its first revision, which
+    /// is where the sticky chain-dirty bit starts.
+    bool baseDirty = false;
+    /// This chain's schedule has to be built and that has not been
+    /// reported yet. The dynamic path rebuilds a chain's schedule when
+    /// the identity sequence of its revisions changed, and not for a
+    /// packet that merely holds different numbers.
+    bool scheduleDirty = true;
+    /// Range-pipelined (Build state): G + 1 group bounds, the last N0;
+    /// empty for a chain that is not.
+    std::vector<int> groupBounds;
+    /// The count the groups were cut from (a pin: another count bails).
+    size_t groupPointCount = 0;
+    /// The base as groups (ChainInputs, the one writer): refs into
+    /// `baseOwner`, each version bumped exactly when its bytes move.
+    std::shared_ptr<const VtVec3fArray> baseOwner;
+    std::vector<RigExecGroupState<GfVec3f>> baseGroups;
+    /// ChainStatus: the group ids `result` and `spare` were gathered from.
+    std::vector<RigExecGroupSource> resultIds, spareIds;
+    // Derived maintenance reads this chain's FINAL points.
+    struct Derived {
+        SdfPath target;
+        /// `target` spelled at Build, for the body's diagnostic.
+        std::string targetText;
+        UsdAttributeQuery baseQuery;
+        RigExecBakedGeomRevision revision;
+        VtVec3fArray sampledBase;
+        bool sampledHaveBase = false;
+        VtVec3fArray lastBase;
+        VtVec3fArray result;
+        /// The other half of the published double buffer; see the
+        /// chain's.
+        VtVec3fArray spare;
+        /// DerivedOut's content version of `result`, as the chain's.
+        uint64_t resultVersion = 0;
+        bool haveResult = false;
+        /// As the chain's, read by the prologue.
+        bool haveBase = false;
+        bool baseDirty = false;
+        /// A surface projector target (RigExecIsDerivedMatrixOp): no
+        /// authored base, and a MATRIX published in place of a vec3f
+        /// array -- when this run measured one.
+        bool matrixTarget = false;
+        GfMatrix4d matrix{1.0};
+        bool haveMatrix = false;
+    };
+    std::vector<Derived> derived;
+    /// A GPU chain (RigExecBakedSelectGpuChains): ChainStatus translates its
+    /// packets into `gpuFrame` and RigExecBakedResolveGpuChains deforms
+    /// it at the publication boundary, then runs its derived steps.
+    bool gpu = false;
+    /// ChainStatus ran this generation; `gpuTranslated`: and translated.
+    bool gpuPending = false;
+    bool gpuTranslated = false;
+    RigExecGpuDeformTranslation gpuTranslation;
+    RigExecGpuDeformFrame gpuFrame;
+    /// What `result` was deformed from, so an unchanged frame keeps it.
+    std::vector<float> gpuLastFrame;
+    uint64_t gpuLastSerial = 0;
+    uint64_t gpuLastBaseVersion = ~uint64_t(0);
+    std::vector<GfVec3f> gpuScratch;
+    /// Names this chain's device buffers; a copy (a frozen clone's
+    /// chain) gets its own, and destruction frees them.
+    RigExecGpuDeviceKey gpuDeviceKey;
+    /// The Derived steps that read this chain, in program order.
+    std::vector<int> gpuDerivedSteps;
+    /// For a chain whose last revision solves on a device: its Derived
+    /// steps, which the boundary runs again on the solved points.
+    std::vector<int> windowDeviceDerivedSteps;
+    /// The ops whose values the boundary writes outside the graph (the
+    /// chain's ChainStatus and its Derived steps), re-keyed there.
+    std::vector<uint32_t> gpuKeyOps;
+    /// Shader mode: what ChainStatus publishes in place of the points,
+    /// the version its frame carries, and the extent sample with the
+    /// layout and base it was chosen for.
+    std::shared_ptr<const RigExecGpuDeformPublication> gpuPublication;
+    uint64_t gpuFrameVersion = 0;
+    std::vector<int32_t> gpuExtentSample;
+    uint64_t gpuExtentSerial = 0;
+    uint64_t gpuExtentBaseVersion = ~uint64_t(0);
+};
+
+// One entry per weight object the compiled rig reaches, in DEPENDENCY ORDER
+// (post-order over rigExec:baseWeight and rigExec:inputWeights, children
+// before parents), so one forward pass per frame builds every packet and
+// a composed object finds its inputs already built.
+// The sharing matters as much as the order: exec's
+// Relationship().TargetedObjects<RigExecWeightPacket>() accessor gives
+// one packet per weight object per generation no matter how many movers
+// bind it, so the table is keyed by the object, not by the consumer.
+struct RigExecBakedWeightObject {
+    SdfPath path;
+    TfToken type;
+    TfToken representation, rangePolicy;
+    bool envelopeOnly = false;
+    RigExecWeightOracleFacts oracleFacts;
+    RigExecBakedPathLeaves oracleLeaves;
+    std::vector<SdfPath> oracleFrozenKeys;
+    /// oracleLeaves index of a volume's inputs:falloffSamples, else -1.
+    int oracleFalloffSamplesLeaf = -1;
+    int oracleKind = -1, oracleRepresentation = -1, oracleCombineMode = -1;
+    int oracleAxis = -1;
+    bool oracleAxisAttribute = false, oracleBoundsAttribute = false;
+    bool oracleClamp = false, oracleBounded = false, oracleUnbounded = false;
+    std::string oracleName, oracleAxisName, oracleBoundsName;
+    // RigExecStaticWeight: every field is uniform, so all three fold --
+    // but they are still REGISTERED, so a drag on a painted weight can
+    // be placed.
+    std::vector<float> values;
+    std::vector<int> indices;
+    RigExecBakedInput<float> defaultWeight;
+    /// rigExec:baseWeight, as an index into `weightObjects`, or -1.
+    int base = -1;
+    /// rigExec:inputWeights in AUTHORED order (subtract and overlay are
+    /// order dependent), as indices into `weightObjects`.
+    std::vector<int> inputs;
+    // RigExecDynamicWeight.
+    RigExecBakedInput<float> driver, scale, bias;
+    // Combine.
+    TfToken combineMode;
+    RigExecBakedInput<float> strength, invert;
+    /// The combine's own rigExec:weightTarget, read for its SIZE alone.
+    std::vector<UsdAttribute> combineTargetPoints;
+    /// Roughly how many elements this object's packet carries, for the
+    /// cost model alone. Measured once at Build off the same arrays the
+    /// chain point counts are measured from; a packet whose field turns
+    /// out to be a different size costs the schedule a bin, never an
+    /// answer.
+    size_t costElements = 1;
+
+    /// The provider slot the volume is posed into, and therefore the
+    /// BASE frame its field is placed against -- base and not final,
+    /// because the evaluator overrides every seeded provider's
+    /// computePointFrame with its base frame before the authoritative
+    /// snapshot, and a mover's packet is what that snapshot carries.
+    int providerSlot = -1;
+    RigExecBakedInput<float> falloffMin, falloffMax;
+    RigExecBakedInput<float> scaleX, scaleY, scaleZ;
+    RigExecBakedInput<float> scaleXPos, scaleYPos, scaleZPos, scaleXNeg,
+        scaleYNeg, scaleZNeg;
+    RigExecBakedInput<float> extentU, extentV;
+    TfToken planeAxis, planeBounds;
+    /// The points-bearing relationships, as the attributes their
+    /// AUTHORED targets name, in authored order.
+    ///
+    /// Authored and not canonicalized: exec reaches these through
+    /// Relationship().TargetedObjects<GfVec3f>(computeValue), which
+    /// computes a value on each targeted OBJECT, so a target naming a
+    /// prim rather than its .points contributes nothing there however
+    /// readily the CPU oracle infers one. A mover copies exec, so this
+    /// list holds exactly the properties exec would have reached. No
+    /// shipped rig authors the prim form -- every weightTarget in the
+    /// tree and in the fixtures names `.points` -- so the two readings
+    /// agree, and where they would not, this is the
+    /// one that is a mover's answer.
+    std::vector<UsdAttribute> targetPoints, samplePoints, curvePoints;
+    /// The compiled rig's resampled falloff remap, copied from falloffLuts.
+    std::vector<float> falloffCurve;
+    /// pointLeaves index of a volume's inputs:falloffSamples, else -1.
+    /// Packets read this leaf; the field reads oracleFalloffSamplesLeaf,
+    /// because the property pass samples oracle leaves before the
+    /// geometry prologue samples point leaves.
+    int falloffSamplesLeaf = -1;
+    std::array<VtVec3fArray, 3> packetPointViews;
+    std::array<std::vector<GfVec3f>, 3> packetPointScratch;
+    std::vector<GfVec3f> packetLocalCurve;
+    std::vector<const RigExecWeightPacket *> packetInputRefs;
+    RigExecWeightPacketWorkspace packetWorkspace;
+    /// The point gathers' reads, one key per attribute of
+    /// `targetPoints`, `samplePoints`, `curvePoints` and
+    /// `combineTargetPoints` in that order, each list starting at its
+    /// index below.
+    RigExecBakedPathLeaves pointLeaves;
+    size_t targetLeaves = 0, sampleLeaves = 0, curveLeaves = 0,
+           combineLeaves = 0;
+};
+
 struct RigExecBakedProgramImpl {
-    // The compiled records live in compiledProgram.h; these spellings stay
-    // for the build and run halves.
+    // The records defined above keep these short spellings for the build and
+    // run halves; the rest live in compiledProgram.h.
     using ConstraintArrays = RigExecBakedConstraintArray;
     using NativeXformSource = RigExecBakedNativeXformSource;
     using Ladder = RigExecBakedLadder;
