@@ -1,9 +1,11 @@
-"""Stage-free menu contract using OpenUSD plugin discovery and Qt."""
+"""Stage-free checks for the checkout launcher and usdview menus."""
 import itertools
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
+import tempfile
 from types import SimpleNamespace
 import unittest
 
@@ -33,6 +35,50 @@ class _EmptyModel(QtCore.QObject):
 
 def _labels(menu):
     return [action.text() for action in menu.actions()]
+
+
+class CheckoutStartupTest(unittest.TestCase):
+    def test_build_selection_at_python_startup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            checkout = Path(tmp).resolve()
+            hook = Path("plugin/rigExecUsdview/sitecustomize.py")
+            helper = Path("tests/python/rigexec_test_env.py")
+            for path in (Path("CMakeLists.txt"), hook, helper):
+                (checkout / path).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(_ROOT / path, checkout / path)
+            default, selected = "build", "selected build"
+            module = "rigexec_startup_probe.py"
+            for tree in (default, selected):
+                probe = checkout / tree / "python" / module
+                probe.parent.mkdir(parents=True)
+                probe.write_text("", encoding="utf-8")
+
+            env = dict(os.environ, RIG=str(checkout), PY=sys.executable,
+                       USD=os.environ["RIGEXEC_USD_INSTALL"], PYTHONPATH="",
+                       PXR_PLUGINPATH_NAME="")
+            for setting, expected in ((selected, selected), (None, default),
+                                      ("", default)):
+                with self.subTest(build_dir=setting):
+                    if setting is None:
+                        env.pop("RIGEXEC_BUILD_DIR", None)
+                    else:
+                        env["RIGEXEC_BUILD_DIR"] = setting
+                    result = subprocess.run(
+                        ["bash", "-ec", 'source "$1"; exec "$PY" -c "$2" "$3"',
+                         "checkout-python", str(_ROOT / "bin" / "_env.sh"),
+                         "import sys; from pathlib import Path; "
+                         "import rigexec_startup_probe; "
+                         "print(Path(sys.modules['sitecustomize'].__file__).resolve()); "
+                         "print(Path(sys.modules['rigexec_test_env'].__file__).resolve()); "
+                         "print(Path(rigexec_startup_probe.__file__).resolve())",
+                         str(checkout / default / "test" / "args" / "input.json")],
+                        env=env, cwd=checkout.parent, capture_output=True,
+                        text=True, timeout=15)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.splitlines(), [
+                        str(checkout / hook), str(checkout / helper),
+                        str(checkout / expected / "python" / module),
+                    ])
 
 
 class MenuTest(unittest.TestCase):
