@@ -93,8 +93,9 @@ def _layer_text(stage):
 def _node_for(stage, path):
     """The slice of NodeModel the reconciliation reads.
 
-    ``getUsdPrim`` tracks the model's current ``_primPath``, like the real
-    NodeModel does after ``remapMovedNodes`` repoints it.
+    ``getUsdPrim`` resolves the model's ``_primPath`` against the live stage,
+    so a namespace edit expires exactly the nodes whose paths are gone --
+    the expired-prim signal validation drops.
     """
     node = SimpleNamespace(
         id=path,
@@ -103,6 +104,9 @@ def _node_for(stage, path):
         _prim=stage.GetPrimAtPath(path),
         _primPath=Sdf.Path(path),
         _position=(0.0, 0.0),
+        position=(0.0, 0.0),
+        _authoredPosition=False,
+        zOrder=0,
         _title_collapsed=False,
         titleCollapsed=False,
         _cachedType="Sphere",
@@ -110,6 +114,13 @@ def _node_for(stage, path):
         invalidate_value_row=MagicMock(),
     )
     node.getUsdPrim = lambda: stage.GetPrimAtPath(node._primPath)
+    node.hasAuthoredPosition = lambda: node._authoredPosition
+
+    def _setDisplayPosition(value):
+        node._position = value
+        node.position = value
+
+    node.setDisplayPosition = _setDisplayPosition
     return node
 
 
@@ -191,19 +202,6 @@ class _StubView:
         self._selectedNodes = set()
         self._marqueeBaseSelectedNodes = set()
         self._marqueePrevSelectedNodes = set()
-        self._reconciledPositionVersions = {}
-        self.nodeIdUnderCursor = ""
-        self._renamingNodeId = ""
-        self._valueEditTarget = None
-        self._mungState = None
-        self._tokenPopup = None
-        self._hoveredPort = None
-        self._tooltipProperty = None
-        self._dragLinkSourceNode = None
-        self._dragLinkSyntheticTarget = None
-        self._dragLinkResolvedTarget = None
-        self._reconnectOldSourceNodeId = None
-        self._reconnectOldTargetNodeId = None
         self._currentPrimPath = None if scope == "/" else scope
         self._syncingSelection = False
         self._cachedShowAttributeValues = False
@@ -346,8 +344,8 @@ class _RecordingHooks:
     def publish(self, delta):
         self.events.append(("publish", delta))
 
-    def reconcile(self, resynced, info, moved, trace):
-        self.events.append(("reconcile", resynced, info, moved, trace))
+    def reconcile(self, resynced, info, trace):
+        self.events.append(("reconcile", resynced, info, trace))
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
@@ -486,8 +484,14 @@ class AdoptPrimsNewToScopeTest(unittest.TestCase):
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
-class RemapMovedNodesTest(unittest.TestCase):
-    """A namespace move re-keys the graph instead of dropping it."""
+class AdoptRenamedPrimTest(unittest.TestCase):
+    """A rename drops the old node and rebuilds from the live prim.
+
+    Node identity always comes from the current stage: the model at the new
+    path is built fresh from the prim there, never re-keyed from the old
+    one. Only display-only state (a grid placement, the draw slot) is
+    carried across, from a snapshot the caller took before the edit.
+    """
 
     def setUp(self) -> None:
         self.stage = Usd.Stage.CreateInMemory()
@@ -500,114 +504,140 @@ class RemapMovedNodesTest(unittest.TestCase):
         ):
             UsdGeom.Sphere.Define(self.stage, path)
 
-    def test_a_move_rekeys_descendants_and_spares_name_prefixes(self) -> None:
-        view = _StubView(
-            self.stage, ["/World", "/World/A", "/World/AB", "/WorldTwo"]
-        )
+    def _rename(self, oldPath, newPath):
         edit = Sdf.BatchNamespaceEdit()
-        edit.Add("/World", "/Moved")
-        self.stage.GetEditTarget().GetLayer().Apply(edit)
+        edit.Add(oldPath, newPath)
+        self.assertTrue(self.stage.GetEditTarget().GetLayer().Apply(edit))
+
+    def test_the_new_node_is_built_from_the_stage_not_rekeyed(self) -> None:
+        view = _StubView(self.stage, ["/World/A", "/Zebra"])
+        oldNode = view.nodes["/World/A"]
+        oldNode.setDisplayPosition((9.0, 9.0))
+        oldNode.zOrder = 3
+        placement = stage_adapter.savedRenamePlacement(view.nodes, "/World/A")
+        self._rename("/World/A", "/World/Renamed")
         before = _layer_text(self.stage)
 
-        remap = stage_adapter.remapMovedNodes(view, {"/World": "/Moved"})
+        nodeId = stage_adapter.adoptRenamedPrim(
+            view, "/World/A", "/World/Renamed", *placement
+        )
 
-        self.assertEqual(
-            remap,
-            {
-                "/World": "/Moved",
-                "/World/A": "/Moved/A",
-                "/World/AB": "/Moved/AB",
-            },
-        )
-        # Iteration order IS draw order: a pop/re-insert would reorder.
-        self.assertEqual(
-            list(view.nodes), ["/Moved", "/Moved/A", "/Moved/AB", "/WorldTwo"]
-        )
-        node = view.nodes["/Moved/A"]
-        self.assertEqual(node.id, "/Moved/A")
-        self.assertEqual(node._primPath, Sdf.Path("/Moved/A"))
-        self.assertTrue(node._prim.IsValid())
-        self.assertEqual(node.name, "A")
+        self.assertEqual(nodeId, "/World/Renamed")
+        self.assertNotIn("/World/A", view.nodes)
+        # The distinguishing assertion: a re-key would hand back the same
+        # object under a new id; a stage-derived node is a fresh model.
+        self.assertIsNot(view.nodes["/World/Renamed"], oldNode)
+        view._addNewNodeFast.assert_called_once()
+        adoptedPrim, _stage = view._addNewNodeFast.call_args[0]
+        self.assertEqual(str(adoptedPrim.GetPath()), "/World/Renamed")
+        node = view.nodes["/World/Renamed"]
+        self.assertEqual(node.id, "/World/Renamed")
+        self.assertEqual(node._primPath, Sdf.Path("/World/Renamed"))
+        self.assertTrue(node.getUsdPrim().IsValid())
+        self.assertEqual(tuple(node._position), (9.0, 9.0))
+        self.assertEqual(node.zOrder, 3)
         # The namespace edit was the test's; reconciliation adds no opinion
         # of its own.
         self.assertEqual(_layer_text(self.stage), before)
 
-    def test_every_endpoint_adjacent_cache_and_gesture_id_moves(self) -> None:
-        view = _StubView(self.stage, ["/World", "/World/A"])
-        view._selectedNodes.add("/World/A")
-        view._marqueeBaseSelectedNodes.add("/World/A")
-        view._marqueePrevSelectedNodes.add("/World")
-        view._reconciledPositionVersions["/World/A"] = 7
-        view.nodeIdUnderCursor = "/World/A"
-        view._renamingNodeId = "/World"
-        view._valueEditTarget = ("/World/A", "radius", 0, 0)
-        view._mungState = {"nodeId": "/World/A", "primPath": "/World/A"}
-        view._tokenPopup = {"nodeId": "/World", "primPath": "/World"}
-        view._hoveredPort = ("/World/A", "input:x")
-        view._tooltipProperty = ("/World/A", "radius")
-        view._dragLinkSourceNode = "/World/A"
-        view._dragLinkSyntheticTarget = ("/World", "output:x")
-        view._dragLinkResolvedTarget = ("/World/A", "input:x")
-        view._reconnectOldSourceNodeId = "/World"
-        view._reconnectOldTargetNodeId = "/World/A"
+    def test_the_fresh_model_lands_in_the_vacated_draw_slot(self) -> None:
+        view = _StubView(self.stage, ["/World", "/World/A", "/Zebra"])
+        placement = stage_adapter.savedRenamePlacement(view.nodes, "/World/A")
+        self._rename("/World/A", "/World/Renamed")
 
-        stage_adapter.remapMovedNodes(view, {"/World": "/Outer/Moved"})
-
-        self.assertEqual(view._selectedNodes, {"/Outer/Moved/A"})
-        self.assertEqual(view._marqueeBaseSelectedNodes, {"/Outer/Moved/A"})
-        self.assertEqual(view._marqueePrevSelectedNodes, {"/Outer/Moved"})
-        self.assertEqual(view._reconciledPositionVersions, {"/Outer/Moved/A": 7})
-        self.assertEqual(view.nodeIdUnderCursor, "/Outer/Moved/A")
-        self.assertEqual(view._renamingNodeId, "/Outer/Moved")
-        self.assertEqual(
-            view._valueEditTarget, ("/Outer/Moved/A", "radius", 0, 0)
+        stage_adapter.adoptRenamedPrim(
+            view, "/World/A", "/World/Renamed", *placement
         )
+
+        # Iteration order IS draw order: the adoption appended the fresh
+        # model, so it moves back to the slot the rename vacated.
         self.assertEqual(
-            view._mungState,
-            {"nodeId": "/Outer/Moved/A", "primPath": "/Outer/Moved/A"},
+            list(view.nodes), ["/World", "/World/Renamed", "/Zebra"]
         )
+
+    def test_an_authored_position_is_left_to_usd(self) -> None:
+        def _adoptAuthored(prim, _stage):
+            node = view._adopt(prim)
+            view.nodes[node]._authoredPosition = True
+            view.nodes[node].setDisplayPosition((1.0, 2.0))
+            return node
+
+        view = _StubView(self.stage, ["/World/A"])
+        view._addNewNodeFast = MagicMock(side_effect=_adoptAuthored)
+        view.nodes["/World/A"].setDisplayPosition((9.0, 9.0))
+        placement = stage_adapter.savedRenamePlacement(view.nodes, "/World/A")
+        self._rename("/World/A", "/World/Renamed")
+
+        stage_adapter.adoptRenamedPrim(
+            view, "/World/A", "/World/Renamed", *placement
+        )
+
+        # The rename carries the attribute to the new path; the snapshot is
+        # display-only state and must not overwrite it.
         self.assertEqual(
-            view._tokenPopup,
-            {"nodeId": "/Outer/Moved", "primPath": "/Outer/Moved"},
+            tuple(view.nodes["/World/Renamed"]._position), (1.0, 2.0)
         )
-        self.assertEqual(view._hoveredPort, ("/Outer/Moved/A", "input:x"))
-        self.assertEqual(view._tooltipProperty, ("/Outer/Moved/A", "radius"))
-        self.assertEqual(view._dragLinkSourceNode, "/Outer/Moved/A")
-        self.assertEqual(
-            view._dragLinkSyntheticTarget, ("/Outer/Moved", "output:x")
+
+    def test_an_already_adopted_prim_is_not_added_twice(self) -> None:
+        """The notice adopts inside the scope before the authoring site runs;
+        the follow-up restores the placement onto that model."""
+        view = _StubView(self.stage, ["/World/A", "/Zebra"])
+        view.nodes["/World/A"].setDisplayPosition((9.0, 9.0))
+        view.nodes["/World/A"].zOrder = 3
+        placement = stage_adapter.savedRenamePlacement(view.nodes, "/World/A")
+        self._rename("/World/A", "/World/Renamed")
+        # What the synchronous notice left behind: the old node dropped, the
+        # new prim adopted at the back without the display-only placement.
+        del view.nodes["/World/A"]
+        view._adopt(self.stage.GetPrimAtPath("/World/Renamed"))
+        view._addNewNodeFast.reset_mock()
+
+        nodeId = stage_adapter.adoptRenamedPrim(
+            view, "/World/A", "/World/Renamed", *placement
         )
-        self.assertEqual(
-            view._dragLinkResolvedTarget, ("/Outer/Moved/A", "input:x")
+
+        self.assertEqual(nodeId, "/World/Renamed")
+        self.assertEqual(list(view.nodes), ["/World/Renamed", "/Zebra"])
+        view._addNewNodeFast.assert_not_called()
+        node = view.nodes["/World/Renamed"]
+        self.assertEqual(tuple(node._position), (9.0, 9.0))
+        self.assertEqual(node.zOrder, 3)
+
+    def test_a_dead_destination_drops_the_old_node_and_returns_none(
+        self,
+    ) -> None:
+        view = _StubView(self.stage, ["/World/A", "/Zebra"])
+        placement = stage_adapter.savedRenamePlacement(view.nodes, "/World/A")
+        self.stage.RemovePrim("/World/A")
+
+        nodeId = stage_adapter.adoptRenamedPrim(
+            view, "/World/A", "/World/A", *placement
         )
-        self.assertEqual(view._reconnectOldSourceNodeId, "/Outer/Moved")
-        self.assertEqual(view._reconnectOldTargetNodeId, "/Outer/Moved/A")
 
-    def test_a_moved_scope_parent_moves_with_it(self) -> None:
-        view = _StubView(self.stage, ["/World/A"], scope="/World")
+        self.assertIsNone(nodeId)
+        self.assertEqual(list(view.nodes), ["/Zebra"])
+        view._addNewNodeFast.assert_not_called()
 
-        stage_adapter.remapMovedNodes(view, {"/World": "/Outer/Moved"})
+    def test_descendant_nodes_whose_prims_expired_are_dropped(self) -> None:
+        """Renaming an ancestor expires every prim under it; only the renamed
+        prim itself is adopted, from its live path."""
+        view = _StubView(self.stage, ["/World", "/World/A", "/Zebra"])
+        placement = stage_adapter.savedRenamePlacement(view.nodes, "/World")
+        self._rename("/World", "/Moved")
 
-        self.assertEqual(view._currentPrimPath, Sdf.Path("/Outer/Moved"))
+        nodeId = stage_adapter.adoptRenamedPrim(
+            view, "/World", "/Moved", *placement
+        )
 
-    def test_synthesized_ids_move_their_key_but_stay_unprimmed(self) -> None:
-        UsdGeom.Sphere.Define(self.stage, "/Bp")
-        view = _StubView(self.stage, ["/Bp"])
-        view.nodes["/Bp#input:drive"] = _synthetic_node("/Bp#input:drive")
+        self.assertEqual(nodeId, "/Moved")
+        self.assertEqual(sorted(view.nodes), ["/Moved", "/Zebra"])
 
-        stage_adapter.remapMovedNodes(view, {"/Bp": "/Bp2"})
-
-        node = view.nodes["/Bp2#input:drive"]
-        self.assertEqual(node.id, "/Bp2#input:drive")
-        # The id only borrows the blueprint's path; the model's prim data is
-        # its pin, not any prim at the new path.
-        self.assertEqual(node._primPath, Sdf.Path("/Bp"))
-        self.assertIsNone(node._prim)
-        self.assertEqual(node.name, "input:drive")
-
-    def test_the_invalidation_order_and_the_spatial_index_sweep(self) -> None:
+    def test_the_invalidation_tail_and_the_spatial_index_sweep(self) -> None:
         view = _StubView(self.stage, ["/World", "/Zebra"])
+        placement = stage_adapter.savedRenamePlacement(view.nodes, "/World")
+        self._rename("/World", "/Moved")
 
-        stage_adapter.remapMovedNodes(view, {"/World": "/Moved"})
+        stage_adapter.adoptRenamedPrim(view, "/World", "/Moved", *placement)
 
         view._spatialIndex.removeNode.assert_called_once_with("/World")
         self.assertEqual(
@@ -619,14 +649,19 @@ class RemapMovedNodesTest(unittest.TestCase):
             ],
         )
 
-    def test_a_move_with_no_nodes_behind_it_is_a_no_op(self) -> None:
-        view = _StubView(self.stage, ["/Zebra"])
+    def test_saved_placement_reads_the_node_or_nothing(self) -> None:
+        view = _StubView(self.stage, ["/World/A"])
+        view.nodes["/World/A"].setDisplayPosition((9.0, 9.0))
+        view.nodes["/World/A"].zOrder = 3
 
         self.assertEqual(
-            stage_adapter.remapMovedNodes(view, {"/Nothing": "/Here"}), {}
+            stage_adapter.savedRenamePlacement(view.nodes, "/World/A"),
+            ((9.0, 9.0), 3, 0),
         )
-        self.assertEqual(list(view.nodes), ["/Zebra"])
-        view._hooks.resetRenderCaches.assert_not_called()
+        self.assertEqual(
+            stage_adapter.savedRenamePlacement(view.nodes, "/World/Missing"),
+            (None, None, None),
+        )
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
@@ -643,35 +678,20 @@ class ApplyUsdChangesTest(unittest.TestCase):
         view._syncingSelection = True
         self.stage.RemovePrim("/Alpha")
 
-        stage_adapter.applyUsdChanges(view, {"/Alpha"}, set(), {})
+        stage_adapter.applyUsdChanges(view, {"/Alpha"}, set())
 
         self.assertIn("/Alpha", view.nodes)
         self.assertFalse(view.linksChanged)
         view._hooks.update.assert_not_called()
 
-    def test_a_reported_move_is_followed_not_rebuilt(self) -> None:
+    def test_a_rename_drops_the_old_node_and_adopts_from_the_stage(
+        self,
+    ) -> None:
+        """The notice path never re-keys: the old node is dropped and the new
+        prim adopted, so the model at the new path is built from the live
+        stage rather than carried across the edit."""
         view = _StubView(self.stage, ["/Alpha", "/Keeper"])
-        edit = Sdf.BatchNamespaceEdit()
-        edit.Add("/Alpha", "/Renamed")
-        self.stage.GetEditTarget().GetLayer().Apply(edit)
-        before = _layer_text(self.stage)
-
-        stage_adapter.applyUsdChanges(
-            view, {"/Alpha", "/Renamed"}, set(), {"/Alpha": "/Renamed"}
-        )
-
-        # No stale node and no duplicate: the old node rode across, and
-        # adoption then found the new path already shown.
-        self.assertEqual(list(view.nodes), ["/Renamed", "/Keeper"])
-        view._addNewNodeFast.assert_not_called()
-        self.assertTrue(view.linksChanged)
-        self.assertTrue(view.textChanged)
-        view._hooks.update.assert_called_once()
-        self.assertEqual(_layer_text(self.stage), before)
-
-    def test_a_rename_without_a_move_map_drops_and_adopts(self) -> None:
-        """USD without GetPrimResyncType: delete-and-create reconciliation."""
-        view = _StubView(self.stage, ["/Alpha", "/Keeper"])
+        oldNode = view.nodes["/Alpha"]
         edit = Sdf.BatchNamespaceEdit()
         edit.Add("/Alpha", "/Renamed")
         self.stage.GetEditTarget().GetLayer().Apply(edit)
@@ -680,7 +700,11 @@ class ApplyUsdChangesTest(unittest.TestCase):
         stage_adapter.applyUsdChanges(view, {"/Alpha", "/Renamed"}, set())
 
         self.assertEqual(sorted(view.nodes), ["/Keeper", "/Renamed"])
+        self.assertIsNot(view.nodes["/Renamed"], oldNode)
+        view._addNewNodeFast.assert_called_once()
         self.assertTrue(view.linksChanged)
+        self.assertTrue(view.textChanged)
+        view._hooks.update.assert_called_once()
         self.assertEqual(_layer_text(self.stage), before)
 
     def test_a_deletion_drops_the_node_and_rebuilds_links(self) -> None:
@@ -875,7 +899,7 @@ class ReplaceStalenessTest(unittest.TestCase):
         hooks = _RecordingHooks()
         hooks.sync.replace(object(), "stage", None, "frame")
         hooks.events.clear()
-        paths = ({"/Alpha"}, {"/Keeper.radius"}, {"/Alpha": "/Renamed"})
+        paths = ({"/Alpha"}, {"/Keeper.radius"})
         hooks.notice_context = muted = stage_sync.NoticeContext(True)
         hooks.receiver._handleUsdChanges(*paths)
         self.assertEqual(hooks.events, [("notice", muted)])
@@ -884,9 +908,9 @@ class ReplaceStalenessTest(unittest.TestCase):
         hooks.receiver._handleUsdChanges(*paths)
         self.assertEqual(hooks.events[:2], [("notice", muted), ("notice", admitted)])
         self.assertEqual(len(hooks.events), 3)
-        kind, resynced, info, moved, trace = hooks.events[2]
+        kind, resynced, info, trace = hooks.events[2]
         self.assertEqual(kind, "reconcile")
-        for original, received in zip(paths, (resynced, info, moved)):
+        for original, received in zip(paths, (resynced, info)):
             self.assertIs(received, original)
         self.assertIsNotNone(trace)
 
@@ -1044,8 +1068,8 @@ class NoticeRegistrationTest(unittest.TestCase):
             listen=lambda receiver: UsdNoticeHandler(receiver),
             warn=lambda message: None,
             sink=deltas.append,
-            reconcile=lambda resynced, info, moved, trace: (
-                stage_adapter.applyUsdChanges(view, resynced, info, moved, trace=trace)
+            reconcile=lambda resynced, info, trace: (
+                stage_adapter.applyUsdChanges(view, resynced, info, trace=trace)
             ),
         )
         service.bind(stage)
@@ -1057,12 +1081,14 @@ class NoticeRegistrationTest(unittest.TestCase):
         # The same rename, with and without the service listening: the layer
         # texts match, so reconciliation authored no opinion of its own.
         self.assertEqual(_layer_text(stage), _layer_text(twin))
-        # And the graph followed the prim through the real notice.
-        self.assertEqual(list(view.nodes), ["/Renamed", "/Keeper"])
+        # And the graph reflects the stage through the real notice: the old
+        # node dropped, the new prim adopted.
+        self.assertEqual(list(view.nodes), ["/Keeper", "/Renamed"])
         self.assertEqual(
             deltas,
             [
-                stage_sync.Remap(0, (("/Alpha", "/Renamed"),)),
+                stage_sync.Remove(0, ("/Alpha",)),
+                stage_sync.Adopt(0, ("/Renamed",)),
                 stage_sync.Invalidate(
                     0, ("/Alpha", "/Renamed"), True, True, True
                 ),
@@ -1445,7 +1471,6 @@ class DeltaRecordsTest(unittest.TestCase):
             stage_sync.BeginReload(7, "frame"),
             stage_sync.Load(7, object(), "blueprint", "/Bp"),
             stage_sync.ClearHistory(7),
-            stage_sync.Remap(7, (("/A", "/B"),)),
             stage_sync.Remove(7, ("/A",)),
             stage_sync.Adopt(7, ("/B",)),
             stage_sync.Invalidate(7, ("/A",), True, False, True),

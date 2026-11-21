@@ -55,7 +55,7 @@
         "_graphScopeParentPath": "stage_sync",
         "_validateNodesAgainstStage": "stage_sync",
         "_adoptPrimsNewToScope": "stage_sync",
-        "_remapMovedNodes": "stage_sync",
+        "_adoptRenamedPrim": "stage_sync",
         "_handleUsdChanges": "stage_sync",
         "_syncSelectionToPrimtree": "selection",
         "_frameInPrimTree": "selection",

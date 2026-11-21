@@ -267,11 +267,12 @@ class _Node:
 class _StubGraphView:
     """The slice of GraphView state the inline rename touches.
 
-    The node re-keying runs for real (``_remapMovedNodes`` is the production
-    method, not a mock), because a stub of it would assert nothing about the
-    thing that actually broke. Only the widget-level edges -- popups, repaint,
-    the prim-tree sync -- are mocked. ``_reloadCurrentGraph`` stays a mock so
-    tests can assert it is NOT reached; reaching it is the bug.
+    The rename follow-up runs for real (``_adoptRenamedPrim`` is the
+    production method, not a mock), because a stub of it would assert nothing
+    about the thing that actually broke. Only the widget-level edges --
+    popups, repaint, the prim-tree sync -- are mocked. ``_reloadCurrentGraph``
+    stays a mock so tests can assert it is NOT reached; reaching it is the
+    bug.
     """
 
     def __init__(self, stage):
@@ -285,9 +286,9 @@ class _StubGraphView:
 
         # The inline VALUE editor shares every handler the rename goes
         # through -- keyPressEvent asks it first, mousePressEvent commits it
-        # on click-away, and _remapMovedNodes carries it across a move -- so
-        # the slice of state mirrored here has to include it. Nothing in
-        # these tests opens one; they all stay at "not in progress".
+        # on click-away -- so the slice of state mirrored here has to include
+        # it. Nothing in these tests opens one; they all stay at
+        # "not in progress".
         self._valueEditTarget = None
         self._valueEditInput = TextInputWidget()
         self._valueEditFresh = True
@@ -303,18 +304,11 @@ class _StubGraphView:
         self.nodeGraph.nodes = {}
         GraphView._initUndoTracking(self, stage)
 
-        # Everything else _remapMovedNodes carries across a move.
+        # Reconciliation drops stale ids from the selection sets and the
+        # spatial index; the adopted model is indexed by _addNewNodeFast.
         self._marqueeBaseSelectedNodes = set()
         self._marqueePrevSelectedNodes = set()
-        self._reconciledPositionVersions = {}
         self.nodeIdUnderCursor = ""
-        self._hoveredPort = None
-        self._tooltipProperty = None
-        self._dragLinkSourceNode = None
-        self._dragLinkSyntheticTarget = None
-        self._dragLinkResolvedTarget = None
-        self._reconnectOldSourceNodeId = None
-        self._reconnectOldTargetNodeId = None
         self._currentPrimPath = None
         self._spatialIndex = MagicMock()
 
@@ -351,7 +345,8 @@ class _StubGraphView:
         self.update = MagicMock()
 
     # Mirrors the real GraphView.nodes: a read-only view of nodeGraph.nodes,
-    # which _remapMovedNodes replaces wholesale when it re-keys.
+    # which _adoptRenamedPrim replaces wholesale when it restores the draw
+    # order.
     @property
     def nodes(self):
         return self.nodeGraph.nodes
@@ -370,14 +365,16 @@ class _StubGraphView:
     def _commitRename(self):
         return GraphView._commitRename(self)
 
-    def _remapMovedNodes(self, movedPaths):
-        return GraphView._remapMovedNodes(self, movedPaths)
+    def _adoptRenamedPrim(self, oldNodeId, newPathStr, *placement):
+        return GraphView._adoptRenamedPrim(
+            self, oldNodeId, newPathStr, *placement
+        )
 
     def _resetRenderCachesAfterBulkMove(self, rebuild_links=True):
         return GraphView._resetRenderCachesAfterBulkMove(self, rebuild_links)
 
-    def _handleUsdChanges(self, resynced, infoOnly, movedPaths=None):
-        return GraphView._handleUsdChanges(self, resynced, infoOnly, movedPaths)
+    def _handleUsdChanges(self, resynced, infoOnly):
+        return GraphView._handleUsdChanges(self, resynced, infoOnly)
 
     def _validateNodesAgainstStage(self):
         return GraphView._validateNodesAgainstStage(self)
@@ -412,7 +409,8 @@ class InlineRenameEditorTest(unittest.TestCase):
         self.stage = _wiredStage()
         self.view = _StubGraphView(self.stage)
         # Only the source node. The destination is NOT pre-seeded: the commit
-        # has to move this node there itself, which is the whole point.
+        # has to adopt the renamed prim from the stage itself, which is the
+        # whole point.
         self.view.nodes["/World/Old"] = _Node("/World/Old")
 
     def test_begin_seeds_the_field_with_the_current_name(self):
@@ -555,8 +553,9 @@ class RenameKeepsTheGraphTest(unittest.TestCase):
     takes them off, neither of which touches USD, so no loader can re-derive
     it. Answering a rename by re-running a loader therefore replaces the user's
     graph with the loader's -- for a stage graph, the stage's top-level prims
-    and nothing else. These tests hold the line on the alternative: the node
-    follows its prim and everything else stays put.
+    and nothing else. These tests hold the line on the alternative: the
+    renamed prim is adopted from the stage under its new path and everything
+    else stays put.
 
     Real NodeModels over a real in-memory stage, because the failure modes are
     all in USD-facing state -- an expired prim, a position with no authored
@@ -587,7 +586,7 @@ class RenameKeepsTheGraphTest(unittest.TestCase):
         self.view._renameInput.text = newName
         self.view._commitRename()
 
-    def test_the_node_follows_its_prim(self):
+    def test_the_graph_shows_the_prim_under_its_new_name(self):
         self._rename("/World/Deep/Node", "Renamed")
 
         self.assertEqual(
@@ -601,12 +600,18 @@ class RenameKeepsTheGraphTest(unittest.TestCase):
         self.assertEqual(tuple(self.other.position), (500.0, 300.0))
         self.assertEqual(self.other.name, "Other")
 
-    def test_it_is_the_same_node_not_a_replacement(self):
-        """Identity, not equality: _lastSelectedNode and friends hold the
-        object, so a rebuilt model would strand them on a discarded one."""
+    def test_the_node_is_rebuilt_from_the_stage_not_rekeyed(self):
+        """The regression that separates the two designs: a re-key hands back
+        the same object under a new id, while a stage-derived node is a fresh
+        model built from the live prim -- the old id names nothing."""
         self._rename("/World/Deep/Node", "Renamed")
 
-        self.assertIs(self.view.nodes["/World/Deep/Renamed"], self.node)
+        self.assertNotIn("/World/Deep/Node", self.view.nodes)
+        rebuilt = self.view.nodes["/World/Deep/Renamed"]
+        self.assertIsNot(rebuilt, self.node)
+        prim = rebuilt.getUsdPrim()
+        self.assertTrue(prim.IsValid())
+        self.assertEqual(str(prim.GetPath()), "/World/Deep/Renamed")
 
     def test_the_graph_is_never_reloaded(self):
         self._rename("/World/Deep/Node", "Renamed")
@@ -653,38 +658,37 @@ class RenameKeepsTheGraphTest(unittest.TestCase):
         self.assertEqual(tuple(node.position), (1000.0, 2000.0))
 
     def test_the_title_becomes_the_new_name(self):
-        """Read it first, so the cache actually holds the OLD name: an
-        unprimed getter would fall through to the (now-repointed) prim and
-        report the right answer whether or not the re-key updated it."""
-        self.assertEqual(self.node.name, "Node")
-        self.assertEqual(self.node._name, "Node")
-
+        """The fresh model reads its title from the live prim, which carries
+        the new name -- no cached title is carried across the edit."""
         self._rename("/World/Deep/Node", "Renamed")
 
-        self.assertEqual(self.view.nodes["/World/Deep/Renamed"]._name, "Renamed")
-        self.assertEqual(self.view.nodes["/World/Deep/Renamed"].name, "Renamed")
+        node = self.view.nodes["/World/Deep/Renamed"]
+        self.assertEqual(node.name, "Renamed")
+        self.assertEqual(node._name, "Renamed")
 
-    def test_the_model_is_repointed_at_the_live_prim(self):
-        """The Usd.Prim captured at construction expires on the namespace edit.
-        Left expired, the next resync has _validateNodesAgainstStage drop the
-        node as 'its prim is gone'."""
+    def test_the_model_is_built_from_the_live_prim(self):
+        """The Usd.Prim captured at construction expires on the namespace
+        edit, which is exactly why the old node is dropped: the fresh model
+        captures the prim at its new home instead."""
         self._rename("/World/Deep/Node", "Renamed")
 
         prim = self.view.nodes["/World/Deep/Renamed"].getUsdPrim()
         self.assertTrue(prim.IsValid())
         self.assertEqual(str(prim.GetPath()), "/World/Deep/Renamed")
 
-    def test_descendant_nodes_move_with_their_ancestor(self):
-        """USD reports only the prim that moved; the children move silently."""
-        child = self._addNode("/World/Deep/Child")
+    def test_descendant_nodes_are_dropped_with_their_ancestor(self):
+        """Renaming an ancestor expires every prim under it. The renamed prim
+        itself is adopted; its descendants' nodes name paths that no longer
+        exist, so they are dropped like any other stale node."""
+        self._addNode("/World/Deep/Child")
 
         self._rename("/World/Deep", "Deeper")
 
-        self.assertIs(self.view.nodes["/World/Deeper/Child"], child)
-        self.assertIs(self.view.nodes["/World/Deeper/Node"], self.node)
-        self.assertTrue(
-            self.view.nodes["/World/Deeper/Child"].getUsdPrim().IsValid()
+        self.assertEqual(
+            set(self.view.nodes), {"/World/Deeper", "/Other"}
         )
+        prim = self.view.nodes["/World/Deeper"].getUsdPrim()
+        self.assertTrue(prim.IsValid())
 
     def test_a_sibling_sharing_a_name_prefix_is_not_dragged_along(self):
         """/World/Deep/Node is not an ancestor of /World/Deep/NodeTwo, however
@@ -697,21 +701,18 @@ class RenameKeepsTheGraphTest(unittest.TestCase):
         self.assertIs(self.view.nodes["/World/Deep/NodeTwo"], sibling)
         self.assertEqual(tuple(sibling.position), (500.0, 300.0))
 
-    def test_selection_and_hover_state_follow_the_node(self):
+    def test_stale_ids_leave_the_selection_sets(self):
+        """The dropped id is forgotten everywhere the view keys by it; the
+        commit then selects the adopted node explicitly."""
         self.view._selectedNodes.add("/World/Deep/Node")
         self.view._marqueeBaseSelectedNodes.add("/World/Deep/Node")
         self.view._marqueePrevSelectedNodes.add("/World/Deep/Node")
-        self.view.nodeIdUnderCursor = "/World/Deep/Node"
-        self.view._hoveredPort = ("/World/Deep/Node", "out", True)
 
         self._rename("/World/Deep/Node", "Renamed")
 
-        self.assertEqual(self.view._marqueeBaseSelectedNodes, {"/World/Deep/Renamed"})
-        self.assertEqual(self.view._marqueePrevSelectedNodes, {"/World/Deep/Renamed"})
-        self.assertEqual(self.view.nodeIdUnderCursor, "/World/Deep/Renamed")
-        self.assertEqual(
-            self.view._hoveredPort, ("/World/Deep/Renamed", "out", True)
-        )
+        self.assertEqual(self.view._selectedNodes, {"/World/Deep/Renamed"})
+        self.assertEqual(self.view._marqueeBaseSelectedNodes, set())
+        self.assertEqual(self.view._marqueePrevSelectedNodes, set())
 
     def test_the_dead_id_leaves_the_spatial_index_immediately(self):
         """The link rebuild that refills the index is deferred to the next
@@ -733,63 +734,28 @@ class RenameKeepsTheGraphTest(unittest.TestCase):
 
         self.assertEqual(self.view._selectedNodes, {"/World/Deep/Renamed"})
 
-    def test_a_graph_scope_that_moved_is_retargeted(self):
-        """A blueprint/container graph measures reconciliation against
-        _currentPrimPath; leaving it on a dead path empties the graph."""
-        self.view._currentPrimPath = Sdf.Path("/World/Deep")
-
-        self.view._remapMovedNodes({"/World": "/World2"})
-
-        self.assertEqual(str(self.view._currentPrimPath), "/World2/Deep")
-
-    def test_several_independent_moves_apply_in_one_pass(self):
-        sibling = self._addNode("/World/Deep/NodeTwo")
-
-        self.view._remapMovedNodes(
-            {
-                "/World/Deep/Node": "/World/Deep/Alpha",
-                "/World/Deep/NodeTwo": "/World/Deep/Beta",
-            }
-        )
-
-        self.assertIs(self.view.nodes["/World/Deep/Alpha"], self.node)
-        self.assertIs(self.view.nodes["/World/Deep/Beta"], sibling)
-        self.assertNotIn("/World/Deep/Node", self.view.nodes)
-        self.assertNotIn("/World/Deep/NodeTwo", self.view.nodes)
-
-    def test_a_move_whose_destination_is_another_moves_source(self):
-        """A shuffle in one pass must not have one entry eat the other."""
-        sibling = self._addNode("/World/Deep/NodeTwo")
-
-        self.view._remapMovedNodes(
-            {
-                "/World/Deep/Node": "/World/Deep/NodeTwo",
-                "/World/Deep/NodeTwo": "/World/Deep/Child",
-            }
-        )
-
-        self.assertIs(self.view.nodes["/World/Deep/NodeTwo"], self.node)
-        self.assertIs(self.view.nodes["/World/Deep/Child"], sibling)
-        self.assertEqual(len(self.view.nodes), 3)
-
-    def test_remapping_the_same_move_twice_is_a_no_op(self):
-        """The notice and the authoring site both call it; whichever runs
-        second must not double-apply."""
+    def test_adopting_twice_does_not_duplicate(self):
+        """The notice adopts inside the scope before the authoring site runs;
+        the follow-up restores the placement onto that model, not a second
+        node."""
         self._rename("/World/Deep/Node", "Renamed")
         before = dict(self.view.nodes)
 
-        applied = self.view._remapMovedNodes(
-            {"/World/Deep/Node": "/World/Deep/Renamed"}
+        nodeId = self.view._adoptRenamedPrim(
+            "/World/Deep/Node", "/World/Deep/Renamed", Gf.Vec2d(1.0, 1.0), 9
         )
 
-        self.assertEqual(applied, {})
+        self.assertEqual(nodeId, "/World/Deep/Renamed")
         self.assertEqual(self.view.nodes, before)
+        node = self.view.nodes["/World/Deep/Renamed"]
+        self.assertEqual(tuple(node.position), (1.0, 1.0))
+        self.assertEqual(node.zOrder, 9)
 
     def test_the_node_order_is_preserved(self):
-        """Dict order is draw and iteration order; a pop-and-re-insert would
-        send every renamed node to the back of the graph."""
-        first = self._addNode("/World/Deep/NodeTwo")
-        last = self._addNode("/World/Deep/Child")
+        """Dict order is draw and iteration order: the fresh model moves back
+        to the slot the rename vacated instead of landing at the back."""
+        self._addNode("/World/Deep/NodeTwo")
+        self._addNode("/World/Deep/Child")
         before = list(self.view.nodes)
 
         self._rename("/World/Deep/NodeTwo", "Renamed")
@@ -797,21 +763,27 @@ class RenameKeepsTheGraphTest(unittest.TestCase):
         expected = ["/World/Deep/Renamed" if n == "/World/Deep/NodeTwo" else n
                     for n in before]
         self.assertEqual(list(self.view.nodes), expected)
-        self.assertIs(self.view.nodes["/World/Deep/Renamed"], first)
-        self.assertIs(self.view.nodes["/World/Deep/Child"], last)
 
-    def test_a_synthesized_io_node_keeps_its_pin_name(self):
-        """Blueprint I/O nodes borrow the blueprint's path for their id but are
-        not prim-backed; only the id moves."""
+    def test_the_draw_order_is_restored_onto_the_fresh_model(self):
+        self.node.zOrder = 7
+
+        self._rename("/World/Deep/Node", "Renamed")
+
+        self.assertEqual(self.view.nodes["/World/Deep/Renamed"].zOrder, 7)
+
+    def test_a_synthesized_io_node_is_left_alone(self):
+        """Blueprint I/O nodes are not prim-backed, so no rename adopts or
+        drops them: only their borrowed path could move, and ids are never
+        re-keyed."""
         io = self.NodeModel()
         io.id = "/World/Deep#input:drive:x"
         io.name = "x"
         self.view.nodes[io.id] = io
 
-        self.view._remapMovedNodes({"/World/Deep": "/World/Deeper"})
+        self._rename("/World/Deep/Node", "Renamed")
 
-        self.assertIn("/World/Deeper#input:drive:x", self.view.nodes)
-        self.assertEqual(self.view.nodes["/World/Deeper#input:drive:x"].name, "x")
+        self.assertIs(self.view.nodes["/World/Deep#input:drive:x"], io)
+        self.assertEqual(io.name, "x")
 
 
 @unittest.skipUnless(
@@ -821,8 +793,9 @@ class RenameFromOutsideTheEditorTest(unittest.TestCase):
     """A rename authored anywhere on the stage, arriving only as a notice.
 
     usdview, a script, or a second editor window can rename a prim without
-    going through _commitRename. USD classifies the resync pair for us
-    (RenameSource / RenameDestination), so the same re-key applies.
+    going through _commitRename. The notice path treats it as a delete plus
+    an add -- no move classification, no re-keying -- so an in-scope prim is
+    dropped and adopted fresh, while an out-of-scope one is only dropped.
     """
 
     def setUp(self):
@@ -831,14 +804,18 @@ class RenameFromOutsideTheEditorTest(unittest.TestCase):
 
         self.stage = _curatedStage()
         self.view = _StubGraphView(self.stage)
-        node = NodeModel(stage=self.stage, primPath=Sdf.Path("/World/Deep/Node"))
-        node.setDisplayPosition(Gf.Vec2d(500.0, 300.0))
-        self.view.nodes["/World/Deep/Node"] = node
-        self.node = node
+        self.NodeModel = NodeModel
 
         self.handler = UsdNoticeHandler(self.view)
         self.handler.register(self.stage)
         self.addCleanup(self.handler.unregister)
+
+    def _addNode(self, path, displayPosition=(500.0, 300.0)):
+        node = self.NodeModel(stage=self.stage, primPath=Sdf.Path(path))
+        if displayPosition is not None:
+            node.setDisplayPosition(Gf.Vec2d(*displayPosition))
+        self.view.nodes[path] = node
+        return node
 
     def _renameOnTheStage(self, path, newName):
         options = Usd.NamespaceEditor.EditOptions()
@@ -847,38 +824,36 @@ class RenameFromOutsideTheEditorTest(unittest.TestCase):
         editor.RenamePrim(self.stage.GetPrimAtPath(path), newName)
         self.assertTrue(editor.ApplyEdits())
 
-    def test_usd_reports_the_pair_as_a_rename(self):
-        """The whole design rests on this classification being available."""
+    def test_an_in_scope_rename_is_dropped_and_adopted_fresh(self):
+        node = self._addNode("/Other")
+
+        self._renameOnTheStage("/Other", "Elsewhere")
+
+        self.assertNotIn("/Other", self.view.nodes)
+        rebuilt = self.view.nodes["/Elsewhere"]
+        self.assertIsNot(rebuilt, node)
+        self.assertTrue(rebuilt.getUsdPrim().IsValid())
+
+    def test_an_out_of_scope_rename_drops_the_node(self):
+        """The new prim is outside the loader's scope, so nothing adopts it;
+        the node for the dead path is still dropped."""
+        self._addNode("/World/Deep/Node")
+
         self._renameOnTheStage("/World/Deep/Node", "Elsewhere")
 
-        self.assertIn("/World/Deep/Elsewhere", self.view.nodes)
-
-    def test_the_node_is_not_dropped_as_stale(self):
-        self._renameOnTheStage("/World/Deep/Node", "Elsewhere")
-
-        self.assertIs(self.view.nodes["/World/Deep/Elsewhere"], self.node)
-        self.assertEqual(len(self.view.nodes), 1)
-
-    def test_the_display_position_survives_the_resync(self):
-        """_handleUsdChanges invalidates the node's cache right after the
-        re-key; a display-only position has nothing in USD to come back from."""
-        self._renameOnTheStage("/World/Deep/Node", "Elsewhere")
-
-        self.assertEqual(
-            tuple(self.view.nodes["/World/Deep/Elsewhere"].position), (500.0, 300.0)
-        )
+        self.assertNotIn("/World/Deep/Node", self.view.nodes)
+        self.assertNotIn("/World/Deep/Elsewhere", self.view.nodes)
+        self.assertEqual(len(self.view.nodes), 0)
 
     def test_an_unrelated_delete_still_drops_its_node(self):
         """The rename handling must not blunt ordinary reconciliation."""
-        from UsdNoodles.models import NodeModel
-
-        self.view.nodes["/Other"] = NodeModel(
-            stage=self.stage, primPath=Sdf.Path("/Other")
-        )
+        self._addNode("/World/Deep/Node")
+        self._addNode("/Other")
 
         self.stage.RemovePrim("/Other")
 
         self.assertNotIn("/Other", self.view.nodes)
+        self.assertIn("/World/Deep/Node", self.view.nodes)
 
 
 @unittest.skipUnless(_has_graph_view, "graphView module not available")
@@ -1006,19 +981,19 @@ class RenameUndoTest(unittest.TestCase):
         _make_rename_undo("/World", "New", "Old")(self.gv)
 
         self.gv._reloadCurrentGraph.assert_not_called()
-        self.gv._remapMovedNodes.assert_called_once_with(
-            {"/World/New": "/World/Old"}
-        )
+        self.gv._adoptRenamedPrim.assert_called_once()
+        adopted = self.gv._adoptRenamedPrim.call_args[0]
+        self.assertEqual(adopted[:2], ("/World/New", "/World/Old"))
 
 
 @unittest.skipUnless(
     _has_graph_view and _has_prim_rename, "graphView module not available"
 )
 class RenameUndoKeepsTheGraphTest(unittest.TestCase):
-    """Undo and redo of a rename move the node, like the rename itself did.
+    """Undo and redo of a rename adopt from the stage, like the rename did.
 
     Driven against a real view stub rather than a bare MagicMock, so the
-    re-keying actually happens and can be asserted on.
+    drop-and-adopt actually happens and can be asserted on.
     """
 
     def setUp(self):
@@ -1045,14 +1020,18 @@ class RenameUndoKeepsTheGraphTest(unittest.TestCase):
         self._undo("Renamed", "Node")
 
         self.assertEqual(set(self.view.nodes), {"/World/Deep/Node", "/Other"})
-        self.assertIs(self.view.nodes["/World/Deep/Node"], self.node)
+        rebuilt = self.view.nodes["/World/Deep/Node"]
+        self.assertIsNot(rebuilt, self.node)
+        self.assertTrue(rebuilt.getUsdPrim().IsValid())
 
     def test_redo_takes_it_forward_again(self):
         self._undo("Renamed", "Node")
         self._undo("Node", "Renamed")
 
         self.assertEqual(set(self.view.nodes), {"/World/Deep/Renamed", "/Other"})
-        self.assertIs(self.view.nodes["/World/Deep/Renamed"], self.node)
+        rebuilt = self.view.nodes["/World/Deep/Renamed"]
+        self.assertIsNot(rebuilt, self.node)
+        self.assertTrue(rebuilt.getUsdPrim().IsValid())
 
     def test_the_graph_is_never_reloaded(self):
         self._undo("Renamed", "Node")

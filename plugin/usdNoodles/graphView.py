@@ -189,13 +189,14 @@ def _make_rename_undo(parent_path, from_name, to_name):
         if not prim or not prim.IsValid():
             Tf.Warn("Rename undo: no prim named %s under %s" % (_from, _parent))
             return
+        placement = stage_adapter.savedRenamePlacement(gv.nodes, oldPath)
         status, newPath, message = rename_prim(stage, prim, _to)
         if status != RENAMED:
             Tf.Warn("Rename undo failed (%s): %s" % (status, message))
             return
         # Follow the node across, exactly as the forward rename does. Reloading
         # instead would undo the name and lose the graph in the same gesture.
-        gv._remapMovedNodes({oldPath: str(newPath)})
+        gv._adoptRenamedPrim(oldPath, str(newPath), *placement)
 
     return _fn
 
@@ -232,8 +233,8 @@ def _makeStageSync(view):
         post=lambda callback: QtCore.QTimer.singleShot(0, callback),
         listen=lambda receiver: UsdNoticeHandler(receiver),
         warn=lambda message: Tf.Warn(message),
-        reconcile=lambda resynced, info, moved, trace: stage_adapter.applyUsdChanges(
-            view, resynced, info, moved, trace=trace
+        reconcile=lambda resynced, info, trace: stage_adapter.applyUsdChanges(
+            view, resynced, info, trace=trace
         ),
     )
 
@@ -1786,13 +1787,13 @@ class GraphView(QGLWidget):
     def _adoptPrimsNewToScope(self, resyncedPaths):
         return stage_adapter.adoptPrimsNewToScope(self, resyncedPaths)
 
-    def _remapMovedNodes(self, movedPaths):
-        return stage_adapter.remapMovedNodes(self, movedPaths)
-
-    def _handleUsdChanges(self, resyncedPaths, infoChangedPaths, movedPaths=None):
-        stage_adapter.applyUsdChanges(
-            self, resyncedPaths, infoChangedPaths, movedPaths
+    def _adoptRenamedPrim(self, oldNodeId, newPathStr, *placement):
+        return stage_adapter.adoptRenamedPrim(
+            self, oldNodeId, newPathStr, *placement
         )
+
+    def _handleUsdChanges(self, resyncedPaths, infoChangedPaths):
+        stage_adapter.applyUsdChanges(self, resyncedPaths, infoChangedPaths)
 
     def _syncSelectionToPrimtree(self):
         with _ProfileSection(self._profiler, "Sync Selection to Primtree"):
@@ -11221,6 +11222,7 @@ class GraphView(QGLWidget):
             return
 
         oldName = prim.GetName()
+        placement = stage_adapter.savedRenamePlacement(self.nodes, nodeId)
         status, newPath, message = rename_prim(stage, prim, newName)
 
         if status == UNCHANGED:
@@ -11239,12 +11241,10 @@ class GraphView(QGLWidget):
         self._renamingNodeId = ""
         self._renameInput.clear()
 
-        # The resync notice the rename emitted has already moved the node to its
-        # new path (USD classifies the pair as RenameSource / RenameDestination,
-        # and _handleUsdChanges follows it). This call is the belt-and-braces
-        # half for the cases where it did not -- notices suppressed by an
-        # enclosing edit, or a USD build without GetPrimResyncType -- and is a
-        # no-op when the node is already where it belongs.
+        # The resync notice the rename emitted already dropped the old node
+        # and, inside the loader's scope, adopted the new prim. This call is
+        # the belt-and-braces half for suppressed notices and out-of-scope
+        # renames, and re-applies the display-only placement otherwise.
         #
         # What must NOT happen here is a reload. Graph membership is the user's
         # ('A' adds prims at any depth, 'D' takes them off, neither touches USD)
@@ -11252,7 +11252,7 @@ class GraphView(QGLWidget):
         # rename by emptying the canvas down to whatever the loader's scope
         # holds.
         newNodeId = str(newPath)
-        self._remapMovedNodes({nodeId: newNodeId})
+        self._adoptRenamedPrim(nodeId, newNodeId, *placement)
 
         self.clearSelection()
         if newNodeId in self.nodes:

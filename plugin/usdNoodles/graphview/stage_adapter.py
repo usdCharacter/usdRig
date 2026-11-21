@@ -26,7 +26,6 @@ from .stage_sync import (
     NoticeContext,
     StageContext,
     _isPathRelated,
-    _nodeIdPrimPath,
 )
 
 
@@ -45,6 +44,21 @@ def graphScopeParentPath(view):
     if isinstance(view.nodeGraph, (NodeGraphBlueprint, NodeGraphBpContainer)):
         return str(view._currentPrimPath) if view._currentPrimPath else None
     return "/"
+
+
+def _dropNodeId(view, nodeId):
+    """Forget one node id everywhere the view keys by it."""
+    view.nodes.pop(nodeId, None)
+    view._selectedNodes.discard(nodeId)
+    view._marqueeBaseSelectedNodes.discard(nodeId)
+    view._marqueePrevSelectedNodes.discard(nodeId)
+    # _rebuildLinks rebuilds the whole index, but that is deferred to
+    # the next paint; drop it now so a click landing first cannot hit
+    # a node that no longer exists.
+    try:
+        view._spatialIndex.removeNode(nodeId)
+    except Exception:
+        pass
 
 
 def validateNodesAgainstStage(view):
@@ -79,22 +93,33 @@ def validateNodesAgainstStage(view):
         stale.append(nodeId)
 
     for nodeId in stale:
-        view.nodes.pop(nodeId, None)
-        view._selectedNodes.discard(nodeId)
-        view._marqueeBaseSelectedNodes.discard(nodeId)
-        view._marqueePrevSelectedNodes.discard(nodeId)
-        # _rebuildLinks rebuilds the whole index, but that is deferred to
-        # the next paint; drop it now so a click landing first cannot hit
-        # a node that no longer exists.
-        try:
-            view._spatialIndex.removeNode(nodeId)
-        except Exception:
-            pass
+        _dropNodeId(view, nodeId)
 
     if stale:
         Tf.Status("Graph validation dropped %d node(s) whose prims are "
                   "gone: %s" % (len(stale), ", ".join(sorted(stale))))
     return stale
+
+
+def _addLivePrimNode(view, pathStr):
+    """Build a fresh node from the live prim at *pathStr*, or None.
+
+    A path already shown resolves to itself, so a notice that adopted the
+    prim and the authoring site that follows it cannot double-add.
+    """
+    if pathStr in view.nodes:
+        return pathStr
+    stage = view.nodeGraph.getStage()
+    if not stage:
+        return None
+    prim = stage.GetPrimAtPath(pathStr)
+    if not prim or not prim.IsValid() or not prim.IsActive():
+        return None
+    try:
+        return view._addNewNodeFast(prim, stage) or None
+    except Exception as error:
+        Tf.Warn("Graph validation could not add %s: %s" % (pathStr, error))
+        return None
 
 
 def adoptPrimsNewToScope(view, resyncedPaths):
@@ -122,172 +147,105 @@ def adoptPrimsNewToScope(view, resyncedPaths):
     for pathStr in sorted(resyncedPaths):
         if "." in pathStr or pathStr in view.nodes:
             continue
-        prim = stage.GetPrimAtPath(pathStr)
-        if not prim or not prim.IsValid() or not prim.IsActive():
+        if str(Sdf.Path(pathStr).GetParentPath()) != scope:
             continue
-        if str(prim.GetPath().GetParentPath()) != scope:
-            continue
-        try:
-            nodeId = view._addNewNodeFast(prim, stage)
-        except Exception as error:
-            Tf.Warn("Graph validation could not add %s: %s" % (pathStr, error))
-            continue
+        nodeId = _addLivePrimNode(view, pathStr)
         if nodeId:
             added.append(nodeId)
     return added
 
 
-def remapMovedNodes(view, movedPaths):
-    """Carry nodes across a namespace move instead of dropping them.
+def savedRenamePlacement(nodes, oldNodeId):
+    """The display-only state a rename must carry onto the rebuilt node.
 
-    A node id IS a prim path, so a rename or reparent changes the identity
-    of every node at or under the moved prim. The alternative -- rebuilding
-    the graph from a loader -- cannot work here, because graph membership
-    is not derivable from the stage: 'A' (``addNodesFromPrimTreeSelection``)
-    puts prims at ANY depth on the canvas and 'D' takes them off again
-    without touching USD, so the set of nodes on screen is the user's, not
-    the loader's. Re-keying is the only operation that preserves it.
+    Read BEFORE the namespace edit: the resync notice it emits can drop the
+    old node -- and adopt the new prim at the back -- before the authoring
+    site continues. Missing node, missing state: a rename of a path the
+    canvas does not show adopts fresh.
+    """
+    node = nodes.get(oldNodeId)
+    try:
+        index = list(nodes).index(oldNodeId)
+    except ValueError:
+        index = None
+    return getattr(node, "position", None), getattr(node, "zOrder", None), index
 
-    Everything keyed by the old id moves with it: the node dict, the
-    NodeModel's own identity and its expired ``Usd.Prim``, the selection and
-    marquee sets, the spatial index, and the scattered cursor / drag / hover
-    ids. Links are NOT re-keyed -- ``_rebuildLinks`` re-derives every one of
-    them from USD, which is also what picks up the relationship targets and
-    connections USD retargeted as part of the move.
 
-    Idempotent: paths with no node behind them are skipped, so it is safe to
-    call from the authoring site as well as from the notice, whichever gets
-    there first.
+def adoptRenamedPrim(
+    view,
+    oldNodeId,
+    newPathStr,
+    displayPosition=None,
+    zOrder=None,
+    oldIndex=None,
+):
+    """Follow one rename by rebuilding the node from the current stage.
+
+    A rename is a delete plus an add: the node at the old id is dropped and
+    a fresh model is built from the live prim at the new path, so node
+    identity is always whatever the stage holds now -- never a re-keyed
+    object carried across the edit. The adoption is scope-independent: the
+    authoring site names the prim the user just renamed, which a notice
+    alone could not re-add outside the loader's scope.
+
+    Validation runs first, so a rename whose notice was suppressed (an
+    enclosing edit) still drops the old node and any descendant nodes whose
+    prims expired with it; when the notice already ran this is a no-op.
+    Display-only state -- a grid placement, the draw order, the draw slot --
+    has no USD backing, so the caller snapshots it before the namespace edit
+    (see ``savedRenamePlacement``) and it is re-applied onto the fresh model
+    here, the same split ``_reloadCurrentGraph`` uses. An authored position
+    is left alone: the rename carries the attribute to the new path and the
+    fresh model reads it back.
 
     Args:
-        movedPaths: ``{oldPrimPath: newPrimPath}`` as strings.
+        oldNodeId: node id naming the prim's path before the rename.
+        newPathStr: the prim's path after the rename.
+        displayPosition: the old node's cached position, re-applied only
+            when the fresh model has no authored position.
+        zOrder: the old node's draw order, restored onto the fresh model.
+        oldIndex: the old node's slot in the node order, which the fresh
+            model moves back to.
 
     Returns:
-        dict[str, str]: the ``{oldNodeId: newNodeId}`` actually applied.
+        str | None: the adopted node id, or None when the new path holds
+        no live prim -- the old node is dropped either way.
     """
-    if not movedPaths:
-        return {}
+    validateNodesAgainstStage(view)
 
-    stage = view.nodeGraph.getStage()
+    nodeId = _addLivePrimNode(view, newPathStr)
+    if nodeId is None:
+        view._invalidateBackReferenceLinkDataCache()
+        view._nodeRenderManager.invalidateAll()
+        view._resetRenderCachesAfterBulkMove()
+        return None
 
-    # A move of /A implies a move of everything under it, but USD reports
-    # only the prim that actually moved -- descendants are not enumerated in
-    # the notice. Walk the graph instead and rewrite every id that sits at
-    # or under a moved path.
-    remap = {}
-    for nodeId in view.nodes:
-        primPath = _nodeIdPrimPath(nodeId)
-        for oldPath, newPath in movedPaths.items():
-            if not _isPathRelated(primPath, oldPath) or len(primPath) < len(
-                oldPath
-            ):
-                continue
-            newId = newPath + nodeId[len(oldPath):]
-            if newId != nodeId:
-                remap[nodeId] = newId
-            break
+    # Dict order is draw order: the adoption appended the fresh model, so
+    # move it back to the slot the rename vacated.
+    if oldIndex is not None:
+        nodeIds = list(view.nodes)
+        nodeIds.remove(nodeId)
+        nodeIds.insert(min(oldIndex, len(nodeIds)), nodeId)
+        view.nodeGraph.nodes = {key: view.nodes[key] for key in nodeIds}
 
-    if not remap:
-        return {}
+    node = view.nodes[nodeId]
+    if zOrder is not None:
+        node.zOrder = zOrder
+    if displayPosition is not None and not node.hasAuthoredPosition():
+        node.setDisplayPosition(displayPosition)
 
-    for oldId, newId in remap.items():
-        node = view.nodes[oldId]
-        node.id = newId
-        # Synthesized Blueprint I/O nodes are not prim-backed: their id only
-        # borrows the blueprint's path, and their title is a pin name. Move
-        # the id and leave the rest of the model alone.
-        if "#" not in newId:
-            # Repoint the model at the prim's new home. The Usd.Prim
-            # captured at construction expired the moment the namespace edit
-            # landed -- left in place it reads as "this node's prim is
-            # gone", and the next resync would have
-            # validateNodesAgainstStage drop the node we just rescued.
-            node._primPath = Sdf.Path(newId)
-            if stage is not None:
-                node._prim = stage.GetPrimAtPath(newId)
-            # The title is the prim's name, and the name changed.
-            node.name = Sdf.Path(newId).name
-        # Hit-testing resolves through the spatial index, and the link
-        # rebuild that refills it is deferred to the next paint -- drop the
-        # dead key now so a click landing first cannot hit it.
-        try:
-            view._spatialIndex.removeNode(oldId)
-        except Exception:
-            pass
-
-    # Re-key the node dict in one pass, preserving insertion order: it is
-    # the draw and iteration order, and a pop/re-insert would send every
-    # renamed node to the back.
-    view.nodeGraph.nodes = {
-        remap.get(nodeId, nodeId): node for nodeId, node in view.nodes.items()
-    }
-
-    def _remapId(value):
-        return remap.get(value, value)
-
-    def _remapIdInTuple(value, index=0):
-        if not value:
-            return value
-        asList = list(value)
-        asList[index] = _remapId(asList[index])
-        return tuple(asList)
-
-    view._selectedNodes = {_remapId(n) for n in view._selectedNodes}
-    view._marqueeBaseSelectedNodes = {
-        _remapId(n) for n in view._marqueeBaseSelectedNodes
-    }
-    view._marqueePrevSelectedNodes = {
-        _remapId(n) for n in view._marqueePrevSelectedNodes
-    }
-    view._reconciledPositionVersions = {
-        _remapId(n): v for n, v in view._reconciledPositionVersions.items()
-    }
-    view.nodeIdUnderCursor = _remapId(view.nodeIdUnderCursor)
-    view._renamingNodeId = _remapId(view._renamingNodeId)
-    # An open value editor / drag / popup follows the prim it is editing,
-    # for the same reason the rename does: the node is still on screen and
-    # still the one being typed into, only its id changed.
-    view._valueEditTarget = _remapIdInTuple(view._valueEditTarget)
-    for _state in (view._mungState, view._tokenPopup):
-        if _state and _state.get("nodeId") in remap:
-            _state["nodeId"] = remap[_state["nodeId"]]
-            _state["primPath"] = _nodeIdPrimPath(_state["nodeId"])
-    view._hoveredPort = _remapIdInTuple(view._hoveredPort)
-    view._tooltipProperty = _remapIdInTuple(view._tooltipProperty)
-    view._dragLinkSourceNode = _remapId(view._dragLinkSourceNode)
-    view._dragLinkSyntheticTarget = _remapIdInTuple(view._dragLinkSyntheticTarget)
-    view._dragLinkResolvedTarget = _remapIdInTuple(view._dragLinkResolvedTarget)
-    view._reconnectOldSourceNodeId = _remapId(view._reconnectOldSourceNodeId)
-    view._reconnectOldTargetNodeId = _remapId(view._reconnectOldTargetNodeId)
-
-    # The blueprint / container graphs scope themselves to the prim they were
-    # opened on (see graphScopeParentPath). If that prim moved, the scope has
-    # to move with it or reconciliation starts measuring against a path that
-    # no longer resolves and empties the graph.
-    if view._currentPrimPath is not None:
-        currentStr = str(view._currentPrimPath)
-        for oldPath, newPath in movedPaths.items():
-            if _isPathRelated(currentStr, oldPath) and len(currentStr) >= len(
-                oldPath
-            ):
-                view._currentPrimPath = Sdf.Path(
-                    newPath + currentStr[len(oldPath):]
-                )
-                break
-
-    # Node ids are baked into the vertex, text and icon caches, so the old
-    # id's geometry would linger while the new id drew nothing. Links are
-    # re-derived from USD by the rebuild this schedules, which is also what
-    # refills the spatial index.
+    # The rename retargeted the connections and relationships that named the
+    # old path; the rebuild this schedules re-derives every link from USD,
+    # which also refills the spatial index.
     view._invalidateBackReferenceLinkDataCache()
     view._nodeRenderManager.invalidateAll()
     view._resetRenderCachesAfterBulkMove()
 
     Tf.Status(
-        "Graph followed %d node(s) across a namespace move: %s"
-        % (len(remap), ", ".join(f"{o} -> {n}" for o, n in sorted(remap.items())))
+        "Graph adopted the renamed prim %s from the stage (was %s)"
+        % (nodeId, oldNodeId)
     )
-    return remap
+    return nodeId
 
 
 def _nodePositionChange(node):
@@ -376,46 +334,31 @@ def _applyPropertyChange(view, node, propName):
     return _otherPropertyChange(node, propName)
 
 
-def applyUsdChanges(
-    view, resyncedPaths, infoChangedPaths, movedPaths=None, trace=None
-):
+def applyUsdChanges(view, resyncedPaths, infoChangedPaths, trace=None):
     """Handle USD changes detected via the Notice system.
 
     This is called by UsdNoticeHandler (through the service's receiver, and
     through the view's delegator for direct callers) when USD prims/properties
-    change. It invalidates caches and triggers redraws as needed.
+    change. It invalidates caches and triggers redraws as needed. A rename
+    is a delete plus an add: the old node is dropped and the new prim is
+    adopted from the stage, never re-keyed.
 
     Args:
         resyncedPaths: Set of path strings that had structural changes
                       (prims added/removed, connections changed)
         infoChangedPaths: Set of path strings that had property value changes
                          (positions, metadata)
-        movedPaths: Optional ``{oldPath: newPath}`` for prims USD reports as
-                    renamed or reparented rather than deleted and recreated.
         trace: Optional ``_ReconcileTrace`` publishing what this pass decided
-               (see Remap / Remove / Adopt / Invalidate).
+               (see Remove / Adopt / Invalidate).
     """
     # Ignore changes if we're in the middle of syncing selection
     # (those are likely our own edits)
     if view._syncingSelection:
         return
 
-    # Follow moved prims FIRST. Both loops below, and the reconciliation
-    # that follows them, ask "is this path one of my nodes?" -- so the
-    # nodes have to be sitting under their new paths before any of that
-    # runs, or the move reads as a delete of the old path plus an
-    # unrelated create of the new one.
-    movedNodes = remapMovedNodes(view, movedPaths) if movedPaths else {}
-    if trace is not None and movedNodes:
-        trace.remap(tuple(movedNodes.items()))
-
     needsLinkRebuild = False
     needsRepaint = False
     needsTextUpdate = False
-    if movedNodes:
-        needsLinkRebuild = True
-        needsRepaint = True
-        needsTextUpdate = True
 
     # Resynced paths represent structural USD changes (prims added/removed,
     # connection authored/cleared). Drop the cached per-prim back-reference
@@ -612,8 +555,8 @@ def _finishReloadOnView(view):
 def applyStageDelta(view, delta):
     """Perform one reload delta on *view*, synchronously, owner thread.
 
-    Remap / Remove / Adopt / Invalidate are records of work reconciliation
-    already did, so they carry nothing to apply here.
+    Remove / Adopt / Invalidate are records of work reconciliation already
+    did, so they carry nothing to apply here.
     """
     if isinstance(delta, BeginReload):
         _beginReloadOnView(view, delta.frame)
