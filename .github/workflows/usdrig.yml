@@ -783,7 +783,7 @@ jobs:
       - name: Install consumer tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends g++ ninja-build
+          sudo apt-get install -y --no-install-recommends g++ ninja-build libgl1-mesa-dev xorg-dev
           python3 -m pip install --break-system-packages scons
 
       - name: Download installed SDK data only
