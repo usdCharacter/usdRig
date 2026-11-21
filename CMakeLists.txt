@@ -31,15 +31,15 @@ endif()
 # test (RuntimeMath, RuntimePose, RuntimeGeometry, ImagingPlayback,
 # verify_binary, the Rbf oracle) by an ulp. -fno-fast-math does not cover
 # this; only -ffp-contract=off does. MSVC needs nothing: /fp:precise is
-# its default and it never auto-contracts.
-if (NOT MSVC)
-    add_compile_options(-ffp-contract=off)
-endif()
-
-# The exact-FP settings every translation unit that instantiates the kernels
-# must carry; rigexec_apply_exact_fp_flags adds them without repeating the
-# directory option above. Docs: docs/concepts/baked-vs-dynamic.md.
+# its default and it never auto-contracts. cmake/rigexec_flags.cmake owns
+# the flag spelling; this scope installs only its contraction-family
+# directory policy, so a vendored target compiled in a child scope can
+# still re-declare the fast family and keep its codegen while the exact-FP
+# finalization walk enforces the effective mode on every owned target.
+# Docs: docs/concepts/baked-vs-dynamic.md.
 include(cmake/rigexec_flags.cmake)
+rigexec_get_exact_fp_directory_flags(_rigexec_fp_directory_flags)
+add_compile_options(${_rigexec_fp_directory_flags})
 include(cmake/installManifests.cmake)
 
 set(RIGEXEC_INSTALL_LIBDIR     "lib"
@@ -198,10 +198,6 @@ target_link_libraries(rigExec PUBLIC
 
 target_link_libraries(rigExec PRIVATE
     rigExecGraph rigExecMath rigExecEvalCore rigExecInputValues ts)
-# The facade's own sources and the composed layer objects compile through
-# separate targets with separate options; the exact-FP settings for this
-# facade and every layer are enforced by the one finalization walk below.
-# See docs/concepts/baked-vs-dynamic.md.
 # On Windows the consumers of rigExec need those two archives as well.
 
 # Scene translation calls back into the evaluator. The evaluator does not
@@ -444,7 +440,10 @@ add_library(rigExecLzma STATIC
     thirdparty/lzma/C/CpuArch.c)
 target_include_directories(rigExecLzma PRIVATE thirdparty/lzma/C)
 target_compile_definitions(rigExecLzma PRIVATE Z7_ST RIGEXEC_LZMA_PORTABLE_SCALAR)
-set_target_properties(rigExecLzma PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# Vendored code keeps its own floating-point codegen: the exact-FP walk
+# exempts targets by this marker, never by source-path text.
+set_target_properties(rigExecLzma PROPERTIES POSITION_INDEPENDENT_CODE ON
+    RIGEXEC_VENDORED TRUE)
 add_library(rigExec::rigExecLzma ALIAS rigExecLzma)
 
 add_library(rigExecBinary STATIC libs/rigExecBinary/format.cpp
@@ -532,6 +531,22 @@ add_test(NAME testRigExecInstallStaging
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/checkInstallStaging.cmake")
 set_tests_properties(testRigExecInstallStaging PROPERTIES LABELS "fast"
     TIMEOUT 120)
+# Effective-mode witness: configures and builds a throwaway project through
+# the same helper, then checks the real compiler commands and runs numeric
+# probes proving the exact mode survives generator expressions, per-source
+# options, PCH creation and reuse, a third_party-named generated path, and a
+# relocated build directory. Needs only a C++ compiler.
+add_test(NAME testRigExecExactFpCompiler
+    COMMAND "${CMAKE_COMMAND}"
+        "-DWITNESS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests/exactFpWitness"
+        "-DWITNESS_MODULE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/rigexec_flags.cmake"
+        "-DBUILD_ROOT=${CMAKE_CURRENT_BINARY_DIR}/exactFpWitness"
+        "-DGENERATOR=${CMAKE_GENERATOR}"
+        "-DCXX_COMPILER=${CMAKE_CXX_COMPILER}"
+        "-DCXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/exactFpCompilerWitness.cmake")
+set_tests_properties(testRigExecExactFpCompiler PROPERTIES TIMEOUT 300
+    ENVIRONMENT "CMAKE_BUILD_PARALLEL_LEVEL=2")
 
 # rigExecSampler: hands a .rigexec's Animated inputs the values a stage holds
 # at each new time (RigExecInputSampler), for every consumer that plays the
@@ -2918,16 +2933,12 @@ if (MSVC AND NOT CMAKE_DISABLE_PRECOMPILE_HEADERS)
     endforeach()
 endif()
 
-# One exact-FP walk covers every owned target of this directory, placed after
-# the endif() above because that conditional PCH block declares the last
-# root-scope targets: the rigExecUsdPch producer and its REUSE_FROM consumers
-# (rigExec, rigExecScene, rigExecOracle, rigExecImaging and its imaging
-# OBJECT libs, rigExecBake, the four rigExec layer OBJECT libs, and the
-# discovered test|bench|probe executables) then all end up with the same
-# mode. The cmake/rigExec*Sources.cmake files are include()d, so their
-# OBJECT targets live in this scope and the single walk covers them; child
-# scopes keep their rigexec_add_mover / rigexec_add_mover_plugin coverage.
-# See docs/concepts/baked-vs-dynamic.md.
+# Exact-FP finalization placement invariant: this walk must be the last
+# CMake code in this scope that touches a target, so it runs after every
+# target_precompile_headers producer and REUSE_FROM consumer above is
+# declared. cmake/rigexec_flags.cmake owns the flags and the RIGEXEC_VENDORED
+# exemption; child scopes keep their rigexec_add_mover / rigexec_add_mover_plugin
+# coverage. See docs/concepts/baked-vs-dynamic.md.
 rigexec_apply_exact_fp_flags_to_directory_targets()
 
 # Executables that compile a stage through rigExec alone name the scene

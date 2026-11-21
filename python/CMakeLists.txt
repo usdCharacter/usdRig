@@ -36,8 +36,11 @@ target_link_libraries(_rigexec PRIVATE
     rigExecGpu
     usd sdf tf gf vt python)
 
-# The module compiles the kernel-instantiating scene and oracle link anchors
-# into itself, and the root exact-FP walk does not reach this directory.
+# _rigexec.cpp instantiates the numeric kernels into this module's own
+# translation unit: it includes the rigExecMath headers (pointFrame, rbf,
+# skeleton2d, geometry kernels) whose kernels compile here, so the module
+# must carry the exact-FP settings. The root walk covers only its own
+# directory scope, so apply them directly.
 rigexec_apply_exact_fp_flags(_rigexec)
 
 # The installed extension lands in lib/python while rigExec/rigExecAuthoring land
