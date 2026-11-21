@@ -37,6 +37,11 @@ rigexec_require_usd "$TESTUSDVIEW"
 export PXR_PLUGINPATH_NAME="${PXR_PLUGINPATH_NAME:-}:$RIG/plugin/touchPose"
 export PYTHONPATH="$RIG/plugin/touchPose:${PYTHONPATH:-}"
 
+# Shape Editor rides the same two paths: the menu suite covers all three
+# containers' load orders, and the live check asserts its merged item.
+export PXR_PLUGINPATH_NAME="${PXR_PLUGINPATH_NAME:-}:$RIG/plugin/shapeEditor"
+export PYTHONPATH="$RIG/plugin/shapeEditor:${PYTHONPATH:-}"
+
 # testusdview `exec`s the script, so it has no __file__ to locate the
 # package from. Handed over explicitly rather than guessed at.
 export TOUCHPOSE_PLUGIN_DIR="$RIG/plugin/touchPose"

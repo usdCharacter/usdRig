@@ -6,6 +6,11 @@
 # is everything this file asserts, and each of these has a number rather
 # than a smoke check:
 #
+#   * the RigExec MENU is load-order-proof: the three containers'
+#     configureView methods run in all six orders on scratch builders,
+#     twice each, and every pass yields one RigExec menu, the same three
+#     submenus and the same items -- and the shared helper is exercised
+#     for direct children, ties, unranked neighbors and repeat identity;
 #   * a KNOWN face's centroid, projected to screen and clicked, selects
 #     that region's control in usdview's own `dataModel.selection` --
 #     which is the whole point of the design, because selecting there is
@@ -120,6 +125,267 @@ def _Trigger(menu, title):
             action.trigger()
             return True
     return False
+
+
+# The shared menu contract both the live session and the scratch builders
+# below must show: three submenus in rank order, each item once.
+_SUBMENU_ORDER = ["Viewport", "General Editors", "Animation Editors"]
+_VIEWPORT_ITEMS = ["Viewport Tools", "View Cube", "View Axis"]
+_GENERAL_ITEMS = ["Avar Editor", "Layer Stack", "Layer Opinions",
+                  "Execution Stack", "Deformer Toggles", "Profiler",
+                  "Cache Strip", "AI Assistant"]
+_ANIMATION_ITEMS = ["Graph Editor", "Shape Editor", "Control Picker",
+                    "Hover Picker", "TouchPose", "Volume Weight Editor"]
+
+# rigExecUsdview's configureView reads its commands off these attributes;
+# the isolated receivers below are fed the live session's registered
+# objects under the same names.
+_RIGEXEC_COMMANDS = [
+    ("_viewportToolsCommand", "RigExecUsdviewContainer.viewportTools"),
+    ("_viewCubeCommand", "RigExecUsdviewContainer.viewCube"),
+    ("_viewAxisCommand", "RigExecUsdviewContainer.viewAxis"),
+    ("_avarEditor", "RigExecUsdviewContainer.avarEditor"),
+    ("_layerStack", "RigExecUsdviewContainer.layerStack"),
+    ("_layerOpinions", "RigExecUsdviewContainer.layerOpinions"),
+    ("_execStack", "RigExecUsdviewContainer.execStack"),
+    ("_deformerToggles", "RigExecUsdviewContainer.deformerToggles"),
+    ("_profiler", "RigExecUsdviewContainer.profiler"),
+    ("_cacheStrip", "RigExecUsdviewContainer.cacheStrip"),
+    ("_assistant", "RigExecUsdviewContainer.assistant"),
+    ("_graphEditor", "RigExecUsdviewContainer.graphEditor"),
+    ("_picker", "RigExecUsdviewContainer.picker"),
+    ("_hoverPicker", "RigExecUsdviewContainer.hoverPicker"),
+    ("_volumeWeights", "RigExecUsdviewContainer.volumeWeights"),
+]
+
+
+def _ScratchBuilder():
+    """A real PluginUIBuilder on a fresh window in the running session."""
+    from pxr.Usdviewq.plugin import PluginUIBuilder
+    window = QtWidgets.QMainWindow()
+    return window, PluginUIBuilder(window)
+
+
+def _DestroyScratch(appController, window):
+    window.close()
+    window.deleteLater()
+    appController._processEvents()
+
+
+def _CheckScratchMenus(window, where):
+    """The exact contract on a scratch builder: one RigExec, three ranked
+    submenus, every item once. Counts, never collapsed by title."""
+    bar = [action.text() for action in window.menuBar().actions()]
+    _Check(bar.count("RigExec") == 1,
+           "%s: exactly one RigExec on the menu bar: %s" % (where, bar))
+    _Check(bar == ["RigExec"],
+           "%s: nothing else on the scratch menu bar: %s" % (where, bar))
+    topMenu = None
+    for action in window.menuBar().actions():
+        if action.text() == "RigExec":
+            topMenu = action.menu()
+    _Check(topMenu is not None, "%s: the RigExec menu exists" % where)
+    top = [action.text() for action in topMenu.actions()]
+    _Check(top == _SUBMENU_ORDER,
+           "%s: three ranked submenus in order: %s" % (where, top))
+    for title, want in (("Viewport", _VIEWPORT_ITEMS),
+                        ("General Editors", _GENERAL_ITEMS),
+                        ("Animation Editors", _ANIMATION_ITEMS)):
+        menu = _Submenu(topMenu, title)
+        _Check(menu is not None,
+               "%s: the %s submenu exists" % (where, title))
+        got = [action.text() for action in menu.actions()]
+        _Check(got == want, "%s: %s carries %s, got %s"
+               % (where, title, want, got))
+
+
+def _IsolatedReceivers(plugRegistry):
+    """Fresh containers fed the live session's command objects.
+
+    No registerPlugins call -- that would register every command twice --
+    and the three non-menu hooks are no-ops so nothing touches the live
+    viewer. Every configureView body runs for real.
+    """
+    import rigExecUsdview
+    import shapeEditorUsdview
+    import touchPoseUsdview
+
+    rig = rigExecUsdview.RigExecUsdviewContainer()
+    for attribute, name in _RIGEXEC_COMMANDS:
+        command = plugRegistry.getCommandPlugin(name)
+        _Check(command is not None,
+               "the live session registered %s" % name)
+        setattr(rig, attribute, command)
+    rig._InstallOutlinerArcMenu = lambda: None
+    rig._InstallTimeline = lambda: None
+
+    shape = shapeEditorUsdview.ShapeEditorContainer()
+    shape._shapeEditor = plugRegistry.getCommandPlugin(
+        "ShapeEditorContainer.shapeEditor")
+    _Check(shape._shapeEditor is not None,
+           "the live session registered ShapeEditorContainer.shapeEditor")
+
+    touch = touchPoseUsdview.TouchPoseContainer()
+    touch._touchPose = plugRegistry.getCommandPlugin(
+        "TouchPoseContainer.touchPose")
+    _Check(touch._touchPose is not None,
+           "the live session registered TouchPoseContainer.touchPose")
+    touch._ActivateByDefault = lambda: None
+    return (("rigExecUsdview", rig), ("shapeEditor", shape),
+            ("touchPose", touch))
+
+
+def _CheckLoadOrders(appController, plugRegistry):
+    """All six container orders, each twice on its own scratch builder."""
+    import itertools
+    receivers = _IsolatedReceivers(plugRegistry)
+    for order in itertools.permutations(receivers):
+        names = "+".join(name for name, _receiver in order)
+        window, builder = _ScratchBuilder()
+        try:
+            for eachPass in (1, 2):
+                for _name, receiver in order:
+                    receiver.configureView(plugRegistry, builder)
+                _CheckScratchMenus(
+                    window, "load order %s pass %d" % (names, eachPass))
+        finally:
+            _DestroyScratch(appController, window)
+    print("TouchPose: all six container load orders agree on the RigExec "
+          "menu, twice each")
+
+
+def _CheckMenuHelper(appController):
+    """The public host helper on its own builders: direct children, named
+    menus, stable ties, unranked neighbors, same-label commands, separate
+    destinations and repeat identity."""
+    from pxr.Usdviewq.plugin import PluginRegistry
+    from usdRigViewMenu import _MENU_RANK, AddToRigExecMenu
+
+    scratch = PluginRegistry(appController._usdviewApi)
+    calls = []
+    direct = scratch.registerCommandPlugin(
+        "MenuHelperProbe.direct", "Direct Item",
+        lambda api: calls.append("direct"))
+
+    window, builder = _ScratchBuilder()
+    try:
+        action = AddToRigExecMenu(builder, None, direct, 10)
+        _Check(isinstance(action, QtGui.QAction),
+               "the helper returns the item's QAction")
+        rigMenu = action.parent()
+        _Check([item.text() for item in rigMenu.actions()] == ["Direct Item"],
+               "submenu=None adds a direct RigExec child")
+        _Check(AddToRigExecMenu(builder, None, direct, 10) is action,
+               "repeating the command returns the same action")
+        _Check([item.text() for item in rigMenu.actions()] == ["Direct Item"],
+               "and adds no second entry")
+        action.trigger()
+        _Check(calls == ["direct"],
+               "a repeated addition connects the callback once: %s" % calls)
+    finally:
+        _DestroyScratch(appController, window)
+
+    rankWindow, rankBuilder = _ScratchBuilder()
+    try:
+        low = scratch.registerCommandPlugin(
+            "MenuHelperProbe.low", "Low", lambda api: None)
+        first = scratch.registerCommandPlugin(
+            "MenuHelperProbe.tieFirst", "Tie First", lambda api: None)
+        second = scratch.registerCommandPlugin(
+            "MenuHelperProbe.tieSecond", "Tie Second", lambda api: None)
+        high = scratch.registerCommandPlugin(
+            "MenuHelperProbe.high", "High", lambda api: None)
+        AddToRigExecMenu(rankBuilder, "Ties", first, 10)
+        AddToRigExecMenu(rankBuilder, "Ties", second, 10)
+        ties = AddToRigExecMenu(rankBuilder, "Ties", high, 20).parent()
+        raw = ties.addAction("Raw Neighbor")
+        AddToRigExecMenu(rankBuilder, "Ties", low, 5)
+        got = [item.text() for item in ties.actions()]
+        _Check(got == ["Low", "Tie First", "Tie Second", "High",
+                       "Raw Neighbor"],
+               "ties keep insertion order around ranked inserts: %s" % got)
+        _Check(raw.property(_MENU_RANK) is None,
+               "the unranked neighbor carries no rank")
+
+        early = scratch.registerCommandPlugin(
+            "MenuHelperProbe.early", "Early", lambda api: None)
+        late = scratch.registerCommandPlugin(
+            "MenuHelperProbe.late", "Late", lambda api: None)
+        between = scratch.registerCommandPlugin(
+            "MenuHelperProbe.between", "Between", lambda api: None)
+        midMenu = AddToRigExecMenu(rankBuilder, "Middle", early, 10).parent()
+        midRaw = midMenu.addAction("Raw Middle")
+        AddToRigExecMenu(rankBuilder, "Middle", late, 20)
+        AddToRigExecMenu(rankBuilder, "Middle", between, 15)
+        got = [item.text() for item in midMenu.actions()]
+        _Check(got == ["Early", "Raw Middle", "Between", "Late"],
+               "an unranked neighbor stays put between ranked inserts: %s"
+               % got)
+        _Check(midRaw.property(_MENU_RANK) is None,
+               "and it carries no rank either")
+    finally:
+        _DestroyScratch(appController, rankWindow)
+
+    topWindow, topBuilder = _ScratchBuilder()
+    try:
+        zeta = scratch.registerCommandPlugin(
+            "MenuHelperProbe.zeta", "Zeta Item", lambda api: None)
+        viewport = scratch.registerCommandPlugin(
+            "MenuHelperProbe.viewport", "Viewport Item", lambda api: None)
+        general = scratch.registerCommandPlugin(
+            "MenuHelperProbe.general", "General Item", lambda api: None)
+        AddToRigExecMenu(topBuilder, "Zeta", zeta, 10)
+        AddToRigExecMenu(topBuilder, "Viewport", viewport, 10)
+        AddToRigExecMenu(topBuilder, "General Editors", general, 20)
+        topMenu = None
+        for barAction in topWindow.menuBar().actions():
+            if barAction.text() == "RigExec":
+                topMenu = barAction.menu()
+        got = [item.text() for item in topMenu.actions()]
+        _Check(got == ["Zeta", "Viewport", "General Editors"],
+               "an unknown submenu keeps creation order: %s" % got)
+        for item in topMenu.actions():
+            if item.text() == "Zeta":
+                _Check(item.property(_MENU_RANK) is None,
+                       "an unknown submenu name gets no implicit rank")
+    finally:
+        _DestroyScratch(appController, topWindow)
+
+    dupWindow, dupBuilder = _ScratchBuilder()
+    otherWindow, otherBuilder = _ScratchBuilder()
+    try:
+        dupA = scratch.registerCommandPlugin(
+            "MenuHelperProbe.dupA", "Same Label", lambda api: None)
+        dupB = scratch.registerCommandPlugin(
+            "MenuHelperProbe.dupB", "Same Label", lambda api: None)
+        actionA = AddToRigExecMenu(dupBuilder, "Animation Editors", dupA, 10)
+        actionB = AddToRigExecMenu(dupBuilder, "Animation Editors", dupB, 10)
+        _Check(actionA is not actionB,
+               "same-label commands are distinct actions")
+        labels = [item.text() for item in actionA.parent().actions()]
+        _Check(labels == ["Same Label", "Same Label"],
+               "both same-label entries are listed: %s" % labels)
+        inViewport = AddToRigExecMenu(dupBuilder, "Viewport", dupA, 10)
+        _Check(inViewport is not actionA,
+               "the same command in another submenu is another action")
+        onOther = AddToRigExecMenu(
+            otherBuilder, "Animation Editors", dupA, 10)
+        _Check(onOther is not actionA,
+               "the same command on another builder is another action")
+        asDirect = AddToRigExecMenu(dupBuilder, None, dupA, 10)
+        _Check(asDirect is not actionA and asDirect is not inViewport,
+               "and a direct child is a third action")
+        _Check(AddToRigExecMenu(dupBuilder, "Animation Editors", dupA, 10)
+               is actionA,
+               "repeating a destination returns its own action")
+        _Check(AddToRigExecMenu(otherBuilder, "Animation Editors", dupA, 10)
+               is onOther,
+               "and each builder keeps its own repeat identity")
+    finally:
+        _DestroyScratch(appController, dupWindow)
+        _DestroyScratch(appController, otherWindow)
+    print("TouchPose: the shared menu helper holds for direct children, "
+          "ties, unranked neighbors and repeats")
 
 
 class _Viewport(object):
@@ -297,6 +563,8 @@ def testUsdviewInputFunction(appController):
     reg = appController._plugRegistry
     _Check(reg.getCommandPlugin("TouchPoseContainer.touchPose") is not None,
            "TouchPose is registered as a command plugin")
+    _Check(reg.getCommandPlugin("ShapeEditorContainer.shapeEditor") is not None,
+           "Shape Editor is registered as a command plugin")
     # The exact menu layout check below only proves the item is not
     # displayed; this proves the command itself is gone.
     _Check(reg.getCommandPlugin("RigExecUsdviewContainer.reactivate") is None,
@@ -305,24 +573,24 @@ def testUsdviewInputFunction(appController):
     menus = _RigExecMenu(appController)
     _Check("RigExec" in menus, "there is a RigExec menu: %s" % sorted(menus))
     topMenu = menus["RigExec"]
-    # Two containers fill this menu, so this is where the layout is
+    # Three containers fill this menu, so this is where the layout is
     # checked: one of each submenu, in order, whatever the load order.
     top = [a.text() for a in topMenu.actions() if not a.isSeparator()]
-    _Check(top == ["Viewport", "General Editors", "Animation Editors"],
+    _Check(top == _SUBMENU_ORDER,
            "the RigExec menu layout is three ranked submenus: %s" % top)
     rigMenu = _Submenu(topMenu, "Animation Editors")
     titles = [a.text() for a in rigMenu.actions()]
     _Check("TouchPose" in titles,
            "RigExec -> Animation Editors carries TouchPose: %s" % titles)
-    # ...and it MERGED into the existing submenu rather than making a
-    # second one, which is the only reason a separate plugin container is
+    _Check("Shape Editor" in titles,
+           "RigExec -> Animation Editors carries Shape Editor: %s" % titles)
+    # ...and they MERGED into the existing submenu rather than making a
+    # second one, which is the only reason separate plugin containers are
     # acceptable here.
     _Check("Control Picker" in titles,
            "the same submenu still carries rigExecUsdview's own items: %s"
            % titles)
-    order = ["Graph Editor", "Shape Editor", "Control Picker",
-             "Hover Picker", "TouchPose", "Volume Weight Editor"]
-    _Check([t for t in order if t in titles] == titles,
+    _Check([t for t in _ANIMATION_ITEMS if t in titles] == titles,
            "and the items are in layout order: %s" % titles)
     _Check("TouchPose" not in menus,
            "and no second top-level menu was created: %s" % sorted(menus))
@@ -333,6 +601,11 @@ def testUsdviewInputFunction(appController):
     panel = touchPoseUI.TouchPosePanel.GetInstance(api)
     _Check(panel is not None, "the panel was created")
     controller = panel.controller
+
+    # The live menu holds; now the load orders and the helper itself, on
+    # scratch builders the live viewer never sees.
+    _CheckLoadOrders(appController, reg)
+    _CheckMenuHelper(appController)
 
     # --- 2. the regions loaded, and the unbound ones are not there ------
     touchModel = controller.model

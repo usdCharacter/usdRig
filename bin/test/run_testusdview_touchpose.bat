@@ -52,6 +52,11 @@ rem launch_usdview.bat registers usdNoodles.
 set "PXR_PLUGINPATH_NAME=%PXR_PLUGINPATH_NAME%;%RIG%\plugin\touchPose"
 set "PYTHONPATH=%RIG%\plugin\touchPose;%PYTHONPATH%"
 
+rem Shape Editor rides the same two paths: the menu suite covers all three
+rem containers' load orders, and the live check asserts its merged item.
+set "PXR_PLUGINPATH_NAME=%PXR_PLUGINPATH_NAME%;%RIG%\plugin\shapeEditor"
+set "PYTHONPATH=%RIG%\plugin\shapeEditor;%PYTHONPATH%"
+
 rem testusdview `exec`s the script, so it has no __file__ to locate the
 rem package from. Supply the package path explicitly.
 set "TOUCHPOSE_PLUGIN_DIR=%RIG%\plugin\touchPose"
