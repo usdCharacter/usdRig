@@ -507,8 +507,11 @@ rigexec_add_sdk_manifest_export(
 
 # What a host that builds these USD-free sources outside CMake needs: the
 # exact-FP flag list and the same source and include manifests this build
-# checks. The installed copies come from the same generated files, with paths
-# made relative to this checkout so a consumer joins them with its own root.
+# checks. The installed copies come from the same generated files under the
+# installed-manifest grammar stated in cmake/rigExecConfig.cmake.in: entries
+# for generated translation units keep the reserved runtime-generated/
+# component and join the installed data directory, the rest join the
+# consumer's matching checkout.
 rigexec_get_exact_fp_flags(_rigexec_exact_fp_flags)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_LIST_DIR}/cmake/rigexec_flags.cmake")
@@ -3175,15 +3178,49 @@ install(FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/generateMoverSchema.py"
     DESTINATION "${RIGEXEC_INSTALL_CMAKEDIR}")
 
-# The exact-FP flags this tree was built with, and the USD-free file lists
-# relocated to this prefix, for a host that compiles those sources without
-# CMake (the Godot and Unreal extensions).
+# The exact-FP flags this tree was built with, the generated runtime
+# translation units, and the USD-free file lists rewritten into the
+# installed-manifest grammar, for a host that compiles those sources without
+# CMake (the Godot and Unreal extensions). The payload preserves the build's
+# runtime-generated/ subtree, which the manifests' reserved first component
+# names; the mover declarations above own the built-in list, so this adds no
+# second inventory.
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/exactFpFlags.txt"
     DESTINATION "${RIGEXEC_INSTALL_DATADIR}")
 rigexec_install_sdk_manifests(BUILD_DIR "${RIGEXEC_SDK_MANIFEST_DIR}"
     INPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}"
     SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}"
     DESTINATION "${RIGEXEC_INSTALL_DATADIR}")
+get_property(_rigexec_builtin_movers GLOBAL PROPERTY RIGEXEC_BUILTIN_MOVERS)
+if (_rigexec_builtin_movers)
+    set(_rigexec_runtime_generated
+        "${CMAKE_CURRENT_BINARY_DIR}/runtime-generated")
+    set(_rigexec_generated_payload
+        "${_rigexec_runtime_generated}/moverCatalog.cpp")
+    foreach (_mover IN LISTS _rigexec_builtin_movers)
+        list(APPEND _rigexec_generated_payload
+            "${_rigexec_runtime_generated}/${_mover}/${_mover}Kernel.cpp"
+            "${_rigexec_runtime_generated}/${_mover}/${_mover}Schema.h"
+            "${_rigexec_runtime_generated}/${_mover}/${_mover}Registration.h")
+    endforeach ()
+    install(CODE "
+        foreach (_payload ${_rigexec_generated_payload})
+            if (NOT EXISTS \"\${_payload}\")
+                message(FATAL_ERROR
+                    \"\${_payload} is missing: configure and build rigExecRuntime first\")
+            endif ()
+        endforeach ()
+    ")
+    install(FILES "${_rigexec_runtime_generated}/moverCatalog.cpp"
+        DESTINATION "${RIGEXEC_INSTALL_DATADIR}/runtime-generated")
+    foreach (_mover IN LISTS _rigexec_builtin_movers)
+        install(FILES
+            "${_rigexec_runtime_generated}/${_mover}/${_mover}Kernel.cpp"
+            "${_rigexec_runtime_generated}/${_mover}/${_mover}Schema.h"
+            "${_rigexec_runtime_generated}/${_mover}/${_mover}Registration.h"
+            DESTINATION "${RIGEXEC_INSTALL_DATADIR}/runtime-generated/${_mover}")
+    endforeach ()
+endif ()
 
 install(FILES LICENSE NOTICE THIRD_PARTY_NOTICES.md
     DESTINATION "share/rigExec")
