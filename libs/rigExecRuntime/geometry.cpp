@@ -1875,11 +1875,7 @@ bool
 RrGeoPointBitsEqual(const std::vector<RrVec3f> &a,
                     const std::vector<RrVec3f> &b)
 {
-    static_assert(sizeof(RrVec3f) == 3 * sizeof(float),
-                  "points compare as packed floats");
-    return a.size() == b.size() &&
-           (a.empty() ||
-            std::memcmp(a.data(), b.data(), a.size() * sizeof(RrVec3f)) == 0);
+    return eval::PointsBitsEqualBody(a.data(), a.size(), b.data(), b.size());
 }
 // RigExecBakedNoteFloats: \p field takes \p scratch's floats and \p version
 // moves, unless the two hold the same bytes.
@@ -1893,30 +1889,6 @@ RrGeoNoteFloats(std::vector<float> *field, std::vector<float> *scratch,
         return;
     field->swap(*scratch);
     ++*version;
-}
-// The program's CopyMovedPoints: \p output takes \p staging's points, block
-// by block where the bytes differ; returns whether any did.
-bool
-RrGeoCopyMovedPoints(const std::vector<RrVec3f> &staging,
-                     std::vector<RrVec3f> *output)
-{
-    if (output->size() != staging.size()) {
-        *output = staging;
-        return true;
-    }
-    constexpr size_t kBlock = 1024;
-    bool moved = false;
-    for (size_t begin = 0; begin < staging.size(); begin += kBlock) {
-        const size_t count = std::min(kBlock, staging.size() - begin);
-        if (std::memcmp(staging.data() + begin, output->data() + begin,
-                        count * sizeof(RrVec3f)) != 0) {
-            std::copy(staging.begin() + long(begin),
-                      staging.begin() + long(begin + count),
-                      output->begin() + long(begin));
-            moved = true;
-        }
-    }
-    return moved;
 }
 struct RrGeoWireBasisEntry {
     std::vector<RrVec2f> binds;
@@ -6194,26 +6166,6 @@ RrGeoSkinRange(RrGeometryScratch::Revision *rev, const RrVec3f *preceding,
         rev->parameters.skinLayoutRead, &ranges, target);
 }
 
-// Into \p fused, never staging: staging holds the ranges the chunks'
-// published RevisionOut keys describe (the program's FuseWholeRevision).
-bool
-RrGeoFuseWholeRevision(const RrGeometryScratch::Chain &chain,
-                       RrGeometryScratch::Revision *rev, size_t revisionIndex,
-                       bool useSimd, std::vector<RrVec3f> *fused,
-                       const RrGeoDispatch *parallel = nullptr)
-{
-    const RrVec3f *points = nullptr;
-    size_t count = 0;
-    RrGeoPointsBefore(chain, revisionIndex, &points, &count);
-    if (!rev->layoutUsable || !rev->envelopeOk ||
-        count != rev->precedingCount) {
-        return false;
-    }
-    fused->resize(count);
-    return RrGeoSkinRange(rev, points, RrGeoWholeTransformsView(rev), 0, count,
-                          true, useSimd, fused, parallel);
-}
-
 // A port of RigExecBakedAdoptPartition. The chunk keys stay Build's,
 // because each chunk step's reads were declared from its key: a layout
 // is adopted as the partition only when it holds the indices and element
@@ -6595,292 +6547,6 @@ RrGeoRunProjectorTarget(RrProgram *program, RrGeometryScratch *scratch,
     return true;
 }
 
-bool
-RrGeoRunDerivedStep(RrProgram *program, RrGeometryScratch *scratch, size_t step,
-                    std::string *error)
-{
-    RrStore &store = program->store;
-    const RigExecWireDomainGeometry &geo = *program->geometry;
-    const int object = (*program->steps)[step].object;
-    RrStepOutput &output = store.stepOutputs[step];
-    if (object < 0 || size_t(object) >= geo.derivedIndex.size() ||
-        size_t(object) >= scratch->derived.size()) {
-        if (error) {
-            *error = RrGeoStepLabel(program, step) + " names no target";
-        }
-        return false;
-    }
-    const size_t chainIndex = size_t(geo.derivedIndex[size_t(object)].first);
-    const size_t derivedIndex = size_t(geo.derivedIndex[size_t(object)].second);
-    if (chainIndex >= scratch->chains.size() ||
-        derivedIndex >= geo.chains[chainIndex].derived.size()) {
-        if (error) {
-            *error = RrGeoStepLabel(program, step) + " names no target";
-        }
-        return false;
-    }
-    RrGeometryScratch::Chain &chain = scratch->chains[chainIndex];
-    RrGeometryScratch::Derived &derived = scratch->derived[size_t(object)];
-    derived.haveBase = derived.sampleHaveBase;
-    const auto &derivedBase = derived.sampledBase;
-    store.derivedHaveBase[size_t(object)] = derived.haveBase ? 1 : 0;
-    // DerivedOut's content version moves exactly when this step leaves
-    // `result` holding other bytes than it last published; a size reset
-    // keeps the old array alive here to compare against.
-    RrRetainedArray<RrVec3f> resetFrom;
-    const auto noteReset = [&] {
-        if (!resetFrom.empty())
-            ++derived.resultVersion;
-    };
-    if (derived.haveBase) {
-        auto &rev = derived.revision;
-        if (derived.haveResult &&
-            derivedBase.size() != derived.lastBase.size()) {
-            resetFrom = derived.result;
-            derived.haveResult = false;
-            derived.result.clear();
-            RrGeoResetRevision(&rev);
-        }
-        if (rev.created) {
-            ++derived.createdCount;
-            ++derived.scheduleCount;
-            rev.created = false;
-        }
-        derived.baseDirty = !derived.haveResult ||
-                            !RrGeoPointBitsEqual(derivedBase, derived.lastBase);
-        if (derived.baseDirty)
-            derived.lastBase = derivedBase;
-        if (geo.chains[chainIndex].derived[derivedIndex].revision->op ==
-            uint8_t(RrGeoOpSkin)) {
-            rev.topology = rev.layoutHandle;
-            rev.topologyResolved = true;
-        }
-    }
-
-    const bool haveBase = chainIndex < store.chainHaveBase.size() &&
-                          store.chainHaveBase[chainIndex] != 0;
-    const bool derivedHaveBase =
-        size_t(object) < store.derivedHaveBase.size() &&
-        store.derivedHaveBase[size_t(object)] != 0;
-    if (size_t(object) < store.derivedPublish.size()) {
-        store.derivedPublish[size_t(object)].haveBase = false;
-    }
-    if (!haveBase || !derivedHaveBase) {
-        noteReset();
-        return true;
-    }
-    const RigExecWireRevision &wire =
-        *geo.chains[chainIndex].derived[derivedIndex].revision;
-    if (!RrGeoOpName(wire.op)) {
-        if (error) {
-            *error = RrGeoStepLabel(program, step) +
-                     " references unknown revision op " +
-                     std::to_string(wire.op);
-        }
-        noteReset();
-        return false;
-    }
-    if (wire.op == RrGeoOpSurfaceProjector || wire.op == RrGeoOpShaderDials) {
-        noteReset();
-        derived.haveResult = true;
-        return RrGeoRunProjectorTarget(program, scratch, chainIndex, wire,
-                                       derived.revision, size_t(object),
-                                       &output);
-    }
-    RrGeometryScratch::Revision &rev = derived.revision;
-    // The fold's answer is dropped for a derived revision, exactly as
-    // the baked step drops it -- but the tables are still folded.
-    bool dropped = false;
-    if (!RrGeoFoldInfluences(program, scratch, wire, &rev, &dropped, error)) {
-        if (error) {
-            *error = RrGeoStepLabel(program, step) + ": " + *error;
-        }
-        return false;
-    }
-    RrGeoAssembleInputs in;
-    in.program = program;
-    in.scratch = scratch;
-    in.wire = &wire;
-    in.rev = &rev;
-    in.basePoints = chain.result.empty() ? nullptr : chain.result.data();
-    in.basePointCount = chain.result.size();
-    in.chain = chainIndex;
-    in.revision = derivedIndex;
-    in.derived = true;
-    in.diagnostics = &output.diagnostics;
-    RrGeoMoverParameters parameters = RrGeoAssembleRevision(in);
-    const RrGeoMoverStatus status = RrGeoStatusForParameters(
-        parameters, program->TextOrEmpty(wire.moverPath));
-    output.counters.revisionsBuilt = 1;
-    // A selected derived operation computes its declared typed result.
-    {
-        output.counters.revisionsExecuted = 1;
-        const bool unseededDerived =
-            (wire.op == RrGeoOpRecomputeNormals ||
-             wire.op == RrGeoOpRecomputeExtent) &&
-            RrGeoEnvelopeIsFullStrength(parameters.weights);
-        std::vector<RrVec3f> values;
-        if (!unseededDerived)
-            values.assign(derived.lastBase.begin(), derived.lastBase.end());
-        const bool applied =
-            status.AllowsApply() &&
-            (unseededDerived
-                 ? parameters.valid &&
-                       parameters.kind == RrGeoKindToken(int(wire.op)) &&
-                       RrGeoApplyDerivedKernel(int(wire.op), parameters,
-                                               &values, derived.lastBase.size())
-                 : RrGeoRunRevisionKernel(
-                       int(wire.op), parameters, &values, &scratch->wireBasis,
-                       program->geoSettings.useSimd, &rev.surfaceCache,
-                       &rev.wireRestCache, &rev.lastWireBasis, nullptr, nullptr,
-                       0, RrGeoSkinMaySplit(program)));
-        rev.resultStatus = status.state;
-        if (!applied) {
-            values.assign(derived.lastBase.begin(), derived.lastBase.end());
-            if (status.AllowsApply()) {
-                rev.resultStatus = "moverFailed";
-            }
-        }
-        rev.output = std::move(values);
-        parameters.auxPoints.clear();
-        rev.lastParameters = std::move(parameters);
-        // Selected graph body does not retain a duplicate auxiliary snapshot.
-        rev.lastStatus = status;
-        rev.ran = true;
-    }
-    if (rev.resultStatus == "moverFailed") {
-        output.diagnostics.push_back(
-            "MoverFailed " +
-            program->TextOrEmpty(
-                geo.chains[chainIndex].derived[derivedIndex].target) +
-            ": derived geometry input/cardinality validation failed");
-    }
-    RrRetainedPrepare(&derived.spare, rev.output.size());
-    std::copy(rev.output.begin(), rev.output.end(), derived.spare.data());
-    {
-        // Before the swap, against what was last published: the array a
-        // size reset set aside, else `result` itself (empty either way when
-        // the reset found nothing).
-        const std::vector<RrVec3f> &published =
-            resetFrom.empty() ? derived.result.Read() : resetFrom.Read();
-        if (!RrGeoPointBitsEqual(derived.spare, published)) {
-            ++derived.resultVersion;
-        }
-    }
-    if (object >= 0 && size_t(object) < store.derivedPublish.size())
-        store.derivedPublish[size_t(object)].result.clear();
-    derived.result.swap(derived.spare);
-    derived.haveResult = true;
-    if (size_t(object) < store.derivedPublish.size()) {
-        store.derivedPublish[size_t(object)].haveBase = true;
-        store.derivedPublish[size_t(object)].result = derived.result;
-    }
-    output.counters.chainsBuilt = 1;
-    output.counters.revisionsCreated += derived.createdCount;
-    output.counters.schedulesBuilt += derived.scheduleCount;
-    return true;
-}
-
-bool
-RrGeoRunChainStatusStep(RrProgram *program, RrGeometryScratch *scratch,
-                        size_t step, std::string *error)
-{
-    RrStore &store = program->store;
-    const RigExecWireDomainGeometry &geo = *program->geometry;
-    const int object = (*program->steps)[step].object;
-    RrStepOutput &output = store.stepOutputs[step];
-    if (object < 0 || size_t(object) >= scratch->chains.size() ||
-        size_t(object) >= geo.chains.size()) {
-        if (error) {
-            *error = RrGeoStepLabel(program, step) + " names no chain";
-        }
-        return false;
-    }
-    RrGeometryScratch::Chain &chain = scratch->chains[size_t(object)];
-    const bool haveBase = size_t(object) < store.chainHaveBase.size() &&
-                          store.chainHaveBase[size_t(object)] != 0;
-    if (size_t(object) < store.chainPublish.size()) {
-        store.chainPublish[size_t(object)].haveBase = false;
-    }
-    if (!haveBase) {
-        // Publish unavailable at the ChainPoints owner frontier; retain the
-        // cached numerical vector without exposing it as this frame's Final.
-        chain.haveResult = false;
-        return true;
-    }
-    for (const RrGeometryScratch::Revision &rev : chain.revisions) {
-        if (rev.resultStatus == "moverFailed") {
-            const size_t r = size_t(&rev - chain.revisions.data());
-            output.diagnostics.push_back(
-                "MoverFailed " +
-                program->TextOrEmpty(
-                    geo.chains[size_t(object)].revisions[r].moverPath) +
-                ": execution rejected its inputs; revision passed through");
-        }
-    }
-    if (!chain.groupBounds.empty() && !chain.revisions.empty()) {
-        // A chain with groups: the published result stands, the same
-        // array, while no group id of the last version moved; else the
-        // groups are gathered into the spare.
-        const size_t groups = chain.groupBounds.size() - 1;
-        const size_t last = chain.revisions.size();
-        bool same = chain.haveResult && chain.resultIds.size() == groups;
-        for (size_t g = 0; g < groups && same; ++g) {
-            RigExecGroupSource id;
-            RrGeoGroupAt(chain, last, g, &id);
-            same = chain.resultIds[g] == id;
-        }
-        if (!same) {
-            chain.resultIds.resize(groups);
-            chain.spare.clear();
-            for (size_t g = 0; g < groups; ++g) {
-                const RigExecPointsRef<RrVec3f> &ref =
-                    RrGeoGroupAt(chain, last, g, &chain.resultIds[g]);
-                if (ref.count > 0 && ref.data) {
-                    chain.spare.insert(chain.spare.end(), ref.data,
-                                       ref.data + ref.count);
-                }
-            }
-            // ChainPoints' content version moves exactly when the bytes do.
-            if (!RrGeoPointBitsEqual(chain.spare, chain.result.Read())) {
-                ++chain.resultVersion;
-            }
-            if (size_t(object) < store.chainPublish.size()) {
-                store.chainPublish[size_t(object)].result.clear();
-            }
-            chain.result.swap(chain.spare);
-        }
-    } else {
-        const RrVec3f *points =
-            chain.lastBase.empty() ? nullptr : chain.lastBase.data();
-        size_t count = chain.lastBase.size();
-        if (!chain.revisions.empty()) {
-            RrGeoPointsAfter(chain, chain.revisions.size() - 1, &points,
-                             &count);
-        }
-        RrRetainedPrepare(&chain.spare, count);
-        if (count > 0 && points) {
-            std::copy(points, points + count, chain.spare.data());
-        }
-        // ChainPoints' content version moves exactly when the bytes do.
-        if (!RrGeoPointBitsEqual(chain.spare, chain.result.Read())) {
-            ++chain.resultVersion;
-        }
-        if (object >= 0 && size_t(object) < store.chainPublish.size())
-            store.chainPublish[size_t(object)].result.clear();
-        chain.result.swap(chain.spare);
-    }
-    chain.haveResult = true;
-    if (size_t(object) < store.chainPublish.size()) {
-        store.chainPublish[size_t(object)].haveBase = true;
-        store.chainPublish[size_t(object)].result = chain.result;
-    }
-    output.counters.chainsBuilt = 1;
-    output.counters.revisionsCreated += chain.createdCount;
-    output.counters.schedulesBuilt += chain.scheduleCount;
-    return true;
-}
-
 void
 RrGeoResolveEnvelope(RrGeometryScratch::Revision *rev, size_t count)
 {
@@ -6905,94 +6571,6 @@ RrGeoRevisionApplies(const RrGeometryScratch::Revision &rev, int op)
         rev.parameters.valid && (op != RrGeoOpSkin || rev.influencesValid);
     return packetValid && rev.status.AllowsApply() &&
            rev.acceptance == RrGeoAcceptance::Applies;
-}
-
-// The fuse of a Whole revision in a chain with groups: the decision the
-// Legacy fuse makes, then every group published -- the keyed chunks'
-// computed groups, or slices of the one chunk's or the stale-partition
-// result, where it applied; the entering groups shared where it did not --
-// and its group ids, which RevisionDone's content version follows.
-void
-RrGeoRunWholeFuse(const RrGeometryScratch::Chain &chain,
-                  RrGeometryScratch::Revision *rev, size_t revisionIndex,
-                  bool skin, bool packetValid, bool useSimd,
-                  const RrGeoDispatch *parallel = nullptr)
-{
-    const size_t groups = chain.groupBounds.size() - 1;
-    const size_t count = rev->precedingCount;
-    rev->resultStatus = rev->status.state;
-    bool applied = packetValid && rev->status.AllowsApply();
-    const bool whole = applied && skin && rev->partitionStale;
-    std::vector<RrVec3f> fused;
-    if (whole) {
-        applied = RrGeoFuseWholeRevision(chain, rev, revisionIndex, useSimd,
-                                         &fused, parallel);
-    } else if (applied && rev->acceptance != RrGeoAcceptance::Deferred) {
-        applied = rev->acceptance == RrGeoAcceptance::Applies;
-    } else if (applied) {
-        for (const RrGeometryScratch::Chunk &chunk : rev->chunks) {
-            if (!chunk.ok) {
-                applied = false;
-                break;
-            }
-        }
-    }
-    // Where the applied points are: each keyed chunk's computed group, or
-    // one array at the full count.
-    const std::vector<RrVec3f> *result =
-        whole ? &fused : (rev->chunked ? nullptr : &rev->stagingOutput);
-    if (applied && !result) {
-        for (size_t g = 0; g < groups; ++g) {
-            if (g >= rev->chunks.size() || !rev->chunks[g].ok ||
-                rev->groups[g].ownComputed < 0) {
-                applied = false;
-                break;
-            }
-        }
-    }
-    if (applied && result && result->size() != count) {
-        applied = false;
-    }
-    for (size_t g = 0; g < groups; ++g) {
-        RigExecGroupState<RrVec3f> &state = rev->groups[g];
-        if (!applied) {
-            RigExecGroupSource from;
-            const RigExecPointsRef<RrVec3f> &entering =
-                RrGeoGroupAt(chain, revisionIndex, g, &from);
-            RigExecPublishPassedGroup(&state, entering, from);
-            continue;
-        }
-        if (!result) {
-            RigExecPublishOwnGroup(&state, state.ownComputed);
-            continue;
-        }
-        size_t begin = 0, end = 0;
-        RrGeoGroupBounds(chain, g, count, &begin, &end);
-        const int k = RigExecGroupScratch(&state, end - begin);
-        state.own[k]->assign(result->begin() + std::ptrdiff_t(begin),
-                             result->begin() + std::ptrdiff_t(end));
-        RigExecPublishOwnGroup(&state, k);
-    }
-    if (!applied && rev->status.AllowsApply()) {
-        rev->resultStatus = "moverFailed";
-    }
-    // RevisionDone's content version moves exactly when a group id of the
-    // version it leaves does (a reset clears the ids, so the next
-    // publication bumps).
-    bool moved = rev->groupIds.size() != groups;
-    rev->groupIds.resize(groups);
-    for (size_t g = 0; g < groups; ++g) {
-        const RigExecGroupSource id = RrGeoSource(
-            rev->groupSlotBase + int64_t(g), rev->groups[g].version);
-        if (rev->groupIds[g] != id) {
-            rev->groupIds[g] = id;
-            moved = true;
-        }
-    }
-    if (moved) {
-        ++rev->doneVersion;
-    }
-    rev->currentSource = int(revisionIndex);
 }
 
 // The fuse's two lines about a packet its weight failed: an out-of-range
@@ -7029,199 +6607,6 @@ RrGeoFuseWeightDiagnostics(const RrProgram *program,
                 "envelope; revision passed through");
         }
     }
-}
-
-bool
-RrGeoRunRevisionFuseStep(RrProgram *program, RrGeometryScratch *scratch,
-                         size_t chainIndex, size_t revisionIndex, size_t step,
-                         std::string *error)
-{
-    RrStore &store = program->store;
-    RrGeometryScratch::Chain &chain = scratch->chains[chainIndex];
-    RrGeometryScratch::Revision &rev = chain.revisions[revisionIndex];
-    const RigExecWireRevision &wire =
-        (*program->geometry).chains[chainIndex].revisions[revisionIndex];
-    const int id = (*program->steps)[step].object;
-    RrStepOutput &output = store.stepOutputs[step];
-    const bool skin = wire.op == uint8_t(RrGeoOpSkin);
-    const bool packetValid =
-        rev.parameters.valid && (!skin || rev.influencesValid);
-    if (rev.rangeSetAside) {
-        // A cycle set the revision aside: publish what an excluded fuse
-        // does, the base passed through, against the live base (native
-        // RunJoin); in a chain with groups, the base groups and their ids.
-        rev.ran = false;
-        rev.executed = false;
-        rev.resultStatus = "operation cycle";
-        if (!chain.groupBounds.empty()) {
-            const size_t groups = chain.groupBounds.size() - 1;
-            bool moved = rev.groupIds.size() != groups;
-            rev.groupIds.resize(groups);
-            for (size_t g = 0; g < groups; ++g) {
-                if (rev.groupWritten[g]) {
-                    RrGeoPassBaseGroup(chain, g, &rev.groups[g]);
-                }
-                const RigExecGroupSource base =
-                    RrGeoSource(-1 - int64_t(g), chain.baseGroups[g].version);
-                if (rev.groupIds[g] != base) {
-                    rev.groupIds[g] = base;
-                    moved = true;
-                }
-            }
-            if (moved) {
-                ++rev.doneVersion;
-            }
-        } else if (!RrGeoPointBitsEqual(chain.lastBase, rev.passedPoints)) {
-            ++rev.doneVersion;
-            rev.passedPoints = chain.lastBase;
-        }
-        (void)error;
-        return true;
-    }
-    RrGeoFuseWeightDiagnostics(program, wire, rev, packetValid,
-                               &output.diagnostics);
-    if (rev.rangeRole) {
-        // The join: the group steps published the written groups, and the
-        // others are the entering version's. RevisionDone's content version
-        // moves exactly when a group id of the version it leaves does (a
-        // reset clears the ids, so the next publication bumps).
-        rev.executed = true;
-        output.counters.revisionsExecuted = 1;
-        const bool applied = RrGeoRevisionApplies(rev, int(wire.op));
-        rev.resultStatus = rev.status.state;
-        if (!applied && rev.status.AllowsApply()) {
-            rev.resultStatus = "moverFailed";
-        }
-        const size_t groups = rev.groups.size();
-        bool moved = rev.groupIds.size() != groups;
-        rev.rangeRefusals = 0;
-        rev.groupIds.resize(groups);
-        for (size_t g = 0; g < groups; ++g) {
-            if (rev.groupWritten[g] && applied && !rev.groups[g].ok) {
-                ++rev.rangeRefusals;
-            }
-            RigExecGroupSource source;
-            RrGeoGroupAt(chain, revisionIndex + 1, g, &source);
-            if (rev.groupIds[g] != source) {
-                rev.groupIds[g] = source;
-                moved = true;
-            }
-        }
-        if (moved) {
-            ++rev.doneVersion;
-        }
-        rev.lastStatus = rev.status;
-        rev.ran = true;
-        if (id >= 0 && size_t(id) < store.revisionRan.size()) {
-            store.revisionRan[size_t(id)] = 1;
-        }
-        if (id >= 0 && size_t(id) < store.revisionPublish.size()) {
-            store.revisionPublish[size_t(id)].resultStatus = rev.resultStatus;
-        }
-        return true;
-    }
-    // The common graph selected this semantic completion body.
-    rev.executed = true;
-    output.counters.revisionsExecuted = rev.executed ? 1 : 0;
-    if (rev.role == RrGeoRole::Whole) {
-        RrGeoRunWholeFuse(chain, &rev, revisionIndex, skin, packetValid,
-                          program->geoSettings.useSimd,
-                          RrGeoSkinMaySplit(program));
-        rev.lastStatus = rev.status;
-        rev.ran = true;
-    } else if (rev.executed) {
-        // The baseline the content version is decided against, as the
-        // program's fuse: its own output when it applied last, the copy of
-        // its entering points when it passed through, none before its first.
-        const bool hadOwn = rev.ran && rev.currentSource == int(revisionIndex);
-        bool moved = !rev.ran;
-        rev.resultStatus = rev.status.state;
-        bool applied = packetValid && rev.status.AllowsApply();
-        const bool whole = applied && skin && rev.partitionStale;
-        // The whole-revision skin's points; a stale partition is rare.
-        std::vector<RrVec3f> fused;
-        if (whole) {
-            applied = RrGeoFuseWholeRevision(
-                chain, &rev, revisionIndex, program->geoSettings.useSimd,
-                &fused, RrGeoSkinMaySplit(program));
-        } else if (applied && rev.acceptance != RrGeoAcceptance::Deferred) {
-            // RevisionStatic's decision, from the validation each chunk's
-            // kernel runs first, so every chunk's `ok` is this answer.
-            applied = rev.acceptance == RrGeoAcceptance::Applies;
-        } else if (applied) {
-            for (const RrGeometryScratch::Chunk &chunk : rev.chunks) {
-                if (!chunk.ok) {
-                    applied = false;
-                    break;
-                }
-            }
-        }
-        if (applied) {
-            if (rev.chunked || whole) {
-                // Sticky chunk ranges stay in staging: copy moved blocks.
-                const std::vector<RrVec3f> &result =
-                    whole ? fused : rev.stagingOutput;
-                if (!hadOwn) {
-                    moved =
-                        moved || !RrGeoPointBitsEqual(result, rev.passedPoints);
-                }
-                const bool copied = RrGeoCopyMovedPoints(result, &rev.output);
-                moved = moved || (hadOwn && copied);
-            } else if (rev.stagingFresh) {
-                moved = moved || !RrGeoPointBitsEqual(
-                                     rev.stagingOutput,
-                                     hadOwn ? rev.output : rev.passedPoints);
-                // Ownership flips instead of a copy; the replaced buffer is
-                // the next chunk's, at the size the chunk left (RevisionOut
-                // keys the staging size).
-                rev.output.swap(rev.stagingOutput);
-                rev.stagingOutput.resize(rev.output.size());
-                rev.stagingFresh = false;
-            } else if (!hadOwn) {
-                moved =
-                    moved || !RrGeoPointBitsEqual(rev.output, rev.passedPoints);
-            }
-            rev.currentSource = int(revisionIndex);
-        } else {
-            // A pass-through publishes the entering points; `output` keeps
-            // the last applied points a later apply may republish.
-            const std::vector<RrVec3f> *entering =
-                RrGeoPointsVersion(chain, revisionIndex);
-            const std::vector<RrVec3f> &previous =
-                hadOwn ? rev.output : rev.passedPoints;
-            const bool same = entering
-                                  ? RrGeoPointBitsEqual(*entering, previous)
-                                  : previous.empty();
-            moved = moved || !same;
-            if (hadOwn || !same) {
-                if (entering)
-                    rev.passedPoints = *entering;
-                else
-                    rev.passedPoints.clear();
-            }
-            rev.currentSource =
-                revisionIndex == 0
-                    ? -1
-                    : chain.revisions[revisionIndex - 1].currentSource;
-            if (rev.status.AllowsApply()) {
-                rev.resultStatus = "moverFailed";
-            }
-        }
-        if (moved) {
-            ++rev.doneVersion;
-        }
-        // No deep packet snapshot: graph input keys own scheduling.
-        rev.lastStatus = rev.status;
-        rev.ran = true;
-    }
-    if (id >= 0 && size_t(id) < store.revisionRan.size()) {
-        store.revisionRan[size_t(id)] = rev.ran ? 1 : 0;
-    }
-    if (id >= 0 && size_t(id) < store.revisionPublish.size()) {
-        store.revisionPublish[size_t(id)].resultStatus = rev.resultStatus;
-    }
-    (void)error;
-    return true;
 }
 
 } // namespace
@@ -7298,6 +6683,19 @@ struct RrChainInputs {
                *revision < scratch->chains[*chain].revisions.size() &&
                *revision < geo.chains[*chain].revisions.size();
     }
+    bool derivedIndexForObject(int32_t object, size_t *chain,
+                               size_t *derived) const
+    {
+        const auto &geo = *program->geometry;
+        if (object < 0 || size_t(object) >= geo.derivedIndex.size()) {
+            return false;
+        }
+        const auto &index = geo.derivedIndex[size_t(object)];
+        *chain = size_t(index.first);
+        *derived = size_t(index.second);
+        return *chain < scratch->chains.size() && *chain < geo.chains.size() &&
+               *derived < geo.chains[*chain].derived.size();
+    }
     bool chainHasBase(size_t chain) const
     {
         return chain < program->store.chainHaveBase.size() &&
@@ -7318,6 +6716,9 @@ struct RrChainState {
     RrGeometryScratch *scratch = nullptr;
     size_t step = 0;
     std::string *error = nullptr;
+    RrRetainedArray<RrVec3f> derivedResetFrom;
+    RrGeoMoverParameters derivedParameters;
+    RrGeoMoverStatus derivedStatus;
     using Chain = RrGeometryScratch::Chain;
     using Revision = RrGeometryScratch::Revision;
     Chain &chainAt(size_t chain)
@@ -7962,6 +7363,607 @@ struct RrChainState {
         state.ok = chunk.ok;
         return true;
     }
+    RrGeometryScratch::Derived &derivedAt(size_t chain, size_t derived)
+    {
+        const auto &geo = *program->geometry;
+        for (size_t d = 0; d < geo.derivedIndex.size(); ++d) {
+            if (geo.derivedIndex[d].first == int(chain) &&
+                geo.derivedIndex[d].second == int(derived)) {
+                return scratch->derived[d];
+            }
+        }
+        return scratch->derived[0];
+    }
+    size_t derivedGlobal(size_t chain, size_t derived)
+    {
+        const auto &geo = *program->geometry;
+        for (size_t d = 0; d < geo.derivedIndex.size(); ++d) {
+            if (geo.derivedIndex[d].first == int(chain) &&
+                geo.derivedIndex[d].second == int(derived)) {
+                return d;
+            }
+        }
+        return 0;
+    }
+    const RigExecWireRevision &derivedWire(size_t chain, size_t derived)
+    {
+        return *(*program->geometry).chains[chain].derived[derived].revision;
+    }
+    eval::FuseRevisionAccessT<RrVec3f> fuseRevision(size_t chain,
+                                                    size_t revision)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        eval::FuseRevisionAccessT<RrVec3f> access;
+        access.ran = &rev.ran;
+        access.currentSource = &rev.currentSource;
+        access.output = &rev.output;
+        access.stagingOutput = &rev.stagingOutput;
+        access.stagingFresh = &rev.stagingFresh;
+        access.passedPoints = &rev.passedPoints;
+        access.doneVersion = &rev.doneVersion;
+        access.groups = &rev.groups;
+        access.groupIds = &rev.groupIds;
+        access.groupWritten = &rev.groupWritten;
+        access.rangeRefusals = &rev.rangeRefusals;
+        access.precedingCount = rev.precedingCount;
+        return access;
+    }
+    bool revisionRangeSetAside(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).rangeSetAside;
+    }
+    void passSetAsideFuse(size_t chain, size_t revision)
+    {
+        Chain &c = chainAt(chain);
+        Revision &rev = revisionAt(chain, revision);
+        rev.ran = false;
+        rev.executed = false;
+        rev.resultStatus = "operation cycle";
+        if (!c.groupBounds.empty()) {
+            const size_t groups = c.groupBounds.size() - 1;
+            bool moved = rev.groupIds.size() != groups;
+            rev.groupIds.resize(groups);
+            for (size_t g = 0; g < groups; ++g) {
+                if (g < rev.groupWritten.size() && rev.groupWritten[g]) {
+                    RrGeoPassBaseGroup(c, g, &rev.groups[g]);
+                }
+                const RigExecGroupSource base =
+                    RrGeoSource(-1 - int64_t(g), c.baseGroups[g].version);
+                if (rev.groupIds[g] != base) {
+                    rev.groupIds[g] = base;
+                    moved = true;
+                }
+            }
+            if (moved) {
+                ++rev.doneVersion;
+            }
+        } else if (!eval::PointsBitsEqualBody(
+                       c.lastBase.data(), c.lastBase.size(),
+                       rev.passedPoints.data(), rev.passedPoints.size())) {
+            ++rev.doneVersion;
+            rev.passedPoints = c.lastBase;
+        }
+    }
+    bool revisionIsRangeRole(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).rangeRole;
+    }
+    bool revisionIsWholeRole(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).role == RrGeoRole::Whole;
+    }
+    bool fusePacketValid(size_t chain, size_t revision)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        const bool skin = rev.op == RrGeoOpSkin;
+        return rev.parameters.valid && (!skin || rev.influencesValid);
+    }
+    void emitFuseDiagnostic(size_t chain, size_t revision, bool packetValid)
+    {
+        RrGeoFuseWeightDiagnostics(
+            program, wireAt(chain, revision), revisionAt(chain, revision),
+            packetValid, &program->store.stepOutputs[step].diagnostics);
+    }
+    bool revisionStatusAllows(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).status.AllowsApply();
+    }
+    int revisionAcceptanceValue(size_t chain, size_t revision)
+    {
+        return int(revisionAt(chain, revision).acceptance);
+    }
+    bool revisionChunkedValue(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).chunked;
+    }
+    bool revisionPartitionStaleValue(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).partitionStale;
+    }
+    size_t revisionChunkCount(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).chunks.size();
+    }
+    bool chunkOk(size_t chain, size_t revision, size_t k)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        return k < rev.chunks.size() && rev.chunks[k].ok;
+    }
+    bool chunkHoldsAnswer(size_t chain, size_t revision, size_t k)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        if (rev.role == RrGeoRole::Whole && rev.chunked) {
+            return k < rev.groups.size() && rev.groups[k].ok &&
+                   rev.groups[k].ownComputed >= 0 && k < rev.chunks.size() &&
+                   rev.chunks[k].ok;
+        }
+        return k < rev.chunks.size() && rev.chunks[k].ok;
+    }
+    void setRevisionExecuted(size_t chain, size_t revision, bool value)
+    {
+        revisionAt(chain, revision).executed = value;
+    }
+    void noteFuseExecuted(size_t, size_t)
+    {
+        program->store.stepOutputs[step].counters.revisionsExecuted = 1;
+    }
+    void setFuseResultFromStatus(size_t chain, size_t revision)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        rev.resultStatus = rev.status.state;
+    }
+    void setFuseResultFailed(size_t chain, size_t revision)
+    {
+        revisionAt(chain, revision).resultStatus = "moverFailed";
+    }
+    void saveFuseLastStatus(size_t chain, size_t revision)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        rev.lastStatus = rev.status;
+    }
+    void publishFuseState(size_t chain, size_t revision, int32_t object)
+    {
+        auto &store = program->store;
+        Revision &rev = revisionAt(chain, revision);
+        if (object >= 0 && size_t(object) < store.revisionRan.size()) {
+            store.revisionRan[size_t(object)] = rev.ran ? 1 : 0;
+        }
+        if (object >= 0 && size_t(object) < store.revisionPublish.size()) {
+            store.revisionPublish[size_t(object)].resultStatus =
+                rev.resultStatus;
+        }
+    }
+    void noteWholeFuseSource(size_t chain, size_t revision, int source)
+    {
+        revisionAt(chain, revision).currentSource = source;
+    }
+    int precedingCurrentSource(size_t chain, size_t revision)
+    {
+        if (revision == 0) {
+            return -1;
+        }
+        return chainAt(chain).revisions[revision - 1].currentSource;
+    }
+    bool wholeFuseSized(size_t, size_t)
+    {
+        return true;
+    }
+    bool legacyWholeStagingOk(size_t, size_t, size_t)
+    {
+        return true;
+    }
+    int64_t fuseGroupSlot(size_t chain, size_t revision, size_t g)
+    {
+        return revisionAt(chain, revision).groupSlotBase + int64_t(g);
+    }
+    RigExecGroupSource fuseVersionSource(size_t chain, size_t version, size_t g)
+    {
+        RigExecGroupSource source;
+        RrGeoGroupAt(chainAt(chain), version, g, &source);
+        return source;
+    }
+    void enteringVersionPoints(size_t chain, size_t version,
+                               const RrVec3f **points, size_t *count)
+    {
+        const std::vector<RrVec3f> *v =
+            RrGeoPointsVersion(chainAt(chain), version);
+        *points = v && !v->empty() ? v->data() : nullptr;
+        *count = v ? v->size() : 0;
+        if (v && v->empty()) {
+            *points = nullptr;
+        }
+        if (v && !v->empty()) {
+            *points = v->data();
+        }
+    }
+    bool revisionLayoutUsableValue(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).layoutUsable;
+    }
+    bool revisionEnvelopeOkValue(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).envelopeOk;
+    }
+    size_t fusePrecedingCount(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).precedingCount;
+    }
+    bool skinWholeRange(size_t chain, size_t revision, const RrVec3f *points,
+                        size_t count, std::vector<RrVec3f> *fused)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        return RrGeoSkinRange(&rev, points, RrGeoWholeTransformsView(&rev), 0,
+                              count, true, program->geoSettings.useSimd, fused,
+                              RrGeoSkinMaySplit(program));
+    }
+    eval::ChainStatusAccessT<RrVec3f> chainStatus(size_t chain)
+    {
+        Chain &c = chainAt(chain);
+        eval::ChainStatusAccessT<RrVec3f> access;
+        access.haveResult = &c.haveResult;
+        access.resultVersion = &c.resultVersion;
+        access.resultIds = &c.resultIds;
+        return access;
+    }
+    void clearChainStatusPublish(size_t chain)
+    {
+        if (chain < program->store.chainPublish.size()) {
+            program->store.chainPublish[chain].haveBase = false;
+        }
+    }
+    void emitChainStatusDiagnostics(size_t chain)
+    {
+        Chain &c = chainAt(chain);
+        auto &output = program->store.stepOutputs[step];
+        const auto &geo = *program->geometry;
+        for (size_t r = 0; r < c.revisions.size(); ++r) {
+            if (c.revisions[r].resultStatus == "moverFailed") {
+                output.diagnostics.push_back(
+                    "MoverFailed " +
+                    program->TextOrEmpty(
+                        geo.chains[chain].revisions[r].moverPath) +
+                    ": execution rejected its inputs; revision passed "
+                    "through");
+            }
+        }
+    }
+    void noteChainBuilt(size_t chain)
+    {
+        auto &output = program->store.stepOutputs[step];
+        output.counters.chainsBuilt = 1;
+        output.counters.revisionsCreated += chainAt(chain).createdCount;
+        output.counters.schedulesBuilt += chainAt(chain).scheduleCount;
+    }
+    bool chainIsGpu(size_t)
+    {
+        return false;
+    }
+    void noteChainGpuPending(size_t)
+    {
+    }
+    bool chainHasGroups(size_t chain)
+    {
+        return !chainAt(chain).groupBounds.empty();
+    }
+    size_t chainRevisionCount(size_t chain)
+    {
+        return chainAt(chain).revisions.size();
+    }
+    size_t chainGroupCount(size_t chain)
+    {
+        Chain &c = chainAt(chain);
+        return c.groupBounds.empty() ? 0 : c.groupBounds.size() - 1;
+    }
+    RigExecGroupSource chainStatusSource(size_t chain, size_t version, size_t g)
+    {
+        RigExecGroupSource id;
+        RrGeoGroupAt(chainAt(chain), version, g, &id);
+        return id;
+    }
+    const RigExecPointsRef<RrVec3f> &chainStatusGroup(size_t chain,
+                                                      size_t version, size_t g)
+    {
+        return RrGeoGroupAt(chainAt(chain), version, g, nullptr);
+    }
+    void publishChainGroups(size_t chain, const std::vector<RrVec3f> &gathered,
+                            const std::vector<RigExecGroupSource> &ids)
+    {
+        Chain &c = chainAt(chain);
+        auto &store = program->store;
+        c.spare = gathered;
+        if (!eval::PointsBitsEqualBody(c.spare.data(), c.spare.size(),
+                                       c.result.data(), c.result.size())) {
+            ++c.resultVersion;
+        }
+        if (chain < store.chainPublish.size()) {
+            store.chainPublish[chain].result.clear();
+        }
+        c.result.swap(c.spare);
+        c.resultIds = ids;
+        c.haveResult = true;
+        if (chain < store.chainPublish.size()) {
+            store.chainPublish[chain].haveBase = true;
+            store.chainPublish[chain].result = c.result;
+        }
+    }
+    void chainFinalPoints(size_t chain, size_t version, const RrVec3f **points,
+                          size_t *count)
+    {
+        Chain &c = chainAt(chain);
+        if (c.revisions.empty()) {
+            *points = c.lastBase.empty() ? nullptr : c.lastBase.data();
+            *count = c.lastBase.size();
+            return;
+        }
+        RrGeoPointsAfter(c, c.revisions.size() - 1, points, count);
+        (void)version;
+    }
+    void publishChainFinal(size_t chain, const std::vector<RrVec3f> &gathered)
+    {
+        Chain &c = chainAt(chain);
+        auto &store = program->store;
+        RrRetainedPrepare(&c.spare, gathered.size());
+        std::copy(gathered.begin(), gathered.end(), c.spare.data());
+        if (!eval::PointsBitsEqualBody(c.spare.data(), c.spare.size(),
+                                       c.result.data(), c.result.size())) {
+            ++c.resultVersion;
+        }
+        if (chain < store.chainPublish.size()) {
+            store.chainPublish[chain].result.clear();
+        }
+        c.result.swap(c.spare);
+        c.haveResult = true;
+        if (chain < store.chainPublish.size()) {
+            store.chainPublish[chain].haveBase = true;
+            store.chainPublish[chain].result = c.result;
+        }
+    }
+    void captureDerivedPublished(size_t, size_t)
+    {
+        derivedResetFrom.clear();
+    }
+    void prepareDerivedBase(size_t chain, size_t derived)
+    {
+        auto &d = derivedAt(chain, derived);
+        Revision &rev = d.revision;
+        auto &store = program->store;
+        const size_t global = derivedGlobal(chain, derived);
+        d.haveBase = d.sampleHaveBase;
+        store.derivedHaveBase[global] = d.haveBase ? 1 : 0;
+        if (global < store.derivedPublish.size()) {
+            store.derivedPublish[global].haveBase = false;
+        }
+        if (!d.haveBase) {
+            return;
+        }
+        const std::vector<RrVec3f> &base = d.sampledBase;
+        if (d.haveResult && base.size() != d.lastBase.size()) {
+            derivedResetFrom = d.result;
+            d.haveResult = false;
+            d.result.clear();
+            RrGeoResetRevision(&rev);
+        }
+        if (rev.created) {
+            ++d.createdCount;
+            ++d.scheduleCount;
+            rev.created = false;
+        }
+        d.baseDirty =
+            !d.haveResult ||
+            !eval::PointsBitsEqualBody(base.data(), base.size(),
+                                       d.lastBase.data(), d.lastBase.size());
+        if (d.baseDirty) {
+            d.lastBase = base;
+        }
+    }
+    bool derivedHasBase(size_t chain, size_t derived)
+    {
+        return derivedAt(chain, derived).haveBase;
+    }
+    void adoptDerivedLayout(size_t chain, size_t derived)
+    {
+        auto &d = derivedAt(chain, derived);
+        Revision &rev = d.revision;
+        if (derivedWire(chain, derived).op == uint8_t(RrGeoOpSkin)) {
+            rev.topology = rev.layoutHandle;
+            rev.topologyResolved = true;
+        }
+    }
+    bool derivedIsMatrix(size_t chain, size_t derived)
+    {
+        const uint8_t op = derivedWire(chain, derived).op;
+        return op == RrGeoOpSurfaceProjector || op == RrGeoOpShaderDials;
+    }
+    bool runDerivedMatrix(size_t chain, size_t derived)
+    {
+        auto &d = derivedAt(chain, derived);
+        if (!derivedResetFrom.empty()) {
+            ++d.resultVersion;
+        }
+        d.haveResult = true;
+        const size_t global = derivedGlobal(chain, derived);
+        return RrGeoRunProjectorTarget(
+            program, scratch, chain, derivedWire(chain, derived), d.revision,
+            global, &program->store.stepOutputs[step]);
+    }
+    bool foldDerivedInfluences(size_t chain, size_t derived)
+    {
+        bool dropped = false;
+        auto &d = derivedAt(chain, derived);
+        const bool ok =
+            RrGeoFoldInfluences(program, scratch, derivedWire(chain, derived),
+                                &d.revision, &dropped, error);
+        if (!ok && error) {
+            *error = RrGeoStepLabel(program, step) + ": " + *error;
+        }
+        return ok;
+    }
+    void assembleDerived(size_t chain, size_t derived)
+    {
+        Chain &c = chainAt(chain);
+        auto &d = derivedAt(chain, derived);
+        RrGeoAssembleInputs in;
+        in.program = program;
+        in.scratch = scratch;
+        in.wire = &derivedWire(chain, derived);
+        in.rev = &d.revision;
+        in.basePoints = c.result.empty() ? nullptr : c.result.data();
+        in.basePointCount = c.result.size();
+        in.chain = chain;
+        in.revision = derived;
+        in.derived = true;
+        in.diagnostics = &program->store.stepOutputs[step].diagnostics;
+        derivedParameters = RrGeoAssembleRevision(in);
+        derivedStatus = RrGeoStatusForParameters(
+            derivedParameters,
+            program->TextOrEmpty(derivedWire(chain, derived).moverPath));
+    }
+    void noteDerivedBuilt(size_t, size_t)
+    {
+        program->store.stepOutputs[step].counters.revisionsBuilt = 1;
+    }
+    void noteDerivedExecuted(size_t, size_t)
+    {
+        program->store.stepOutputs[step].counters.revisionsExecuted = 1;
+    }
+    bool derivedStatusAllows(size_t, size_t)
+    {
+        return derivedStatus.AllowsApply();
+    }
+    bool runDerivedKernel(size_t chain, size_t derived,
+                          std::vector<RrVec3f> *values)
+    {
+        auto &d = derivedAt(chain, derived);
+        Revision &rev = d.revision;
+        const auto &wire = derivedWire(chain, derived);
+        const bool unseeded =
+            (wire.op == RrGeoOpRecomputeNormals ||
+             wire.op == RrGeoOpRecomputeExtent) &&
+            RrGeoEnvelopeIsFullStrength(derivedParameters.weights);
+        if (!unseeded) {
+            values->assign(d.lastBase.begin(), d.lastBase.end());
+        } else {
+            values->clear();
+        }
+        if (unseeded) {
+            return derivedParameters.valid &&
+                   derivedParameters.kind == RrGeoKindToken(int(wire.op)) &&
+                   RrGeoApplyDerivedKernel(int(wire.op), derivedParameters,
+                                           values, d.lastBase.size());
+        }
+        return RrGeoRunRevisionKernel(
+            int(wire.op), derivedParameters, values, &scratch->wireBasis,
+            program->geoSettings.useSimd, &rev.surfaceCache, &rev.wireRestCache,
+            &rev.lastWireBasis, nullptr, nullptr, 0,
+            RrGeoSkinMaySplit(program));
+    }
+    void derivedLastBasePoints(size_t chain, size_t derived,
+                               std::vector<RrVec3f> *values)
+    {
+        const auto &base = derivedAt(chain, derived).lastBase;
+        values->assign(base.begin(), base.end());
+    }
+    void setDerivedResultFromStatus(size_t chain, size_t derived)
+    {
+        derivedAt(chain, derived).revision.resultStatus = derivedStatus.state;
+    }
+    void setDerivedResultFailed(size_t chain, size_t derived)
+    {
+        derivedAt(chain, derived).revision.resultStatus = "moverFailed";
+    }
+    void saveDerivedRevision(size_t chain, size_t derived,
+                             std::vector<RrVec3f> &&values)
+    {
+        auto &d = derivedAt(chain, derived);
+        Revision &rev = d.revision;
+        rev.output = std::move(values);
+        derivedParameters.auxPoints.clear();
+        rev.lastParameters = std::move(derivedParameters);
+        rev.lastStatus = derivedStatus;
+        rev.ran = true;
+    }
+    bool derivedResultIsFailed(size_t chain, size_t derived)
+    {
+        return derivedAt(chain, derived).revision.resultStatus == "moverFailed";
+    }
+    void emitDerivedDiagnostic(size_t chain, size_t derived)
+    {
+        const auto &geo = *program->geometry;
+        program->store.stepOutputs[step].diagnostics.push_back(
+            "MoverFailed " +
+            program->TextOrEmpty(geo.chains[chain].derived[derived].target) +
+            ": derived geometry input/cardinality validation failed");
+    }
+    void noteDerivedEarlyVersion(size_t chain, size_t derived)
+    {
+        auto &d = derivedAt(chain, derived);
+        if (!derivedResetFrom.empty()) {
+            ++d.resultVersion;
+        }
+    }
+    void publishDerivedResult(size_t chain, size_t derived)
+    {
+        auto &d = derivedAt(chain, derived);
+        Revision &rev = d.revision;
+        auto &store = program->store;
+        const size_t global = derivedGlobal(chain, derived);
+        RrRetainedPrepare(&d.spare, rev.output.size());
+        std::copy(rev.output.begin(), rev.output.end(), d.spare.data());
+        const std::vector<RrVec3f> &published = derivedResetFrom.empty()
+                                                    ? d.result.Read()
+                                                    : derivedResetFrom.Read();
+        if (!eval::PointsBitsEqualBody(d.spare.data(), d.spare.size(),
+                                       published.data(), published.size())) {
+            ++d.resultVersion;
+        }
+        if (global < store.derivedPublish.size()) {
+            store.derivedPublish[global].result.clear();
+        }
+        d.result.swap(d.spare);
+        d.haveResult = true;
+        if (global < store.derivedPublish.size()) {
+            store.derivedPublish[global].haveBase = true;
+            store.derivedPublish[global].result = d.result;
+        }
+        auto &output = store.stepOutputs[step];
+        output.counters.chainsBuilt = 1;
+        output.counters.revisionsCreated += d.createdCount;
+        output.counters.schedulesBuilt += d.scheduleCount;
+    }
+    void skipChainInputs(size_t chain)
+    {
+        if (chain < program->store.chainBaseDirty.size()) {
+            program->store.chainBaseDirty[chain] = 0;
+        }
+    }
+    void skipDerived(size_t chain, size_t derived)
+    {
+        derivedAt(chain, derived).revision.influencesChanged = false;
+    }
+    void skipInfluenceFold(size_t chain, size_t revision)
+    {
+        revisionAt(chain, revision).influencesChanged = false;
+    }
+    void skipRevisionStatic(size_t chain, size_t revision, int32_t object)
+    {
+        revisionAt(chain, revision).staticDirty = false;
+        if (object >= 0 &&
+            size_t(object) < program->store.revisionStaticDirty.size()) {
+            program->store.revisionStaticDirty[size_t(object)] = 0;
+        }
+    }
+    void skipRevisionChunk(size_t chain, size_t revision, int32_t part)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        if (part < 0 || size_t(part) >= rev.chunks.size()) {
+            return;
+        }
+        rev.chunks[size_t(part)].keyChanged = false;
+    }
+    void skipRevisionFuse(size_t chain, size_t revision)
+    {
+        revisionAt(chain, revision).executed = false;
+    }
 };
 
 struct RrChainHost {
@@ -8108,6 +8110,7 @@ RrRunGeometryStep(RrProgram *program, size_t step, std::string *error)
         }
         return false;
     }
+    const RigExecWireDomainGeometry &geo = *program->geometry;
     if (kind == RigExecWireStepKind::ChainInputs) {
         if (wireStep.object < 0 ||
             size_t(wireStep.object) >= scratch->chains.size()) {
@@ -8116,7 +8119,6 @@ RrRunGeometryStep(RrProgram *program, size_t step, std::string *error)
             }
             return false;
         }
-        // EvalCore's one ChainInputs body (rigExecEvalCore/chain.h).
         RrChainHost host(RrChainInputs{program, scratch},
                          RrChainState{program, scratch, step, error});
         const eval::StepResult result = eval::RunGeometryStep(
@@ -8125,13 +8127,71 @@ RrRunGeometryStep(RrProgram *program, size_t step, std::string *error)
         return result.outcome != eval::Outcome::Invalid;
     }
     if (kind == RigExecWireStepKind::Derived) {
-        return RrGeoRunDerivedStep(program, scratch, step, error);
+        const int object = wireStep.object;
+        if (object < 0 || size_t(object) >= geo.derivedIndex.size() ||
+            size_t(object) >= scratch->derived.size()) {
+            if (error) {
+                *error = RrGeoStepLabel(program, step) + " names no target";
+            }
+            return false;
+        }
+        const size_t chainIndex =
+            size_t(geo.derivedIndex[size_t(object)].first);
+        const size_t derivedIndex =
+            size_t(geo.derivedIndex[size_t(object)].second);
+        if (chainIndex >= scratch->chains.size() ||
+            derivedIndex >= geo.chains[chainIndex].derived.size()) {
+            if (error) {
+                *error = RrGeoStepLabel(program, step) + " names no target";
+            }
+            return false;
+        }
+        const RigExecWireRevision &wire =
+            *geo.chains[chainIndex].derived[derivedIndex].revision;
+        if (!RrGeoOpName(wire.op)) {
+            if (error) {
+                *error = RrGeoStepLabel(program, step) +
+                         " references unknown revision op " +
+                         std::to_string(wire.op);
+            }
+            return false;
+        }
+        RrChainHost host(RrChainInputs{program, scratch},
+                         RrChainState{program, scratch, step, error});
+        const eval::StepResult result = eval::RunGeometryStep(
+            host, eval::StepRef{uint32_t(kind), wireStep.object, wireStep.part,
+                                step});
+        if (result.outcome == eval::Outcome::Invalid) {
+            if (error && error->empty()) {
+                *error = RrGeoStepLabel(program, step) + " names no target";
+            }
+            return false;
+        }
+        return true;
     }
     if (kind == RigExecWireStepKind::ChainStatus) {
-        return RrGeoRunChainStatusStep(program, scratch, step, error);
+        const int object = wireStep.object;
+        if (object < 0 || size_t(object) >= scratch->chains.size() ||
+            size_t(object) >= geo.chains.size()) {
+            if (error) {
+                *error = RrGeoStepLabel(program, step) + " names no chain";
+            }
+            return false;
+        }
+        RrChainHost host(RrChainInputs{program, scratch},
+                         RrChainState{program, scratch, step, error});
+        const eval::StepResult result = eval::RunGeometryStep(
+            host, eval::StepRef{uint32_t(kind), wireStep.object, wireStep.part,
+                                step});
+        if (result.outcome == eval::Outcome::Invalid) {
+            if (error && error->empty()) {
+                *error = RrGeoStepLabel(program, step) + " names no chain";
+            }
+            return false;
+        }
+        return true;
     }
     const int object = wireStep.object;
-    const RigExecWireDomainGeometry &geo = *program->geometry;
     if (object < 0 || size_t(object) >= geo.revisionIndex.size()) {
         if (error) {
             *error = RrGeoStepLabel(program, step) + " names no revision";
@@ -8158,16 +8218,6 @@ RrRunGeometryStep(RrProgram *program, size_t step, std::string *error)
                          geo.chains[chainIndex].revisions[revisionIndex].op);
         }
         return false;
-    }
-    if (kind == RigExecWireStepKind::RevisionFuse) {
-        const bool haveBase =
-            chainIndex < program->store.chainHaveBase.size() &&
-            program->store.chainHaveBase[chainIndex] != 0;
-        if (!haveBase) {
-            return true;
-        }
-        return RrGeoRunRevisionFuseStep(program, scratch, chainIndex,
-                                        revisionIndex, step, error);
     }
     if (kind == RigExecWireStepKind::RevisionChunk) {
         auto &rev = scratch->chains[chainIndex].revisions[revisionIndex];
@@ -8210,67 +8260,17 @@ RrSkipGeometryStep(RrProgram *program, size_t step)
     }
     RrGeometryScratch *scratch = RrGeoScratch(program);
     const RigExecWireStep &wireStep = (*program->steps)[step];
-    const RigExecWireDomainGeometry &geo = *program->geometry;
     if (wireStep.kind == RigExecWireStepKind::WeightField) {
         // Field IDs do not index revision bookkeeping.
         return;
     }
-    if (wireStep.kind == RigExecWireStepKind::ChainInputs) {
-        if (wireStep.object >= 0 &&
-            size_t(wireStep.object) < program->store.chainBaseDirty.size()) {
-            program->store.chainBaseDirty[size_t(wireStep.object)] = 0;
-        }
-        return;
-    }
-    if (wireStep.kind == RigExecWireStepKind::Derived) {
-        if (wireStep.object < 0 ||
-            size_t(wireStep.object) >= scratch->derived.size()) {
-            return;
-        }
-        scratch->derived[size_t(wireStep.object)].revision.influencesChanged =
-            false;
-        return;
-    }
-    if (wireStep.kind == RigExecWireStepKind::ChainStatus) {
-        return;
-    }
-    if (wireStep.object < 0 ||
-        size_t(wireStep.object) >= geo.revisionIndex.size()) {
-        return;
-    }
-    const size_t chainIndex =
-        size_t(geo.revisionIndex[size_t(wireStep.object)].first);
-    const size_t revisionIndex =
-        size_t(geo.revisionIndex[size_t(wireStep.object)].second);
-    if (chainIndex >= scratch->chains.size() ||
-        revisionIndex >= scratch->chains[chainIndex].revisions.size()) {
-        return;
-    }
-    RrGeometryScratch::Revision &rev =
-        scratch->chains[chainIndex].revisions[revisionIndex];
-    switch (wireStep.kind) {
-    case RigExecWireStepKind::InfluenceFold:
-        rev.influencesChanged = false;
-        return;
-    case RigExecWireStepKind::RevisionStatic:
-        rev.staticDirty = false;
-        if (size_t(wireStep.object) <
-            program->store.revisionStaticDirty.size()) {
-            program->store.revisionStaticDirty[size_t(wireStep.object)] = 0;
-        }
-        return;
-    case RigExecWireStepKind::RevisionChunk:
-        if (wireStep.part < 0 || size_t(wireStep.part) >= rev.chunks.size()) {
-            return;
-        }
-        rev.chunks[size_t(wireStep.part)].keyChanged = false;
-        return;
-    case RigExecWireStepKind::RevisionFuse:
-        rev.executed = false;
-        return;
-    default:
-        return;
-    }
+    // EvalCore's one skip switch (rigExecEvalCore/chain.h) over this
+    // adapter's host; the WeightField arm above stays in this half.
+    RrChainHost host(RrChainInputs{program, scratch},
+                     RrChainState{program, scratch, step, nullptr});
+    eval::RunSkipGeometryStep(host, eval::StepRef{uint32_t(wireStep.kind),
+                                                  wireStep.object,
+                                                  wireStep.part, step});
 }
 
 namespace {
