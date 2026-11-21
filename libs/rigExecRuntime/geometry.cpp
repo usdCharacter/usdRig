@@ -1,5 +1,6 @@
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecEvalCore/envelope.h"
+#include "rigExecEvalCore/skin.h"
 #include "rigExecMath/blendLayoutKernel.h"
 #include "rigExecMath/blendRangeKernel.h"
 #include "rigExecMath/dualQuatKernel.h"
@@ -1102,49 +1103,11 @@ RrGeoApplyMatrixKernel(const RrGeoMoverParameters &p, std::vector<RrVec3f> *pts,
 }
 
 // Dual-quaternion skinning: rigExecMath/dualQuatKernel.h over the runtime
-// mirror is the one numeric definition (blend, normalize, polar split, point
-// apply). Only the palette build and the per-range apply below are the
-// runtime's, as solvers.cpp's RigExecSkinDualQuatPalette and
-// RigExecApplyDualQuatSkin are for the core.
+// mirror is the one numeric definition (gather, palette, blend, point
+// apply), run through EvalCore's skin bodies as the Gf wrappers in
+// solvers.cpp run it for the core.
 
 using RrGeoScaledDualQuat = RigExecScaledDualQuatKernelT<RrVec3f, RrVec3d>;
-
-std::vector<RrGeoScaledDualQuat>
-RrGeoSkinDualQuatPalette(const RrGeoSkinLayout &layout)
-{
-    std::vector<RrGeoScaledDualQuat> palette;
-    palette.reserve(layout.transformCount + 1);
-    for (size_t t = 0; t < layout.transformCount; ++t) {
-        palette.push_back(
-            RigExecScaledDualQuatFromMatrixKernel<RrVec3f, RrVec3d>(
-                layout.transforms[t]));
-    }
-    palette.emplace_back(); // identity: the weight complement's influence
-    return palette;
-}
-
-bool
-RrGeoApplyDualQuatSkin(const RrVec3f *in, RrVec3f *out,
-                       const RrGeoSkinLayout &layout,
-                       const RrGeoScaledDualQuat *palette, size_t paletteSize)
-{
-    std::vector<int> indices;
-    std::vector<double> weights;
-    indices.reserve(layout.elementSize + 1);
-    weights.reserve(layout.elementSize + 1);
-    for (size_t i = 0; i < layout.pointCount; ++i) {
-        RigExecGatherDualQuatInfluences(layout, i, &indices, &weights);
-        RrGeoScaledDualQuat blend;
-        if (!RigExecBlendScaledDualQuatsKernel(palette, paletteSize,
-                                               indices.data(), weights.data(),
-                                               indices.size(), &blend)) {
-            return false;
-        }
-        out[i] = RrGeoToVec3f(RigExecScaledDualQuatTransformPointKernel(
-            blend, RrGeoToVec3d(in[i])));
-    }
-    return true;
-}
 
 // Geometry kernels (geometryKernels.cpp): volume, smooth, normals, extent,
 // lattice, surface projection, wire/NURBS. RMF sampling, ribbon transport,
@@ -1373,157 +1336,72 @@ RrGeoApplyWireGroup(RrVec3f *out, size_t begin, size_t end, size_t count,
         restEvaluations ? restEvaluations->size() : 0);
 }
 
-struct RrGeoSkinTransformsView {
-    const RrMat4d *transforms = nullptr;
-    size_t transformCount = 0;
-    const float *rows = nullptr;
-    const RrGeoScaledDualQuat *palette = nullptr;
-    size_t paletteSize = 0;
+/// EvalCore's skin bodies (rigExecEvalCore/skin.h) over the runtime's
+/// numbers: the SIMD blend and narrowed rows are the SSE2 kernels above,
+/// the split is the dual-quaternion kernel palette.
+struct RrGeoSkinMath {
+    using Vec3f = RrVec3f;
+    using Vec3d = RrVec3d;
+    using Mat4 = RrMat4d;
+    using ScaledDualQuat = RrGeoScaledDualQuat;
+    static Vec3f ToFloat(const Vec3d &v)
+    {
+        return RrGeoToVec3f(v);
+    }
+    static Vec3d ToDouble(const Vec3f &v)
+    {
+        return RrGeoToVec3d(v);
+    }
+    static void NarrowSkinRows(const Mat4 &t, float *rows)
+    {
+        RrGeoNarrowSkinRows(t, rows);
+    }
+    static void
+    ApplyLinearBlendSkinSimd(const Vec3f *in, Vec3f *out,
+                             const eval::SkinLayoutViewT<RrGeoSkinMath> &part,
+                             const float *rows)
+    {
+        RrGeoSkinLayout layout;
+        layout.transforms = part.transforms;
+        layout.transformCount = part.transformCount;
+        layout.indices = part.indices;
+        layout.weights = part.weights;
+        layout.indexCount = part.indexCount;
+        layout.elementSize = part.elementSize;
+        layout.pointCount = part.pointCount;
+        RrGeoApplyLinearBlendSkinSimd(in, out, layout, rows);
+    }
 };
 
-RrGeoSkinTransformsView
-RrGeoSkinTransformsOf(const RrGeoMoverParameters &p)
+/// The packet as EvalCore's SkinPacketView: the method playback resolved
+/// at Open, the layout arrays borrowed from the handle it pinned there.
+/// Playback always carries a handle, so the packet's own arrays stay
+/// empty and the shared body's fallback arm refuses, as the runtime's
+/// layout check did.
+eval::SkinPacketView
+RrGeoSkinPacket(const RrGeoMoverParameters &p)
 {
-    RrGeoSkinTransformsView view;
-    view.transforms = p.skinTransforms.data();
-    view.transformCount = p.skinTransforms.size();
-    return view;
-}
-
-RrGeoSkinLayout
-RrGeoSkinLayoutForPacket(const RrGeoMoverParameters &p,
-                         const RrGeoSkinTransformsView &transforms,
-                         size_t pointCount)
-{
-    RrGeoSkinLayout layout;
-    layout.transforms = transforms.transforms;
-    layout.transformCount = transforms.transformCount;
+    eval::SkinPacketView v;
+    v.method = p.skinMethod == RrGeoSkinMethod::ClassicLinear
+                   ? eval::kSkinMethodClassicLinear
+                   : (p.skinMethod == RrGeoSkinMethod::DualQuaternion
+                          ? eval::kSkinMethodDualQuaternion
+                          : eval::kSkinMethodUnknown);
     if (const RrGeoSkinTopology *const topology = p.skinTopology.get()) {
-        layout.indices = topology->indices.data();
-        layout.weights = topology->weights.data();
-        layout.indexCount = topology->indices.size();
-        layout.elementSize =
-            topology->elementSize < 1 ? 0 : size_t(topology->elementSize);
+        v.hasTopology = true;
+        v.topologyValidated = topology->validated;
+        v.topologyInfluenceCount = topology->influenceCount;
+        v.topologyIndices = topology->indices.data();
+        v.topologyWeights = topology->weights.data();
+        v.topologyIndexCount = topology->indices.size();
+        v.topologyElementSize = topology->elementSize;
     }
-    layout.pointCount = pointCount;
-    return layout;
-}
-
-// The layout's entries were validated once, when its handle was built;
-// here only its shape is held to this run's point and influence counts.
-bool
-RrGeoSkinLayoutIsUsable(const RrGeoMoverParameters &p, size_t pointCount)
-{
-    const RrGeoSkinTopology *const topology = p.skinTopology.get();
-    if (!topology) {
-        return false;
-    }
-    const size_t elementSize =
-        topology->elementSize < 1 ? 0 : size_t(topology->elementSize);
-    return topology->validated &&
-           topology->influenceCount == p.skinTransforms.size() &&
-           topology->indices.size() == pointCount * elementSize;
-}
-
-bool
-RrGeoSkinTransformsAreUsable(const RrMat4d *transforms, size_t count)
-{
-    if (!transforms || count == 0) {
-        return false;
-    }
-    for (size_t t = 0; t < count; ++t) {
-        const RrMat4d &m = transforms[t];
-        for (int r = 0; r < 4; ++r) {
-            for (int c = 0; c < 4; ++c) {
-                if (!std::isfinite(m[r][c])) {
-                    return false;
-                }
-            }
-        }
-        if (m[0][3] != 0 || m[1][3] != 0 || m[2][3] != 0 || m[3][3] != 1) {
-            return false;
-        }
-    }
-    return true;
-}
-
-RrGeoSkinMethod
-RrGeoSkinMethodOf(const RrGeoMoverParameters &p)
-{
-    return p.skinMethod;
-}
-
-bool
-RrGeoApplySkinKernelRange(const RrGeoMoverParameters &p,
-                          const RrGeoSkinTransformsView &transforms,
-                          size_t begin, size_t end, std::vector<RrVec3f> *pts,
-                          bool useSimd)
-{
-    const RrGeoSkinMethod method = RrGeoSkinMethodOf(p);
-    const RrGeoSkinLayout layout =
-        RrGeoSkinLayoutForPacket(p, transforms, pts->size());
-    RrGeoSkinLayout part = layout;
-    part.indices = layout.indices + begin * layout.elementSize;
-    part.weights = layout.weights + begin * layout.elementSize;
-    part.indexCount = (end - begin) * layout.elementSize;
-    part.pointCount = end - begin;
-    RrVec3f *const points = pts->data();
-
-    if (method == RrGeoSkinMethod::ClassicLinear) {
-        if (useSimd) {
-            RrGeoApplyLinearBlendSkinSimd(points + begin, points + begin, part,
-                                          transforms.rows);
-        } else {
-            RrGeoApplyLinearBlendSkin(points + begin, points + begin, part);
-        }
-        return true;
-    }
-    if (method == RrGeoSkinMethod::DualQuaternion) {
-        std::vector<RrGeoScaledDualQuat> local;
-        const RrGeoScaledDualQuat *palette = transforms.palette;
-        size_t paletteSize = transforms.paletteSize;
-        if (!palette) {
-            local = RrGeoSkinDualQuatPalette(layout);
-            palette = local.data();
-            paletteSize = local.size();
-        }
-        return RrGeoApplyDualQuatSkin(points + begin, points + begin, part,
-                                      palette, paletteSize);
-    }
-    return false;
+    v.elementSize = p.skinElementSize;
+    return v;
 }
 
 // The host's task dispatcher (RrStore::dispatch).
 using RrGeoDispatch = std::function<void(std::function<void()>)>;
-
-bool RrGeoApplySkinRanges(const RrGeoMoverParameters &p,
-                          const RrGeoSkinTransformsView &transforms,
-                          size_t begin, size_t end, std::vector<RrVec3f> *pts,
-                          bool useSimd, const RrGeoDispatch *parallel);
-
-bool
-RrGeoApplySkinKernelWithTransforms(const RrGeoMoverParameters &p,
-                                   const RrGeoSkinTransformsView &transforms,
-                                   std::vector<RrVec3f> *pts, bool useSimd,
-                                   const RrGeoDispatch *parallel = nullptr)
-{
-    const size_t count = pts->size();
-    if (!RrGeoSkinLayoutIsUsable(p, count)) {
-        return false;
-    }
-    if (p.skinLayoutRead &&
-        !RrGeoSkinTransformsAreUsable(transforms.transforms,
-                                      transforms.transformCount)) {
-        return false;
-    }
-
-    // Same cut as the baked kernel: a point range is independent under either
-    // method, and the per-matrix tables are derived once. \p parallel is the
-    // host's dispatcher while the op graph runs on it (RrStore::rangeDispatch)
-    // and the program is parallel-safe; null runs here.
-    return RrGeoApplySkinRanges(p, transforms, 0, count, pts, useSimd,
-                                parallel);
-}
 
 // The dispatcher a skin body may split its points over: the host's while
 // Execute's op graph runs on it, else null.
@@ -1647,52 +1525,8 @@ RrGeoRangeRunner(const RrGeoDispatch *dispatch)
         };
 }
 
-bool
-RrGeoApplySkinRanges(const RrGeoMoverParameters &p,
-                     const RrGeoSkinTransformsView &transforms, size_t begin,
-                     size_t end, std::vector<RrVec3f> *pts, bool useSimd,
-                     const RrGeoDispatch *parallel)
-{
-    const size_t count = end - begin;
-    const RrGeoSkinMethod method = RrGeoSkinMethodOf(p);
-    const bool splittable = parallel && *parallel &&
-                            count >= RigExecGeometryParallelThreshold &&
-                            method != RrGeoSkinMethod::Unknown;
-    if (!splittable) {
-        return RrGeoApplySkinKernelRange(p, transforms, begin, end, pts,
-                                         useSimd);
-    }
-
-    RrGeoSkinTransformsView shared = transforms;
-    const RrGeoSkinLayout layout =
-        RrGeoSkinLayoutForPacket(p, transforms, pts->size());
-    std::vector<float> rows;
-    std::vector<RrGeoScaledDualQuat> palette;
-    if (method == RrGeoSkinMethod::ClassicLinear && useSimd && !shared.rows &&
-        layout.transforms) {
-        rows.resize(layout.transformCount * RrGeoSkinRowStride);
-        for (size_t t = 0; t < layout.transformCount; ++t) {
-            RrGeoNarrowSkinRows(layout.transforms[t],
-                                &rows[t * RrGeoSkinRowStride]);
-        }
-        shared.rows = rows.data();
-    } else if (method == RrGeoSkinMethod::DualQuaternion && !shared.palette) {
-        palette = RrGeoSkinDualQuatPalette(layout);
-        shared.palette = palette.data();
-        shared.paletteSize = palette.size();
-    }
-
-    std::atomic<bool> ok(true);
-    const std::function<void(size_t, size_t)> range = [&](size_t rangeBegin,
-                                                          size_t rangeEnd) {
-        if (!RrGeoApplySkinKernelRange(p, shared, rangeBegin, rangeEnd, pts,
-                                       useSimd)) {
-            ok.store(false, std::memory_order_relaxed);
-        }
-    };
-    const bool ran = RrGeoParallelPointRanges(*parallel, begin, end, range);
-    return ran && ok.load(std::memory_order_relaxed);
-}
+// The skin split lives in EvalCore's whole-array kernel now, over the
+// range runner RrGeoRangeRunner builds from the host's dispatcher.
 
 // One sample as the gather consumes it. `points` (the dense points, empty
 // for a sparse sample) is Open's conversion and is never null.
@@ -2430,9 +2264,14 @@ RrGeoApplyRevisionKernel(
         return RrGeoApplyExternal(p, pts);
     case RrGeoOpMatrix:
         return RrGeoApplyMatrixKernel(p, pts, useSimd);
-    case RrGeoOpSkin:
-        return RrGeoApplySkinKernelWithTransforms(p, RrGeoSkinTransformsOf(p),
-                                                  pts, useSimd, parallelSkin);
+    case RrGeoOpSkin: {
+        const RigExecRangeRunner ranges = RrGeoRangeRunner(parallelSkin);
+        return eval::ApplySkinKernelWithTransforms<RrGeoSkinMath>(
+            RrGeoSkinPacket(p),
+            eval::SkinTransformsOf<RrGeoSkinMath>(p.skinTransforms.data(),
+                                                  p.skinTransforms.size()),
+            pts, useSimd, p.skinLayoutRead, &ranges);
+    }
     case RrGeoOpBlendShape:
         return RrGeoApplyBlendShapeKernel(p, pts, surfaceCache);
     case RrGeoOpVolumeCorrect:
@@ -2823,7 +2662,7 @@ RrGeoPrepareRevisionRanges(
 // there for the whole array of \p count entering points. Every whole-array
 // input (the packet, \p prepared, \p separateEnvelope, sparse indices, bind
 // tables) is indexed absolutely. Ops: Matrix, Wire, Lattice and a
-// target-space BlendShape; a skin runs through RrGeoSkinGroup.
+// target-space BlendShape; a skin runs through EvalCore's group body.
 // \p separateEnvelope is the resolved "apply once" envelope for an op that
 // blends one below full strength, else null. \p untouched, when given,
 // receives whether the result is \p in itself, and then \p out is not
@@ -3583,62 +3422,9 @@ RrGeoVersionGatherShared(const RrProgram &program,
     return false;
 }
 
-// The skin over points [begin, end) of \p count held in a group's own
-// buffers: \p in[k] / \p out[k] are point begin + k (\p out never aliases
-// \p in); the layout's rows from begin, then the "apply once" envelope, as
-// the whole kernel and a chunk's range give each point.
-bool
-RrGeoSkinGroup(const RrGeometryScratch::Revision &rev, const RrVec3f *in,
-               const RrGeoSkinTransformsView &view, size_t count, size_t begin,
-               size_t end, bool useSimd, RrVec3f *out)
-{
-    if (begin > end || end > count || (end > begin && (!in || !out))) {
-        return false;
-    }
-    const size_t n = end - begin;
-    const RrGeoMoverParameters &p = rev.parameters;
-    const RrGeoSkinLayout layout = RrGeoSkinLayoutForPacket(p, view, count);
-    RrGeoSkinLayout part = layout;
-    part.indices = layout.indices + begin * layout.elementSize;
-    part.weights = layout.weights + begin * layout.elementSize;
-    part.indexCount = n * layout.elementSize;
-    part.pointCount = n;
-    switch (RrGeoSkinMethodOf(p)) {
-    case RrGeoSkinMethod::ClassicLinear:
-        if (useSimd) {
-            RrGeoApplyLinearBlendSkinSimd(in, out, part, view.rows);
-        } else {
-            RrGeoApplyLinearBlendSkin(in, out, part);
-        }
-        break;
-    case RrGeoSkinMethod::DualQuaternion: {
-        std::vector<RrGeoScaledDualQuat> local;
-        const RrGeoScaledDualQuat *palette = view.palette;
-        size_t paletteSize = view.paletteSize;
-        if (!palette) {
-            local = RrGeoSkinDualQuatPalette(layout);
-            palette = local.data();
-            paletteSize = local.size();
-        }
-        if (!RrGeoApplyDualQuatSkin(in, out, part, palette, paletteSize)) {
-            return false;
-        }
-        break;
-    }
-    default:
-        return false;
-    }
-    if (!rev.fullStrength) {
-        if (rev.envelope.size() != count) {
-            return false;
-        }
-        for (size_t k = 0; k < n; ++k) {
-            out[k] =
-                RigExecBlendEnvelope(in[k], out[k], rev.envelope[begin + k]);
-        }
-    }
-    return true;
-}
+// A skin group is EvalCore's ApplySkinGroupRange over the revision's
+// packet, envelope and folded or chunk table; its callers guard the
+// envelope's size, as the body it replaces did.
 
 // Whether a gated Range revision's packet keeps every point of its unwritten
 // groups at its entering bytes (RigExecRevisionGateHolds, plus the file's
@@ -3655,7 +3441,7 @@ RrGeoGroupGateHolds(const RrGeometryScratch::Chain &chain,
     const RrGeoMoverParameters &p = rev.parameters;
     if (!RrGeoEnvelopeIsSparseWalk(p.weights) ||
         (rev.op == RrGeoOpSkin &&
-         RrGeoSkinMethodOf(p) != RrGeoSkinMethod::ClassicLinear) ||
+         RrGeoSkinPacket(p).method != eval::kSkinMethodClassicLinear) ||
         (rev.op == RrGeoOpBlendShape && p.blendSurfaceFrame)) {
         return false;
     }
@@ -6278,60 +6064,26 @@ RrGeoFoldInfluences(RrProgram *program, RrGeometryScratch *scratch,
 void
 RrGeoFoldTransformForms(RrGeometryScratch::Revision *rev, bool useSimd)
 {
-    const size_t count = rev->influences.size();
-    if (rev->parameters.skinMethod == RrGeoSkinMethod::DualQuaternion) {
-        rev->rows.clear();
-        rev->palette.resize(count + 1);
-        for (size_t t = 0; t < count; ++t) {
-            rev->palette[t] =
-                RigExecScaledDualQuatFromMatrixKernel<RrVec3f, RrVec3d>(
-                    rev->influences[t]);
-        }
-        rev->palette[count] = RrGeoScaledDualQuat();
-        return;
-    }
-    rev->palette.clear();
-    if (!useSimd) {
-        rev->rows.clear();
-        return;
-    }
-    rev->rows.resize(count * size_t(RrGeoSkinRowStride));
-    for (size_t t = 0; t < count; ++t) {
-        RrGeoNarrowSkinRows(rev->influences[t],
-                            &rev->rows[t * size_t(RrGeoSkinRowStride)]);
-    }
+    eval::FoldSkinTransformForms<RrGeoSkinMath>(
+        RrGeoSkinPacket(rev->parameters).method, rev->influences.data(),
+        rev->influences.size(), useSimd, &rev->rows, &rev->palette);
 }
 
-RrGeoSkinTransformsView
+eval::SkinTransformsViewT<RrGeoSkinMath>
 RrGeoWholeTransformsView(RrGeometryScratch::Revision *rev)
 {
-    RrGeoSkinTransformsView view;
-    view.transforms = rev->influences.data();
-    view.transformCount = rev->influences.size();
-    if (!rev->rows.empty()) {
-        view.rows = rev->rows.data();
-    }
-    if (!rev->palette.empty()) {
-        view.palette = rev->palette.data();
-        view.paletteSize = rev->palette.size();
-    }
-    return view;
+    return eval::SkinWholeTransforms<RrGeoSkinMath>(
+        rev->influences.data(), rev->influences.size(), rev->rows.data(),
+        !rev->rows.empty(), rev->palette.data(), rev->palette.size());
 }
 
-RrGeoSkinTransformsView
+eval::SkinTransformsViewT<RrGeoSkinMath>
 RrGeoChunkTransformsView(const RrGeometryScratch::Chunk &chunk, bool useSimd)
 {
-    RrGeoSkinTransformsView view;
-    view.transforms = chunk.transforms.data();
-    view.transformCount = chunk.transforms.size();
-    if (useSimd && !chunk.rows.empty()) {
-        view.rows = chunk.rows.data();
-    }
-    if (!chunk.palette.empty()) {
-        view.palette = chunk.palette.data();
-        view.paletteSize = chunk.palette.size();
-    }
-    return view;
+    return eval::SkinChunkTransforms<RrGeoSkinMath>(
+        chunk.transforms.data(), chunk.transforms.size(), chunk.rows.data(),
+        !chunk.rows.empty(), useSimd, chunk.palette.data(),
+        chunk.palette.size());
 }
 
 bool
@@ -6340,10 +6092,9 @@ RrGeoGatherChunkTransforms(RrProgram *program, const RigExecWireRevision &wire,
                            RrGeometryScratch::Chunk *chunk, std::string *error)
 {
     const RrStore &store = program->store;
-    const bool dualQuat =
-        rev.parameters.skinMethod == RrGeoSkinMethod::DualQuaternion;
-    const size_t count = chunk->transforms.size();
-    const bool splitAlready = chunk->palette.size() == count + 1;
+    // Slot resolution stays playback's: a key naming no influence or a
+    // slot naming no provider fails the step with its labeled error
+    // before the shared gather runs.
     for (const int32_t position : chunk->key) {
         if (position < 0 || size_t(position) >= wire.influenceSlots.size() ||
             size_t(position) >= chunk->transforms.size() ||
@@ -6365,95 +6116,55 @@ RrGeoGatherChunkTransforms(RrProgram *program, const RigExecWireRevision &wire,
             }
             return false;
         }
-        const RrMat4d &matrix = wire.finalPhase
-                                    ? store.finalMatrix[size_t(slot)]
-                                    : store.baseMatrix[size_t(slot)];
-        if (chunk->transforms[size_t(position)] == matrix) {
-            continue;
-        }
-        chunk->transforms[size_t(position)] = matrix;
-        chunk->keyChanged = true;
-        RrGeoNarrowSkinRows(
-            matrix,
-            &chunk->rows[size_t(position) * size_t(RrGeoSkinRowStride)]);
-        if (splitAlready && size_t(position) < chunk->palette.size()) {
-            chunk->palette[size_t(position)] =
-                RigExecScaledDualQuatFromMatrixKernel<RrVec3f, RrVec3d>(matrix);
-        }
     }
-    if (dualQuat && !splitAlready) {
-        chunk->palette.resize(count + 1);
-        for (size_t t = 0; t < count; ++t) {
-            chunk->palette[t] =
-                RigExecScaledDualQuatFromMatrixKernel<RrVec3f, RrVec3d>(
-                    chunk->transforms[t]);
+    const auto matrixAt = [&](int position) -> const RrMat4d * {
+        const int slot = wire.influenceSlots[size_t(position)];
+        if (slot < 0) {
+            return nullptr;
         }
-        chunk->palette[count] = RrGeoScaledDualQuat();
-    }
+        return wire.finalPhase ? &store.finalMatrix[size_t(slot)]
+                               : &store.baseMatrix[size_t(slot)];
+    };
+    eval::GatherSkinChunkTransforms<RrGeoSkinMath>(
+        RrGeoSkinPacket(rev.parameters).method, chunk->key, matrixAt,
+        &chunk->transforms, &chunk->rows, &chunk->palette, &chunk->keyChanged);
     return true;
 }
 
-// SkinPacketIsUsable (bakedGeometry.cpp): the skin's validation over the half
-// RevisionStatic holds, for its decision and every chunk's guard.
+// The skin's validation over the half RevisionStatic holds, for its
+// decision and every chunk's guard (EvalCore's one body).
 bool
 RrGeoSkinPacketIsUsable(const RrGeometryScratch::Revision &rev)
 {
-    return rev.parameters.valid &&
-           rev.parameters.kind == RrGeoKindToken(RrGeoOpSkin) &&
-           rev.layoutUsable && rev.envelopeOk;
+    return eval::SkinPacketIsUsable(rev.parameters.valid,
+                                    rev.parameters.kind ==
+                                        RrGeoKindToken(RrGeoOpSkin),
+                                    rev.layoutUsable, rev.envelopeOk);
 }
 
-// SkinAcceptance (bakedGeometry.cpp): past that half a linear blend cannot
-// fail; a dual-quaternion blend can still be degenerate at a vertex.
+// Past that half a linear blend cannot fail; a dual-quaternion blend can
+// still be degenerate at a vertex.
 RrGeoAcceptance
 RrGeoSkinAcceptance(const RrGeometryScratch::Revision &rev)
 {
-    if (!RrGeoSkinPacketIsUsable(rev)) {
-        return RrGeoAcceptance::Refuses;
-    }
-    switch (RrGeoSkinMethodOf(rev.parameters)) {
-    case RrGeoSkinMethod::ClassicLinear:
-        return RrGeoAcceptance::Applies;
-    case RrGeoSkinMethod::DualQuaternion:
-        return rev.rangeRole ? RrGeoAcceptance::Applies
-                             : RrGeoAcceptance::Deferred;
-    case RrGeoSkinMethod::Unknown:
-        break;
-    }
-    return RrGeoAcceptance::Refuses;
+    return static_cast<RrGeoAcceptance>(eval::SkinAcceptance(
+        RrGeoSkinPacketIsUsable(rev), RrGeoSkinPacket(rev.parameters).method,
+        rev.rangeRole));
 }
 
 // \p target is the buffer written, at the full count: staging for a chunk.
 bool
 RrGeoSkinRange(RrGeometryScratch::Revision *rev, const RrVec3f *preceding,
-               const RrGeoSkinTransformsView &view, size_t begin, size_t end,
-               bool whole, bool useSimd, std::vector<RrVec3f> *target,
+               const eval::SkinTransformsViewT<RrGeoSkinMath> &view,
+               size_t begin, size_t end, bool whole, bool useSimd,
+               std::vector<RrVec3f> *target,
                const RrGeoDispatch *parallel = nullptr)
 {
-    std::vector<RrVec3f> &out = *target;
-    if (end > begin && preceding) {
-        std::copy(preceding + begin, preceding + end,
-                  out.begin() + long(begin));
-    }
-    if (whole) {
-        if (!RrGeoApplySkinKernelWithTransforms(rev->parameters, view, &out,
-                                                useSimd, parallel)) {
-            return false;
-        }
-    } else if (!RrGeoApplySkinRanges(rev->parameters, view, begin, end, &out,
-                                     useSimd, parallel)) {
-        return false;
-    }
-    if (!rev->fullStrength) {
-        if (whole) {
-            eval::BlendEnvelopeAll(preceding, rev->envelope.data(), end,
-                                   out.data());
-        } else {
-            eval::BlendEnvelopeRange(preceding, rev->envelope.data(), begin,
-                                     end, out.data());
-        }
-    }
-    return true;
+    const RigExecRangeRunner ranges = RrGeoRangeRunner(parallel);
+    return eval::SkinRange<RrGeoSkinMath>(
+        RrGeoSkinPacket(rev->parameters), rev->fullStrength,
+        rev->envelope.data(), preceding, view, begin, end, whole, useSimd,
+        rev->parameters.skinLayoutRead, &ranges, target);
 }
 
 // Into \p fused, never staging: staging holds the ranges the chunks'
@@ -6570,13 +6281,11 @@ RrGeoRunLayoutOp(const RrProgram *program, const RrGeometryScratch &scratch,
         built->weights.assign(weights->begin(), weights->end());
     built->elementSize = elementSize;
     built->influenceCount = wire.influenceSlots.size();
-    if (elementSize >= 1 && built->indices.size() == built->weights.size() &&
-        built->indices.size() % size_t(elementSize) == 0) {
-        built->pointCount = built->indices.size() / size_t(elementSize);
-    }
-    built->validated = RigExecFormatSkinLayoutValidates(
+    const eval::SkinLayoutBuild build = eval::BuildSkinLayout(
         built->indices.data(), built->indices.size(), built->weights.data(),
         built->weights.size(), elementSize, built->influenceCount);
+    built->pointCount = build.pointCount;
+    built->validated = build.validated;
     if (id < scratch.compiledRigTopologies.size() &&
         scratch.compiledRigTopologies[id] &&
         *scratch.compiledRigTopologies[id] == *built) {
@@ -7235,8 +6944,8 @@ RrGeoRunInfluenceFoldStep(RrProgram *program, RrGeometryScratch *scratch,
     }
     rev.influencesChanged = changed;
     rev.influencesValid =
-        !skin || RrGeoSkinTransformsAreUsable(rev.influences.data(),
-                                              rev.influences.size());
+        !skin || eval::SkinTransformsAreUsable<RrGeoSkinMath>(
+                     rev.influences.data(), rev.influences.size());
     const bool rangeDq =
         skin && rev.rangeRole &&
         rev.parameters.skinMethod == RrGeoSkinMethod::DualQuaternion;
@@ -7246,8 +6955,9 @@ RrGeoRunInfluenceFoldStep(RrProgram *program, RrGeometryScratch *scratch,
     }
     if (rangeDq && rev.influencesValid && RrGeoSkinPacketIsUsable(rev)) {
         const auto &palette = rev.palette;
-        const auto layout = RrGeoSkinLayoutForPacket(
-            rev.parameters, RrGeoWholeTransformsView(&rev), rev.precedingCount);
+        const auto layout = eval::SkinLayoutForPacket<RrGeoSkinMath>(
+            RrGeoSkinPacket(rev.parameters), RrGeoWholeTransformsView(&rev),
+            rev.precedingCount);
         rev.influencesValid =
             (rev.dqWeightsSafe &&
              RigExecDualQuatPaletteSafe(palette.data(), palette.size())) ||
@@ -7466,7 +7176,9 @@ RrGeoRunRevisionStaticStep(RrProgram *program, RrGeometryScratch *scratch,
         }
         return true;
     }
-    rev.layoutUsable = RrGeoSkinLayoutIsUsable(rev.parameters, count);
+    rev.layoutUsable =
+        eval::SkinLayoutIsUsable(RrGeoSkinPacket(rev.parameters), count,
+                                 rev.parameters.skinTransforms.size());
     rev.fullStrength = RrGeoEnvelopeIsFullStrength(rev.parameters.weights);
     if (!rev.fullStrength) {
         RrGeoResolveEnvelope(&rev, count);
@@ -7475,8 +7187,12 @@ RrGeoRunRevisionStaticStep(RrProgram *program, RrGeometryScratch *scratch,
     rev.dqWeightsSafe =
         rev.layoutUsable &&
         rev.parameters.skinMethod == RrGeoSkinMethod::DualQuaternion &&
-        RigExecDualQuatWeightsSafe(RrGeoSkinLayoutForPacket(
-            rev.parameters, RrGeoSkinTransformsOf(rev.parameters), count));
+        RigExecDualQuatWeightsSafe(eval::SkinLayoutForPacket<RrGeoSkinMath>(
+            RrGeoSkinPacket(rev.parameters),
+            eval::SkinTransformsOf<RrGeoSkinMath>(
+                rev.parameters.skinTransforms.data(),
+                rev.parameters.skinTransforms.size()),
+            count));
     if (rev.chunked) {
         const RrGeoSkinTopology *const topology =
             rev.parameters.skinTopology.get();
@@ -7558,9 +7274,12 @@ RrGeoRunGroupStep(RrProgram *program, RrGeometryScratch *scratch,
                 const int k = RigExecGroupScratch(&state, n);
                 std::vector<RrVec3f> &buffer = *state.own[k];
                 buffer.resize(n);
-                ok = RrGeoSkinGroup(*rev, entering.data,
-                                    RrGeoChunkTransformsView(chunk, useSimd),
-                                    count, begin, end, useSimd, buffer.data());
+                ok = eval::ApplySkinGroupRange<RrGeoSkinMath>(
+                    RrGeoSkinPacket(rev->parameters), rev->fullStrength,
+                    rev->envelope.size() == count ? rev->envelope.data()
+                                                  : nullptr,
+                    RrGeoChunkTransformsView(chunk, useSimd), entering.data,
+                    count, begin, end, useSimd, buffer.data());
                 chunk.ok = ok;
                 if (ok) {
                     RigExecPublishOwnGroup(&state, k);
@@ -7683,9 +7402,11 @@ RrGeoRunWholeSkinChunk(RrProgram *program,
     const int k = RigExecGroupScratch(&state, n);
     std::vector<RrVec3f> &buffer = *state.own[k];
     buffer.resize(n);
-    chunk.ok = RrGeoSkinGroup(*rev, entering.data,
-                              RrGeoChunkTransformsView(chunk, useSimd), count,
-                              begin, end, useSimd, buffer.data());
+    chunk.ok = eval::ApplySkinGroupRange<RrGeoSkinMath>(
+        RrGeoSkinPacket(rev->parameters), rev->fullStrength,
+        rev->envelope.size() == count ? rev->envelope.data() : nullptr,
+        RrGeoChunkTransformsView(chunk, useSimd), entering.data, count, begin,
+        end, useSimd, buffer.data());
     if (chunk.ok) {
         RigExecNoteComputedGroup(&state, k);
     }
@@ -9097,9 +8818,14 @@ RrGeoCompareSkinSplitForTesting(std::string *error, double *linearSerialUs,
                     late.push_back(std::move(task));
                 }
             };
-            const bool ok = RrGeoApplySkinKernelWithTransforms(
-                built.parameters, RrGeoSkinTransformsOf(built.parameters), &out,
-                useSimd, parallel ? &dispatch : nullptr);
+            const RrGeoDispatch *split = parallel ? &dispatch : nullptr;
+            const RigExecRangeRunner ranges = RrGeoRangeRunner(split);
+            const bool ok = eval::ApplySkinKernelWithTransforms<RrGeoSkinMath>(
+                RrGeoSkinPacket(built.parameters),
+                eval::SkinTransformsOf<RrGeoSkinMath>(
+                    built.parameters.skinTransforms.data(),
+                    built.parameters.skinTransforms.size()),
+                &out, useSimd, built.parameters.skinLayoutRead, &ranges);
             for (std::thread &thread : threads) {
                 thread.join();
             }
