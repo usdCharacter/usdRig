@@ -956,8 +956,13 @@ def _applyUsdChangesPass(view, resyncedPaths, infoChangedPaths, trace, movedPath
         # Capture BEFORE validation drops the source ids: the adoption
         # below rebuilds them from their live destinations.
         displayMoves = capturedDisplayedMoves(view, moved)
+        selectedDestinations = {
+            displayMoves[nodeId][0] for nodeId in view._selectedNodes
+            if nodeId in displayMoves
+        }
         removed = validateNodesAgainstStage(view)
         adopted = adoptMovedDisplayedPrims(view, displayMoves)
+        view._selectedNodes.update(selectedDestinations.intersection(adopted))
         adopted.extend(adoptPrimsNewToScope(view, resyncedPaths))
         if removed or adopted:
             if trace is not None:
@@ -1066,6 +1071,13 @@ def prepareGraphSwitch(view):
     view._invalidateBackReferenceLinkDataCache()
     view._linksNeedSync = True
     view._portHighlightsDirty = True
+
+
+def deferReloadRendering(view, defer):
+    view._deferRenderCacheClear = defer
+    if not defer:
+        # Only FinishReload can resume painting, even if a loader initialized GL.
+        view.initialized = False
 
 
 def _beginReloadOnView(view, frame):

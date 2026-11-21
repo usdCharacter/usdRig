@@ -1048,15 +1048,15 @@ class ReplaceStalenessTest(unittest.TestCase):
         clear = stage_sync.ClearHistory(3)
         self.assertEqual(hooks.events, [
             ("listen", hooks.receiver),
-            ("read", snapshotA),
+            ("read", snapshotA), ("unregister",),
             ("publish", beginA), ("apply", beginA),
             ("publish", stage_sync.Remove(1, idsA)),
-            ("publish", loadA), ("apply", loadA), ("post", finishA),
-            ("read", snapshotB),
+            ("publish", loadA), ("apply", loadA), ("register", stageA), ("post", finishA),
+            ("read", snapshotB), ("unregister",),
             ("publish", beginB), ("apply", beginB),
             ("publish", stage_sync.Remove(2, idsB)),
-            ("publish", loadB), ("apply", loadB), ("post", finishB),
-            ("read", snapshotB),
+            ("publish", loadB), ("apply", loadB), ("register", stageB), ("post", finishB),
+            ("read", snapshotB), ("unregister",),
             ("publish", beginNone), ("apply", beginNone),
             ("publish", clear), ("apply", clear), ("post", finishNone),
         ])
@@ -1134,8 +1134,8 @@ class LoadFailureTest(unittest.TestCase):
         (finishA,) = hooks.queued
         self.assertEqual(hooks.events[-3:], [
             ("apply", stage_sync.Load(1, stageA, "stage", None)),
-            ("warn", "Failed to reload graph after stage replace: load boom"),
             ("post", finishA),
+            ("warn", "Failed to reload graph after stage replace: load boom"),
         ])
         finishA()
         self.assertEqual(hooks.events[-2:], [
@@ -1152,10 +1152,10 @@ class LoadFailureTest(unittest.TestCase):
         load = stage_sync.Load(2, stageB, "container", "/Box")
         finish = stage_sync.FinishReload(2)
         self.assertEqual(hooks.events, [
-            ("read", hooks.stage_context),
+            ("read", hooks.stage_context), ("unregister",),
             ("publish", begin), ("apply", begin),
             ("publish", stage_sync.Remove(2, ())),
-            ("publish", load), ("apply", load), ("post", finishB),
+            ("publish", load), ("apply", load), ("register", stageB), ("post", finishB),
             ("publish", finish), ("apply", finish),
         ])
 
@@ -1213,7 +1213,6 @@ class SuppressionTest(unittest.TestCase):
             self.assertFalse(hooks.handler.isEnabled())
         self.assertTrue(hooks.handler.isEnabled())
         self.assertEqual(hooks.events[1:], [
-            ("setEnabled", False), ("setEnabled", False),
             ("setEnabled", False), ("setEnabled", True),
         ])
 
@@ -1228,13 +1227,16 @@ class CloseTest(unittest.TestCase):
         hooks.sync.replace(stage, "stage", None, "frame")
         handler = hooks.handler
         self.assertIs(handler, hooks.handler)
-        self.assertFalse(any(event[0] == "register" for event in hooks.events))
-        handler.register(stage)
+        self.assertIs(hooks.sync.boundStage(), stage)
+        self.assertEqual([event for event in hooks.events if event[0] == "register"],
+                         [("register", stage)])
+        before_close = hooks.events[:]
         live = hooks.sync.epoch()
         hooks.sync.close()
         self.assertTrue(hooks.sync.isClosed())
         self.assertEqual(hooks.sync.epoch(), live + 1)
-        self.assertEqual(hooks.events[-2:], [("register", stage), ("unregister",)])
+        self.assertEqual(hooks.events, before_close + [("unregister",)])
+        self.assertIsNone(hooks.sync.boundStage())
         events = hooks.events[:]
         hooks.queued[0]()
         hooks.receiver._handleUsdChanges({"/Alpha"}, set())
@@ -1366,16 +1368,20 @@ class ProductionAdapterTest(unittest.TestCase):
 
     def test_load_effect_brackets_the_selected_loader_even_on_failure(self) -> None:
         for mode, loader, args in (
-            ("stage", "loadStage", ()),
-            ("blueprint", "loadBlueprint", ("/Bp",)),
-            ("container", "loadContainer", ("/Box",)),
+            ("stage", "_populateStage", ()),
+            ("blueprint", "_populateBlueprint", ("/Bp",)),
+            ("container", "_populateContainer", ("/Box",)),
         ):
             for fail in (False, True):
                 with self.subTest(mode=mode, fail=fail):
                     stage = Usd.Stage.CreateInMemory()
                     view = _StubView(stage)
                     view._deferRenderCacheClear = False
-                    view.initialized = False
+                    view.initialized = True
+                    view._prepareGraphSwitch = lambda: None
+                    view._resetUnboundGraph = lambda: None
+                    view.setUpdatesEnabled = lambda _: None
+                    view._stageSync = _makeStageSync(view)
                     calls = []
 
                     def load(*received):
@@ -1385,12 +1391,12 @@ class ProductionAdapterTest(unittest.TestCase):
                             raise RuntimeError("loader boom")
 
                     setattr(view, loader, load)
-                    delta = stage_sync.Load(1, stage, mode, args[0] if args else None)
-                    if fail:
-                        with self.assertRaisesRegex(RuntimeError, "loader boom"):
-                            stage_adapter.applyStageDelta(view, delta)
-                    else:
-                        stage_adapter.applyStageDelta(view, delta)
+                    with patch("UsdNoodles.graphView.QtCore.QTimer.singleShot") as post, \
+                         patch("UsdNoodles.graphView.Tf.Warn") as warn:
+                        view._stageSync.replace(stage, mode, args[0] if args else None, None)
+                    post.assert_called_once()
+                    self.assertEqual(warn.call_count, int(fail))
+                    self.assertIs(view._stageSync.boundStage(), None if fail else stage)
                     self.assertEqual(calls, [((stage, *args), True)])
                     self.assertFalse(view._deferRenderCacheClear)
                     self.assertFalse(view.initialized)

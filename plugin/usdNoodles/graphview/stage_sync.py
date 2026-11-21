@@ -342,7 +342,8 @@ class StageSync:
         self._pendingChanges = None
         if begin is not None:
             self._finishPending = True
-        defer = self._defer(True) if self._finishPending and self._defer else None
+        if self._finishPending and self._defer is not None:
+            self._defer(True)
         try:
             self.bind(None)
             if begin is not None:
@@ -362,12 +363,12 @@ class StageSync:
             raise
         finally:
             if not self._closed and epoch == self._epoch:
-                if defer is not None:
-                    self._defer(False)
-            if not self._closed and epoch == self._epoch and self._finishPending:
-                self._scheduleFinish(epoch)
-            if not self._closed and epoch == self._epoch and self._graphReplaced:
-                self._graphReplaced()
+                if self._finishPending:
+                    if self._defer is not None:
+                        self._defer(False)
+                    self._scheduleFinish(epoch)
+                if self._graphReplaced is not None:
+                    self._graphReplaced()
 
     def boundStage(self):
         """The stage that actually owns the adapter's live notice key."""

@@ -21,7 +21,7 @@ from pxr.Usdviewq.qt import QtCore, QtWidgets
 from UsdNoodles._qt_editor import NoodlesLayerEditorWidget
 from UsdNoodles.core import FontMetrics
 from UsdNoodles.graphView import GraphView
-from UsdNoodles.graphview import stage_sync
+from UsdNoodles.graphview import stage_adapter
 from UsdNoodles.nodeGraph import NodeGraph
 from UsdNoodles.nodeGraphBlueprint import NodeGraphBlueprint
 from UsdNoodles.nodeGraphBpContainer import NodeGraphBpContainer
@@ -72,7 +72,7 @@ class LoaderLifecycleTest(unittest.TestCase):
         self.layers = NoodlesLayerEditorWidget(self.host)
         self.addCleanup(self.layers.close)
         self.reconcile = self.enterContext(patch.object(
-            stage_sync, 'applyUsdChanges', wraps=stage_sync.applyUsdChanges
+            stage_adapter, 'applyUsdChanges', wraps=stage_adapter.applyUsdChanges
         ))
         self.posts = []
         self.enterContext(patch.object(
