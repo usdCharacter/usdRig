@@ -719,13 +719,26 @@ class ValuePreviewOpinion:
 
     def __init__(self, target, attr, time):
         self.layer = target.GetLayer()
+        self._target = target
         self._initial_path = target.MapToSpecPath(attr.GetPath())
+        prim = attr.GetPrim()
+        properties = attr.GetPropertyStack()
+        # A composed Usd handle is path-bound. Keep a pre-preview Sdf identity
+        # that can survive both removal of the preview spec and a namespace edit.
+        self._anchor = next(iter(properties or prim.GetPrimStack()), None)
+        if self._anchor:
+            owner = self._anchor.owner if properties else self._anchor
+            index = prim.GetPrimIndex()
+            node = index.GetNodeProvidingSpec(owner)
+            self._anchor_map = node.mapToRoot.Evaluate() if node else None
+        self._prim = prim
+        self._prim_path = prim.GetPath()
+        self._property_name = attr.GetName()
         self.time = (None if time.IsDefault() else
                      target.GetMapFunction().timeOffset.GetInverse() * time.GetValue())
         self.original = read_value_opinion(self.layer, self._initial_path, self.time)
         self.preview = None
         self._spec = None
-        self._redo_path = None
         self._record_site(self._initial_path)
 
     def _record_site(self, path):
@@ -763,7 +776,7 @@ class ValuePreviewOpinion:
                     and set(spec.ListInfoKeys()) <= {"typeName", "variability", "custom"}
                     and (spec.typeName, spec.variability, spec.custom) == self._declaration):
                 spec.owner.RemoveProperty(spec)
-                self._redo_path = path
+                self._spec = None
             # Keep handles rather than old paths so namespace edits cannot
             # make cleanup delete an unrelated replacement at the old site.
             for prim in reversed(self._prims):
@@ -773,9 +786,32 @@ class ValuePreviewOpinion:
                     else:
                         del prim.nameParent.nameChildren[prim.name]
 
-    def redo(self):
-        path = self.path or self._redo_path
-        if path is None or read_value_opinion(self.layer, path, self.time) != self.original:
+    def _removed_site(self, stage):
+        anchor = self._anchor
+        if not (stage and anchor and self._anchor_map):
+            return None
+        path = self._anchor_map.MapSourceToTarget(anchor.path.StripAllVariantSelections())
+        if not path:
+            return None
+        is_property = isinstance(anchor, Sdf.AttributeSpec)
+        attr = stage.GetAttributeAtPath(path if is_property else path.AppendProperty(self._property_name))
+        if not attr or attr.GetTypeName() != self._declaration[0]:
+            return None
+        prim = attr.GetPrim()
+        # Sdf handles can become valid again after recreation at the same path.
+        if prim.GetPath() == self._prim_path and prim != self._prim:
+            return None
+        stack = attr.GetPropertyStack() if is_property else prim.GetPrimStack()
+        if anchor not in stack:
+            return None
+        return self._target.MapToSpecPath(attr.GetPath())
+
+    def redo(self, stage):
+        if not (stage and self.layer.permissionToEdit and self.layer in stage.GetUsedLayers()):
+            return
+        # Only resolve a new site when our own restore removed the spec.
+        path = self._removed_site(stage) if self._spec is None else self.path
+        if not path or read_value_opinion(self.layer, path, self.time) != self.original:
             return
         spec = self.layer.GetPropertyAtPath(path)
         if spec and (not isinstance(spec, Sdf.AttributeSpec)
@@ -791,7 +827,6 @@ class ValuePreviewOpinion:
                 Sdf.AttributeSpec(owner, path.name, type_name, variability, custom)
             self._created = self._created or was_created
             self._capture_specs(path, retained_prims)
-            self._redo_path = None
             set_value_opinion(self.layer, path, self.time, self.preview)
 
 

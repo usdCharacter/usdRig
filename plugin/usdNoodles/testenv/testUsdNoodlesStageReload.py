@@ -738,8 +738,9 @@ class TestReloadLifecycle(unittest.TestCase):
 
     def test_layered_drag_removes_preview_specs_and_redoes_at_mapped_site(self):
         for action in ('cancel', 'undo', 'cancel_with_edits', 'undo_with_edits',
-                       'cancel_with_parent_edit', 'undo_after_rename',
-                       'undo_with_existing_declaration', 'cancel_with_existing_parent'):
+                       'cancel_with_parent_edit', 'undo_after_rename', 'undo_then_rename',
+                       'undo_then_replace', 'undo_with_existing_declaration',
+                       'cancel_with_existing_parent'):
             with self.subTest(action=action):
                 stage, view = Usd.Stage.CreateInMemory(), self.view
                 root = stage.GetRootLayer()
@@ -817,8 +818,33 @@ class TestReloadLifecycle(unittest.TestCase):
                         self.assertEqual(layer.GetPrimAtPath(group_path).documentation, 'keep me')
                     else:
                         self.assertEqual(layer.ExportToString(), before)
+                if action in ('undo_then_rename', 'undo_then_replace'):
+                    editor = Usd.NamespaceEditor(stage)
+                    if action == 'undo_then_replace':
+                        self.assertTrue(editor.DeletePrimAtPath('/Group'))
+                        self.assertTrue(editor.ApplyEdits())
+                        stage.SetEditTarget(weaker)
+                        replacement = stage.DefinePrim('/Group/Value').CreateAttribute(
+                            'number', Sdf.ValueTypeNames.Float)
+                        self.assertTrue(replacement.Set(8, time))
+                        stage.SetEditTarget(root)
+                    else:
+                        self.assertTrue(editor.MovePrimAtPath('/Group', '/Renamed'))
+                        self.assertTrue(editor.ApplyEdits())
+                        path = Sdf.Path('/Renamed/Value.number')
+                        attr = stage.GetAttributeAtPath(path)
                 if commit:
+                    active_target = stage.GetEditTarget()
                     history.redo(view)
+                    self.assertEqual(stage.GetEditTarget(), active_target)
+                    if action in ('undo_then_rename', 'undo_then_replace'):
+                        self.assertFalse(layer.GetPrimAtPath('/Group'), layer.ExportToString())
+                        self.assertFalse(layer.GetPrimAtPath('/Group/Value'))
+                        self.assertFalse(layer.GetAttributeAtPath('/Group/Value.number'))
+                    if action == 'undo_then_replace':
+                        self.assertEqual(layer.ExportToString(), before)
+                        self.assertEqual(replacement.Get(time), 8)
+                        continue
                     self.assertTrue(layer.GetAttributeAtPath(path))
                     self.assertEqual(layer.QueryTimeSample(path, 5), 3.5)
                     self.assertEqual(attr.Get(time), 3.5)

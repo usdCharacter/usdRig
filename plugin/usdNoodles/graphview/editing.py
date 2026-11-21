@@ -2323,7 +2323,7 @@ def _recordMungOpinion(view, state):
         return False
     legacy_symbol("_push_undo_command")(
         "Set %s" % path,
-        lambda view: opinion.redo(),
+        lambda view: opinion.redo(view.nodeGraph.getStage()),
         lambda view: opinion.restore(),
         view=view,
     )
