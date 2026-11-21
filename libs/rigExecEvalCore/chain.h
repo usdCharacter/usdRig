@@ -1,8 +1,10 @@
 // The revision-chain step bodies the baked program and .rigexec playback
-// share: ChainInputs, InfluenceFold, RevisionStatic and RevisionChunk, plus
+// share: ChainInputs, InfluenceFold, RevisionStatic, RevisionChunk,
+// RevisionFuse, ChainStatus and Derived, plus the paired skip switch and
 // the chain helpers both front ends used to carry twice -- base-group
-// publication, group resolution, point-version resolution and partition
-// adoption (docs/specs/eval-core-parity.md). One definition per body, so a
+// publication, group resolution, point-version resolution, partition
+// adoption, point-bit equality and the moved-points copy
+// (docs/specs/eval-core-parity.md). One definition per body, so a
 // second front end cannot drift into a different answer. Adapter binding
 // stays with each front end: the core classifies roles and reads Build
 // facts from its leaves, playback binds the partition and roles the file
@@ -10,7 +12,9 @@
 // GateDefault and GateRevision stay core-adapter Build functions and are
 // never ported here; the gate predicate itself is gate.h's, not this
 // header's. The weight-field overlay publication and the revisionsBuilt
-// counting stay adapter-local, as host.h records.
+// counting stay adapter-local, as host.h records. A GPU chain's Derived
+// deferral to the publication boundary and its GPU fuse stay with the
+// baked adapter around the shared bodies; discardable probes stay native.
 //
 // Bodies are templated on the host Math trait of envelope.h's convention
 // (Math::Vec3f is the chain's point type) and read the host contract of
@@ -26,6 +30,8 @@
 //     bool chainIndexForObject(int32_t object, size_t *chain) const;
 //     bool revisionIndexForObject(int32_t object, size_t *chain,
 //                                 size_t *revision) const;
+//     bool derivedIndexForObject(int32_t object, size_t *chain,
+//                                size_t *derived) const;
 //     bool chainHasBase(size_t chain) const;
 //     int opCode(size_t chain, size_t revision) const;
 //          the revision's op as a wire RevisionOp ordinal (kinds.h);
@@ -147,6 +153,92 @@
 //                           size_t count, size_t begin, size_t end,
 //                           const float *envelope, bool *untouched);
 //     bool runWholeSkinChunk(size_t chain, size_t revision, size_t g);
+//     FuseRevisionAccessT<Math::Vec3f> fuseRevision(size_t chain,
+//                                                  size_t revision);
+//     bool revisionRangeSetAside(size_t chain, size_t revision);
+//     void passSetAsideFuse(size_t chain, size_t revision);
+//     bool revisionIsRangeRole(size_t chain, size_t revision);
+//     bool revisionIsWholeRole(size_t chain, size_t revision);
+//     bool fusePacketValid(size_t chain, size_t revision);
+//     void emitFuseDiagnostic(size_t chain, size_t revision,
+//                             bool packetValid);
+//     bool revisionStatusAllows(size_t chain, size_t revision);
+//     int revisionAcceptanceValue(size_t chain, size_t revision);
+//     bool revisionChunkedValue(size_t chain, size_t revision);
+//     bool revisionPartitionStaleValue(size_t chain, size_t revision);
+//     size_t revisionChunkCount(size_t chain, size_t revision);
+//     bool chunkOk(size_t chain, size_t revision, size_t k);
+//     bool chunkHoldsAnswer(size_t chain, size_t revision, size_t k);
+//     void setRevisionExecuted(size_t chain, size_t revision, bool);
+//     void noteFuseExecuted(size_t chain, size_t revision);
+//     void setFuseResultFromStatus(size_t chain, size_t revision);
+//     void setFuseResultFailed(size_t chain, size_t revision);
+//     void saveFuseLastStatus(size_t chain, size_t revision);
+//     void publishFuseState(size_t chain, size_t revision, int32_t object);
+//     void noteWholeFuseSource(size_t chain, size_t revision, int source);
+//     int precedingCurrentSource(size_t chain, size_t revision);
+//     bool wholeFuseSized(size_t chain, size_t revision);
+//     bool legacyWholeStagingOk(size_t chain, size_t revision, size_t count);
+//     int64_t fuseGroupSlot(size_t chain, size_t revision, size_t g);
+//     RigExecGroupSource fuseVersionSource(size_t chain, size_t version,
+//                                          size_t g);
+//     void enteringVersionPoints(size_t chain, size_t version,
+//                                const Math::Vec3f **points, size_t *count);
+//     bool revisionLayoutUsableValue(size_t chain, size_t revision);
+//     bool revisionEnvelopeOkValue(size_t chain, size_t revision);
+//     size_t fusePrecedingCount(size_t chain, size_t revision);
+//     bool skinWholeRange(size_t chain, size_t revision,
+//                         const Math::Vec3f *points, size_t count,
+//                         std::vector<Math::Vec3f> *fused);
+//     ChainStatusAccessT<Math::Vec3f> chainStatus(size_t chain);
+//     void clearChainStatusPublish(size_t chain);
+//     void emitChainStatusDiagnostics(size_t chain);
+//     void noteChainBuilt(size_t chain);
+//     bool chainIsGpu(size_t chain);
+//     void noteChainGpuPending(size_t chain);
+//     bool chainHasGroups(size_t chain);
+//     size_t chainRevisionCount(size_t chain);
+//     size_t chainGroupCount(size_t chain);
+//     RigExecGroupSource chainStatusSource(size_t chain, size_t version,
+//                                          size_t g);
+//     const RigExecPointsRef<Math::Vec3f> &
+//         chainStatusGroup(size_t chain, size_t version, size_t g);
+//     void publishChainGroups(size_t chain,
+//                             const std::vector<Math::Vec3f> &gathered,
+//                             const std::vector<RigExecGroupSource> &ids);
+//     void chainFinalPoints(size_t chain, size_t version,
+//                           const Math::Vec3f **points, size_t *count);
+//     void publishChainFinal(size_t chain,
+//                            const std::vector<Math::Vec3f> &gathered);
+//     void captureDerivedPublished(size_t chain, size_t derived);
+//     void prepareDerivedBase(size_t chain, size_t derived);
+//     bool derivedHasBase(size_t chain, size_t derived);
+//     void adoptDerivedLayout(size_t chain, size_t derived);
+//     bool derivedIsMatrix(size_t chain, size_t derived);
+//     bool runDerivedMatrix(size_t chain, size_t derived);
+//     bool foldDerivedInfluences(size_t chain, size_t derived);
+//     void assembleDerived(size_t chain, size_t derived);
+//     void noteDerivedBuilt(size_t chain, size_t derived);
+//     void noteDerivedExecuted(size_t chain, size_t derived);
+//     bool derivedStatusAllows(size_t chain, size_t derived);
+//     bool runDerivedKernel(size_t chain, size_t derived,
+//                           std::vector<Math::Vec3f> *values);
+//     void derivedLastBasePoints(size_t chain, size_t derived,
+//                                std::vector<Math::Vec3f> *values);
+//     void setDerivedResultFromStatus(size_t chain, size_t derived);
+//     void setDerivedResultFailed(size_t chain, size_t derived);
+//     void saveDerivedRevision(size_t chain, size_t derived,
+//                              std::vector<Math::Vec3f> &&values);
+//     bool derivedResultIsFailed(size_t chain, size_t derived);
+//     void emitDerivedDiagnostic(size_t chain, size_t derived);
+//     void noteDerivedEarlyVersion(size_t chain, size_t derived);
+//     void publishDerivedResult(size_t chain, size_t derived);
+//     void skipChainInputs(size_t chain);
+//     void skipDerived(size_t chain, size_t derived);
+//     void skipInfluenceFold(size_t chain, size_t revision);
+//     void skipRevisionStatic(size_t chain, size_t revision, int32_t object);
+//     void skipRevisionChunk(size_t chain, size_t revision, int32_t part);
+//     void skipRevisionFuse(size_t chain, size_t revision);
 //
 // Views cannot outlive the packet or program they borrow. Bodies are
 // no-mutex zones: no guarded statics, no text-built tokens, no
@@ -159,6 +251,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -185,7 +278,8 @@ enum ChainStepDetail : int32_t {
     kChainDetailNoRevision = 2,
     kChainDetailNoChunk = 3,
     kChainDetailFold = 4,
-    kChainDetailChunk = 5
+    kChainDetailChunk = 5,
+    kChainDetailNoDerived = 6
 };
 
 /// The op ordinals the chain bodies dispatch on, in wire order.
@@ -234,6 +328,85 @@ template <class Point> struct GroupStepAccessT {
     size_t chainPointCount = 0;
     size_t chunksSize = 0;
 };
+
+/// The fields one fuse reads and writes, as the adapter's revision holds
+/// them. Borrowed; valid for the call.
+template <class Point> struct FuseRevisionAccessT {
+    bool *ran = nullptr;
+    int *currentSource = nullptr;
+    std::vector<Point> *output = nullptr;
+    std::vector<Point> *stagingOutput = nullptr;
+    bool *stagingFresh = nullptr;
+    std::vector<Point> *passedPoints = nullptr;
+    uint64_t *doneVersion = nullptr;
+    std::vector<RigExecGroupState<Point>> *groups = nullptr;
+    std::vector<RigExecGroupSource> *groupIds = nullptr;
+    std::vector<char> *groupWritten = nullptr;
+    uint32_t *rangeRefusals = nullptr;
+    size_t precedingCount = 0;
+};
+
+/// The publication state ChainStatus reads and writes. Borrowed; valid
+/// for the call.
+template <class Point> struct ChainStatusAccessT {
+    bool *haveResult = nullptr;
+    uint64_t *resultVersion = nullptr;
+    std::vector<RigExecGroupSource> *resultIds = nullptr;
+};
+
+/// Point-bit equality, one definition: same count and same bytes, the
+/// rule every content version in the chain follows.
+template <class Point>
+inline bool
+PointsBitsEqualBody(const Point *a, size_t na, const Point *b, size_t nb)
+{
+    return RigExecPointsBitsEqual(a, na, b, nb);
+}
+
+/// The moved-points copy, one definition: \p output takes \p staging's
+/// points, copying only the blocks whose bytes differ, and returns
+/// whether any did (a size change included).
+template <class Point>
+bool
+CopyMovedPointsBody(const std::vector<Point> &staging,
+                    std::vector<Point> *output)
+{
+    if (output->size() != staging.size()) {
+        output->assign(staging.begin(), staging.end());
+        return true;
+    }
+    constexpr size_t kBlock = 1024;
+    bool moved = false;
+    for (size_t begin = 0; begin < staging.size(); begin += kBlock) {
+        const size_t count = std::min(kBlock, staging.size() - begin);
+        if (std::memcmp(staging.data() + begin, output->data() + begin,
+                        count * sizeof(Point)) != 0) {
+            std::copy(staging.begin() + long(begin),
+                      staging.begin() + long(begin + count),
+                      output->begin() + long(begin));
+            moved = true;
+        }
+    }
+    return moved;
+}
+
+/// The whole-array skin a fuse runs when its partition went stale, one
+/// definition: the layout and envelope checks, then the host's whole
+/// skin range into \p fused.
+template <class Host>
+bool
+FuseWholeRevisionBody(Host &host, size_t chain, size_t revision,
+                      const typename Host::Math::Vec3f *points, size_t count,
+                      std::vector<typename Host::Math::Vec3f> *fused)
+{
+    if (!host.state().revisionLayoutUsableValue(chain, revision) ||
+        !host.state().revisionEnvelopeOkValue(chain, revision) ||
+        count != host.state().fusePrecedingCount(chain, revision)) {
+        return false;
+    }
+    fused->resize(count);
+    return host.state().skinWholeRange(chain, revision, points, count, fused);
+}
 
 /// Base-group publication, one definition: the chain base as groups,
 /// one immutable owner sharing the array's buffer and each base group a
@@ -729,10 +902,457 @@ RunRevisionChunkStep(Host &host, const StepRef &step)
     return {Outcome::Applied, kNoStepDetail};
 }
 
+/// RevisionFuse: the apply-or-pass-through decision, the RevisionOut
+/// publication and the sticky dirty bit. A Range revision joins its
+/// groups, a Whole revision fuses them, and a Legacy revision publishes
+/// its one array; a revision a cycle set aside passes the base through.
+/// Content versions move exactly when the published bytes or group ids
+/// do. The GPU-owned fuse stays with the baked adapter: it intercepts
+/// before this body ever sees a GPU revision.
+template <class Host>
+StepResult
+RunRevisionFuseStep(Host &host, const StepRef &step)
+{
+    static_assert(IsBoundHost<Host>::value, "chain Host is not bound");
+    using Point = typename Host::Math::Vec3f;
+    size_t chain = 0, revision = 0;
+    if (!host.inputs().revisionIndexForObject(step.object, &chain, &revision)) {
+        return {Outcome::Invalid, kChainDetailNoRevision};
+    }
+    if (!host.inputs().chainHasBase(chain)) {
+        return {Outcome::Held, kNoStepDetail};
+    }
+    if (host.state().revisionRangeSetAside(chain, revision)) {
+        host.state().passSetAsideFuse(chain, revision);
+        return {Outcome::Applied, kNoStepDetail};
+    }
+    const bool skin = host.state().revisionIsSkin(chain, revision);
+    const bool packetValid = host.state().fusePacketValid(chain, revision);
+    host.state().emitFuseDiagnostic(chain, revision, packetValid);
+    if (host.state().revisionIsRangeRole(chain, revision)) {
+        auto access = host.state().fuseRevision(chain, revision);
+        host.state().setRevisionExecuted(chain, revision, true);
+        host.state().noteFuseExecuted(chain, revision);
+        const bool applied = RevisionAppliesBody(
+            packetValid, host.state().revisionStatusAllows(chain, revision),
+            host.state().revisionAcceptanceValue(chain, revision));
+        host.state().setFuseResultFromStatus(chain, revision);
+        if (!applied && host.state().revisionStatusAllows(chain, revision)) {
+            host.state().setFuseResultFailed(chain, revision);
+        }
+        bool moved = false;
+        if (access.groupIds && access.groups &&
+            access.groupIds->size() != access.groups->size()) {
+            access.groupIds->assign(access.groups->size(),
+                                    RigExecGroupSource());
+            moved = true;
+        }
+        uint32_t refusals = 0;
+        if (access.groupIds) {
+            for (size_t g = 0; g < access.groupIds->size(); ++g) {
+                if (access.groupWritten && g < access.groupWritten->size() &&
+                    (*access.groupWritten)[g] && access.groups &&
+                    g < access.groups->size() && applied &&
+                    !(*access.groups)[g].ok) {
+                    ++refusals;
+                }
+                const RigExecGroupSource source =
+                    host.state().fuseVersionSource(chain, revision + 1, g);
+                if ((*access.groupIds)[g] != source) {
+                    (*access.groupIds)[g] = source;
+                    moved = true;
+                }
+            }
+        }
+        if (access.rangeRefusals) {
+            *access.rangeRefusals = refusals;
+        }
+        if (moved && access.doneVersion) {
+            ++*access.doneVersion;
+        }
+        host.state().saveFuseLastStatus(chain, revision);
+        if (access.ran) {
+            *access.ran = true;
+        }
+        host.state().publishFuseState(chain, revision, step.object);
+        return {Outcome::Applied, kNoStepDetail};
+    }
+    if (host.state().revisionIsWholeRole(chain, revision)) {
+        auto access = host.state().fuseRevision(chain, revision);
+        host.state().setRevisionExecuted(chain, revision, true);
+        host.state().noteFuseExecuted(chain, revision);
+        host.state().setFuseResultFromStatus(chain, revision);
+        const size_t groupCount = access.groups ? access.groups->size() : 0;
+        const size_t count = access.precedingCount;
+        const bool keyed = host.state().revisionChunkedValue(chain, revision);
+        bool applied = packetValid &&
+                       host.state().revisionStatusAllows(chain, revision) &&
+                       host.state().wholeFuseSized(chain, revision);
+        const bool whole =
+            applied && skin &&
+            host.state().revisionPartitionStaleValue(chain, revision);
+        std::vector<Point> fused;
+        if (whole) {
+            const Point *points = nullptr;
+            size_t enteringCount = 0;
+            host.state().enteringVersionPoints(chain, revision, &points,
+                                               &enteringCount);
+            applied = FuseWholeRevisionBody<Host>(host, chain, revision, points,
+                                                  enteringCount, &fused);
+        } else if (applied &&
+                   host.state().revisionAcceptanceValue(chain, revision) !=
+                       kChainAcceptanceDeferred) {
+            applied = host.state().revisionAcceptanceValue(chain, revision) ==
+                      kChainAcceptanceApplies;
+        } else if (applied) {
+            const size_t chunks =
+                host.state().revisionChunkCount(chain, revision);
+            for (size_t k = 0; k < chunks; ++k) {
+                if (!host.state().chunkHoldsAnswer(chain, revision, k)) {
+                    applied = false;
+                    break;
+                }
+            }
+        }
+        if (applied && keyed && !whole) {
+            for (size_t g = 0; g < groupCount; ++g) {
+                if (!host.state().chunkHoldsAnswer(chain, revision, g)) {
+                    applied = false;
+                    break;
+                }
+            }
+        }
+        if (applied && !whole && !keyed && access.stagingOutput &&
+            access.stagingOutput->size() != count) {
+            applied = false;
+        }
+        if (!applied && host.state().revisionStatusAllows(chain, revision)) {
+            host.state().setFuseResultFailed(chain, revision);
+        }
+        const std::vector<Point> *slices =
+            whole ? &fused : (keyed ? nullptr : access.stagingOutput);
+        bool moved = false;
+        if (access.groupIds && access.groupIds->size() != groupCount) {
+            access.groupIds->assign(groupCount, RigExecGroupSource());
+            moved = true;
+        }
+        for (size_t g = 0; g < groupCount; ++g) {
+            RigExecGroupState<Point> &state = (*access.groups)[g];
+            if (applied && !slices) {
+                RigExecPublishOwnGroup(&state, state.ownComputed);
+            } else if (applied) {
+                size_t begin = 0, end = 0;
+                host.state().groupRange(chain, revision, g, count, &begin,
+                                        &end);
+                const int k = RigExecGroupScratch(&state, end - begin);
+                std::vector<Point> &buffer = *state.own[size_t(k)];
+                std::copy(slices->begin() + long(begin),
+                          slices->begin() + long(end), buffer.begin());
+                RigExecPublishOwnGroup(&state, k);
+            } else {
+                RigExecGroupSource from;
+                const RigExecPointsRef<Point> &entering =
+                    host.state().enteringGroup(chain, revision, g, &from);
+                RigExecPublishPassedGroup(&state, entering, from);
+            }
+            RigExecGroupSource source;
+            source.slot = host.state().fuseGroupSlot(chain, revision, g);
+            source.version = state.version;
+            if (access.groupIds && (*access.groupIds)[g] != source) {
+                (*access.groupIds)[g] = source;
+                moved = true;
+            }
+        }
+        if (moved && access.doneVersion) {
+            ++*access.doneVersion;
+        }
+        host.state().saveFuseLastStatus(chain, revision);
+        if (access.ran) {
+            *access.ran = true;
+        }
+        host.state().noteWholeFuseSource(chain, revision, int(revision));
+        host.state().publishFuseState(chain, revision, step.object);
+        return {Outcome::Applied, kNoStepDetail};
+    }
+    {
+        auto access = host.state().fuseRevision(chain, revision);
+        host.state().setRevisionExecuted(chain, revision, true);
+        host.state().noteFuseExecuted(chain, revision);
+        const bool hadOwn = access.ran && *access.ran && access.currentSource &&
+                            *access.currentSource == int(revision);
+        bool moved = !(access.ran && *access.ran);
+        host.state().setFuseResultFromStatus(chain, revision);
+        bool applied =
+            packetValid && host.state().revisionStatusAllows(chain, revision);
+        const bool whole =
+            applied && skin &&
+            host.state().revisionPartitionStaleValue(chain, revision);
+        std::vector<Point> fused;
+        if (whole) {
+            const Point *points = nullptr;
+            size_t count = 0;
+            host.state().enteringVersionPoints(chain, revision, &points,
+                                               &count);
+            applied =
+                host.state().legacyWholeStagingOk(chain, revision, count) &&
+                FuseWholeRevisionBody<Host>(host, chain, revision, points,
+                                            count, &fused);
+        } else if (applied &&
+                   host.state().revisionAcceptanceValue(chain, revision) !=
+                       kChainAcceptanceDeferred) {
+            applied = host.state().revisionAcceptanceValue(chain, revision) ==
+                      kChainAcceptanceApplies;
+        } else if (applied) {
+            const size_t chunks =
+                host.state().revisionChunkCount(chain, revision);
+            for (size_t k = 0; k < chunks; ++k) {
+                if (!host.state().chunkOk(chain, revision, k)) {
+                    applied = false;
+                    break;
+                }
+            }
+        }
+        if (applied) {
+            if (host.state().revisionChunkedValue(chain, revision) || whole) {
+                const std::vector<Point> &result =
+                    whole ? fused : *access.stagingOutput;
+                if (!hadOwn) {
+                    moved = moved ||
+                            !PointsBitsEqualBody(result.data(), result.size(),
+                                                 access.passedPoints->data(),
+                                                 access.passedPoints->size());
+                }
+                const bool copied =
+                    CopyMovedPointsBody<Point>(result, access.output);
+                moved = moved || (hadOwn && copied);
+            } else if (access.stagingFresh && *access.stagingFresh) {
+                const std::vector<Point> &previous =
+                    hadOwn ? *access.output : *access.passedPoints;
+                moved = moved ||
+                        !PointsBitsEqualBody(access.stagingOutput->data(),
+                                             access.stagingOutput->size(),
+                                             previous.data(), previous.size());
+                access.output->swap(*access.stagingOutput);
+                access.stagingOutput->resize(access.output->size());
+                *access.stagingFresh = false;
+            } else if (!hadOwn) {
+                moved =
+                    moved || !PointsBitsEqualBody(access.output->data(),
+                                                  access.output->size(),
+                                                  access.passedPoints->data(),
+                                                  access.passedPoints->size());
+            }
+            if (access.currentSource) {
+                *access.currentSource = int(revision);
+            }
+        } else {
+            const Point *points = nullptr;
+            size_t count = 0;
+            host.state().enteringVersionPoints(chain, revision, &points,
+                                               &count);
+            const std::vector<Point> &previous =
+                hadOwn ? *access.output : *access.passedPoints;
+            const bool same = PointsBitsEqualBody(
+                points, count, previous.data(), previous.size());
+            moved = moved || !same;
+            if (hadOwn || !same) {
+                if (points) {
+                    access.passedPoints->assign(points, points + count);
+                } else {
+                    access.passedPoints->clear();
+                }
+            }
+            if (access.currentSource) {
+                *access.currentSource =
+                    host.state().precedingCurrentSource(chain, revision);
+            }
+            if (host.state().revisionStatusAllows(chain, revision)) {
+                host.state().setFuseResultFailed(chain, revision);
+            }
+        }
+        if (moved && access.doneVersion) {
+            ++*access.doneVersion;
+        }
+        host.state().saveFuseLastStatus(chain, revision);
+        if (access.ran) {
+            *access.ran = true;
+        }
+        host.state().publishFuseState(chain, revision, step.object);
+        return {Outcome::Applied, kNoStepDetail};
+    }
+}
+
+/// ChainStatus: sweep the per-revision statuses and publish ChainPoints.
+/// A chain cut into groups is re-gathered only when its group content
+/// ids moved; ids that still stand leave the published array in place,
+/// identity and all. Content version moves exactly when the bytes do.
+template <class Host>
+StepResult
+RunChainStatusStep(Host &host, const StepRef &step)
+{
+    static_assert(IsBoundHost<Host>::value, "chain Host is not bound");
+    using Point = typename Host::Math::Vec3f;
+    size_t chain = 0;
+    if (!host.inputs().chainIndexForObject(step.object, &chain)) {
+        return {Outcome::Invalid, kChainDetailNoChain};
+    }
+    auto access = host.state().chainStatus(chain);
+    if (!host.inputs().chainHasBase(chain)) {
+        if (access.haveResult) {
+            *access.haveResult = false;
+        }
+        host.state().clearChainStatusPublish(chain);
+        return {Outcome::Held, kNoStepDetail};
+    }
+    host.state().emitChainStatusDiagnostics(chain);
+    host.state().noteChainBuilt(chain);
+    if (host.state().chainIsGpu(chain)) {
+        host.state().noteChainGpuPending(chain);
+        return {Outcome::Applied, kNoStepDetail};
+    }
+    const size_t last = host.state().chainRevisionCount(chain);
+    if (host.state().chainHasGroups(chain) && last > 0) {
+        const size_t groups = host.state().chainGroupCount(chain);
+        std::vector<RigExecGroupSource> ids(groups);
+        for (size_t g = 0; g < groups; ++g) {
+            ids[g] = host.state().chainStatusSource(chain, last, g);
+        }
+        const bool same =
+            access.haveResult && *access.haveResult && access.resultIds &&
+            access.resultIds->size() == groups && *access.resultIds == ids;
+        if (same) {
+            return {Outcome::Applied, kNoStepDetail};
+        }
+        std::vector<Point> gathered;
+        for (size_t g = 0; g < groups; ++g) {
+            const RigExecPointsRef<Point> &ref =
+                host.state().chainStatusGroup(chain, last, g);
+            if (ref.count > 0 && ref.data) {
+                gathered.insert(gathered.end(), ref.data, ref.data + ref.count);
+            }
+        }
+        host.state().publishChainGroups(chain, gathered, ids);
+        return {Outcome::Applied, kNoStepDetail};
+    }
+    const Point *points = nullptr;
+    size_t count = 0;
+    host.state().chainFinalPoints(chain, last, &points, &count);
+    std::vector<Point> gathered;
+    if (count > 0 && points) {
+        gathered.assign(points, points + count);
+    }
+    host.state().publishChainFinal(chain, gathered);
+    return {Outcome::Applied, kNoStepDetail};
+}
+
+/// Derived: recompute a derived target from the graph-bound base and
+/// the chain's published points, including matrix outputs. The GPU
+/// deferral stays with the baked adapter around this body.
+template <class Host>
+StepResult
+RunDerivedStep(Host &host, const StepRef &step)
+{
+    static_assert(IsBoundHost<Host>::value, "chain Host is not bound");
+    using Point = typename Host::Math::Vec3f;
+    size_t chain = 0, derived = 0;
+    if (!host.inputs().derivedIndexForObject(step.object, &chain, &derived)) {
+        return {Outcome::Invalid, kChainDetailNoDerived};
+    }
+    host.state().captureDerivedPublished(chain, derived);
+    host.state().prepareDerivedBase(chain, derived);
+    if (!host.inputs().chainHasBase(chain) ||
+        !host.state().derivedHasBase(chain, derived)) {
+        host.state().noteDerivedEarlyVersion(chain, derived);
+        return {Outcome::Held, kNoStepDetail};
+    }
+    host.state().adoptDerivedLayout(chain, derived);
+    if (host.state().derivedIsMatrix(chain, derived)) {
+        if (!host.state().runDerivedMatrix(chain, derived)) {
+            return {Outcome::Invalid, kChainDetailNoDerived};
+        }
+        return {Outcome::Applied, kNoStepDetail};
+    }
+    if (!host.state().foldDerivedInfluences(chain, derived)) {
+        return {Outcome::Invalid, kChainDetailFold};
+    }
+    host.state().assembleDerived(chain, derived);
+    host.state().noteDerivedBuilt(chain, derived);
+    host.state().noteDerivedExecuted(chain, derived);
+    std::vector<Point> values;
+    const bool applied = host.state().derivedStatusAllows(chain, derived) &&
+                         host.state().runDerivedKernel(chain, derived, &values);
+    host.state().setDerivedResultFromStatus(chain, derived);
+    if (!applied) {
+        host.state().derivedLastBasePoints(chain, derived, &values);
+        if (host.state().derivedStatusAllows(chain, derived)) {
+            host.state().setDerivedResultFailed(chain, derived);
+        }
+    }
+    host.state().saveDerivedRevision(chain, derived, std::move(values));
+    if (host.state().derivedResultIsFailed(chain, derived)) {
+        host.state().emitDerivedDiagnostic(chain, derived);
+    }
+    host.state().publishDerivedResult(chain, derived);
+    return {Outcome::Applied, kNoStepDetail};
+}
+
+/// The paired skip switch: the same per-kind flag clears on both front
+/// ends, publishing nothing fabricated. The WeightField arm stays in
+/// each adapter's geometry half exactly as it stands there, so it
+/// answers without touching revision state here too.
+template <class Host>
+void
+RunSkipGeometryStep(Host &host, const StepRef &step)
+{
+    static_assert(IsBoundHost<Host>::value, "chain Host is not bound");
+    switch (StepKind(step.kind)) {
+    case StepKind::WeightField:
+        return;
+    case StepKind::ChainInputs: {
+        size_t chain = 0;
+        if (host.inputs().chainIndexForObject(step.object, &chain)) {
+            host.state().skipChainInputs(chain);
+        }
+        return;
+    }
+    case StepKind::Derived: {
+        size_t chain = 0, derived = 0;
+        if (host.inputs().derivedIndexForObject(step.object, &chain,
+                                                &derived)) {
+            host.state().skipDerived(chain, derived);
+        }
+        return;
+    }
+    case StepKind::ChainStatus:
+        return;
+    default:
+        break;
+    }
+    size_t chain = 0, revision = 0;
+    if (!host.inputs().revisionIndexForObject(step.object, &chain, &revision)) {
+        return;
+    }
+    switch (StepKind(step.kind)) {
+    case StepKind::InfluenceFold:
+        host.state().skipInfluenceFold(chain, revision);
+        return;
+    case StepKind::RevisionStatic:
+        host.state().skipRevisionStatic(chain, revision, step.object);
+        return;
+    case StepKind::RevisionChunk:
+        host.state().skipRevisionChunk(chain, revision, step.part);
+        return;
+    case StepKind::RevisionFuse:
+        host.state().skipRevisionFuse(chain, revision);
+        return;
+    default:
+        return;
+    }
+}
+
 /// The one geometry-step dispatch for the revision chain: ChainInputs,
-/// InfluenceFold, RevisionStatic and RevisionChunk. Every other kind
-/// answers Invalid here; the fuse, status, derived and skip bodies are
-/// their own lifts and stay with their adapters.
+/// InfluenceFold, RevisionStatic, RevisionChunk, RevisionFuse,
+/// ChainStatus and Derived. Every other kind answers Invalid here.
 template <class Host>
 StepResult
 RunGeometryStep(Host &host, const StepRef &step)
@@ -747,6 +1367,12 @@ RunGeometryStep(Host &host, const StepRef &step)
         return RunRevisionStaticStep<Host>(host, step);
     case StepKind::RevisionChunk:
         return RunRevisionChunkStep<Host>(host, step);
+    case StepKind::RevisionFuse:
+        return RunRevisionFuseStep<Host>(host, step);
+    case StepKind::ChainStatus:
+        return RunChainStatusStep<Host>(host, step);
+    case StepKind::Derived:
+        return RunDerivedStep<Host>(host, step);
     default:
         return {Outcome::Invalid, kNoStepDetail};
     }
