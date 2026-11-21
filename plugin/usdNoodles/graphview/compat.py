@@ -36,9 +36,7 @@ def bind_compat(cls):
     cls._adoptPrimsNewToScope = stage_adapter.adoptPrimsNewToScope
     cls._adoptRenamedPrim = stage_adapter.adoptRenamedPrim
     cls._remapMovedNodes = stage_adapter.remapMovedNodes
-    cls._handleUsdChanges = lambda view, resynced, info, movedPaths=None: (
-        stage_adapter.applyUsdChanges(view, resynced, info, movedPaths=movedPaths)
-    )
+    cls._handleUsdChanges = stage_adapter.handleUsdChanges
     cls._clearRenderCache = render._clearRenderCache
     cls._loadSampleGraph = _loadSampleGraph
     cls.loadBlueprint = stage_adapter.loadBlueprint

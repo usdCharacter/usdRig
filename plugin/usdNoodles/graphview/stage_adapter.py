@@ -132,7 +132,14 @@ def _addLivePrimNode(view, pathStr):
     if not prim or not prim.IsValid() or not prim.IsActive():
         return None
     try:
-        return view._addNewNodeFast(prim, stage) or None
+        state = model.state_for_view(view)
+        if state is None:
+            return view._addNewNodeFast(prim, stage) or None
+        node = model.construct_node_for_insert(view, prim, stage)
+        if node is not None:
+            state.apply(model.GraphDelta(ops=(model.InsertNode(node.id, node),)))
+            return node.id
+        return None
     except Exception as error:
         Tf.Warn("Graph validation could not add %s: %s" % (pathStr, error))
         return None
@@ -842,6 +849,10 @@ def _applyPropertyChange(view, node, propName):
     if "info:implementationSource" in propName:
         return _nodeTypeChange(node)
     return _otherPropertyChange(node, propName)
+
+
+def handleUsdChanges(view, resynced, info, movedPaths=None):
+    return applyUsdChanges(view, resynced, info, movedPaths=movedPaths)
 
 
 def applyUsdChanges(view, resyncedPaths, infoChangedPaths, trace=None, movedPaths=None):

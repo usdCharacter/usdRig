@@ -1,6 +1,7 @@
 import unittest
 from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from pxr import Sdf, Usd
 
@@ -74,17 +75,17 @@ class TestCommandRegistry(unittest.TestCase):
 
     def testLinkIntentsPreserveEndpointMetadata(self):
         from UsdNoodles.graphView import GraphView
+        from UsdNoodles.graphview import editing
 
         ends = intents.LinkEndpoints("/Source", "out", "/Target", "in",
                                      "outputs:out", "inputs:in")
-        for intent, method in ((intents.Connect(ends), "_createConnection"),
-                               (intents.Disconnect(ends), "_deleteConnection")):
-            with self.subTest(intent=intent):
-                view = SimpleNamespace(**{method: lambda *args, **kwargs: (args, kwargs)})
-                self.assertEqual(GraphView._makeCommandRegistry(view).dispatch(intent), (
-                    ("/Source", "out", "/Target", "in"),
-                    {"sourcePropertyName": "outputs:out", "targetPropertyName": "inputs:in"},
-                ))
+        view = SimpleNamespace()
+        registry = GraphView._makeCommandRegistry(view)
+        editor = editing.editor_for_view(view, registry)
+        for intent in (intents.Connect(ends), intents.Disconnect(ends)):
+            with self.subTest(intent=intent), patch.object(editing, "_edit_connections") as edit:
+                editor.execute(intent)
+                edit.assert_called_once_with(view, intent)
 
 
 class TestLinkRecords(unittest.TestCase):

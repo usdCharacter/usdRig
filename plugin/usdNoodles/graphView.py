@@ -5,7 +5,6 @@
 # in plugin/usdNoodles/ in this repository.
 #
 """Compatibility imports for the canonical noodle editor widget."""
-
 from pxr import Tf
 from pxr.Usdviewq.qt import QtCore, QtWidgets
 

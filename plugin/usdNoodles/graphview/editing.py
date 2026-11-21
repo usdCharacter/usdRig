@@ -29,6 +29,7 @@ from . import intents
 from . import selection as _selection
 from .legacy import legacy_symbol
 from .selection import LinkKey
+from . import model as _model
 from .stage_adapter import savedRenamePlacement
 from .stage_sync import _nodeIdPrimPath
 
@@ -397,15 +398,31 @@ def _remap_and_refresh(view, stage, journal, remap):
     return applied
 
 
+def _finish_rename(view, old, new, placement):
+    with _model.transaction_for(view):
+        node_id = view._adoptRenamedPrim(old, new, *placement)
+        view.clearSelection()
+        if node_id:
+            _selection.select_node(view, node_id)
+
+
 def _rename_replay(site, records, path_map, forward, view):
     stage = view.nodeGraph.getStage()
     target = site.resolve(stage)
     steps = _resolve_patches(stage, records, forward)
     remap = dict(path_map) if forward else {new: old for old, new in path_map}
+    adopts = hasattr(view, '_adoptRenamedPrim')
+    placements = [(old, new, savedRenamePlacement(view.nodes, old))
+                  for old, new in remap.items()] if adopts else ()
     with _edit_transaction(stage, target, view, batch=True) as journal:
-        _journal_remap(view, remap, journal)
+        if not adopts:
+            _journal_remap(view, remap, journal)
         _apply_patches(steps, forward, journal)
-        _remap_and_refresh(view, stage, journal, remap)
+        if adopts:
+            for old, new, placement in placements:
+                journal.defer(partial(_finish_rename, view, old, new, placement))
+        else:
+            _remap_and_refresh(view, stage, journal, remap)
         if hasattr(view, '_afterUsdviewRefresh'):
             view._afterUsdviewRefresh(view._syncSelectionToPrimtree)
     return True
@@ -518,8 +535,11 @@ class Editor:
         for layer in layers:
             _find_layer(stage, layer.identifier)
         remap = ((str(old), str(new)),)
+        adopts = hasattr(view, '_adoptRenamedPrim')
+        placement = savedRenamePlacement(view.nodes, str(old)) if adopts else None
         with _edit_transaction(stage, target, view, batch=True) as journal:
-            _journal_remap(view, dict(remap), journal)
+            if not adopts:
+                _journal_remap(view, dict(remap), journal)
             before = tuple(_journal_layer(journal, layer) for layer in layers)
             if not editor.ApplyEdits():
                 raise RuntimeError("the rename could not be applied")
@@ -528,7 +548,10 @@ class Editor:
                                           mapped_old if backup.GetPrimAtPath(mapped_old) else old,
                                           mapped_new if backup.GetPrimAtPath(mapped_old) else new)
                             for layer, backup in zip(layers, before))
-            if self.model:
+            if adopts:
+                journal.defer(partial(_finish_rename, view, str(old), str(new), placement))
+                view._afterUsdviewRefresh(view._syncSelectionToPrimtree)
+            elif self.model:
                 self.model(view, intent, new, journal)
             else:
                 _remap_and_refresh(view, stage, journal, dict(remap))

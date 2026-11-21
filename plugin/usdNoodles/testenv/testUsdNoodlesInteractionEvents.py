@@ -568,4 +568,3 @@ class TestLiveEventDeliveryNoGL(_NoGLWidgetFixture, LiveEventDeliveryTests):
 
 if __name__ == "__main__":
     unittest.main()
-

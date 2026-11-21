@@ -1089,7 +1089,7 @@ def focusNextPrevChild(view, nextChild):
     return False
 
 
-def mouseDoubleClickEvent(view, event):
+def mouseDoubleClickEvent(self, event):
     """Handle double-click events.
 
     Double-clicking on a dangling link or on a connected port whose
@@ -1100,36 +1100,36 @@ def mouseDoubleClickEvent(view, event):
     """
     if event.button() != QtCore.Qt.LeftButton:
         return
-    if _gestures.double_click_gesture(view, event):
+    if _gestures.double_click_gesture(self, event):
         return
     # Default behavior for double-click on non-dangling elements
-    QGLWidget.mouseDoubleClickEvent(view, event)
+    QGLWidget.mouseDoubleClickEvent(self, event)
 
 
-def mousePressEvent(view, event):
-    if _gestures.press_intercept_overlays(view, event):
+def mousePressEvent(self, event):
+    if _gestures.press_intercept_overlays(self, event):
         return
 
-    if event.buttons() & QtCore.Qt.LeftButton and not view.spacePressed:
-        if _gestures.press_title_caret_toggle(view, event):
+    if event.buttons() & QtCore.Qt.LeftButton and not self.spacePressed:
+        if _gestures.press_title_caret_toggle(self, event):
             return
-        if _gestures.press_group_fold_toggle(view, event):
+        if _gestures.press_group_fold_toggle(self, event):
             return
-        if _gestures.press_value_cell(view, event):
+        if _gestures.press_value_cell(self, event):
             return
-        if _gestures.press_hovered_port_link_start(view, event):
+        if _gestures.press_hovered_port_link_start(self, event):
             return
-        if _gestures.press_arrowhead_reconnect(view, event):
+        if _gestures.press_arrowhead_reconnect(self, event):
             return
-        if _gestures.press_row_edge_link_start(view, event):
+        if _gestures.press_row_edge_link_start(self, event):
             return
-        _gestures.press_node_or_empty(view, event)
+        _gestures.press_node_or_empty(self, event)
 
-    view.update()
+    self.update()
 
 
-def mouseMoveEvent(view, event):
-    if _gestures.move_intercept_overlays(view, event):
+def mouseMoveEvent(self, event):
+    if _gestures.move_intercept_overlays(self, event):
         return
 
     # During an interactive pan or pan-zoom drag (middle-button, or
@@ -1141,29 +1141,29 @@ def mouseMoveEvent(view, event):
     # below; this mirrors the node-drag and link-drag branches, which also
     # bypass hover updates.
     isViewportDrag = bool(event.buttons() & QtCore.Qt.MiddleButton) or (
-        view.spacePressed and bool(event.buttons() & QtCore.Qt.LeftButton)
+        self.spacePressed and bool(event.buttons() & QtCore.Qt.LeftButton)
     )
 
-    if _gestures.move_value_drag(view, event):
+    if _gestures.move_value_drag(self, event):
         return
 
-    _gestures.move_update_hover(view, event, isViewportDrag)
-    if _gestures.move_link_drag(view, event):
+    _gestures.move_update_hover(self, event, isViewportDrag)
+    if _gestures.move_link_drag(self, event):
         return
-    if _gestures.move_viewport_drag(view, event):
+    if _gestures.move_viewport_drag(self, event):
         return
-    if _gestures.move_left_drag(view, event):
+    if _gestures.move_left_drag(self, event):
         return
 
-    view.lastMousePos = event.position().toPoint()
-    view.update()
+    self.lastMousePos = event.position().toPoint()
+    self.update()
 
 
-def mouseReleaseEvent(view, event):
-    if _gestures.release_intercept_overlays(view, event):
+def mouseReleaseEvent(self, event):
+    if _gestures.release_intercept_overlays(self, event):
         return
-    if _gestures.release_link_drag(view, event):
+    if _gestures.release_link_drag(self, event):
         return
-    if _gestures.release_minimap(view, event):
+    if _gestures.release_minimap(self, event):
         return
-    _gestures.release_node_drag_and_marquee(view, event)
+    _gestures.release_node_drag_and_marquee(self, event)

@@ -868,4 +868,3 @@ def IsVolumeWeightPrim(prim):
 def IsWeightObjectPrim(prim):
     """True for anything that may feed rigExec:inputWeights."""
     return bool(prim) and prim.GetTypeName() in WEIGHT_OBJECT_TYPE_NAMES
-
