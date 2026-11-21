@@ -41,6 +41,7 @@ include(cmake/rigexec_flags.cmake)
 rigexec_get_exact_fp_directory_flags(_rigexec_fp_directory_flags)
 add_compile_options(${_rigexec_fp_directory_flags})
 include(cmake/installManifests.cmake)
+include(cmake/installSdkPayload.cmake)
 
 set(RIGEXEC_INSTALL_LIBDIR     "lib"
     CACHE STRING "Install directory for libraries, relative to the prefix")
@@ -551,6 +552,13 @@ add_test(NAME testRigExecExactFpCompiler
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/exactFpCompilerWitness.cmake")
 set_tests_properties(testRigExecExactFpCompiler PROPERTIES TIMEOUT 300
     ENVIRONMENT "CMAKE_BUILD_PARALLEL_LEVEL=2")
+add_test(NAME testRigExecSdkInstallSpaces
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+        "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+        "-DSCRATCH_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdkInstallSpacesCheck"
+        "-DINSTALL_DATADIR=${RIGEXEC_INSTALL_DATADIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/checkSdkInstallSpaces.cmake")
 
 # rigExecSampler: hands a .rigexec's Animated inputs the values a stage holds
 # at each new time (RigExecInputSampler), for every consumer that plays the
@@ -3185,17 +3193,12 @@ install(FILES
 # runtime-generated/ subtree, which the manifests' reserved first component
 # names; the mover declarations above own the built-in list, so this adds no
 # second inventory.
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/exactFpFlags.txt"
-    DESTINATION "${RIGEXEC_INSTALL_DATADIR}")
-rigexec_install_sdk_manifests(BUILD_DIR "${RIGEXEC_SDK_MANIFEST_DIR}"
-    INPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}"
-    SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}"
-    DESTINATION "${RIGEXEC_INSTALL_DATADIR}")
 get_property(_rigexec_builtin_movers GLOBAL PROPERTY RIGEXEC_BUILTIN_MOVERS)
+set(_rigexec_generated_payload "")
 if (_rigexec_builtin_movers)
     set(_rigexec_runtime_generated
         "${CMAKE_CURRENT_BINARY_DIR}/runtime-generated")
-    set(_rigexec_generated_payload
+    list(APPEND _rigexec_generated_payload
         "${_rigexec_runtime_generated}/moverCatalog.cpp")
     foreach (_mover IN LISTS _rigexec_builtin_movers)
         list(APPEND _rigexec_generated_payload
@@ -3203,24 +3206,14 @@ if (_rigexec_builtin_movers)
             "${_rigexec_runtime_generated}/${_mover}/${_mover}Schema.h"
             "${_rigexec_runtime_generated}/${_mover}/${_mover}Registration.h")
     endforeach ()
-    install(CODE "
-        foreach (_payload ${_rigexec_generated_payload})
-            if (NOT EXISTS \"\${_payload}\")
-                message(FATAL_ERROR
-                    \"\${_payload} is missing: configure and build rigExecRuntime first\")
-            endif ()
-        endforeach ()
-    ")
-    install(FILES "${_rigexec_runtime_generated}/moverCatalog.cpp"
-        DESTINATION "${RIGEXEC_INSTALL_DATADIR}/runtime-generated")
-    foreach (_mover IN LISTS _rigexec_builtin_movers)
-        install(FILES
-            "${_rigexec_runtime_generated}/${_mover}/${_mover}Kernel.cpp"
-            "${_rigexec_runtime_generated}/${_mover}/${_mover}Schema.h"
-            "${_rigexec_runtime_generated}/${_mover}/${_mover}Registration.h"
-            DESTINATION "${RIGEXEC_INSTALL_DATADIR}/runtime-generated/${_mover}")
-    endforeach ()
 endif ()
+rigexec_install_sdk_payload(
+    SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}"
+    BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}"
+    EXPORT_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/cmake/exportManifests.cmake"
+    DATA_DIR "${RIGEXEC_INSTALL_DATADIR}"
+    FLAGS_FILE "${CMAKE_CURRENT_BINARY_DIR}/exactFpFlags.txt"
+    PAYLOAD ${_rigexec_generated_payload})
 
 install(FILES LICENSE NOTICE THIRD_PARTY_NOTICES.md
     DESTINATION "share/rigExec")
