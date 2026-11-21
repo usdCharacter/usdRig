@@ -526,6 +526,16 @@ add_test(NAME testRigExecExactFpFragment
         "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
         "-DSTAGED_DIR=${RIGEXEC_SDK_MANIFEST_DIR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/checkExactFpFragment.cmake")
+add_test(NAME testRigExecInstallStaging
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+        "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+        "-DSCRATCH_DIR=${CMAKE_CURRENT_BINARY_DIR}/installStagingCheck"
+        "-DINSTALL_DATADIR=${RIGEXEC_INSTALL_DATADIR}"
+        "-DGENERATOR=${CMAKE_GENERATOR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/checkInstallStaging.cmake")
+set_tests_properties(testRigExecInstallStaging PROPERTIES LABELS "fast"
+    TIMEOUT 120)
 
 # rigExecSampler: hands a .rigexec's Animated inputs the values a stage holds
 # at each new time (RigExecInputSampler), for every consumer that plays the
