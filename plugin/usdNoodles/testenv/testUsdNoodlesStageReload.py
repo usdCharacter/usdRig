@@ -737,7 +737,8 @@ class TestReloadLifecycle(unittest.TestCase):
         self.assertIs(view._stageSync.boundStage(), replacement)
 
     def test_layered_drag_removes_preview_specs_and_redoes_at_mapped_site(self):
-        for action in ('cancel', 'undo', 'undo_two_drags', 'cancel_with_edits', 'undo_with_edits',
+        for action in ('cancel', 'undo', 'undo_two_drags', 'replace_property_then_undo',
+                       'cancel_with_edits', 'undo_with_edits',
                        'cancel_with_parent_edit', 'undo_after_rename', 'undo_then_rename',
                        'undo_then_replace', 'undo_then_replace_property',
                        'undo_then_replace_property_in_batch', 'undo_with_existing_declaration',
@@ -814,6 +815,28 @@ class TestReloadLifecycle(unittest.TestCase):
                         self.assertEqual(attr.Get(time), expected)
                         self.assertEqual(stage.GetEditTarget(), active_target)
                         self.assertFalse(root.GetAttributeAtPath(path))
+                    continue
+                if action == 'replace_property_then_undo':
+                    view._finishMung()
+                    self.assertTrue(history.canUndo())
+                    stage.SetEditTarget(root)
+                    original_spec = layer.GetAttributeAtPath(path)
+                    owner = original_spec.owner
+                    with Sdf.ChangeBlock():
+                        owner.RemoveProperty(original_spec)
+                        self.assertFalse(layer.GetAttributeAtPath(path))
+                        spec = Sdf.AttributeSpec(owner, 'number', Sdf.ValueTypeNames.Float,
+                                                 Sdf.VariabilityVarying, True)
+                        layer.SetTimeSample(spec.path, 5, 3.5)
+                    replacement_layer = layer.ExportToString()
+                    active_target = stage.GetEditTarget()
+                    history.undo(view)
+                    self.assertEqual(stage.GetEditTarget(), active_target)
+                    self.assertEqual(layer.ExportToString(), replacement_layer)
+                    self.assertEqual(layer.ListTimeSamplesForPath(path), [5.0])
+                    self.assertEqual(layer.QueryTimeSample(path, 5), 3.5)
+                    self.assertEqual(attr.Get(time), 3.5)
+                    self.assertFalse(root.GetAttributeAtPath(path))
                     continue
                 stage.SetEditTarget(root)
                 commit = action.startswith('undo')

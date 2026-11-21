@@ -2322,12 +2322,16 @@ def _recordMungOpinion(view, state):
     if opinion.preview == opinion.original or not opinion.matches(path):
         return False
     stage = view.nodeGraph.getStage()
-    watch = view._stageSync.watchProperty(stage, opinion.scene_path, state["editTarget"])
+    target = state["editTarget"]
+    watch = view._stageSync.watchProperty(stage, opinion.scene_path, target)
 
     def replay(forward, view):
+        scene_path = watch.path
+        if not scene_path:
+            return
         if forward:
-            opinion.redo(view.nodeGraph.getStage(), watch.path, watch.replayDeclaration)
-        else:
+            opinion.redo(view.nodeGraph.getStage(), scene_path, watch.replayDeclaration)
+        elif target.MapToSpecPath(Sdf.Path(scene_path)) == opinion.path:
             opinion.restore(watch.replayDeclaration)
 
     legacy_symbol("_push_undo_command")(
