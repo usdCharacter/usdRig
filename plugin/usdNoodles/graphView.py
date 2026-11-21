@@ -50,6 +50,7 @@ from .graphview.editing import (
     _make_prim_activation_undo, _make_rename_undo, _push_undo_command,
 )
 from .graphview import intents as _intents
+from .graphview import interaction as _interaction
 from .graphview import selection as _selection
 from .graphview import stage_sync
 from .graphview.stage_sync import _isPathRelated, _nodeIdPrimPath
@@ -655,38 +656,6 @@ class GraphView(QGLWidget):
     def linksChanged(self, value):
         self.nodeGraph.linksChanged = value
 
-    def _centerOnNode(self, node, animate=True):
-        nodeCenter = node.position + node.size * 0.5
-
-        # Calculate the viewport size in world coordinates
-        vpWidth = self.width() / self.zoom
-        vpHeight = self.height() / self.zoom
-
-        # Calculate target pan position
-        targetPanX = nodeCenter[0] - vpWidth * 0.5
-        targetPanY = nodeCenter[1] - vpHeight * 0.5
-
-        if animate:
-            # Set up animated pan with cached speed
-            panSpeed = self._cachedPanAnimationSpeed
-
-            self._panXAnim.current = self.panX
-            self._panXAnim.target = targetPanX
-            self._panXAnim.speed = panSpeed
-
-            self._panYAnim.current = self.panY
-            self._panYAnim.target = targetPanY
-            self._panYAnim.speed = panSpeed
-
-            self._panAnimating = True
-        else:
-            # Immediate jump
-            self.panX = targetPanX
-            self.panY = targetPanY
-            self._panAnimating = False
-
-        self.update()
-
     def _showHotkeyPopup(self, keyText, direction):
         if direction == "left":
             message = f"<- {keyText}"
@@ -712,178 +681,6 @@ class GraphView(QGLWidget):
     def timerEvent(self, event):
         if self.hotkeyPopup.handle_timer_event(event.timerId()):
             self.update()
-
-    def navigateBackward(self):
-        """Navigate backward (toward inputs/sources) using the [ key.
-
-        Behavior:
-        - If a link is selected: jump to the source node (data provider)
-        - If a node is selected: select the first input link
-        - If the node has no inputs: swap direction and select first output link
-        """
-        link = self._getFirstSelectedLink()
-        node = self._getFirstSelectedNode()
-
-        if link and not node:
-            self._jumpToSourceNode(link)
-        elif node:
-            self._selectFirstLinkInDirection(node, "input")
-
-    def navigateForward(self):
-        """Navigate forward (toward outputs/targets) using the ] key.
-
-        Behavior:
-        - If a link is selected: jump to the target node (data receiver)
-        - If a node is selected: select the first output link
-        - If the node has no outputs: swap direction and select first input link
-        """
-        link = self._getFirstSelectedLink()
-        node = self._getFirstSelectedNode()
-
-        if link and not node:
-            self._jumpToTargetNode(link)
-        elif node:
-            self._selectFirstLinkInDirection(node, "output")
-
-    def _jumpToSourceNode(self, link):
-        self._showHotkeyPopup("[", "left")
-
-        # Track direction for subsequent pin selection
-        self._lastJumpDirection = "source"
-
-        # Get the data source node (the node providing data via its output)
-        sourceNodeId = getattr(link, "data_sourceNodeId", None)
-
-        # Check if this is a dangling link
-        if link.isDangling and sourceNodeId and sourceNodeId not in self.nodes:
-            # Get the link index
-            linkIndex = -1
-            for i, l in enumerate(self.links):
-                if l is link:
-                    linkIndex = i
-                    break
-
-            # Check if this is the same dangling link we tried to follow before
-            if linkIndex == self._lastDanglingLinkIndex:
-                self._danglingLinkFollowCount += 1
-                if self._danglingLinkFollowCount >= 1:
-                    # Second attempt - add the missing node
-                    if self._addNodeFromDanglingLink(link):
-                        self._lastDanglingLinkIndex = -1
-                        self._danglingLinkFollowCount = 0
-                        # Now jump to the newly added node
-                        if sourceNodeId in self.nodes:
-                            self._jumpToSourceNodeInternal(link, sourceNodeId)
-                    return
-            else:
-                # First time selecting this dangling link - just show it's selected
-                self._lastDanglingLinkIndex = linkIndex
-                self._danglingLinkFollowCount = 0
-                self._showPopupMessage("Follow again to add node")
-                return
-
-        if not sourceNodeId or sourceNodeId not in self.nodes:
-            return
-
-        self._jumpToSourceNodeInternal(link, sourceNodeId)
-
-    def _jumpToSourceNodeInternal(self, link, sourceNodeId):
-        """Internal helper to complete the jump to source node."""
-        sourceNode = self.nodes[sourceNodeId]
-
-
-
-
-        for i, l in enumerate(self.links):
-            if l is link:
-                self._lastOutputLinkIndex = i
-                break
-
-        # Clear current selection and select the source node
-        self.clearSelection()
-        self.clearLinkSelection()
-        _selection.select_node(self, sourceNode.id)
-        self._lastSelectedNode = sourceNode
-
-        # Reset dangling link tracking
-        self._lastDanglingLinkIndex = -1
-        self._danglingLinkFollowCount = 0
-
-        # Center on the node (maintains current zoom)
-        self._centerOnNode(sourceNode)
-
-        # Sync selection to primtree
-        self._syncSelectionToPrimtree()
-
-    def _jumpToTargetNode(self, link):
-        self._showHotkeyPopup("]", "right")
-
-        # Track direction for subsequent pin selection
-        self._lastJumpDirection = "target"
-
-        # Get the data target node (the node receiving data via its input)
-        targetNodeId = getattr(link, "data_targetNodeId", None)
-
-        # Check if this is a dangling link
-        if link.isDangling and targetNodeId and targetNodeId not in self.nodes:
-            # Get the link index
-            linkIndex = -1
-            for i, l in enumerate(self.links):
-                if l is link:
-                    linkIndex = i
-                    break
-
-            # Check if this is the same dangling link we tried to follow before
-            if linkIndex == self._lastDanglingLinkIndex:
-                self._danglingLinkFollowCount += 1
-                if self._danglingLinkFollowCount >= 1:
-                    # Second attempt - add the missing node
-                    if self._addNodeFromDanglingLink(link):
-                        self._lastDanglingLinkIndex = -1
-                        self._danglingLinkFollowCount = 0
-                        # Now jump to the newly added node
-                        if targetNodeId in self.nodes:
-                            self._jumpToTargetNodeInternal(link, targetNodeId)
-                    return
-            else:
-                # First time selecting this dangling link - just show it's selected
-                self._lastDanglingLinkIndex = linkIndex
-                self._danglingLinkFollowCount = 0
-                self._showPopupMessage("Follow again to add node")
-                return
-
-        if not targetNodeId or targetNodeId not in self.nodes:
-            return
-
-        self._jumpToTargetNodeInternal(link, targetNodeId)
-
-    def _jumpToTargetNodeInternal(self, link, targetNodeId):
-        """Internal helper to complete the jump to target node."""
-        targetNode = self.nodes[targetNodeId]
-
-
-
-
-        for i, l in enumerate(self.links):
-            if l is link:
-                self._lastInputLinkIndex = i
-                break
-
-        # Clear current selection and select the target node
-        self.clearSelection()
-        self.clearLinkSelection()
-        _selection.select_node(self, targetNode.id)
-        self._lastSelectedNode = targetNode
-
-        # Reset dangling link tracking
-        self._lastDanglingLinkIndex = -1
-        self._danglingLinkFollowCount = 0
-
-        # Center on the node (maintains current zoom)
-        self._centerOnNode(targetNode)
-
-        # Sync selection to primtree
-        self._syncSelectionToPrimtree()
 
 
 
@@ -1020,11 +817,6 @@ class GraphView(QGLWidget):
         self.setFocus(QtCore.Qt.MouseFocusReason)
 
         super().enterEvent(event)
-
-    def _clearPropertyTooltip(self):
-        self._tooltipTimer.stop()
-        self._tooltipProperty = None
-        QtWidgets.QToolTip.hideText()
 
     def leaveEvent(self, event):
         if self._previousActiveWindow and self._previousActiveWindow.isVisible():
@@ -1407,60 +1199,6 @@ class GraphView(QGLWidget):
 
     def _toggleLinkDimming(self, checked):
         self.linkDimming.target = 1.0 if checked else 0.0
-        self.update()
-
-    def _zoomAroundPoint(self, newZoom, focusPoint):
-        """Zoom the view around a specific point.
-
-        Zoom limits:
-        - Min zoom: graph bounds occupy about 25% of screen (can zoom out 4x beyond fit)
-        - Max zoom: a typical node (200x100) takes up about 1/5 of the screen
-        """
-        # Calculate min zoom so graph bounds occupy ~25% of screen
-        # This means we can zoom out 4x beyond the "fit to screen" level
-        minZoom = 0.001
-        graphBounds = self.minimap.getGraphBounds()
-        if not graphBounds.IsEmpty():
-            graphSize = graphBounds.GetSize()
-            if graphSize[0] > 0 and graphSize[1] > 0:
-                # Calculate zoom where graph fills screen, then allow 4x more zoom out
-                # (graph at 25% of screen = 4x zoom out from fill)
-                zoomForWidth = self.width() / graphSize[0] if graphSize[0] > 0 else 1.0
-                zoomForHeight = (
-                    self.height() / graphSize[1] if graphSize[1] > 0 else 1.0
-                )
-                fitZoom = min(zoomForWidth, zoomForHeight)
-                minZoom = fitZoom * 0.25  # Allow zooming out to 25% of fit
-                minZoom = max(0.001, minZoom)
-
-        # Calculate max zoom so one node takes up about 1/5 of the screen
-        # Typical node size is around 200x100 units
-        typicalNodeWidth = 200.0
-        typicalNodeHeight = 100.0
-        # Node should be ~1/5 of screen, so screen = 5 * node
-        maxZoomForWidth = (
-            self.width() / (typicalNodeWidth * 5.0) if typicalNodeWidth > 0 else 100.0
-        )
-        maxZoomForHeight = (
-            self.height() / (typicalNodeHeight * 5.0)
-            if typicalNodeHeight > 0
-            else 100.0
-        )
-        # Use the larger zoom (more zoomed in) but cap at reasonable maximum
-        maxZoom = min(max(maxZoomForWidth, maxZoomForHeight), 100.0)
-        # Ensure max is at least greater than min
-        maxZoom = max(maxZoom, minZoom * 2.0)
-
-        newZoom = max(minZoom, min(newZoom, maxZoom))
-        focus = Gf.Vec2d(focusPoint[0], focusPoint[1])
-        delta = focus * (1.0 / self.zoom - 1.0 / newZoom)
-        self.panX += delta[0]
-        self.panY += delta[1]
-        self.zoom = newZoom
-
-    def _setZoom(self, newZoom):
-        center = Gf.Vec2d(self.width() * 0.5, self.height() * 0.5)
-        self._zoomAroundPoint(newZoom, center)
         self.update()
 
     def _clearRenderCache(self):
@@ -2552,40 +2290,6 @@ class GraphView(QGLWidget):
 
 
 
-    def _findDanglingLinkAtPort(self, worldPos):
-        """Find a dangling link whose present-node port is under worldPos.
-
-        Returns the index into self.links, or -1 if none.
-        """
-        for i, link in enumerate(self.links):
-            if not link.isDangling:
-                continue
-            if link.sourceNodeId in self.nodes:
-                nodeId = link.sourceNodeId
-                portName = link.sourcePort
-                isOutput = True
-            elif link.targetNodeId in self.nodes:
-                nodeId = link.targetNodeId
-                portName = link.targetPort
-                isOutput = False
-            else:
-                continue
-            node = self.nodes.get(nodeId)
-            if not node:
-                continue
-            renderer = node.renderer if node.renderer else self.defaultRenderer
-            if not renderer:
-                continue
-            portPos = self._getPortPosition(node, portName, isOutput)
-            if not portPos:
-                continue
-            hitRadius = renderer.getPortWidth() * self._cachedPortHitRadiusMultiplier
-            dx = worldPos[0] - portPos[0]
-            dy = worldPos[1] - portPos[1]
-            if dx * dx + dy * dy <= hitRadius * hitRadius:
-                return i
-        return -1
-
     @_guardsQtBoundary
     def mouseDoubleClickEvent(self, event):
         """Handle double-click events.
@@ -2642,47 +2346,6 @@ class GraphView(QGLWidget):
 
         # Default behavior for double-click on non-dangling elements
         super().mouseDoubleClickEvent(event)
-
-    def _navigateAlongRelationshipLink(self, link, worldPos):
-        """Jump to the endpoint of ``link`` farthest from ``worldPos``.
-
-        Returns True when navigation occurred. Used by the double-click
-        handler so users can follow a relationship into a connected node
-        that may be scrolled outside the current viewport.
-        """
-        sourceNodeId = getattr(link, "data_sourceNodeId", "") or getattr(
-            link, "sourceNodeId", ""
-        )
-        targetNodeId = getattr(link, "data_targetNodeId", "") or getattr(
-            link, "targetNodeId", ""
-        )
-
-        startPos = getattr(link, "start", None)
-        endPos = getattr(link, "end", None)
-        prefer_target = True
-        if startPos is not None and endPos is not None:
-            dx_start = float(worldPos[0]) - float(startPos[0])
-            dy_start = float(worldPos[1]) - float(startPos[1])
-            dx_end = float(worldPos[0]) - float(endPos[0])
-            dy_end = float(worldPos[1]) - float(endPos[1])
-            prefer_target = (dx_start * dx_start + dy_start * dy_start) <= (
-                dx_end * dx_end + dy_end * dy_end
-            )
-
-        if prefer_target and targetNodeId and targetNodeId in self.nodes:
-            self._jumpToTargetNodeInternal(link, targetNodeId)
-            return True
-        if not prefer_target and sourceNodeId and sourceNodeId in self.nodes:
-            self._jumpToSourceNodeInternal(link, sourceNodeId)
-            return True
-        # Fall back to whichever endpoint is reachable.
-        if targetNodeId and targetNodeId in self.nodes:
-            self._jumpToTargetNodeInternal(link, targetNodeId)
-            return True
-        if sourceNodeId and sourceNodeId in self.nodes:
-            self._jumpToSourceNodeInternal(link, sourceNodeId)
-            return True
-        return False
 
     @_guardsQtBoundary
     def mousePressEvent(self, event):
@@ -3564,375 +3227,6 @@ class GraphView(QGLWidget):
             Tf.Warn(f"RuntimeError in event handling: {e}")
             return False
 
-    def _updateNodeUnderCursor(self, pos):
-        with _ProfileSection(self._profiler, "Update Node Under Cursor"):
-            worldMousePos = (QtCore.QPointF(pos) / self.zoom) + QtCore.QPointF(
-                self.panX, self.panY
-            )
-            mousePoint = Gf.Vec2d(worldMousePos.x(), worldMousePos.y())
-            self.nodeIdUnderCursor = self._getNodeIdAtWorldPos(mousePoint)
-
-    def _getNodeIdAtWorldPos(self, worldPos, margin=0.0):
-        if margin > 0.0:
-            queryBounds = Gf.Range2d(
-                Gf.Vec2d(worldPos[0] - margin, worldPos[1] - margin),
-                Gf.Vec2d(worldPos[0] + margin, worldPos[1] + margin),
-            )
-            nodeIds, _ = self._spatialIndex.queryRegion(queryBounds)
-        else:
-            nodeIds, _ = self._spatialIndex.queryPoint(worldPos)
-
-        sortedNodeIds = sorted(
-            (nid for nid in nodeIds if nid in self.nodes),
-            key=lambda nid: self.nodes[nid].zOrder,
-            reverse=True,
-        )
-
-        margin_vec = Gf.Vec2d(float(margin), float(margin))
-        for nodeId in sortedNodeIds:
-            node = self.nodes[nodeId]
-            nodeBounds = Gf.Range2d(
-                node.position - margin_vec,
-                node.position + node.size + margin_vec,
-            )
-            if nodeBounds.Contains(worldPos):
-                return nodeId
-        return ""
-
-    def _updateHoveredPort(self, pos):
-        """
-        Update which port (if any) the cursor is hovering over.
-
-        Args:
-            pos: Screen position of cursor (QPoint)
-
-        Returns:
-            bool: True if hover state changed, False otherwise
-        """
-        worldMousePos = (QtCore.QPointF(pos) / self.zoom) + QtCore.QPointF(
-            self.panX, self.panY
-        )
-        worldPos = Gf.Vec2d(worldMousePos.x(), worldMousePos.y())
-
-        # Hit radius = the drawn port circle (renderer.getPortWidth() ==
-        # nodePortWidth / 2) scaled by the configured multiplier. One radius for
-        # every port kind, matching what is drawn.
-        portWidth = self.defaultRenderer.getPortWidth() if self.defaultRenderer else 8.0
-        hitRadius = portWidth * self._cachedPortHitRadiusMultiplier
-
-        # Single C++ hit-test over every node's ports (normal / folded-header /
-        # dual / output-dual / synthetic relationship / collapsed aggregate),
-        # spatially rejected to the cursor's neighbourhood inside portAtPoint.
-        hit = self._nodeRenderManager.portAtPoint(
-            self.nodeGraph,
-            worldPos[0],
-            worldPos[1],
-            hitRadius,
-        )
-        if hit and hit["found"]:
-            return self._setHoveredPort(
-                (hit["nodeId"], hit["portName"], hit["isOutput"])
-            )
-
-        # During a relationship-link drag an attribute can also land on a whole
-        # relationship / property row (a wider target than the port glyph).
-        rowHover = self._relationshipDragRowHover(worldPos, portWidth * 2.0)
-        if rowHover is not None:
-            return self._setHoveredPort(rowHover)
-
-        # No port found - clear hover if needed
-        if self._hoveredPort is not None:
-            self._hoveredPort = None
-            return True
-
-        return False  # No change
-
-    def _relationshipDragRowHover(self, worldPos, portExtent):
-        """Whole-row relationship/property drop target during a relationship drag.
-
-        Returns ``(nodeId, pinName, isOutput)`` for the relationship or property
-        row under ``worldPos``, or ``None``. Only active while dragging a
-        relationship link; the port glyphs themselves are hit by the C++
-        ``portAtPoint`` pass in :meth:`_updateHoveredPort`.
-        """
-        _temp_link = getattr(self, "_dragLinkTempLink", None)
-        if not self._draggingLink or not getattr(
-            _temp_link, "is_relationship_link", False
-        ):
-            return None
-
-        candidateNodes = []
-        if self.nodeIdUnderCursor and self.nodeIdUnderCursor in self.nodes:
-            candidateNodes.append(self.nodeIdUnderCursor)
-        queryBounds = Gf.Range2d(
-            Gf.Vec2d(worldPos[0] - portExtent, worldPos[1] - portExtent),
-            Gf.Vec2d(worldPos[0] + portExtent, worldPos[1] + portExtent),
-        )
-        nearbyNodeIds, _ = self._spatialIndex.queryRegion(queryBounds)
-        for nodeId in nearbyNodeIds:
-            if nodeId not in candidateNodes:
-                candidateNodes.append(nodeId)
-
-        for nodeId in candidateNodes:
-            node = self.nodes.get(nodeId)
-            if node is None or not node.renderer:
-                continue
-            rowHover = self._findRelationshipRowHover(node, nodeId, worldPos)
-            if rowHover is None:
-                rowHover = self._findPropertyRowHover(node, nodeId, worldPos)
-            if rowHover is not None:
-                return rowHover
-        return None
-
-    def _setHoveredPort(self, newHover):
-        """Update _hoveredPort, returning True iff it actually changed."""
-        if self._hoveredPort != newHover:
-            self._hoveredPort = newHover
-            return True
-        return False
-
-    def _getRowHitMetrics(self, node, renderer):
-        # Read from the cached layout (single source of truth) so hover row bands
-        # match the rendered rows exactly. port_start_y is the band-area top (world);
-        # row_slot * port_line_height gives each band top, [top, top+line_height].
-        port_line_height = node.layoutPortLineHeight
-        if port_line_height <= 0.0:
-            # Layout not computed yet — degrade without crashing.
-            port_line_height = max(renderer.getPortWidth() * 2.0, 16.0)
-        return node.position[1] + node.layoutPortStartY, port_line_height
-
-    def _findRelationshipRowHover(self, node, nodeId, worldPos):
-        _temp_link = getattr(self, "_dragLinkTempLink", None)
-        if not self._draggingLink or not getattr(
-            _temp_link, "is_relationship_link", False
-        ):
-            return None
-        if getattr(node, "_title_collapsed", False):
-            return None
-        renderer = node.renderer if node.renderer else self.defaultRenderer
-        if not renderer:
-            return None
-        if (
-            worldPos[0] < node.position[0]
-            or worldPos[0] > node.position[0] + node.size[0]
-        ):
-            return None
-
-        is_relationship_pin_for_node = getattr(
-            node,
-            "is_relationship_pin",
-            lambda _pin_name, _is_output: False,
-        )
-        output_row_kinds = list(node.outputRowKinds)
-        output_row_slots = list(node.outputRowSlots)
-        port_start_y, port_line_height = self._getRowHitMetrics(node, renderer)
-
-        closest_hover = None
-        closest_distance = None
-        for i, pinName in enumerate(getattr(node, "outputPins", [])):
-            if not is_relationship_pin_for_node(pinName, True):
-                continue
-            if i < len(output_row_kinds) and output_row_kinds[i] == 2:
-                continue
-            row_slot = output_row_slots[i] if i < len(output_row_slots) else i
-            row_y = port_start_y + row_slot * port_line_height
-            row_y1 = row_y + port_line_height
-            if worldPos[1] < row_y or worldPos[1] > row_y1:
-                continue
-            port_pos = self._getPortPosition(node, pinName, True)
-            row_center_y = (
-                float(port_pos[1])
-                if port_pos is not None
-                else row_y + port_line_height * 0.5
-            )
-            distance = abs(float(worldPos[1]) - row_center_y)
-            if closest_distance is None or distance < closest_distance:
-                closest_distance = distance
-                closest_hover = (nodeId, pinName, True)
-        return closest_hover
-
-    def _findPropertyRowHover(self, node, nodeId, worldPos):
-        _temp_link = getattr(self, "_dragLinkTempLink", None)
-        if not self._draggingLink or not getattr(
-            _temp_link, "is_relationship_link", False
-        ):
-            return None
-        if getattr(node, "_title_collapsed", False):
-            return None
-        renderer = node.renderer if node.renderer else self.defaultRenderer
-        if not renderer:
-            return None
-        if (
-            worldPos[0] < node.position[0]
-            or worldPos[0] > node.position[0] + node.size[0]
-        ):
-            return None
-
-        is_relationship_pin_for_node = getattr(
-            node,
-            "is_relationship_pin",
-            lambda _pin_name, _is_output: False,
-        )
-        port_start_y, port_line_height = self._getRowHitMetrics(node, renderer)
-        center_x = node.position[0] + node.size[0] * 0.5
-        prefer_output = worldPos[0] >= center_x
-        output_spec = (
-            True,
-            getattr(node, "outputPins", []),
-            list(node.outputRowKinds),
-            list(node.outputRowSlots),
-        )
-        input_spec = (
-            False,
-            getattr(node, "inputPins", []),
-            list(node.inputRowKinds),
-            list(node.inputRowSlots),
-        )
-        side_specs = (
-            [output_spec, input_spec] if prefer_output else [input_spec, output_spec]
-        )
-
-        closest_hover = None
-        closest_distance = None
-        for is_output, pins, row_kinds, row_slots in side_specs:
-            for i, pin_name in enumerate(pins):
-                if is_relationship_pin_for_node(pin_name, is_output):
-                    continue
-
-                row_kind = row_kinds[i] if i < len(row_kinds) else 0
-                if row_kind == 1 or row_kind == 2:
-                    continue
-
-                row_slot = row_slots[i] if i < len(row_slots) else i
-                row_y = port_start_y + row_slot * port_line_height
-                row_y1 = row_y + port_line_height
-                if worldPos[1] < row_y or worldPos[1] > row_y1:
-                    continue
-
-                port_pos = self._getPortPosition(node, pin_name, is_output)
-                row_center_y = (
-                    float(port_pos[1])
-                    if port_pos is not None
-                    else row_y + port_line_height * 0.5
-                )
-                # Prefer the side closest to the cursor half when both sides
-                # share the same visible row slot.
-                side_bias = 0.0 if (is_output == prefer_output) else port_line_height
-                distance = abs(float(worldPos[1]) - row_center_y) + side_bias
-                if closest_distance is None or distance < closest_distance:
-                    closest_distance = distance
-                    closest_hover = (nodeId, pin_name, is_output)
-        return closest_hover
-
-    def _rowEdgePinCandidates(self, node, is_output):
-        """(pin_name, row_slot) pairs that own a port on the ``is_output`` side.
-
-        Output candidates include real output pins plus dual pins (whose right
-        edge mirrors an input row); input candidates likewise include real input
-        pins plus output-dual pins (whose left edge mirrors an output row). So a
-        press on either edge of any dual row resolves to the right pin regardless
-        of which list backs it.
-        """
-        candidates = []
-        if is_output:
-            out_pins = getattr(node, "outputPins", [])
-            out_slots = list(node.outputRowSlots)
-            out_kinds = list(node.outputRowKinds)
-            for i, pin in enumerate(out_pins):
-                if i < len(out_kinds) and out_kinds[i] == 2:
-                    continue
-                candidates.append((pin, out_slots[i] if i < len(out_slots) else i))
-            out_set = set(out_pins)
-            dual = getattr(node, "_dual_pin_names", set())
-            in_pins = getattr(node, "inputPins", [])
-            in_slots = list(node.inputRowSlots)
-            in_kinds = list(node.inputRowKinds)
-            for i, pin in enumerate(in_pins):
-                if pin not in dual or pin in out_set:
-                    continue
-                if i < len(in_kinds) and in_kinds[i] == 2:
-                    continue
-                candidates.append((pin, in_slots[i] if i < len(in_slots) else i))
-        else:
-            in_pins = getattr(node, "inputPins", [])
-            in_slots = list(node.inputRowSlots)
-            in_kinds = list(node.inputRowKinds)
-            for i, pin in enumerate(in_pins):
-                if i < len(in_kinds) and in_kinds[i] == 2:
-                    continue
-                candidates.append((pin, in_slots[i] if i < len(in_slots) else i))
-            in_set = set(in_pins)
-            out_dual = getattr(node, "_output_dual_pin_names", set())
-            out_pins = getattr(node, "outputPins", [])
-            out_slots = list(node.outputRowSlots)
-            out_kinds = list(node.outputRowKinds)
-            for i, pin in enumerate(out_pins):
-                if pin not in out_dual or pin in in_set:
-                    continue
-                if i < len(out_kinds) and out_kinds[i] == 2:
-                    continue
-                candidates.append((pin, out_slots[i] if i < len(out_slots) else i))
-        return candidates
-
-    def _pinAtRowEdge(self, node, worldPos, is_output):
-        """Pin whose row band contains ``worldPos[1]`` on the ``is_output`` side."""
-        renderer = node.renderer if node.renderer else self.defaultRenderer
-        if not renderer:
-            return None
-        port_start_y, port_line_height = self._getRowHitMetrics(node, renderer)
-        best = None
-        best_distance = None
-        for pin_name, row_slot in self._rowEdgePinCandidates(node, is_output):
-            row_y = port_start_y + row_slot * port_line_height
-            if worldPos[1] < row_y or worldPos[1] > row_y + port_line_height:
-                continue
-            port_pos = self._getPortPosition(node, pin_name, is_output)
-            row_center_y = (
-                float(port_pos[1])
-                if port_pos is not None
-                else row_y + port_line_height * 0.5
-            )
-            distance = abs(float(worldPos[1]) - row_center_y)
-            if best_distance is None or distance < best_distance:
-                best_distance = distance
-                best = pin_name
-        return best
-
-    def _findRowEdgeDragStart(self, node, worldPos):
-        """Resolve a press near a node's left/right edge to ``(pin, is_output)``
-        for starting a new connection.
-
-        Only the outer tenth of the node width on each side starts a connection:
-        a press in the left band starts an input-side drag, the right band an
-        output-side drag. A press in the middle of the row, on the title (above
-        the first row), or below the last row falls through to a node-body drag
-        (moving the node). A row is grabbable from its side even when no pin
-        glyph is drawn (REQ 3 hides it until the pin is connected or dragged) -
-        aim near the node edge rather than the inward-offset row label.
-        """
-        if getattr(node, "_title_collapsed", False):
-            return None
-        renderer = node.renderer if node.renderer else self.defaultRenderer
-        if not renderer:
-            return None
-        nx = float(node.position[0])
-        nw = float(node.size[0])
-        if worldPos[0] < nx or worldPos[0] > nx + nw:
-            return None
-        # Only the outer tenth of each side starts a connection; the middle 80%
-        # stays a node-body drag handle for moving the node.
-        edge_band = nw * 0.1
-        if worldPos[0] >= nx + nw - edge_band:
-            is_output = True
-        elif worldPos[0] <= nx + edge_band:
-            is_output = False
-        else:
-            return None
-        pin_name = self._pinAtRowEdge(node, worldPos, is_output)
-        if pin_name is None:
-            return None
-        return (pin_name, is_output)
-
     def _startLinkReconnect(self, linkIndex, worldClickPos):
         """Disconnect a link from its nearest end and start dragging to reconnect.
 
@@ -4119,82 +3413,6 @@ class GraphView(QGLWidget):
                 self._rebuildLinks()
         finally:
             self._noticeHandler.setEnabled(True)
-
-    def _getPropertyAtPoint(self, screenPos):
-        """Return (nodeId, pinName) for the property row under screenPos, or None."""
-        worldMousePos = (QtCore.QPointF(screenPos) / self.zoom) + QtCore.QPointF(
-            self.panX, self.panY
-        )
-        worldPos = Gf.Vec2d(worldMousePos.x(), worldMousePos.y())
-
-        renderer = self.defaultRenderer
-        if not renderer:
-            return None
-
-        # Iterate topmost-first so overlapping nodes return the visible one.
-        sortedNodes = sorted(
-            self.nodes.items(),
-            key=lambda kv: getattr(kv[1], "zOrder", 0),
-            reverse=True,
-        )
-        for nodeId, node in sortedNodes:
-            if node.is_title_collapsed:
-                continue
-            if (
-                worldPos[0] < node.position[0]
-                or worldPos[0] > node.position[0] + node.size[0]
-            ):
-                continue
-
-            # Each pin's band is its cached center +/- half the row height — the
-            # same per-pin layout the renderer uses, so clicks match what's drawn.
-            half = node.layoutPortLineHeight * 0.5
-            inputCenters = node.layoutInputCenterY
-            for i, pinName in enumerate(node.inputPins):
-                if i >= len(inputCenters):
-                    break
-                center = node.position[1] + inputCenters[i]
-                if center - half <= worldPos[1] <= center + half:
-                    return (nodeId, pinName)
-
-            outputCenters = node.layoutOutputCenterY
-            for i, pinName in enumerate(node.outputPins):
-                if i >= len(outputCenters):
-                    break
-                center = node.position[1] + outputCenters[i]
-                if center - half <= worldPos[1] <= center + half:
-                    return (nodeId, pinName)
-
-        return None
-
-    def _updatePropertyTooltip(self, screenPos):
-        """Update tooltip state based on which property row the cursor is over."""
-        prop = self._getPropertyAtPoint(screenPos)
-        if prop != self._tooltipProperty:
-            self._tooltipTimer.stop()
-            QtWidgets.QToolTip.hideText()
-            self._tooltipProperty = prop
-            if prop is not None:
-                self._tooltipTimer.start()
-        if prop is not None:
-            # Track the latest cursor position so the eventual tooltip appears
-            # where the user is actually pointing, not where they entered the row.
-            self._tooltipScreenPos = self.mapToGlobal(screenPos)
-
-    def _showPropertyTooltip(self):
-        """Show the tooltip for the currently hovered property."""
-        if self._tooltipProperty is None or self._tooltipScreenPos is None:
-            return
-        nodeId, pinName = self._tooltipProperty
-        node = self.nodes.get(nodeId)
-        if node is None:
-            return
-        doc = ""
-        if hasattr(node, "get_pin_documentation"):
-            doc = node.get_pin_documentation(pinName)
-        if not doc:
-            return
-        QtWidgets.QToolTip.showText(self._tooltipScreenPos, doc, self)
 
     def _startLinkDrag(self, nodeId, portName, isOutput):
         """
@@ -5092,52 +4310,6 @@ class GraphView(QGLWidget):
             if vao is not None:
                 GL.glDeleteVertexArrays(1, [vao])
 
-    def _findDanglingIndicatorUnderCursor(self, worldPos):
-        """Find which dangling link's circle indicator is under the cursor.
-
-        Returns the index into self.links of the dangling link whose indicator
-        contains worldPos, or -1 if none.
-        """
-        INDICATOR_RADIUS = 6.0
-        HIT_RADIUS = INDICATOR_RADIUS + 4.0
-        hitRadiusSq = HIT_RADIUS * HIT_RADIUS
-
-        for i, link in enumerate(self.links):
-            if not link.isDangling:
-                continue
-            cx, cy = link.end[0], link.end[1]
-            dx = worldPos[0] - cx
-            dy = worldPos[1] - cy
-            if dx * dx + dy * dy <= hitRadiusSq:
-                return i
-        return -1
-
-    def _findArrowheadUnderCursor(self, worldPos):
-        """Index into self.links of the relationship link whose arrowhead is
-        under worldPos, or -1. Grabbing the arrowhead (the link's target end)
-        starts a reconnect; dropping it on empty space disconnects the link.
-        """
-        arrow_length = max(10.0 / max(self.zoom, 1e-6), 2.0)
-        arrow_width = max(8.0 / max(self.zoom, 1e-6), 2.0)
-        hit_radius = max(arrow_length, arrow_width)
-        hitRadiusSq = hit_radius * hit_radius
-        best = -1
-        best_distance = None
-        for i, link in enumerate(self.links):
-            if not bool(getattr(link, "is_relationship_link", False)):
-                continue
-            if getattr(link, "isDangling", False):
-                continue
-            dx = worldPos[0] - float(link.end[0])
-            dy = worldPos[1] - float(link.end[1])
-            distance = dx * dx + dy * dy
-            if distance <= hitRadiusSq and (
-                best_distance is None or distance < best_distance
-            ):
-                best_distance = distance
-                best = i
-        return best
-
     def _renderTemporaryLink(self):
         """
         Render the temporary link being dragged with color feedback.
@@ -5685,45 +4857,6 @@ class GraphView(QGLWidget):
     # widgets/valueCell.cell_rect: the value cell and the two connection
     # gutters are disjoint, so a press can mean exactly one of the two.
 
-    def _valueCellAtPoint(self, worldPoint):
-        """The value cell under a WORLD position, or None."""
-        if not self._cachedShowAttributeValues:
-            return None
-        x, y = self._asWorldXY(worldPoint)
-        nodeId = self.nodeIdUnderCursor
-        if not nodeId or nodeId not in self.nodes:
-            nodeId = self._getNodeIdAtWorldPos(Gf.Vec2d(x, y))
-        if not nodeId or nodeId not in self.nodes:
-            return None
-        node = self.nodes[nodeId]
-        # The paint pass skips cells below _cachedValueMinPixelHeight; testing
-        # what is not drawn would arm invisible cells, and costs a full
-        # row-geometry walk per mouse-move for nothing.
-        if (
-            float(node.layoutPortLineHeight) * self.zoom
-            < float(self._cachedValueMinPixelHeight)
-        ):
-            return None
-        primPath = _nodeIdPrimPath(nodeId)
-        for row, rect, subs, _h in self._valueRowGeometry(node):
-            if not (rect.top <= y <= rect.bottom):
-                continue
-            if not valueCell.rect_contains(rect, x, y):
-                continue
-            # The gaps between sub-cells belong to the cell too: a press that
-            # lands a pixel off a component must not fall through to a node
-            # drag, so it resolves to the nearest component instead.
-            index = min(
-                range(len(subs)),
-                key=lambda i: abs(x - (subs[i].left + subs[i].right) * 0.5),
-            )
-            for i, sub in enumerate(subs):
-                if valueCell.rect_contains(sub, x, y):
-                    index = i
-                    break
-            return _ValueHit(nodeId, primPath, row.property_name, index, subs[index], row)
-        return None
-
     # Cursor per cell kind: the pointer says what a press will do before it
     # happens -- drag a number, type into text, open a list, flip a switch.
     _VALUE_CURSORS = {
@@ -5733,28 +4866,6 @@ class GraphView(QGLWidget):
         noodlesValues.KIND_TOKEN_ENUM: QtCore.Qt.PointingHandCursor,
         noodlesValues.KIND_BOOL: QtCore.Qt.PointingHandCursor,
     }
-
-    def _updateValueHoverCursor(self, screenPos):
-        """Track the hovered cell: its fill lifts and the cursor changes."""
-        hit = None
-        if not (self.draggingNodes or self._draggingLink or self.spacePressed):
-            world = (QtCore.QPointF(screenPos) / self.zoom) + QtCore.QPointF(
-                self.panX, self.panY
-            )
-            hit = self._valueCellAtPoint(world)
-
-        hover = None
-        cursor = None
-        if hit is not None:
-            hover = (hit.nodeId, hit.propertyName, hit.comp)
-            if hit.row.editable:
-                cursor = self._VALUE_CURSORS.get(hit.row.kind)
-        if hover != self._valueHover:
-            self._valueHover = hover
-            self.update()
-        if cursor != self._valueCursorSet:
-            self.setCursor(cursor if cursor is not None else QtCore.Qt.ArrowCursor)
-            self._valueCursorSet = cursor
 
 
     def _valueTextBand(self, rowHeight):
@@ -6808,3 +5919,37 @@ class GraphView(QGLWidget):
     _groupLinksByLayer = staticmethod(_intents._groupLinksByLayer)
     _runLinkOperationOnLayer = _intents._runLinkOperationOnLayer
     _findLibraryForPrim = _intents._findLibraryForPrim
+
+    # Hit testing, rows and hover moved to graphview/interaction.py
+    # (nv-interaction-hits). Explicit bindings, never forwarding bodies,
+    # so unbound GraphView._method(duck_self, ...) calls keep working.
+    _getNodeIdAtWorldPos = _interaction._getNodeIdAtWorldPos
+    _getPropertyAtPoint = _interaction._getPropertyAtPoint
+    _findPropertyRowHover = _interaction._findPropertyRowHover
+    _findRelationshipRowHover = _interaction._findRelationshipRowHover
+    _relationshipDragRowHover = _interaction._relationshipDragRowHover
+    _getRowHitMetrics = _interaction._getRowHitMetrics
+    _valueCellAtPoint = _interaction._valueCellAtPoint
+    _findRowEdgeDragStart = _interaction._findRowEdgeDragStart
+    _rowEdgePinCandidates = _interaction._rowEdgePinCandidates
+    _pinAtRowEdge = _interaction._pinAtRowEdge
+    _findArrowheadUnderCursor = _interaction._findArrowheadUnderCursor
+    _findDanglingIndicatorUnderCursor = _interaction._findDanglingIndicatorUnderCursor
+    _findDanglingLinkAtPort = _interaction._findDanglingLinkAtPort
+    _updateHoveredPort = _interaction._updateHoveredPort
+    _setHoveredPort = _interaction._setHoveredPort
+    _updateNodeUnderCursor = _interaction._updateNodeUnderCursor
+    _updateValueHoverCursor = _interaction._updateValueHoverCursor
+    _showPropertyTooltip = _interaction._showPropertyTooltip
+    _updatePropertyTooltip = _interaction._updatePropertyTooltip
+    _clearPropertyTooltip = _interaction._clearPropertyTooltip
+    _centerOnNode = _interaction._centerOnNode
+    _setZoom = _interaction._setZoom
+    _zoomAroundPoint = _interaction._zoomAroundPoint
+    navigateBackward = _interaction.navigateBackward
+    navigateForward = _interaction.navigateForward
+    _jumpToSourceNode = _interaction._jumpToSourceNode
+    _jumpToTargetNode = _interaction._jumpToTargetNode
+    _jumpToSourceNodeInternal = _interaction._jumpToSourceNodeInternal
+    _jumpToTargetNodeInternal = _interaction._jumpToTargetNodeInternal
+    _navigateAlongRelationshipLink = _interaction._navigateAlongRelationshipLink
