@@ -10,7 +10,6 @@ The assistant looks at the stage with tools (see tools), and with the
 toggles under the message box it may also change the stage and run Python.
 """
 # Builtin
-import functools
 import json
 import logging
 import time
@@ -109,6 +108,7 @@ class AiAssistant(QtWidgets.QDockWidget):
                          QtWidgets.QDockWidget.DockWidgetFloatable)
         self.setMinimumWidth(minimum_width)
         self.session = None
+        self._document_generation = 0
         self.store = store
         if chat_store is None:
             # Given its own prefs (as tests are), it keeps chats in memory.
@@ -124,6 +124,10 @@ class AiAssistant(QtWidgets.QDockWidget):
         # What the tools did in the reply coming, by call.
         self.reply_tools = []
         self.toolbox = None
+        self._reply_failed = False
+        self._reply_version = 0
+        # The reply whose text arrived while its own calls are still running
+        self._settling = None
         self.memory = Memory(self.prefs)
         # Folders the user let the assistant read in this chat only.
         self.chat_folders = set()
@@ -132,7 +136,6 @@ class AiAssistant(QtWidgets.QDockWidget):
         self.thread = None
         self.speaker = ''
         self.models_threads = []
-        # Replies still ending for a chat that was left.
         self.left_threads = []
 
         self.main_widget = QtWidgets.QWidget(parent=self)
@@ -299,8 +302,9 @@ class AiAssistant(QtWidgets.QDockWidget):
         self.edit_check = _chip(
             'Edit stage', 'The assistant can pose and key controls, and '
             'make, change and delete prims, attributes, connections and '
-            'layers on the edit target, and save layers. All the changes '
-            'in a reply are one undo step, so Ctrl+Z takes them back.')
+            'layers on the edit target, and save layers. The changes go on '
+            'the undo history in the order they were made, so Ctrl+Z takes '
+            'them back.')
         self.edit_check.setChecked(bool(self.prefs.get(
             host.USER_PREF.AI_ALLOW_EDITS, True)))
         self.edit_check.toggled.connect(self.on_edit_toggled)
@@ -337,6 +341,7 @@ class AiAssistant(QtWidgets.QDockWidget):
     def set_session(self, session):
         """Work on session's stage. Called again when usdview opens
         another stage."""
+        self._document_generation += 1
         old = self.session
         if old is not None:
             try:
@@ -351,6 +356,7 @@ class AiAssistant(QtWidgets.QDockWidget):
                     .connect(self.on_selection_changed)
             except AttributeError:
                 pass
+        self._abandon_reply()
         self.on_selection_changed()
 
     @property
@@ -480,7 +486,7 @@ class AiAssistant(QtWidgets.QDockWidget):
     # Chat
     @property
     def busy(self):
-        return bool(self.thread and self.thread.isRunning())
+        return self.toolbox is not None
 
     def eventFilter(self, widget, event):
         if (widget is self.chat_list and
@@ -516,70 +522,134 @@ class AiAssistant(QtWidgets.QDockWidget):
                             'the AI Assistant settings.'.format(
                                 provider.label))
             return
+        generation = self._document_generation
+        session = self.session
+        stage = self.stage
+        toolbox = tools.Toolbox(
+            session, can_edit=self.edit_check.isChecked() and stage is not None,
+            can_run=self.run_check.isChecked() and stage is not None,
+            memory=self.memory, chat_folders=self.chat_folders,
+            ask_access=self.ask_access,
+            document_current=lambda: self._document_generation == generation
+            and self.stage is stage,
+            edit_allowed=lambda: self.edit_check.isChecked(),
+            run_allowed=lambda: self.run_check.isChecked())
+        self._reply_version += 1
+        self.toolbox = toolbox
+        toolbox.activity.connect(self.on_tool_activity)
+        toolbox.settled.connect(self.on_tools_settled)
+
         content = text
-        if self.include_check.isChecked():
-            selection = context.describe_selection(self.session)
-            if selection:
-                content = '{}\n\nThe selected prims:\n\n{}'.format(
-                    text, selection)
-        self.messages.append({'role': 'user', 'content': content,
-                              'shown': text, 'time': time.time()})
-        self.save_chat()
-        self.input.clear()
-        self.reply = ''
-        self.reply_time = time.time()
-        self.clear_error()
-        self.status_label.setText('{} is answering...'.format(
-            provider.label))
-        sent = [{'role': m['role'], 'content': m['content']}
-                for m in self.messages]
-        # Without tools the model is told about the stage, and changes it
-        # with a block of actions in its answer.
-        fallback = context.system_prompt()
-        if self.can_edit:
-            fallback += '\n\n' + stage_actions.instructions()
-            fallback += '\n\nThe stage as it is now:\n\n{}'.format(
-                stage_actions.describe_stage(self.stage))
-        remembered = self.memory.describe()
-        if remembered:
-            fallback += '\n\n' + remembered
-        self.reply_tools = []
-        self.toolbox = tools.Toolbox(self.session,
-                                     can_edit=self.can_edit,
-                                     can_run=self.can_run, parent=self,
-                                     memory=self.memory,
-                                     chat_folders=self.chat_folders,
-                                     ask_access=self.ask_access)
-        self.toolbox.activity.connect(self.on_tool_activity)
-        system = context.system_prompt() + '\n\n' + tools.instructions()
-        if remembered:
-            system += '\n\n' + remembered
-        self.speaker = '{} \u00b7 {}'.format(provider.label, model)
-        self.thread = ChatThread(provider, sent, system, model, parent=self,
-                                 tools=self.toolbox,
-                                 fallback_system=fallback)
-        self.thread.chunk.connect(self.on_chunk)
-        self.thread.failed.connect(self.on_failed)
-        self.thread.tools_dropped.connect(self.on_tools_dropped)
-        self.thread.finished.connect(self.on_finished)
-        self.thread.start()
+        try:
+            if self.include_check.isChecked():
+                selection = context.describe_selection(session)
+                if selection:
+                    content = '{}\n\nThe selected prims:\n\n{}'.format(
+                        text, selection)
+            if not self._can_start_reply(toolbox):
+                return
+            fallback = context.system_prompt()
+            if toolbox.can_edit:
+                fallback += '\n\n' + stage_actions.instructions()
+                fallback += '\n\nThe stage as it is now:\n\n{}'.format(
+                    stage_actions.describe_stage(stage))
+            remembered = self.memory.describe()
+            if remembered:
+                fallback += '\n\n' + remembered
+            system = context.system_prompt() + '\n\n' + tools.instructions()
+            if remembered:
+                system += '\n\n' + remembered
+            if not self._can_start_reply(toolbox):
+                return
+
+            self.messages.append({'role': 'user', 'content': content,
+                                  'shown': text, 'time': time.time()})
+            self._pending_turn = self.messages[-1]
+            try:
+                self.save_chat()
+            except Exception as err:
+                # The Send reservation is this reply's only one: a chat that
+                # cannot be saved leaves no reply in flight.
+                self._abandon_reply()
+                self.show_error('The chat could not be saved: {}'.format(err))
+                return
+            self.input.clear()
+            if not self._can_start_reply(toolbox):
+                return
+            self.reply_time = time.time()
+            self.speaker = '{} \u00b7 {}'.format(provider.label, model)
+            self.clear_error()
+            self.status_label.setText('{} is answering...'.format(
+                provider.label))
+            sent = [{'role': m['role'], 'content': m['content']}
+                    for m in self.messages if not m.get('canceled')]
+            self.thread = ChatThread(provider, sent, system, model, parent=self,
+                                     tools=toolbox,
+                                     fallback_system=fallback)
+            self._pending_turn = None
+            self.thread.chunk.connect(self.on_chunk)
+            self.thread.failed.connect(self.on_failed)
+            self.thread.tools_dropped.connect(self.on_tools_dropped)
+            self.thread.finished.connect(self.on_finished)
+            self.thread.start()
+        except Exception as err:
+            # From the reservation to the worker starting, everything this
+            # Send holds is its own: whatever failed, only this reply is
+            # released, and the question stays where the artist can send it
+            # again.
+            logger.exception('The assistant request could not start')
+            if toolbox is self.toolbox:
+                self._abandon_reply()
+            if not self.input.toPlainText().strip():
+                self.input.setPlainText(text)
+            self.show_error('The request could not start: {}'.format(err))
+            return
         self.render()
-        self.update_buttons()
+        if self._current_reply(toolbox):
+            self.update_buttons()
+
+    def _current_reply(self, toolbox):
+        return (toolbox is not None and toolbox is self.toolbox and
+                toolbox.is_current())
+
+    def _can_start_reply(self, toolbox):
+        if self._current_reply(toolbox) and not toolbox.cancelled.is_set():
+            return True
+        if toolbox is self.toolbox:
+            self._abandon_reply()
+        return False
 
     def stop(self):
-        if self.thread:
+        if self.thread is not None:
             self.thread.cancel()
-        self.answer_access(tools.DENY)
+            self._dismiss_access()
+        elif self.toolbox is not None:
+            self._abandon_reply()
 
+    def _stream_sender_current(self):
+        return (self.thread is not None and self.sender() is self.thread and
+                self._current_reply(self.toolbox) and
+                not self.toolbox.cancelled.is_set())
+
+    @QtCore.Slot(str)
     def on_chunk(self, text):
+        if not self._stream_sender_current():
+            return
         self.reply += text
         if not self.render_timer.isActive():
             self.render_timer.start()
 
+    @QtCore.Slot(str)
     def on_failed(self, message):
-        self.show_error(message)
+        if self._stream_sender_current():
+            self._reply_failed = True
+            self.show_error(message)
 
+    @QtCore.Slot(dict)
     def on_tool_activity(self, event):
+        toolbox = self.sender()
+        if not self._current_reply(toolbox) or toolbox.cancelled.is_set():
+            return
         for i, known in enumerate(self.reply_tools):
             if known['id'] == event['id']:
                 self.reply_tools[i] = dict(event)
@@ -589,7 +659,10 @@ class AiAssistant(QtWidgets.QDockWidget):
         if not self.render_timer.isActive():
             self.render_timer.start()
 
+    @QtCore.Slot()
     def on_tools_dropped(self):
+        if not self._stream_sender_current():
+            return
         self.reply_tools.append({
             'id': -1, 'name': '', 'kind': tools.READ, 'state': 'note',
             'label': 'This model can not use tools, so it answered without '
@@ -600,48 +673,54 @@ class AiAssistant(QtWidgets.QDockWidget):
         """Ask the user to let the assistant read folder. Waits for the
         answer, which is ONCE, ALWAYS or DENY."""
         toolbox = self.toolbox
-        if toolbox is None or toolbox.cancelled.is_set():
+
+        def current():
+            return (self._current_reply(toolbox) and
+                    not toolbox.cancelled.is_set())
+
+        if not current() or self.access_loop is not None:
             return tools.DENY
-        provider = self.provider()
-        who = provider.label if provider else 'The assistant'
-        self.ask_title.setText('{} wants to read files in'.format(who))
-        self.ask_path.setText(folder)
-        self.ask_reason.setText(reason or '')
-        self.ask_reason.setVisible(bool(reason))
-        self.ask_frame.show()
-        # The answer is needed here, so bring the panel forward.
-        self.show()
-        self.raise_()
-        self.allow_button.setFocus()
-        self.access_answer = tools.DENY
         loop = QtCore.QEventLoop()
         self.access_loop = loop
-        # A stopped reply gets no answer.
+        self.access_answer = None
         watch = QtCore.QTimer()
-        watch.timeout.connect(lambda: toolbox.cancelled.is_set() and
-                              loop.quit())
-        watch.start(100)
+        watch.timeout.connect(lambda: not current() and loop.quit())
         try:
-            loop.exec_()
+            provider = self.provider()
+            who = provider.label if provider else 'The assistant'
+            self.ask_title.setText('{} wants to read files in'.format(who))
+            self.ask_path.setText(folder)
+            self.ask_reason.setText(reason or '')
+            self.ask_reason.setVisible(bool(reason))
+            self.ask_frame.show()
+            self.show()
+            if self.access_loop is loop and current():
+                self.raise_()
+                self.allow_button.setFocus()
+            if (self.access_loop is loop and current() and
+                    self.access_answer is None):
+                watch.start(100)
+                loop.exec_()
+            answer = (self.access_answer if self.access_loop is loop else
+                      tools.DENY)
         finally:
             watch.stop()
-            self.access_loop = None
-            self.ask_frame.hide()
-        if toolbox.cancelled.is_set():
-            return tools.DENY
-        return self.access_answer
+            # A replacement may already have installed a different prompt.
+            if self.access_loop is loop:
+                self._dismiss_access()
+        return answer if current() and answer is not None else tools.DENY
 
     def answer_access(self, answer):
-        self.access_answer = answer
         if self.access_loop is not None:
+            self.access_answer = answer
             self.access_loop.quit()
 
-    def end_tools(self):
-        """The changes the reply made become one undo step."""
-        toolbox, self.toolbox = self.toolbox, None
-        if toolbox is not None:
-            toolbox.finish()
-        return toolbox
+    def _dismiss_access(self):
+        loop, self.access_loop = self.access_loop, None
+        self.access_answer = tools.DENY
+        if loop is not None:
+            loop.quit()
+            self.ask_frame.hide()
 
     @staticmethod
     def tools_record(events):
@@ -649,31 +728,93 @@ class AiAssistant(QtWidgets.QDockWidget):
                  'state': e['state'], 'detail': e.get('detail', '')}
                 for e in events]
 
+    def _reply_message(self):
+        return {'role': 'assistant', 'content': self.reply,
+                'who': self.speaker, 'time': self.reply_time or time.time()}
+
+    def _record_outcomes(self, message, toolbox):
+        if self.reply_tools:
+            message['tools'] = self.tools_record(self.reply_tools)
+        failed = list(toolbox.failed) + message.get('failed', [])
+        if toolbox.done or failed:
+            message['done'] = list(toolbox.done)
+            message['failed'] = failed
+
+    @QtCore.Slot()
     def on_finished(self):
-        toolbox = self.end_tools()
-        if self.reply or (toolbox and toolbox.done):
-            message = {'role': 'assistant', 'content': self.reply,
-                       'who': self.speaker,
-                       'time': self.reply_time or time.time()}
-            if self.reply_tools:
-                message['tools'] = self.tools_record(self.reply_tools)
-            if toolbox is not None and (toolbox.done or toolbox.failed):
-                message['done'] = list(toolbox.done)
-                message['failed'] = list(toolbox.failed)
+        worker = self.sender()
+        try:
+            if worker is not None and worker is self.thread:
+                self._complete_reply(self.toolbox)
+        finally:
+            if worker in self.left_threads:
+                # The queued finished signal was delivered; let go of the
+                # thread, even when a call it made is still settling.
+                self.left_threads.remove(worker)
+                worker.deleteLater()
+
+    def _complete_reply(self, toolbox):
+        if not self._current_reply(toolbox):
+            self._abandon_reply()
+            return
+        self._dismiss_access()
+        if self.toolbox is not toolbox:
+            return
+        if toolbox.outstanding_calls():
+            # The model gave its last text; a change it asked for is still
+            # being authored on this thread. The reply is recorded when the
+            # whole call has ended.
+            self._settling = toolbox
+            self.status_label.setText('Writing the changes...')
+            return
+        self._write_reply(toolbox)
+
+    @QtCore.Slot()
+    def on_tools_settled(self):
+        """A call this reply made has ended, and none is left."""
+        toolbox = self._settling
+        if toolbox is None or toolbox is not self.toolbox:
+            return
+        if toolbox.outstanding_calls():
+            return
+        self._write_reply(toolbox)
+
+    def _write_reply(self, toolbox):
+        """Record this reply's message, once its own calls have all ended.
+        A stopped reply is recorded too: Stop takes the changes away, not
+        the answer the artist already read."""
+        self._settling = None
+        if self.toolbox is not toolbox:
+            return
+        message = self._reply_message()
+        if self.reply and not self._reply_failed:
+            self.apply_changes(message, toolbox)
+        if self.toolbox is not toolbox:
+            return
+        toolbox.cancel()
+        if not self._current_reply(toolbox):
+            if self.toolbox is toolbox:
+                self._abandon_reply()
+            return
+
+        self._record_outcomes(message, toolbox)
+        retry = None
+        if self.reply or self.reply_tools or toolbox.done or toolbox.failed:
             self.messages.append(message)
-            self.apply_changes(message)
         elif self.messages and self.messages[-1]['role'] == 'user':
-            # Nothing came back, so let the question be asked again.
-            failed = self.messages.pop()
-            if not self.input.toPlainText():
-                self.input.setPlainText(failed['shown'])
-        self.save_chat()
-        self.reply = ''
-        self.reply_tools = []
+            retry = self.messages.pop()['shown']
+        version = self._detach_reply()
+        if message.get('failed') and not self.status_label.property('error'):
+            self.show_error('{} of the changes could not be made.'.format(
+                len(message['failed'])))
         if not self.status_label.property('error'):
             self.status_label.setText('')
-        self.render()
-        self.update_buttons()
+        self._keep_chat()
+        if version != self._reply_version:
+            return
+        if retry is not None and not self.input.toPlainText():
+            self.input.setPlainText(retry)
+        self._refresh_reply_ui(version)
 
     def show_error(self, message):
         self.status_label.setProperty('error', True)
@@ -702,7 +843,8 @@ class AiAssistant(QtWidgets.QDockWidget):
             day_line(when)
             if message['role'] == 'user':
                 parts.append(chat_render.user_html(
-                    message.get('shown', message['content']), when))
+                    message.get('shown', message['content']), when,
+                    note=message.get('canceled')))
             else:
                 parts.append(chat_render.reply_html(
                     message.get('who', 'Assistant'),
@@ -726,29 +868,32 @@ class AiAssistant(QtWidgets.QDockWidget):
         if at_end:
             bar.setValue(bar.maximum())
 
-    def apply_changes(self, message):
-        """Make the changes a reply asks for, if it may."""
+    def apply_changes(self, message, toolbox):
+        """Dispatch final actions with the authority captured for Send."""
+        if not self._current_reply(toolbox) or toolbox.cancelled.is_set():
+            return
         actions, problems = stage_actions.find_actions(message['content'])
         if not actions and not problems:
             return
-        if not self.edit_check.isChecked():
+        if toolbox.stage is None:
+            message['note'] = 'Open a stage for it to change.'
+        elif not toolbox.can_edit:
+            message['note'] = ('It suggested changes to the stage, but '
+                               '"Edit stage" was off when you sent this.')
+        elif not self.edit_check.isChecked():
             message['note'] = ('It suggested changes to the stage. Turn '
                                'on "Edit stage" to allow them.')
-            return
-        if self.stage is None:
-            message['note'] = 'Open a stage for it to change.'
-            return
-        toolbox = tools.Toolbox(self.session, can_edit=True, parent=self,
-                                memory=self.memory)
-        if actions:
-            toolbox.change_stage({'changes': actions})
-        toolbox.finish()
-        done, failed = toolbox.done, problems + toolbox.failed
-        message['done'] = message.get('done', []) + done
-        message['failed'] = message.get('failed', []) + failed
-        if failed:
-            self.show_error('{} of the changes could not be made.'.format(
-                len(failed)))
+        elif (actions and self._current_reply(toolbox) and
+              not toolbox.cancelled.is_set()):
+            try:
+                text, failed = toolbox.call('change_stage', {'changes': actions})
+            except Exception as err:
+                problems.append('Could not apply the changes: {}'.format(err))
+            else:
+                if failed:
+                    problems.append(text)
+        if problems:
+            message['failed'] = problems
 
     # Chats
     def save_chat(self):
@@ -766,6 +911,14 @@ class AiAssistant(QtWidgets.QDockWidget):
         self.chat_store.save({'id': self.chat_id, 'messages': self.messages,
                               'created': self.chat_created})
         self.refresh_chat_list()
+
+    def _keep_chat(self):
+        """Write the chat. A store that cannot write says so on the status
+        line; it does not break the reply's state path."""
+        try:
+            self.save_chat()
+        except Exception as err:
+            self.show_error('The chat could not be saved: {}'.format(err))
 
     def refresh_chat_list(self):
         """Pinned chats first, then the rest, most recent first."""
@@ -826,39 +979,79 @@ class AiAssistant(QtWidgets.QDockWidget):
         self.chat_store.set_pinned(chat_id, pinned)
         self.refresh_chat_list()
 
-    def leave_chat(self):
-        """Stop a reply still coming, and keep what came of it in the chat
-        it belongs to."""
-        thread = self.thread
+    def _detach_reply(self):
+        self._reply_version += 1
+        self._settling = None
+        self._pending_turn = None
+        if self.thread is not None:
+            if self.thread.isFinished():
+                self.thread.deleteLater()
+            else:
+                # Even a stopped QThread can still have a queued finished signal.
+                self.left_threads.append(self.thread)
         self.thread = None
-        if not (thread and thread.isRunning()):
-            return
-        thread.cancel()
-        for signal in (thread.chunk, thread.failed, thread.finished):
-            try:
-                signal.disconnect()
-            except (RuntimeError, TypeError):
-                pass
-        toolbox = self.end_tools()
-        if self.reply or self.reply_tools:
-            message = {
-                'role': 'assistant', 'content': self.reply,
-                'who': self.speaker, 'time': self.reply_time or time.time(),
-                'note': 'Stopped when you left the chat.'}
-            if self.reply_tools:
-                message['tools'] = self.tools_record(self.reply_tools)
-            if toolbox is not None and (toolbox.done or toolbox.failed):
-                message['done'] = list(toolbox.done)
-                message['failed'] = list(toolbox.failed)
-            self.messages.append(message)
-        elif self.messages and self.messages[-1]['role'] == 'user':
-            self.messages.pop()
+        self.toolbox = None
         self.reply = ''
         self.reply_tools = []
-        self.save_chat()
-        self.left_threads.append(thread)
-        thread.finished.connect(
-            functools.partial(self.left_threads.remove, thread))
+        self.reply_time = None
+        self.speaker = ''
+        self._reply_failed = False
+        self.render_timer.stop()
+        return self._reply_version
+
+    def _refresh_reply_ui(self, version):
+        if version == self._reply_version:
+            self.render()
+        if version == self._reply_version:
+            self.update_buttons()
+
+    def _abandon_reply(self, note=None):
+        toolbox = self.toolbox
+        if toolbox is None:
+            return
+        if self.thread is not None:
+            self.thread.cancel()
+        else:
+            toolbox.cancel()
+        save = False
+        turn = self._pending_turn
+        self._pending_turn = None
+        if turn is not None and self.messages and self.messages[-1] is turn:
+            # Nothing of this Send reached the model: the turn never happened.
+            self.messages.pop()
+            save = True
+        elif note and toolbox.is_current() and (
+                self.reply or self.reply_tools or toolbox.done or
+                toolbox.failed):
+            message = self._reply_message()
+            message['note'] = note
+            self._record_outcomes(message, toolbox)
+            self.messages.append(message)
+            save = True
+        elif self.thread is not None or not toolbox.is_current():
+            save = self._mark_canceled_turn(note)
+        version = self._detach_reply()
+        self.clear_error()
+        self.status_label.clear()
+        self._dismiss_access()
+        if version == self._reply_version:
+            if save:
+                self._keep_chat()
+            self._refresh_reply_ui(version)
+
+    def _mark_canceled_turn(self, note):
+        """Mark a turn whose reply was lost, so the transcript shows it and
+        the next request does not act on it. The artist's text stays."""
+        if not self.messages or self.messages[-1]['role'] != 'user':
+            return False
+        message = self.messages[-1]
+        if message.get('canceled'):
+            return False
+        message['canceled'] = note or 'Stopped'
+        return True
+
+    def leave_chat(self):
+        self._abandon_reply('Stopped when you left the chat.')
 
     def show_chat(self, chat_id, messages, created=None):
         if chat_id != self.chat_id:
@@ -926,7 +1119,6 @@ class AiAssistant(QtWidgets.QDockWidget):
         toolbox = tools.Toolbox(self.session, can_run=True, parent=self,
                                 memory=self.memory)
         text, failed = toolbox.call('run_python', {'code': code})
-        toolbox.finish()
         try:
             result = json.loads(text)
         except ValueError:
@@ -975,6 +1167,5 @@ class AiAssistant(QtWidgets.QDockWidget):
             self.refresh_providers()
 
     def closeEvent(self, event):
-        self.stop()
-        self.end_tools()
+        self._abandon_reply('Stopped when you closed the Assistant.')
         super(AiAssistant, self).closeEvent(event)

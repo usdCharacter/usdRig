@@ -5,6 +5,7 @@ calling, which end their answer with a fenced ```usdrig-actions block of
 JSON that the panel applies. Every edit goes to the stage's current edit
 target. Qt-free.
 """
+import contextlib
 import json
 import logging
 import re
@@ -189,24 +190,41 @@ class Applier(object):
 
     :param stage: the Usd.Stage
     :param select: called with a list of paths for the select action
+    :param revalidate: called on the owner thread before each action; when
+        it gives back False the rest of the batch is not made
+    :param bracket: called with the action before it runs, giving back a
+        context manager around that one action. The assistant uses it to
+        snapshot and record each change as it is made, so the history keeps
+        the order the changes were made.
     """
 
-    def __init__(self, stage, select=None):
+    def __init__(self, stage, select=None, revalidate=None, bracket=None):
         self.stage = stage
         self.select = select
+        self.revalidate = revalidate
+        self.bracket = bracket or (lambda action: contextlib.nullcontext())
 
     def apply(self, actions):
         # No Sdf.ChangeBlock: each action reads the stage the one before it
         # made, and a stage does not recompose inside a block.
         done, failed = [], []
-        for action in actions:
+        for left, action in enumerate(actions):
+            if self.revalidate is not None and not self.revalidate():
+                # An action can change what is open (a viewer notice, a
+                # saved layer another stage composes); the actions after it
+                # would land in that document.
+                failed.append('The document is no longer current: {} of the '
+                              'changes were not made'.format(
+                                  len(actions) - left))
+                break
             name = str(action.get('action') or '')
             handler = getattr(self, 'do_' + name, None)
             if handler is None:
                 failed.append('There is no action {}'.format(name))
                 continue
             try:
-                done.append(handler(action))
+                with self.bracket(action):
+                    done.append(handler(action))
             except ActionError as err:
                 failed.append('{}: {}'.format(name, err))
             except Exception as err:

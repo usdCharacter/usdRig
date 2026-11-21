@@ -405,6 +405,11 @@ class UndoStack(object):
         self._redo = []
         self._Notify()
 
+    def LastEdit(self):
+        """The newest undoable step, or None. A producer may add to a step
+        of its own only while it is still the newest."""
+        return self._undo[-1] if self._undo else None
+
     def CanUndo(self):
         return bool(self._undo)
 
