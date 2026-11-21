@@ -86,6 +86,17 @@ jobs:
       - name: Compile the runtime with no pxr include path
         run: bin/check_runtime_usd_free.sh
 
+      # The positional build-directory interface must keep working when the
+      # tree is not named build/: the manifests there carry the absolute and
+      # checkout-relative spellings CMake wrote, unlike installed manifests.
+      - name: Compile from a nondefault configured build directory
+        run: |
+          mkdir -p runtime-build-alt
+          cp build/runtimeSources.txt build/runtimeIncludes.txt \
+             build/evalCoreSources.txt build/evalCoreIncludes.txt \
+             build/exactFpFlags.txt runtime-build-alt/
+          bin/check_runtime_usd_free.sh runtime-build-alt
+
   # --------------------------------------------------------------------------
   # OpenUSD v26.08 (PixarAnimationStudios/OpenUSD @ tag v26.08).
   # Cache key = OS + arch + resolved commit + recipe epoch. Bump the epoch
@@ -875,7 +886,21 @@ jobs:
           done
 
       - name: Compile relocated manifests with no pxr include path
-        run: ./consumer-src/bin/check_runtime_usd_free.sh "$GITHUB_WORKSPACE/sdk-relocated/share/rigExec"
+        run: ./consumer-src/bin/check_runtime_usd_free.sh --sdk "$GITHUB_WORKSPACE/sdk-relocated/share/rigExec"
+
+      # The strict installed-manifest rule stays strict: one producer-absolute
+      # entry in an otherwise valid copied SDK manifest must fail, and the
+      # diagnostic must name that entry.
+      - name: Reject a producer-absolute entry in a copied SDK manifest
+        run: |
+          cp -r sdk-relocated/share/rigExec bad-sdk
+          entry=/producer-build/libs/rigExecRuntime/open.cpp
+          sed -i "1i $entry" bad-sdk/runtimeSources.txt
+          if ./consumer-src/bin/check_runtime_usd_free.sh --sdk bad-sdk 2>bad-sdk.log; then
+            echo "a producer-absolute installed entry compiled"; exit 1
+          fi
+          grep -F "runtimeSources.txt: $entry:" bad-sdk.log \
+            || { echo "the failure did not name the offending entry"; cat bad-sdk.log; exit 1; }
 
       - name: Unpack the tutorial archive and fetch pinned godot-cpp
         run: |

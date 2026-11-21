@@ -3,10 +3,11 @@
 # binary format with no OpenUSD include path. Fails if a translation unit
 # needs a pxr header, or if an undefined symbol is an OpenUSD type.
 #
-# Usage: bin/check_runtime_usd_free.sh [manifest-directory]
-# Without an argument the manifests and exact-FP flags come from this
-# checkout's configured build tree, exactly as CMake generates them. With
-# one, the argument is an installed SDK's manifest directory M and the
+# Usage: bin/check_runtime_usd_free.sh [BUILD_DIR | --sdk MANIFEST_DIR]
+# With a build directory (default: this checkout's build/) the manifests and
+# exact-FP flags come from that configured build tree, exactly as CMake
+# generates them, and entries keep the spellings CMake wrote. With --sdk,
+# the argument is an installed SDK's manifest directory M and the
 # installed-manifest grammar applies: entries whose first path component
 # is runtime-generated resolve under M, every other relative entry under
 # this checkout (never both), and an absolute or '..' entry marks a
@@ -14,28 +15,51 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-if [[ $# -gt 1 ]]; then
-    echo "usage: ${0##*/} [manifest-directory]" >&2
+usage() {
+    echo "usage: ${0##*/} [BUILD_DIR | --sdk MANIFEST_DIR]" >&2
     exit 2
-fi
-BUILD="${1:-$ROOT/build}"
+}
+BUILD=""
+SDK=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --sdk)
+            [[ $# -eq 2 && -n "$2" && -z "$SDK" && -z "$BUILD" ]] || usage
+            SDK="$2"; shift 2 ;;
+        --build)
+            [[ $# -eq 2 && -n "$2" && -z "$BUILD" && -z "$SDK" ]] || usage
+            BUILD="$2"; shift 2 ;;
+        -h|--help)
+            echo "usage: ${0##*/} [BUILD_DIR | --sdk MANIFEST_DIR]" >&2
+            exit 0 ;;
+        *)
+            [[ $# -eq 1 && -n "$1" && -z "$BUILD" && -z "$SDK" ]] || usage
+            BUILD="$1"; shift ;;
+    esac
+done
+BUILD="${BUILD:-$ROOT/build}"
 installed=0
-if [[ $# -eq 1 && -n "${1:-}" ]]; then
+if [[ -n "$SDK" ]]; then
     installed=1
+    [[ "$SDK" = /* ]] || SDK="$PWD/$SDK"
+    SDK="${SDK%/}"
+    MANIFESTS="$SDK"
+else
     [[ "$BUILD" = /* ]] || BUILD="$PWD/$BUILD"
     BUILD="${BUILD%/}"
+    MANIFESTS="$BUILD"
 fi
-if [[ ! -f "$BUILD/runtimeSources.txt" || ! -f "$BUILD/runtimeIncludes.txt" ||
-      ! -f "$BUILD/evalCoreSources.txt" || ! -f "$BUILD/evalCoreIncludes.txt" ]]; then
+if [[ ! -f "$MANIFESTS/runtimeSources.txt" || ! -f "$MANIFESTS/runtimeIncludes.txt" ||
+      ! -f "$MANIFESTS/evalCoreSources.txt" || ! -f "$MANIFESTS/evalCoreIncludes.txt" ]]; then
     if [[ $installed -eq 1 ]]; then
-        echo "no SDK manifests in $BUILD: expected runtimeSources.txt, runtimeIncludes.txt, evalCoreSources.txt and evalCoreIncludes.txt there (install the SDK from a matching build)" >&2
+        echo "no SDK manifests in $MANIFESTS: expected runtimeSources.txt, runtimeIncludes.txt, evalCoreSources.txt and evalCoreIncludes.txt there (install the SDK from a matching build)" >&2
     else
-        echo "configure and build rigExecRuntime first (missing source manifest in $BUILD)" >&2
+        echo "configure and build rigExecRuntime first (missing source manifest in $MANIFESTS)" >&2
     fi
     exit 1
 fi
-if [[ ! -s "$BUILD/exactFpFlags.txt" ]]; then
-    echo "configure first: $BUILD/exactFpFlags.txt names the exact-FP flags" >&2
+if [[ ! -s "$MANIFESTS/exactFpFlags.txt" ]]; then
+    echo "configure first: $MANIFESTS/exactFpFlags.txt names the exact-FP flags" >&2
     exit 1
 fi
 WORK="$(mktemp -d)"
@@ -48,9 +72,9 @@ while IFS= read -r flag; do
     flag="${flag%$'\r'}"
     [[ -z "$flag" ]] && continue
     fp_flags+=("$flag")
-done < "$BUILD/exactFpFlags.txt"
+done < "$MANIFESTS/exactFpFlags.txt"
 if [[ ${#fp_flags[@]} -eq 0 ]]; then
-    echo "no exact-FP flags in $BUILD/exactFpFlags.txt" >&2
+    echo "no exact-FP flags in $MANIFESTS/exactFpFlags.txt" >&2
     exit 1
 fi
 for flag in "${fp_flags[@]}"; do
@@ -83,7 +107,7 @@ resolve_manifest_entry() {
             ;;
     esac
     case "$entry" in
-        runtime-generated|runtime-generated/*) root="$BUILD" ;;
+        runtime-generated|runtime-generated/*) root="$SDK" ;;
         *) root="$ROOT" ;;
     esac
     printf '%s' "$root/$entry"
@@ -108,7 +132,7 @@ for manifest in runtimeIncludes.txt evalCoreIncludes.txt; do
             exit 1
         fi
         CXXFLAGS+=(-I "$include_dir")
-    done < "$BUILD/$manifest"
+    done < "$MANIFESTS/$manifest"
 done
 
 objs=()
@@ -140,7 +164,7 @@ for manifest in runtimeSources.txt evalCoreSources.txt; do
             [[ "$src" = /* ]] || src="$ROOT/$src"
         fi
         sources+=("$src")
-    done < "$BUILD/$manifest"
+    done < "$MANIFESTS/$manifest"
 done
 sources+=(
     "$ROOT/libs/rigExecGraph/opGraph.cpp"
