@@ -195,7 +195,7 @@ class HoverPickerController(QtCore.QObject):
                                                        undoStack)
         self._overlay = None
         self._selection = None
-        self._enabledHover = False
+        self._releaseHover = None
         self._hostHandoff = False
 
     def Attach(self):
@@ -204,9 +204,7 @@ class HoverPickerController(QtCore.QObject):
         self._overlay.setParent(self._view)
         self._overlay.resize(self._view.size())
         # Mouse tracking would make usdview run a GPU pick on every move.
-        if not self._view.testAttribute(QtCore.Qt.WA_Hover):
-            self._enabledHover = True
-            self._view.setAttribute(QtCore.Qt.WA_Hover, True)
+        self._releaseHover = stageViewReady.ClaimHover(self._view)
         if self._installFilters:
             self._view.installEventFilter(self)
         selection = getattr(getattr(self._api, "dataModel", None),
@@ -228,6 +226,8 @@ class HoverPickerController(QtCore.QObject):
     def Detach(self):
         view, self._view = self._view, None
         overlay, self._overlay = self._overlay, None
+        release, self._releaseHover = self._releaseHover, None
+        stageViewReady.ReleaseHover(release)
         self._gesture = None
         self._panel.RemoveListener(self._OnPanel)
         selection, self._selection = self._selection, None
@@ -236,9 +236,6 @@ class HoverPickerController(QtCore.QObject):
         if view is not None:
             if self._installFilters:
                 stageViewReady.IgnoreDeleted(lambda: view.removeEventFilter(self))
-            if self._enabledHover:
-                stageViewReady.IgnoreDeleted(lambda: view.setAttribute(
-                    QtCore.Qt.WA_Hover, False))
             if self._cursorSet:
                 stageViewReady.IgnoreDeleted(view.unsetCursor)
         stageViewReady.RemoveWidget(overlay)

@@ -160,7 +160,7 @@ class GizmoController(QtCore.QObject):
         self._viewDestroyed = False
         self._connections = []
         self._controlPicking = self.overlay = self.statusBar = self.toolbar = None
-        self._previousHover = None
+        self._releaseHover = None
         try:
             self._Attach(view)
         except Exception:
@@ -201,8 +201,7 @@ class GizmoController(QtCore.QObject):
             # pickObject per mouse move (stageView.mouseMoveEvent's
             # "none" camera mode). WA_Hover produces HoverMove events
             # instead, which nothing else in usdview listens for.
-            self._previousHover = view.testAttribute(QtCore.Qt.WA_Hover)
-            view.setAttribute(QtCore.Qt.WA_Hover, True)
+            self._releaseHover = stageViewReady.ClaimHover(view)
             self._Connect(view, "signalFrustumChanged", self._onFrustumChanged)
         self.settings.AddListener(self._onSettingsChanged)
         self.undoStack.AddListener(self._onUndoStackChanged)
@@ -291,16 +290,14 @@ class GizmoController(QtCore.QObject):
         self._viewDestroyed = True
         stageViewReady._Cleanup("gizmo", self.FlushReleasedEdit)
         stageViewReady._Cleanup("gizmo", self.CancelGesture)
+        release, self._releaseHover = self._releaseHover, None
+        stageViewReady.ReleaseHover(release)
         if self._controlPicking is not None:
             self._controlPicking.Detach()
             self._controlPicking = None
         view, self._view = self._view, None
-        if view is not None:
-            if self._installFilters:
-                stageViewReady.IgnoreDeleted(lambda: view.removeEventFilter(self))
-            if self._previousHover is not None:
-                stageViewReady.IgnoreDeleted(lambda: view.setAttribute(
-                    QtCore.Qt.WA_Hover, self._previousHover))
+        if view is not None and self._installFilters:
+            stageViewReady.IgnoreDeleted(lambda: view.removeEventFilter(self))
         application = QtWidgets.QApplication.instance()
         if application is not None and self._hotkeys is not None:
             application.removeEventFilter(self._hotkeys)

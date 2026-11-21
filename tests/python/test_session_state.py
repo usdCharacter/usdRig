@@ -1404,6 +1404,87 @@ def TestAuxiliaryViewportRetirement():
     print("  ok: auxiliary viewport tools share readiness and retirement")
 
 
+def _TouchPoseModule():
+    root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
+    touchPoseDir = os.path.join(root, "plugin", "touchPose")
+    if touchPoseDir not in sys.path:
+        sys.path.insert(0, touchPoseDir)
+    import touchPoseUI
+    return touchPoseUI
+
+
+def TestTouchPoseKeepsHoverAfterBrokerRetirement():
+    import markingMenuUI
+
+    touchPoseUI = _TouchPoseModule()
+    hover = QtCore.Qt.WA_Hover
+    for initialHover in (False, True):
+        window, api = _Session()
+        api.dataModel = SimpleNamespace()
+        view = QtWidgets.QWidget()
+        window.setCentralWidget(view)
+        _Host(api)._stageView = view
+        view.setAttribute(hover, initialHover)
+        touchPose = touchPoseUI.TouchPoseController(api)
+        touchPose._model = object()  # no region geometry or renderer needed
+        try:
+            menu = markingMenuUI.InstallMarkingMenu(api)
+            _Check(menu is not None and view.testAttribute(hover),
+                   "marking menu installed with hover enabled")
+            _Check(touchPose.SetActive(True), "TouchPose activated on the same view")
+            stageViewReady.Retire(api)
+            _Check(not menu.HasView() and touchPose.active and view.testAttribute(hover),
+                   "TouchPose still needs hover after marking menu detaches")
+            touchPose.SetActive(False)
+            _Check(view.testAttribute(hover) == initialHover,
+                   "the last consumer restored the original hover flag")
+        finally:
+            touchPose.SetActive(False)
+            stageViewReady.Retire(api)
+            _Destroy(window)
+    print("  ok: TouchPose keeps StageView hover until the last claim is released")
+
+
+def TestTouchPoseAttachmentRollback():
+    touchPoseUI = _TouchPoseModule()
+    extension = touchPoseUI.editorExtension
+    hover = QtCore.Qt.WA_Hover
+    window, api = _Session()
+    view = QtWidgets.QWidget()
+    window.setCentralWidget(view)
+    _Host(api)._stageView = view
+    view.setAttribute(hover, False)
+    touchPose = touchPoseUI.TouchPoseController(api)
+
+    class _RejectHandoff(extension.EditorExtension):
+        def OwnsInput(self, api):
+            return True
+
+        def EditorAdded(self, api, kind, editor):
+            _Check(view.testAttribute(hover), "TouchPose already claimed hover")
+            raise RuntimeError("test host rejected TouchPose")
+
+    try:
+        with _Patched(extension, _extension=_RejectHandoff()):
+            try:
+                touchPose._Install()
+            except RuntimeError as error:
+                _Check(str(error) == "test host rejected TouchPose", str(error))
+            else:
+                raise AssertionError("the failed handoff must not install TouchPose")
+        _Check(not view.testAttribute(hover), "failed attachment restored hover")
+        touchPose._Install()
+        _Check(view.testAttribute(hover), "TouchPose can retry after failure")
+        touchPose._Uninstall()
+        touchPose._Uninstall()
+        _Check(not view.testAttribute(hover), "retry released its hover claim")
+    finally:
+        touchPose._Uninstall()
+        _Destroy(window)
+    print("  ok: TouchPose rolls back a rejected input handoff")
+
+
 def TestMarkingMenuPreservesHostInput():
     import markingMenuUI
 
@@ -1721,13 +1802,8 @@ def TestTouchPoseMarqueeUsesOwnSession():
     window's session: nothing when that is ambiguous (every control dropped
     from the band), another session's camera when that window is active.
     """
-    root = os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__))))
-    touchPoseDir = os.path.join(root, "plugin", "touchPose")
-    if touchPoseDir not in sys.path:
-        sys.path.insert(0, touchPoseDir)
     import gizmoMarquee
-    import touchPoseUI
+    touchPoseUI = _TouchPoseModule()
 
     stageA = Usd.Stage.CreateInMemory()
     stageB = Usd.Stage.CreateInMemory()
@@ -1800,13 +1876,15 @@ def main():
     TestContainerEnsureAndRetire()
     TestContainerAdoptsReadyGizmo()
     TestAuxiliaryViewportRetirement()
+    TestTouchPoseKeepsHoverAfterBrokerRetirement()
+    TestTouchPoseAttachmentRollback()
     TestMarkingMenuPreservesHostInput()
     TestMarkingMenuReleasesItsOwnGrab()
     TestHoverPickerAttachmentRollback()
     TestRegistryDestroyedSlots()
     TestRegistryRemovalHook()
     TestTouchPoseMarqueeUsesOwnSession()
-    print("SESSION_STATE_OK (26 groups)")
+    print("SESSION_STATE_OK (29 groups)")
     return 0
 
 

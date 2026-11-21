@@ -587,7 +587,7 @@ class ControlMarkingMenu(QtCore.QObject):
         self._pressed = False
         self._window = None
         self._ownsMouseGrab = False
-        self._enabledHover = False
+        self._releaseHover = None
         # The item the gesture's direction last lit, which a label under
         # the cursor overrides.
         self._sectorLit = None
@@ -607,11 +607,13 @@ class ControlMarkingMenu(QtCore.QObject):
         # the machine draws.
         self.clock = None
         if self._view is not None:
-            if not self._view.testAttribute(QtCore.Qt.WA_Hover):
-                self._enabledHover = True
-                self._view.setAttribute(QtCore.Qt.WA_Hover, True)
-            if installFilters:
-                self._view.installEventFilter(self)
+            try:
+                self._releaseHover = stageViewReady.ClaimHover(self._view)
+                if installFilters:
+                    self._view.installEventFilter(self)
+            except Exception:
+                stageViewReady._Cleanup("markingMenu", self.Detach)
+                raise
 
     # -- the world ---------------------------------------------------------
 
@@ -779,15 +781,15 @@ class ControlMarkingMenu(QtCore.QObject):
             self._view.releaseMouse()
 
     def Detach(self):
-        stageViewReady.IgnoreDeleted(self._Close)
+        release, self._releaseHover = self._releaseHover, None
+        try:
+            stageViewReady.IgnoreDeleted(self._Close)
+        finally:
+            stageViewReady.ReleaseHover(release)
         view, self._view = self._view, None
         window, self._window = self._window, None
-        if view is not None:
-            if self._installFilters:
-                stageViewReady.IgnoreDeleted(lambda: view.removeEventFilter(self))
-            if self._enabledHover:
-                stageViewReady.IgnoreDeleted(lambda: view.setAttribute(
-                    QtCore.Qt.WA_Hover, False))
+        if view is not None and self._installFilters:
+            stageViewReady.IgnoreDeleted(lambda: view.removeEventFilter(self))
         stageViewReady.RemoveWidget(window)
         if not self._installFilters:
             editorExtension.EditorRemoved(self._api, editorExtension.MARKING_MENU, self)

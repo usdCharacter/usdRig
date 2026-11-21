@@ -67,6 +67,41 @@ def IgnoreDeleted(operation):
             raise
 
 
+_hoverClaims = weakref.WeakKeyDictionary()
+
+
+def ClaimHover(view):
+    """Enable WA_Hover until the last consumer releases this view (UI thread)."""
+    from pxr.Usdviewq.qt import QtCore
+
+    attribute = QtCore.Qt.WA_Hover
+    claim = object()
+    if view not in _hoverClaims:
+        original = view.testAttribute(attribute)
+        if not original:
+            view.setAttribute(attribute, True)
+        _hoverClaims[view] = original, set()
+    original, claims = _hoverClaims[view]
+    claims.add(claim)
+    viewRef = weakref.ref(view)
+
+    def release():
+        if claim not in claims:
+            return
+        claims.remove(claim)
+        widget = viewRef()
+        if not claims and widget is not None:
+            del _hoverClaims[widget]
+            IgnoreDeleted(lambda: widget.setAttribute(attribute, original))
+
+    return release
+
+
+def ReleaseHover(release):
+    if release is not None:
+        release()
+
+
 def Disconnect(owner, name, slot):
     def disconnect():
         signal = getattr(owner, name, None)
