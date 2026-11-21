@@ -5,7 +5,8 @@
 # WITNESS_FAST_TAIL and WITNESS_CONFLICT_FLAG come from the driver, and
 # each WITNESS_*_LINK, WITNESS_*_OPTION and WITNESS_MIXED/ADJACENT/
 # DEEP/ONE_ARG mode adds a target whose only route to a fast option is
-# that one link- or compile-option shape.
+# that one link- or compile-option shape. The WITNESS_CONCAT_*_OPTION
+# modes split the fast flag across literal text and a property lookup.
 cmake_minimum_required(VERSION 3.26)
 project(rigexec_exact_fp_witness LANGUAGES CXX)
 
@@ -51,7 +52,9 @@ if (NOT WITNESS_IF_LINK AND NOT WITNESS_DEEP_LINK AND NOT WITNESS_PROP_LINK
     AND NOT WITNESS_MIXED_DIRECT AND NOT WITNESS_MIXED_IF
     AND NOT WITNESS_ONE_ARG_PROP AND NOT WITNESS_ADJACENT_DIRECT
     AND NOT WITNESS_ADJACENT_IF AND NOT WITNESS_PROP_IFACE_OPTION
-    AND NOT WITNESS_PROP_SOURCE_OPTION)
+    AND NOT WITNESS_PROP_SOURCE_OPTION
+    AND NOT WITNESS_CONCAT_IFACE_OPTION
+    AND NOT WITNESS_CONCAT_SOURCE_OPTION)
     target_link_libraries(witnessExact PRIVATE $<$<CONFIG:Release>:Pkg::Fast>)
 endif ()
 
@@ -153,14 +156,37 @@ endif ()
 
 if (WITNESS_PROP_SOURCE_OPTION)
     # The same lookup supplied through per-source COMPILE_OPTIONS: the
-    # shared source property must be judged by its effective value, not
-    # its raw text.
+    # property must be judged by its effective value, and only
+    # witnessPropSource compiles its translation unit.
     set_target_properties(fpIface PROPERTIES FP_MODE "${WITNESS_CONFLICT_FLAG}")
-    set_source_files_properties(probe.cpp PROPERTIES
+    set_source_files_properties(probeSrcOpt.cpp PROPERTIES
         COMPILE_OPTIONS "$<TARGET_PROPERTY:fpIface,FP_MODE>")
-    add_executable(witnessPropSource
+    add_executable(witnessPropSource probeSrcOpt.cpp)
+endif ()
+
+if (WITNESS_CONCAT_IFACE_OPTION)
+    # The fast flag split between literal text and a property lookup:
+    # neither part matches a conflict alone, but the expanded compiler
+    # argument is the full fast flag.
+    add_executable(witnessPropConcat
         probe.cpp
         "${_gen_dir}/generatedProbe.cpp")
+    set_target_properties(fpIface PROPERTIES
+        FP_MODE "${WITNESS_CONCAT_TAIL}")
+    target_compile_options(fpIface INTERFACE
+        "${WITNESS_CONCAT_HEAD}$<TARGET_PROPERTY:fpIface,FP_MODE>")
+    target_link_libraries(witnessPropConcat PRIVATE fpIface)
+endif ()
+
+if (WITNESS_CONCAT_SOURCE_OPTION)
+    # The same split supplied through per-source COMPILE_OPTIONS on a
+    # translation unit only witnessSourceConcat compiles.
+    set_target_properties(fpIface PROPERTIES
+        FP_MODE "${WITNESS_CONCAT_TAIL}")
+    set_source_files_properties(probeSrcOpt.cpp PROPERTIES
+        COMPILE_OPTIONS
+        "${WITNESS_CONCAT_HEAD}$<TARGET_PROPERTY:fpIface,FP_MODE>")
+    add_executable(witnessSourceConcat probeSrcOpt.cpp)
 endif ()
 
 if (WITNESS_UNSUPPORTED_LINK)

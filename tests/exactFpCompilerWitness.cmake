@@ -33,6 +33,10 @@ if (_msvc)
     set(_fast_head "/fp:fast")
     set(_fast_tail "/fp:fast")
     set(_conflict_flag "/fp:fast")
+    # Split so neither fragment matches the conflict regex alone: the
+    # "/fp:" prefix by itself would be a direct hit, not a concatenation.
+    set(_concat_head "/f")
+    set(_concat_tail "p:fast")
     set(_canonical "/fp:precise")
     set(_exe ".exe")
 else ()
@@ -40,6 +44,8 @@ else ()
     set(_fast_head "-ffp-contract=fast")
     set(_fast_tail "-ffast-math")
     set(_conflict_flag "-ffast-math")
+    set(_concat_head "-f")
+    set(_concat_tail "fast-math")
     set(_canonical "-fno-fast-math;-ffp-contract=off")
     set(_exe "")
 endif ()
@@ -524,15 +530,17 @@ if (WITNESS_RC EQUAL 0)
         "diagnostic (rc=0)")
 endif ()
 foreach (_w_needle IN ITEMS
+    "target witnessPropIface carries"
     "fpIface: [$]<TARGET_PROPERTY:fpIface,FP_MODE>"
-    "via FP_MODE of fpIface: conflicting option \\([-]ffast-math\\)")
+    "via FP_MODE of fpIface: conflicting option \\(${_conflict_flag}\\)")
     if (NOT WITNESS_LOG MATCHES "${_w_needle}")
         _witness_fail("leg14 diagnostic lacks '${_w_needle}':\n${WITNESS_LOG}")
     endif ()
 endforeach ()
 
 # Leg 15: the same resolved value supplied through per-source
-# COMPILE_OPTIONS must abort naming the source, expression and flag.
+# COMPILE_OPTIONS must abort naming the consuming target, its dedicated
+# translation unit, the expression and the flag.
 set(_work15 "${BUILD_ROOT}/source-option")
 _witness_configure("${_work15}" -DWITNESS_PROP_SOURCE_OPTION=ON)
 if (WITNESS_RC EQUAL 0)
@@ -540,10 +548,52 @@ if (WITNESS_RC EQUAL 0)
         "diagnostic (rc=0)")
 endif ()
 foreach (_w_needle IN ITEMS
-    "source .*probe\\.cpp: [$]<TARGET_PROPERTY:fpIface,FP_MODE>"
-    "via FP_MODE of fpIface: conflicting option \\([-]ffast-math\\)")
+    "target witnessPropSource carries"
+    "source .*probeSrcOpt\\.cpp: [$]<TARGET_PROPERTY:fpIface,FP_MODE>"
+    "via FP_MODE of fpIface: conflicting option \\(${_conflict_flag}\\)")
     if (NOT WITNESS_LOG MATCHES "${_w_needle}")
         _witness_fail("leg15 diagnostic lacks '${_w_needle}':\n${WITNESS_LOG}")
+    endif ()
+endforeach ()
+
+# Leg 16: the fast flag split between literal text and a property
+# lookup in an interface option; the complete expanded argument must be
+# judged, not each part.
+set(_work16 "${BUILD_ROOT}/concat-iface-option")
+_witness_configure("${_work16}"
+    "-DWITNESS_CONCAT_HEAD=${_concat_head}"
+    "-DWITNESS_CONCAT_TAIL=${_concat_tail}"
+    -DWITNESS_CONCAT_IFACE_OPTION=ON)
+if (WITNESS_RC EQUAL 0)
+    _witness_fail("concatenated interface compile option configured "
+        "without a diagnostic (rc=0)")
+endif ()
+foreach (_w_needle IN ITEMS
+    "target witnessPropConcat carries"
+    "fpIface: ${_concat_head}[$]<TARGET_PROPERTY:fpIface,FP_MODE>"
+    "via FP_MODE of fpIface: conflicting option \\(${_conflict_flag}\\)")
+    if (NOT WITNESS_LOG MATCHES "${_w_needle}")
+        _witness_fail("leg16 diagnostic lacks '${_w_needle}':\n${WITNESS_LOG}")
+    endif ()
+endforeach ()
+
+# Leg 17: the same split supplied through per-source COMPILE_OPTIONS on
+# a translation unit only witnessSourceConcat compiles.
+set(_work17 "${BUILD_ROOT}/concat-source-option")
+_witness_configure("${_work17}"
+    "-DWITNESS_CONCAT_HEAD=${_concat_head}"
+    "-DWITNESS_CONCAT_TAIL=${_concat_tail}"
+    -DWITNESS_CONCAT_SOURCE_OPTION=ON)
+if (WITNESS_RC EQUAL 0)
+    _witness_fail("concatenated per-source compile option configured "
+        "without a diagnostic (rc=0)")
+endif ()
+foreach (_w_needle IN ITEMS
+    "target witnessSourceConcat carries"
+    "source .*probeSrcOpt\\.cpp: ${_concat_head}[$]<TARGET_PROPERTY:fpIface,FP_MODE>"
+    "via FP_MODE of fpIface: conflicting option \\(${_conflict_flag}\\)")
+    if (NOT WITNESS_LOG MATCHES "${_w_needle}")
+        _witness_fail("leg17 diagnostic lacks '${_w_needle}':\n${WITNESS_LOG}")
     endif ()
 endforeach ()
 

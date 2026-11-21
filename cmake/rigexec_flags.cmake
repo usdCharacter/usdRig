@@ -247,11 +247,12 @@ function(rigexec_fp_genex_operator entry out_var)
 endfunction()
 
 # PRIVATE: reason text when a compile-option entry could contribute a
-# conflicting floating-point option after expansion, empty when it is
-# provably safe. Literal and conditional text is judged as written; a
-# $<TARGET_PROPERTY:...> lookup contributes its property's value, judged
-# recursively; unresolvable lookups and values past the nesting cutoff
-# are rejected.
+# conflicting floating-point option, empty when it is provably safe. A
+# bare $<TARGET_PROPERTY:...> entry is judged per value item; a lookup
+# concatenated into text is substituted into the entry and the complete
+# compiler argument is judged, so a split spelling cannot re-form a
+# conflicting option. Unresolvable lookups, multi-value concatenations
+# and values past the nesting cutoff are rejected.
 function(rigexec_fp_option_conflict_reason entry ctx_target depth out_var)
     rigexec_get_exact_fp_flags(_rigexec_fp_canonical)
     rigexec_get_exact_fp_conflict_regex(_rigexec_fp_conflict)
@@ -267,68 +268,93 @@ function(rigexec_fp_option_conflict_reason entry ctx_target depth out_var)
     endif ()
     if (entry MATCHES "${_rigexec_fp_conflict}"
         AND NOT entry IN_LIST _rigexec_fp_canonical)
-        set(${out_var} "conflicting option" PARENT_SCOPE)
+        set(${out_var} "conflicting option (${entry})" PARENT_SCOPE)
         return ()
     endif ()
-    set(_rigexec_or_tail "${entry}")
-    set(_rigexec_or_offset 0)
-    while (1)
-        string(FIND "${_rigexec_or_tail}" "$<TARGET_PROPERTY:"
-            _rigexec_or_pos)
-        if (_rigexec_or_pos EQUAL -1)
-            break ()
+    string(FIND "${entry}" "$<TARGET_PROPERTY:" _rigexec_or_pos)
+    if (_rigexec_or_pos EQUAL -1)
+        if (entry MATCHES "[$]<" AND NOT entry MATCHES "^[$]<")
+            # Literal text around an expression: the joined argument is
+            # not spelled by any part, and no lookup resolves it.
+            set(${out_var} "concatenated option expression (${entry})"
+                PARENT_SCOPE)
         endif ()
-        math(EXPR _rigexec_or_start "${_rigexec_or_offset} + ${_rigexec_or_pos}")
-        string(SUBSTRING "${entry}" ${_rigexec_or_start} -1
-            _rigexec_or_from)
-        rigexec_fp_genex_close_index("${_rigexec_or_from}" _rigexec_or_close)
-        if (_rigexec_or_close LESS 0)
-            set(${out_var} "unbalanced option expression" PARENT_SCOPE)
-            return ()
-        endif ()
-        math(EXPR _rigexec_or_len "${_rigexec_or_close} + 1")
-        string(SUBSTRING "${entry}" ${_rigexec_or_start} ${_rigexec_or_len}
-            _rigexec_or_expr)
-        rigexec_fp_genex_content("${_rigexec_or_expr}" _rigexec_or_body)
-        rigexec_fp_genex_segments("${_rigexec_or_body}" _rigexec_or_args)
-        list(LENGTH _rigexec_or_args _rigexec_or_n)
-        if (_rigexec_or_n EQUAL 1)
-            set(_rigexec_or_owner "${ctx_target}")
-            list(GET _rigexec_or_args 0 _rigexec_or_prop)
-        elseif (_rigexec_or_n EQUAL 2)
-            list(GET _rigexec_or_args 0 _rigexec_or_owner)
-            list(GET _rigexec_or_args 1 _rigexec_or_prop)
-        else ()
-            set(${out_var} "unresolvable option lookup" PARENT_SCOPE)
-            return ()
-        endif ()
-        if (_rigexec_or_prop STREQUAL ""
-            OR _rigexec_or_owner MATCHES "[$<>]"
-            OR _rigexec_or_prop MATCHES "[$<>]"
-            OR NOT TARGET "${_rigexec_or_owner}")
-            set(${out_var} "unresolvable option lookup" PARENT_SCOPE)
-            return ()
-        endif ()
-        get_target_property(_rigexec_or_value "${_rigexec_or_owner}"
-            "${_rigexec_or_prop}")
-        if (_rigexec_or_value
-            AND NOT _rigexec_or_value MATCHES "NOTFOUND$")
-            math(EXPR _rigexec_or_child "${depth} + 1")
-            foreach (_rigexec_or_part IN LISTS _rigexec_or_value)
-                rigexec_fp_option_conflict_reason("${_rigexec_or_part}"
-                    "${ctx_target}" ${_rigexec_or_child} _rigexec_or_sub)
-                if (_rigexec_or_sub)
-                    set(${out_var}
-                        "via ${_rigexec_or_prop} of ${_rigexec_or_owner}: ${_rigexec_or_sub} (${_rigexec_or_part})"
-                        PARENT_SCOPE)
-                    return ()
-                endif ()
-            endforeach ()
-        endif ()
-        math(EXPR _rigexec_or_offset "${_rigexec_or_start} + ${_rigexec_or_len}")
-        string(SUBSTRING "${entry}" ${_rigexec_or_offset} -1
-            _rigexec_or_tail)
-    endwhile ()
+        return ()
+    endif ()
+    string(SUBSTRING "${entry}" ${_rigexec_or_pos} -1 _rigexec_or_from)
+    rigexec_fp_genex_close_index("${_rigexec_or_from}" _rigexec_or_close)
+    if (_rigexec_or_close LESS 0)
+        set(${out_var} "unbalanced option expression" PARENT_SCOPE)
+        return ()
+    endif ()
+    math(EXPR _rigexec_or_len "${_rigexec_or_close} + 1")
+    string(SUBSTRING "${entry}" ${_rigexec_or_pos} ${_rigexec_or_len}
+        _rigexec_or_expr)
+    rigexec_fp_genex_content("${_rigexec_or_expr}" _rigexec_or_body)
+    rigexec_fp_genex_segments("${_rigexec_or_body}" _rigexec_or_args)
+    list(LENGTH _rigexec_or_args _rigexec_or_n)
+    if (_rigexec_or_n EQUAL 1)
+        set(_rigexec_or_owner "${ctx_target}")
+        list(GET _rigexec_or_args 0 _rigexec_or_prop)
+    elseif (_rigexec_or_n EQUAL 2)
+        list(GET _rigexec_or_args 0 _rigexec_or_owner)
+        list(GET _rigexec_or_args 1 _rigexec_or_prop)
+    else ()
+        set(${out_var} "unresolvable option lookup (${_rigexec_or_expr})"
+            PARENT_SCOPE)
+        return ()
+    endif ()
+    if (_rigexec_or_prop STREQUAL ""
+        OR _rigexec_or_owner MATCHES "[$<>]"
+        OR _rigexec_or_prop MATCHES "[$<>]"
+        OR _rigexec_or_prop STREQUAL "COMPILE_OPTIONS"
+        OR NOT TARGET "${_rigexec_or_owner}")
+        set(${out_var} "unresolvable option lookup (${_rigexec_or_expr})"
+            PARENT_SCOPE)
+        return ()
+    endif ()
+    get_target_property(_rigexec_or_value "${_rigexec_or_owner}"
+        "${_rigexec_or_prop}")
+    if (_rigexec_or_value AND _rigexec_or_value MATCHES "NOTFOUND$")
+        set(_rigexec_or_value "")
+    endif ()
+    math(EXPR _rigexec_or_child "${depth} + 1")
+    if (entry STREQUAL _rigexec_or_expr)
+        foreach (_rigexec_or_part IN LISTS _rigexec_or_value)
+            rigexec_fp_option_conflict_reason("${_rigexec_or_part}"
+                "${ctx_target}" ${_rigexec_or_child} _rigexec_or_sub)
+            if (_rigexec_or_sub)
+                set(${out_var}
+                    "via ${_rigexec_or_prop} of ${_rigexec_or_owner}: ${_rigexec_or_sub}"
+                    PARENT_SCOPE)
+                return ()
+            endif ()
+        endforeach ()
+        set(${out_var} "" PARENT_SCOPE)
+        return ()
+    endif ()
+    list(LENGTH _rigexec_or_value _rigexec_or_vn)
+    if (_rigexec_or_vn GREATER 1)
+        set(${out_var}
+            "computed option value cannot form one argument (${_rigexec_or_expr})"
+            PARENT_SCOPE)
+        return ()
+    endif ()
+    string(SUBSTRING "${entry}" 0 ${_rigexec_or_pos} _rigexec_or_prefix)
+    math(EXPR _rigexec_or_suffix_at "${_rigexec_or_pos} + ${_rigexec_or_len}")
+    string(SUBSTRING "${entry}" ${_rigexec_or_suffix_at} -1
+        _rigexec_or_suffix)
+    set(_rigexec_or_expanded
+        "${_rigexec_or_prefix}${_rigexec_or_value}${_rigexec_or_suffix}")
+    rigexec_fp_option_conflict_reason("${_rigexec_or_expanded}"
+        "${ctx_target}" ${_rigexec_or_child} _rigexec_or_sub)
+    if (_rigexec_or_sub)
+        set(${out_var}
+            "via ${_rigexec_or_prop} of ${_rigexec_or_owner}: ${_rigexec_or_sub}"
+            PARENT_SCOPE)
+        return ()
+    endif ()
+    set(${out_var} "" PARENT_SCOPE)
 endfunction()
 
 # PRIVATE: options no ordering can outrank abort configuration naming
