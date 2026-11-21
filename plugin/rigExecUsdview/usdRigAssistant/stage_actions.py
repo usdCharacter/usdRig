@@ -11,12 +11,19 @@ import re
 
 from pxr import Gf, Sdf, Usd, Vt
 
+import layerOpinionsModel
+import rigExecUndo
+
 from . import host
 
 logger = logging.getLogger(host.LOGGER_NAME)
 
 FENCE = 'usdrig-actions'
 MAX_OUTLINE = 400
+UNDO_LABEL = 'AI Assistant changes'
+# Actions that change how the stage is seen, not what it holds: they get
+# no undo record, only a report through the effect callback.
+SEEN_ACTIONS = ('select', 'set_edit_target')
 
 INSTRUCTIONS = '''
 You can change the open stage. You have no files or tools: the only way to
@@ -184,16 +191,128 @@ def to_json(value):
     return [to_json(v) for v in items]
 
 
+def _changed(before, after):
+    """Whether a snapshot moved, decided by what it says, not by which
+    object it is. Each snapshot kind is whole in its own way."""
+    if isinstance(before, layerOpinionsModel.InfoSnapshot):
+        return (before.had, before.value) != (after.had, after.value)
+    if isinstance(before, layerOpinionsModel.SublayerSnapshot):
+        return (list(before.paths), list(before.offsets)) != (
+            list(after.paths), list(after.offsets))
+    return before != after
+
+
+def _topmost_absent(layer, spec_path):
+    """The shallowest path at or above spec_path whose spec is not in
+    layer yet. A write there brings a whole chain of overs into being, and
+    the snapshot of the top of that chain takes all of it back."""
+    top = spec_path
+    parent = spec_path.GetParentPath()
+    while (parent and not parent.IsAbsoluteRootPath()
+           and layer.GetObjectAtPath(parent) is None):
+        top = parent
+        parent = parent.GetParentPath()
+    return top
+
+
+def _layer_copy(layer):
+    """A throwaway copy of a whole layer, to diff one opaque move."""
+    copy = Sdf.Layer.CreateAnonymous('rigExecAssistantMove.usda')
+    copy.TransferContent(layer)
+    return copy
+
+
+def _rebound(snapshot, layer):
+    """Point a snapshot taken in a throwaway copy at the live layer."""
+    snapshot.layer = layer
+    return snapshot
+
+
+def _authored_specs(layer):
+    """Every spec path layer authors, each parent before its children."""
+    paths = []
+
+    def descend(spec):
+        for prop in spec.properties.values():
+            paths.append(prop.path)
+        for child in spec.nameChildren.values():
+            paths.append(child.path)
+            descend(child)
+
+    for root in layer.rootPrims.values():
+        paths.append(root.path)
+        descend(root)
+    return paths
+
+
+def _moved_outside(paths, other):
+    """The paths in paths that other does not have, keeping only the top
+    of each moved subtree: its snapshot carries everything below."""
+    gone = [path for path in paths if path not in other]
+    gone_set = set(gone)
+    return [path for path in gone if path.GetParentPath() not in gone_set]
+
+
+class _Capture(object):
+    """What one action wrote, gathered at the writes themselves.
+
+    Each snapshot names the layer the action actually wrote, so the delta
+    can be handed over as one host undoable edit without predicting paths
+    ahead of the change or keeping a second stack.
+    """
+
+    def __init__(self):
+        self.before = []      # (snapshot, entry path), in capture order
+        self.extra = []       # entries already built, for opaque moves
+        self.problems = []    # capture failures, for the caller's report
+
+    def capture(self, snapshot, path):
+        self.before.append((snapshot, path))
+
+    def add(self, layer, path, before, after):
+        self.extra.append(rigExecUndo.EditEntry(layer, path, before, after))
+
+    def build(self):
+        """The edit's entries, one per snapshot whose value really moved.
+
+        A snapshot that cannot be recaptured is a hole in the undo, never
+        a reason to report "nothing changed", so it is kept as a problem.
+        """
+        entries = list(self.extra)
+        for snapshot, path in self.before:
+            try:
+                after = snapshot.Recapture()
+            except Exception as err:
+                self.problems.append(
+                    'could not record the change, so it may not be '
+                    'undoable: {}'.format(err))
+                continue
+            if not _changed(snapshot, after):
+                continue
+            entries.append(rigExecUndo.EditEntry(snapshot.layer, path,
+                                                 snapshot, after))
+        return entries
+
+
 class Applier(object):
     """Applies actions to stage, each one to the current edit target.
 
     :param stage: the Usd.Stage
     :param select: called with a list of paths for the select action
+    :param record: called with one rigExecUndo.Edit for what an action
+        really wrote, bound to the layer it wrote it in; None changes no
+        recording behaviour
+    :param effect: called with the text of a successful action that left
+        nothing to undo (select, set_edit_target); when given, that text
+        is not also returned as an authored change
     """
 
-    def __init__(self, stage, select=None):
+    def __init__(self, stage, select=None, record=None, effect=None):
         self.stage = stage
         self.select = select
+        self.record = record
+        self.effect = effect
+        self._capture = None
 
     def apply(self, actions):
         # No Sdf.ChangeBlock: each action reads the stage the one before it
@@ -205,14 +324,77 @@ class Applier(object):
             if handler is None:
                 failed.append('There is no action {}'.format(name))
                 continue
+            self._capture = _Capture() if self.record is not None else None
+            text, error = None, None
             try:
-                done.append(handler(action))
+                text = handler(action)
             except ActionError as err:
-                failed.append('{}: {}'.format(name, err))
+                error = str(err)
             except Exception as err:
                 logger.exception('Action {} failed'.format(name))
-                failed.append('{}: {}'.format(name, str(err).strip()))
+                error = str(err).strip()
+            self._record(name, failed)
+            if error is not None:
+                failed.append('{}: {}'.format(name, error))
+                continue
+            if self.effect is not None and name in SEEN_ACTIONS:
+                self.effect(text)
+            else:
+                done.append(text)
         return done, failed
+
+    def _record(self, name, failed):
+        """Hand over this action's delta, whether or not the action raised:
+        a write that happened before it raised still needs undoing."""
+        capture, self._capture = self._capture, None
+        if capture is None:
+            return
+        entries = capture.build()
+        for problem in capture.problems:
+            failed.append('{}: {}'.format(name, problem))
+        if not entries:
+            return
+        try:
+            self.record(rigExecUndo.Edit(UNDO_LABEL, entries))
+        except Exception as err:
+            logger.exception('Could not record {}'.format(name))
+            failed.append('{}: the change was made but could not be put on '
+                          'the undo stack: {}'.format(name, err))
+
+    # Capture
+    def _capture_spec(self, scene_path):
+        """Snapshot the spec the next write touches, on the layer that
+        write lands on, which is not always where the prim is composed."""
+        if self._capture is None:
+            return
+        target = self.stage.GetEditTarget()
+        layer = target.GetLayer()
+        spec_path = target.MapToSpecPath(scene_path)
+        if not spec_path:
+            raise ActionError('{} has no spec in the layer being '
+                              'edited'.format(scene_path))
+        path = _topmost_absent(layer, spec_path)
+        self._capture.capture(rigExecUndo.SpecSnapshot.Capture(layer, path),
+                              path)
+
+    def _capture_sublayers(self, layer):
+        """Snapshot a layer's sublayers: both paths and offsets, since
+        writing the paths resets the offsets."""
+        if self._capture is None:
+            return
+        self._capture.capture(
+            layerOpinionsModel.SublayerSnapshot.Capture(layer),
+            Sdf.Path.absoluteRootPath)
+
+    def _capture_info(self, layer, key):
+        """Snapshot one field of a layer, rather than a snapshot of the
+        always-present pseudo-root spec, which would be the whole layer."""
+        if self._capture is None:
+            return
+        self._capture.capture(
+            layerOpinionsModel.InfoSnapshot.Capture(
+                layer, Sdf.Path.absoluteRootPath, key),
+            Sdf.Path.absoluteRootPath)
 
     # Helpers
     def path(self, action, key='path'):
@@ -255,6 +437,7 @@ class Applier(object):
     def do_define_prim(self, action):
         path = self.path(action)
         type_name = str(action.get('type') or '')
+        self._capture_spec(path)
         prim = self.stage.DefinePrim(path, type_name)
         if not prim:
             raise ActionError('Could not define {}'.format(path))
@@ -263,12 +446,14 @@ class Applier(object):
 
     def do_override_prim(self, action):
         path = self.path(action)
+        self._capture_spec(path)
         if not self.stage.OverridePrim(path):
             raise ActionError('Could not override {}'.format(path))
         return 'Added an over for {}'.format(path)
 
     def do_remove_prim(self, action):
         path = self.path(action)
+        self._capture_spec(path)
         if not self.stage.RemovePrim(path):
             raise ActionError('{} has no spec on the edit target to '
                               'remove; deactivate it instead'.format(path))
@@ -282,9 +467,92 @@ class Applier(object):
         if not editor.MovePrimAtPath(prim.GetPath(), new_path):
             raise ActionError('Cannot move {} to {}'.format(
                 prim.GetPath(), new_path))
-        if not editor.ApplyEdits():
-            raise ActionError('Moving {} to {} failed'.format(
-                prim.GetPath(), new_path))
+        copies = self._before_move(editor)
+        try:
+            if not editor.ApplyEdits():
+                raise ActionError('Moving {} to {} failed'.format(
+                    prim.GetPath(), new_path))
+        finally:
+            if copies:
+                self._diff_move(copies)
+
+    def _before_move(self, editor):
+        """Copies of the layers this move can write.
+
+        The move is not confined to the edit target or to the two renamed
+        paths. It names the layers whose specs move, and it also fixes up
+        relationship targets and connections in layers it does not name --
+        measured here, a rename reported one layer and wrote a second.
+        So every layer the stage uses is copied and diffed, and only the
+        specs that really changed go on the undo stack. Without the
+        layers the editor names there is nothing honest to diff, and the
+        action fails rather than guessing the edit target.
+        """
+        if self._capture is None:
+            return []
+        get_layers = getattr(editor, 'GetLayersToEdit', None)
+        if get_layers is None:
+            raise ActionError('This USD cannot say which layers the move '
+                              'edits, so it cannot be recorded for undo')
+        layers = [layer for layer in get_layers() if layer is not None]
+        if not layers:
+            raise ActionError('The move reports no layer to edit')
+        named = {layer.identifier for layer in layers}
+        for layer in self.stage.GetLayerStack(includeSessionLayers=True):
+            if layer is not None and layer.identifier not in named:
+                layers.append(layer)
+        return [(layer, _layer_copy(layer)) for layer in layers]
+
+    def _diff_move(self, copies):
+        """Record what the move did to each copied layer, spec by spec.
+
+        The move can relocate specs, repair relationships and connections
+        that named the moved prim, and reorder siblings. The two copies
+        say what happened; the snapshots go back to the live layers, and
+        SpecSnapshot's saved sibling order is what puts a moved spec back
+        where it was among its siblings -- mover order IS sibling order.
+        Deletions come before creations so each direction replays the
+        move the way it happened.
+        """
+        for layer, before in copies:
+            after = _layer_copy(layer)
+            old = _authored_specs(before)
+            new = _authored_specs(after)
+            old_set, new_set = set(old), set(new)
+            for paths, other in ((old, new_set), (new, old_set)):
+                for path in _moved_outside(paths, other):
+                    self._capture.add(
+                        layer, path,
+                        _rebound(rigExecUndo.SpecSnapshot.Capture(
+                            before, path), layer),
+                        _rebound(rigExecUndo.SpecSnapshot.Capture(
+                            after, path), layer))
+            for path in old:
+                if path in new_set:
+                    self._diff_kept(layer, before, after, path)
+
+    def _diff_kept(self, layer, before, after, path):
+        """Record only the fields a surviving spec changed. A property is
+        already the smallest unit, so it is stored whole; a prim stores
+        its changed fields, and its children's own entries carry the rest
+        of the change -- including their order."""
+        if path.IsPropertyPath():
+            was = _rebound(rigExecUndo.SpecSnapshot.Capture(before, path),
+                           layer)
+            now = _rebound(rigExecUndo.SpecSnapshot.Capture(after, path),
+                           layer)
+            if now != was:
+                self._capture.add(layer, path, was, now)
+            return
+        old_spec = before.GetObjectAtPath(path)
+        new_spec = after.GetObjectAtPath(path)
+        keys = set(old_spec.ListInfoKeys()) | set(new_spec.ListInfoKeys())
+        for key in sorted(keys):
+            was = layerOpinionsModel.InfoSnapshot.Capture(before, path, key)
+            now = layerOpinionsModel.InfoSnapshot.Capture(after, path, key)
+            if (was.had, was.value) != (now.had, now.value):
+                self._capture.add(layer, path, _rebound(was, layer),
+                                  _rebound(now, layer))
 
     def do_rename_prim(self, action):
         prim = self.prim(action)
@@ -304,6 +572,7 @@ class Applier(object):
 
     def do_set_active(self, action):
         path = self.path(action)
+        self._capture_spec(path)
         prim = self.stage.GetPrimAtPath(path) or self.stage.OverridePrim(
             path)
         value = bool(action.get('value', True))
@@ -313,6 +582,7 @@ class Applier(object):
     def do_reorder_children(self, action):
         prim = self.prim(action)
         names = [str(n) for n in action.get('names') or []]
+        self._capture_spec(prim.GetPath())
         prim.SetChildrenReorder(names)
         return 'Reordered the children of {}'.format(prim.GetPath())
 
@@ -323,7 +593,9 @@ class Applier(object):
         if not name:
             raise ActionError('"name" is needed')
         attr = prim.GetAttribute(name)
-        if not attr:
+        if attr:
+            type_name = attr.GetTypeName()
+        else:
             type_name = action.get('type')
             if not type_name:
                 raise ActionError('{} has no attribute {}; give a "type" to '
@@ -332,10 +604,12 @@ class Applier(object):
             if not vtype:
                 raise ActionError('There is no value type {}'.format(
                     type_name))
+        value = to_value(action.get('value'), type_name)
+        time = self.time(action)
+        self._capture_prop(prim.GetPath(), name)
+        if not attr:
             attr = prim.CreateAttribute(name, vtype,
                                         bool(action.get('custom', True)))
-        value = to_value(action.get('value'), attr.GetTypeName())
-        time = self.time(action)
         if not attr.Set(value, time):
             raise ActionError('Could not set {}'.format(attr.GetPath()))
         return 'Set {} to {}{}'.format(
@@ -344,6 +618,7 @@ class Applier(object):
     def do_clear_attr(self, action):
         attr = self.attr(action)
         time = self.time(action)
+        self._capture_prop(attr.GetPrim().GetPath(), attr.GetName())
         if time.IsDefault():
             attr.Clear()
         else:
@@ -352,12 +627,14 @@ class Applier(object):
 
     def do_block_attr(self, action):
         attr = self.attr(action)
+        self._capture_prop(attr.GetPrim().GetPath(), attr.GetName())
         attr.Block()
         return 'Blocked {}'.format(attr.GetPath())
 
     def do_set_connections(self, action):
         attr = self.attr(action)
         sources = [Sdf.Path(str(s)) for s in action.get('sources') or []]
+        self._capture_prop(attr.GetPrim().GetPath(), attr.GetName())
         attr.SetConnections(sources)
         return 'Connected {} to {}'.format(
             attr.GetPath(), ', '.join(str(s) for s in sources) or 'nothing')
@@ -365,15 +642,22 @@ class Applier(object):
     def do_set_relationship(self, action):
         prim = self.prim(action)
         name = str(action.get('name') or '')
-        rel = prim.GetRelationship(name) or prim.CreateRelationship(name)
         targets = [Sdf.Path(str(t)) for t in action.get('targets') or []]
+        self._capture_prop(prim.GetPath(), name)
+        rel = prim.GetRelationship(name) or prim.CreateRelationship(name)
         rel.SetTargets(targets)
         return 'Pointed {} at {}'.format(
             rel.GetPath(), ', '.join(str(t) for t in targets) or 'nothing')
 
+    def _capture_prop(self, prim_path, name):
+        """Snapshot the property the next write touches, whether or not
+        that property is in the layer being edited yet."""
+        self._capture_spec(prim_path.AppendProperty(name))
+
     def do_apply_schema(self, action):
         prim = self.prim(action)
         schema = str(action.get('schema') or '')
+        self._capture_spec(prim.GetPath())
         if not prim.AddAppliedSchema(schema):
             raise ActionError('Could not apply {}'.format(schema))
         return 'Applied {} to {}'.format(schema, prim.GetPath())
@@ -381,6 +665,7 @@ class Applier(object):
     def do_remove_schema(self, action):
         prim = self.prim(action)
         schema = str(action.get('schema') or '')
+        self._capture_spec(prim.GetPath())
         if not prim.RemoveAppliedSchema(schema):
             raise ActionError('Could not remove {}'.format(schema))
         return 'Removed {} from {}'.format(schema, prim.GetPath())
@@ -388,8 +673,11 @@ class Applier(object):
     def do_set_variant(self, action):
         prim = self.prim(action)
         vset = prim.GetVariantSets().GetVariantSet(str(action.get('set')))
-        if not vset or not vset.SetVariantSelection(
-                str(action.get('variant'))):
+        if not vset:
+            raise ActionError('{} has no variant set {}'.format(
+                prim.GetPath(), action.get('set')))
+        self._capture_spec(prim.GetPath())
+        if not vset.SetVariantSelection(str(action.get('variant'))):
             raise ActionError('Could not select {} in {}'.format(
                 action.get('variant'), action.get('set')))
         return 'Selected {} {} on {}'.format(
@@ -397,12 +685,13 @@ class Applier(object):
 
     def do_add_reference(self, action):
         path = self.path(action)
-        prim = self.stage.GetPrimAtPath(path) or self.stage.OverridePrim(
-            path)
         asset = str(action.get('asset') or '')
         if not asset:
             raise ActionError('"asset" is needed')
         target = action.get('prim')
+        self._capture_spec(path)
+        prim = self.stage.GetPrimAtPath(path) or self.stage.OverridePrim(
+            path)
         if target:
             prim.GetReferences().AddReference(asset, Sdf.Path(str(target)))
         else:
@@ -415,6 +704,7 @@ class Applier(object):
             raise ActionError('"asset" is needed')
         layer = self.stage.GetEditTarget().GetLayer()
         position = int(action.get('position', 0))
+        self._capture_sublayers(layer)
         layer.subLayerPaths.insert(position, asset)
         return 'Added the sublayer {} to {}'.format(asset, layer.identifier)
 
@@ -430,14 +720,34 @@ class Applier(object):
         raise ActionError('No layer {} in the layer stack'.format(wanted))
 
     def do_set_metadata(self, action):
+        path = self.path(action)
+        key = str(action.get('key') or '')
+        if not key:
+            raise ActionError('"key" is needed')
+        name = str(action.get('name') or '')
+        if path.IsAbsoluteRootPath():
+            # Layer metadata, not a prim: the write lands on the edit
+            # target's pseudo-root spec, and a snapshot of that spec would
+            # be a copy of the whole layer.
+            if name:
+                raise ActionError('the layer has no property {}'.format(name))
+            prim = self.stage.GetPrimAtPath(path)
+            if not prim:
+                raise ActionError('There is no prim {}'.format(path))
+            self._capture_info(self.stage.GetEditTarget().GetLayer(), key)
+            if not prim.SetMetadata(key, action.get('value')):
+                raise ActionError('Could not set {}'.format(key))
+            return 'Set {} on {}'.format(key, path)
         prim = self.prim(action)
         target = prim
-        if action.get('name'):
-            target = prim.GetProperty(str(action['name']))
+        if name:
+            target = prim.GetProperty(name)
             if not target:
                 raise ActionError('{} has no property {}'.format(
-                    prim.GetPath(), action['name']))
-        key = str(action.get('key') or '')
+                    prim.GetPath(), name))
+            self._capture_prop(prim.GetPath(), name)
+        else:
+            self._capture_spec(prim.GetPath())
         if not target.SetMetadata(key, action.get('value')):
             raise ActionError('Could not set {}'.format(key))
         return 'Set {} on {}'.format(key, target.GetPath())

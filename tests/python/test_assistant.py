@@ -26,6 +26,7 @@ from pxr import Sdf, Usd  # noqa: E402
 from pxr.Usdviewq.qt import QtWidgets  # noqa: E402
 
 import rigExecUndo  # noqa: E402
+import layerOpinionsModel  # noqa: E402
 from usdRigAssistant import mcp_server, session, stage_actions  # noqa: E402
 from usdRigAssistant import tools  # noqa: E402
 
@@ -238,6 +239,366 @@ def TestRunPython():
            "undo takes back what the Python changed on the edit target")
 
 
+_CAPTURE_USDA = """#usda 1.0
+(
+    timeCodesPerSecond = 30
+)
+def Xform "Char"
+{
+    def Xform "Ctl"
+    {
+        rel bindings = </Char/Geo>
+        custom double x = 1
+    }
+    def Scope "Geo"
+    {
+    }
+    def Scope "Tail"
+    {
+    }
+}
+"""
+
+
+_AIMER_USDA = """#usda 1.0
+def Xform "Char"
+{
+    def Xform "Rig"
+    {
+        rel aim = </Char/Geo>
+    }
+}
+"""
+
+
+def _Layer(name, usda=""):
+    layer = Sdf.Layer.CreateAnonymous(name)
+    if usda:
+        layer.ImportFromString(usda)
+    return layer
+
+
+def _RecordingApplier(stage, stack):
+    """An Applier that hands every edit it records to a real undo stack."""
+    edits = []
+
+    def record(edit):
+        edits.append(edit)
+        stack.Push(edit)
+
+    return stage_actions.Applier(stage, record=record), edits
+
+
+def _SublayerCapture():
+    root = _Layer("capture_root.usda", _CAPTURE_USDA)
+    near = _Layer("capture_near.usda")
+    root.subLayerPaths.append(near.identifier)
+    root.subLayerOffsets[0] = Sdf.LayerOffset(0, 5)
+    paths = [str(p) for p in root.subLayerPaths]
+    offsets = [(o.scale, o.offset) for o in root.subLayerOffsets]
+    _Check(offsets != [(1.0, 0.0)],
+           "the neighbour is retimed, not identity: %s" % (offsets,))
+    new = _Layer("capture_new.usda")
+    stack = rigExecUndo.UndoStack()
+    applier, edits = _RecordingApplier(Usd.Stage.Open(root), stack)
+    done, failed = applier.apply([{"action": "add_sublayer",
+                                   "asset": new.identifier, "position": 0}])
+    _Check(not failed and len(edits) == 1 and len(edits[0].entries) == 1,
+           "a layer's sublayers are one entry: %s %s" % (done, failed))
+    entry = edits[0].entries[0] if edits and edits[0].entries else None
+    _Check(entry is not None
+           and entry.layer.identifier == root.identifier
+           and entry.specPath == Sdf.Path.absoluteRootPath
+           and isinstance(entry.before,
+                          layerOpinionsModel.SublayerSnapshot),
+           "the entry names the layer whose sublayers changed")
+    _Check([str(p) for p in root.subLayerPaths]
+           == [new.identifier] + paths, "the sublayer is inserted first")
+    stack.Undo()
+    _Check([str(p) for p in root.subLayerPaths] == paths
+           and [(o.scale, o.offset) for o in root.subLayerOffsets] == offsets,
+           "one undo restores the sublayers and their offsets")
+    _Check(root.pseudoRoot.GetInfo("timeCodesPerSecond") == 30,
+           "an unrelated layer field survives the undo")
+    stack.Redo()
+    _Check([str(p) for p in root.subLayerPaths]
+           == [new.identifier] + paths
+           and [(o.scale, o.offset) for o in root.subLayerOffsets]
+           == [(1.0, 0.0), offsets[0]],
+           "one redo inserts it again without resetting the offset")
+
+
+def _RootFieldCapture():
+    root = _Layer("capture_meta_root.usda", _CAPTURE_USDA)
+    target = _Layer("capture_meta_target.usda")
+    root.subLayerPaths.append(target.identifier)
+    stage = Usd.Stage.Open(root)
+    stage.SetEditTarget(Usd.EditTarget(target))
+    stack = rigExecUndo.UndoStack()
+    applier, edits = _RecordingApplier(stage, stack)
+    done, failed = applier.apply([{"action": "set_metadata", "path": "/",
+                                   "key": "metersPerUnit", "value": 0.5}])
+    _Check(not failed and len(edits) == 1,
+           "a layer field is recorded: %s %s" % (done, failed))
+    entry = edits[0].entries[0] if edits and edits[0].entries else None
+    _Check(edits and edits[0].label == "AI Assistant changes",
+           "the edit carries the reply's label: %s" % (edits,))
+    _Check(entry is not None
+           and isinstance(entry.before, layerOpinionsModel.InfoSnapshot)
+           and entry.before.had is False
+           and entry.layer.identifier == target.identifier
+           and entry.specPath == Sdf.Path.absoluteRootPath,
+           "the field is an info snapshot on the edit target, not a prim")
+    _Check(target.pseudoRoot.GetInfo("metersPerUnit") == 0.5
+           and not root.pseudoRoot.HasInfo("metersPerUnit"),
+           "the field lands on the edit target layer")
+    stack.Undo()
+    _Check(not target.pseudoRoot.HasInfo("metersPerUnit"),
+           "one undo leaves a field that was absent before absent")
+    stack.Redo()
+    _Check(target.pseudoRoot.GetInfo("metersPerUnit") == 0.5,
+           "one redo puts the field back")
+
+
+def _TargetSwitchCapture():
+    root = _Layer("capture_switch_root.usda", _CAPTURE_USDA)
+    over = _Layer("capture_switch_over.usda")
+    root.subLayerPaths.append(over.identifier)
+    stage = Usd.Stage.Open(root)
+    stack = rigExecUndo.UndoStack()
+    seen, edits = [], []
+
+    def record(edit):
+        edits.append(edit)
+        stack.Push(edit)
+
+    applier = stage_actions.Applier(stage, record=record,
+                                    select=lambda paths: None,
+                                    effect=seen.append)
+    done, failed = applier.apply([
+        {"action": "set_edit_target", "layer": over.identifier},
+        {"action": "set_attr", "path": "/Char/Ctl", "name": "x",
+         "value": 2.0},
+    ])
+    _Check(not failed and len(done) == 1 and len(edits) == 1,
+           "the switch reports an effect, the edit one entry: %s %s %s"
+           % (done, failed, edits))
+    _Check(len(seen) == 1 and "Edits now go to" in seen[0],
+           "the switch is reported through the effect callback: %s" % seen)
+    entry = edits[0].entries[0] if edits and edits[0].entries else None
+    _Check(entry is not None
+           and entry.layer.identifier == over.identifier,
+           "the entry is bound to the layer the edit went to")
+    _Check(over.GetAttributeAtPath("/Char/Ctl.x").default == 2.0,
+           "the over carries the new value")
+    stack.Undo()
+    _Check(over.GetPrimAtPath("/Char") is None
+           and over.GetAttributeAtPath("/Char/Ctl.x") is None,
+           "one undo leaves no overs behind in the second layer")
+    _Check(root.GetAttributeAtPath("/Char/Ctl.x").default == 1.0,
+           "the first layer still reads its own value")
+    _Check(stage.GetEditTarget().GetLayer().identifier == over.identifier,
+           "the edit target stays where the action put it")
+    stack.Redo()
+    _Check(over.GetAttributeAtPath("/Char/Ctl.x").default == 2.0,
+           "one redo makes the edit again")
+    done, failed = applier.apply([{"action": "set_attr", "path": "/Char/Ctl",
+                                   "name": "x", "value": 2.0}])
+    _Check(done and not failed and len(edits) == 1,
+           "a change that changes nothing records nothing: %s %s"
+           % (done, failed))
+
+
+class _BlindCaptureApplier(stage_actions.Applier):
+    """An Applier whose capture refuses, to check the write is refused too."""
+
+    def _capture_spec(self, scene_path):
+        raise stage_actions.ActionError("the snapshot failed")
+
+
+class _RaisingAfterWriteApplier(stage_actions.Applier):
+    """An Applier whose action raises after it wrote."""
+
+    def do_define_prim(self, action):
+        stage_actions.Applier.do_define_prim(self, action)
+        raise stage_actions.ActionError("stopped after writing")
+
+
+def _RecordFailure():
+    root = _Layer("capture_fail_root.usda", _CAPTURE_USDA)
+    stage = Usd.Stage.Open(root)
+
+    def record(edit):
+        raise RuntimeError("the undo stack is gone")
+
+    applier = stage_actions.Applier(stage, record=record)
+    done, failed = applier.apply([{"action": "set_attr", "path": "/Char/Ctl",
+                                   "name": "x", "value": 3.0}])
+    _Check(done and any("set_attr" in f and "undo" in f for f in failed),
+           "a record that raises is reported, not hidden: %s %s"
+           % (done, failed))
+    _Check(root.GetAttributeAtPath("/Char/Ctl.x").default == 3.0,
+           "a failed record does not roll the change back")
+    blind = _BlindCaptureApplier(stage, record=lambda edit: None)
+    done, failed = blind.apply([{"action": "define_prim",
+                                 "path": "/Char/Rig/New", "type": "Xform"}])
+    _Check(not done and any("define_prim" in f for f in failed),
+           "a capture that fails is reported: %s" % (failed,))
+    _Check(root.GetPrimAtPath("/Char/Rig") is None,
+           "a capture that fails before the write leaves the stage alone")
+
+
+def _WriteBeforeRaise():
+    """A write made before an action raised still needs its undo entry."""
+    root = _Layer("capture_later_root.usda", _CAPTURE_USDA)
+    stack = rigExecUndo.UndoStack()
+    edits = []
+
+    def record(edit):
+        edits.append(edit)
+        stack.Push(edit)
+
+    applier = _RaisingAfterWriteApplier(Usd.Stage.Open(root), record=record)
+    done, failed = applier.apply([{"action": "define_prim",
+                                   "path": "/Char/Rig/Gone",
+                                   "type": "Xform"}])
+    _Check(not done and any("define_prim" in f for f in failed)
+           and len(edits) == 1,
+           "an action that raised still hands over what it wrote: %s %s"
+           % (done, failed))
+    _Check(stack.Undo() and root.GetPrimAtPath("/Char/Rig") is None,
+           "the write made before the raise is undone too")
+
+
+def _MoveCapture():
+    root = _Layer("capture_move_root.usda")
+    owner = _Layer("capture_move_owner.usda", _CAPTURE_USDA)
+    elsewhere = _Layer("capture_move_elsewhere.usda")
+    root.subLayerPaths.append(owner.identifier)
+    root.subLayerPaths.append(elsewhere.identifier)
+    stage = Usd.Stage.Open(root)
+    stage.SetEditTarget(Usd.EditTarget(elsewhere))
+
+    def siblings():
+        return list(owner.GetPrimAtPath("/Char").nameChildren.keys())
+
+    def targets():
+        spec = owner.GetRelationshipAtPath("/Char/Ctl.bindings")
+        return [str(t) for t in spec.GetInfo("targetPaths").explicitItems]
+
+    _Check(siblings() == ["Ctl", "Geo", "Tail"]
+           and targets() == ["/Char/Geo"],
+           "the rig starts as written: %s %s" % (siblings(), targets()))
+    stack = rigExecUndo.UndoStack()
+    applier, edits = _RecordingApplier(stage, stack)
+    done, failed = applier.apply([{"action": "rename_prim",
+                                   "path": "/Char/Geo", "name": "Mesh"}])
+    _Check(not failed and done and len(edits) == 1,
+           "the rename is applied and recorded: %s %s" % (done, failed))
+    _Check(not elsewhere.rootPrims,
+           "a move writes the layer that owns the opinions, not the target")
+    _Check(siblings() == ["Ctl", "Mesh", "Tail"]
+           and targets() == ["/Char/Mesh"],
+           "the spec and the relationship that named it moved: %s %s"
+           % (siblings(), targets()))
+    entries = edits[0].entries if edits else []
+    _Check(entries and all(e.before.layer.identifier == owner.identifier
+                           and e.after.layer.identifier == owner.identifier
+                           for e in entries),
+           "every entry is bound to the owning layer")
+    stack.Undo()
+    _Check(owner.GetPrimAtPath("/Char/Geo") is not None
+           and owner.GetPrimAtPath("/Char/Mesh") is None,
+           "one undo brings back the old name")
+    _Check(siblings() == ["Ctl", "Geo", "Tail"],
+           "undo puts the spec back among its siblings: %s" % (siblings(),))
+    _Check(targets() == ["/Char/Geo"],
+           "undo points the relationship back at the old name")
+    stack.Redo()
+    _Check(owner.GetPrimAtPath("/Char/Mesh") is not None
+           and siblings() == ["Ctl", "Mesh", "Tail"]
+           and targets() == ["/Char/Mesh"],
+           "one redo makes the rename and the repair again")
+
+
+def _NewPropertyCapture():
+    """A new property is authored by the action itself, so its snapshot has
+    to come first: a spec captured after the create cannot be taken away."""
+    root = _Layer("capture_prop_root.usda", _CAPTURE_USDA)
+    stack = rigExecUndo.UndoStack()
+    applier, edits = _RecordingApplier(Usd.Stage.Open(root), stack)
+    done, failed = applier.apply([
+        {"action": "set_relationship", "path": "/Char/Ctl", "name": "links",
+         "targets": ["/Char/Geo"]},
+        {"action": "set_attr", "path": "/Char/Ctl", "name": "z",
+         "type": "double", "value": 3.0},
+    ])
+    _Check(not failed and len(edits) == 2,
+           "each new property is one edit: %s %s" % (done, failed))
+    _Check(root.GetPropertyAtPath("/Char/Ctl.links") is not None
+           and root.GetPropertyAtPath("/Char/Ctl.z") is not None,
+           "both properties are authored")
+    stack.Undo()
+    _Check(root.GetPropertyAtPath("/Char/Ctl.z") is None,
+           "one undo takes the new attribute away")
+    stack.Undo()
+    _Check(root.GetPropertyAtPath("/Char/Ctl.links") is None,
+           "one undo takes the new relationship away")
+    _Check([str(t) for t in root.GetRelationshipAtPath("/Char/Ctl.bindings")
+            .GetInfo("targetPaths").explicitItems] == ["/Char/Geo"],
+           "the relationship that was already there is untouched")
+
+
+def _MoveRepairsAnotherLayer():
+    """A rename retargets the relationships that named the prim, in
+    whatever layer authors them, and one undo puts those back too."""
+    root = _Layer("capture_repair_root.usda")
+    owner = _Layer("capture_repair_owner.usda", _CAPTURE_USDA)
+    reader = _Layer("capture_repair_reader.usda", _AIMER_USDA)
+    elsewhere = _Layer("capture_repair_target.usda")
+    for layer in (owner, reader, elsewhere):
+        root.subLayerPaths.append(layer.identifier)
+    stage = Usd.Stage.Open(root)
+    stage.SetEditTarget(Usd.EditTarget(elsewhere))
+
+    def aimed():
+        return [str(t) for t in reader.GetRelationshipAtPath("/Char/Rig.aim")
+                .GetInfo("targetPaths").explicitItems]
+
+    stack = rigExecUndo.UndoStack()
+    applier, edits = _RecordingApplier(stage, stack)
+    done, failed = applier.apply([{"action": "rename_prim",
+                                   "path": "/Char/Geo", "name": "Mesh"}])
+    _Check(not failed and len(edits) == 1,
+           "the rename stays one edit: %s %s" % (done, failed))
+    _Check(aimed() == ["/Char/Mesh"],
+           "the move retargets the relationship where it is authored: %s"
+           % (aimed(),))
+    entries = edits[0].entries if edits else []
+    _Check(any(e.layer.identifier == reader.identifier
+               and e.specPath == Sdf.Path("/Char/Rig.aim")
+               for e in entries),
+           "the layer the editor did not name is on the undo stack too")
+    stack.Undo()
+    _Check(aimed() == ["/Char/Geo"],
+           "one undo puts the other layer's target back")
+    stack.Redo()
+    _Check(aimed() == ["/Char/Mesh"], "one redo retargets it again")
+
+
+def TestActionCapture():
+    """Every action records the layer it actually wrote, so one host undo
+    step puts that layer back exactly."""
+    _SublayerCapture()
+    _RootFieldCapture()
+    _TargetSwitchCapture()
+    _NewPropertyCapture()
+    _MoveCapture()
+    _MoveRepairsAnotherLayer()
+    _RecordFailure()
+    _WriteBeforeRaise()
+
+
 def TestActionBlocks():
     reply = ("Done.\n\n```usdrig-actions\n"
              '[{"action": "set_active", "path": "/Char/Geo", '
@@ -323,7 +684,8 @@ def main():
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     _ = app
     for test in (TestLooking, TestChangesAreOneUndoStep, TestPosing,
-                 TestRunPython, TestActionBlocks, TestMcpServer):
+                 TestRunPython, TestActionCapture, TestActionBlocks,
+                 TestMcpServer):
         try:
             test()
         except Exception as err:
