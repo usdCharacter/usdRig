@@ -540,6 +540,7 @@ class AiAssistant(QtWidgets.QDockWidget):
         toolbox.settled.connect(self.on_tools_settled)
 
         content = text
+        turn = None
         try:
             if self.include_check.isChecked():
                 selection = context.describe_selection(session)
@@ -562,16 +563,19 @@ class AiAssistant(QtWidgets.QDockWidget):
             if not self._can_start_reply(toolbox):
                 return
 
-            self.messages.append({'role': 'user', 'content': content,
-                                  'shown': text, 'time': time.time()})
-            self._pending_turn = self.messages[-1]
+            turn = {'role': 'user', 'content': content, 'shown': text,
+                    'time': time.time()}
+            self.messages.append(turn)
+            self._pending_turn = turn
             try:
                 self.save_chat()
             except Exception as err:
-                # The Send reservation is this reply's only one: a chat that
-                # cannot be saved leaves no reply in flight.
-                self._abandon_reply()
-                self.show_error('The chat could not be saved: {}'.format(err))
+                # The Send reservation is this reply's only one: a chat
+                # that cannot be saved leaves no reply in flight, and what
+                # another Send took in the meantime keeps what it holds.
+                self._rollback_send(
+                    toolbox, turn,
+                    'The chat could not be saved: {}'.format(err))
                 return
             self.input.clear()
             if not self._can_start_reply(toolbox):
@@ -583,30 +587,70 @@ class AiAssistant(QtWidgets.QDockWidget):
                 provider.label))
             sent = [{'role': m['role'], 'content': m['content']}
                     for m in self.messages if not m.get('canceled')]
-            self.thread = ChatThread(provider, sent, system, model, parent=self,
-                                     tools=toolbox,
-                                     fallback_system=fallback)
+            thread = ChatThread(provider, sent, system, model, parent=self,
+                                tools=toolbox,
+                                fallback_system=fallback)
+            thread.chunk.connect(self.on_chunk)
+            thread.failed.connect(self.on_failed)
+            thread.tools_dropped.connect(self.on_tools_dropped)
+            thread.finished.connect(self.on_finished)
+            try:
+                thread.start()
+            except Exception:
+                # It never ran: hand the worker back with the rest of the
+                # Send instead of keeping a half-started one.
+                thread.setParent(None)
+                raise
+            # The question is with the model from here: whatever becomes of
+            # the reply, this turn stays in the chat.
+            self.thread = thread
             self._pending_turn = None
-            self.thread.chunk.connect(self.on_chunk)
-            self.thread.failed.connect(self.on_failed)
-            self.thread.tools_dropped.connect(self.on_tools_dropped)
-            self.thread.finished.connect(self.on_finished)
-            self.thread.start()
         except Exception as err:
             # From the reservation to the worker starting, everything this
             # Send holds is its own: whatever failed, only this reply is
             # released, and the question stays where the artist can send it
             # again.
             logger.exception('The assistant request could not start')
-            if toolbox is self.toolbox:
-                self._abandon_reply()
-            if not self.input.toPlainText().strip():
-                self.input.setPlainText(text)
-            self.show_error('The request could not start: {}'.format(err))
+            self._rollback_send(
+                toolbox, turn,
+                'The request could not start: {}'.format(err))
             return
         self.render()
         if self._current_reply(toolbox):
             self.update_buttons()
+
+    def _rollback_send(self, toolbox, turn, problem):
+        """Give back one Send that never reached the model: its question,
+        its toolbox, and its worker if it had one. What another Send took
+        in the meantime keeps everything it holds."""
+        owner = toolbox is self.toolbox
+        if turn is not None:
+            for row, message in enumerate(self.messages):
+                if message is turn:
+                    del self.messages[row]
+                    break
+            if self._pending_turn is turn:
+                self._pending_turn = None
+        if owner:
+            if self.thread is not None:
+                self.thread.cancel()
+            else:
+                toolbox.cancel()
+            version = self._detach_reply()
+            self.clear_error()
+            self.status_label.clear()
+            self._dismiss_access()
+            # The question may already be in the saved chat: the rollback
+            # takes it out of storage too.
+            self._keep_chat()
+        else:
+            toolbox.cancel()
+            self._keep_chat()
+        if not self.input.toPlainText().strip():
+            self.input.setPlainText(turn['shown'] if turn else '')
+        self.show_error(problem)
+        if owner:
+            self._refresh_reply_ui(version)
 
     def _current_reply(self, toolbox):
         return (toolbox is not None and toolbox is self.toolbox and

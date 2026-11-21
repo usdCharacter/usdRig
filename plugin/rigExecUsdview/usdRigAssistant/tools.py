@@ -40,6 +40,7 @@ logger = logging.getLogger(host.LOGGER_NAME)
 READ, SHOW, EDIT, RUN, MEMORY = 'read', 'show', 'edit', 'run', 'memory'
 # What the user answers when asked to let the assistant read a folder.
 ONCE, ALWAYS, DENY = 'once', 'always', 'deny'
+_UNGROUPED = object()
 MAX_TEXT = 20000
 MAX_LOG_LINES = 400
 CALL_TIMEOUT = 600
@@ -653,55 +654,92 @@ class Toolbox(QtCore.QObject):
             return None
 
     def _groups_edits(self, stack):
-        """Gathering a reply's edits into one step is only safe when the
-        stack says which edit is newest, so a step still being written can
-        be recognised. The documented host protocol does not require that
-        hook; such a stack gets each change pushed on its own."""
-        return getattr(stack, 'LastEdit', None) is not None
+        """Grouping needs both newest-step identity and redo visibility;
+        the documented host protocol requires neither."""
+        return (callable(getattr(stack, 'LastEdit', None)) and
+                callable(getattr(stack, 'CanRedo', None)))
 
-    def _add_edit(self, stack, edit):
-        """Record one authored edit as soon as its change is made, on the
-        owner thread where every edit is authored. The reply's step grows
-        while it is still the newest thing on the history; when the artist,
-        another reply, or an undo took that place, the next change opens a
-        step of its own, so the history keeps the order the changes were
-        made. A stack that cannot say which edit is newest (see
-        _groups_edits) gets one push per change."""
-        if edit is None or stack is None:
-            return
-        groups = self._groups_edits(stack)
+    def _step_is_open(self, stack, step):
+        """Only the newest step on the current history can be extended."""
+        return stack.LastEdit() is step and not stack.CanRedo()
+
+    def _open_step(self, stack, label):
+        """Reserve a step before authoring; a notice's editor commit must
+        follow it in history. Unsupported hosts receive one push per edit."""
+        if stack is None:
+            return None
+        if not self._groups_edits(stack):
+            return _UNGROUPED
         step = self._history_step
-        if step is not None and (not groups or stack.LastEdit() is not step):
-            step = None
+        if step is not None and not self._step_is_open(stack, step):
+            # An undo took this step back: a change written after that
+            # undo is not part of it, and pushing a step of its own drops
+            # the redo branch. The next change opens a step.
             self._history_step = None
+            step = None
         if step is None:
-            if not groups:
-                try:
-                    stack.Push(edit)
-                except RuntimeError:
-                    logger.warning('Could not add the assistant\'s changes '
-                                   'to the undo stack', exc_info=True)
-                return
-            step = session_module.GroupEdit(edit.label, [])
+            step = session_module.GroupEdit(label, [])
             try:
                 stack.Push(step)
             except RuntimeError:
                 logger.warning('Could not add the assistant\'s changes to '
                                'the undo stack', exc_info=True)
-                return
+                return _UNGROUPED
             self._history_step = step
-        step.edits.append(edit)
+        return step
+
+    def _close_step(self, stack, step, edit):
+        """Fill the reserved step only while it remains newest."""
+        if step is None:
+            return
+        if step is _UNGROUPED:
+            if edit is not None:
+                try:
+                    stack.Push(edit)
+                except RuntimeError:
+                    logger.warning('Could not add the assistant\'s changes '
+                                   'to the undo stack', exc_info=True)
+            return
+        if edit is not None:
+            if self._step_is_open(stack, step):
+                step.edits.append(edit)
+            else:
+                # An undo moved this step behind a redo branch; the change
+                # gets a step of its own after it.
+                self._history_step = None
+                try:
+                    stack.Push(edit)
+                except RuntimeError:
+                    logger.warning('Could not add the assistant\'s changes '
+                                   'to the undo stack', exc_info=True)
+            return
+        if not step.edits:
+            withdraw = getattr(stack, 'Withdraw', None)
+            if withdraw is not None and withdraw(step):
+                self._history_step = None
 
     @contextlib.contextmanager
-    def _authored_edit(self, stack, paths, label):
-        """One change, recorded when it is made rather than when the batch
-        holding it is finished. A change that turns out to touch nothing
-        records no undo."""
+    def _authored_edit(self, stack, paths, label, defer_notice=False):
+        """One change: its history step is opened before the write and
+        filled in when the change is made, so a commit arriving from a
+        notice the write fires keeps the authored order. A change that
+        turns out to touch nothing records no undo."""
         import rigExecUndo
+        step = self._open_step(stack, label)
         scope = rigExecUndo.SpecScope(self.stage, paths, None, label)
-        with scope:
-            yield scope
-        self._add_edit(stack, scope.edit)
+        closed = False
+        try:
+            # A value write can fire a USD notice whose handler authors a
+            # second edit. Seal this edit before dispatching that notice.
+            block = Sdf.ChangeBlock() if defer_notice else contextlib.nullcontext()
+            with block:
+                with scope:
+                    yield scope
+                self._close_step(stack, step, scope.edit)
+                closed = True
+        finally:
+            if not closed:
+                self._close_step(stack, step, scope.edit)
 
     # The tools
     def _all_tools(self):
@@ -1436,12 +1474,16 @@ class Toolbox(QtCore.QObject):
         channels = [c for c, _ in planned]
         warnings = []
         stack = self._undo_stack()
-        with model.EditScope(self.stage, channels, None,
-                             'AI Assistant pose') as scope:
-            plans = [model.PlanWrite(c, v, time_code, mode)
-                     for c, v in planned]
-            warnings = [w for w in model.ApplyPlans(plans) if w]
-        self._add_edit(stack, scope.edit)
+        step = self._open_step(stack, 'AI Assistant pose')
+        scope = model.EditScope(self.stage, channels, None,
+                               'AI Assistant pose')
+        try:
+            with scope:
+                plans = [model.PlanWrite(c, v, time_code, mode)
+                         for c, v in planned]
+                warnings = [w for w in model.ApplyPlans(plans) if w]
+        finally:
+            self._close_step(stack, step, scope.edit)
         when = '' if time_code.IsDefault() else ' at frame {:g}'.format(
             time_code.GetValue())
         for channel, value in planned:
@@ -1473,11 +1515,15 @@ class Toolbox(QtCore.QObject):
         if not channels:
             raise ToolError('No avars to reset')
         stack = self._undo_stack()
-        with model.EditScope(self.stage, channels, None,
-                             'AI Assistant reset') as scope:
-            model.ApplyPlans([model.PlanReset(c, time_code, mode)
-                              for c in channels])
-        self._add_edit(stack, scope.edit)
+        step = self._open_step(stack, 'AI Assistant reset')
+        scope = model.EditScope(self.stage, channels, None,
+                               'AI Assistant reset')
+        try:
+            with scope:
+                model.ApplyPlans([model.PlanReset(c, time_code, mode)
+                                  for c in channels])
+        finally:
+            self._close_step(stack, step, scope.edit)
         self.done.append('Reset {} avars on {}'.format(len(channels),
                                                         _short(paths)))
         return 'Reset {} avars.'.format(len(channels))
@@ -1493,7 +1539,9 @@ class Toolbox(QtCore.QObject):
 
         def guard(change):
             paths = _spec_paths([change], layer) if layer is not None else []
-            return self._authored_edit(stack, paths, 'AI Assistant changes')
+            return self._authored_edit(
+                stack, paths, 'AI Assistant changes',
+                defer_notice=change.get('action') == 'set_attr')
 
         applier = stage_actions.Applier(self.stage, select=self._select,
                                         revalidate=self.is_current,
@@ -1550,6 +1598,9 @@ class Toolbox(QtCore.QObject):
         log = recent_log()
         mark = log.count
         started = time.time()
+        stack = self._undo_stack()
+        step = (self._open_step(stack, 'AI Assistant Python')
+                if before is not None else None)
         printed = io.StringIO()
         result = {}
         with contextlib.redirect_stdout(printed), \
@@ -1562,12 +1613,13 @@ class Toolbox(QtCore.QObject):
                 result['error'] = traceback.format_exc(limit=8)
         if before is not None:
             after = session_module.snapshot(layer)
+            edit = None
             if not session_module.same_content(before, after):
-                stack = self._undo_stack()
-                self._add_edit(stack, session_module.LayerSnapshotEdit(
-                    'AI Assistant Python', layer, before, after))
+                edit = session_module.LayerSnapshotEdit(
+                    'AI Assistant Python', layer, before, after)
                 self.done.append('Changed {} with Python'.format(
                     layer.identifier))
+            self._close_step(stack, step, edit)
         result['seconds'] = round(time.time() - started, 2)
         text = printed.getvalue().strip()
         if text:

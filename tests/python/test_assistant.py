@@ -26,7 +26,7 @@ import rigexec_test_env
 
 rigexec_test_env.SetupPluginTest()
 
-from pxr import Sdf, Usd  # noqa: E402
+from pxr import Sdf, Tf, Usd  # noqa: E402
 from pxr.Usdviewq.qt import QtCore, QtWidgets  # noqa: E402
 
 import rigExecUndo  # noqa: E402
@@ -561,6 +561,82 @@ def TestEditsUndoInTheOrderTheyWereMade():
     _SetRotation(box, 40)
     _Check(not container.stack.CanRedo(),
            "a new write after undo discards the stale redo branch")
+
+
+def TestACommitFromAStageNoticeKeepsTheAuthoredOrder():
+    """A change the editor commits from a USD notice the reply's own write
+    fires is recorded after that write, so the history still undoes in the
+    order the changes were made."""
+    stage = _Stage()
+    container = _Container()
+    box, _api = _Toolbox(stage, container, can_edit=True)
+    channel = stage.GetAttributeAtPath('/Char/Ctl.avars:rx')
+    _Check(channel.Get() == 0, 'the notice test starts at zero')
+    made = []
+
+    def artist_releases_the_slider(notice, sender):
+        # The editor commits the artist's slider release from the notice
+        # the reply's change fires, before that change is recorded.
+        if made or channel.Get() != 11:
+            return
+        made.append(channel.Get())
+        container.stack.Push(_ArtistEdit(channel, 23))
+        channel.Set(23)
+
+    listener = Tf.Notice.Register(Usd.Notice.ObjectsChanged,
+                                  artist_releases_the_slider, stage)
+    text, failed = box.call("change_stage", {"changes": [
+        {"action": "set_attr", "path": "/Char/Ctl", "name": "avars:rx",
+         "value": 11}]})
+    listener.Revoke()
+    _Check(not failed and made == [11] and channel.Get() == 23,
+           "the artist commit lands while the reply writes: %s" % text)
+    _Check(_UndoState(container.stack) == (True, "Artist rotation", False, ""),
+           "the reply's step is on the history before the artist commit")
+    container.stack.Undo()
+    _Check(channel.Get() == 11 and
+           container.stack.UndoText() == "AI Assistant changes",
+           "the first undo takes back the change made last")
+    container.stack.Undo()
+    _Check(channel.Get() == 0 and not container.stack.CanUndo(),
+           "the next undo takes back the change that began first")
+    for wanted in (11, 23):
+        _Check(container.stack.Redo() and channel.Get() == wanted,
+               "redo puts the changes back in the order they were made")
+    _Check(not container.stack.CanRedo(), "redo stops at the newest change")
+
+
+def TestAWriteAfterAnUndoDoesNotGrowAnOlderStep():
+    """An undo that took a later change off the history closes that step to
+    the reply that wrote before it: the next change is a step of its own
+    and discards what the undo left to be redone."""
+    stage = _Stage()
+    container = _Container()
+    rx = stage.GetAttributeAtPath("/Char/Ctl.avars:rx")
+    box, _api = _Toolbox(stage, container, can_edit=True)
+    _SetRotation(box, 11)
+    container.stack.Push(_ArtistEdit(rx, 23))
+    rx.Set(23)
+    _Check(_UndoState(container.stack) == (True, "Artist rotation", False, ""),
+           "the artist change is the newest step")
+    container.stack.Undo()
+    _Check(rx.Get() == 11 and
+           _UndoState(container.stack) == (True, "AI Assistant changes",
+                                          True, "Artist rotation"),
+           "undoing the artist change leaves it waiting to be redone")
+    text, failed = _SetRotation(box, 31)
+    _Check(not failed and rx.Get() == 31,
+           "the same reply writes again: %s" % text)
+    _Check(not container.stack.CanRedo(),
+           "the new write discards the redo branch the undo left")
+    _Check(_UndoState(container.stack) == (True, "AI Assistant changes",
+                                          False, ""),
+           "the new write is a step of its own, not a late addition")
+    container.stack.Undo()
+    _Check(rx.Get() == 11, "the first undo takes back the newest change")
+    container.stack.Undo()
+    _Check(rx.Get() == 0 and not container.stack.CanUndo(),
+           "the older change is still undone on its own")
 
 
 class _ProtocolStack(object):
@@ -1340,6 +1416,102 @@ def TestSendRollsBackWhenTheRequestCannotStart():
                'the first retry starts exactly one request')
 
 
+def TestSendRollsBackWhenTheWorkerCannotStart():
+    stage = _Stage()
+    api, container = _Api(stage), _Container()
+    again = _LocalReply('plain', gated=False)
+    with _ProviderPanel(api, container, {'start me': again}) as ui:
+        attempts = []
+
+        def failing_start(self):
+            attempts.append(1)
+            raise RuntimeError('no threads left')
+
+        with patch.object(panel.ChatThread, 'start', failing_start):
+            ui.input.setPlainText('start me')
+            ui.send()
+        _Check(len(attempts) == 1 and not ui.busy and ui.thread is None and
+               not ui._pending_turn and not ui._settling and ui.messages == [] and
+               ui.input.toPlainText() == 'start me' and
+               'could not start' in ui.status_label.text() and
+               bool(ui.status_label.property('error')) and
+               ui.send_button.text() == 'Send',
+               'a worker that cannot start leaves no reply in flight')
+        QtWidgets.QApplication.processEvents()
+        _Check(not ui.findChildren(panel.ChatThread),
+               'the worker that never started is not kept')
+        saved = ui.chat_store.load(ui.chat_id)
+        _Check(saved is None or
+               all(message['content'] != 'start me'
+                   for message in saved['messages']),
+               'the turn that never reached the model is not in the chat')
+        ui.send('start me')
+        _ProviderFinished(ui)
+        _Check(again.sent == ['start me'],
+               'the first retry starts exactly one request')
+
+
+def TestSendRollsBackAfterAnotherSendTookThePanel():
+    """A chat that cannot be saved, for a Send another Send has already
+    taken the place of, gives back only its own question: the reply now in
+    flight keeps what it holds."""
+    stage = _Stage()
+    api, container = _Api(stage), _Container()
+    lost = _LocalReply('plain', gated=True)
+    instead = _LocalReply('plain', gated=True)
+    with _ProviderPanel(api, container,
+                        {'hello': lost, 'instead': instead}) as ui:
+        store = ui.chat_store
+        write = store.save
+        moved = []
+
+        def save_that_moves_the_panel(record):
+            if not moved:
+                # The artist stops this Send and sends another question
+                # while the first Send is still writing its chat.
+                moved.append(1)
+                ui.stop()
+                ui.send('instead')
+                raise OSError('the disk is full')
+            write(record)
+
+        with patch.object(store, 'save', save_that_moves_the_panel):
+            ui.input.setPlainText('hello')
+            ui.send()
+        _Check(ui.busy and ui.toolbox is not None and ui.thread is not None and
+               ui._pending_turn is None and not ui.left_threads and
+               ui.findChildren(panel.ChatThread) == [ui.thread] and
+               [m.get('shown', m['content']) for m in ui.messages] ==
+               ['instead'] and ui.send_button.text() == 'Stop',
+               'the Send that took the panel is left alone')
+        _Check('could not be saved' in ui.status_label.text() and
+               bool(ui.status_label.property('error')) and
+               ui.input.toPlainText() == 'hello',
+               'the failed Send says so and keeps its question to send again')
+        saved = ui.chat_store.load(ui.chat_id)
+        _Check(saved is not None and
+               [m['content'] for m in saved['messages']] == ['instead'],
+               'reloaded storage contains only the replacement question')
+        instead.release.set()
+        _ProviderFinished(ui)
+        _Check(lost.sent is None and instead.sent == ['instead'],
+               'the rolled back question never reached the model, and the '
+               'other Send asked once')
+        saved = ui.chat_store.load(ui.chat_id)
+        _Check(saved is not None and
+               all(message['content'] != 'hello'
+                   for message in saved['messages']),
+               'the rolled back turn is not kept in the saved chat')
+        _Check([m.get('shown', m['content']) for m in ui.messages] ==
+               ['instead', _PLAIN_TEXT],
+               'the reply in flight is recorded once')
+        ui.send('hello')
+        lost.release.set()
+        _ProviderFinished(ui)
+        _Check(len(lost.passes) == 1 and lost.sent[-1] == 'hello',
+               'the failed question reaches the provider exactly once on retry')
+
+
 def TestMcpEditLosesConsentBeforeDispatch():
     """An MCP tools/call queued while Edit stage is on is refused, and
     authors nothing, when consent goes off before the owner thread runs it."""
@@ -1456,6 +1628,8 @@ def main():
                  TestToolboxGenerationAndRetirement,
                  TestArtistCommitStartsANewStep,
                  TestEditsUndoInTheOrderTheyWereMade,
+                 TestACommitFromAStageNoticeKeepsTheAuthoredOrder,
+                 TestAWriteAfterAnUndoDoesNotGrowAnOlderStep,
                  TestHostUndoStackWithoutLastEdit,
                  TestStageReplacementMidBatchStopsTheRest,
                  TestSharedLayerReplacementMidBatchStopsTheRest,
@@ -1472,6 +1646,8 @@ def main():
                  TestReplyWaitsForItsQueuedCall,
                  TestSendRollsBackWhenTheChatCannotBeSaved,
                  TestSendRollsBackWhenTheRequestCannotStart,
+                 TestSendRollsBackWhenTheWorkerCannotStart,
+                 TestSendRollsBackAfterAnotherSendTookThePanel,
                  TestMcpEditLosesConsentBeforeDispatch):
         if app is None and test is not TestToolboxNoStageWithoutApp:
             app = QtWidgets.QApplication([])

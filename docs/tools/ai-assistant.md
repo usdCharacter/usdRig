@@ -51,12 +51,13 @@ Neither **Stop** nor replacing the stage rolls back changes already made or
 forcibly interrupts a tool that has started. When the changes can be recorded
 on the RigExec undo stack, they go on it as labelled ++ctrl+z++ steps ("AI
 Assistant changes", "AI Assistant pose", "AI Assistant Python") in the order
-the changes were made. A reply that changes the stage in more than one go, or
-that goes on after the editor committed something of its own, leaves more than
-one step; Undo and Redo move through them in that order, and a new Assistant
-write after an Undo discards what that Undo had taken back. Python changes can
-be undone when they only affect the edit target. Undo entries from the old
-reply are not added to the replacement stage's stack.
+the changes were made. Uninterrupted edits from one reply share a step when
+the host supports grouping. If an artist or another reply commits an edit
+between them, the next Assistant edit starts a new step so Undo and Redo follow
+the order of the writes. A new Assistant write after an Undo discards the redo
+branch. Hosts without grouping support receive one undo step per edit. Python
+changes can be undone when they only affect the edit target. Undo entries
+from the old reply are not added to the replacement stage's stack.
 
 ## Signing in
 
