@@ -1,6 +1,7 @@
 // Runtime aggregate solvers: FK, two-bone IK, spline IK, ribbon, and twist.
 
 #include "rigExecSchema/schemaNames.h"
+#include "poseEvalHost.h"
 #include "poseInternal.h"
 #include <algorithm>
 #include <limits>
@@ -1946,17 +1947,24 @@ _RrRunSolverCommitStep(RrProgram *program, size_t step, std::string *error)
     if (wireCommit.split) {
         return true;
     }
-    if (!commit.abandoned) {
-        if (!_RrComputeCommitDeltas(program, step, wireCommit, &commit,
-                                    error)) {
-            return false;
-        }
-        if (!_RrStageCommitPairs(program, step, wireCommit, &commit, 0,
-                                 wireCommit.propagate.size(), error)) {
-            return false;
-        }
+    RrPoseHost host(program, step);
+    const eval::StepResult result =
+        eval::RunFinishCommit(host, size_t(wire.object));
+    if (result.outcome == eval::Outcome::Applied) {
+        return true;
     }
-    return _RrFinishCommit(program, step, size_t(wire.object), error);
+    if (error) {
+        const char *what = " names no commit";
+        if (result.detail == eval::pose_detail::kPoseDetailNoChunk) {
+            what = " names no chunk";
+        } else if (result.detail == eval::pose_detail::kPoseDetailNoSlot) {
+            what = " names no slot";
+        } else if (result.detail == eval::pose_detail::kPoseDetailNoVersion) {
+            what = " names no version";
+        }
+        *error = _RrStepHead(program, step) + what;
+    }
+    return false;
 }
 
 } // namespace runtimePoseDetail
