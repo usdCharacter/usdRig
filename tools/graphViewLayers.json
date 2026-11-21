@@ -125,6 +125,9 @@
     },
     "plugin/usdNoodles/graphview/interaction_events.py": {
       "layer": "interaction"
+    },
+    "plugin/usdNoodles/graphview/frame.py": {
+      "layer": "render"
     }
   },
   "line_ceilings": {
