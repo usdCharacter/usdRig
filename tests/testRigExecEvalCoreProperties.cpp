@@ -26,6 +26,7 @@
 // frames 1060 and 1064), a synthetic classicLinear skin at elementSize
 // 10, and a synthetic matrix mover under dense and sparse envelopes.
 #include "rigExec/bakedProgram.h"
+#include "rigExec/bakedProgramImpl.h"
 #include "rigExec/rigEvaluator.h"
 #include "rigExecExampleFixtures.h"
 
@@ -168,7 +169,8 @@ _Fixture(const char *stage)
 
 // The moved point arrays of a pose, deep-copied in path order: the bytes
 // a retained snapshot must keep while later evaluations run.
-using _PointBytes = std::vector<std::pair<std::string, VtVec3fArray>>;
+using _PointBytes =
+    std::vector<std::pair<std::string, std::vector<unsigned char>>>;
 
 static _PointBytes
 _PosePointBytes(const RigExecRigPose &pose)
@@ -176,8 +178,14 @@ _PosePointBytes(const RigExecRigPose &pose)
     _PointBytes out;
     for (const auto &[path, value] : pose.movedProperties) {
         if (value.IsHolding<VtVec3fArray>()) {
-            out.push_back(
-                {path.GetString(), value.UncheckedGet<VtVec3fArray>()});
+            const auto &points = value.UncheckedGet<VtVec3fArray>();
+            auto &bytes =
+                out.emplace_back(path.GetString(), std::vector<unsigned char>())
+                    .second;
+            bytes.resize(points.size() * sizeof(GfVec3f));
+            if (!bytes.empty()) {
+                std::memcpy(bytes.data(), points.cdata(), bytes.size());
+            }
         }
     }
     return out;
@@ -201,21 +209,7 @@ _SamePoseBytes(const RigExecRigPose &a, const RigExecRigPose &b)
             return false;
         }
     }
-    const _PointBytes left = _PosePointBytes(a);
-    const _PointBytes right = _PosePointBytes(b);
-    if (left.size() != right.size()) {
-        return false;
-    }
-    for (size_t i = 0; i < left.size(); ++i) {
-        if (left[i].first != right[i].first ||
-            left[i].second.size() != right[i].second.size() ||
-            (!left[i].second.empty() &&
-             std::memcmp(left[i].second.cdata(), right[i].second.cdata(),
-                         left[i].second.size() * sizeof(GfVec3f)) != 0)) {
-            return false;
-        }
-    }
-    return true;
+    return _PosePointBytes(a) == _PosePointBytes(b);
 }
 
 static bool
@@ -289,12 +283,19 @@ _BakeAndOpen(const _Case &testCase, RigExecTestPlayer *player,
     return player->Open(bytes, testCase.stage, error);
 }
 
+struct _RunWitness {
+    size_t nativeGroups = 0;
+    size_t nativeClusters = 0;
+    size_t runtimeClusters = 0;
+    size_t sparseEntries = 0;
+};
+
 // Native pose and runtime points of every frame, each front end fresh:
 // the cross-front-end baseline every other property compares against.
 static bool
 _RunBoth(const _Case &testCase, std::vector<RigExecRigPose> *poses,
          std::vector<std::vector<RigExecRuntimePoints>> *played,
-         std::string *error)
+         std::string *error, _RunWitness *witness = nullptr)
 {
     RigExecTestPlayer player;
     if (!_BakeAndOpen(testCase, &player, error)) {
@@ -314,6 +315,26 @@ _RunBoth(const _Case &testCase, std::vector<RigExecRigPose> *poses,
         if (!RigExecCompareRuntimeOutputs(pose, player.Reader(), &diffs)) {
             *error = diffs.empty() ? "front ends differ" : diffs.front();
             return false;
+        }
+        if (witness && poses->empty()) {
+            const auto *program = evaluator.GetBakedProgram();
+            if (!program) {
+                *error = "no baked program for the execution witness";
+                return false;
+            }
+            const auto &graph = program->GetStepGraph();
+            witness->nativeClusters = graph.lastClosedClusters;
+            witness->runtimeClusters =
+                player.Reader().GetClosedClusterCountForTesting();
+            for (const auto &chain : graph.chains) {
+                witness->nativeGroups += chain.baseGroups.size();
+                for (const auto &revision : chain.revisions) {
+                    for (const auto &group : revision.groups) {
+                        witness->sparseEntries +=
+                            group.walk.computed + group.walk.reused;
+                    }
+                }
+            }
         }
         poses->push_back(std::move(pose));
         played->push_back(player.Reader().GetPoints());
@@ -345,8 +366,11 @@ _CheckRunBoth(const _Case &testCase)
 // each repartition the same rig; neither front end may publish a
 // different byte for any of them.
 static void
-_CheckPartitioning(const _Case &testCase)
+_CheckPartitioning(const _Case &testCase, bool checkWitness)
 {
+    const _ScopedEnv chunkTarget("RIGEXEC_BAKED_CHUNK_VERTS", "1024");
+    const _ScopedEnv grain("RIGEXEC_BAKED_GRAIN_US", "1000");
+    const _ScopedEnv schedule("RIGEXEC_BAKED_SCHEDULE", "parallel");
     struct Config {
         const char *label;
         std::vector<std::pair<const char *, const char *>> knobs;
@@ -361,7 +385,9 @@ _CheckPartitioning(const _Case &testCase)
     };
     std::vector<RigExecRigPose> baselinePoses;
     std::vector<std::vector<RigExecRuntimePoints>> baselinePlayed;
-    for (const Config &config : configs) {
+    _RunWitness baseline;
+    for (size_t i = 0; i < configs.size(); ++i) {
+        const Config &config = configs[i];
         std::vector<std::unique_ptr<_ScopedEnv>> scoped;
         for (const auto &[name, value] : config.knobs) {
             scoped.push_back(std::make_unique<_ScopedEnv>(name, value));
@@ -369,7 +395,9 @@ _CheckPartitioning(const _Case &testCase)
         std::vector<RigExecRigPose> poses;
         std::vector<std::vector<RigExecRuntimePoints>> played;
         std::string error;
-        const bool ok = _RunBoth(testCase, &poses, &played, &error);
+        _RunWitness witness;
+        const bool ok = _RunBoth(testCase, &poses, &played, &error,
+                                 checkWitness ? &witness : nullptr);
         if (!ok) {
             std::printf("%s partitioning %s: %s\n", testCase.name.c_str(),
                         config.label, error.c_str());
@@ -381,7 +409,16 @@ _CheckPartitioning(const _Case &testCase)
         if (baselinePoses.empty()) {
             baselinePoses = poses;
             baselinePlayed = played;
+            baseline = witness;
             continue;
+        }
+        if (checkWitness && i == 1) {
+            CHECK(baseline.nativeGroups == 0);
+            CHECK(witness.nativeGroups > 1);
+        }
+        if (checkWitness && i == 2) {
+            CHECK(witness.nativeClusters > baseline.nativeClusters);
+            CHECK(witness.runtimeClusters > baseline.runtimeClusters);
         }
         bool same = poses.size() == baselinePoses.size() &&
                     played.size() == baselinePlayed.size();
@@ -518,8 +555,10 @@ _CheckRetainedAfterEdit(const _Case &testCase)
 
     player.ReleaseAll();
     CHECK(player.Play(frame, &error));
+    CHECK(_RetainedMatchesDeep(retainedPoints, retainedDeep));
     CHECK(_SameRuntimePoints(retainedPoints, player.Reader().GetPoints()));
     const RigExecRigPose released = evaluator.Evaluate(UsdTimeCode(frame));
+    CHECK(_PosePointBytes(retainedPose) == retainedBytes);
     CHECK(_SamePoseBytes(retainedPose, released));
     std::printf("%s: retained snapshots survive the drag, release "
                 "republishes them\n",
@@ -555,10 +594,10 @@ _CheckSparseSampling(const _Case &testCase)
 }
 
 static void
-_CheckCase(const _Case &testCase)
+_CheckCase(const _Case &testCase, bool checkPartitionWitness = false)
 {
     _CheckRunBoth(testCase);
-    _CheckPartitioning(testCase);
+    _CheckPartitioning(testCase, checkPartitionWitness);
     _CheckSparseSampling(testCase);
     _CheckMemoRecompute(testCase);
     _CheckRetainedAfterEdit(testCase);
@@ -719,18 +758,25 @@ _CheckDenseSparseEquivalence()
                      SdfPath("/Asset/Rig/Controls/Moving.avars:tx")};
     std::vector<RigExecRigPose> densePoses, sparsePoses;
     std::vector<std::vector<RigExecRuntimePoints>> densePlayed, sparsePlayed;
+    const _ScopedEnv chunkTarget("RIGEXEC_BAKED_CHUNK_VERTS", "16");
+    const _ScopedEnv groupTarget("RIGEXEC_BAKED_GROUP_VERTS", "8");
+    _RunWitness denseWitness, sparseWitness;
     std::string error;
-    const bool denseOk = _RunBoth(denseCase, &densePoses, &densePlayed, &error);
+    const bool denseOk =
+        _RunBoth(denseCase, &densePoses, &densePlayed, &error, &denseWitness);
     if (!denseOk) {
         std::printf("%s dense: %s\n", name, error.c_str());
     }
     CHECK(denseOk);
-    const bool sparseOk =
-        _RunBoth(sparseCase, &sparsePoses, &sparsePlayed, &error);
+    const bool sparseOk = _RunBoth(sparseCase, &sparsePoses, &sparsePlayed,
+                                   &error, &sparseWitness);
     if (!sparseOk) {
         std::printf("%s sparse: %s\n", name, error.c_str());
     }
     CHECK(sparseOk);
+    CHECK(sparseWitness.nativeGroups > 1);
+    CHECK(sparseWitness.sparseEntries == 6);
+    CHECK(denseWitness.sparseEntries == 0);
     bool same = densePoses.size() == sparsePoses.size() &&
                 densePlayed.size() == sparsePlayed.size();
     for (size_t f = 0; same && f < densePoses.size(); ++f) {
@@ -848,7 +894,7 @@ main(int argc, char **argv)
                        SdfPath("/Asset/Rig"),
                        {1.0, 2.0, 3.0},
                        SdfPath("/Asset/Rig/Joints/J1.avars:ty")};
-        _CheckCase(testCase);
+        _CheckCase(testCase, true);
     }
 
     _CheckDenseSparseEquivalence();
