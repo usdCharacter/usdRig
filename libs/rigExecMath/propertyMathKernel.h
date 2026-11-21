@@ -20,7 +20,14 @@ namespace rigExec {
 
 /// The operation a property mover performs (schema `rigExec:operation`).
 enum class RigExecPropertyOp {
-    Add, Multiply, Clamp, Remap, Blend, Curve, Quantize, Path
+    Add,
+    Multiply,
+    Clamp,
+    Remap,
+    Blend,
+    Curve,
+    Quantize,
+    Path
 };
 
 /// The authored inputs a float or vec3f property mover carries, with the
@@ -31,8 +38,7 @@ enum class RigExecPropertyOp {
 /// path reads `value` as the distance its curve starts at. A mover authors
 /// all of them and the operation chooses. Per-component for the vec3f variant, which is why the schema
 /// declares float3 rather than float bounds.
-template <class T, class Key>
-struct RigExecPropertyMathKernelParams {
+template <class T, class Key> struct RigExecPropertyMathKernelParams {
     RigExecPropertyOp op = RigExecPropertyOp::Add;
     T value{};
     T min{};
@@ -141,8 +147,8 @@ RigExecEvaluateHermiteKeysKernel(const Key *keys, const Key *tangents,
     const double h10 = t3 - 2.0 * t2 + t;
     const double h01 = -2.0 * t3 + 3.0 * t2;
     const double h11 = t3 - t2;
-    return float(h00 * a[1] + h10 * h * tangents[hi - 1][1] +
-                 h01 * b[1] + h11 * h * tangents[hi][0]);
+    return float(h00 * a[1] + h10 * h * tangents[hi - 1][1] + h01 * b[1] +
+                 h11 * h * tangents[hi][0]);
 }
 
 /// True when the keys are finite and strictly increasing in input.
@@ -263,6 +269,30 @@ RigExecApplyVec3fMathKernel(
     return mixed;
 }
 
+/// `a * b` for a 4x4 matrix, each element summed left to right as
+/// GfMatrix4d::operator*= writes it.
+///
+/// The kernel multiplies here rather than through the type's own operator*:
+/// GfMatrix4d's is compiled into the OpenUSD library with that build's
+/// floating-point flags, and a GCC build for aarch64 contracts it into fused
+/// multiply-adds. This header is compiled with -ffp-contract=off, so the Gf
+/// entry point and a plain-type instantiation get the same bits on every host.
+template <class M4>
+M4
+RigExecMultiplyMatrixKernel(const M4 &a, const M4 &b)
+{
+    // Every element is overwritten; the copy only avoids requiring a default
+    // constructor of M4.
+    M4 out = a;
+    for (size_t r = 0; r < 4; ++r) {
+        for (size_t c = 0; c < 4; ++c) {
+            out[r][c] = a[r][0] * b[0][c] + a[r][1] * b[1][c] +
+                        a[r][2] * b[2][c] + a[r][3] * b[3][c];
+        }
+    }
+    return out;
+}
+
 /// The matrix4d peer: multiply is `base * value` (value applied after base
 /// in the row-vector convention), blend is `value`, and the mix is
 /// per element with the weight widened to double. False for any other
@@ -281,17 +311,18 @@ RigExecApplyMatrixMathKernel(const M4 &base, RigExecPropertyOp op,
         // USD, so the evaluator validates against this return.
         return false;
     }
-    const M4 operated =
-        op == RigExecPropertyOp::Multiply ? M4(base * value) : value;
+    const M4 operated = op == RigExecPropertyOp::Multiply
+                            ? RigExecMultiplyMatrixKernel(base, value)
+                            : value;
     for (size_t r = 0; r < 4; ++r) {
         for (size_t c = 0; c < 4; ++c) {
-            (*result)[r][c] = RigExecBlendEnvelope(
-                base[r][c], operated[r][c], double(weight));
+            (*result)[r][c] = RigExecBlendEnvelope(base[r][c], operated[r][c],
+                                                   double(weight));
         }
     }
     return true;
 }
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_MATH_PROPERTY_MATH_KERNEL_H
+#endif // RIGEXEC_MATH_PROPERTY_MATH_KERNEL_H
