@@ -772,13 +772,26 @@ jobs:
 
       # CMakeLists.txt keeps cmake_minimum_required at 3.26; this last step is
       # the deliberate check of that declared minimum, isolated in a throwaway
-      # venv so the steps above still use the runner's own cmake.
+      # venv so the steps above still use the runner's own cmake. The floor
+      # tool configures and generates the real root, builds the manifest
+      # producer, and runs both manifest checks from that tree — the same
+      # configure/generate that newer cmake performed above.
       - name: Staging test at the declared minimum CMake
         run: |
           python3 -m venv /tmp/cm326
           /tmp/cm326/bin/pip install --disable-pip-version-check "cmake==3.26.*"
           /tmp/cm326/bin/cmake --version
-          /tmp/cm326/bin/cmake -DSOURCE_DIR="$GITHUB_WORKSPACE" -DBINARY_DIR="$GITHUB_WORKSPACE/build" -DSCRATCH_DIR="$GITHUB_WORKSPACE/install-staging-326" -DINSTALL_DATADIR=share/rigExec -P tests/checkInstallStaging.cmake
+          /tmp/cm326/bin/cmake -S . -B build-326 -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSD_INSTALL_DIR="${GITHUB_WORKSPACE}/usd-install" \
+            -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/usd-install" \
+            -DRIGEXEC_BUILD_TESTS=ON \
+            -DRIGEXEC_BUILD_PYTHON=OFF \
+            -DRIGEXEC_BUILD_USDNOODLES=OFF
+          /tmp/cm326/bin/cmake --build build-326 --target rigexecSdkManifests
+          export USD="${GITHUB_WORKSPACE}/usd-install"
+          source bin/_env.sh
+          /tmp/cm326/bin/ctest --test-dir build-326 -R 'testRigExec(InstallStaging|ExactFpFragment)' --output-on-failure
 
 
   platform-cpp:
