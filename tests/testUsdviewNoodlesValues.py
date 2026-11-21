@@ -54,7 +54,7 @@ def testUsdviewInputFunction(appController):
     import sys
     from unittest.mock import patch
 
-    from pxr import Sdf, Tf, Usd
+    from pxr import Gf, Sdf, Tf, Usd
     from pxr.Usdviewq.qt import QtCore, QtGui, QtWidgets
 
     app = QtWidgets.QApplication.instance()
@@ -671,38 +671,39 @@ def testUsdviewInputFunction(appController):
     _Check(plainAttr.Get() == before and not undo.canUndo(),
            "refused write changed the value or pushed undo")
 
-    def startAbandonedDrag(phase):
-        point = cellPoint(valuesNode, "plain")
-        before = plainAttr.Get()
+    def startAbandonedDrag(attr, phase):
+        point = cellPoint(valuesNode, attr.GetName())
+        before = attr.Get()
         press(point)
         move(offset(point, 100.0))
-        _Check(view._mungActive and plainAttr.Get() != before,
+        _Check(view._mungActive and attr.Get() != before,
                "%s: drag did not preview" % phase)
         probeDelivery(valuesPrim, valuesNode, delivered=False, phase=phase)
         return point, before
 
-    # Keep the target path on the replacement stage to detect stale writes
-    # to either stage.
+    # usdview can start on the session layer, so use an untouched cell.
+    switchAttr = valuesPrim.GetAttribute("tint")
     replacement = Usd.Stage.Open(stage.Flatten())
-    replacementAttr = replacement.GetPrimAtPath(VALUES).GetAttribute("plain")
-    _Check(replacementAttr.Set(17.0), "failed to seed the replacement value")
+    replacementAttr = replacement.GetAttributeAtPath(switchAttr.GetPath())
+    replacementValue = Gf.Vec3f(0.25, 0.5, 0.75)
+    _Check(replacementAttr.Set(replacementValue), "failed to seed the replacement value")
     originalTarget = stage.GetEditTarget()
     session = stage.GetSessionLayer()
     stage.SetEditTarget(session)
-    _Check(not session.GetAttributeAtPath(plainAttr.GetPath()),
+    _Check(not session.GetAttributeAtPath(switchAttr.GetPath()),
            "preview cancellation requires an initially unauthored session value")
-    point, original = startAbandonedDrag("before switch")
+    point, original = startAbandonedDrag(switchAttr, "before switch")
     view.loadStage(replacement)
     checkMungCleared("switch")
     replacementUndo = view._undoHistory
     _Check(view.nodeGraph.getStage() == replacement and replacementUndo is not undo,
            "switch did not install a new stage and history")
     move(offset(point, 150.0))
-    _Check(plainAttr.Get() == original and replacementAttr.Get() == 17.0,
+    _Check(switchAttr.Get() == original and replacementAttr.Get() == replacementValue,
            "switch or the next move wrote to a stage")
     _Check(not undo.canUndo() and not replacementUndo.canUndo(),
            "abandoning the drag at switch pushed undo")
-    spec = session.GetAttributeAtPath(plainAttr.GetPath())
+    spec = session.GetAttributeAtPath(switchAttr.GetPath())
     _Check(not spec or not spec.HasInfo("default"), "switch left a session default")
     stage.SetEditTarget(originalTarget)
     probeDelivery(valuesPrim, valuesNode, delivered=False, phase="old sender after switch")
@@ -714,17 +715,17 @@ def testUsdviewInputFunction(appController):
     settle()
     valuesNode = view.nodes[VALUES]
     probeDelivery(valuesPrim, valuesNode, delivered=True, phase="after switching back")
-    point = cellPoint(valuesNode, "plain")
+    point = cellPoint(valuesNode, "tint")
     press(point)
     release(point)
-    _Check(view._valueEditTarget == (VALUES, "plain", 0),
+    _Check(view._valueEditTarget == (VALUES, "tint", 0),
            "first click on the reloaded graph did not open a fresh editor")
     key(QtCore.Qt.Key_Escape)
-    _Check(plainAttr.Get() == original and not undo.canUndo(),
+    _Check(switchAttr.Get() == original and not undo.canUndo(),
            "first click after switching authored a value")
     print("RIGEXEC_NOODLES_VALUES: mid-drag stage switch verified")
 
-    point, original = startAbandonedDrag("before dock close")
+    point, original = startAbandonedDrag(plainAttr, "before dock close")
     editor.close()
     _pump(app, 10)
     checkMungCleared("dock close")
