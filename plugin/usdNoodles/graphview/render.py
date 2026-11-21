@@ -612,12 +612,7 @@ def paintGL(view):
 
     view.makeCurrent()
 
-    # Verify the GL context is actually current before issuing GL calls.
-    # When docked alongside another QOpenGLWidget (e.g. usdview's Hydra
-    # viewport), makeCurrent() can silently fail if the context was lost
-    # or the surface is not yet valid.
-    ctx = view.context()
-    if ctx is None or not ctx.isValid():
+    if not view._hasCurrentRenderContext():
         return
 
     # Detect stale GL context (e.g. after usdview "Reopen Stage").
@@ -631,6 +626,7 @@ def paintGL(view):
                 return
 
     try:
+        view._clearPendingRenderCache()
         _paintGLInner(view)
     except GLError as e:
         Tf.Warn(f"GL error during paintGL: {e}")
@@ -809,25 +805,28 @@ def _screenSpaceProjectionMatrix(view):
     return view._screenProjCache
 
 
+def _hasCurrentRenderContext(view):
+    ctx = view.context()
+    return ctx is not None and ctx.isValid() and ctx == type(ctx).currentContext()
+
+
+def _clearPendingRenderCache(view):
+    if (view._renderCacheClearPending and not view._deferRenderCacheClear
+            and view._hasCurrentRenderContext()):
+        view._renderCacheClearPending = False
+        view._nodeRenderManager.clearCache()
+
+
 def _clearRenderCache(view):
-    """Clear the node render manager cache within this widget's GL context.
-
-    makeCurrent()/doneCurrent() ensures that glDeleteBuffers/glDeleteVertexArrays
-    operate on this widget's OpenGL context, not the stageView's.  Without the
-    context switch the 3D viewport's render state may be corrupted.
-
-    When view._deferRenderCacheClear is True (set by _onStageReplaced),
-    only flag the pending clear; _finishStageReload will run the actual
-    glDelete* calls after the next event-loop tick.  This avoids issuing
-    GL deletes during the NVIDIA Windows non-functional window while the
-    stageView's renderer is mid-teardown.
-    """
-    if view._deferRenderCacheClear:
-        view._renderCacheClearPending = True
-        return
-    view.makeCurrent()
-    view._nodeRenderManager.clearCache()
-    view.doneCurrent()
+    if not view._deferRenderCacheClear and view.initialized and not view._renderCacheClearPending:
+        view.makeCurrent()
+        if view._hasCurrentRenderContext():
+            try:
+                view._nodeRenderManager.clearCache()
+            finally:
+                view.doneCurrent()
+            return
+    view._renderCacheClearPending = True
 
 
 def _resetRenderCachesAfterBulkMove(view, rebuild_links=True):
@@ -841,13 +840,19 @@ def _resetRenderCachesAfterBulkMove(view, rebuild_links=True):
     so re-reading every prim's connections from USD would be wasted work.
     """
     view._clearRenderCache()
+    view._invalidateGraphGeometry()
+    if rebuild_links:
+        view.linksChanged = True
+
+
+def _invalidateGraphGeometry(view):
     view.textRenderer.resetPositionCaches()
-    view._cppIconRenderer.resetPositionCaches()
+    # Pending/initial loaders can run before initializeGL creates icons.
+    if hasattr(view, "_cppIconRenderer"):
+        view._cppIconRenderer.resetPositionCaches()
     view._nodeRenderManager.resetNodeQuadCaches()
     view._nodeTransformFrame.reset()
     view.textChanged = True
-    if rebuild_links:
-        view.linksChanged = True
 
 
 class _ProfileSection:

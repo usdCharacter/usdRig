@@ -8,7 +8,6 @@
 
 import functools
 
-from ..nodeGraphJson import NodeGraphJson
 from ..pinUtils import arrowhead_points
 from . import editing as _editing, intents as _intents, selection as _selection
 from . import interaction as _interaction, interaction_events, stage_adapter
@@ -18,19 +17,10 @@ from . import render_links as _render_links, render_nodes as _render_nodes
 from . import render_overlays as _render_overlays, render_text as _render_text
 
 
-def _loadSampleGraph(view, jsonPath):
-    view.nodeGraph = NodeGraphJson()
-    view._initUndoTracking(None)
-    view.nodeGraph.load(
-        jsonPath, view.textRenderer.calculateTextWidth, view.fontAtlas
-    )
-    view._initUndoTracking(view.nodeGraph.getStage())
-    view.linksChanged = True
-
-
 def bind_compat(cls):
     cls._onStageReplaced = stage_adapter._onStageReplaced
-    cls._finishStageReload = stage_adapter._finishStageReload
+    cls._prepareGraphSwitch = stage_adapter.prepareGraphSwitch
+    cls._resetUnboundGraph = stage_adapter.resetUnboundGraph
     cls._graphScopeParentPath = stage_adapter.graphScopeParentPath
     cls._validateNodesAgainstStage = stage_adapter.validateNodesAgainstStage
     cls._adoptPrimsNewToScope = stage_adapter.adoptPrimsNewToScope
@@ -38,10 +28,17 @@ def bind_compat(cls):
     cls._remapMovedNodes = stage_adapter.remapMovedNodes
     cls._handleUsdChanges = stage_adapter.handleUsdChanges
     cls._clearRenderCache = render._clearRenderCache
-    cls._loadSampleGraph = _loadSampleGraph
+    cls._hasCurrentRenderContext = render._hasCurrentRenderContext
+    cls._clearPendingRenderCache = render._clearPendingRenderCache
+    cls._invalidateGraphGeometry = render._invalidateGraphGeometry
+    cls._loadSampleGraph = stage_adapter.loadSampleGraph
+    cls._populateSampleGraph = stage_adapter.populateSampleGraph
     cls.loadBlueprint = stage_adapter.loadBlueprint
+    cls._populateBlueprint = stage_adapter.populateBlueprint
     cls.loadContainer = stage_adapter.loadContainer
+    cls._populateContainer = stage_adapter.populateContainer
     cls.loadStage = stage_adapter.loadStage
+    cls._populateStage = stage_adapter.populateStage
     cls._resetRenderCachesAfterBulkMove = render._resetRenderCachesAfterBulkMove
     cls._valueRowOnlyChange = staticmethod(stage_adapter._valueRowOnlyChange)
     cls._isPinPropertyChange = staticmethod(stage_adapter._isPinPropertyChange)

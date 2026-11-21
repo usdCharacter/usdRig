@@ -51,7 +51,7 @@ class TestViewCoordinator(unittest.TestCase):
     def test_close_cancels_timers_and_revokes_notices(self):
         seen = []
         stage = Usd.Stage.CreateInMemory()
-        self.view._noticeHandler.register(stage)
+        self.view._stageSync.bind(stage)
         self.view._afterUsdviewRefresh(lambda: seen.append('timer'))
         self.view._tooltipTimer.start()
         stage_adapter.closeStageLifecycle(self.view)
@@ -59,11 +59,11 @@ class TestViewCoordinator(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(seen, [])
         self.assertFalse(self.view._tooltipTimer.isActive())
-        self.assertIsNone(self.view._noticeHandler.getStage())
+        self.assertIsNone(self.view._stageSync.boundStage())
 
     def test_worker_notice_reaches_owner_and_pending_notice_dies_on_close(self):
         stage = Usd.Stage.CreateInMemory()
-        self.view._noticeHandler.register(stage)
+        self.view._stageSync.bind(stage)
         seen = []
 
         def send(path):

@@ -290,7 +290,6 @@ def make_connection_view(*, delete_old_returns=True, show_popup=True):
             )
         ),
         nodeGraph=SimpleNamespace(getStage=MagicMock(return_value=stage)),
-        _noticeHandler=SimpleNamespace(setEnabled=MagicMock()),
         _stageSync=_makeStageSync(None),
         _abortConnection=MagicMock(),
         _deleteOldConnection=MagicMock(return_value=delete_old_returns),
