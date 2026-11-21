@@ -178,28 +178,42 @@ class _NoticeReceiver:
 
     def __init__(self, service):
         self._service = service
-        self._epoch = service.epoch()
-        self._revoked = False
+        self._binding = None
 
-    def rebind(self, epoch):
-        self._epoch = epoch
-        self._revoked = False
+    def rebind(self, stage, epoch):
+        self._binding = (stage, epoch)
 
     def revoke(self):
-        self._revoked = True
+        self._binding = None
 
-    def _handleSuppressedUsdChanges(self, resynced, info, moved):
-        if not self._revoked:
-            self._service._recordSuppressed(self._epoch, resynced, info, moved)
+    def _selectUsdChanges(self, sender):
+        binding = self._binding
+        if binding is None or binding[0] is not sender:
+            return None
+        service = self._service
+        # Capture the batch before path extraction can outlive its last token.
+        pending = service._pendingChanges
+        if pending is None and not service._handler.isEnabled():
+            return None
 
-    def _handleUsdChanges(
-        self, resyncedPaths, infoChangedPaths, movedPaths=None
-    ):
-        if self._revoked:
-            return
-        self._service.changed(
-            self._epoch, resyncedPaths, infoChangedPaths, movedPaths
-        )
+        def deliver(resynced, info, moved=None):
+            def onOwner():
+                if self._binding is binding:
+                    service._deliverNotice(binding[1], pending, resynced, info, moved)
+
+            if service._on_owner is not None and not service._on_owner():
+                service._post_notice(onOwner)
+            else:
+                onOwner()
+
+        return deliver
+
+    def _handleUsdChanges(self, resyncedPaths, infoChangedPaths, movedPaths=None):
+        binding = self._binding
+        if binding is not None:
+            callback = self._selectUsdChanges(binding[0])
+            if callback is not None:
+                callback(resyncedPaths, infoChangedPaths, movedPaths)
 
 
 class _SuppressionToken:
@@ -288,9 +302,12 @@ class StageSync:
             if pending is not None and (pending[1] or pending[2]):
                 self.changed(*pending)
 
-    def _recordSuppressed(self, epoch, resynced, info, moved):
-        pending = self._pendingChanges
-        if pending is None or pending[0] != epoch or epoch != self._epoch:
+    def _deliverNotice(self, epoch, pending, resynced, info, moved):
+        if epoch != self._epoch or self._closed:
+            return
+        if pending is None or pending is not self._pendingChanges:
+            # A released batch cannot collect these paths or pass them to a new gesture.
+            self.changed(epoch, resynced, info, moved)
             return
         pending[1].update(resynced)
         pending[2].update(info)
@@ -380,11 +397,12 @@ class StageSync:
         if self._closed:
             return None
         self._receiver.revoke()
+        self._pendingChanges = None
         if stage is None:
             self._handler.unregister()
         else:
             self._handler.register(stage)
-            self._receiver.rebind(self._epoch)
+            self._receiver.rebind(stage, self._epoch)
         return self.boundStage()
 
     def finish(self, epoch):

@@ -100,8 +100,12 @@ class UsdNoticeHandler:
         if not self._graphView:
             return
 
-        callback = (self._graphView._handleUsdChanges if self._enabled else
-                    getattr(self._graphView, "_handleSuppressedUsdChanges", None))
+        select = getattr(self._graphView, "_selectUsdChanges", None)
+        if select is not None:
+            callback = select(sender)
+        else:
+            callback = (self._graphView._handleUsdChanges if self._enabled else
+                        getattr(self._graphView, "_handleSuppressedUsdChanges", None))
         if callback is None:
             return
 

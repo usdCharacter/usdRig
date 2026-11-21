@@ -11,6 +11,7 @@
 
 import os
 from pathlib import Path
+from threading import Event, Thread, get_ident
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
@@ -19,6 +20,7 @@ from unittest.mock import MagicMock, Mock, call, patch
 from pxr import Gf, Sdf, Tf, Usd
 from pxr.Usdviewq.qt import QtCore, QtWidgets
 from UsdNoodles.undoHistory import history_for_stage
+from UsdNoodles.usdNoticeHandler import UsdNoticeHandler
 from UsdNoodles.graphView import GraphView
 from UsdNoodles.graphview.stage_sync import FinishReload
 from UsdNoodles.nodeGraphBpContainer import NodeGraphBpContainer
@@ -399,6 +401,67 @@ class TestReloadLifecycle(unittest.TestCase):
             _, resync, info = reconcile.call_args.args
             self.assertEqual(resync, {'/New'})
             self.assertEqual(info, {'/Old.testValue'})
+
+    def test_worker_notice_selected_before_release(self):
+        for action in ('deliver', 'rebind', 'replace', 'close', 'scoped'):
+            with self.subTest(action=action):
+                view = GraphView()
+                self.addCleanup(view.close)
+                stage = Usd.Stage.CreateInMemory()
+                attr = stage.DefinePrim('/Value').CreateAttribute(
+                    'number', Sdf.ValueTypeNames.Float)
+                sync = view._stageSync
+                sync.bind(stage)
+                token = sync.acquireSuppression(reconcile=action != 'scoped')
+                selected, resume = Event(), Event()
+                writes, reconciliations = [], []
+
+                def readMoves(notice):
+                    # Path extraction is downstream of callback selection.
+                    selected.set()
+                    if action != 'scoped' and not resume.wait(5):
+                        raise AssertionError('Owner did not resume notice delivery')
+                    return {}
+
+                def write():
+                    writes.append(attr.Set(2.0))
+
+                def reconcile(_view, resync, info, **kwargs):
+                    reconciliations.append((get_ident(), resync, info))
+
+                with patch.object(UsdNoticeHandler, '_movedPaths', staticmethod(readMoves)), \
+                     patch('UsdNoodles.graphview.stage_adapter.applyUsdChanges',
+                           side_effect=reconcile):
+                    worker = Thread(target=write, daemon=True)
+                    worker.start()
+                    try:
+                        if action == 'scoped':
+                            worker.join(5)
+                            self.assertFalse(worker.is_alive())
+                        else:
+                            self.assertTrue(selected.wait(5))
+                        token.release()
+                        self.assertEqual(reconciliations, [])
+                        if action == 'rebind':
+                            # Same stage and epoch, but a different registration.
+                            sync.bind(stage)
+                    finally:
+                        resume.set()
+                        worker.join(5)
+                    self.assertFalse(worker.is_alive())
+                    self.assertEqual(writes, [True])
+                    self.assertEqual(reconciliations, [])
+                    if action == 'replace':
+                        replacement = Usd.Stage.CreateInMemory()
+                        sync.loadGraph(replacement, lambda: None, lambda: None)
+                        self.assertIs(sync.boundStage(), replacement)
+                    elif action == 'close':
+                        view.close()
+                        self.assertTrue(sync.isClosed())
+                    self.app.processEvents()
+                    expected = ([(get_ident(), set(), {'/Value.number'})]
+                                if action == 'deliver' else [])
+                    self.assertEqual(reconciliations, expected)
 
     def test_final_release_follows_parent_move_then_child_reparent(self):
         stage, view = self.stage, self.view
