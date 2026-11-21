@@ -1115,6 +1115,8 @@ def _finishReloadOnView(view, epoch):
             try:
                 # Leave the clear pending for paintGL if makeCurrent failed.
                 view._clearPendingRenderCache()
+            except Exception as error:
+                Tf.Warn(f"usdNoodles reload could not clear the render cache: {error}")
             finally:
                 if view._hasCurrentRenderContext():
                     view.doneCurrent()
