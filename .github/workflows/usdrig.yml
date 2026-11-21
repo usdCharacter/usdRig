@@ -89,10 +89,12 @@ jobs:
       # The positional build-directory interface must keep working when the
       # tree is not named build/: the manifests there carry the absolute and
       # checkout-relative spellings CMake wrote, unlike installed manifests.
+      # Moving the manifests (generated sources stay in place) also makes the
+      # check fail if the checker ever ignores the positional directory.
       - name: Compile from a nondefault configured build directory
         run: |
           mkdir -p runtime-build-alt
-          cp build/runtimeSources.txt build/runtimeIncludes.txt \
+          mv build/runtimeSources.txt build/runtimeIncludes.txt \
              build/evalCoreSources.txt build/evalCoreIncludes.txt \
              build/exactFpFlags.txt runtime-build-alt/
           bin/check_runtime_usd_free.sh runtime-build-alt
@@ -901,6 +903,22 @@ jobs:
           fi
           grep -F "runtimeSources.txt: $entry:" bad-sdk.log \
             || { echo "the failure did not name the offending entry"; cat bad-sdk.log; exit 1; }
+
+      # A non-compiled suffix must not hide a producer path: the Windows
+      # cmake_pch.cxx that broke the exporter would slip past a suffix filter
+      # applied before path validation. Independent copy, same strict rule.
+      - name: Reject a producer-absolute cmake_pch.cxx entry in a copied SDK manifest
+        run: |
+          cp -r sdk-relocated/share/rigExec bad-sdk-pch
+          entry=/producer/build/cmake_pch.cxx
+          sed -i "1i $entry" bad-sdk-pch/runtimeSources.txt
+          if ./consumer-src/bin/check_runtime_usd_free.sh --sdk bad-sdk-pch 2>bad-sdk-pch.log; then
+            echo "a producer-absolute .cxx entry compiled"; exit 1
+          fi
+          grep -F "runtimeSources.txt: $entry:" bad-sdk-pch.log \
+            || { echo "the failure did not name the offending entry"; cat bad-sdk-pch.log; exit 1; }
+          grep -F "installed entries are relative" bad-sdk-pch.log >/dev/null \
+            || { echo "the failure did not state the relative-path rule"; exit 1; }
 
       - name: Unpack the tutorial archive and fetch pinned godot-cpp
         run: |

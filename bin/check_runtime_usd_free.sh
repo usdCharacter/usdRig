@@ -152,15 +152,18 @@ for manifest in runtimeSources.txt evalCoreSources.txt; do
     while IFS= read -r src; do
         src="${src%$'\r'}"
         [[ -z "$src" ]] && continue
-        [[ "$src" = *.cpp || "$src" = *.c ]] || continue
         spelling="$src"
         if [[ $installed -eq 1 ]]; then
+            # The installed grammar constrains every entry, whatever its
+            # suffix: resolve and validate before filtering for compilation.
             src="$(resolve_manifest_entry "$manifest" "$src")" || exit 1
+            [[ "$src" = *.cpp || "$src" = *.c ]] || continue
             if [[ ! -f "$src" ]]; then
                 echo "$manifest: $spelling: no such source $src" >&2
                 exit 1
             fi
         else
+            [[ "$src" = *.cpp || "$src" = *.c ]] || continue
             [[ "$src" = /* ]] || src="$ROOT/$src"
         fi
         sources+=("$src")
