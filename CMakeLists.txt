@@ -1231,6 +1231,18 @@ add_executable(testRigExecEvalCoreKinds tests/testRigExecEvalCoreKinds.cpp)
 target_link_libraries(testRigExecEvalCoreKinds PRIVATE rigExec rigExecEvalCore)
 add_test(NAME testRigExecEvalCoreKinds COMMAND testRigExecEvalCoreKinds)
 
+add_executable(testRigExecEvalCoreProperties
+    tests/testRigExecEvalCoreProperties.cpp)
+target_link_libraries(testRigExecEvalCoreProperties PRIVATE
+    rigExecRuntime rigExecBake rigExecSampler)
+target_include_directories(testRigExecEvalCoreProperties PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/tests")
+target_compile_definitions(testRigExecEvalCoreProperties PRIVATE
+    ${_rigexec_schema_resource_define}
+    RIGEXEC_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples")
+add_test(NAME testRigExecEvalCoreProperties COMMAND testRigExecEvalCoreProperties
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples")
+
 add_executable(testRigExecSurfaceKernelCache tests/testRigExecSurfaceKernelCache.cpp)
 target_link_libraries(testRigExecSurfaceKernelCache PRIVATE rigExecMath)
 add_test(NAME testRigExecSurfaceKernelCache COMMAND testRigExecSurfaceKernelCache)
