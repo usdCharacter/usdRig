@@ -19,6 +19,7 @@ from weakref import ref
 from pxr import Gf, Sdf, Tf, Usd
 
 from .. import noodlesValues, primRename
+from ..pinUtils import usd_edge_exists
 from ..nodeActivation import (
     capture_activation, capture_activation_at, prune_activation_ancestors,
     replay_activation,
@@ -130,9 +131,11 @@ def _notice_enabled(notice):
 
 @contextmanager
 def _edit_transaction(stage, target, view, *, batch=False):
-    notice = getattr(view, '_noticeHandler', None)
+    sync = getattr(view, '_stageSync', None)
+    notice = getattr(view, '_noticeHandler', None) if sync is None else None
     enabled = _notice_enabled(notice)
     journal = Journal()
+    token = sync.acquireSuppression() if sync is not None else None
     if notice is not None:
         notice.setEnabled(False)
     try:
@@ -153,6 +156,8 @@ def _edit_transaction(stage, target, view, *, batch=False):
     finally:
         if notice is not None:
             notice.setEnabled(enabled)
+        if token is not None:
+            token.release()
 
 
 @dataclass(frozen=True)
@@ -888,14 +893,10 @@ def _applyNodePositions(view, positions):
     links' endpoints (connections are unchanged, so it skips the full
     connection re-read). Used by auto-layout and its undo/redo.
     """
-    enabled = _notice_enabled(view._noticeHandler)
-    view._noticeHandler.setEnabled(False)
-    try:
+    with view._stageSync.suppressed():
         with Sdf.ChangeBlock():
             for node_id, pos in positions.items():
                 view._authorNodePosition(node_id, pos)
-    finally:
-        view._noticeHandler.setEnabled(enabled)
     # Only positions changed (not connections): re-bake the node/text/icon
     # drawables, then refresh the moved links' endpoints incrementally
     # (paintLinks re-syncs to the C++ renderer each frame) -- far cheaper at
@@ -1651,13 +1652,15 @@ def _make_reconnect_edits(
     *,
     sourcePropertyName="",
     targetPropertyName="",
+    oldProperties=(),
 ):
     """Return (redo, undo) callables for a reconnection."""
+    props = dict(zip(("source_property_name", "target_property_name"), oldProperties))
     delete_old = _make_connection_edit(
-        old_src, old_src_port, old_tgt, old_tgt_port, create=False
+        old_src, old_src_port, old_tgt, old_tgt_port, create=False, **props
     )
     create_old = _make_connection_edit(
-        old_src, old_src_port, old_tgt, old_tgt_port, create=True
+        old_src, old_src_port, old_tgt, old_tgt_port, create=True, **props
     )
     delete_new = _make_connection_edit(
         new_src,
@@ -1816,12 +1819,14 @@ def _abortConnection(view, message, reconnect_state=None):
     if view._reconnectingLink:
         view._cancelLinkReconnect()
     elif reconnect_state is not None:
-        oldSrcId, oldSrcPort, oldTgtId, oldTgtPort = reconnect_state[:4]
+        oldSrcId, oldSrcPort, oldTgtId, oldTgtPort, *properties = reconnect_state
         srcNode = view.nodes.get(oldSrcId)
         tgtNode = view.nodes.get(oldTgtId)
         if srcNode and tgtNode:
             view._addLinkToGraph(
-                oldSrcId, oldSrcPort, oldTgtId, oldTgtPort, srcNode, tgtNode
+                oldSrcId, oldSrcPort, oldTgtId, oldTgtPort, srcNode, tgtNode,
+                sourcePropertyName=properties[0] if properties else "",
+                targetPropertyName=properties[1] if properties else "",
             )
 
 
@@ -1848,7 +1853,7 @@ def _resolveConnectionEndpoints(view, outputNodeId, inputNodeId):
     return outputNode, inputNode, outputPrim, inputPrim, library
 
 
-def _deleteOldConnection(view, stage, oldSrcId, oldSrcPort, oldTgtId, oldTgtPort):
+def _deleteOldConnection(view, stage, oldSrcId, oldSrcPort, oldTgtId, oldTgtPort, *properties):
     oldInputNode = view.nodes.get(oldTgtId)
     oldOutputNode = view.nodes.get(oldSrcId)
     if not oldInputNode or not oldOutputNode:
@@ -1861,7 +1866,9 @@ def _deleteOldConnection(view, stage, oldSrcId, oldSrcPort, oldTgtId, oldTgtPort
     if not oldLib:
         return False
     return oldLib.delete_connection(
-        stage, oldOutputPrim, oldSrcPort, oldInputPrim, oldTgtPort
+        stage, oldOutputPrim, oldSrcPort, oldInputPrim, oldTgtPort,
+        **(dict(zip(("source_property_name", "target_property_name"), properties))
+           if any(properties) else {}),
     )
 
 
@@ -1877,7 +1884,10 @@ def _createConnection(
     targetPropertyName="",
 ):
     """Create a connection in USD via the appropriate node library."""
-    if isinstance(view.nodeGraph.getStage(), Usd.Stage):
+    # Stub views take the direct library path: dispatch needs the view's
+    # Editor wiring, which doubles that never ran __init__ do not have.
+    if (isinstance(view.nodeGraph.getStage(), Usd.Stage)
+            and getattr(view, "_editor", None) is not None):
         new = intents.LinkEndpoints(outputNodeId, outputPort, inputNodeId, inputPort,
                                     sourcePropertyName, targetPropertyName)
         if reconnect_state is None and view._reconnectingLink:
@@ -1901,110 +1911,103 @@ def _createConnection(
         return
     legacy_symbol("warn_if_non_persistent_edit_target")(stage)
 
-    view._noticeHandler.setEnabled(False)
     try:
-        connection_kwargs = {}
-        if sourcePropertyName or targetPropertyName:
-            connection_kwargs = {
-                "source_property_name": sourcePropertyName,
-                "target_property_name": targetPropertyName,
-            }
-        success = library.create_connection(
-            stage,
-            outputPrim,
-            outputPort,
-            inputPrim,
-            inputPort,
-            **connection_kwargs,
-        )
-
-        if not success:
-            view._abortConnection(
-                "Failed to create connection in USD", reconnect_state
-            )
-            return
-
-        if reconnect_state is not None:
-            isReconnect = True
-            oldSrcId, oldSrcPort, oldTgtId, oldTgtPort = reconnect_state[:4]
-        else:
-            isReconnect = view._reconnectingLink
-            oldSrcId = view._reconnectOldSourceNodeId
-            oldSrcPort = view._reconnectOldSourcePort
-            oldTgtId = view._reconnectOldTargetNodeId
-            oldTgtPort = view._reconnectOldTargetPort
-
-        if isReconnect:
-            view._clearReconnectState()
-
-            if not view._deleteOldConnection(
-                stage, oldSrcId, oldSrcPort, oldTgtId, oldTgtPort
-            ):
-                # Old connection may have been implicitly replaced by
-                # create_connection (e.g. SetConnections on the same
-                # input attribute). Continue with the new connection.
-                Tf.Status(
-                    "Reconnect: old connection already removed "
-                    f"({oldSrcId}.{oldSrcPort} -> {oldTgtId}.{oldTgtPort})"
+        with view._stageSync.suppressed():
+            try:
+                connection_kwargs = {}
+                if sourcePropertyName or targetPropertyName:
+                    connection_kwargs = {
+                        "source_property_name": sourcePropertyName,
+                        "target_property_name": targetPropertyName,
+                    }
+                success = library.create_connection(
+                    stage,
+                    outputPrim,
+                    outputPort,
+                    inputPrim,
+                    inputPort,
+                    **connection_kwargs,
                 )
 
-        view._addLinkToGraph(
-            outputNodeId,
-            outputPort,
-            inputNodeId,
-            inputPort,
-            outputNode,
-            inputNode,
-            sourcePropertyName=sourcePropertyName,
-            targetPropertyName=targetPropertyName,
-        )
+                if not success:
+                    view._abortConnection(
+                        "Failed to create connection in USD", reconnect_state
+                    )
+                    return
 
-        if isReconnect:
-            redo_fn, undo_fn = _make_reconnect_edits(
-                oldSrcId,
-                oldSrcPort,
-                oldTgtId,
-                oldTgtPort,
-                outputNodeId,
-                outputPort,
-                inputNodeId,
-                inputPort,
-                sourcePropertyName=sourcePropertyName,
-                targetPropertyName=targetPropertyName,
-            )
-            legacy_symbol("_push_undo_command")("Reconnect", redo_fn, undo_fn, view=view)
-        else:
-            legacy_symbol("_push_undo_command")(
-                "Create Connection",
-                _make_connection_edit(
+                if reconnect_state is None and view._reconnectingLink:
+                    reconnect_state = (
+                        view._reconnectOldSourceNodeId, view._reconnectOldSourcePort,
+                        view._reconnectOldTargetNodeId, view._reconnectOldTargetPort,
+                        view._reconnectOldSourcePropertyName, view._reconnectOldTargetPropertyName,
+                    )
+                if reconnect_state is not None:
+                    view._clearReconnectState()
+                    if (not view._deleteOldConnection(stage, *reconnect_state)
+                            and usd_edge_exists(stage, *reconnect_state)):
+                        if not library.delete_connection(
+                            stage, outputPrim, outputPort, inputPrim, inputPort,
+                            **connection_kwargs,
+                        ):
+                            view.linksChanged = True
+                            Tf.Warn("Could not roll back the new connection in USD")
+                        view._abortConnection("Could not delete the old connection in USD", reconnect_state)
+                        return
+
+                view._addLinkToGraph(
                     outputNodeId,
                     outputPort,
                     inputNodeId,
                     inputPort,
-                    create=True,
-                    source_property_name=sourcePropertyName,
-                    target_property_name=targetPropertyName,
-                ),
-                _make_connection_edit(
-                    outputNodeId,
-                    outputPort,
-                    inputNodeId,
-                    inputPort,
-                    create=False,
-                    source_property_name=sourcePropertyName,
-                    target_property_name=targetPropertyName,
-                ),
-                view=view,
-            )
+                    outputNode,
+                    inputNode,
+                    sourcePropertyName=sourcePropertyName,
+                    targetPropertyName=targetPropertyName,
+                )
 
+                if reconnect_state is not None:
+                    redo_fn, undo_fn = _make_reconnect_edits(
+                        *reconnect_state[:4],
+                        outputNodeId,
+                        outputPort,
+                        inputNodeId,
+                        inputPort,
+                        oldProperties=reconnect_state[4:],
+                        sourcePropertyName=sourcePropertyName,
+                        targetPropertyName=targetPropertyName,
+                    )
+                    legacy_symbol("_push_undo_command")("Reconnect", redo_fn, undo_fn, view=view)
+                else:
+                    legacy_symbol("_push_undo_command")(
+                        "Create Connection",
+                        _make_connection_edit(
+                            outputNodeId,
+                            outputPort,
+                            inputNodeId,
+                            inputPort,
+                            create=True,
+                            source_property_name=sourcePropertyName,
+                            target_property_name=targetPropertyName,
+                        ),
+                        _make_connection_edit(
+                            outputNodeId,
+                            outputPort,
+                            inputNodeId,
+                            inputPort,
+                            create=False,
+                            source_property_name=sourcePropertyName,
+                            target_property_name=targetPropertyName,
+                        ),
+                        view=view,
+                    )
+            finally:
+                # The notice handler is suppressed across the authoring window so
+                # _handleUsdChanges cannot drop the cached per-prim link scan that
+                # back-reference resolution reads from.  Drop it explicitly here so
+                # a later re-add of an absent prim does not resurrect a connection
+                # we just authored away.
+                view._invalidateBackReferenceLinkDataCache()
     finally:
-        # The notice handler is suppressed across the authoring window so
-        # _handleUsdChanges cannot drop the cached per-prim link scan that
-        # back-reference resolution reads from.  Drop it explicitly here so
-        # a later re-add of an absent prim does not resurrect a connection
-        # we just authored away.
-        view._invalidateBackReferenceLinkDataCache()
-        view._noticeHandler.setEnabled(True)
         view.update()
 
 
@@ -2041,61 +2044,60 @@ def _deleteConnection(
         )
         return
 
-    view._noticeHandler.setEnabled(False)
-    try:
-        connection_kwargs = {}
-        if sourcePropertyName or targetPropertyName:
-            connection_kwargs = {
-                "source_property_name": sourcePropertyName,
-                "target_property_name": targetPropertyName,
-            }
-        success = library.delete_connection(
-            view.nodeGraph.getStage(),
-            outputPrim,
-            outputPort,
-            inputPrim,
-            inputPort,
-            **connection_kwargs,
-        )
-
-        if success:
-            view._removeLinkFromGraph(
-                outputNodeId,
+    with view._stageSync.suppressed():
+        try:
+            connection_kwargs = {}
+            if sourcePropertyName or targetPropertyName:
+                connection_kwargs = {
+                    "source_property_name": sourcePropertyName,
+                    "target_property_name": targetPropertyName,
+                }
+            success = library.delete_connection(
+                view.nodeGraph.getStage(),
+                outputPrim,
                 outputPort,
-                inputNodeId,
+                inputPrim,
                 inputPort,
-                sourcePropertyName=sourcePropertyName,
-                targetPropertyName=targetPropertyName,
+                **connection_kwargs,
             )
 
-            legacy_symbol("_push_undo_command")(
-                "Delete Connection",
-                _make_connection_edit(
+            if success:
+                view._removeLinkFromGraph(
                     outputNodeId,
                     outputPort,
                     inputNodeId,
                     inputPort,
-                    create=False,
-                    source_property_name=sourcePropertyName,
-                    target_property_name=targetPropertyName,
-                ),
-                _make_connection_edit(
-                    outputNodeId,
-                    outputPort,
-                    inputNodeId,
-                    inputPort,
-                    create=True,
-                    source_property_name=sourcePropertyName,
-                    target_property_name=targetPropertyName,
-                ),
-                view=view,
-            )
-    finally:
-        # Mirror _createConnection: drop the back-reference cache while the
-        # notice handler is still suppressed, so a later re-add of an
-        # absent prim does not resurrect the connection we just deleted.
-        view._invalidateBackReferenceLinkDataCache()
-        view._noticeHandler.setEnabled(True)
+                    sourcePropertyName=sourcePropertyName,
+                    targetPropertyName=targetPropertyName,
+                )
+
+                legacy_symbol("_push_undo_command")(
+                    "Delete Connection",
+                    _make_connection_edit(
+                        outputNodeId,
+                        outputPort,
+                        inputNodeId,
+                        inputPort,
+                        create=False,
+                        source_property_name=sourcePropertyName,
+                        target_property_name=targetPropertyName,
+                    ),
+                    _make_connection_edit(
+                        outputNodeId,
+                        outputPort,
+                        inputNodeId,
+                        inputPort,
+                        create=True,
+                        source_property_name=sourcePropertyName,
+                        target_property_name=targetPropertyName,
+                    ),
+                    view=view,
+                )
+        finally:
+            # Mirror _createConnection: drop the back-reference cache while the
+            # notice handler is still suppressed, so a later re-add of an
+            # absent prim does not resurrect the connection we just deleted.
+            view._invalidateBackReferenceLinkDataCache()
 
 
 def _applyApiSchemaFromHotbox(view, identifier):
@@ -2161,12 +2163,31 @@ def _showApiSchemaResult(view, identifier, applied, alreadyPresent, skipped):
 
 def _writeValueComponents(view, state, components, warn=True):
     """Author *components* and refresh just that node's cells."""
-    intent = intents.SetValue(
-        str(Sdf.Path(state['primPath']).AppendProperty(state['prop'])),
-        tuple(components), view._cachedValueWriteMode, state.get('time'))
     if warn:
+        intent = intents.SetValue(
+            str(Sdf.Path(state['primPath']).AppendProperty(state['prop'])),
+            tuple(components), view._cachedValueWriteMode, state.get('time'))
         return _view_editor(view).execute(intent)
-    return _set_value(view, intent, warn=False, preview=state.setdefault('preview', {}))
+    graph = view.nodeGraph
+    stage = graph.getStage()
+    if not stage:
+        return False, "no stage"
+    prim = stage.GetPrimAtPath(state["primPath"])
+    ok, reason = noodlesValues.write_value(
+        stage,
+        prim,
+        state["prop"],
+        components,
+        state.get("time"),
+        mode=state.get("writeMode", view._cachedValueWriteMode),
+        warn=warn, on_authored=state["opinion"].capture if state.get("opinion") else None,
+    )
+    if not ok:
+        return False, reason
+    node = graph.nodes.get(state["nodeId"]) if graph is view.nodeGraph else None
+    if node is not None and hasattr(node, "invalidate_value_row"):
+        node.invalidate_value_row(state["prop"])
+    return True, ""
 
 
 def _make_value_edit(prim_path, property_name, components, time_code, mode):
@@ -2208,23 +2229,13 @@ def _make_value_edit(prim_path, property_name, components, time_code, mode):
 
 def _pushValueUndo(view, primPath, propertyName, oldComponents, newComponents,
                    timeCode):
-    """Record the local opinion delta accumulated by a completed drag."""
-    preview = getattr(view, '_finishedValuePreview', None)
-    if preview:
-        site = preview['site']
-        stage = view.nodeGraph.getStage()
-        site.resolve(stage)
-        path = Sdf.Path(primPath).AppendProperty(propertyName)
-        _record_opinions(view, stage, f'Set {path}', (site,), preview['patches'],
-                         partial(_refresh_value, path))
-    else:
-        # Direct callers supply a committed edit without a drag journal.
-        mode = view._cachedValueWriteMode
-        legacy_symbol('_push_undo_command')(
-            f'Set {primPath}.{propertyName}',
-            _make_value_edit(primPath, propertyName, newComponents, timeCode, mode),
-            _make_value_edit(primPath, propertyName, oldComponents, timeCode, mode),
-            view=view)
+    """One undo entry per committed value edit, whatever gesture made it."""
+    mode = view._cachedValueWriteMode
+    legacy_symbol('_push_undo_command')(
+        f'Set {primPath}.{propertyName}',
+        _make_value_edit(primPath, propertyName, newComponents, timeCode, mode),
+        _make_value_edit(primPath, propertyName, oldComponents, timeCode, mode),
+        view=view)
 
 
 def _updateMung(view, event):
@@ -2233,87 +2244,110 @@ def _updateMung(view, event):
     if state is None or not state["mungable"]:
         return
     dx = float(event.position().x()) - state["baseScreenX"]
-    if not view._mungActive:
-        if abs(dx) < float(view._cachedMungDragThresholdPx):
-            return
-        view._mungActive = True
-        state['noticeEnabled'] = _notice_enabled(view._noticeHandler)
-        # Our own writes must not come back to us as notices -- the same
-        # bracket _finalizeNodeDrag uses, for the same reason. USD still
-        # notifies Hydra, so usdview's viewport updates live.
-        view._noticeHandler.setEnabled(False)
-    QtCore = legacy_symbol("QtCore")
-    mods = event.modifiers()
-    mult = noodlesValues.mung_multiplier(
-        bool(mods & QtCore.Qt.ShiftModifier),
-        bool(mods & QtCore.Qt.ControlModifier),
-    )
-    # Absolute, from the press position and the ORIGINAL value, never
-    # incremental: dragging back to where the press landed then restores
-    # exactly the value it started at, instead of accumulating drift.
-    value = state["base"] + dx * state["step"] * mult
-    components = noodlesValues.apply_delta(
-        state["original"], state["comp"], value, state["typeName"]
-    )
-    if components != state["current"]:
-        if view._writeValueComponents(state, components, warn=False)[0]:
+    if not view._mungActive and abs(dx) < float(view._cachedMungDragThresholdPx):
+        return
+    try:
+        if not view._mungActive:
+            view._mungSuppression = view._stageSync.acquireSuppression(reconcile=True)
+            view._mungActive = True
+        QtCore = legacy_symbol("QtCore")
+        mods = event.modifiers()
+        mult = noodlesValues.mung_multiplier(
+            bool(mods & QtCore.Qt.ShiftModifier),
+            bool(mods & QtCore.Qt.ControlModifier),
+        )
+        value = state["base"] + dx * state["step"] * mult
+        components = noodlesValues.apply_delta(
+            state["original"], state["comp"], value, state["typeName"]
+        )
+        if components != state["current"]:
+            stage = view.nodeGraph.getStage()
+            attr = stage.GetAttributeAtPath(Sdf.Path(state["primPath"]).AppendProperty(state["prop"])) if stage else None
+            target = stage.GetEditTarget() if stage else None
+            opinion = state.get("opinion")
+            if opinion and (target != state["editTarget"] or not attr
+                            or opinion.path != target.MapToSpecPath(attr.GetPath())):
+                view._cancelMung()
+                return
+            if not opinion and attr:
+                time = noodlesValues.value_write_time(attr, state["time"], view._cachedValueWriteMode)
+                state["writeMode"] = "default" if time.IsDefault() else "animation"
+                state["opinion"] = noodlesValues.ValuePreviewOpinion(target, attr, time)
+                state["editTarget"] = target
+            ok, reason = view._writeValueComponents(state, components, warn=False)
+            if view._mungState is not state:
+                return
+            if not ok:
+                state["opinion"] = opinion
+                view._showWarningPopup("%s: %s" % (state["prop"], reason))
+                return
             state["current"] = components
+    except Exception:
+        if view._mungState is state:
+            view._cancelMung()
+        raise
+
+
+def _clearMung(view):
+    token, view._mungSuppression = view._mungSuppression, None
+    view._mungState = None
+    view._mungActive = False
+    if token is not None:
+        token.release()
 
 
 def _finishMung(view):
     """Release: commit the drag as ONE undo entry, or open the editor."""
     state = view._mungState
-    view._mungState = None
     if state is None:
         return
-    if not view._mungActive:
-        # Never crossed the threshold, so nothing was authored and nothing
-        # is on the undo stack: this was a click, and a click types.
-        view._beginValueEdit(state["nodeId"], state["prop"], state["comp"])
-        return
-
-    view._mungActive = False
-    final = tuple(state["current"])
-    original = tuple(state["original"])
-    preview = state.get('preview')
-    if preview:
-        if final == original:
-            _cancel_value_preview(view, state)
-            return
-        try:
-            stage = view.nodeGraph.getStage()
-            preview['site'].resolve(stage)
-            noodlesValues._warn_edit_target(stage)
-            view._finishedValuePreview = preview
-            view._pushValueUndo(state['primPath'], state['prop'], original, final, state['time'])
-        finally:
-            view._finishedValuePreview = None
-            view._noticeHandler.setEnabled(state.get('noticeEnabled', True))
-        view._startValueFlash(state['nodeId'], state['prop'], 'commit')
-    else:
-        view._noticeHandler.setEnabled(state.get('noticeEnabled', True))
-
-
-def _cancel_value_preview(view, state):
     try:
-        preview = state.get('preview')
-        if preview:
-            path = preview['site'].paths[0][0]
-            _replay_opinions((preview['site'],), preview['patches'],
-                             partial(_refresh_value, path), False, view)
+        if not view._mungActive:
+            view._beginValueEdit(state["nodeId"], state["prop"], state["comp"])
+            return
+        if state.get("opinion"):
+            if state["current"] == state["original"]:
+                _restoreMungOpinion(view, state)
+            elif _recordMungOpinion(view, state):
+                legacy_symbol("warn_if_non_persistent_edit_target")(view.nodeGraph.getStage())
+                view._startValueFlash(state["nodeId"], state["prop"], "commit")
     finally:
-        view._noticeHandler.setEnabled(state.get('noticeEnabled', True))
+        _clearMung(view)
+
+
+def _recordMungOpinion(view, state):
+    opinion = state["opinion"]
+    layer, path, time = opinion.layer, opinion.path, opinion.time
+    old, new = opinion.original, opinion.preview
+    if new == old or not opinion.matches(path):
+        return False
+    legacy_symbol("_push_undo_command")(
+        "Set %s" % path,
+        lambda view: noodlesValues.set_value_opinion(layer, path, time, new),
+        lambda view: noodlesValues.set_value_opinion(layer, path, time, old),
+        view=view,
+    )
+    return True
+
+
+def _restoreMungOpinion(view, state):
+    try:
+        state["opinion"].restore()
+    except (RuntimeError, Tf.ErrorException) as error:
+        Tf.Warn(f"Could not cancel value preview; recording undo: {error}")
+        _recordMungOpinion(view, state)
 
 
 def _cancelMung(view):
-    """Esc mid-drag: restore the local opinion without recording history."""
     state = view._mungState
-    view._mungState = None
-    if state is not None:
-        if view._mungActive:
-            view._mungActive = False
-            _cancel_value_preview(view, state)
-        view.update()
+    if state is None:
+        return
+    try:
+        if state.get("opinion"):
+            _restoreMungOpinion(view, state)
+    finally:
+        _clearMung(view)
+    view.update()
 
 
 def _toggleBoolValue(view, hit):

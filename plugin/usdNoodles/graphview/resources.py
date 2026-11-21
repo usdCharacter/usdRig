@@ -525,12 +525,14 @@ def initializeGL(view):
         view.doneCurrent()
         return
 
-    if not view.nodes:
+    if (
+        view._startupSamplePending
+        and not view._stageSync.isClosed()
+        and not view.nodes
+    ):
         sampleGraphPath = assetsPath / "bodyGraph.json"
         if sampleGraphPath.exists():
             view._loadSampleGraph(str(sampleGraphPath))
-            if view.nodes:
-                view.frameScene()
 
     view.initialized = True
     view.textChanged = True

@@ -321,11 +321,10 @@ class TestReloadLifecycle(unittest.TestCase):
         view.nodeGraphReplaced.connect(replaced)
         view.loadStage(other)
         self.assertEqual(seen, [other, self.stage])
-        with patch.object(view, '_addNewNodeFast', return_value=None) as adopt:
-            other.DefinePrim('/Retired', 'Xform')
-            adopt.assert_not_called()
-            self.stage.DefinePrim('/Live', 'Xform')
-            adopt.assert_called_once()
+        other.DefinePrim('/Retired', 'Xform')
+        self.assertNotIn('/Retired', view.nodes)
+        self.stage.DefinePrim('/Live', 'Xform')
+        self.assertIn('/Live', view.nodes)
 
     def test_interrupted_load_failure_does_not_reset_newer_graph(self):
         view = self.view
@@ -408,7 +407,7 @@ class TestReloadLifecycle(unittest.TestCase):
         self.assertTrue(view._addPrimAsNode(prim, stage, []))
         node = view.nodes['/A/Child']
         node.setDisplayPosition(Gf.Vec2d(500, 300))
-        view._selectedNodes = {'/A/Child'}
+        view._selection.update("replace", {'/A/Child'}, ())
         token = view._stageSync.acquireSuppression(reconcile=True)
         self.addCleanup(token.release)
         editor = Usd.NamespaceEditor(stage)
@@ -698,12 +697,13 @@ class TestReloadLifecycle(unittest.TestCase):
         self.assertUnbound()
         self.assertFalse(self.posts)
         view.loadStage(self.stage)
-        with patch.object(view, '_addNewNodeFast', return_value=None) as adopt:
-            previous.DefinePrim('/Former', 'Xform')
-            adopt.assert_not_called()
-            self.stage.DefinePrim('/Current', 'Xform')
-            adopt.assert_called_once()
-            self.assertEqual(str(adopt.call_args.args[0].GetPath()), '/Current')
+        previous.DefinePrim('/Former', 'Xform')
+        self.assertNotIn('/Former', view.nodes)
+        self.stage.DefinePrim('/Current', 'Xform')
+        self.assertIn('/Current', view.nodes)
+        self.assertEqual(
+            str(view.nodes['/Current'].getUsdPrim().GetPath()), '/Current'
+        )
 
 
 class TestIsStageViewMidTeardown(unittest.TestCase):

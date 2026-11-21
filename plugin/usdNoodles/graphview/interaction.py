@@ -977,18 +977,17 @@ def _navigateAlongRelationshipLink(view, link, worldPos):
 
 
 def _clearValueInteractionState(view):
-    """Abandon any value edit / drag / popup without authoring.
-
-    Called wherever the graph underneath is about to be replaced. A mung
-    left live across a stage reload would hold a prim path that no longer
-    means anything and would author onto whatever now sits there.
-    """
-    if view._mungState is not None and view._mungActive:
-        view._noticeHandler.setEnabled(True)
-    view._mungState = None
-    view._mungActive = False
+    """Cancel value interactions before detaching their graph."""
+    view._cancelMung()
+    view._valueHover = None
+    view._valueFlash = None
+    if view._valueCursorSet is not None:
+        view._valueCursorSet = None
+        view.setCursor(QtCore.Qt.ArrowCursor)
     view._valueEditTarget = None
     view._valueEditInput.clear()
+    view._valueEditFresh = True
+    view._valueEditError = False
     view._tokenPopup = None
     # The fitted-text cache is keyed by node id, so a rebuilt graph must
     # not inherit it (stale entries would only miss on their component
@@ -1450,6 +1449,8 @@ def _completeLinkDrag(view):
                                if isinstance(view.nodeGraph.getStage(), Usd.Stage) else (
                                    view._reconnectOldSourceNodeId, view._reconnectOldSourcePort,
                                    view._reconnectOldTargetNodeId, view._reconnectOldTargetPort,
+                                   view._reconnectOldSourcePropertyName,
+                                   view._reconnectOldTargetPropertyName,
                                ))
             view._clearReconnectState()
 
@@ -1628,8 +1629,7 @@ def _finishReconnectDisconnect(view):
     stage = view.nodeGraph.getStage()
     legacy_symbol("warn_if_non_persistent_edit_target")(stage)
 
-    view._noticeHandler.setEnabled(False)
-    try:
+    with view._stageSync.suppressed():
         success = library.delete_connection(
             stage, outputPrim, srcPort, inputPrim, tgtPort
         )
@@ -1670,8 +1670,6 @@ def _finishReconnectDisconnect(view):
             # so the UI reflects the actual stage state.
             view.linksChanged = True
             view._rebuildLinks()
-    finally:
-        view._noticeHandler.setEnabled(True)
 
 
 def _finalizeNodeDrag(view):
@@ -1698,11 +1696,8 @@ def _finalizeNodeDrag(view):
         _editing.edit_node_positions(view, new_positions, "Move Nodes", finish,
                                      old_display=old_positions)
         return
-    view._noticeHandler.setEnabled(False)
-    try:
+    with view._stageSync.suppressed():
         finish()
-    finally:
-        view._noticeHandler.setEnabled(True)
 
     # Push undo command if positions actually changed
     Tf.Status(

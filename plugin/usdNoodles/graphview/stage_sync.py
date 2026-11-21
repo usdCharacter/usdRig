@@ -235,6 +235,7 @@ class StageSync:
     def __init__(
         self, read, notice, apply, post, listen, warn=None, sink=None, *,
         reconcile=None, prepare=None, reset=None, defer=None, graphReplaced=None,
+        on_owner=None, post_notice=None,
     ):
         self._read = read
         self._notice = notice

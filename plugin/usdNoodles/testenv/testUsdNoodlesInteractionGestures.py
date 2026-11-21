@@ -22,7 +22,7 @@ from unittest.mock import MagicMock, patch
 
 from pxr import Gf, Usd
 
-from UsdNoodles.graphView import GraphView
+from UsdNoodles.graphView import GraphView, _makeStageSync
 from UsdNoodles.graphview import interaction, intents
 from UsdNoodles.graphview.selection import Selection
 from pxr.Usdviewq.qt import QtCore
@@ -183,7 +183,7 @@ def _make_node_drag_view(node, registry):
         _draggingLink=False,
         draggingNodes=False,
         marqueeActive=False,
-        _noticeHandler=SimpleNamespace(setEnabled=MagicMock()),
+        _stageSync=_makeStageSync(None),
         _syncSelectionToPrimtree=MagicMock(),
         update=MagicMock(),
         _commandRegistry=registry,
