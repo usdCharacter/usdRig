@@ -1,4 +1,5 @@
 // Runtime adapter for the shared readiness and value propagation loop.
+#include "rigExecEvalCore/closure.h"
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecRuntime/labels.h"
 #include "rigExecRuntime/store.h"
@@ -711,37 +712,48 @@ RrRunOpBody(RrProgram *p, size_t i, std::string *error)
 {
     const auto &step = (*p->steps)[i];
     auto &s = p->store;
-    s.stepOutputs[i].BeginRun();
-    if (!p->requiredStageFramesAdmission.admitted &&
-        std::any_of(
-            step.reads.begin(), step.reads.end(), [](const auto &range) {
-                return range.domain() ==
-                       RigExecWireSlotDomain::RequiredStageFramesAdmission;
-            }))
-        return true;
-    bool ok = true;
-    if (step.kind == RigExecWireStepKind::PropertyRevision) {
-        auto &lines = s.headLines[i];
-        lines.clear();
-        ok = RrRunPropertyPart(p, size_t(step.object), size_t(step.part),
-                               &lines);
-        if (!ok && error)
-            *error = "step " + RrStepLabel(*p, i) + " has no property part";
-    } else if (step.kind == RigExecWireStepKind::RestCompose ||
-               step.kind == RigExecWireStepKind::LadderCompose)
-        RrRunRestHead(p, size_t(step.object),
-                      step.kind == RigExecWireStepKind::LadderCompose);
-    else if (step.kind == RigExecWireStepKind::SkinTopology)
-        RrRunTopologyHead(p, size_t(step.object));
-    else if (step.kind == RigExecWireStepKind::SpaceExpression)
-        ok = RrRunSpaceExpression(p, step, error);
-    else if (_RrIsWeightKind(step.kind))
-        ok = RrRunWeightStep(p, i, error);
-    else if (_RrIsGeometryKind(step.kind))
-        ok = RrRunGeometryStep(p, i, error);
-    else
-        ok = RrRunPoseStep(p, i, error);
-    return ok;
+    // The prologue (run framing, the RequiredStageFramesAdmission refusal)
+    // and the epilogue shape live in rigExecEvalCore/closure.h; the
+    // routing switch and the step's label text stay with this adapter.
+    const eval::StepRun ran = eval::RunScheduledStep(
+        s.stepOutputs[i], p->requiredStageFramesAdmission.admitted,
+        [&step] {
+            return std::any_of(
+                step.reads.begin(), step.reads.end(), [](const auto &range) {
+                    return range.domain() ==
+                           RigExecWireSlotDomain::RequiredStageFramesAdmission;
+                });
+        },
+        [&] {
+            if (step.kind == RigExecWireStepKind::PropertyRevision) {
+                auto &lines = s.headLines[i];
+                lines.clear();
+                return RrRunPropertyPart(p, size_t(step.object),
+                                         size_t(step.part), &lines);
+            }
+            if (step.kind == RigExecWireStepKind::RestCompose ||
+                step.kind == RigExecWireStepKind::LadderCompose) {
+                RrRunRestHead(p, size_t(step.object),
+                              step.kind == RigExecWireStepKind::LadderCompose);
+                return true;
+            }
+            if (step.kind == RigExecWireStepKind::SkinTopology) {
+                RrRunTopologyHead(p, size_t(step.object));
+                return true;
+            }
+            if (step.kind == RigExecWireStepKind::SpaceExpression)
+                return RrRunSpaceExpression(p, step, error);
+            if (_RrIsWeightKind(step.kind))
+                return RrRunWeightStep(p, i, error);
+            if (_RrIsGeometryKind(step.kind))
+                return RrRunGeometryStep(p, i, error);
+            return RrRunPoseStep(p, i, error);
+        },
+        [&] {
+            if (step.kind == RigExecWireStepKind::PropertyRevision && error)
+                *error = "step " + RrStepLabel(*p, i) + " has no property part";
+        });
+    return ran != eval::StepRun::Failed;
 }
 } // namespace
 
@@ -1830,9 +1842,10 @@ RrExecuteOpGraph(RrProgram *p, bool force, std::string *error)
     };
     callbacks.skip = [&](uint32_t c) {
         const auto i = p->opGraph.ops[c].originalIndex;
-        s.stepOutputs[i].MarkSkipped();
-        if (_RrIsGeometryKind((*p->steps)[i].kind))
-            RrSkipGeometryStep(p, i);
+        eval::SkipScheduledStep(s.stepOutputs[i], [&] {
+            if (_RrIsGeometryKind((*p->steps)[i].kind))
+                RrSkipGeometryStep(p, i);
+        });
     };
     callbacks.skipEffects = &state.skipEffects;
     if (s.dispatch && s.wait && p->parallelSafe) {

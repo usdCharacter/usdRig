@@ -18,8 +18,7 @@ namespace rigExec {
 /// The entering points of the vertex groups one group step reads. Group h
 /// holds points [bounds[h], bounds[h + 1]) at points[h]; points[h] is null
 /// for a group the step does not read. bounds holds groups + 1 entries.
-template <class V>
-struct RigExecGroupPoints {
+template <class V> struct RigExecGroupPoints {
     const int *bounds = nullptr;
     size_t groups = 0;
     const V *const *points = nullptr;
@@ -41,17 +40,14 @@ struct RigExecGroupPoints {
     }
 };
 
-/// Points [begin, end) of RigExecApplyLaplacianSmoothWithAdjacency's result
-/// for \p count entering points read through \p groups, written to
-/// out[i - begin]. An adjacency that does not cover \p count, or a strength
-/// that clamps to 0, passes the points through, as the whole kernel does.
-/// False when a point or neighbour lies in a group the step does not read.
-template <class V>
+// Whole and group smoothing share the Jacobi walk. Only their source
+// lookup and the need to copy untouched vertices to the output differ.
+template <class Point, class Read>
 bool
-RigExecApplyLaplacianSmoothGroup(const RigExecMeshAdjacency &adjacency,
-                                 double strength, size_t count,
-                                 const RigExecGroupPoints<V> &groups,
-                                 size_t begin, size_t end, V *out)
+RigExecApplyLaplacianSmoothKernel(const RigExecMeshAdjacency &adjacency,
+                                  double strength, size_t count, Read read,
+                                  size_t begin, size_t end, Point *out,
+                                  bool copyUntouched)
 {
     if (begin > end || end > count) {
         return false;
@@ -59,22 +55,20 @@ RigExecApplyLaplacianSmoothGroup(const RigExecMeshAdjacency &adjacency,
     const double s = std::min(std::max(strength, 0.0), 1.0);
     const bool passThrough = s <= 0.0 || !adjacency.Covers(count);
     for (size_t i = begin; i < end; ++i) {
-        const V *self = groups.At(i);
+        const Point *self = read(i);
         if (!self) {
             return false;
         }
-        if (passThrough) {
-            out[i - begin] = *self;
+        if (passThrough || adjacency.neighbors[i].empty()) {
+            if (copyUntouched) {
+                out[i - begin] = *self;
+            }
             continue;
         }
-        const std::vector<int> &ring = adjacency.neighbors[i];
-        if (ring.empty()) {
-            out[i - begin] = *self;
-            continue;
-        }
-        V average(0.0f);
-        for (const int n : ring) {
-            const V *p = groups.At(size_t(n));
+        const auto &ring = adjacency.neighbors[i];
+        Point average(0.0f);
+        for (int n : ring) {
+            const Point *p = read(size_t(n));
             if (!p) {
                 return false;
             }
@@ -84,6 +78,68 @@ RigExecApplyLaplacianSmoothGroup(const RigExecMeshAdjacency &adjacency,
         out[i - begin] = *self + (average - *self) * float(s);
     }
     return true;
+}
+
+/// False when a point or neighbour lies outside the groups the step reads.
+template <class Point>
+bool
+RigExecApplyLaplacianSmoothGroup(const RigExecMeshAdjacency &adjacency,
+                                 double strength, size_t count,
+                                 const RigExecGroupPoints<Point> &groups,
+                                 size_t begin, size_t end, Point *out)
+{
+    return RigExecApplyLaplacianSmoothKernel(
+        adjacency, strength, count, [&](size_t i) { return groups.At(i); },
+        begin, end, out, true);
+}
+
+/// Borrow an entering range, copy the points, or swap caller-owned scratch
+/// into the destination. Isolated vertices only need copying after a swap.
+template <class Point>
+void
+RigExecApplyLaplacianSmoothWithAdjacencyKernel(
+    std::vector<Point> *points, const RigExecMeshAdjacency &adjacency,
+    double strength, const Point *source, size_t sourceCount,
+    std::vector<Point> *scratch = nullptr)
+{
+    const size_t count = points->size();
+    if (count == 0 || strength <= 0.0 || !adjacency.Covers(count) ||
+        (source && sourceCount != count)) {
+        return;
+    }
+    std::vector<Point> owned;
+    const bool swapSource = !source && scratch;
+    if (swapSource) {
+        scratch->swap(*points);
+        points->resize(count);
+        source = scratch->data();
+    } else if (!source) {
+        owned = *points;
+        source = owned.data();
+    }
+    RigExecApplyLaplacianSmoothKernel(
+        adjacency, strength, count, [source](size_t i) { return source + i; },
+        0, count, points->data(), swapSource);
+}
+
+template <class Point>
+void
+RigExecApplyLaplacianSmoothMeshKernel(std::vector<Point> *points,
+                                      const int *counts, size_t countsSize,
+                                      const int *indices, size_t indicesSize,
+                                      double strength,
+                                      const Point *source = nullptr,
+                                      size_t sourceCount = 0)
+{
+    if (points->empty() || strength <= 0.0) {
+        return;
+    }
+    RigExecMeshAdjacency adjacency;
+    if (RigExecBuildMeshAdjacency(points->size(), counts, countsSize, indices,
+                                  indicesSize, &adjacency)) {
+        RigExecApplyLaplacianSmoothWithAdjacencyKernel(
+            points, adjacency, strength, source, sourceCount);
+    }
 }
 
 /// The groups a group's points reach through one ring of \p adjacency:
@@ -106,9 +162,10 @@ RigExecSmoothHaloGroups(const RigExecMeshAdjacency &adjacency,
         seen[g] = 1;
         for (int i = bounds[g]; i < bounds[g + 1]; ++i) {
             for (const int n : adjacency.neighbors[size_t(i)]) {
-                const size_t h = size_t(
-                    std::upper_bound(bounds.begin(), bounds.end(), n) -
-                    bounds.begin()) - 1;
+                const size_t h =
+                    size_t(std::upper_bound(bounds.begin(), bounds.end(), n) -
+                           bounds.begin()) -
+                    1;
                 if (h < groups && !seen[h]) {
                     seen[h] = 1;
                     (*out)[g].push_back(int(h));
@@ -119,6 +176,6 @@ RigExecSmoothHaloGroups(const RigExecMeshAdjacency &adjacency,
     }
 }
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_MATH_SMOOTH_KERNEL_H
+#endif // RIGEXEC_MATH_SMOOTH_KERNEL_H

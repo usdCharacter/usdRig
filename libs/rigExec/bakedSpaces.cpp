@@ -10,14 +10,19 @@
 #include "frameExtraction.h"
 #include "rigExecMath/spaceMatchKernel.h"
 #include "rigExecScene/poseProgram.h"
+#include "rigExecScene/providerProgram.h"
+#include "rigExecEvalCore/spaces.h"
+#include "rigExecMath/affineFrameKernels.h"
 #include "pxr/base/tf/diagnostic.h"
 #include "pxr/base/tf/getenv.h"
 #include "pxr/base/tf/staticTokens.h"
 #include "pxr/usd/sdf/types.h"
 #include "pxr/usd/usd/resolveInfo.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
+#include <string_view>
 #include <unordered_map>
 
 namespace rigExec {
@@ -1121,9 +1126,25 @@ RigExecBakedBindProviderRefresh(
     return true;
 }
 namespace {
-struct RefreshMath {
-    using Frame = RigExecPointFrame;
+// SpaceExpression part 0 and ProviderRefresh run through EvalCore's single
+// space body; the bridge parts below stay here as input binding, and the
+// xform-composing op kinds keep RigExecRunProviderOp.
+struct BakedSpaceMath {
     using Matrix = GfMatrix4d;
+    using Vector = GfVec3d;
+    using Rotation = GfRotation;
+    using Frame = RigExecPointFrame;
+    using AffineMath = RigExecGfAffineMath;
+    static bool PointsToMatrix(const std::array<Vector, 4> &rest,
+                               const std::array<Vector, 4> &pose, Matrix *out)
+    {
+        return RigExecPointsToMatrix(rest, pose, out);
+    }
+    static bool PointsToMatrix(const Frame &before, const Frame &after,
+                               Matrix *out)
+    {
+        return RigExecPointsToMatrix(before.points, after.points, out);
+    }
     static bool Usable(const Frame &frame)
     {
         if (!frame.IsValid() || frame.IsDegenerate())
@@ -1134,79 +1155,278 @@ struct RefreshMath {
                     return false;
         return true;
     }
-    static bool PointsToMatrix(const Frame &before, const Frame &after,
-                               Matrix *delta)
-    {
-        return RigExecPointsToMatrix(before.points, after.points, delta);
-    }
     static Frame Transform(const Frame &frame, const Matrix &delta)
     {
         return RigExecMatrixToPoints(frame.points, delta);
     }
 };
+struct BakedSpaceInputs {
+    const RigExecProviderProgram *program = nullptr;
+    const std::vector<RigExecBakedProgramImpl::ProviderRefresh> *refreshes =
+        nullptr;
+    const std::vector<std::string> *pathTexts = nullptr;
+    size_t opCount() const
+    {
+        return program->ops.size();
+    }
+    const RigExecProviderOp &op(size_t index) const
+    {
+        return program->ops[index];
+    }
+    size_t valueCount() const
+    {
+        return program->valueKeys.size();
+    }
+    size_t refreshCount() const
+    {
+        return refreshes->size();
+    }
+    const RigExecBakedProgramImpl::ProviderRefresh &refresh(size_t index) const
+    {
+        return (*refreshes)[index];
+    }
+    std::string_view refreshPath(size_t index) const
+    {
+        return (*pathTexts)[size_t((*refreshes)[index].slot)];
+    }
+    std::string_view refreshCarryPath(size_t index, size_t carry) const
+    {
+        return (*pathTexts)[size_t((*refreshes)[index].carries[carry].slot)];
+    }
+};
+struct BakedSpaceState : GfProviderStore {
+    BakedSpaceState(
+        RigExecTypedValueStore &values, const RigExecBakedProgramImpl *program,
+        const std::vector<RigExecBakedCommit> *commits,
+        std::vector<RigExecPointFrame> *base,
+        std::vector<RigExecPointFrame> *fin,
+        std::vector<RigExecBakedProgramImpl::ProviderRefresh> *refreshes,
+        std::vector<std::string> *diagnostics)
+        : GfProviderStore{values}, program(program), commits(commits),
+          base(base), fin(fin), refreshes(refreshes), diagnostics(diagnostics)
+    {
+    }
+    const RigExecBakedProgramImpl *program = nullptr;
+    const std::vector<RigExecBakedCommit> *commits = nullptr;
+    std::vector<RigExecPointFrame> *base = nullptr, *fin = nullptr;
+    std::vector<RigExecBakedProgramImpl::ProviderRefresh> *refreshes = nullptr;
+    std::vector<std::string> *diagnostics = nullptr;
+    const VtValue *Boxed(uint64_t id) const
+    {
+        return store.Read<VtValue>(id);
+    }
+    bool ReadAffineDouble(uint64_t id, double *out) const
+    {
+        if (const auto *value = store.Read<double>(id)) {
+            *out = *value;
+            return true;
+        }
+        if (const auto *narrow = store.Read<float>(id)) {
+            *out = *narrow;
+            return true;
+        }
+        return false;
+    }
+    bool ReadAffineVec3i(uint64_t id, GfVec3i *out) const
+    {
+        const auto *value = Boxed(id);
+        if (value && value->IsHolding<GfVec3i>()) {
+            *out = value->UncheckedGet<GfVec3i>();
+            return true;
+        }
+        return false;
+    }
+    bool ReadAffineBool(uint64_t id, bool *out) const
+    {
+        const auto *value = Boxed(id);
+        if (value && value->IsHolding<bool>()) {
+            *out = value->UncheckedGet<bool>();
+            return true;
+        }
+        return false;
+    }
+    bool ReadAffineInt(uint64_t id, int *out) const
+    {
+        const auto *value = Boxed(id);
+        if (value && value->IsHolding<int>()) {
+            *out = value->UncheckedGet<int>();
+            return true;
+        }
+        return false;
+    }
+    bool ReadAffineString(uint64_t id, std::string *out) const
+    {
+        if (const auto *value = store.Read<TfToken>(id)) {
+            *out = value->GetText();
+            return true;
+        }
+        return false;
+    }
+    bool ReadAffineIntArray(uint64_t id, std::vector<int> *out) const
+    {
+        const auto *value = Boxed(id);
+        if (value && value->IsHolding<VtIntArray>()) {
+            const auto &array = value->UncheckedGet<VtIntArray>();
+            if (!array.empty()) {
+                out->assign(array.begin(), array.end());
+                return true;
+            }
+        }
+        return false;
+    }
+    bool ReadAffineDoubleArray(uint64_t id, std::vector<double> *out) const
+    {
+        const auto *value = Boxed(id);
+        if (value && value->IsHolding<VtDoubleArray>()) {
+            const auto &array = value->UncheckedGet<VtDoubleArray>();
+            if (!array.empty()) {
+                out->assign(array.begin(), array.end());
+                return true;
+            }
+        }
+        return false;
+    }
+    bool ReadAffineMatrixArray(uint64_t id, std::vector<GfMatrix4d> *out) const
+    {
+        const auto *value = Boxed(id);
+        if (value && value->IsHolding<VtMatrix4dArray>()) {
+            const auto &array = value->UncheckedGet<VtMatrix4dArray>();
+            if (!array.empty()) {
+                out->assign(array.begin(), array.end());
+                return true;
+            }
+        }
+        return false;
+    }
+    void PublishAffineFailure(uint64_t id, const std::string &message)
+    {
+        store.values[size_t(id)].raw = VtValue();
+        store.Publish(RigExecValueId(id), std::monostate(), false, false, 0,
+                      message);
+    }
+    bool CommitAbandoned(uint32_t index) const
+    {
+        return (*commits)[index].abandoned;
+    }
+    bool CommitPresent(uint32_t index, uint32_t pos) const
+    {
+        return (*commits)[index].present[pos];
+    }
+    const RigExecPointFrame &BaseFrame(uint32_t version) const
+    {
+        return (*base)[version];
+    }
+    const RigExecPointFrame &FinFrame(uint32_t version) const
+    {
+        return (*fin)[version];
+    }
+    RigExecPointFrame *MutableBaseFrame(uint32_t version)
+    {
+        return &(*base)[version];
+    }
+    RigExecPointFrame *MutableFinFrame(uint32_t version)
+    {
+        return &(*fin)[version];
+    }
+    RigExecPointFrame *RefreshBaseInputs(size_t index)
+    {
+        return (*refreshes)[index].baseInputs.data();
+    }
+    RigExecPointFrame *RefreshFinInputs(size_t index)
+    {
+        return (*refreshes)[index].finInputs.data();
+    }
+    RigExecPointFrame *RefreshBaseOutputs(size_t index)
+    {
+        return (*refreshes)[index].baseOutputs.data();
+    }
+    RigExecPointFrame *RefreshFinOutputs(size_t index)
+    {
+        return (*refreshes)[index].finOutputs.data();
+    }
+    uint8_t *RefreshBlocked(size_t index)
+    {
+        return (*refreshes)[index].blocked.data();
+    }
+    GfMatrix4d ParentRawMatrix(int slot) const
+    {
+        return RigExecBakedProviderParentRaw(*program, slot);
+    }
+    const RigExecPointFrame *
+    ReadRefreshFrame(uint64_t id, RigExecPointFrame * /*scratch*/) const
+    {
+        return store.Read<RigExecPointFrame>(RigExecValueId(id));
+    }
+    void PushDiagnostic(const std::string &text)
+    {
+        diagnostics->push_back(text);
+    }
+};
+struct BakedSpaceHost {
+    using Math = BakedSpaceMath;
+    using Inputs = BakedSpaceInputs;
+    using State = BakedSpaceState;
+    BakedSpaceHost(const BakedSpaceInputs &inputs, const BakedSpaceState &state)
+        : _inputs(inputs), _state(state)
+    {
+    }
+    const Inputs &inputs() const
+    {
+        return _inputs;
+    }
+    State &state()
+    {
+        return _state;
+    }
+    const RigExecRangeRunner *ranges() const
+    {
+        return nullptr;
+    }
+
+private:
+    Inputs _inputs;
+    State _state;
+};
+const char *
+SpaceFailureMessage(eval::spaces::SpaceDetail detail)
+{
+    switch (detail) {
+    case eval::spaces::SpaceDetail::OutputRange:
+        return "provider output is outside its typed layout";
+    case eval::spaces::SpaceDetail::AffineLayout:
+        return "affine frame inputs do not match their expression";
+    case eval::spaces::SpaceDetail::AffineKind:
+        return "unknown affine frame expression";
+    case eval::spaces::SpaceDetail::NoOp:
+    case eval::spaces::SpaceDetail::NoRefresh:
+    case eval::spaces::SpaceDetail::None:
+        return "invalid provider kernel/store binding";
+    }
+    return "invalid provider kernel/store binding";
+}
 } // namespace
 void
 RigExecBakedRunProviderRefresh(RigExecBakedProgramImpl *program,
                                RigExecBakedStep *step)
 {
     auto &B = *program;
-    auto &r = B.providerRefreshes[size_t(step->object)];
-    bool constrained = false;
-    for (const auto &[index, pos] : r.priorConstraints) {
-        const auto &commit = B.commits[index];
-        constrained = constrained || (!commit.abandoned && commit.present[pos]);
+    if (step->object < 0 ||
+        size_t(step->object) >= B.providerRefreshes.size()) {
+        step->diagnostics.push_back(
+            "ProviderRefresh names no compiled context");
+        return;
     }
-    for (size_t k = 0; k < r.carries.size(); ++k) {
-        const auto &carry = r.carries[k];
-        r.baseInputs[k] = B.base[carry.baseRead];
-        r.finInputs[k] = B.fin[carry.finRead];
-        r.blocked[k] = 0;
-        for (int slot : carry.blockingSlots)
-            if (RigExecBakedProviderParentRaw(B, slot) != GfMatrix4d(1.0))
-                r.blocked[k] = 1;
-    }
-    size_t failed = 0;
-    const auto outcome = RigExecRefreshProviderFrames<RefreshMath>(
-        B.base[r.baseRead], B.fin[r.finRead],
-        B.providerValues.Read<RigExecPointFrame>(r.baseValue),
-        B.providerValues.Read<RigExecPointFrame>(r.currentValue), constrained,
-        r.baseInputs.data(), r.finInputs.data(), r.blocked.data(),
-        r.carries.size(), &B.base[r.baseWrite], &B.fin[r.finWrite],
-        r.baseOutputs.data(), r.finOutputs.data(), &failed);
-    for (size_t k = 0; k < r.carries.size(); ++k) {
-        B.base[r.carries[k].baseWrite] = r.baseOutputs[k];
-        B.fin[r.carries[k].finWrite] = r.finOutputs[k];
-    }
-    // Build spelled the paths. `failed` names a carry only on the two
-    // descendant outcomes, so that text is looked up there alone.
-    const auto &texts = *B.pathTexts;
-    const std::string &path = texts[size_t(r.slot)];
-    const auto carry = [&]() -> const std::string & {
-        return texts[size_t(r.carries[failed].slot)];
-    };
-    if (outcome == RigExecProviderRefreshOutcome::MissingBase)
-        step->diagnostics.push_back("connected base pose input incomplete: " +
-                                    path);
-    else if (outcome == RigExecProviderRefreshOutcome::MissingCurrent)
-        step->diagnostics.push_back("connected final pose input incomplete: " +
-                                    path);
-    else if (outcome == RigExecProviderRefreshOutcome::InvalidCurrent)
+    const BakedSpaceInputs inputs{&B.GetProviderProgram(), &B.providerRefreshes,
+                                  B.pathTexts.get()};
+    BakedSpaceState state(B.providerValues, &B, &B.commits, &B.base, &B.fin,
+                          &B.providerRefreshes, &step->diagnostics);
+    BakedSpaceHost host(inputs, state);
+    const eval::StepResult result = eval::RunValueStep(
+        host, eval::StepRef{uint32_t(step->kind), step->object, step->part,
+                            size_t(step->object)});
+    if (result.outcome != eval::Outcome::Applied)
         step->diagnostics.push_back(
-            path + " produced an invalid or degenerate frame for " + path +
-            "; constraint passed through");
-    else if (outcome == RigExecProviderRefreshOutcome::SingularCurrent)
-        step->diagnostics.push_back(
-            path +
-            " produced a singular hierarchy delta; constraint passed through");
-    else if (outcome == RigExecProviderRefreshOutcome::InvalidDescendant)
-        step->diagnostics.push_back(
-            path + " could not propagate its pose revision through " + carry() +
-            "; constraint passed through");
-    else if (outcome ==
-             RigExecProviderRefreshOutcome::InvalidTransformedDescendant)
-        step->diagnostics.push_back(
-            path + " produced an invalid descendant frame for " + carry() +
-            "; constraint passed through");
+            "ProviderRefresh names no compiled context");
 }
 // A ladder reads its own property revision before following connections,
 // while other consumers keep
@@ -1587,17 +1807,45 @@ RigExecBakedRunSpaceOp(RigExecBakedProgramImpl *program, RigExecBakedStep *step)
                           : GfMatrix4d(1.0));
         return;
     }
-    std::string error;
-    if (!RigExecRunProviderOp(B.GetProviderProgram(), uint32_t(step->object),
-                              &B.providerValues, &error)) {
-        const auto output =
-            B.GetProviderProgram().ops[size_t(step->object)].output;
-        B.providerValues.Publish(output, std::monostate(), true, false, 0,
-                                 error);
-        B.providerValues.values[size_t(output)].raw = VtValue();
-        if (!error.empty())
-            step->diagnostics.push_back(error);
+    const auto &ops = B.GetProviderProgram().ops;
+    if (step->object < 0 || size_t(step->object) >= ops.size()) {
+        step->diagnostics.push_back("invalid provider kernel/store binding");
+        return;
     }
+    const auto &op = ops[size_t(step->object)];
+    if (op.kind == RigExecProviderOpKind::LocalXform ||
+        op.kind == RigExecProviderOpKind::InterveningXform) {
+        std::string error;
+        if (!RigExecRunProviderOp(B.GetProviderProgram(),
+                                  uint32_t(step->object), &B.providerValues,
+                                  &error)) {
+            B.providerValues.Publish(op.output, std::monostate(), true, false,
+                                     0, error);
+            B.providerValues.values[size_t(op.output)].raw = VtValue();
+            if (!error.empty())
+                step->diagnostics.push_back(error);
+        }
+        return;
+    }
+    const BakedSpaceInputs inputs{&B.GetProviderProgram(), &B.providerRefreshes,
+                                  B.pathTexts.get()};
+    BakedSpaceState state(B.providerValues, &B, &B.commits, &B.base, &B.fin,
+                          &B.providerRefreshes, &step->diagnostics);
+    BakedSpaceHost host(inputs, state);
+    const eval::StepResult result = eval::RunValueStep(
+        host, eval::StepRef{uint32_t(step->kind), step->object, step->part,
+                            size_t(step->object)});
+    if (result.outcome == eval::Outcome::Applied)
+        return;
+    const char *message =
+        result.outcome == eval::Outcome::Rejected
+            ? "unknown provider operation kind"
+            : SpaceFailureMessage(
+                  static_cast<eval::spaces::SpaceDetail>(result.detail));
+    B.providerValues.Publish(op.output, std::monostate(), true, false, 0,
+                             message);
+    B.providerValues.values[size_t(op.output)].raw = VtValue();
+    step->diagnostics.push_back(message);
 }
 void
 RigExecBakedRunSpaceMatch(const RigExecBakedProgramImpl &B,

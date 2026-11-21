@@ -1,8 +1,6 @@
 // Property revisions: immutable compile bindings, sampled typed inputs,
-// canonical graph bodies and publication. Native and detached SceneDb
-// revisions use the same numerical property runner.
+// graph bindings and publication.
 #include "rigExecSchema/schemaNames.h"
-#include "rigExecScene/propertyProgram.h"
 #include "bakedProgram.h"
 #include "bakedProgramImpl.h"
 #include "bodyPurity.h"
@@ -13,6 +11,7 @@
 #include "rigEvaluator.h"
 #include "rigEvaluatorPropertyBindings.h"
 
+#include "rigExecEvalCore/properties.h"
 #include "rigExecMath/propertyMath.h"
 
 #include "pxr/base/gf/half.h"
@@ -40,7 +39,6 @@
 #include "pxr/usd/usd/relationship.h"
 
 #include <algorithm>
-#include <cmath>
 #include <cstring>
 #include <limits>
 #include <map>
@@ -110,39 +108,6 @@ BitSameArray(const VtArray<T> &a, const VtArray<T> &b)
            (a.size() == b.size() &&
             (a.empty() ||
              std::memcmp(a.cdata(), b.cdata(), a.size() * sizeof(T)) == 0));
-}
-
-bool
-IsFinite(float v)
-{
-    return std::isfinite(v);
-}
-
-// _EvaluatePropertyChains has no double overload: a double chain's base and
-// result reach its float one, so a double past float's range is not finite.
-bool
-IsFinite(double v)
-{
-    return std::isfinite(static_cast<float>(v));
-}
-
-bool
-IsFinite(const GfVec3f &v)
-{
-    return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
-}
-
-bool
-IsFinite(const GfMatrix4d &m)
-{
-    for (size_t r = 0; r < 4; ++r) {
-        for (size_t c = 0; c < 4; ++c) {
-            if (!std::isfinite(m[r][c])) {
-                return false;
-            }
-        }
-    }
-    return true;
 }
 
 // The TfType a head value type reads as.
@@ -2011,11 +1976,10 @@ VersionValue(const RigExecBakedProgramImpl &B, const Chain &chain, uint32_t id)
 }
 
 // runChain's base: a drag on the target converted to the chain's type,
-// else the target's own value; skipped when neither is a usable number.
+// else the target's own value.
 template <class ValueT>
 bool
-Base(const RigExecBakedProgramImpl &B, const Chain &chain,
-     std::vector<std::string> *lines, ValueT *value)
+ReadBase(const RigExecBakedProgramImpl &B, const Chain &chain, ValueT *value)
 {
     bool haveBase = false;
     const VtValue *drag = chain.targetSlot >= 0
@@ -2032,18 +1996,9 @@ Base(const RigExecBakedProgramImpl &B, const Chain &chain,
         const VtValue *own = chain.ownLeaf >= 0
                                  ? &B.headLeaves[size_t(chain.ownLeaf)].value
                                  : nullptr;
-        if (!own || !own->IsHolding<ValueT>()) {
-            lines->push_back(chain.linePrefix +
-                             ": target has no authored value; chain skipped");
+        if (!own || !own->IsHolding<ValueT>())
             return false;
-        }
         *value = own->UncheckedGet<ValueT>();
-    }
-    // The same line for a held base as for an authored one.
-    if (!IsFinite(*value)) {
-        lines->push_back(chain.linePrefix +
-                         ": authored base is not finite; chain skipped");
-        return false;
     }
     return true;
 }
@@ -2056,210 +2011,214 @@ Read(const RigExecBakedProgramImpl &B, const RigExecBakedWalk &walk, T fallback)
     return RigExecBakedResolveWalk(B, walk, &value) ? value : fallback;
 }
 
-// applyFloat.
-bool
-ApplyFloat(const RigExecBakedProgramImpl &B, const Chain::Revision &r, float in,
-           float envelope, float *out)
-{
-    RigExecFloatPropertyRecord record;
-    record.op = r.op;
-    record.opValid = r.opValid;
-    record.hasTangents = r.hasTangents;
-    record.value = Read(B, r.value, 0.0f);
-    record.minimum = Read(B, r.minimum, 0.0f);
-    record.maximum = Read(B, r.maximum, 0.0f);
-    VtArray<GfVec2f> keys, tangents;
-    if (record.op == RigExecPropertyOp::Curve) {
-        keys = Read(B, r.keys, keys);
-        record.keyData = keys.cdata();
-        record.keyCount = keys.size();
-        if (r.hasTangents) {
-            tangents = Read(B, r.tangents, tangents);
-            record.tangentData = tangents.cdata();
-            record.tangentCount = tangents.size();
+struct BakedPropertyHost {
+    struct Math {
+        using Matrix = GfMatrix4d;
+        using Vec3 = GfVec3f;
+        using Key = GfVec2f;
+    };
+
+    struct Revision {
+        const RigExecBakedProgramImpl &program;
+        const Chain::Revision &bound;
+
+        bool exists() const
+        {
+            return bound.moverExists;
         }
-    }
-    VtVec3fArray points;
-    if (record.op == RigExecPropertyOp::Path) {
-        points = Read(B, r.pathPoints, points);
-        record.pathPointData = points.cdata();
-        record.pathPointCount = points.size();
-        record.path = r.path;
-    }
-    return RigExecRunProperty(record, in, envelope, out);
-}
-
-bool
-Apply(const RigExecBakedProgramImpl &B, const Chain::Revision &r, float in,
-      float envelope, float *out)
-{
-    return ApplyFloat(B, r, in, envelope, out);
-}
-
-// A double chain is computed in float.
-bool
-Apply(const RigExecBakedProgramImpl &B, const Chain::Revision &r, double in,
-      float envelope, double *out)
-{
-    float result = 0.0f;
-    if (!ApplyFloat(B, r, float(in), envelope, &result)) {
-        return false;
-    }
-    *out = double(result);
-    return true;
-}
-
-bool
-Apply(const RigExecBakedProgramImpl &B, const Chain::Revision &r,
-      const GfMatrix4d &in, float envelope, GfMatrix4d *out)
-{
-    RigExecMatrixPropertyRecord record;
-    record.op = r.op;
-    record.opValid = r.opValid;
-    record.value = Read(B, r.value, GfMatrix4d(1.0));
-    return RigExecRunProperty(record, in, envelope, out);
-}
-
-bool
-Apply(const RigExecBakedProgramImpl &B, const Chain::Revision &r,
-      const GfVec3f &in, float envelope, GfVec3f *out)
-{
-    RigExecVec3PropertyRecord record;
-    record.op = r.op;
-    record.opValid = r.opValid;
-    record.value = Read(B, r.value, GfVec3f(0));
-    record.minimum = Read(B, r.minimum, GfVec3f(0));
-    record.maximum = Read(B, r.maximum, GfVec3f(0));
-    return RigExecRunProperty(record, in, envelope, out);
-}
-
-// One revision of runChain's loop: \p out is \p in where the revision
-// passes through.
-template <class ValueT>
-void
-Revise(const RigExecBakedProgramImpl &B, const Chain::Revision &r,
-       const ValueT &in, UsdTimeCode time, std::vector<std::string> *lines,
-       ValueT *out)
-{
-    *out = in;
-    if (!r.moverExists) {
-        return;
-    }
-    if (!Read(B, r.enabled, true)) {
-        lines->push_back(r.linePrefix + ": disabled; revision passed through");
-        return;
-    }
-    float envelope = 1.0f;
-    if (!r.weightObject.IsEmpty()) {
-        const auto &field = B.weightFields[size_t(r.weightField)];
-        const auto &weights = field.values;
-        const auto &error = field.error;
-        const bool resolved = field.ok;
-        if (!resolved || weights.size() != 1) {
-            lines->push_back(r.linePrefix + ": " + error +
-                             "; revision passed through");
-            return;
+        const std::string &label() const
+        {
+            return bound.linePrefix;
         }
-        envelope = weights[0];
-    } else {
-        envelope = Read(B, r.defaultWeight, 1.0f);
-        if (!std::isfinite(envelope) || envelope < 0.0f || envelope > 1.0f) {
-            lines->push_back(r.linePrefix +
-                             ": inputs:defaultWeight must be finite and in "
-                             "[0, 1]; revision passed through");
-            return;
+        void appendInputDiagnostics(std::vector<std::string> &lines) const
+        {
+            ForEachWalk(bound, [&](const RigExecBakedWalk &walk) {
+                for (const auto *hops : {&walk.hops, &walk.doubleHops})
+                    for (const auto &hop : *hops)
+                        if (hop.crossDomain >= 0) {
+                            VtValue value;
+                            std::string diagnostic;
+                            if (!RigExecBakedReadCrossDomain(
+                                    program, hop.crossDomain, &value,
+                                    &diagnostic) &&
+                                !diagnostic.empty())
+                                lines.push_back(std::move(diagnostic));
+                        }
+            });
         }
-    }
-    ValueT next = in;
-    if (!Apply(B, r, in, envelope, &next)) {
-        lines->push_back(r.linePrefix +
-                         ": inputs unusable; revision passed through");
-        return;
-    }
-    if (!IsFinite(next)) {
-        lines->push_back(r.linePrefix +
-                         ": produced a non-finite value; revision passed "
-                         "through");
-        return;
-    }
-    *out = next;
-}
+        bool enabled() const
+        {
+            return Read(program, bound.enabled, true);
+        }
+        bool hasWeightField() const
+        {
+            return !bound.weightObject.IsEmpty();
+        }
+        eval::properties::WeightFieldView weightField() const
+        {
+            const auto &field = program.weightFields[size_t(bound.weightField)];
+            return {field.ok, field.values.size(), field.values.data(),
+                    field.error};
+        }
+        float defaultWeight() const
+        {
+            return Read(program, bound.defaultWeight, 1.0f);
+        }
+        bool opValid() const
+        {
+            return bound.opValid;
+        }
+        RigExecPropertyOp op() const
+        {
+            return bound.op;
+        }
+        template <class T> T read(eval::properties::Operand operand) const
+        {
+            using O = eval::properties::Operand;
+            const auto &walk = operand == O::Value     ? bound.value
+                               : operand == O::Minimum ? bound.minimum
+                                                       : bound.maximum;
+            if constexpr (std::is_same_v<T, GfMatrix4d>)
+                return Read(program, walk, T(1.0));
+            else
+                return Read(program, walk, T(0.0f));
+        }
+        VtArray<GfVec2f> keys() const
+        {
+            return Read(program, bound.keys, VtArray<GfVec2f>());
+        }
+        VtArray<GfVec2f> tangents() const
+        {
+            return bound.hasTangents
+                       ? Read(program, bound.tangents, VtArray<GfVec2f>())
+                       : VtArray<GfVec2f>();
+        }
+        bool keysValid(const VtArray<GfVec2f> &keys) const
+        {
+            return RigExecValidateLinearKeysKernel(keys.cdata(), keys.size());
+        }
+        VtVec3fArray pathPoints() const
+        {
+            return Read(program, bound.pathPoints, VtVec3fArray());
+        }
+        const RigExecPathSettings &pathSettings() const
+        {
+            return bound.path;
+        }
+    };
 
-template <class ValueT>
-void
-RunPart(RigExecBakedProgramImpl *program, RigExecBakedStep *step,
-        UsdTimeCode time)
-{
-    RigExecBakedProgramImpl &B = *program;
-    const size_t c = size_t(step->object);
-    const Chain &chain = B.propertyChains[c];
-    const uint32_t id = chain.versionBase + uint32_t(step->part);
-    std::vector<std::string> *lines = &step->lines;
-    // Recompute memo diagnostics only when this body actually executes.
-    lines->clear();
-    ValueT value{};
-    bool valid = false;
-    if (step->part == 0) {
-        if (!chain.targetExists) {
-            lines->push_back(chain.linePrefix +
-                             ": target attribute disappeared; chain "
-                             "skipped");
-        } else {
-            valid = Base(B, chain, lines, &value);
+    struct Inputs {
+        const RigExecBakedProgramImpl &program;
+        size_t chainCount() const
+        {
+            return program.propertyChains.size();
         }
-    } else if (B.propertyVersionValid[id - 1]) {
-        // A skipped chain runs no revision and says nothing about them.
-        const ValueT in = Member<ValueT>(B.propertyValues[id - 1]);
-        const auto &revision = chain.revisions[size_t(step->part) - 1];
-        ForEachWalk(revision, [&](const RigExecBakedWalk &walk) {
-            for (const auto *hops : {&walk.hops, &walk.doubleHops})
-                for (const auto &hop : *hops)
-                    if (hop.crossDomain >= 0) {
-                        VtValue value;
-                        std::string diagnostic;
-                        if (!RigExecBakedReadCrossDomain(B, hop.crossDomain,
-                                                         &value, &diagnostic) &&
-                            !diagnostic.empty())
-                            lines->push_back(diagnostic);
-                    }
-        });
-        Revise(B, chain.revisions[size_t(step->part) - 1], in, time, lines,
-               &value);
-        valid = true;
+        size_t revisionCount(size_t c) const
+        {
+            return program.propertyChains[c].revisions.size();
+        }
+        size_t versionBase(size_t c) const
+        {
+            return program.propertyChains[c].versionBase;
+        }
+        auto valueType(size_t c) const
+        {
+            using Type = eval::properties::ValueType;
+            switch (program.propertyChains[c].arm) {
+            case Chain::Arm::Float:
+                return Type::Float;
+            case Chain::Arm::Double:
+                return Type::Double;
+            case Chain::Arm::Matrix4d:
+                return Type::Matrix4d;
+            case Chain::Arm::Vec3f:
+                return Type::Vec3f;
+            }
+            return Type::Float;
+        }
+        const std::string &baseLabel(size_t c) const
+        {
+            return program.propertyChains[c].linePrefix;
+        }
+        template <class T>
+        eval::properties::BaseRead readBase(size_t c, T &value) const
+        {
+            using B = eval::properties::BaseRead;
+            const auto &chain = program.propertyChains[c];
+            if (!chain.targetExists)
+                return B::NoTarget;
+            return ReadBase(program, chain, &value) ? B::Present : B::Missing;
+        }
+        Revision revision(size_t c, size_t r) const
+        {
+            return {program, program.propertyChains[c].revisions[r]};
+        }
+        // Baked phased consumers box the committed version in FinishPropertyStep.
+        template <class Fn> void forEachRecord(size_t, Fn) const
+        {
+        }
+    };
+
+    struct State {
+        RigExecBakedProgramImpl &program;
+        std::vector<std::string> &lines;
+        void setChainValid(size_t c, bool valid)
+        {
+            program.chainValid[c] = valid;
+        }
+        bool predecessorValid(size_t, size_t id) const
+        {
+            return program.propertyVersionValid[id];
+        }
+        template <class T> const T &version(size_t id) const
+        {
+            return Member<T>(program.propertyValues[id]);
+        }
+        template <class T>
+        void storeVersion(size_t id, const T *value, bool valid)
+        {
+            T &stored = Member<T>(program.propertyValues[id]);
+            const bool wasValid = program.propertyVersionValid[id] != 0;
+            program.propertyChanged[id] =
+                valid != wasValid || (valid && !BitSame(*value, stored));
+            if (valid)
+                stored = *value;
+            program.propertyVersionValid[id] = valid;
+        }
+        bool recordStoodAside(size_t r) const
+        {
+            return program.recordStoodAside[r];
+        }
+    };
+
+    Inputs input;
+    State output;
+    const Inputs &inputs() const
+    {
+        return input;
     }
-    ValueT &stored = Member<ValueT>(B.propertyValues[id]);
-    const bool wasValid = B.propertyVersionValid[id] != 0;
-    B.propertyChanged[id] =
-        valid != wasValid || (valid && !BitSame(value, stored)) ? 1 : 0;
-    if (valid) {
-        stored = value;
+    State &state()
+    {
+        return output;
     }
-    B.propertyVersionValid[id] = valid ? 1 : 0;
-    if (step->part == 0) {
-        B.chainValid[c] = valid ? 1 : 0;
+    const RigExecRangeRunner *ranges() const
+    {
+        return nullptr;
     }
-}
+};
 
 } // namespace
 
 void
 RigExecBakedRunPropertyStep(RigExecBakedProgramImpl *program,
-                            RigExecBakedStep *step, UsdTimeCode time)
+                            RigExecBakedStep *step, UsdTimeCode)
 {
-    switch (program->propertyChains[size_t(step->object)].arm) {
-    case Chain::Arm::Float:
-        RunPart<float>(program, step, time);
-        return;
-    case Chain::Arm::Double:
-        RunPart<double>(program, step, time);
-        return;
-    case Chain::Arm::Matrix4d:
-        RunPart<GfMatrix4d>(program, step, time);
-        return;
-    case Chain::Arm::Vec3f:
-        RunPart<GfVec3f>(program, step, time);
-        return;
-    }
+    // Recompute memo diagnostics only when this body executes.
+    step->lines.clear();
+    const eval::StepRef ref{uint32_t(step->kind), step->object, step->part,
+                            step->writes.front().begin};
+    BakedPropertyHost host{{*program}, {*program, step->lines}};
+    eval::RunValueStep(host, ref);
 }
 
 void
