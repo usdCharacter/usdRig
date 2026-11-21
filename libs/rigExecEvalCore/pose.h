@@ -5011,10 +5011,14 @@ NormalizeConstraintTables(size_t sourceCount, size_t poleCount,
                           bool parentOffsets, bool readPole, Weights weights,
                           Offsets offsets, bool *ok, bool *poleOk)
 {
-    const bool weightsOk = weights(0, sourceCount);
-    const bool translationOk = offsets(1, sourceCount, parentOffsets);
-    const bool rotationOk = offsets(2, sourceCount, parentOffsets);
-    *ok = weightsOk && translationOk && rotationOk;
+    *ok = weights(0, sourceCount);
+    if (parentOffsets) {
+        *ok = *ok && offsets(1, sourceCount, true) &&
+              offsets(2, sourceCount, true);
+    } else {
+        offsets(1, sourceCount, false);
+        offsets(2, sourceCount, false);
+    }
     if (readPole) {
         *poleOk = weights(3, poleCount);
     }

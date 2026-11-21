@@ -4838,6 +4838,8 @@ static const TfToken kRigExecSources(SchemaAttrText::rigExecSources);
 static const TfToken
     kInputsTranslationOffsets(SchemaAttrText::inputsTranslationOffsets);
 static const TfToken
+    kInputsRotationOffsets(SchemaAttrText::inputsRotationOffsets);
+static const TfToken
     kRigExecPoleVectorMode(SchemaAttrText::rigExecPoleVectorMode);
 static const TfToken
     kRigExecPoleVectorObjects(SchemaAttrText::rigExecPoleVectorObjects);
@@ -4958,6 +4960,56 @@ TestConstraintTableNormalizationAcrossHosts()
                                                    &diffs));
             }
         }
+    }
+    const UsdStageRefPtr stage = BuildConstraintStage(nullptr);
+    const UsdPrim parent =
+        stage->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/Parent"));
+    parent.GetRelationship(kRigExecSources)
+        .SetTargets(
+            {SdfPath("/Asset/Sources/Parent"), SdfPath("/Asset/Sources/A")});
+    const UsdAttribute weights = parent.GetAttribute(kInputsSourceWeights);
+    const UsdAttribute translation =
+        parent.GetAttribute(kInputsTranslationOffsets);
+    const UsdAttribute rotation = parent.GetAttribute(kInputsRotationOffsets);
+    CHECK(weights.Set(VtFloatArray(1, 1.0f)));
+    CHECK(translation.Set(VtVec3dArray(1, GfVec3d(0))));
+    CHECK(rotation.Set(VtVec3dArray(1, GfVec3d(0))));
+    for (int phase = 0; phase < 2; ++phase) {
+        if (phase == 1) {
+            CHECK(weights.Set(VtFloatArray(2, 1.0f)));
+        }
+        const std::string path = parent.GetPath().GetString();
+        const std::vector<std::string> expected{
+            path + " " +
+                (phase == 0 ? SchemaAttrText::inputsSourceWeights
+                            : SchemaAttrText::inputsTranslationOffsets) +
+                " has 1 entries for 2 sources",
+            path +
+                " has unusable constraint inputs; constraint passed through"};
+        RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+        std::vector<std::string> errors;
+        CHECK(evaluator.Compile(&errors));
+        const RigExecRigPose native = evaluator.Evaluate(UsdTimeCode(1));
+        CHECK(native.valid);
+        CHECK(native.diagnostics == expected);
+        ConstraintsSourcePlayback playback;
+        if (!playback.Open(evaluator, stage)) {
+            continue;
+        }
+        RigExecFrameInputs inputs;
+        std::string error;
+        CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(1), {}, &inputs,
+                                       &error));
+        playback.context.varyingInputCount = inputs.values.size();
+        const RigExecRigPose frozen = RigExecEvaluateFrozen(
+            playback.context, inputs, RigExecMakeProductionStepRunner());
+        CHECK(frozen.valid);
+        CHECK(frozen.diagnostics == expected);
+        CHECK(playback.player.Play(1, &error));
+        RigExecRigPose runtime;
+        CHECK(RigExecProjectRuntimePose(
+            playback.player.Reader(), UsdTimeCode(1), true, &runtime, &error));
+        CHECK(runtime.diagnostics == expected);
     }
 }
 
