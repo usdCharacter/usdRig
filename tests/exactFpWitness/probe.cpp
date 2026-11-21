@@ -32,6 +32,16 @@ main(int argc, char **argv)
         argc > 4 ? static_cast<float>(std::atof(argv[4])) : 0.14999999f;
     std::printf("probe contract %08x\n", rigexecBits(a * b + c));
 
+    // The grouped-option witness defines KEEP1 and KEEP2 in one SHELL:
+    // entry; each guard checked separately proves both definitions
+    // survived the conflict scrub as independent options.
+#if defined(KEEP1)
+    std::printf("probe keep1 1\n");
+#endif
+#if defined(KEEP2)
+    std::printf("probe keep2 2\n");
+#endif
+
     rigexecPrintGeneratedProbe();
     return 0;
 }

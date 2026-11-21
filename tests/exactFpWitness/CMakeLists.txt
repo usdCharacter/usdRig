@@ -24,6 +24,10 @@ add_custom_command(OUTPUT "${_gen_dir}/generatedProbe.cpp"
             -P "${CMAKE_CURRENT_LIST_DIR}/genSource.cmake")
 
 add_library(fpIface INTERFACE)
+# A namespaced name with no unqualified counterpart: an enforcement pass
+# that splits a generator-expression link entry at its last colon sees only
+# "Fast" and misses this dependency entirely.
+add_library(Pkg::Fast ALIAS fpIface)
 if (WITNESS_CONFLICT STREQUAL "interface")
     # A conflict owned by a linked interface target cannot be scrubbed or
     # reordered, so the helper must abort configuration. The link itself is
@@ -37,7 +41,16 @@ add_executable(witnessExact
     probe.cpp
     "${_gen_dir}/generatedProbe.cpp")
 target_precompile_headers(witnessExact PRIVATE probePch.h)
-target_link_libraries(witnessExact PRIVATE $<$<CONFIG:Release>:fpIface>)
+target_link_libraries(witnessExact PRIVATE $<$<CONFIG:Release>:Pkg::Fast>)
+
+# Own options grouped through SHELL:, so the conflicting flag and the two
+# independent definitions share one property entry. The scrub must drop the
+# flag while both -D definitions survive as separate options.
+add_executable(witnessGrouped
+    probe.cpp
+    "${_gen_dir}/generatedProbe.cpp")
+target_compile_options(witnessGrouped PRIVATE
+    "SHELL:${WITNESS_CONFLICT_FLAG} -DKEEP1 -DKEEP2")
 
 if (WITNESS_SOURCE_CONFLICT)
     # Source-level conflicts sit after every target option on the real

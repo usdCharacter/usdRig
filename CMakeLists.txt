@@ -2887,10 +2887,6 @@ if (MSVC AND NOT CMAKE_DISABLE_PRECOMPILE_HEADERS)
     endforeach()
 endif()
 
-# Exact-FP finalization runs after the scene and oracle links below:
-# interface compile options reach the command line after the appended
-# exact-FP flags, so the walk must follow every compile-affecting link.
-
 # Executables that compile a stage through rigExec alone name the scene
 # library, so the hooks are loaded. Imaging, bake, and the standalone
 # adapter link it privately: playback, runtime, and imaging tests load
@@ -2942,6 +2938,13 @@ foreach(_rigexec_oracle_exe IN ITEMS
     endif()
 endforeach()
 
+# Placement invariant for the exact-FP finalize walk: it must stay the last
+# code in this scope that mutates target options. It runs after every
+# target_precompile_headers producer and REUSE_FROM consumer above and after
+# every compile-affecting target_link_libraries call in this scope, the
+# scene and oracle links just above included, because interface and
+# per-source options reach the command line after the appended exact-FP
+# flags. Only install() rules follow it here.
 rigexec_apply_exact_fp_flags_to_directory_targets()
 
 # Install

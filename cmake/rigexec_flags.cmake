@@ -6,10 +6,9 @@ include_guard(GLOBAL)
 # occurrence, so a conflicting option anywhere after the settings flips the
 # mode; a scoped or shared option must not be applied by text. These
 # functions return the flag list once per compiler family and enforce the
-# mode on a target. The walk itself must run in each directory scope that
-# declares compiled targets, after every target_precompile_headers producer
-# and REUSE_FROM consumer and every compile-affecting target_link_libraries
-# call in that scope, and as the last target mutation in the scope.
+# mode on a target. Each directory scope that declares compiled targets
+# calls the walk for its own targets; CMakeLists.txt states the placement
+# rule beside the root walk.
 #
 # See docs/concepts/baked-vs-dynamic.md.
 
@@ -56,12 +55,46 @@ function(rigexec_get_exact_fp_conflict_regex out_var)
     set(${out_var} [[-ffast-math|-Ofast|-ffp-contract=|[/-]fp:]] PARENT_SCOPE)
 endfunction()
 
+# PRIVATE: the content of the outermost generator expression, split at the
+# first colon outside nested generator expressions: the content of
+# $<$<CONFIG:Release>:Pkg::Fast> is Pkg::Fast, not Fast. Returns empty for
+# expressions without a content colon.
+function(rigexec_fp_genex_content entry out_var)
+    string(LENGTH "${entry}" _rigexec_gc_len)
+    set(_rigexec_gc_i 2)
+    set(_rigexec_gc_depth 0)
+    set(_rigexec_gc_content "")
+    while (_rigexec_gc_i LESS _rigexec_gc_len)
+        string(SUBSTRING "${entry}" ${_rigexec_gc_i} 1 _rigexec_gc_ch)
+        if (_rigexec_gc_ch STREQUAL ":" AND _rigexec_gc_depth EQUAL 0)
+            math(EXPR _rigexec_gc_start "${_rigexec_gc_i} + 1")
+            math(EXPR _rigexec_gc_stop "${_rigexec_gc_len} - ${_rigexec_gc_start} - 1")
+            if (_rigexec_gc_stop GREATER 0)
+                string(SUBSTRING "${entry}" ${_rigexec_gc_start}
+                    ${_rigexec_gc_stop} _rigexec_gc_content)
+            endif ()
+            break ()
+        elseif (_rigexec_gc_ch STREQUAL "$")
+            string(SUBSTRING "${entry}" ${_rigexec_gc_i} 2 _rigexec_gc_pair)
+            if (_rigexec_gc_pair STREQUAL "$<")
+                math(EXPR _rigexec_gc_depth "${_rigexec_gc_depth} + 1")
+                math(EXPR _rigexec_gc_i "${_rigexec_gc_i} + 1")
+            endif ()
+        elseif (_rigexec_gc_ch STREQUAL ">" AND _rigexec_gc_depth GREATER 0)
+            math(EXPR _rigexec_gc_depth "${_rigexec_gc_depth} - 1")
+        endif ()
+        math(EXPR _rigexec_gc_i "${_rigexec_gc_i} + 1")
+    endwhile ()
+    set(${out_var} "${_rigexec_gc_content}" PARENT_SCOPE)
+endfunction()
+
 # PRIVATE: the settings belong to the translation units that instantiate the
 # kernels, not to their consumers. A compiler resolves a duplicated family by
 # its last occurrence, so the canonical flags must finish the target's own
 # option list: every literal or generator-expression copy of the family in
 # the target's options is removed token by token, so unrelated options
-# grouped in the same entry keep their place and order. Options the ordering
+# grouped in the same entry (including a SHELL: grouping prefix) keep their
+# place and order. Options the ordering
 # cannot outrank abort configuration instead: per-source COMPILE_OPTIONS,
 # which CMake places after the target's own options (and whose properties
 # are shared by every target of the directory that sets them, so they must
@@ -84,9 +117,16 @@ function(rigexec_apply_exact_fp_flags target)
             list(APPEND _rigexec_fp_kept "${_rigexec_fp_entry}")
             continue ()
         endif ()
-        # Keep the non-conflicting tokens of a grouped entry, in order.
+        # Keep the non-conflicting tokens of a grouped entry, in order, and
+        # keep the SHELL: prefix so the survivors stay separate options.
+        set(_rigexec_fp_prefix "")
+        set(_rigexec_fp_body "${_rigexec_fp_entry}")
+        if (_rigexec_fp_body MATCHES "^SHELL:")
+            set(_rigexec_fp_prefix "SHELL:")
+            string(SUBSTRING "${_rigexec_fp_body}" 6 -1 _rigexec_fp_body)
+        endif ()
         string(REGEX REPLACE "[ \t]+" ";" _rigexec_fp_tokens
-            "${_rigexec_fp_entry}")
+            "${_rigexec_fp_body}")
         set(_rigexec_fp_part "")
         foreach (_rigexec_fp_token IN LISTS _rigexec_fp_tokens)
             if (_rigexec_fp_token STREQUAL "")
@@ -98,7 +138,7 @@ function(rigexec_apply_exact_fp_flags target)
         endforeach ()
         if (_rigexec_fp_part)
             list(JOIN _rigexec_fp_part " " _rigexec_fp_join)
-            list(APPEND _rigexec_fp_kept "${_rigexec_fp_join}")
+            list(APPEND _rigexec_fp_kept "${_rigexec_fp_prefix}${_rigexec_fp_join}")
         endif ()
     endforeach ()
     if (_rigexec_fp_kept)
@@ -115,9 +155,9 @@ endfunction()
 # COMPILE_OPTIONS entries (last on the real command line, and shared by
 # every target of the directory that sets them) and the INTERFACE_COMPILE_OPTIONS
 # of the direct requirements and their transitive link closure. A conditional
-# link entry ($<$<CONFIG:Release>:lib>, $<BUILD_INTERFACE:lib>) still names a
-# target whose interface applies in some configuration, so generator-expression
-# bodies are scanned too.
+# link entry ($<$<CONFIG:Release>:Pkg::Fast>, $<BUILD_INTERFACE:lib>) still
+# names a target whose interface applies in some configuration, so generator
+# expressions are unwrapped to their full content, namespaced names included.
 function(rigexec_fp_reject_unrankable_conflicts target)
     rigexec_get_exact_fp_flags(_rigexec_fp_canonical)
     rigexec_get_exact_fp_conflict_regex(_rigexec_fp_conflict)
@@ -145,19 +185,30 @@ function(rigexec_fp_reject_unrankable_conflicts target)
     set(_rigexec_fp_seen "")
     while (_rigexec_fp_queue)
         list(POP_FRONT _rigexec_fp_queue _rigexec_fp_lib)
-        if (_rigexec_fp_lib MATCHES "^\\$<LINK_ONLY:(.+)>(.*)$")
-            set(_rigexec_fp_lib "${CMAKE_MATCH_1}${CMAKE_MATCH_2}")
-        elseif (_rigexec_fp_lib MATCHES "^\\$<.*:(.*)>$")
-            # Scan the body of any other generator expression: a
+        if (_rigexec_fp_lib MATCHES "^\\$<")
+            # Unwrap generator expressions to their real content: a
             # conditional link still smuggles its target's interface into
-            # the configurations where the condition holds.
-            foreach (_rigexec_fp_part IN LISTS CMAKE_MATCH_1)
-                if (TARGET "${_rigexec_fp_part}")
-                    list(APPEND _rigexec_fp_queue "${_rigexec_fp_part}")
+            # the configurations where the condition holds, and the target
+            # name may be namespaced or nested in another expression.
+            set(_rigexec_fp_probe "${_rigexec_fp_lib}")
+            set(_rigexec_fp_depth 0)
+            while (_rigexec_fp_probe MATCHES "^\\$<"
+                   AND _rigexec_fp_depth LESS 5)
+                math(EXPR _rigexec_fp_depth "${_rigexec_fp_depth} + 1")
+                rigexec_fp_genex_content("${_rigexec_fp_probe}"
+                    _rigexec_fp_body)
+                if (NOT _rigexec_fp_body)
+                    break ()
                 endif ()
-            endforeach ()
-            continue ()
-        elseif (_rigexec_fp_lib MATCHES "^\\$")
+                set(_rigexec_fp_probe "")
+                foreach (_rigexec_fp_part IN LISTS _rigexec_fp_body)
+                    if (TARGET "${_rigexec_fp_part}")
+                        list(APPEND _rigexec_fp_queue "${_rigexec_fp_part}")
+                    elseif (_rigexec_fp_part MATCHES "^\\$<")
+                        set(_rigexec_fp_probe "${_rigexec_fp_part}")
+                    endif ()
+                endforeach ()
+            endwhile ()
             continue ()
         endif ()
         if (_rigexec_fp_lib IN_LIST _rigexec_fp_seen)
