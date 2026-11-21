@@ -186,11 +186,10 @@ class RigExecUsdviewContainer(PluginContainer):
         self._stageNoticeKey = None
         self._activating = False
         self._undoStack = None
-        self._viewportTools = None
+        # The readiness broker owns the viewport controllers; these latches
+        # cover only synchronous setup/import failure of one ensure below.
         self._viewportToolsFailed = False
-        self._viewCube = None
         self._viewCubeFailed = False
-        self._viewAxis = None
         self._viewAxisFailed = False
 
         # Release the stage BEFORE the interpreter finalizes.
@@ -840,8 +839,6 @@ class RigExecUsdviewContainer(PluginContainer):
         # activation-failure case) has only the attributes that branch needs,
         # and reaching this far through _OnStageReplaced must not depend on
         # the rest of registerPlugins having run.
-        if getattr(self, "_viewportTools", None) is not None:
-            return self._viewportTools
         if getattr(self, "_viewportToolsFailed", False):
             # A headless or Qt-less session fails identically on every
             # stage replacement; warning each time would bury the one
@@ -850,10 +847,19 @@ class RigExecUsdviewContainer(PluginContainer):
         try:
             try:
                 import gizmoUI
+                import stageViewReady
             except ImportError:
                 sys.path.insert(
                     0, os.path.dirname(os.path.abspath(__file__)))
                 import gizmoUI
+                import stageViewReady
+            result = stageViewReady.GetResult(self._api, "gizmo")
+            if result is not None:
+                # Registered in any state: ready answers its controller,
+                # pending/unavailable/failed answer None. No rebinding, and
+                # no failure inferred from None: a pending install reports
+                # its controller on a later pass.
+                return result.controller
             import gizmoMath
             import gizmoPreview
             # Both are filed under THIS session: another window's gizmo
@@ -865,15 +871,14 @@ class RigExecUsdviewContainer(PluginContainer):
             ikfkMatch.SetPublishedValuesReader(
                 self._ReadPublishedValues, session=self._api)
             gizmoPreview.SetSink(self._PreviewSink(), session=self._api)
-            self._viewportTools = gizmoUI.InstallViewportTools(
+            return gizmoUI.InstallViewportTools(
                 self._api, self._UndoStack(),
                 openGraphEditor=self._OpenGraphEditor)
         except Exception as error:
             Tf.Warn("rigExecUsdview: viewport tools unavailable: %s"
                     % error)
-            self._viewportTools = None
             self._viewportToolsFailed = True
-        return self._viewportTools
+        return None
 
     def _PreviewSink(self):
         """
@@ -1121,8 +1126,6 @@ class RigExecUsdviewContainer(PluginContainer):
         how the headless tests get away with loading this container.
         """
         # Same tolerance as _EnsureViewportTools above, for the same reason.
-        if getattr(self, "_viewCube", None) is not None:
-            return self._viewCube
         if getattr(self, "_viewCubeFailed", False):
             # A headless or Qt-less session fails identically on every
             # stage replacement; warning each time would bury the one
@@ -1131,17 +1134,21 @@ class RigExecUsdviewContainer(PluginContainer):
         try:
             try:
                 import viewCubeUI
+                import stageViewReady
             except ImportError:
                 sys.path.insert(
                     0, os.path.dirname(os.path.abspath(__file__)))
                 import viewCubeUI
-            self._viewCube = viewCubeUI.InstallViewCube(self._api)
+                import stageViewReady
+            result = stageViewReady.GetResult(self._api, "viewCube")
+            if result is not None:
+                return result.controller
+            return viewCubeUI.InstallViewCube(self._api)
         except Exception as error:
             Tf.Warn("rigExecUsdview: view cube unavailable: %s"
                     % error)
-            self._viewCube = None
             self._viewCubeFailed = True
-        return self._viewCube
+        return None
 
     def _ToggleViewCube(self):
         """Menu item: show or hide the view cube."""
@@ -1153,23 +1160,25 @@ class RigExecUsdviewContainer(PluginContainer):
 
     def _EnsureViewAxis(self):
         """Install the view axis gizmo; see _EnsureViewCube."""
-        if getattr(self, "_viewAxis", None) is not None:
-            return self._viewAxis
         if getattr(self, "_viewAxisFailed", False):
             return None
         try:
             try:
                 import viewAxisUI
+                import stageViewReady
             except ImportError:
                 sys.path.insert(
                     0, os.path.dirname(os.path.abspath(__file__)))
                 import viewAxisUI
-            self._viewAxis = viewAxisUI.InstallViewAxis(self._api)
+                import stageViewReady
+            result = stageViewReady.GetResult(self._api, "viewAxis")
+            if result is not None:
+                return result.controller
+            return viewAxisUI.InstallViewAxis(self._api)
         except Exception as error:
             Tf.Warn("rigExecUsdview: view axis unavailable: %s" % error)
-            self._viewAxis = None
             self._viewAxisFailed = True
-        return self._viewAxis
+        return None
 
     def _ToggleViewAxis(self):
         """Menu item: show or hide the view axis gizmo."""
@@ -1210,6 +1219,18 @@ class RigExecUsdviewContainer(PluginContainer):
         and USD state it would touch is already half gone -- a noisy
         traceback on quit teaches an artist nothing.
         """
+        # Retire this session's viewport registrations first: waiting
+        # installs must never construct into a torn-down window. Only an
+        # already-loaded broker can hold our work, so sys.modules keeps a
+        # session that never loaded the UI -- and a partial test container
+        # -- from importing Qt on its way out.
+        try:
+            ready = sys.modules.get("stageViewReady")
+            api = getattr(self, "_api", None)
+            if ready is not None and api is not None:
+                ready.Retire(api)
+        except Exception:
+            pass
         try:
             self._DeactivateImaging()
         except Exception:

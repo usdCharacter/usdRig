@@ -981,6 +981,121 @@ def TestContainerPerSession():
     print("  ok: one RigExec container per session")
 
 
+def TestContainerEnsureAndRetire():
+    """The container's ensures drive the broker; shutdown retires only it.
+
+    Real ensure/toggle/shutdown methods on minimal containers; doubles only
+    for the constructors and the reader/sink bindings they call into.
+    """
+    import ikfkMatch
+    import rigExecUsdview
+
+    windowA, apiA = _Session()
+    windowB, apiB = _Session()
+    undoA, undoB = object(), object()
+
+    def _MinimalContainer(api, undo):
+        container = rigExecUsdview.RigExecUsdviewContainer.__new__(
+            rigExecUsdview.RigExecUsdviewContainer)
+        container._api = api
+        container._undoStack = undo
+        return container
+
+    containerA = _MinimalContainer(apiA, undoA)
+    containerB = _MinimalContainer(apiB, undoB)
+    tools = ("gizmo", "viewCube", "viewAxis")
+
+    def _Ensures(container):
+        return (container._EnsureViewportTools(),
+                container._EnsureViewCube(), container._EnsureViewAxis())
+
+    bindings = Counter()
+
+    def _FrameReader(reader, session=None):
+        bindings[("frame", session)] += 1
+
+    def _ValuesReader(reader, session):
+        bindings[("values", session)] += 1
+
+    def _Sink(sink, session=None):
+        bindings[("sink", session)] += 1
+
+    def _Toggleable(controller):
+        controller.visible = True
+        controller.SetVisible = lambda value: setattr(
+            controller, "visible", value)
+        controller.IsVisible = lambda: controller.visible
+
+    with _ToolDoubles() as (probes, built), \
+            _Patched(gizmoMath, SetPublishedControlFrameReader=_FrameReader), \
+            _Patched(ikfkMatch, SetPublishedValuesReader=_ValuesReader), \
+            _Patched(gizmoPreview, SetSink=_Sink):
+        _Check(_Ensures(containerA) == (None, None, None),
+               "no view yet: the stage path queues all three tools")
+        _Check(_Ensures(containerA) == (None, None, None),
+               "a second stage pass still queues")
+        _Check(bindings == {("frame", apiA): 1, ("values", apiA): 1,
+                            ("sink", apiA): 1},
+               "two pending gizmo ensures bind this session's readers once")
+        _Check(not built, "and construct nothing without a view")
+        _Check(probes == {apiA: 1},
+               "two stage passes probe once for the session")
+        _Check(containerB._EnsureViewportTools() is None,
+               "B queues its own gizmo while A waits")
+        _Check(bindings[("frame", apiB)] == 1,
+               "bound to B's session, once")
+
+        _Host(apiA)._stageView = object()
+        _PumpUntil(lambda: all(
+            stageViewReady.GetResult(apiA, tool).status == "ready"
+            for tool in tools))
+        for _api, _tool, controller in built:
+            _Toggleable(controller)
+        gizmo, cube, axis = _Ensures(containerA)
+        _Check(all(controller.api is apiA
+                   for controller in (gizmo, cube, axis)),
+               "the stage path reports A's own controllers")
+        _Check(containerA._ToggleViewportTools() is gizmo and
+               containerA._ToggleViewCube() is cube and
+               containerA._ToggleViewAxis() is axis,
+               "the menu path shares the stage-installed controllers")
+        _Check(not gizmo.visible and not cube.visible and not axis.visible,
+               "through the real toggles")
+        _Check(gizmo.args == (undoA,) and
+               gizmo.kwargs == {"openGraphEditor": containerA._OpenGraphEditor,
+                                "installFilters": True},
+               "the gizmo keeps the container's undo stack and opener")
+        _Check(Counter((api, tool) for api, tool, _ in built) ==
+               {(apiA, "gizmo"): 1, (apiA, "viewCube"): 1,
+                (apiA, "viewAxis"): 1},
+               "each factory ran once across stage and menu passes")
+        _Check(bindings[("frame", apiA)] == 1, "readiness rebinds nothing")
+        _Check(stageViewReady.GetResult(apiA, "avarDock") is None,
+               "the container never installs the dock")
+
+        containerA._Shutdown()
+        _Check(all(stageViewReady.GetResult(apiA, tool) is None
+                   for tool in tools),
+               "shutdown retires this session's registrations")
+        _Check(stageViewReady.GetResult(apiB, "gizmo").status == "pending",
+               "while B keeps waiting")
+        _Host(apiB)._stageView = object()
+        _PumpUntil(lambda:
+                   stageViewReady.GetResult(apiB, "gizmo").status == "ready")
+        gizmoB = gizmoUI.GetController(apiB)
+        _Check(gizmoB is not None and gizmoB is not gizmo and
+               gizmoB.api is apiB and gizmoB.args == (undoB,),
+               "B still installs its own gizmo after A retires")
+        _Check(Counter((api, tool) for api, tool, _ in built) ==
+               {(apiA, "gizmo"): 1, (apiA, "viewCube"): 1,
+                (apiA, "viewAxis"): 1, (apiB, "gizmo"): 1},
+               "four constructions total, one per session tool")
+    _Destroy(windowA)
+    _Destroy(windowB)
+    print("  ok: container ensures share broker results; "
+          "shutdown retires one session")
+
+
 def TestRegistryDestroyedSlots():
     """Filing and removing a session repeatedly adds no slots to its window.
 
@@ -1181,10 +1296,11 @@ def main():
     TestMemoScopePerStage()
     TestPanelInstanceView()
     TestContainerPerSession()
+    TestContainerEnsureAndRetire()
     TestRegistryDestroyedSlots()
     TestRegistryRemovalHook()
     TestTouchPoseMarqueeUsesOwnSession()
-    print("SESSION_STATE_OK (17 groups)")
+    print("SESSION_STATE_OK (18 groups)")
     return 0
 
 
