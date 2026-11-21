@@ -49,6 +49,13 @@ NO_UNDO_STACK = ('There is no undo stack, so these changes cannot be '
                  'taken back')
 NO_UNDO_PUSH = ('The undo stack went away while the reply was working, so '
                 'these changes may have no usable undo')
+# Whole-layer restore for what arbitrary Python authored.
+PYTHON_UNDO_LABEL = 'AI Assistant Python'
+PYTHON_UNDO_NOTE = ('Undo takes back {} with the rest of this reply; it does '
+                    'not cover saved files, the Python environment, or the '
+                    'viewport')
+PYTHON_UNCOVERED = ('Python used layers this reply did not start with, so '
+                    'changes to them are not covered by undo: {}')
 
 INSTRUCTIONS = '''
 You have tools for the stage and rigs open in usdview. Look before you
@@ -764,8 +771,11 @@ class Toolbox(QtCore.QObject):
                  'UsdGeom and rigexec are ready, and names you define are '
                  'kept for later runs in this reply. Print what you want '
                  'to see; the value of a last bare expression is given '
-                 'back too. Changes to the edit target can be undone with '
-                 'the rest of the reply; changes to other layers cannot.',
+                 'back too. Changes to the layers the stage already uses '
+                 'are undone with the rest of the reply; a layer the code '
+                 'opens is reported and not covered. Nothing here is '
+                 'undone on disk, in the Python environment, or in what '
+                 'the viewport shows.',
                  _obj({'code': {'type': 'string'}}, ['code']),
                  self.run_python, lambda a: 'Ran Python'),
             Tool('list_files', READ,
@@ -1404,30 +1414,30 @@ class Toolbox(QtCore.QObject):
             raise ToolError('Give some code to run')
         if self._namespace is None:
             self._namespace = _namespace(self.session)
-        layer = self.stage.GetEditTarget().GetLayer() if self.stage \
-            else None
-        before = session_module.snapshot(layer) if layer is not None \
-            else None
+        # What the stage reads before the code runs, so the reply can put
+        # those layers back. A layer the code brings in has no baseline and
+        # is reported rather than guessed at.
+        baseline = session_module.layer_baseline(self.stage)
         log = recent_log()
         mark = log.count
         started = time.time()
         printed = io.StringIO()
         result = {}
-        with contextlib.redirect_stdout(printed), \
-                contextlib.redirect_stderr(printed):
-            try:
-                value = _exec(source, self._namespace)
-                if value is not None:
-                    result['value'] = _clip(repr(value), 4000)
-            except Exception:
-                result['error'] = traceback.format_exc(limit=8)
-        if before is not None:
-            after = session_module.snapshot(layer)
-            if not session_module.same_content(before, after):
-                self._record(session_module.LayerSnapshotEdit(
-                    'AI Assistant Python', layer, before, after))
-                self.done.append('Changed {} with Python'.format(
-                    layer.identifier))
+        try:
+            with contextlib.redirect_stdout(printed), \
+                    contextlib.redirect_stderr(printed):
+                try:
+                    value = _exec(source, self._namespace)
+                    if value is not None:
+                        result['value'] = _clip(repr(value), 4000)
+                except Exception:
+                    result['error'] = traceback.format_exc(limit=8)
+        finally:
+            # Code that raised may have authored already, so the layers are
+            # compared either way.
+            note = self._record_python_layers(baseline)
+            if note:
+                result['undo'] = note
         result['seconds'] = round(time.time() - started, 2)
         text = printed.getvalue().strip()
         if text:
@@ -1437,6 +1447,35 @@ class Toolbox(QtCore.QObject):
             result['logged'] = errors[-20:]
         self.session.update_viewport()
         return result
+
+    def _record_python_layers(self, baseline):
+        """One whole-layer edit per stage layer the code changed, and the
+        warning for the layers it brought in that have nothing to go
+        back to. Gives back what the run should say about undo."""
+        changed, uncovered = [], []
+        for layer, before in baseline.items():
+            after = session_module.snapshot(layer)
+            if session_module.same_content(before, after):
+                continue
+            self._record(session_module.LayerSnapshotEdit(
+                PYTHON_UNDO_LABEL, layer, before, after))
+            changed.append(layer.identifier)
+            self.done.append('Changed {} with Python'.format(
+                layer.identifier))
+        for layer in session_module.stage_layers(self.stage):
+            if layer not in baseline:
+                uncovered.append(layer.identifier)
+        if uncovered:
+            self._warn(PYTHON_UNCOVERED.format(', '.join(uncovered)))
+        note = self._undo_note(bool(changed))
+        if not changed:
+            return note
+        lines = [PYTHON_UNDO_NOTE.format(', '.join(changed))]
+        if uncovered:
+            lines.append(PYTHON_UNCOVERED.format(', '.join(uncovered)))
+        if note:
+            lines.append(note)
+        return ' '.join(lines)
 
     # Files and imports
     def list_files(self, args):

@@ -899,6 +899,174 @@ def TestActionBlocks():
            "describe_stage outlines the stage: %s" % described)
 
 
+def _TwoLayerStage(usda=_LAYER):
+    """A root layer with an anonymous over above it, so a reply can write
+    on two layers and each one can be read back on its own."""
+    root = _Layer('py_root.usda', usda)
+    over = _Layer('py_over.usda')
+    root.subLayerPaths.append(over.identifier)
+    return root, over, Usd.Stage.Open(root)
+
+
+def _LayerOf(stage, name):
+    """The code the assistant runs has only the stage to reach its layers
+    with, so the tests pick them out the same way. The name is matched at
+    the end: the session layer's identifier carries the root layer's."""
+    return ("[l for l in stage.GetUsedLayers() if "
+            "l.identifier.endswith(%r)][0]" % name)
+
+
+def _PythonWritesTwoLayers():
+    """Python that writes on two layers is recorded on both, and one undo
+    step puts both back."""
+    root, over, stage = _TwoLayerStage()
+    container = _CountingContainer()
+    box, _api = _Toolbox(stage, container, can_run=True)
+    text, failed = box.call("run_python", {"code": (
+        "stage.SetEditTarget(Usd.EditTarget(%s))\n"
+        "stage.GetAttributeAtPath('/Char/Ctl.avars:rx').Set(9)\n"
+        "stage.SetEditTarget(Usd.EditTarget(%s))\n"
+        "stage.DefinePrim('/Char/Wrote', 'Xform')\n"
+        % (_LayerOf(stage, "py_root.usda"), _LayerOf(stage, "py_over.usda")))})
+    lines = [d for d in box.done if d.endswith("with Python")]
+    _Check(not failed and len(lines) == 2,
+           "both changed layers are reported: %s %s" % (text, box.done))
+    _Check(root.GetAttributeAtPath("/Char/Ctl.avars:rx").default == 9 and
+           over.GetPrimAtPath("/Char/Wrote") is not None,
+           "the two layers were written: %s" % text)
+    box.finish()
+    pushed = container.stack.pushed
+    _Check(len(pushed) == 1, "the reply is one step: %s" % pushed)
+    group = pushed[0] if pushed else None
+    _Check(isinstance(group, session.GroupEdit) and len(group.edits) == 2 and
+           all(isinstance(e, session.LayerSnapshotEdit) for e in group.edits)
+           and all(e.label == "AI Assistant Python" for e in group.edits),
+           "the whole-layer edits are one group: %s" % (
+               getattr(group, "edits", None),))
+    _Check(group is not None and
+           {e.layer.identifier for e in group.edits} ==
+           {root.identifier, over.identifier},
+           "the group carries both layers: %s" % (
+               getattr(group, "edits", None),))
+    container.stack.Undo()
+    _Check(root.GetAttributeAtPath("/Char/Ctl.avars:rx").default == 0 and
+           over.GetPrimAtPath("/Char/Wrote") is None and
+           not stage.GetPrimAtPath("/Char/Wrote").IsValid(),
+           "one undo puts both layers back")
+    container.stack.Redo()
+    _Check(root.GetAttributeAtPath("/Char/Ctl.avars:rx").default == 9 and
+           over.GetPrimAtPath("/Char/Wrote") is not None,
+           "one redo writes both layers again")
+
+
+def _PythonRaisesAfterAnEdit():
+    """Code that raises after authoring still gets its change recorded."""
+    root, _over, stage = _TwoLayerStage()
+    container = _CountingContainer()
+    box, _api = _Toolbox(stage, container, can_run=True)
+    text, failed = box.call("run_python", {"code": (
+        "stage.GetAttributeAtPath('/Char/Ctl.avars:rx').Set(6)\n"
+        "raise ValueError('halfway')\n")})
+    result = json.loads(text)
+    _Check("halfway" in result.get("error", ""),
+           "the error is still given back: %s" % text)
+    _Check(root.GetAttributeAtPath("/Char/Ctl.avars:rx").default == 6,
+           "the change the code made before raising stands")
+    _Check(any(d.endswith("with Python") for d in box.done),
+           "the change is recorded even though the code raised: %s"
+           % box.done)
+    box.finish()
+    _Check(len(container.stack.pushed) == 1,
+           "the change of a raising run is one step: %s" %
+           container.stack.pushed)
+    container.stack.Undo()
+    _Check(root.GetAttributeAtPath("/Char/Ctl.avars:rx").default == 0 and
+           stage.GetAttributeAtPath("/Char/Ctl.avars:rx").Get() == 0,
+           "undo takes back the change made before the error")
+
+
+def _PythonOpensALayer():
+    """A layer the code brings in has no baseline, so it is reported as
+    outside what undo covers rather than guessed at."""
+    root, over, stage = _TwoLayerStage()
+    container = _CountingContainer()
+    box, _api = _Toolbox(stage, container, can_run=True)
+    text, failed = box.call("run_python", {"code": (
+        "fresh = Sdf.Layer.CreateAnonymous('py_fresh.usda')\n"
+        "%s.subLayerPaths.append(fresh.identifier)\n"
+        "stage.SetEditTarget(Usd.EditTarget(fresh))\n"
+        "stage.DefinePrim('/Char/Fresh', 'Xform')\n"
+        % _LayerOf(stage, "py_root.usda"))})
+    _Check(stage.GetPrimAtPath("/Char/Fresh").IsValid(),
+           "the code's layer is in the stage: %s" % text)
+    _Check(any("not covered by undo" in f and "py_fresh" in f
+               for f in box.failed),
+           "the layer the code opened is reported as uncovered: %s"
+           % box.failed)
+    _Check("not covered by undo" in json.loads(text).get("undo", ""),
+           "the run says so too: %s" % text)
+    layers = [d for d in box.done if d.endswith("with Python")]
+    _Check(any("py_root.usda" in d for d in layers),
+           "the layer it started with is still covered: %s" % box.done)
+    box.finish()
+    _Check(len(container.stack.pushed) == 1,
+           "the reply is one step whatever it touched: %s" %
+           container.stack.pushed)
+    container.stack.Undo()
+    _Check(list(root.subLayerPaths) == [over.identifier] and
+           not stage.GetPrimAtPath("/Char/Fresh").IsValid(),
+           "undo puts the starting layer back, and with it the stage")
+
+
+def _MixedPoseChangeAndPython():
+    """Posing, change_stage and Python in one reply: one step, one undo
+    puts every layer it touched back."""
+    root, over, stage = _TwoLayerStage()
+    container = _CountingContainer()
+    box, _api = _Toolbox(stage, container, can_edit=True, can_run=True)
+    box.call("set_avars", {"values": [
+        {"path": "/Char/Ctl", "name": "avars:rx", "value": 45}]})
+    box.call("change_stage", {"changes": [
+        {"action": "define_prim", "path": "/Char/Rig/Extra", "type":
+         "Xform"}]})
+    text, failed = box.call("run_python", {"code": (
+        "stage.SetEditTarget(Usd.EditTarget(%s))\n"
+        "stage.DefinePrim('/Char/Wrote', 'Xform')\n"
+        % _LayerOf(stage, "py_over.usda"))})
+    rx = stage.GetAttributeAtPath("/Char/Ctl.avars:rx")
+    _Check(not failed and rx.Get(1) == 45 and
+           stage.GetPrimAtPath("/Char/Rig/Extra").IsValid() and
+           stage.GetPrimAtPath("/Char/Wrote").IsValid(),
+           "the reply made all three kinds of change: %s" % text)
+    box.finish()
+    pushed = container.stack.pushed
+    _Check(len(pushed) == 1,
+           "pose, action and Python are one step: %s" % pushed)
+    group = pushed[0] if pushed else None
+    _Check(isinstance(group, session.GroupEdit) and len(group.edits) == 3 and
+           container.stack.UndoText() == stage_actions.UNDO_LABEL,
+           "the step groups all three: %s" % (getattr(group, "edits", None),))
+    container.stack.Undo()
+    _Check(abs(rx.Get(1)) < 1e-9 and
+           root.GetPrimAtPath("/Char/Rig") is None and
+           over.GetPrimAtPath("/Char/Wrote") is None and
+           not stage.GetPrimAtPath("/Char/Wrote").IsValid(),
+           "one undo puts every affected layer back")
+    container.stack.Redo()
+    _Check(rx.Get(1) == 45 and stage.GetPrimAtPath("/Char/Rig/Extra").IsValid()
+           and stage.GetPrimAtPath("/Char/Wrote").IsValid(),
+           "one redo makes every change again")
+
+
+def TestPythonUndoCoverage():
+    """What a run_python changed on every layer the reply started with goes
+    on the undo step; a layer the code opened is reported instead."""
+    _PythonWritesTwoLayers()
+    _PythonRaisesAfterAnEdit()
+    _PythonOpensALayer()
+    _MixedPoseChangeAndPython()
+
+
 def TestMcpServer():
     stage = _Stage()
     box, _api = _Toolbox(stage, _Container())
@@ -967,7 +1135,8 @@ def main():
     _ = app
     for test in (TestLooking, TestChangesAreOneUndoStep, TestPosing,
                  TestRunPython, TestActionCapture, TestActionBlocks,
-                 TestReplyTransaction, TestMcpServer):
+                 TestReplyTransaction, TestPythonUndoCoverage,
+                 TestMcpServer):
         try:
             test()
         except Exception as err:
