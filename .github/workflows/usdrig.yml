@@ -750,6 +750,374 @@ jobs:
           source bin/_env.sh
           ctest --test-dir installed-scene-build --output-on-failure
 
+      # The relocated-consumer job rebuilds from these installed files alone:
+      # the share/rigExec manifests with their runtime-generated payload, and
+      # the exact-FP flags fragment the SConstruct reads. No build tree, no
+      # generated objects, no producer path travels with them.
+      - name: Pack installed SDK data for the relocated consumer
+        run: |
+          tar -C "${GITHUB_WORKSPACE}/usdrig-install" -cf usdrig-sdk-data.tar \
+            share/rigExec lib/cmake/rigExec/rigexec_flags.cmake
+
+      - name: Upload installed SDK data
+        uses: actions/upload-artifact@v4
+        with:
+          name: usdrig-sdk-data.tar
+          path: usdrig-sdk-data.tar
+          retention-days: 5
+
+  # --------------------------------------------------------------------------
+  # Relocated SDK consumer: a clean Linux checkout that has never seen the
+  # producer build tree compiles the installed manifests from the real
+  # install-check above. It checks out the same commit under a different
+  # directory name, asserts the producer's checkout, build and prefix paths
+  # hold nothing here, and downloads no build artifact. The USD-free shell
+  # check runs against the relocated manifest directory; then the actual
+  # tutorial archive builds both Godot template configurations in one output
+  # tree against the relocated SDK, and the in-place SCons path is enumerated
+  # against a configured build with no SDK. Every object-path assertion reads
+  # actual SCons outputs; nothing here reimplements the SConstruct mapping.
+  # --------------------------------------------------------------------------
+  relocated-consumer:
+    name: relocated SDK consumer (clean checkout)
+    runs-on: ubuntu-24.04
+    needs: [install-check, openusd]
+    timeout-minutes: 120
+    steps:
+      - name: Checkout usdRig under a different directory name
+        uses: actions/checkout@v4
+        with:
+          path: consumer-src
+
+      - name: Install consumer tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends g++ ninja-build libgl1-mesa-dev xorg-dev
+          python3 -m pip install --break-system-packages scons
+
+      - name: Download installed SDK data only
+        uses: actions/download-artifact@v4
+        with:
+          name: usdrig-sdk-data.tar
+
+      # Third-party dependency for the in-place configure leg below, the same
+      # prefix every other job uses -- not a usdRig build artifact.
+      - name: Download OpenUSD prefix (in-place configure only)
+        uses: actions/download-artifact@v4
+        with:
+          name: usd-install.tar
+
+      - name: Extract SDK data and OpenUSD prefix
+        run: |
+          mkdir -p sdk-relocated usd-install
+          tar -C sdk-relocated -xf usdrig-sdk-data.tar
+          tar -C usd-install -xf usd-install.tar
+
+      - name: Assert a clean room with no producer path
+        run: |
+          test "$(git -C consumer-src rev-parse HEAD)" = "$GITHUB_SHA" \
+            || { echo "consumer checkout is not $GITHUB_SHA"; exit 1; }
+          test ! -e "$GITHUB_WORKSPACE/CMakeLists.txt" \
+            || { echo "producer checkout present at $GITHUB_WORKSPACE"; exit 1; }
+          test ! -e "$GITHUB_WORKSPACE/build" \
+            || { echo "producer build tree present at $GITHUB_WORKSPACE/build"; exit 1; }
+          test ! -e "$GITHUB_WORKSPACE/usdrig-install" \
+            || { echo "producer prefix present at $GITHUB_WORKSPACE/usdrig-install"; exit 1; }
+          test ! -e "$GITHUB_WORKSPACE/usdrig-build.tar" \
+            || { echo "build artifact downloaded into the clean room"; exit 1; }
+          test ! -e consumer-src/build \
+            || { echo "relocated checkout carries a build tree"; exit 1; }
+          for f in \
+            sdk-relocated/share/rigExec/runtimeSources.txt \
+            sdk-relocated/share/rigExec/evalCoreSources.txt \
+            sdk-relocated/share/rigExec/runtimeIncludes.txt \
+            sdk-relocated/share/rigExec/evalCoreIncludes.txt \
+            sdk-relocated/share/rigExec/exactFpFlags.txt \
+            sdk-relocated/lib/cmake/rigExec/rigexec_flags.cmake
+          do
+            test -f "$f" || { echo "SDK transfer is missing $f"; exit 1; }
+          done
+
+      - name: Compile relocated manifests with no pxr include path
+        run: ./consumer-src/bin/check_runtime_usd_free.sh "$GITHUB_WORKSPACE/sdk-relocated/share/rigExec"
+
+      - name: Unpack the tutorial archive and fetch pinned godot-cpp
+        run: |
+          python3 -m zipfile -e consumer-src/docs/examples/godot_rolling_ball.zip tutorial-sdk
+          python3 -m zipfile -e consumer-src/docs/examples/godot_rolling_ball.zip tutorial-inplace
+          pin="$(grep -o 'godot-cpp checkout [0-9a-f]\{40\}' \
+            consumer-src/docs/concepts/tutorial-godot-baked-rig.md | head -n 1 | awk '{print $3}')"
+          test -n "$pin" || { echo "the tutorial names no pinned godot-cpp revision"; exit 1; }
+          echo "godot-cpp pin from the tutorial: $pin"
+          git clone https://github.com/godotengine/godot-cpp.git \
+            tutorial-sdk/godot_rigExec/thirdparty/godot-cpp
+          git -C tutorial-sdk/godot_rigExec/thirdparty/godot-cpp checkout "$pin"
+          git -C tutorial-sdk/godot_rigExec/thirdparty/godot-cpp submodule update --init --recursive
+          mkdir -p tutorial-inplace/godot_rigExec/thirdparty
+          cp -r tutorial-sdk/godot_rigExec/thirdparty/godot-cpp \
+            tutorial-inplace/godot_rigExec/thirdparty/godot-cpp
+
+      # api_version=4.7 is what the tutorial's own demo/setup_rolling.py --build
+      # passes; the pinned godot-cpp refuses to configure without it.
+      - name: Build template_debug against the relocated SDK
+        run: |
+          cd tutorial-sdk/godot_rigExec
+          scons -j"$(nproc)" platform=linux target=template_debug api_version=4.7 \
+            "sdk_root=$GITHUB_WORKSPACE/sdk-relocated" \
+            "usdrig_root=$GITHUB_WORKSPACE/consumer-src" \
+            2>&1 | tee "$GITHUB_WORKSPACE/scons-debug.log"
+          test "${PIPESTATUS[0]}" -eq 0
+          find build/obj -type f | sort | xargs sha256sum > "$GITHUB_WORKSPACE/debug-object-hashes.txt"
+
+      - name: Build template_release in the same tree without cleaning
+        run: |
+          cd tutorial-sdk/godot_rigExec
+          scons -j"$(nproc)" platform=linux target=template_release api_version=4.7 \
+            "sdk_root=$GITHUB_WORKSPACE/sdk-relocated" \
+            "usdrig_root=$GITHUB_WORKSPACE/consumer-src" \
+            2>&1 | tee "$GITHUB_WORKSPACE/scons-release.log"
+          test "${PIPESTATUS[0]}" -eq 0
+
+      - name: Verify both configurations share no object target
+        run: |
+          python3 - "$GITHUB_WORKSPACE/tutorial-sdk/godot_rigExec" \
+            "$GITHUB_WORKSPACE/sdk-relocated/share/rigExec" \
+            "$GITHUB_WORKSPACE/consumer-src" \
+            "$GITHUB_WORKSPACE/debug-object-hashes.txt" <<'PY'
+          import hashlib, os, sys
+
+          tutorial, manifest_dir, checkout, hashes_path = sys.argv[1:5]
+          failures = []
+
+
+          def check(cond, msg):
+              print(("ok:   " if cond else "FAIL:  ") + msg)
+              if not cond:
+                  failures.append(msg)
+
+
+          def no_ext(path):
+              return os.path.splitext(path)[0]
+
+
+          # Both link products, found by the target= names this job passed to SCons.
+          bindir = os.path.join(tutorial, "addons", "rigexec", "bin")
+          libs = sorted(os.listdir(bindir))
+          debug_libs = [n for n in libs if "template_debug" in n and n.endswith(".so")]
+          release_libs = [n for n in libs if "template_release" in n and n.endswith(".so")]
+          check(bool(debug_libs), "template_debug link product present (%s)" % debug_libs)
+          check(bool(release_libs), "template_release link product present (%s)" % release_libs)
+
+
+          def suffix_of(name):
+              stem = name[len("librigexec"):] if name.startswith("librigexec") else name
+              return stem[: -len(".so")].lstrip(".")
+
+
+          obj = os.path.join(tutorial, "build", "obj")
+          debug_root = os.path.join(obj, suffix_of(debug_libs[0])) if debug_libs else None
+          release_root = os.path.join(obj, suffix_of(release_libs[0])) if release_libs else None
+          check(debug_root is not None and os.path.isdir(debug_root),
+                "debug object root exists (%s)" % debug_root)
+          check(release_root is not None and os.path.isdir(release_root),
+                "release object root exists (%s)" % release_root)
+          check(debug_root != release_root,
+                "distinct configuration roots (%s vs %s)" % (debug_root, release_root))
+
+
+          def actuals(root):
+              found = set()
+              for dirpath, _, filenames in os.walk(root):
+                  for name in filenames:
+                      found.add(os.path.relpath(os.path.join(dirpath, name), root).replace(os.sep, "/"))
+              return found
+
+
+          debug = actuals(debug_root) if debug_root and os.path.isdir(debug_root) else set()
+          release = actuals(release_root) if release_root and os.path.isdir(release_root) else set()
+          check(bool(debug) and bool(release),
+                "both configurations produced objects (%d debug, %d release)"
+                % (len(debug), len(release)))
+
+          # Disjointness compares full tree-relative targets: the per-config
+          # keys repeat by design, the configuration roots must not.
+          debug_full = {"build/obj/" + suffix_of(debug_libs[0]) + "/" + p for p in debug} \
+              if debug_libs else set()
+          release_full = {"build/obj/" + suffix_of(release_libs[0]) + "/" + p for p in release} \
+              if release_libs else set()
+          shared = sorted(debug_full & release_full)
+          check(not shared, "no shared normalized object target (%d shared%s)"
+                % (len(shared), (": " + ", ".join(shared[:5])) if shared else ""))
+          shared_stems = sorted({no_ext(p) for p in debug_full} & {no_ext(p) for p in release_full})
+          check(not shared_stems, "no shared object stem across configurations (%d shared)"
+                % len(shared_stems))
+
+          # The debug tree recorded between the builds must still be there, byte-identical.
+          persisted = True
+          recorded = 0
+          with open(hashes_path, encoding="utf-8") as handle:
+              for line in handle:
+                  line = line.strip()
+                  if not line:
+                      continue
+                  recorded += 1
+                  digest, _, rel = line.partition(" ")
+                  rel = rel.strip()
+                  full = os.path.join(tutorial, rel)
+                  if not os.path.isfile(full):
+                      print("missing after the release build: " + rel)
+                      persisted = False
+                      continue
+                  with open(full, "rb") as blob:
+                      if hashlib.sha256(blob.read()).hexdigest() != digest.strip():
+                          print("changed by the release build: " + rel)
+                          persisted = False
+          check(recorded > 0, "debug hash list recorded %d objects" % recorded)
+          check(persisted, "debug objects still present and unchanged after the release build")
+
+          # Named evidence: both generated TUs, under the generated/ key, in both builds.
+          # Expected keys come from the C3 contract in docs/godot_example/SConstruct and
+          # are asserted here against the actual files SCons produced.
+          for needle in ("ClothMoverKernel", "moverCatalog"):
+              in_debug = sorted(p for p in debug if needle in p)
+              in_release = sorted(p for p in release if needle in p)
+              check(bool(in_debug) and bool(in_release),
+                    "%s objects in both configs (debug: %s; release: %s)"
+                    % (needle, in_debug, in_release))
+              check(all(p.startswith("generated/") for p in in_debug + in_release),
+                    "%s objects key under generated/" % needle)
+
+          # Every manifest TU resolves to an actual object in both configurations.
+          sources = []
+          for name in ("runtimeSources.txt", "evalCoreSources.txt"):
+              with open(os.path.join(manifest_dir, name), encoding="utf-8") as handle:
+                  sources.extend(line.strip() for line in handle if line.strip())
+          sources = [e for e in sources if e.endswith((".cpp", ".c"))]
+          missing = []
+          for entry in sources:
+              first, _, rest = entry.partition("/")
+              if first == "runtime-generated":
+                  key = "generated/" + no_ext(rest)
+              else:
+                  key = "checkout/" + no_ext(entry)
+              for label, actual in (("debug", debug), ("release", release)):
+                  if not any(no_ext(p) == key for p in actual):
+                      missing.append("%s: %s (%s)" % (label, entry, key))
+          check(bool(sources), "%d manifest TUs to cover" % len(sources))
+          check(not missing, "every manifest TU has an object in both configs%s"
+                % (": " + ", ".join(missing[:6]) if missing else ""))
+
+          # C3 key hygiene on every actual target: no drive, absolute segment or '..'.
+          bad = [p for p in debug | release
+                 if p.startswith("/") or ".." in p.split("/") or p.split("/")[0].endswith(":")]
+          check(not bad, "object keys carry no drive, absolute segment or '..'%s"
+                % (": " + ", ".join(bad[:5]) if bad else ""))
+
+          if failures:
+              print("\n%d failure(s)" % len(failures))
+              sys.exit(1)
+          print("\nrelocated SDK leg verified: %d debug + %d release objects"
+                % (len(debug), len(release)))
+          PY
+
+      - name: Configure the relocated checkout for the in-place leg
+        run: |
+          cmake -S consumer-src -B consumer-src/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSD_INSTALL_DIR="${GITHUB_WORKSPACE}/usd-install" \
+            -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/usd-install" \
+            -DRIGEXEC_BUILD_PYTHON=OFF \
+            -DRIGEXEC_BUILD_USDNOODLES=OFF \
+            -DRIGEXEC_BUILD_TESTS=OFF
+          cmake --build consumer-src/build --target rigExecRuntime --parallel "$(nproc)"
+
+      # --tree=all asks SCons itself for the target DAG it computed, with
+      # --dry-run so nothing is compiled; the listing below is checked for
+      # the targets SCons named.
+      - name: Enumerate in-place SCons targets for both configurations
+        run: |
+          mkdir -p empty-sdk
+          cd tutorial-inplace/godot_rigExec
+          scons -Q --tree=all --dry-run platform=linux target=template_debug api_version=4.7 \
+            "sdk_root=$GITHUB_WORKSPACE/empty-sdk" \
+            "usdrig_root=$GITHUB_WORKSPACE/consumer-src" \
+            > "$GITHUB_WORKSPACE/inplace-debug-targets.txt" 2>&1
+          scons -Q --tree=all --dry-run platform=linux target=template_release api_version=4.7 \
+            "sdk_root=$GITHUB_WORKSPACE/empty-sdk" \
+            "usdrig_root=$GITHUB_WORKSPACE/consumer-src" \
+            > "$GITHUB_WORKSPACE/inplace-release-targets.txt" 2>&1
+
+      - name: Verify the in-place enumeration shares no target
+        run: |
+          python3 - "$GITHUB_WORKSPACE/inplace-debug-targets.txt" \
+            "$GITHUB_WORKSPACE/inplace-release-targets.txt" <<'PY'
+          import re, sys
+
+          debug_listing, release_listing = sys.argv[1:3]
+          failures = []
+
+
+          def check(cond, msg):
+              print(("ok:   " if cond else "FAIL:  ") + msg)
+              if not cond:
+                  failures.append(msg)
+
+
+          def enumerated(path):
+              found = set()
+              with open(path, encoding="utf-8") as handle:
+                  for line in handle:
+                      for token in re.findall(r"(?:\./)?build/obj/\S+", line):
+                          found.add(token.lstrip("./").rstrip("',\";)"))
+              return found
+
+
+          debug = enumerated(debug_listing)
+          release = enumerated(release_listing)
+          check(bool(debug) and bool(release),
+                "both configurations enumerate object targets (%d debug, %d release)"
+                % (len(debug), len(release)))
+
+          shared = sorted(debug & release)
+          check(not shared, "no shared enumerated target (%d shared%s)"
+                % (len(shared), (": " + ", ".join(shared[:5])) if shared else ""))
+
+          debug_roots = {p.split("/")[2] for p in debug if len(p.split("/")) > 2}
+          release_roots = {p.split("/")[2] for p in release if len(p.split("/")) > 2}
+          check(len(debug_roots) == 1 and len(release_roots) == 1 and debug_roots != release_roots,
+                "distinct configuration roots (%s vs %s)"
+                % (sorted(debug_roots), sorted(release_roots)))
+
+          for needle in ("ClothMoverKernel", "moverCatalog"):
+              in_debug = sorted(p for p in debug if needle in p)
+              in_release = sorted(p for p in release if needle in p)
+              check(bool(in_debug) and bool(in_release),
+                    "%s enumerated in both configs (debug: %s; release: %s)"
+                    % (needle, in_debug, in_release))
+
+          bad = [p for p in debug | release
+                 if p.startswith("/") or ".." in p.split("/") or p.split("/")[0].endswith(":")]
+          check(not bad, "enumerated keys carry no drive, absolute segment or '..'")
+
+          if failures:
+              print("\n%d failure(s)" % len(failures))
+              sys.exit(1)
+          print("\nin-place enumeration verified: %d debug + %d release targets"
+                % (len(debug), len(release)))
+          PY
+
+      - name: Upload consumer logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: relocated-consumer-logs
+          path: |
+            scons-debug.log
+            scons-release.log
+            debug-object-hashes.txt
+            inplace-debug-targets.txt
+            inplace-release-targets.txt
+
 
   platform-cpp:
     name: Release C++ (${{ matrix.os }})
