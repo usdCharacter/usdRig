@@ -353,7 +353,7 @@ def TestPendingInstallPerSession():
             reentered.append((stageViewReady.GetResult(api, tool),
                               gizmoUI.InstallViewportTools(api, ignored)))
 
-    def _Added(api, kind, controller):
+    def _Added(api, kind, controller, **kwargs):
         notified.append((api, kind, controller, gizmoUI.GetController(api),
                          stageViewReady.GetResult(api, "gizmo")))
 
@@ -389,10 +389,10 @@ def TestPendingInstallPerSession():
                 ready = module.GetController(windowA)
                 _Check(ready is not None and module.GetController(apiB) is None
                        and module.GetController(windowB) is None
-                       and module.GetController() is ready
-                       and module._controller is ready
+                       and module.GetController() is None
+                       and module._controller is None
                        and stageViewReady.Controllers(tool) == [ready],
-                       "pending active session does not mask the sole ready tool")
+                       "pending active session never borrows another tool")
 
         _Host(apiB)._stageView = object()
         _PumpUntil(lambda: all(r.status == "ready" for r in _Results(apiB)))
@@ -405,8 +405,8 @@ def TestPendingInstallPerSession():
                "old snapshots and constructor reentry see pending")
         gizmoA, gizmoB = (gizmoUI.GetController(api) for api in (apiA, apiB))
         _Check(notified == [(apiA, gizmoUI.editorExtension.GIZMO, gizmoA,
-                             gizmoA, stageViewReady.GetResult(apiA, "gizmo"))],
-               "delegation is evaluated at construction and notified after ready")
+                             None, pending)],
+               "delegation must finish before readiness is published")
         _Check(gizmoA.args == (undoA,) and gizmoB.args == (undoB,) and
                gizmoA.kwargs == {"openGraphEditor": _OpenGraphEditor,
                                  "installFilters": False} and
@@ -455,29 +455,30 @@ def TestInstallProbeBounds():
             _Check(_Requests(api, retries=retries)[0]() is None,
                    "no view during first probe")
         unavailable = stageViewReady.InstallResult("unavailable")
-        for api in (apiZero, apiHeadless):
-            _Check(_Results(api)[0] == unavailable,
-                   "zero retries and known no-render settle synchronously")
+        _Check(_Results(apiZero)[0].status == "pending" and
+               _Results(apiHeadless)[0] == unavailable,
+               "only confirmed no-render settles unavailable")
         old = _Results(apiSmall)[0]
         for api in (apiLast, apiSmall):
             for request in _Requests(api)[1:]:
                 request()
-        _PumpUntil(lambda: all(r.status != "pending" for r in _Results(apiSmall))
-                   and all(r.status != "pending" for r in _Results(apiLast)))
-        _Check(all(r.status == "ready" for r in _Results(apiLast)) and
-               [api for api, _, _ in built] == [apiLast] * 4,
+        _PumpUntil(lambda: all(r.status == "ready" for r in _Results(apiLast))
+                   and probes[apiSmall] == 3)
+        _Check([api for api, _, _ in built] == [apiLast] * 4,
                "the final allowed probe can still publish all waiting tools")
-        _Check(old == stageViewReady.InstallResult("pending"),
-               "exhaustion does not change the old snapshot")
-        for api in (apiSmall, apiZero, apiHeadless):
-            if api is not apiHeadless:
-                _Host(api)._stageView = object()
-            _Check(all(request() is None for request in _Requests(api)) and
-                   _Results(api) == [unavailable] * 4,
-                   "unavailability is terminal for repeated and new tools")
+        settled = probes.copy()
         _PumpExtraTurns()
-        _Check(probes == {apiLast: 3, apiSmall: 3, apiZero: 1, apiHeadless: 1},
-               "late arrivals cannot extend the shared bound or rearm a timer")
+        _Check(probes == settled and old == stageViewReady.InstallResult("pending"),
+               "exhaustion stops polling without mutating snapshots")
+        for api in (apiSmall, apiZero):
+            _Host(api)._stageView = object()
+        _Check(_Requests(apiZero)[0]() is not None, "explicit request can recover")
+        stageViewReady.NotifyReady(apiSmall)
+        _Check(all(r.status == "ready" for r in _Results(apiSmall)),
+               "host readiness drains the exhausted queue")
+        _Check(all(request() is None for request in _Requests(apiHeadless)) and
+               _Results(apiHeadless) == [unavailable] * 4,
+               "known no-render remains terminal")
     for window in (windowLast, windowSmall, windowZero, windowHeadless):
         _Destroy(window)
     print("  ok: final probe, bounded retries, zero, and no-render outcomes")
@@ -542,6 +543,75 @@ def TestInstallFailures():
     print("  ok: constructor isolation and shared probe/timer failures")
 
 
+def TestRetireRealTools():
+    import rigExecUndo
+
+    class _View(QtWidgets.QWidget):
+        signalFrustumChanged = QtCore.Signal()
+
+        def pick(self, *args):
+            return []
+
+    class _Model(QtCore.QObject):
+        signalStageReplaced = QtCore.Signal()
+        currentFrameChanged = QtCore.Signal()
+        signalPrimSelectionChanged = QtCore.Signal()
+        signalSettingChanged = QtCore.Signal()
+        stage = None
+
+    window, api = _Session()
+    frame = QtWidgets.QWidget(window)
+    layout = QtWidgets.QVBoxLayout(frame)
+    view = _View(frame)
+    layout.addWidget(view)
+    host = _Host(api)
+    host._stageView = view
+    host._ui = SimpleNamespace(glFrame=frame)
+    api.dataModel = model = _Model()
+    model.selection = model.viewSettings = model
+    api.frame = 0
+    stack = rigExecUndo.UndoStack()
+    requests = _Requests(api, stack, retries=0)
+    with _Patched(gizmoUI.GizmoController, RefreshTarget=lambda self: None):
+        for _ in range(2):
+            gizmo, cube, dock, axis = [request() for request in requests]
+            panel = QtWidgets.QWidget(window)
+            dock.Dock(panel)
+            _Check(len(window.actions()) == 2 and layout.count() == 3,
+                   "one pair of shortcuts and one toolbar")
+            sessionRegistry.ForgetSession(api)
+            _Check(not window.actions() and layout.count() == 1 and
+                   not view.findChildren(QtWidgets.QWidget) and
+                   panel.parentWidget() is window and not stack._listeners,
+                   "retirement unparents widgets, returns the panel and removes listeners")
+            _Check(view.pick == _View.pick.__get__(view), "original picking restored")
+            model.signalStageReplaced.emit()
+
+        def _Retire(api):
+            stageViewReady.Retire(api)
+            return True
+
+        with _Patched(gizmoUI.editorExtension, OwnsInput=_Retire):
+            _Check(requests[0]() is None and not window.actions() and
+                   layout.count() == 1 and not view.findChildren(QtWidgets.QWidget),
+                   "retiring in OwnsInput rolls back live widgets")
+
+        class _HostExtension(gizmoUI.editorExtension.EditorExtension):
+            def OwnsInput(self, api):
+                return True
+
+            def EditorAdded(self, *args):
+                raise RuntimeError("test host rejected handoff")
+
+        with _Patched(gizmoUI.editorExtension, _extension=_HostExtension()):
+            _Check(requests[0]() is None and not window.actions() and
+                   stageViewReady.GetResult(api, "gizmo").status == "failed" and
+                   not view.findChildren(QtWidgets.QWidget),
+                   "host rejection rolls back instead of publishing ready")
+    _Destroy(window)
+    print("  ok: retained Qt widgets, actions, picking, and host handoff rollback")
+
+
 def TestRetirePendingInstalls():
     windowClosed, apiClosed = _Session()
     windowForgotten, apiForgotten = _Session()
@@ -557,7 +627,7 @@ def TestRetirePendingInstalls():
 
     with _ToolDoubles(onCreate=_RetireDuringCreate) as (probes, built), \
             _Patched(gizmoUI.editorExtension, OwnsInput=lambda api: True,
-                     EditorAdded=lambda api, kind, c: notified.append(api)):
+                     EditorAdded=lambda api, kind, c, **kw: notified.append(api)):
         for api in (apiClosed, apiForgotten, apiRetired, apiSurvivor):
             _Check(all(request() is None for request in _Requests(api, oldUndo)),
                    "pending before retirement")
@@ -982,11 +1052,6 @@ def TestContainerPerSession():
 
 
 def TestContainerEnsureAndRetire():
-    """The container's ensures drive the broker; shutdown retires only it.
-
-    Real ensure/toggle/shutdown methods on minimal containers; doubles only
-    for the constructors and the reader/sink bindings they call into.
-    """
     import ikfkMatch
     import rigExecUsdview
 
@@ -999,6 +1064,7 @@ def TestContainerEnsureAndRetire():
             rigExecUsdview.RigExecUsdviewContainer)
         container._api = api
         container._undoStack = undo
+        rigExecUsdview._containers.Set(api, container)
         return container
 
     containerA = _MinimalContainer(apiA, undoA)
@@ -1034,16 +1100,12 @@ def TestContainerEnsureAndRetire():
                "no view yet: the stage path queues all three tools")
         _Check(_Ensures(containerA) == (None, None, None),
                "a second stage pass still queues")
-        _Check(bindings == {("frame", apiA): 1, ("values", apiA): 1,
-                            ("sink", apiA): 1},
-               "two pending gizmo ensures bind this session's readers once")
+        _Check(not bindings, "pending registrations do not bind readers")
         _Check(not built, "and construct nothing without a view")
         _Check(probes == {apiA: 1},
                "two stage passes probe once for the session")
-        _Check(containerB._EnsureViewportTools() is None,
-               "B queues its own gizmo while A waits")
-        _Check(bindings[("frame", apiB)] == 1,
-               "bound to B's session, once")
+        _Check(gizmoUI.InstallViewportTools(apiB, undoB) is None,
+               "the public installer queues B before the container asks")
 
         _Host(apiA)._stageView = object()
         _PumpUntil(lambda: all(
@@ -1086,6 +1148,9 @@ def TestContainerEnsureAndRetire():
         _Check(gizmoB is not None and gizmoB is not gizmo and
                gizmoB.api is apiB and gizmoB.args == (undoB,),
                "B still installs its own gizmo after A retires")
+        _Check(containerB._EnsureViewportTools() is gizmoB and
+               all(bindings[(kind, apiB)] == 1 for kind in ("frame", "values", "sink")),
+               "public install wires B before ensure, without rebinding")
         _Check(Counter((api, tool) for api, tool, _ in built) ==
                {(apiA, "gizmo"): 1, (apiA, "viewCube"): 1,
                 (apiA, "viewAxis"): 1, (apiB, "gizmo"): 1},
@@ -1288,6 +1353,7 @@ def main():
     TestPendingInstallPerSession()
     TestInstallProbeBounds()
     TestInstallFailures()
+    TestRetireRealTools()
     TestRetirePendingInstalls()
     TestHotkeyRouting()
     TestUndoShortcutScoping()
@@ -1300,7 +1366,7 @@ def main():
     TestRegistryDestroyedSlots()
     TestRegistryRemovalHook()
     TestTouchPoseMarqueeUsesOwnSession()
-    print("SESSION_STATE_OK (18 groups)")
+    print("SESSION_STATE_OK (19 groups)")
     return 0
 
 

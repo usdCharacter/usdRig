@@ -1129,7 +1129,7 @@ class TouchPoseController(QtCore.QObject,
         """
         try:
             import gizmoUI
-            controller = gizmoUI.GetController()
+            controller = gizmoUI.GetController(self._api)
             stack = getattr(controller, "undoStack", None)
             if stack is not None:
                 return stack

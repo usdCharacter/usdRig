@@ -343,6 +343,14 @@ def _Unwatch(key, entry):
         pass
 
 
+def KnownSessionOf(widget):
+    for window in _WindowChain(widget):
+        if any(registry._Find(window) is not None
+               for registry in list(_registries)):
+            return window
+    return None
+
+
 def ForgetSession(session):
     """
     Drop `session` from every registry now; returns how many held it.

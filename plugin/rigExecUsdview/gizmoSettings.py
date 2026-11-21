@@ -367,6 +367,10 @@ class GizmoSettings(object):
     def AddListener(self, fn):
         self._listeners.append(fn)
 
+    def RemoveListener(self, fn):
+        if fn in self._listeners:
+            self._listeners.remove(fn)
+
     def Notify(self):
         for fn in list(self._listeners):
             fn()

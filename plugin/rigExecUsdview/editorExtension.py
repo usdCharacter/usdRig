@@ -170,8 +170,13 @@ def DocumentEdit(usdviewApi):
     return _GuardedContext(context)
 
 
-def EditorAdded(usdviewApi, kind, editor):
-    _Call("EditorAdded", None, usdviewApi, kind, editor)
+def EditorAdded(usdviewApi, kind, editor, *, required=False):
+    if required:
+        if _extension is None:
+            raise RuntimeError("input-owning extension is no longer installed")
+        _extension.EditorAdded(usdviewApi, kind, editor)
+    else:
+        _Call("EditorAdded", None, usdviewApi, kind, editor)
 
 
 def EditorRemoved(usdviewApi, kind, editor):

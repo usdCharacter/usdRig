@@ -362,6 +362,19 @@ class AvarDockController(QtCore.QObject):
         self._view = None
         self._dock = None
 
+    def Detach(self):
+        view, self._view = self._view, None
+        dock, self._dock = self._dock, None
+        if view is None:
+            return
+        view.removeEventFilter(self)
+        stageViewReady.Disconnect(view, "destroyed", self._OnViewDestroyed)
+        panel = dock.Release()
+        if panel is not None:
+            panel.setParent(self.usdviewApi.qMainWindow)
+            panel.setWindowFlags(QtCore.Qt.Dialog)
+        stageViewReady.RemoveWidget(dock)
+
     # -- docking -----------------------------------------------------------
 
     def Dock(self, panel):
@@ -397,14 +410,13 @@ class AvarDockController(QtCore.QObject):
 
 def InstallAvarDock(usdviewApi, undoStack=None,
                     retries=stageViewReady.DEFAULT_RETRIES):
-    """Install the dock for this session without moving the editor panel."""
+    # Readiness does not move a floating panel into the dock.
     return stageViewReady.Register(
         usdviewApi, "avarDock", lambda: AvarDockController(usdviewApi, undoStack),
         retries=retries).controller
 
 
 def GetController(usdviewApi=None):
-    """The ready dock controller for this session, or None."""
     return stageViewReady.Controller(usdviewApi, "avarDock")
 
 

@@ -320,14 +320,12 @@ class ViewAxisController(viewCubeUI.ViewCubeController):
 
 
 def InstallViewAxis(usdviewApi, retries=stageViewReady.DEFAULT_RETRIES):
-    """Return this session's view axis controller once ready, else None."""
     return stageViewReady.Register(
         usdviewApi, "viewAxis", lambda: ViewAxisController(usdviewApi),
         retries=retries).controller
 
 
 def GetController(usdviewApi=None):
-    """Return the controller for the explicit or current session, if ready."""
     return stageViewReady.Controller(usdviewApi, "viewAxis")
 
 

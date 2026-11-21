@@ -46,19 +46,50 @@ def _Diagnostic(cause, error):
 
 def _DisposeTimer(timer, slot):
     if timer is not None:
-        try:
-            timer.stop()
-        except Exception:
-            pass
+        _Cleanup("timer", timer.stop)
         if slot is not None:
-            try:
-                timer.timeout.disconnect(slot)
-            except Exception:
-                pass
-        try:
-            timer.deleteLater()
-        except Exception:
-            pass
+            _Cleanup("timer", lambda: timer.timeout.disconnect(slot))
+        _Cleanup("timer", timer.deleteLater)
+
+
+def _Cleanup(tool, cleanup):
+    try:
+        cleanup()
+    except Exception as error:
+        _Warn(tool, _Diagnostic("cleanup", error))
+
+
+def IgnoreDeleted(operation):
+    try:
+        operation()
+    except RuntimeError as error:
+        if "already deleted" not in str(error):
+            raise
+
+
+def Disconnect(owner, name, slot):
+    def disconnect():
+        signal = getattr(owner, name, None)
+        if signal is not None:
+            signal.disconnect(slot)
+    IgnoreDeleted(disconnect)
+
+
+def RemoveWidget(widget):
+    if widget is None:
+        return
+
+    def remove():
+        widget.hide()
+        widget.setParent(None)
+        widget.deleteLater()
+    IgnoreDeleted(remove)
+
+
+def _Detach(tool, controller):
+    detach = getattr(controller, "Detach", None)
+    if detach is not None:
+        _Cleanup(tool, detach)
 
 
 class _Record:
@@ -70,7 +101,7 @@ class _Record:
         self.results = {}
         self.pending = {}
         self.api = None
-        self.remaining = 0
+        self.remaining = None
         self.timer = None
         self.slot = None
 
@@ -78,7 +109,10 @@ class _Record:
         self.live = False
         self._StopWaiting()
         self.pending.clear()
-        self.results.clear()
+        results, self.results = self.results, {}
+        for tool, result in results.items():
+            if result.controller is not None:
+                _Detach(tool, result.controller)
 
     def _StopWaiting(self):
         timer, self.timer = self.timer, None
@@ -110,18 +144,26 @@ class _Record:
             tool = next(iter(self.pending))
             self._Install(tool, *self.pending.pop(tool))
 
-    def _Install(self, tool, create, onReady):
+    def _Install(self, tool, create, prepare, onReady):
+        controller = None
+        cause = "factory"
         try:
             controller = create()
             if controller is None:
                 raise ValueError("returned no controller")
+            if self.live and prepare is not None:
+                cause = "setup"
+                prepare(controller)
         except Exception as error:
-            diagnostic = _Diagnostic("factory", error)
+            if controller is not None:
+                _Detach(tool, controller)
+            diagnostic = _Diagnostic(cause, error)
             if self.live:
                 self.results[tool] = InstallResult("failed", error=diagnostic)
                 _Warn(tool, diagnostic)
             return
         if not self.live:
+            _Detach(tool, controller)
             return
         self.results[tool] = InstallResult("ready", controller)
         if onReady is not None:
@@ -149,12 +191,16 @@ class _Record:
             if not self.live:
                 return
             cause = "timer"
-            self.remaining = (self.remaining - 1 if retries is None
-                              else max(0, retries))
-            if not self.live:
-                return
-            if noRender or self.remaining <= 0 or not self._Arm(api):
+            if noRender:
                 self._Settle(_UNAVAILABLE)
+                return
+            if self.remaining is None:
+                self.remaining = max(0, retries or 0)
+            elif retries is None and self.timer is not None:
+                self.remaining -= 1
+            if self.remaining <= 0 or not self._Arm(api):
+                self.remaining = 0
+                self._StopWaiting()
         except Exception as error:
             diagnostic = _Diagnostic(cause, error)
             if self.live:
@@ -166,7 +212,8 @@ class _Record:
         if self.timer is None:
             try:
                 from pxr.Usdviewq.qt import QtCore
-            except ImportError:
+            except ImportError as error:
+                _Warn("timer", _Diagnostic("Qt import", error))
                 return False
             if not self.live:
                 return False
@@ -211,12 +258,15 @@ class _Record:
 _sessions = sessionRegistry.SessionRegistry("StageView readiness", _Record.Dispose)
 
 
-def Register(usdviewApi, tool, create, retries=DEFAULT_RETRIES, onReady=None):
+def Register(usdviewApi, tool, create, retries=DEFAULT_RETRIES, onReady=None,
+             prepare=None):
     """Reserve a session/tool once; re-query GetResult after a pending result."""
     key = sessionRegistry.SessionKey(usdviewApi)
     record = _sessions.Get(key)
     if record is not None and tool in record.results:
-        return record.results[tool]
+        if record.results[tool].status == "pending" and record.timer is None:
+            record.Probe(usdviewApi, retries)
+        return record.results.get(tool, _UNAVAILABLE)
     if key is None or (record is not None and record.unavailable):
         if record is not None:
             record.results[tool] = _UNAVAILABLE
@@ -225,7 +275,7 @@ def Register(usdviewApi, tool, create, retries=DEFAULT_RETRIES, onReady=None):
     if first:
         record = _Record()
     record.results[tool] = _PENDING
-    record.pending[tool] = (create, onReady)
+    record.pending[tool] = (create, prepare, onReady)
     if first:
         # The destroyed watch may call out while the entry is being filed.
         record.busy = True
@@ -234,6 +284,13 @@ def Register(usdviewApi, tool, create, retries=DEFAULT_RETRIES, onReady=None):
     if record.live and not record.busy and record.timer is None:
         record.Probe(usdviewApi, retries)
     return record.results.get(tool, _UNAVAILABLE)
+
+
+def NotifyReady(usdviewApi):
+    """Call on the UI thread after the host attaches its StageView."""
+    record = _sessions.Get(usdviewApi)
+    if record is not None and record.pending:
+        record.Probe(usdviewApi, 0)
 
 
 def GetResult(usdviewApi, tool):
@@ -259,15 +316,12 @@ def Controller(usdviewApi, tool):
     if usdviewApi is not None:
         result = GetResult(usdviewApi, tool)
         return result.controller if result is not None else None
-    windows = list(sessionRegistry._WindowChain(sessionRegistry.ActiveWindow()))
+    key = sessionRegistry.KnownSessionOf(sessionRegistry.ActiveWindow())
+    if key is not None:
+        return Controller(key, tool)
     ready = list(_ReadyItems(tool))
-    for window in windows:
-        for key, controller in ready:
-            if window is key:
-                return controller
     return ready[0][1] if len(ready) == 1 else None
 
 
 def Controllers(tool):
-    """Return all ready controllers for this tool."""
     return [controller for _key, controller in _ReadyItems(tool)]

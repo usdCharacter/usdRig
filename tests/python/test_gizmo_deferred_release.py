@@ -71,6 +71,7 @@ class Controller(gizmoUI.GizmoController):
         self._drag = self._releasedEdit = self._committing = self._target = None
         self._frame = Usd.TimeCode(1)
         self._view = self.overlay = self._rubber = None
+        self._marqueeAt = None
         self._controlPicking = None; self._viewDestroyed = False
         self._snapGeom = {}; self._solverPosed = types.SimpleNamespace(Clear=lambda: None)
         self._warnings = []; self._hoverRigStage = None

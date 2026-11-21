@@ -765,44 +765,32 @@ class ViewCubeController(QtCore.QObject):
             widget._controller = None
 
     def Detach(self):
-        """Drop the widget and the timer; every later call is a no-op.
-        """
+        if getattr(self, "_detached", False):
+            return
+        self._detached = True
         self.CancelAnimation()
         view, self._view = self._view, None
         if view is not None:
-            try:
-                view.removeEventFilter(self)
-            except Exception:
-                pass
-            try:
-                view.signalFrustumChanged.disconnect(
-                    self._onFrustumChanged)
-            except Exception:
-                pass
-            try:
-                view.destroyed.disconnect(self._onViewDestroyed)
-            except Exception:
-                pass
+            view.removeEventFilter(self)
+            stageViewReady.Disconnect(view, "signalFrustumChanged", self._onFrustumChanged)
+            stageViewReady.Disconnect(view, "destroyed", self._onViewDestroyed)
+        model = self.usdviewApi.dataModel
+        stageViewReady.Disconnect(model, "signalStageReplaced", self._onStageReplaced)
+        stageViewReady.Disconnect(model.viewSettings, "signalSettingChanged",
+                                  self._onSettingChanged)
         widget, self._widget = self._widget, None
         if widget is not None:
             widget._controller = None
-            try:
-                widget.deleteLater()
-            except Exception:
-                pass
+            stageViewReady.RemoveWidget(widget)
 
-
-# Installation
 
 def InstallViewCube(usdviewApi, retries=stageViewReady.DEFAULT_RETRIES):
-    """Return this session's view cube controller once ready, else None."""
     return stageViewReady.Register(
         usdviewApi, "viewCube", lambda: ViewCubeController(usdviewApi),
         retries=retries).controller
 
 
 def GetController(usdviewApi=None):
-    """Return the ready cube for the explicit or current session."""
     return stageViewReady.Controller(usdviewApi, "viewCube")
 
 

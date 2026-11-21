@@ -371,7 +371,9 @@ its windows, and the plugins keep their state per session.
   controller; only `failed` carries diagnostic text; `pending` and
   `unavailable` carry neither. `create()` runs synchronously once the broker
   sees the view and must return a non-null controller; `onReady(controller)`
-  runs once after publication. First registration wins, including its inputs;
+  runs once after publication. Required setup, including gizmo input handoff
+  to an input-owning extension, runs before publication. First registration
+  wins, including its inputs;
   reentrant or repeated registrations never replace the factory or run it
   twice.
   The first request probes immediately. A known `_noRender` host with no view
@@ -381,10 +383,10 @@ its windows, and the plugins keep their state per session.
   arrivals join the remaining budget and never extend it. The shared default is
   `DEFAULT_RETRIES = 40`; an explicit `0` from the request that starts the wait
   means synchronous-only. The last allowed probe still runs before exhaustion
-  is declared, and `unavailable` is then cached for the session generation,
-  including later tool registrations, with no `QTimer` left behind and no
-  rearming on stage changes. Once the view appears, waiting factories drain in
-  insertion order; later tools probe synchronously.
+  is declared. Exhaustion leaves requests pending without a timer. A later
+  registration probes again without restarting polling, or the host calls
+  `NotifyReady(api)` after attaching the view. Waiting factories drain in
+  insertion order.
 - **Status snapshots and controller lookups.** `GetResult(usdviewApi, tool)` is
   a side-effect-free read of the latest snapshot, or `None` for an
   unregistered or retired session/tool. Snapshots never mutate: async consumers
@@ -399,7 +401,8 @@ its windows, and the plugins keep their state per session.
   delegating to the shared `Controller(usdviewApi, tool)` lookup: an explicit
   api or window names only that session and never falls back, while a `None`
   api answers the session that owns the active window (through its window
-  chain), else the sole ready session of that tool, else `None`.
+  chain) even if its tool is not ready. Only when there is no known active
+  session does it fall back to the sole ready session for that tool.
   `Controllers(tool)` lists every ready controller of that tool for shortcut
   rescoping.
   ```python
@@ -419,18 +422,12 @@ its windows, and the plugins keep their state per session.
   registry even when the window is retained, so a later registration on the
   retained window starts a fresh generation with new inputs. Retirement
   invalidates the generation first, stops and disposes a live timer, and clears
-  factories and results, so no stale construction, `onReady`, or obsolete
-  publication runs afterwards, and surviving sessions are unaffected.
+  factories and results. It detaches installed tools and rolls back any tool
+  returned by an in-flight factory after retirement. A host losing its view
+  can call `Retire(api)` before removing it.
   Replacing the USD stage does none of this: ready controllers stay installed,
   pending work keeps its budget, and a terminal `unavailable` stays terminal
   until the session is retired.
-  Covered by the offscreen `tests/python/test_session_state.py` groups "all
-  four installers are immediate and idempotent", "staggered readiness, FIFO,
-  delegation, and ready-only lookups", "final probe, bounded retries, zero,
-  and no-render outcomes", "constructor isolation and shared probe/timer
-  failures", and "close, forget/re-register, and retirement during creation"
-  (`ctest -R '^testSessionState$'`); this prose edit runs no test target, so
-  no verified result is claimed here.
 - **Application-wide event filters.** The gizmo hotkeys act only on events
   whose window belongs to their session (`sessionRegistry.SessionOfEvent`).
   The graph editor's hotkeys act only inside its own panel.
