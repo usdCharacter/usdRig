@@ -553,7 +553,8 @@ def pack_components(components, type_name):
 
 
 def write_value(
-    stage, prim, property_name, components, time_code=None, mode="auto", warn=True
+    stage, prim, property_name, components, time_code=None, mode="auto", warn=True,
+    *, on_authored=None,
 ):
     """Author *components* onto *property_name*.  (ok, reason).
 
@@ -584,22 +585,24 @@ def write_value(
     if warn:
         _warn_edit_target(stage)
 
-    if time_code is None:
-        time_code = Usd.TimeCode.Default()
-
+    time = value_write_time(attr, time_code, mode)
     try:
         with Sdf.ChangeBlock():
-            if attr.GetVariability() == Sdf.VariabilityUniform:
-                attr.Set(value)
-            elif mode == "default":
-                attr.Set(value)
-            elif mode == "animation" or attr.GetNumTimeSamples() > 0:
-                attr.Set(value, time_code)
-            else:
-                attr.Set(value)
+            if not attr.Set(value, time):
+                return False, "USD refused the value"
+            if on_authored is not None:
+                # Capture the Sdf opinion before synchronous USD notice delivery.
+                on_authored()
     except Exception as e:  # a locked layer USD refuses late, a bad value
         return False, str(e)
     return True, ""
+
+
+def value_write_time(attr, time_code, mode):
+    if (attr.GetVariability() != Sdf.VariabilityUniform and mode != "default"
+            and (mode == "animation" or attr.GetNumTimeSamples() > 0)):
+        return time_code if time_code is not None else Usd.TimeCode.Default()
+    return Usd.TimeCode.Default()
 
 
 def _warn_edit_target(stage):
@@ -709,3 +712,55 @@ def build_value_row(stage, prim, pin_name, property_name, time_code=None):
     if template is None:
         return None
     return build_value_row_from_template(stage, prim, template, time_code)
+
+
+class ValuePreviewOpinion:
+    """Snapshot one authored value and follow its Sdf spec through moves."""
+
+    def __init__(self, target, attr, time):
+        self.layer = target.GetLayer()
+        self._initial_path = target.MapToSpecPath(attr.GetPath())
+        self.time = (None if time.IsDefault() else
+                     target.GetMapFunction().timeOffset.GetInverse() * time.GetValue())
+        self.original = read_value_opinion(self.layer, self._initial_path, self.time)
+        self.preview = None
+        self._spec = None
+
+    def capture(self):
+        self._spec = self.layer.GetAttributeAtPath(self._initial_path)
+        self.preview = read_value_opinion(self.layer, self._initial_path, self.time)
+
+    @property
+    def path(self):
+        return self._spec.path if self._spec else None
+
+    def matches(self, path):
+        return path is not None and read_value_opinion(self.layer, path, self.time) == self.preview
+
+    def restore(self):
+        path = self.path
+        if self.matches(path):
+            set_value_opinion(self.layer, path, self.time, self.original)
+
+
+def read_value_opinion(layer, path, time):
+    if time is not None:
+        return layer.QueryTimeSample(path, time)
+    spec = layer.GetAttributeAtPath(path)
+    return spec.default if spec and spec.HasInfo("default") else None
+
+
+def set_value_opinion(layer, path, time, value):
+    spec = layer.GetAttributeAtPath(path)
+    if not spec:
+        return
+    with Sdf.ChangeBlock():
+        if time is not None:
+            if value is None:
+                layer.EraseTimeSample(path, time)
+            else:
+                layer.SetTimeSample(path, time, value)
+        elif value is None:
+            spec.ClearInfo("default")
+        else:
+            spec.default = value

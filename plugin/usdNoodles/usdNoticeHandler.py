@@ -34,10 +34,10 @@ class UsdNoticeHandler:
         if not stage:
             return
 
-        self._stage = stage
-        self._listener = Tf.Notice.Register(
+        listener = Tf.Notice.Register(
             Usd.Notice.ObjectsChanged, self._onObjectsChanged, stage
         )
+        self._listener, self._stage = listener, stage
 
     def unregister(self):
         if self._listener:
@@ -94,10 +94,19 @@ class UsdNoticeHandler:
         return moved
 
     def _onObjectsChanged(self, notice, sender):
-        if not self._enabled:
+        if self._stage is None or sender is not self._stage:
             return
 
         if not self._graphView:
+            return
+
+        select = getattr(self._graphView, "_selectUsdChanges", None)
+        if select is not None:
+            callback = select(sender)
+        else:
+            callback = (self._graphView._handleUsdChanges if self._enabled else
+                        getattr(self._graphView, "_handleSuppressedUsdChanges", None))
+        if callback is None:
             return
 
         # Collect resynced paths (structural changes)
@@ -125,9 +134,7 @@ class UsdNoticeHandler:
             infoChangedPaths.add(pathStr)
 
         if resyncedPaths or infoChangedPaths:
-            self._graphView._handleUsdChanges(
-                resyncedPaths, infoChangedPaths, movedPaths
-            )
+            callback(resyncedPaths, infoChangedPaths, movedPaths)
 
     def getStage(self):
         return self._stage

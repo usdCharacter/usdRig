@@ -748,7 +748,7 @@ class StageSyncApplyTest(unittest.TestCase):
         new_graph = NodeGraph()
         new_graph.setStage(self.stage)
         new_graph.nodes["/X"] = _make_node(self.stage, "/X")
-        self.view.loadStage = lambda _stage: setattr(
+        self.view._populateStage = lambda _stage: setattr(
             self.view, "nodeGraph", new_graph
         )
         stage_adapter.applyStageDelta(

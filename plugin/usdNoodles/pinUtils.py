@@ -536,3 +536,19 @@ def arrowhead_points(
         (base_center_x + perp_x * half_width, base_center_y + perp_y * half_width),
         (base_center_x - perp_x * half_width, base_center_y - perp_y * half_width),
     )
+
+
+def usd_edge_exists(stage, source, source_pin, target, target_pin,
+                    source_property="", target_property=""):
+    for path in (source, target):
+        prim = stage.GetPrimAtPath(path)
+        if not prim:
+            continue
+        for edge in collect_links_for_prim(prim):
+            if (edge["sourceNodeId"], edge["sourcePinName"],
+                edge["targetNodeId"], edge["targetPinName"]) != (source, source_pin, target, target_pin):
+                continue
+            if ((not source_property or edge["sourcePropertyName"] == source_property)
+                    and (not target_property or edge["targetPropertyName"] == target_property)):
+                return True
+    return False
