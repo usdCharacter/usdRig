@@ -2318,14 +2318,13 @@ def _finishMung(view):
 
 def _recordMungOpinion(view, state):
     opinion = state["opinion"]
-    layer, path, time = opinion.layer, opinion.path, opinion.time
-    old, new = opinion.original, opinion.preview
-    if new == old or not opinion.matches(path):
+    path = opinion.path
+    if opinion.preview == opinion.original or not opinion.matches(path):
         return False
     legacy_symbol("_push_undo_command")(
         "Set %s" % path,
-        lambda view: noodlesValues.set_value_opinion(layer, path, time, new),
-        lambda view: noodlesValues.set_value_opinion(layer, path, time, old),
+        lambda view: opinion.redo(),
+        lambda view: opinion.restore(),
         view=view,
     )
     return True

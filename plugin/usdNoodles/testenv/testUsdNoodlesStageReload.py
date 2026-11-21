@@ -736,6 +736,98 @@ class TestReloadLifecycle(unittest.TestCase):
         self.assertIsNone(view._mungSuppression)
         self.assertIs(view._stageSync.boundStage(), replacement)
 
+    def test_layered_drag_removes_preview_specs_and_redoes_at_mapped_site(self):
+        for action in ('cancel', 'undo', 'cancel_with_edits', 'undo_with_edits',
+                       'cancel_with_parent_edit', 'undo_after_rename',
+                       'undo_with_existing_declaration', 'cancel_with_existing_parent'):
+            with self.subTest(action=action):
+                stage, view = Usd.Stage.CreateInMemory(), self.view
+                root = stage.GetRootLayer()
+                layer, weaker = Sdf.Layer.CreateAnonymous(), Sdf.Layer.CreateAnonymous()
+                root.subLayerPaths = [layer.identifier, weaker.identifier]
+                root.subLayerOffsets[0] = Sdf.LayerOffset(10, 2)
+                stage.SetEditTarget(weaker)
+                prim = stage.DefinePrim('/Group/Value')
+                attr = prim.CreateAttribute('number', Sdf.ValueTypeNames.Float)
+                time = Usd.TimeCode(20)
+                self.assertTrue(attr.Set(2.5, time))
+                view.loadStage(stage)
+                view._currentTimeCode = time
+                view._cachedValueWriteMode = 'animation'
+                stage.SetEditTarget(stage.GetEditTargetForLocalLayer(layer))
+                history = view._undoHistory
+                path = attr.GetPath()
+                existing_declaration = action == 'undo_with_existing_declaration'
+                existing_parent = action == 'cancel_with_existing_parent'
+                if existing_declaration:
+                    owner = Sdf.CreatePrimInLayer(layer, '/Group/Value')
+                    Sdf.AttributeSpec(owner, 'number', Sdf.ValueTypeNames.Float,
+                                      Sdf.VariabilityVarying, True)
+                elif existing_parent:
+                    Sdf.CreatePrimInLayer(layer, '/Group')
+                before = layer.ExportToString()
+                self.assertEqual(bool(layer.GetAttributeAtPath(path)), existing_declaration)
+                hit = SimpleNamespace(
+                    row=SimpleNamespace(editable=True, kind='numeric', mungable=True,
+                                        components=(2.5,), type_name='float'),
+                    comp=0, nodeId='/Group/Value', primPath='/Group/Value',
+                    propertyName='number',
+                )
+                view._onValueCellPressed(hit, SimpleNamespace(position=lambda: QtCore.QPointF()))
+                view._updateMung(SimpleNamespace(position=lambda: QtCore.QPointF(100, 0),
+                                                 modifiers=lambda: QtCore.Qt.NoModifier))
+                self.assertEqual(layer.QueryTimeSample(path, 5), 3.5)
+                for ancestor in ('/Group', '/Group/Value'):
+                    self.assertEqual(layer.GetPrimAtPath(ancestor).specifier, Sdf.SpecifierOver)
+                with_edits = action.endswith('_with_edits')
+                if with_edits:
+                    self.assertTrue(attr.Set(9, Usd.TimeCode(24)))
+                    self.assertTrue(stage.GetPrimAtPath('/Group').SetDocumentation('keep me'))
+                parent_edit = action == 'cancel_with_parent_edit'
+                if parent_edit:
+                    self.assertTrue(stage.GetPrimAtPath('/Group').SetDocumentation('keep me'))
+                stage.SetEditTarget(root)
+                commit = action.startswith('undo')
+                group_path, prim_path = '/Group', '/Group/Value'
+                if commit:
+                    view._finishMung()
+                    self.assertTrue(history.canUndo())
+                    if action == 'undo_after_rename':
+                        editor = Usd.NamespaceEditor(stage)
+                        self.assertTrue(editor.MovePrimAtPath('/Group', '/Renamed'))
+                        self.assertTrue(editor.ApplyEdits())
+                        group_path, prim_path = '/Renamed', '/Renamed/Value'
+                        path = Sdf.Path(prim_path).AppendProperty('number')
+                        attr = stage.GetAttributeAtPath(path)
+                    history.undo(view)
+                else:
+                    view._cancelMung()
+                    self.assertFalse(history.canUndo())
+                if with_edits:
+                    self.assertEqual(layer.ListTimeSamplesForPath(path), [7.0])
+                    self.assertEqual(layer.QueryTimeSample(path, 7), 9)
+                    self.assertEqual(layer.GetPrimAtPath('/Group').documentation, 'keep me')
+                else:
+                    self.assertEqual(attr.Get(time), 2.5)
+                    self.assertEqual(bool(layer.GetAttributeAtPath(path)), existing_declaration)
+                    self.assertEqual(bool(layer.GetPrimAtPath(prim_path)), existing_declaration)
+                    self.assertEqual(bool(layer.GetPrimAtPath(group_path)),
+                                     existing_declaration or existing_parent or parent_edit)
+                    if parent_edit:
+                        self.assertEqual(layer.GetPrimAtPath(group_path).documentation, 'keep me')
+                    else:
+                        self.assertEqual(layer.ExportToString(), before)
+                if commit:
+                    history.redo(view)
+                    self.assertTrue(layer.GetAttributeAtPath(path))
+                    self.assertEqual(layer.QueryTimeSample(path, 5), 3.5)
+                    self.assertEqual(attr.Get(time), 3.5)
+                    self.assertEqual(stage.GetEditTarget().GetLayer(), root)
+                    self.assertFalse(root.GetAttributeAtPath(path))
+                    history.undo(view)
+                    if not with_edits:
+                        self.assertEqual(layer.ExportToString(), before)
+
     def test_release_records_the_last_owned_preview_for_redo(self):
         stage, view = self.stage, self.view
         attr = stage.DefinePrim('/Value').CreateAttribute('number', Sdf.ValueTypeNames.Float)

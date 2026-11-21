@@ -693,6 +693,8 @@ def testUsdviewInputFunction(appController):
     _Check(not session.GetAttributeAtPath(switchAttr.GetPath()),
            "preview cancellation requires an initially unauthored session value")
     point, original = startAbandonedDrag(switchAttr, "before switch")
+    _Check(session.GetAttributeAtPath(switchAttr.GetPath()),
+           "preview did not author a session-layer spec")
     view.loadStage(replacement)
     checkMungCleared("switch")
     replacementUndo = view._undoHistory
@@ -703,8 +705,8 @@ def testUsdviewInputFunction(appController):
            "switch or the next move wrote to a stage")
     _Check(not undo.canUndo() and not replacementUndo.canUndo(),
            "abandoning the drag at switch pushed undo")
-    spec = session.GetAttributeAtPath(switchAttr.GetPath())
-    _Check(not spec or not spec.HasInfo("default"), "switch left a session default")
+    _Check(not session.GetAttributeAtPath(switchAttr.GetPath()),
+           "switch left a preview-created session-layer spec")
     stage.SetEditTarget(originalTarget)
     probeDelivery(valuesPrim, valuesNode, delivered=False, phase="old sender after switch")
 

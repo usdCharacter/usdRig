@@ -715,7 +715,7 @@ def build_value_row(stage, prim, pin_name, property_name, time_code=None):
 
 
 class ValuePreviewOpinion:
-    """Snapshot one authored value and follow its Sdf spec through moves."""
+    """Replay one mapped value and clean up only the specs it introduced."""
 
     def __init__(self, target, attr, time):
         self.layer = target.GetLayer()
@@ -725,9 +725,24 @@ class ValuePreviewOpinion:
         self.original = read_value_opinion(self.layer, self._initial_path, self.time)
         self.preview = None
         self._spec = None
+        self._redo_path = None
+        self._record_site(self._initial_path)
+
+    def _record_site(self, path):
+        self._created = not self.layer.GetAttributeAtPath(path)
+        self._missing_prims = tuple(
+            prefix for prefix in path.GetPrimOrPrimVariantSelectionPath().GetPrefixes()
+            if prefix.IsPrimPath() and not self.layer.GetPrimAtPath(prefix)
+        )
+
+    def _capture_specs(self, path, retained_prims=()):
+        self._spec = self.layer.GetAttributeAtPath(path)
+        self._prims = retained_prims + tuple(self.layer.GetPrimAtPath(p) for p in self._missing_prims)
 
     def capture(self):
-        self._spec = self.layer.GetAttributeAtPath(self._initial_path)
+        if self._spec is None:
+            self._capture_specs(self._initial_path)
+            self._declaration = self._spec.typeName, self._spec.variability, self._spec.custom
         self.preview = read_value_opinion(self.layer, self._initial_path, self.time)
 
     @property
@@ -739,8 +754,45 @@ class ValuePreviewOpinion:
 
     def restore(self):
         path = self.path
-        if self.matches(path):
+        if not self.matches(path):
+            return
+        with Sdf.ChangeBlock():
             set_value_opinion(self.layer, path, self.time, self.original)
+            spec = self._spec
+            if (self._created and spec
+                    and set(spec.ListInfoKeys()) <= {"typeName", "variability", "custom"}
+                    and (spec.typeName, spec.variability, spec.custom) == self._declaration):
+                spec.owner.RemoveProperty(spec)
+                self._redo_path = path
+            # Keep handles rather than old paths so namespace edits cannot
+            # make cleanup delete an unrelated replacement at the old site.
+            for prim in reversed(self._prims):
+                if prim and prim.IsInert():
+                    if prim.nameParent is None:
+                        del self.layer.rootPrims[prim.name]
+                    else:
+                        del prim.nameParent.nameChildren[prim.name]
+
+    def redo(self):
+        path = self.path or self._redo_path
+        if path is None or read_value_opinion(self.layer, path, self.time) != self.original:
+            return
+        spec = self.layer.GetPropertyAtPath(path)
+        if spec and (not isinstance(spec, Sdf.AttributeSpec)
+                     or spec.typeName != self._declaration[0]):
+            return
+        retained_prims = tuple(prim for prim in self._prims if prim)
+        was_created = self._created and spec == self._spec
+        with Sdf.ChangeBlock():
+            self._record_site(path)
+            if self._created:
+                owner = Sdf.CreatePrimInLayer(self.layer, path.GetPrimOrPrimVariantSelectionPath())
+                type_name, variability, custom = self._declaration
+                Sdf.AttributeSpec(owner, path.name, type_name, variability, custom)
+            self._created = self._created or was_created
+            self._capture_specs(path, retained_prims)
+            self._redo_path = None
+            set_value_opinion(self.layer, path, self.time, self.preview)
 
 
 def read_value_opinion(layer, path, time):
