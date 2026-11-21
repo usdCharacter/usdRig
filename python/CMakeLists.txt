@@ -36,6 +36,10 @@ target_link_libraries(_rigexec PRIVATE
     rigExecGpu
     usd sdf tf gf vt python)
 
+# The module compiles the kernel-instantiating scene and oracle link anchors
+# into itself, and the root exact-FP walk does not reach this directory.
+rigexec_apply_exact_fp_flags(_rigexec)
+
 # The installed extension lands in lib/python while rigExec/rigExecAuthoring land
 # in lib, so the loader-relative rpath inherited from CMAKE_INSTALL_RPATH
 # ($ORIGIN / @loader_path) needs one extra hop up to find its siblings.
