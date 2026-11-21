@@ -14,25 +14,6 @@
 // compiled index the adapter already uses. Space steps run serially; ranges()
 // is unused and may be null.
 //
-//   Math     Matrix, Vector, Rotation, Frame and the affine policy
-//            AffineMath for RigExecAffineFrameInputsT and
-//            RigExecAffineFrameKernel; PointsToMatrix over point arrays and
-//            over frames, the commit-gate predicate Usable, and Transform.
-//   Inputs   opCount()/op(i)/valueCount() for part 0; refreshCount()/
-//            refresh(i) for ProviderRefresh; refreshPath(i) and
-//            refreshCarryPath(i, k) spell the diagnostic labels. The op and
-//            refresh records stay the adapter's own types and are read
-//            through their existing member names only.
-//   State    the RigExecRunProviderArithmetic store (ReadMatrix, ReadFrame,
-//            ReadScalar, ReadVector, ReadToken, ResetXformStack, Present,
-//            Authoritative, Copy, Invalidate, PublishMatrix, PublishFrame),
-//            the affine field readers (ReadAffineDouble with float
-//            widening, ReadAffineVec3i, ReadAffineBool, ReadAffineInt,
-//            ReadAffineString, ReadAffineIntArray, ReadAffineDoubleArray,
-//            ReadAffineMatrixArray, each true when the value is present),
-//            PublishAffineFailure, the refresh frame and commit accessors,
-//            ParentRawMatrix, ReadRefreshFrame and PushDiagnostic.
-//
 // LocalXform and InterveningXform ops evaluate only on the baked side (they
 // compose captured UsdGeom xform orders); here they answer Rejected and the
 // runtime reports the output blocked, as it does today. The SpaceExpression

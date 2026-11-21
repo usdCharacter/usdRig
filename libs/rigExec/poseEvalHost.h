@@ -20,73 +20,58 @@
 
 namespace rigExec {
 
-// Samples one constraint's authored tables (weights, offsets, pole)
-// from the raw values the prologue read: empty-or-absent fills the
-// default, a short table overlays it, a wrong-sized table diagnoses.
+// Decode the sampled USD values; EvalCore owns table size and default policy.
 inline void
 PrepareConstraintArrays(RigExecBakedProgramImpl::ConstraintArrays *arrays)
 {
     auto &a = *arrays;
     a.diagnostics.clear();
     a.poleDiagnostics.clear();
-    const auto weights = [&](size_t channel, size_t count, const char *name,
-                             std::vector<std::string> *diagnostics,
-                             std::vector<double> *values) {
+    const auto weights = [&](size_t channel, size_t count) {
         const auto *raw = a.raw[channel].IsHolding<VtFloatArray>()
                               ? &a.raw[channel].UncheckedGet<VtFloatArray>()
                               : nullptr;
-        if (raw && !raw->empty() && raw->size() != count) {
-            diagnostics->push_back(a.pathText + " " + name + " has " +
-                                   std::to_string(raw->size()) +
-                                   " entries for " + std::to_string(count) +
-                                   " sources");
-            return false;
-        }
-        values->assign(count, 1.0);
-        if (raw) {
-            for (size_t i = 0; i < raw->size(); ++i) {
-                (*values)[i] = (*raw)[i];
-            }
-        }
-        return true;
+        const char *name = channel == 0
+                               ? SchemaAttrText::inputsSourceWeights
+                               : SchemaAttrText::inputsPoleVectorWeights;
+        auto &diagnostics = channel == 0 ? a.diagnostics : a.poleDiagnostics;
+        auto &values = channel == 0 ? a.weights : a.poleWeights;
+        return eval::NormalizeConstraintArray<double>(
+            count, raw ? raw->size() : 0, raw != nullptr, 1.0,
+            [&](size_t k) { return double((*raw)[k]); },
+            [&](size_t size, size_t expected) {
+                diagnostics.push_back(a.pathText + " " + name + " has " +
+                                      std::to_string(size) + " entries for " +
+                                      std::to_string(expected) + " sources");
+            },
+            &values);
     };
-    const auto offsets = [&](size_t channel, const char *name,
-                             std::vector<GfVec3d> *values) {
+    const auto offsets = [&](size_t channel, size_t count) {
         const auto *raw = a.raw[channel].IsHolding<VtVec3dArray>()
                               ? &a.raw[channel].UncheckedGet<VtVec3dArray>()
                               : nullptr;
-        if (raw && !raw->empty() && raw->size() != a.sourceCount) {
-            a.diagnostics.push_back(a.pathText + " " + name + " has " +
-                                    std::to_string(raw->size()) +
-                                    " entries for " +
-                                    std::to_string(a.sourceCount) + " sources");
-            return false;
-        }
-        values->assign(a.sourceCount, GfVec3d(0));
-        if (raw) {
-            for (size_t i = 0; i < raw->size(); ++i) {
-                (*values)[i] = (*raw)[i];
-            }
-        }
-        return true;
+        const char *name = channel == 1
+                               ? SchemaAttrText::inputsTranslationOffsets
+                               : SchemaAttrText::inputsRotationOffsets;
+        auto &values = channel == 1 ? a.translationOffsets : a.rotationOffsets;
+        return eval::NormalizeConstraintArray<GfVec3d>(
+            count, raw ? raw->size() : 0, raw != nullptr, GfVec3d(0),
+            [&](size_t k) { return (*raw)[k]; },
+            [&](size_t size, size_t expected) {
+                a.diagnostics.push_back(a.pathText + " " + name + " has " +
+                                        std::to_string(size) + " entries for " +
+                                        std::to_string(expected) + " sources");
+            },
+            &values);
     };
-    a.ok = weights(0, a.sourceCount, SchemaAttrText::inputsSourceWeights,
-                   &a.diagnostics, &a.weights);
-    if (a.parentOffsets) {
-        a.ok = a.ok &&
-               offsets(1, SchemaAttrText::inputsTranslationOffsets,
-                       &a.translationOffsets) &&
-               offsets(2, SchemaAttrText::inputsRotationOffsets,
-                       &a.rotationOffsets);
-    } else {
-        a.translationOffsets.assign(a.sourceCount, GfVec3d(0));
-        a.rotationOffsets.assign(a.sourceCount, GfVec3d(0));
-    }
-    if (a.readPole) {
-        a.poleOk =
-            weights(3, a.poleCount, SchemaAttrText::inputsPoleVectorWeights,
-                    &a.poleDiagnostics, &a.poleWeights);
-    }
+    eval::NormalizeConstraintTables(
+        a.sourceCount, a.poleCount, a.parentOffsets, a.readPole, weights,
+        offsets,
+        [&](size_t count) {
+            a.translationOffsets.assign(count, GfVec3d(0));
+            a.rotationOffsets.assign(count, GfVec3d(0));
+        },
+        &a.ok, &a.poleOk);
 }
 
 struct BakedPoseMath {

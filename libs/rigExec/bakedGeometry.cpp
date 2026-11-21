@@ -4515,11 +4515,10 @@ struct BakedChainState {
         return rev.parameters.valid && rev.status.AllowsApply() &&
                rev.acceptance == RigExecRevisionAcceptance::Applies;
     }
-    bool groupGateHolds(size_t chain, size_t revision, size_t)
+    bool groupGateHolds(size_t chain, size_t revision, size_t count)
     {
         const Revision &rev = revisionAt(chain, revision);
-        // The core consultation of gate.h: packet facts alone, as in
-        // RigExecRevisionGateHolds; NoteGateViolation stays the adapter's.
+        const auto &owner = chainAt(chain);
         eval::GroupGateFacts facts;
         facts.enabled = true;
         facts.op = int(rev.op);
@@ -4527,6 +4526,12 @@ struct BakedChainState {
         facts.skinMethod = BakedSkinPacket(rev.parameters).method;
         facts.blendSurfaceFrame = rev.parameters.blendSurfaceFrame;
         facts.regularGrid = rev.parameters.latticeSettings.regularGrid;
+        facts.hasWrittenProof = true;
+        facts.groupBounds = owner.groupBounds.data();
+        facts.groupBoundCount = owner.groupBounds.size();
+        facts.groupWritten = rev.groupWritten.data();
+        facts.groupWrittenCount = rev.groupWritten.size();
+        facts.pointCount = count;
         return eval::GroupGateHolds(facts);
     }
     void noteGateViolation(size_t, size_t)

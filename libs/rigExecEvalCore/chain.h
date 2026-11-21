@@ -16,235 +16,8 @@
 // deferral to the publication boundary and its GPU fuse stay with the
 // baked adapter around the shared bodies; discardable probes stay native.
 //
-// Bodies are templated on the host Math trait of envelope.h's convention
-// (Math::Vec3f is the chain's point type) and read the host contract of
-// host.h: nested Math, Inputs and State, with inputs(), state() and
-// ranges(). A chain host adds:
-//
-//   typename Host::ChainPoints
-//        the container a chain's base and result points live in
-//        (VtVec3fArray on the baked side, std::vector<RrVec3f> at
-//        playback); borrowed for the call, never outliving its owner.
-//
-//   inputs() adds, all borrowed and valid for the call:
-//     bool chainIndexForObject(int32_t object, size_t *chain) const;
-//     bool revisionIndexForObject(int32_t object, size_t *chain,
-//                                 size_t *revision) const;
-//     bool derivedIndexForObject(int32_t object, size_t *chain,
-//                                size_t *derived) const;
-//     bool chainHasBase(size_t chain) const;
-//     int opCode(size_t chain, size_t revision) const;
-//          the revision's op as a wire RevisionOp ordinal (kinds.h);
-//     bool useSimd() const;
-//
-//   state() adds the slot, revision and group results by compiled index:
-//     ChainInputsAccessT<Math::Vec3f, Host::ChainPoints>
-//         chainInputs(size_t chain);
-//     void resetChainRevision(size_t chain, size_t revision);
-//     bool revisionRangeNotAside(size_t chain, size_t revision);
-//     void setRevisionSource(size_t chain, size_t revision, int source);
-//     void resetBaseGroups(size_t chain);
-//     void clearChainResultIds(size_t chain);
-//     void countChainCreated(size_t chain);
-//     void noteChainSchedules(size_t chain);
-//          the adapter's own counters (step counters on the baked side,
-//          the chain's created/schedule counts at playback);
-//     void noteChainBaseDirty(size_t chain, bool dirty);
-//     void publishChainBaseGroups(size_t chain, bool moved);
-//     bool chainPointsEqual(size_t chain, const Host::ChainPoints &a,
-//                           const Host::ChainPoints &b);
-//          the bit-exact base comparison (the version rule);
-//     bool chainBaseValueEqual(size_t chain, const Host::ChainPoints &a,
-//                              const Host::ChainPoints &b);
-//          the adapter's base-dirty comparison (a head-value compare on
-//          the baked side, the same bits at playback);
-//     bool foldInfluences(size_t chain, size_t revision, bool *changed);
-//          false is the adapter's existing diagnostic path (playback's
-//          labeled slot errors); the fold's slot resolution and error
-//          text stay adapter-local, its ordering and changed rule here.
-//     void setInfluencesChanged(size_t chain, size_t revision, bool);
-//     bool influencesValid(size_t chain, size_t revision);
-//     void setInfluencesValid(size_t chain, size_t revision, bool);
-//     bool skinTransformsUsable(size_t chain, size_t revision);
-//     void foldTransformForms(size_t chain, size_t revision);
-//     bool skinPacketUsable(size_t chain, size_t revision);
-//     bool dualQuatPaletteSafe(size_t chain, size_t revision);
-//     bool revisionIsRange(size_t chain, size_t revision);
-//     bool revisionIsDualQuat(size_t chain, size_t revision);
-//     bool revisionGpuOwned(size_t chain, size_t revision);
-//     void noteRevisionGpuTouched(size_t chain, size_t revision);
-//     void adoptRevisionLayout(size_t chain, size_t revision);
-//     bool applyCurrentPhasePacket(size_t chain, size_t revision);
-//          false is the adapter's diagnostic path; the current-phase
-//          packet patch and its wording stay adapter-local.
-//     void assembleRevision(size_t chain, size_t revision);
-//          the packet assembly: parameter assembly is shared through
-//          the family headers, the read binding stays adapter-local.
-//     void publishAssembledStatus(size_t chain, size_t revision);
-//          the packet status, the defaultWeight diagnostic scalar, the
-//          static-dirty flag, the weight-field overlay publication and
-//          the revisionsBuilt counting -- adapter-local by design.
-//     bool revisionIsSkin(size_t chain, size_t revision);
-//     bool revisionRangeChain(size_t chain, size_t revision);
-//     bool revisionRangeLattice(size_t chain, size_t revision);
-//     void finishRevisionStaticHead(size_t chain, size_t revision);
-//          the range-chain delta version, the held lattice rest and the
-//          staged sizing the assemble produced, in the adapter's types.
-//     void sizeRevisionStaging(size_t chain, size_t revision,
-//                              size_t count);
-//          the staged sizing and the tail flags, in the adapter's types;
-//     void setPrecedingCount(size_t chain, size_t revision, size_t count);
-//     size_t chainBaseCount(size_t chain);
-//     EnvelopePacketView envelopeView(size_t chain, size_t revision);
-//     const float *resolvedEnvelope(size_t chain, size_t revision);
-//     void resolveRevisionEnvelope(size_t chain, size_t revision,
-//                                  size_t count);
-//     int prepareRevisionRanges(size_t chain, size_t revision);
-//     int revisionKernelAcceptance(size_t chain, size_t revision);
-//     int skinRevisionAcceptance(size_t chain, size_t revision);
-//          acceptance as a RigExecRevisionAcceptance ordinal (Refuses 0,
-//          Applies 1, Deferred 2), decided by envelope.h and skin.h.
-//     bool skinLayoutUsable(size_t chain, size_t revision, size_t count);
-//     bool dualQuatWeightsSafe(size_t chain, size_t revision);
-//     bool revisionPartitionStale(size_t chain, size_t revision,
-//                                 size_t count);
-//     bool gateCheckApplies(size_t chain, size_t revision);
-//     bool groupGateHolds(size_t chain, size_t revision, size_t count);
-//     void noteGateViolation(size_t chain, size_t revision);
-//     void setFullStrength(size_t chain, size_t revision, bool);
-//     void setAcceptance(size_t chain, size_t revision, int);
-//     void setLayoutUsable(size_t chain, size_t revision, bool);
-//     void setDualQuatWeightsSafe(size_t chain, size_t revision, bool);
-//     void setPartitionStale(size_t chain, size_t revision, bool);
-//     void gpuRevisionStatic(size_t chain, size_t revision);
-//          the GPU-owned static arm; the baked adapter's alone.
-//     bool revisionWholeChunked(size_t chain, size_t revision);
-//     bool runSingleChunk(size_t chain, size_t revision, int32_t part);
-//          the ungrouped chunk arm (window, device and staging state are
-//          the adapter's); false is its diagnostic path.
-//     GroupStepAccessT<Math::Vec3f> groupStep(size_t chain,
-//                                              size_t revision, size_t g);
-//     void groupRange(size_t chain, size_t revision, size_t g,
-//                     size_t count, size_t *begin, size_t *end);
-//     const RigExecPointsRef<Math::Vec3f> &
-//         enteringGroup(size_t chain, size_t revision, size_t g,
-//                       RigExecGroupSource *from);
-//     void passBaseGroup(size_t chain, size_t revision, size_t g,
-//                        RigExecGroupState<Math::Vec3f> *state);
-//     bool gatherChunkTransforms(size_t chain, size_t revision, size_t g);
-//     bool runSkinGroup(size_t chain, size_t revision, size_t g,
-//                       const Math::Vec3f *in, Math::Vec3f *out,
-//                       size_t count, size_t begin, size_t end,
-//                       bool *untouched);
-//          the group's skin kernel over its chunk table (skin.h's
-//          ApplySkinGroupRange at playback, the revision-group kernel
-//          with the chunk view on the baked side);
-//     void runBlendGroup(size_t chain, size_t revision, size_t g,
-//                        size_t begin, size_t end,
-//                        const RigExecPointsRef<Math::Vec3f> &entering,
-//                        RigExecGroupState<Math::Vec3f> *state);
-//          the chunked blend arm; its channel weights are the adapter's
-//          declared reads, its accumulation blendRangeKernel.h's;
-//     const float *groupEnvelope(size_t chain, size_t revision);
-//     bool prepareGroupHalo(size_t chain, size_t revision, size_t g,
-//                           const RigExecPointsRef<Math::Vec3f> &entering);
-//     bool runRevisionGroup(size_t chain, size_t revision, size_t g,
-//                           const Math::Vec3f *in, Math::Vec3f *out,
-//                           size_t count, size_t begin, size_t end,
-//                           const float *envelope, bool *untouched);
-//     bool runWholeSkinChunk(size_t chain, size_t revision, size_t g);
-//     FuseRevisionAccessT<Math::Vec3f> fuseRevision(size_t chain,
-//                                                  size_t revision);
-//     bool revisionRangeSetAside(size_t chain, size_t revision);
-//     void passSetAsideFuse(size_t chain, size_t revision);
-//     bool revisionIsRangeRole(size_t chain, size_t revision);
-//     bool revisionIsWholeRole(size_t chain, size_t revision);
-//     bool fusePacketValid(size_t chain, size_t revision);
-//     void emitFuseDiagnostic(size_t chain, size_t revision,
-//                             bool packetValid);
-//     bool revisionStatusAllows(size_t chain, size_t revision);
-//     int revisionAcceptanceValue(size_t chain, size_t revision);
-//     bool revisionChunkedValue(size_t chain, size_t revision);
-//     bool revisionPartitionStaleValue(size_t chain, size_t revision);
-//     size_t revisionChunkCount(size_t chain, size_t revision);
-//     bool chunkOk(size_t chain, size_t revision, size_t k);
-//     bool chunkHoldsAnswer(size_t chain, size_t revision, size_t k);
-//     void setRevisionExecuted(size_t chain, size_t revision, bool);
-//     void noteFuseExecuted(size_t chain, size_t revision);
-//     void setFuseResultFromStatus(size_t chain, size_t revision);
-//     void setFuseResultFailed(size_t chain, size_t revision);
-//     void saveFuseLastStatus(size_t chain, size_t revision);
-//     void publishFuseState(size_t chain, size_t revision, int32_t object);
-//     void noteWholeFuseSource(size_t chain, size_t revision, int source);
-//     int precedingCurrentSource(size_t chain, size_t revision);
-//     bool wholeFuseSized(size_t chain, size_t revision);
-//     bool legacyWholeStagingOk(size_t chain, size_t revision, size_t count);
-//     int64_t fuseGroupSlot(size_t chain, size_t revision, size_t g);
-//     RigExecGroupSource fuseVersionSource(size_t chain, size_t version,
-//                                          size_t g);
-//     void enteringVersionPoints(size_t chain, size_t version,
-//                                const Math::Vec3f **points, size_t *count);
-//     bool revisionLayoutUsableValue(size_t chain, size_t revision);
-//     bool revisionEnvelopeOkValue(size_t chain, size_t revision);
-//     size_t fusePrecedingCount(size_t chain, size_t revision);
-//     bool skinWholeRange(size_t chain, size_t revision,
-//                         const Math::Vec3f *points, size_t count,
-//                         std::vector<Math::Vec3f> *fused);
-//     ChainStatusAccessT<Math::Vec3f> chainStatus(size_t chain);
-//     void clearChainStatusPublish(size_t chain);
-//     void emitChainStatusDiagnostics(size_t chain);
-//     void noteChainBuilt(size_t chain);
-//     bool chainIsGpu(size_t chain);
-//     void noteChainGpuPending(size_t chain);
-//     bool chainHasGroups(size_t chain);
-//     size_t chainRevisionCount(size_t chain);
-//     size_t chainGroupCount(size_t chain);
-//     RigExecGroupSource chainStatusSource(size_t chain, size_t version,
-//                                          size_t g);
-//     const RigExecPointsRef<Math::Vec3f> &
-//         chainStatusGroup(size_t chain, size_t version, size_t g);
-//     void publishChainGroups(size_t chain,
-//                             const std::vector<Math::Vec3f> &gathered,
-//                             const std::vector<RigExecGroupSource> &ids);
-//     void chainFinalPoints(size_t chain, size_t version,
-//                           const Math::Vec3f **points, size_t *count);
-//     void publishChainFinal(size_t chain,
-//                            const std::vector<Math::Vec3f> &gathered);
-//     void captureDerivedPublished(size_t chain, size_t derived);
-//     void prepareDerivedBase(size_t chain, size_t derived);
-//     bool derivedHasBase(size_t chain, size_t derived);
-//     void adoptDerivedLayout(size_t chain, size_t derived);
-//     bool derivedIsMatrix(size_t chain, size_t derived);
-//     bool runDerivedMatrix(size_t chain, size_t derived);
-//     bool foldDerivedInfluences(size_t chain, size_t derived);
-//     void assembleDerived(size_t chain, size_t derived);
-//     void noteDerivedBuilt(size_t chain, size_t derived);
-//     void noteDerivedExecuted(size_t chain, size_t derived);
-//     bool derivedStatusAllows(size_t chain, size_t derived);
-//     bool runDerivedKernel(size_t chain, size_t derived,
-//                           std::vector<Math::Vec3f> *values);
-//     void derivedLastBasePoints(size_t chain, size_t derived,
-//                                std::vector<Math::Vec3f> *values);
-//     void setDerivedResultFromStatus(size_t chain, size_t derived);
-//     void setDerivedResultFailed(size_t chain, size_t derived);
-//     void saveDerivedRevision(size_t chain, size_t derived,
-//                              std::vector<Math::Vec3f> &&values);
-//     bool derivedResultIsFailed(size_t chain, size_t derived);
-//     void emitDerivedDiagnostic(size_t chain, size_t derived);
-//     void noteDerivedEarlyVersion(size_t chain, size_t derived);
-//     void publishDerivedResult(size_t chain, size_t derived);
-//     void skipChainInputs(size_t chain);
-//     void skipDerived(size_t chain, size_t derived);
-//     void skipInfluenceFold(size_t chain, size_t revision);
-//     void skipRevisionStatic(size_t chain, size_t revision, int32_t object);
-//     void skipRevisionChunk(size_t chain, size_t revision, int32_t part);
-//     void skipRevisionFuse(size_t chain, size_t revision);
-//
-// Views cannot outlive the packet or program they borrow. Bodies are
-// no-mutex zones: no guarded statics, no text-built tokens, no
-// environment reads, no bare new. Range and Whole results stay bitwise
-// identical: group bodies write disjoint groups through the shared
-// pointBlocks publication, and untouched groups keep their handles.
+// Each host borrows compiled partitions and packet views for one scheduled
+// step; state publishes only through the graph-owned output slots.
 #ifndef RIGEXEC_EVAL_CORE_CHAIN_H
 #define RIGEXEC_EVAL_CORE_CHAIN_H
 
@@ -704,11 +477,15 @@ RunRevisionStaticStep(Host &host, const StepRef &step)
     const size_t count = host.state().chainBaseCount(chain);
     host.state().sizeRevisionStaging(chain, revision, count);
     host.state().setPrecedingCount(chain, revision, count);
-    const auto noteGate = [&] {
+    const auto gateValid = [&] {
         if (host.state().gateCheckApplies(chain, revision) &&
             !host.state().groupGateHolds(chain, revision, count)) {
             host.state().noteGateViolation(chain, revision);
+            host.state().setAcceptance(chain, revision,
+                                       kChainAcceptanceRefuses);
+            return false;
         }
+        return true;
     };
     if (host.state().revisionIsRange(chain, revision) && !skin) {
         const EnvelopePacketView envelope =
@@ -724,7 +501,9 @@ RunRevisionStaticStep(Host &host, const StepRef &step)
         host.state().setAcceptance(
             chain, revision,
             host.state().prepareRevisionRanges(chain, revision));
-        noteGate();
+        if (!gateValid()) {
+            return {Outcome::Rejected, kChainDetailNoRevision};
+        }
         return {Outcome::Applied, kNoStepDetail};
     }
     if (!skin) {
@@ -762,7 +541,9 @@ RunRevisionStaticStep(Host &host, const StepRef &step)
     host.state().setPartitionStale(
         chain, revision,
         host.state().revisionPartitionStale(chain, revision, count));
-    noteGate();
+    if (!gateValid()) {
+        return {Outcome::Rejected, kChainDetailNoRevision};
+    }
     return {Outcome::Applied, kNoStepDetail};
 }
 

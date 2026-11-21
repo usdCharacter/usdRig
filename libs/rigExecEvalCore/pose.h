@@ -23,49 +23,8 @@
 // fused instructions the spelling matches what both sides computed
 // before, so exact captures stay valid.
 //
-// The Host contract (host.h) plus the family accessors below. `Math`
-// adds the affine types the bodies need:
-//
-//   Math::Mat4, Math::Mat3, Math::Vec3, Math::Quat, Math::Frame
-//     Row-vector 4x4/3x3 matrices (operator[] returns a mutable row),
-//     3-vectors, quaternions and point frames. Constructed only through
-//     the Math helpers below, never through a Gf/Rr constructor the
-//     bodies name directly.
-//   Math::Identity4() / Math::Identity3()
-//   Math::Mat4FromElements(...) / Math::Mat3FromElements(...)
-//   Math::Vec3Of(x, y, z)
-//   Math::FrameFromPoints(const Vec3 (&)[4])   // valid frame, no checks
-//   Math::FramePoints(const Frame&) -> const Vec3(&)[4]
-//   Math::FrameFlags(const Frame&) -> unsigned
-//   Math::FrameWithFlags(const Frame&, unsigned)
-//   Math::IsUsableFrame(const Frame&)
-//   Math::DegenerateFrame()                    // invalid, zero points
-//   Math::SameBits(double, double)             // bitwise equality
-//   Math::SameBitsMat4 / Math::SameBitsMat3
-//   Math::SinCos(double, double*, double*)     // same libm on both sides
-//   Math::Dot / Cross / Length / NormalizeVec3 // elementwise, inline-safe
-//
-// `inputs()` adds, all borrowed and valid for the call, one accessor
-// group per step kind (a group the adapter never binds may trap):
-//   const PoseLadderFacts &ladderFacts(size_t slot) const;
-//   const PoseComposeFacts &composeFacts(size_t slot) const;
-//   const PoseSolverFacts &solverFacts(size_t object) const;
-//   const PoseCommitFacts &commitFacts(size_t object) const;
-//   const PoseConstraintFacts &constraintFacts(size_t object) const;
-//   const PoseInterpFacts &interpFacts(size_t object) const;
-//   const PoseProviderFacts &providerFacts(size_t slot) const;
-//   const PoseFrameRecordFacts &frameRecordFacts(size_t object) const;
-//   const PoseCheckpointFacts &checkpointFacts(size_t object) const;
-//   ... (each fact struct is declared below, per kind)
-//
-// `state()` adds the slot/revision/group result, scratch, memo,
-// counters and versions by stable compiled index (declared per kind).
-// `ranges()` splits only independent per-point loops; results are
-// bitwise the same with or without it.
-//
-// Bodies are no-mutex zones: no tokens, no environment reads, no
-// guarded statics, no stage access, no bare new, and no allocation
-// beyond the packets and scratch the adapters sized at Build/Open.
+// Host inputs borrow compiled tables only for the scheduled step; no solver
+// reads the live stage or starts another traversal.
 #ifndef RIGEXEC_EVAL_CORE_POSE_H
 #define RIGEXEC_EVAL_CORE_POSE_H
 
@@ -5024,6 +4983,46 @@ RunIkFkArm(Host &host, size_t object)
     return {Outcome::Applied, kNoStepDetail};
 }
 
+// Absent and empty tables use defaults; a nonempty table must name every source.
+template <class Value, class Read, class Diagnose>
+inline bool
+NormalizeConstraintArray(size_t count, size_t rawCount, bool present,
+                         const Value &fallback, Read read, Diagnose diagnose,
+                         std::vector<Value> *values)
+{
+    if (present && rawCount != 0 && rawCount != count) {
+        diagnose(rawCount, count);
+        return false;
+    }
+    values->assign(count, fallback);
+    if (present) {
+        for (size_t k = 0; k < rawCount; ++k) {
+            (*values)[k] = read(k);
+        }
+    }
+    return true;
+}
+
+// Keep the source, optional offsets and pole channels in the same order on
+// both hosts; decoding and diagnostic text remain with their adapters.
+template <class Weights, class Offsets, class DefaultOffsets>
+inline void
+NormalizeConstraintTables(size_t sourceCount, size_t poleCount,
+                          bool parentOffsets, bool readPole, Weights weights,
+                          Offsets offsets, DefaultOffsets defaultOffsets,
+                          bool *ok, bool *poleOk)
+{
+    *ok = weights(0, sourceCount);
+    if (parentOffsets) {
+        *ok = *ok && offsets(1, sourceCount) && offsets(2, sourceCount);
+    } else {
+        defaultOffsets(sourceCount);
+    }
+    if (readPole) {
+        *poleOk = weights(3, poleCount);
+    }
+}
+
 // One single-chain IK's bound inputs, copied: the chain slots, the
 // effector and pole references, and the solve parameters. Small
 // (chain-length) vectors; frames travel through the frame accessors.
@@ -5039,11 +5038,10 @@ struct PoseIkChainFacts {
     std::vector<int> poleObjects;
 };
 
-// The single-chain IK arm: the chain, the effector, the parameters,
-// the pole, the rest-derived preparation, the solve, one atomic
-// validity check, and then a commit over the whole chain. The
-// preparation and the solve itself stay host calls into the
-// per-side solver cores until the Solve lift unifies them.
+// Gathers the chain, effector, pole and rests and atomically commits the
+// result. Rest-derived preparation and the IK solve remain host-specific:
+// native uses RigExecRunConstraint (including preserveJointOrientation),
+// playback uses _RrSolveSingleChainIk without that binding.
 template <class Host>
 StepResult
 RunSingleChainIkArm(Host &host, size_t object,

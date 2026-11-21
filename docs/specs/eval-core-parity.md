@@ -96,6 +96,24 @@ bodies; `WeightField` dispatch-half routing, `SnapshotFinals` (8) and the
 the OpenExec oracle's `NoEquivalent` geometry rows stay independent checks,
 never playback coverage.
 
+## Maintenance qualification
+
+The single-chain IK arm in `pose.h` shares input gathering, validation and
+atomic publication, but **not** rest-derived preparation or the solver: the
+native host uses `RigExecPrepareRestDerivedIkChain` and `RigExecRunConstraint`
+with `preserveJointOrientation`; playback uses its own rest preparation and
+`_RrSolveSingleChainIk`. A shared caller is not evidence of a shared solve.
+
+For gated Range revisions, Build uses prospective packet eligibility to
+establish the partition. The binary validator rejects a default packet naming
+an unwritten group before Open; neither host rebuilds the recorded mask at
+RevisionStatic. At that step both hosts also check the packet against the
+compiled mask; a failed proof marks acceptance `Refuses`, returns `Rejected`,
+and the fuse publishes `MoverFailed` instead of reporting an applied result.
+The native and playback gate adapters still differ in how they classify the
+lattice `regularGrid` fact. The historical integrated-head and snapshot rows
+below describe their earlier heads, not a new full-suite validation result.
+
 ## How to read the tables
 
 - **oracle key** is the identity

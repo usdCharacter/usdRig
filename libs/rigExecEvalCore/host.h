@@ -120,53 +120,6 @@ struct IsBoundHost<
 // RigExecBakedSkipGeometryStep and RrSkipGeometryStep stay the adapter's
 // skip entry points and publish nothing fabricated.
 
-// Constraints every later EvalCore header works inside:
-//   - the step bodies are templates, so no new .cpp joins the
-//     rigExecEvalCore target and evalCoreSources.txt / evalCoreIncludes.txt
-//     stay byte-stable;
-//   - no OpenUSD header included anywhere in EvalCore; rigExecMath is used
-//     through its USD-free headers only;
-//   - no rigExecGraph include in a math-level header;
-//   - rigExecGraph alone owns edges, readiness, invalidation and invocation;
-//   - no new serialized record, flag, kind or per-time data; the Revision
-//     chunks and partition fields stay as the wire declares them;
-//   - bodies are no-mutex zones: no guarded statics, no text-built tokens,
-//     no environment reads, no bare new.
-
-// Files a lift must not touch (its owners, not this milestone's editors):
-// step.h, kinds.h, kinds.cpp, bakedProgramImpl.h, bakedSchedule.h,
-// runtime.h, poseInternal.h, spaces.h, pointBlocks.h, dualQuat.cpp,
-// pointFrame.cpp, schema.usda, open.cpp, inputs.cpp, and the oracle's
-// bakedExecCrossCheckRows.cpp.
-
-// Who edits which adapter file in this milestone (one editor per file; a
-// lift chain orders its links by dependency):
-//   libs/rigExecEvalCore/     one new header per task: host.h, envelope.h,
-//                             skin.h, chain.h, gate.h, closure.h, pose.h,
-//                             weights.h, spaces.h, properties.h. step.h and
-//                             kinds.h / kinds.cpp are frozen.
-//   libs/rigExec/bakedGeometry.cpp and libs/rigExecRuntime/geometry.cpp
-//                             the ordered chain: wire, then mesh/surface,
-//                             envelope, skin, revision chain, fuse/status/
-//                             derived, gate. Each link switches both callers
-//                             and deletes both old decisions.
-//   libs/rigExec/moverGraph.{h,cpp}   dynamic-walk-reuse first (signatures
-//                             frozen for scene, bake, oracle and
-//                             bakedPose.cpp callers), then gate-policy-lift
-//                             at the gate site only.
-//   bakedSchedule.cpp, bakedOpGraph.cpp, rigExecRuntime/closure.cpp
-//                             dispatch-policy-lift alone: prologue and
-//                             epilogue policy; routing stays adapter-local.
-//   Value families (bakedPose, bakedHarmonics, bakedIkFkMatch, bakedWeights,
-//   weightField, bakedSpaces, bakedProperties and the matching pose*,
-//   weights, spaces, properties bodies): one task each on disjoint files.
-//   poseInternal.h, spaces.h, store.h and solvers.{h,cpp} are read-only for
-//   them; RrRunTopologyHead and the WeightField dispatch and skip halves
-//   belong to the geometry chain.
-//   CMakeLists.txt: evalcore-properties alone.
-//   docs (eval-core-parity.md, this README, STATUS.md, baked-vs-dynamic.md,
-//   the AGENTS.md code-map bullet): docs-status-update alone, last.
-
 } // namespace eval
 } // namespace rigExec
 

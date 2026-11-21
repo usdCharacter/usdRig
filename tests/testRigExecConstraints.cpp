@@ -1,6 +1,7 @@
 #include "rigExecSchema/schemaTokens.h"
 // FBX-equivalent constraint schema and evaluator conformance.
 #include "rigExecPoseCompare.h"
+#include "rigExecFrozenParity.h"
 #include "rigExecGraphDependencyCheck.h"
 #include "rigExecRuntimeDrive.h"
 #include "rigExecSceneProgramDrive.h"
@@ -1046,6 +1047,17 @@ TestModeAndFailureContracts()
                 std::string(evaluationMode) == "neverTS" ? 2.0 : 3.0;
             CHECK(Near(solvedEnd->second.Origin(), GfVec3d(expectedX, 0, 0),
                        2e-4));
+        }
+        std::vector<uint8_t> bytes;
+        RigExecTestPlayer player;
+        std::string error;
+        const bool opened = RigExecTestBakeAt(evaluator, 1, &bytes, &error) &&
+                            player.Open(bytes, stage, &error);
+        CHECK(opened);
+        if (opened) {
+            CHECK(player.Play(1, &error));
+            std::vector<std::string> diffs;
+            CHECK(RigExecCompareRuntimeOutputs(pose, player.Reader(), &diffs));
         }
     }
 
@@ -4819,6 +4831,120 @@ struct ConstraintsSourcePlayback {
     }
 };
 
+static void
+TestInvalidSingleChainPlayback()
+{
+    const UsdStageRefPtr stage = BuildConstraintStage(nullptr);
+    const UsdPrim ik = stage->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/IK"));
+    ik.GetAttribute(TfToken("rigExec:solverMode")).Set(TfToken("singleChain"));
+    ik.GetRelationship(TfToken("rigExec:firstJoint"))
+        .SetTargets({SdfPath("/Missing/Joint")});
+    RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+    std::vector<std::string> errors;
+    CHECK(evaluator.Compile(&errors));
+    CHECK(evaluator.GetSkippedOperations().count(ik.GetPath()) == 1);
+    const RigExecRigPose native = evaluator.Evaluate(UsdTimeCode(1));
+    CHECK(native.valid);
+    const SdfPath end("/Asset/Rig/Joints/Root/Mid/End");
+    const auto base = native.jointFramesBase.find(end);
+    const auto final = native.jointFramesFinal.find(end);
+    CHECK(base != native.jointFramesBase.end());
+    CHECK(final != native.jointFramesFinal.end());
+    if (base != native.jointFramesBase.end() &&
+        final != native.jointFramesFinal.end()) {
+        CHECK(base->second == final->second);
+    }
+    std::string why;
+    CHECK(RigExecFrozenMatchesLive(&evaluator, SdfPath("/Asset/Rig"),
+                                   UsdTimeCode(1), &why));
+    std::vector<uint8_t> bytes;
+    RigExecTestPlayer player;
+    std::string error;
+    const bool opened = RigExecTestBakeAt(evaluator, 1, &bytes, &error) &&
+                        player.Open(bytes, stage, &error);
+    CHECK(opened);
+    if (opened) {
+        CHECK(player.Play(1, &error));
+        std::vector<std::string> diffs;
+        CHECK(RigExecCompareRuntimeOutputs(native, player.Reader(), &diffs));
+    }
+}
+
+static void
+TestConstraintTableNormalizationAcrossHosts()
+{
+    for (int channel = 0; channel < 3; ++channel) {
+        for (int entries : {-1, 0, 1, 3, 2}) {
+            const UsdStageRefPtr stage = BuildConstraintStage(nullptr);
+            const UsdPrim position =
+                stage->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/Position"));
+            const UsdAttribute weights =
+                position.GetAttribute(TfToken("inputs:sourceWeights"));
+            CHECK(weights);
+            const UsdPrim parent =
+                stage->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/Parent"));
+            parent.GetRelationship(TfToken("rigExec:sources"))
+                .SetTargets({SdfPath("/Asset/Sources/Parent"),
+                             SdfPath("/Asset/Sources/A")});
+            const UsdAttribute offsets =
+                parent.GetAttribute(TfToken("inputs:translationOffsets"));
+            const UsdPrim ik =
+                stage->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/IK"));
+            ik.GetAttribute(TfToken("rigExec:poleVectorMode"))
+                .Set(TfToken("object"));
+            ik.GetRelationship(TfToken("rigExec:poleVectorObjects"))
+                .SetTargets(
+                    {SdfPath("/Asset/Sources/A"), SdfPath("/Asset/Sources/B")});
+            const UsdAttribute poleWeights =
+                ik.CreateAttribute(TfToken("inputs:poleVectorWeights"),
+                                   SdfValueTypeNames->FloatArray);
+            const auto size = [&](int selected) {
+                return size_t(channel == selected ? std::max(entries, 0) : 2);
+            };
+            if (entries < 0 && channel == 0)
+                weights.Clear();
+            else
+                CHECK(weights.Set(VtFloatArray(size(0), 1.0f)));
+            if (entries < 0 && channel == 1)
+                offsets.Clear();
+            else
+                CHECK(offsets.Set(VtVec3dArray(size(1), GfVec3d(0))));
+            if (entries < 0 && channel == 2)
+                poleWeights.Clear();
+            else
+                CHECK(poleWeights.Set(VtFloatArray(size(2), 1.0f)));
+            RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+            std::vector<std::string> errors;
+            CHECK(evaluator.Compile(&errors));
+            const RigExecRigPose native = evaluator.Evaluate(UsdTimeCode(1));
+            CHECK(native.valid);
+            const bool mismatch = entries == 1 || entries == 3;
+            CHECK(HasDiagnostic(native, "sourceWeights has") ==
+                  (mismatch && channel == 0));
+            CHECK(HasDiagnostic(native, "translationOffsets has") ==
+                  (mismatch && channel == 1));
+            CHECK(HasDiagnostic(native, "poleVectorWeights has") ==
+                  (mismatch && channel == 2));
+            std::string why;
+            CHECK(RigExecFrozenMatchesLive(&evaluator, SdfPath("/Asset/Rig"),
+                                           UsdTimeCode(1), &why));
+            std::vector<uint8_t> bytes;
+            RigExecTestPlayer player;
+            std::string error;
+            const bool opened =
+                RigExecTestBakeAt(evaluator, 1, &bytes, &error) &&
+                player.Open(bytes, stage, &error);
+            CHECK(opened);
+            if (opened) {
+                CHECK(player.Play(1, &error));
+                std::vector<std::string> diffs;
+                CHECK(RigExecCompareRuntimeOutputs(native, player.Reader(),
+                                                   &diffs));
+            }
+        }
+    }
+}
+
 // The typed binding boundary distinguishes live source absence from a
 // detached source fact that already includes its override or upstream layer.
 static void
@@ -5717,6 +5843,8 @@ main()
 
     TestSchemaSurface();
     TestEvaluatorSemantics();
+    TestConstraintTableNormalizationAcrossHosts();
+    TestInvalidSingleChainPlayback();
     TestDynamicWeightDenseBaseFormulaAndParity();
     TestSingleChainIkUniversalWeightObject();
     TestConstraintCompositionAndHierarchy();

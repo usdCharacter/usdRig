@@ -1433,72 +1433,60 @@ public:
         const auto arrayPath = _program->TextOrEmpty(arrayWire.prim);
         arrays.diagnostics.clear();
         arrays.poleDiagnostics.clear();
-        const auto weights = [&](size_t channel, size_t count, const char *name,
-                                 std::vector<std::string> *lines,
-                                 std::vector<double> *values) {
+        const auto weights = [&](size_t channel, size_t count) {
             const int slot = arrayWire.rawSlots[channel];
             const auto *raw =
                 slot >= 0 && RrInputHasValue(_program, uint32_t(slot))
                     ? RrInputArray<float>(_program, uint32_t(slot))
                     : nullptr;
-            if (raw && !raw->empty() && raw->size() != count) {
-                lines->push_back(arrayPath + " " + name + " has " +
-                                 std::to_string(raw->size()) + " entries for " +
-                                 std::to_string(count) + " sources");
-                return false;
-            }
-            values->assign(count, 1.0);
-            if (raw) {
-                for (size_t k = 0; k < raw->size(); ++k) {
-                    (*values)[k] = (*raw)[k];
-                }
-            }
-            return true;
+            const char *name = channel == 0
+                                   ? SchemaAttrText::inputsSourceWeights
+                                   : SchemaAttrText::inputsPoleVectorWeights;
+            auto &lines =
+                channel == 0 ? arrays.diagnostics : arrays.poleDiagnostics;
+            auto &values = channel == 0 ? arrays.weights : arrays.poleWeights;
+            return eval::NormalizeConstraintArray<double>(
+                count, raw ? raw->size() : 0, raw != nullptr, 1.0,
+                [&](size_t k) { return double((*raw)[k]); },
+                [&](size_t size, size_t expected) {
+                    lines.push_back(arrayPath + " " + name + " has " +
+                                    std::to_string(size) + " entries for " +
+                                    std::to_string(expected) + " sources");
+                },
+                &values);
         };
-        const auto offsets = [&](size_t channel, const char *name,
-                                 std::vector<RrVec3d> *values) {
+        const auto offsets = [&](size_t channel, size_t count) {
             const int slot = arrayWire.rawSlots[channel];
             const auto *raw =
                 slot >= 0 && RrInputHasValue(_program, uint32_t(slot))
                     ? RrInputArray<RigExecWireVec3d>(_program, uint32_t(slot))
                     : nullptr;
-            if (raw && !raw->empty() && raw->size() != arrayWire.sourceCount) {
-                arrays.diagnostics.push_back(
-                    arrayPath + " " + name + " has " +
-                    std::to_string(raw->size()) + " entries for " +
-                    std::to_string(arrayWire.sourceCount) + " sources");
-                return false;
-            }
-            values->assign(size_t(arrayWire.sourceCount), RrVec3d(0));
-            if (raw) {
-                for (size_t k = 0; k < raw->size(); ++k) {
-                    (*values)[k] =
-                        RrVec3d((*raw)[k][0], (*raw)[k][1], (*raw)[k][2]);
-                }
-            }
-            return true;
+            const char *name = channel == 1
+                                   ? SchemaAttrText::inputsTranslationOffsets
+                                   : SchemaAttrText::inputsRotationOffsets;
+            auto &values = channel == 1 ? arrays.translationOffsets
+                                        : arrays.rotationOffsets;
+            return eval::NormalizeConstraintArray<RrVec3d>(
+                count, raw ? raw->size() : 0, raw != nullptr, RrVec3d(0),
+                [&](size_t k) {
+                    return RrVec3d((*raw)[k][0], (*raw)[k][1], (*raw)[k][2]);
+                },
+                [&](size_t size, size_t expected) {
+                    arrays.diagnostics.push_back(
+                        arrayPath + " " + name + " has " +
+                        std::to_string(size) + " entries for " +
+                        std::to_string(expected) + " sources");
+                },
+                &values);
         };
-        arrays.ok = weights(0, size_t(arrayWire.sourceCount),
-                            SchemaAttrText::inputsSourceWeights,
-                            &arrays.diagnostics, &arrays.weights);
-        if (arrayWire.parentOffsets) {
-            arrays.ok = arrays.ok &&
-                        offsets(1, SchemaAttrText::inputsTranslationOffsets,
-                                &arrays.translationOffsets) &&
-                        offsets(2, SchemaAttrText::inputsRotationOffsets,
-                                &arrays.rotationOffsets);
-        } else {
-            arrays.translationOffsets.assign(size_t(arrayWire.sourceCount),
-                                             RrVec3d(0));
-            arrays.rotationOffsets.assign(size_t(arrayWire.sourceCount),
-                                          RrVec3d(0));
-        }
-        if (arrayWire.readPole) {
-            arrays.poleOk =
-                weights(3, size_t(arrayWire.poleCount),
-                        SchemaAttrText::inputsPoleVectorWeights,
-                        &arrays.poleDiagnostics, &arrays.poleWeights);
-        }
+        eval::NormalizeConstraintTables(
+            size_t(arrayWire.sourceCount), size_t(arrayWire.poleCount),
+            arrayWire.parentOffsets, arrayWire.readPole, weights, offsets,
+            [&](size_t count) {
+                arrays.translationOffsets.assign(count, RrVec3d(0));
+                arrays.rotationOffsets.assign(count, RrVec3d(0));
+            },
+            &arrays.ok, &arrays.poleOk);
         return true;
     }
 
