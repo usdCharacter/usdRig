@@ -2,13 +2,36 @@
 # Compile the runtime, the EvalCore step table, the op scheduler, and the
 # binary format with no OpenUSD include path. Fails if a translation unit
 # needs a pxr header, or if an undefined symbol is an OpenUSD type.
+#
+# Usage: bin/check_runtime_usd_free.sh [manifest-directory]
+# Without an argument the manifests and exact-FP flags come from this
+# checkout's configured build tree, exactly as CMake generates them. With
+# one, the argument is an installed SDK's manifest directory M and the
+# installed-manifest grammar applies: entries whose first path component
+# is runtime-generated resolve under M, every other relative entry under
+# this checkout (never both), and an absolute or '..' entry marks a
+# producer-dependent layout that cannot be checked from a consumer.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ $# -gt 1 ]]; then
+    echo "usage: ${0##*/} [manifest-directory]" >&2
+    exit 2
+fi
 BUILD="${1:-$ROOT/build}"
+installed=0
+if [[ $# -eq 1 && -n "${1:-}" ]]; then
+    installed=1
+    [[ "$BUILD" = /* ]] || BUILD="$PWD/$BUILD"
+    BUILD="${BUILD%/}"
+fi
 if [[ ! -f "$BUILD/runtimeSources.txt" || ! -f "$BUILD/runtimeIncludes.txt" ||
       ! -f "$BUILD/evalCoreSources.txt" || ! -f "$BUILD/evalCoreIncludes.txt" ]]; then
-    echo "configure and build rigExecRuntime first (missing source manifest in $BUILD)" >&2
+    if [[ $installed -eq 1 ]]; then
+        echo "no SDK manifests in $BUILD: expected runtimeSources.txt, runtimeIncludes.txt, evalCoreSources.txt and evalCoreIncludes.txt there (install the SDK from a matching build)" >&2
+    else
+        echo "configure and build rigExecRuntime first (missing source manifest in $BUILD)" >&2
+    fi
     exit 1
 fi
 if [[ ! -s "$BUILD/exactFpFlags.txt" ]]; then
@@ -47,11 +70,39 @@ CFLAGS=(
     -std=c11 -O2 -DZ7_ST -DRIGEXEC_LZMA_PORTABLE_SCALAR
     -I "$ROOT/thirdparty/lzma/C"
 )
+resolve_manifest_entry() {
+    # Prints the path an installed-manifest entry ($2) resolves under: the
+    # reserved runtime-generated component joins the manifest directory, a
+    # bare relative entry joins this checkout, and never both. Absolute
+    # entries and '..' segments are producer-dependent spellings.
+    local manifest="$1" entry="$2" root
+    case "$entry" in
+        /*|..|../*|*/..|*/../*)
+            echo "$manifest: $entry: installed entries are relative without '..' segments (this manifest came from a producer build tree: install the SDK from a matching build)" >&2
+            return 1
+            ;;
+    esac
+    case "$entry" in
+        runtime-generated|runtime-generated/*) root="$BUILD" ;;
+        *) root="$ROOT" ;;
+    esac
+    printf '%s' "$root/$entry"
+}
+
 for manifest in runtimeIncludes.txt evalCoreIncludes.txt; do
     while IFS= read -r include_dir; do
         include_dir="${include_dir%$'\r'}"
         [[ -z "$include_dir" ]] && continue
-        [[ "$include_dir" = /* ]] || include_dir="$ROOT/$include_dir"
+        spelling="$include_dir"
+        if [[ $installed -eq 1 ]]; then
+            include_dir="$(resolve_manifest_entry "$manifest" "$include_dir")" || exit 1
+            if [[ ! -d "$include_dir" ]]; then
+                echo "$manifest: $spelling: no such include directory $include_dir" >&2
+                exit 1
+            fi
+        else
+            [[ "$include_dir" = /* ]] || include_dir="$ROOT/$include_dir"
+        fi
         if [[ -d "$include_dir/pxr" ]]; then
             echo "runtime/EvalCore include directories expose OpenUSD: $include_dir" >&2
             exit 1
@@ -78,7 +129,16 @@ for manifest in runtimeSources.txt evalCoreSources.txt; do
         src="${src%$'\r'}"
         [[ -z "$src" ]] && continue
         [[ "$src" = *.cpp || "$src" = *.c ]] || continue
-        [[ "$src" = /* ]] || src="$ROOT/$src"
+        spelling="$src"
+        if [[ $installed -eq 1 ]]; then
+            src="$(resolve_manifest_entry "$manifest" "$src")" || exit 1
+            if [[ ! -f "$src" ]]; then
+                echo "$manifest: $spelling: no such source $src" >&2
+                exit 1
+            fi
+        else
+            [[ "$src" = /* ]] || src="$ROOT/$src"
+        fi
         sources+=("$src")
     done < "$BUILD/$manifest"
 done
