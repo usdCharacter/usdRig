@@ -44,7 +44,8 @@ if __name__ != "__main__":
 import markingMenuDefs as defs
 import markingMenuModel as mm
 import editorExtension
-import sessionRegistry
+import stageViewReady
+from stageViewReady import StageView
 
 # Prims the menu treats as controls: what the picker selects.
 CONTROL_TYPES = ("RigExecControl", "RigExecJoint")
@@ -73,14 +74,6 @@ _REST_VALUES = {"avars:tx": 0.0, "avars:ty": 0.0, "avars:tz": 0.0,
                 "avars:rx": 0.0, "avars:ry": 0.0, "avars:rz": 0.0,
                 "avars:rspin": 0.0,
                 "avars:sx": 1.0, "avars:sy": 1.0, "avars:sz": 1.0}
-
-
-def StageView(usdviewApi):
-    # usdview keeps its app controller name-mangled on the api object.
-    try:
-        return usdviewApi._UsdviewApi__appController._stageView
-    except AttributeError:
-        return None
 
 
 def _AppController(usdviewApi):
@@ -593,6 +586,8 @@ class ControlMarkingMenu(QtCore.QObject):
         self._controls = []
         self._pressed = False
         self._window = None
+        self._ownsMouseGrab = False
+        self._releaseHover = None
         # The item the gesture's direction last lit, which a label under
         # the cursor overrides.
         self._sectorLit = None
@@ -612,9 +607,13 @@ class ControlMarkingMenu(QtCore.QObject):
         # the machine draws.
         self.clock = None
         if self._view is not None:
-            self._view.setAttribute(QtCore.Qt.WA_Hover, True)
-            if installFilters:
-                self._view.installEventFilter(self)
+            try:
+                self._releaseHover = stageViewReady.ClaimHover(self._view)
+                if installFilters:
+                    self._view.installEventFilter(self)
+            except Exception:
+                stageViewReady._Cleanup("markingMenu", self.Detach)
+                raise
 
     # -- the world ---------------------------------------------------------
 
@@ -746,6 +745,8 @@ class ControlMarkingMenu(QtCore.QObject):
 
     def Open(self, point, controls):
         """Start a gesture at a viewport point for `controls`."""
+        if self._view is None:
+            return
         self._controls = list(controls)
         context = SelectionContext(self, self._controls)
         if self._window is None:
@@ -774,9 +775,24 @@ class ControlMarkingMenu(QtCore.QObject):
         application = QtWidgets.QApplication.instance()
         if application is not None:
             application.removeEventFilter(self._escape)
-        if self._view is not None and \
+        ownsMouseGrab, self._ownsMouseGrab = self._ownsMouseGrab, False
+        if ownsMouseGrab and self._view is not None and \
                 QtWidgets.QWidget.mouseGrabber() is self._view:
             self._view.releaseMouse()
+
+    def Detach(self):
+        release, self._releaseHover = self._releaseHover, None
+        try:
+            stageViewReady.IgnoreDeleted(self._Close)
+        finally:
+            stageViewReady.ReleaseHover(release)
+        view, self._view = self._view, None
+        window, self._window = self._window, None
+        if view is not None and self._installFilters:
+            stageViewReady.IgnoreDeleted(lambda: view.removeEventFilter(self))
+        stageViewReady.RemoveWidget(window)
+        if not self._installFilters:
+            editorExtension.EditorRemoved(self._api, editorExtension.MARKING_MENU, self)
 
     def Cancel(self):
         if self._gesture is not None:
@@ -804,6 +820,7 @@ class ControlMarkingMenu(QtCore.QObject):
                     # Up for clicking: every click, even one outside the
                     # viewport, is the menu's to take or dismiss.
                     self._view.grabMouse()
+                    self._ownsMouseGrab = QtWidgets.QWidget.mouseGrabber() is self._view
             elif kind == mm.HIGHLIGHT:
                 self._sectorLit = emission.item.id if emission.item else None
                 window.lit = self._sectorLit
@@ -1118,23 +1135,20 @@ class _EscapeFilter(QtCore.QObject):
         return False
 
 
-_menus = sessionRegistry.SessionRegistry("control marking menus")
-
-
 def GetMenu(usdviewApi):
-    return _menus.Get(usdviewApi)
+    return stageViewReady.Controller(usdviewApi, "markingMenu")
 
 
 def InstallMarkingMenu(usdviewApi, undoStack=None, switchIkFk=None,
                        knownLimbs=None):
-    """The session's right-click marking menu, installed once."""
-    menu = _menus.Get(usdviewApi)
-    if menu is None and StageView(usdviewApi) is not None:
-        yielded = editorExtension.OwnsInput(usdviewApi)
-        menu = _menus.Set(usdviewApi, ControlMarkingMenu(
-            usdviewApi, undoStack, switchIkFk, knownLimbs,
-            installFilters=not yielded))
-        if yielded:
-            editorExtension.EditorAdded(
-                usdviewApi, editorExtension.MARKING_MENU, menu)
-    return menu
+    def _Create():
+        return ControlMarkingMenu(usdviewApi, undoStack, switchIkFk, knownLimbs,
+                                  installFilters=not editorExtension.OwnsInput(usdviewApi))
+
+    def _Prepare(menu):
+        if not menu.InstallsFilters():
+            editorExtension.EditorAdded(usdviewApi, editorExtension.MARKING_MENU,
+                                        menu, required=True)
+
+    return stageViewReady.Register(usdviewApi, "markingMenu", _Create,
+                                   prepare=_Prepare).controller

@@ -77,6 +77,7 @@ if __name__ != "__main__":
 # also how the gizmo helpers below reach gizmoUI.
 import editorExtension
 import sessionRegistry
+import stageViewReady
 import touchPoseModel
 
 # Voice-to-select. OPTIONAL IN THE STRONGEST SENSE, and the dependency
@@ -457,6 +458,7 @@ class TouchPoseController(QtCore.QObject,
         self._view = StageView(usdviewApi)
         self._active = False
         self._installed = False
+        self._releaseHover = None
         # EVERY region set on the stage, all live at once, and the ONE
         # that is active -- listed in the panel, painted into and saved.
         #
@@ -948,31 +950,34 @@ class TouchPoseController(QtCore.QObject,
         if view is None or self._installed:
             return
         self._yielded = editorExtension.OwnsInput(self._api)
-        if self._yielded:
-            # The owner forwards view events to HandleViewEvent.
-            editorExtension.EditorAdded(
-                self._api, editorExtension.TOUCH_POSE, self)
-        else:
-            view.installEventFilter(self)
-        # See the module docstring: WA_Hover, never setMouseTracking.
-        view.setAttribute(QtCore.Qt.WA_Hover, True)
+        self._releaseHover = stageViewReady.ClaimHover(view)
         self._installed = True
+        try:
+            if self._yielded:
+                # The owner forwards view events to HandleViewEvent.
+                editorExtension.EditorAdded(
+                    self._api, editorExtension.TOUCH_POSE, self, required=True)
+            else:
+                view.installEventFilter(self)
+        except Exception:
+            stageViewReady._Cleanup("touchPose", self._Uninstall)
+            raise
 
     def _Uninstall(self):
         view = self._view
-        if view is None or not self._installed:
+        if not self._installed:
             return
-        if getattr(self, "_yielded", False):
-            editorExtension.EditorRemoved(
-                self._api, editorExtension.TOUCH_POSE, self)
-            self._yielded = False
-        else:
-            view.removeEventFilter(self)
-        # WA_Hover is deliberately LEFT ON. gizmoUI sets it too and may
-        # still be running; clearing it here would silently kill the
-        # manipulator's pre-selection highlight. It costs nothing on its
-        # own -- the events are only delivered, not acted on.
         self._installed = False
+        release, self._releaseHover = self._releaseHover, None
+        yielded, self._yielded = self._yielded, False
+        try:
+            if yielded:
+                editorExtension.EditorRemoved(
+                    self._api, editorExtension.TOUCH_POSE, self)
+            elif view is not None:
+                stageViewReady.IgnoreDeleted(lambda: view.removeEventFilter(self))
+        finally:
+            stageViewReady.ReleaseHover(release)
 
     # -- the ray ---------------------------------------------------------
 
@@ -1129,7 +1134,7 @@ class TouchPoseController(QtCore.QObject,
         """
         try:
             import gizmoUI
-            controller = gizmoUI.GetController()
+            controller = gizmoUI.GetController(self._api)
             stack = getattr(controller, "undoStack", None)
             if stack is not None:
                 return stack

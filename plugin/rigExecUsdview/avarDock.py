@@ -28,9 +28,11 @@ from pxr.Usdviewq.qt import QtCore, QtGui, QtWidgets
 
 try:
     import avarWidgets
+    import stageViewReady
 except ImportError:                    # loader that did not add our dir
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import avarWidgets
+    import stageViewReady
 
 
 # How far the dock sits from the viewport's edges, and how wide it opens.
@@ -41,22 +43,13 @@ DOCK_WIDTH = 296 + 25
 # the title turned on its side.
 COLLAPSED_WIDTH = 22
 
-_INSTALL_RETRIES = 40
-
-_controller = None
-_installPending = False
-
-
 # Clear of usdview's orientation cube, which lives in the same corner.
 TOP_INSET = 96
 
 
 def StageView(usdviewApi):
     """usdview's stage view widget, or None headless."""
-    try:
-        return usdviewApi._UsdviewApi__appController._stageView
-    except AttributeError:
-        return None
+    return stageViewReady.StageView(usdviewApi)
 
 
 class VerticalTab(QtWidgets.QAbstractButton):
@@ -369,6 +362,19 @@ class AvarDockController(QtCore.QObject):
         self._view = None
         self._dock = None
 
+    def Detach(self):
+        view, self._view = self._view, None
+        dock, self._dock = self._dock, None
+        if view is None:
+            return
+        view.removeEventFilter(self)
+        stageViewReady.Disconnect(view, "destroyed", self._OnViewDestroyed)
+        panel = dock.Release()
+        if panel is not None:
+            panel.setParent(self.usdviewApi.qMainWindow)
+            panel.setWindowFlags(QtCore.Qt.Dialog)
+        stageViewReady.RemoveWidget(dock)
+
     # -- docking -----------------------------------------------------------
 
     def Dock(self, panel):
@@ -402,31 +408,19 @@ class AvarDockController(QtCore.QObject):
         return self._dock
 
 
-def InstallAvarDock(usdviewApi, undoStack=None, retries=_INSTALL_RETRIES):
-    """Put the dock on usdview's stage view once.
-
-    Returns the controller, or None while there is no stage view yet (in
-    which case an install is queued), exactly as InstallViewCube does --
-    plugins are constructed before the view exists.
-    """
-    global _controller, _installPending
-    if _controller is not None:
-        return _controller
-    if StageView(usdviewApi) is None:
-        if retries > 0 and not _installPending:
-            _installPending = True
-
-            def _Retry():
-                global _installPending
-                _installPending = False
-                InstallAvarDock(usdviewApi, undoStack, retries - 1)
-
-            QtCore.QTimer.singleShot(0, _Retry)
-        return None
-    _controller = AvarDockController(usdviewApi, undoStack)
-    return _controller
+def InstallAvarDock(usdviewApi, undoStack=None,
+                    retries=stageViewReady.DEFAULT_RETRIES):
+    # Readiness does not move a floating panel into the dock.
+    return stageViewReady.Register(
+        usdviewApi, "avarDock", lambda: AvarDockController(usdviewApi, undoStack),
+        retries=retries).controller
 
 
-def GetController():
-    """The installed controller, or None."""
-    return _controller
+def GetController(usdviewApi=None):
+    return stageViewReady.Controller(usdviewApi, "avarDock")
+
+
+def __getattr__(name):
+    if name == "_controller":
+        return GetController()
+    raise AttributeError("module %r has no attribute %r" % (__name__, name))
