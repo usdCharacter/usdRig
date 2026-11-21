@@ -222,6 +222,23 @@ CheckMissingRecordAtNonZeroOffset(const char *traitName)
                                             kPaletteSize, &fromPlain));
     CHECK(!fromPadded.isRigid);
     CHECK(SameRecordBits(fromPadded, fromPlain));
+
+    // The same blend through a mutable accessor: the rigid projection keeps
+    // the record's qualification, so this instantiation must compile and
+    // agree with the plain-record blend bit for bit.
+    auto getAllMutable = [&table](size_t i) -> Padded * { return &table[i]; };
+    Padded fromMutable;
+    CHECK(RigExecBlendScaledDualQuatsKernel(kPaletteSize, getAllMutable,
+                                            getWeight, &fromMutable));
+    CHECK(SameRecordBits(fromMutable, fromPlain));
+
+    auto getMutableHole = [&table](size_t i) -> Padded * {
+        return i == 0 ? nullptr : &table[i];
+    };
+    Padded rejected = table[2];
+    CHECK(!RigExecBlendScaledDualQuatsKernel(kPaletteSize, getMutableHole,
+                                             getWeight, &rejected));
+    CHECK(IsIdentityRecord(rejected));
 }
 
 // A null or out-of-range record whose weight is exactly 0.0 is padding: it is

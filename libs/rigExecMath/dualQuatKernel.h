@@ -669,7 +669,7 @@ RigExecBlendScaledDualQuatsKernel(size_t count, GetSdq getSdq,
 {
     *result = ScaledDualQuat();
     auto getRigid = [&getSdq](size_t i) -> decltype(&getSdq(i)->rigid) {
-        const ScaledDualQuat *sdq = getSdq(i);
+        auto *sdq = getSdq(i);
         if (!sdq) {
             return nullptr;
         }
