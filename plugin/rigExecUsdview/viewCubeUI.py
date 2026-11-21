@@ -32,11 +32,11 @@ from pxr import Tf, UsdGeom
 from pxr.Usdviewq.qt import QtCore, QtGui, QtWidgets
 
 try:
-    import sessionRegistry
+    import stageViewReady
     import viewCubeMath
 except ImportError:                    # loader that did not add our dir
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    import sessionRegistry
+    import stageViewReady
     import viewCubeMath
 
 
@@ -74,13 +74,7 @@ _CAMERA_MODIFIERS = (QtCore.Qt.AltModifier | QtCore.Qt.MetaModifier)
 
 
 def StageView(usdviewApi):
-    # Same 6 lines as gizmoUI.StageView: the private-name mangling is
-    # usdview's own (UsdviewApi keeps the app controller as
-    # __appController).
-    try:
-        return usdviewApi._UsdviewApi__appController._stageView
-    except AttributeError:
-        return None
+    return stageViewReady.StageView(usdviewApi)
 
 
 def _EventPoint(event):
@@ -800,55 +794,19 @@ class ViewCubeController(QtCore.QObject):
 
 # Installation
 
-# One view cube per usdview session, filed under the session's main window.
-# Several sessions can share this module in one process (usdOrchestrate's
-# host), and each window gets its own cube. An entry goes away with its
-# window.
-_controllers = sessionRegistry.SessionRegistry("view cube controllers")
-
-# The pending install flag is per session, like the controller.
-_INSTALL_RETRIES = 20
-_installPending = sessionRegistry.SessionRegistry("view cube pending installs")
-
-
-def InstallViewCube(usdviewApi, retries=_INSTALL_RETRIES):
-    """
-    Put the view cube on this session's stage view once.
-
-    Returns the controller, or None when there is no stage view yet (in
-    which case an install is queued) or none at all.
-    """
-    controller = _controllers.Get(usdviewApi)
-    if controller is not None:
-        return controller
-    if StageView(usdviewApi) is None:
-        if retries > 0 and not _installPending.Get(usdviewApi, False):
-            _installPending.Set(usdviewApi, True)
-
-            def _Retry():
-                _installPending.Pop(usdviewApi)
-                InstallViewCube(usdviewApi, retries - 1)
-
-            QtCore.QTimer.singleShot(0, _Retry)
-        return None
-    return _controllers.Set(usdviewApi, ViewCubeController(usdviewApi))
+def InstallViewCube(usdviewApi, retries=stageViewReady.DEFAULT_RETRIES):
+    """Return this session's view cube controller once ready, else None."""
+    return stageViewReady.Register(
+        usdviewApi, "viewCube", lambda: ViewCubeController(usdviewApi),
+        retries=retries).controller
 
 
 def GetController(usdviewApi=None):
-    """
-    The view cube installed for `usdviewApi`'s session, or None.
-
-    Without an api: the cube of the session that owns the active window,
-    else of the only session there is (a plain usdview), else None.
-    """
-    if usdviewApi is None:
-        return _controllers.Current()
-    return _controllers.Get(usdviewApi)
+    """Return the ready cube for the explicit or current session."""
+    return stageViewReady.Controller(usdviewApi, "viewCube")
 
 
 def __getattr__(name):
-    # `_controller` is a view onto the per-session registry for scripts
-    # that read it.
     if name == "_controller":
-        return _controllers.Current()
+        return GetController()
     raise AttributeError("module %r has no attribute %r" % (__name__, name))

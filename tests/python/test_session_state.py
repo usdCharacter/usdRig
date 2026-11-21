@@ -18,8 +18,12 @@ gets which, not what a gizmo draws.
 
 Usage: test_session_state.py
 """
+from collections import Counter
+from contextlib import ExitStack, contextmanager
+import gc
 import os
 import sys
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -30,10 +34,13 @@ rigexec_test_env.SetupPluginTest()
 from pxr import Gf, Sdf, Usd  # noqa: E402
 from pxr.Usdviewq.qt import QtCore, QtGui, QtWidgets  # noqa: E402
 
+import avarDock  # noqa: E402
 import gizmoMath  # noqa: E402
 import gizmoPreview  # noqa: E402
 import gizmoUI  # noqa: E402
 import sessionRegistry  # noqa: E402
+import stageViewReady  # noqa: E402
+import viewAxisUI  # noqa: E402
 import viewCubeUI  # noqa: E402
 
 
@@ -52,11 +59,16 @@ class _Api(object):
     def __init__(self, window, stage=None):
         self.qMainWindow = window
         self.stage = stage
+        self._UsdviewApi__appController = SimpleNamespace(_stageView=None)
 
 
 def _Session(stage=None):
     window = QtWidgets.QMainWindow()
     return window, _Api(window, stage)
+
+
+def _Host(api):
+    return api._UsdviewApi__appController
 
 
 def _Destroy(window):
@@ -68,10 +80,8 @@ def _Destroy(window):
     except ImportError:
         pass
     window.deleteLater()
-    for _ in range(5):
-        QtCore.QCoreApplication.sendPostedEvents(
-            None, QtCore.QEvent.DeferredDelete)
-        _APP.processEvents()
+    # Deliver deletion without also dispatching any pending install timers.
+    QtCore.QCoreApplication.sendPostedEvents(None, QtCore.QEvent.DeferredDelete)
 
 
 class _ActiveWindow(object):
@@ -185,11 +195,9 @@ def TestGizmoAndViewCubePerSession():
     _FakeController.built = []
     windowA, apiA = _Session()
     windowB, apiB = _Session()
-    view = object()
-    with _Patched(gizmoUI, GizmoController=_FakeController,
-                  StageView=lambda api: view), \
-            _Patched(viewCubeUI, ViewCubeController=_FakeController,
-                     StageView=lambda api: view):
+    _Host(apiA)._stageView = _Host(apiB)._stageView = object()
+    with _Patched(gizmoUI, GizmoController=_FakeController), \
+            _Patched(viewCubeUI, ViewCubeController=_FakeController):
         gizmoA = gizmoUI.InstallViewportTools(apiA, undoStack=None)
         gizmoB = gizmoUI.InstallViewportTools(apiB, undoStack=None)
         cubeA = viewCubeUI.InstallViewCube(apiA)
@@ -240,37 +248,345 @@ def TestGizmoAndViewCubePerSession():
     print("  ok: gizmo and view cube install once per session")
 
 
+_INSTALLERS = (
+    ("gizmo", gizmoUI, "GizmoController"),
+    ("viewCube", viewCubeUI, "ViewCubeController"),
+    ("avarDock", avarDock, "AvarDockController"),
+    ("viewAxis", viewAxisUI, "ViewAxisController"),
+)
+
+
+def _Requests(api, undo=None, opener=None, retries=stageViewReady.DEFAULT_RETRIES):
+    return (
+        lambda: gizmoUI.InstallViewportTools(api, undo, retries, opener),
+        lambda: viewCubeUI.InstallViewCube(api, retries),
+        lambda: avarDock.InstallAvarDock(api, undo, retries),
+        lambda: viewAxisUI.InstallViewAxis(api, retries),
+    )
+
+
+@contextmanager
+def _ToolDoubles(onProbe=None, onCreate=None):
+    probes = Counter()
+    built = []
+    stageView = stageViewReady.StageView
+
+    def _Probe(api):
+        probes[api] += 1
+        if onProbe is not None:
+            onProbe(api, probes[api])
+        return stageView(api)
+
+    def _Constructor(tool):
+        def _Create(api, *args, **kwargs):
+            # Read the fake host field without incrementing the broker count.
+            controller = SimpleNamespace(api=api, view=stageView(api),
+                                         args=args, kwargs=kwargs)
+            built.append((api, tool, controller))
+            if onCreate is not None:
+                onCreate(api, tool)
+            return controller
+        return _Create
+
+    with ExitStack() as patches:
+        patches.enter_context(_Patched(stageViewReady, StageView=_Probe))
+        for tool, module, constructor in _INSTALLERS:
+            patches.enter_context(_Patched(
+                module, **{constructor: _Constructor(tool)}))
+        yield probes, built
+
+
+def _Results(api):
+    return [stageViewReady.GetResult(api, tool) for tool, _, _ in _INSTALLERS]
+
+
+def _PumpUntil(predicate):
+    for _ in range(2 * stageViewReady.DEFAULT_RETRIES):
+        if predicate():
+            return
+        _APP.processEvents()
+    _Check(predicate(), "queued StageView work did not settle")
+
+
+def _PumpExtraTurns():
+    for _ in range(stageViewReady.DEFAULT_RETRIES + 1):
+        _APP.processEvents()
+
+
+def TestAllInstallersImmediate():
+    window, api = _Session()
+    _Host(api)._stageView = object()
+    undo, opener = object(), lambda: None
+    with _ToolDoubles() as (probes, built):
+        requests = _Requests(api, undo, opener, retries=0)
+        controllers = [request() for request in requests]
+        _Check(all(c is not None for c in controllers), "all four are ready")
+        _Check([request() for request in requests] == controllers and
+               len(built) == probes[api] == 4,
+               "each new tool probes once; repeated requests do not probe")
+        for result, controller in zip(_Results(api), controllers):
+            _Check(result == stageViewReady.InstallResult("ready", controller)
+                   and result.controller is controller and controller.api is api
+                   and controller.view is _Host(api)._stageView,
+                   "ready carries the controller built for this session")
+        _Check(controllers[0].args == (undo,) and controllers[0].kwargs == {
+            "openGraphEditor": opener, "installFilters": True},
+            "standalone gizmo installs its own input filters")
+        _Check(controllers[2].args == (undo,), "dock gets the session's undo")
+    _Destroy(window)
+    print("  ok: all four installers are immediate and idempotent")
+
+
 def TestPendingInstallPerSession():
-    """A queued retry in one session does not block another's."""
-    _FakeController.built = []
     windowA, apiA = _Session()
     windowB, apiB = _Session()
-    views = {}
-    with _Patched(gizmoUI, GizmoController=_FakeController,
-                  StageView=lambda api: views.get(id(api))):
-        _Check(gizmoUI.InstallViewportTools(apiA, None) is None,
-               "no stage view yet: A queues")
-        _Check(gizmoUI.InstallViewportTools(apiB, None) is None,
-               "and so does B")
-        _Check(gizmoUI._installPending.Get(apiA) and
-               gizmoUI._installPending.Get(apiB),
-               "each session has its own pending retry")
-        views[id(apiA)] = object()
-        views[id(apiB)] = object()
-        for _ in range(10):
-            _APP.processEvents()
-            if (gizmoUI.GetController(apiA) is not None and
-                    gizmoUI.GetController(apiB) is not None):
-                break
-        _Check(gizmoUI.GetController(apiA) is not None and
-               gizmoUI.GetController(apiB) is not None,
-               "both retries installed their own session's tools")
-        _Check(not gizmoUI._installPending.Get(apiA, False) and
-               not gizmoUI._installPending.Get(apiB, False),
-               "and cleared their own pending flags")
+    undoA, undoB, ignored = object(), object(), object()
+    def _OpenGraphEditor():
+        pass
+
+    notified = []
+    reentered = []
+    delegated = set()
+
+    def _Reenter(api, tool):
+        if tool == "gizmo":
+            reentered.append((stageViewReady.GetResult(api, tool),
+                              gizmoUI.InstallViewportTools(api, ignored)))
+
+    def _Added(api, kind, controller):
+        notified.append((api, kind, controller, gizmoUI.GetController(api),
+                         stageViewReady.GetResult(api, "gizmo")))
+
+    with _ToolDoubles(onCreate=_Reenter) as (probes, built), \
+            _Patched(gizmoUI.editorExtension,
+                     OwnsInput=lambda api: api in delegated, EditorAdded=_Added):
+        order = (2, 0, 3, 1)
+        for api, undo in ((apiA, undoA), (apiB, undoB)):
+            requests = _Requests(api, undo, _OpenGraphEditor)
+            for i in order:
+                _Check(requests[i]() is None, "no view yet: installer queues")
+            _Check(all(request() is None for request in _Requests(api, ignored)),
+                   "repeated requests join without replacing inputs")
+        old = _Results(apiA)
+        pending = stageViewReady.InstallResult("pending")
+        _Check(old == _Results(apiB) == [pending] * 4 and
+               probes == {apiA: 1, apiB: 1}, "one initial probe per session")
+        try:
+            old[0].status = "ready"
+        except AttributeError:
+            pass
+        else:
+            raise AssertionError("install snapshots must be immutable")
+
+        delegated.add(apiA)
+        _Host(apiA)._stageView = object()
+        _PumpUntil(lambda: all(r.status == "ready" for r in _Results(apiA))
+                   and probes[apiB] >= 2)
+        _Check(_Results(apiB) == [pending] * 4,
+               "B is still waiting after A became ready")
+        with _ActiveWindow(windowB):
+            for tool, module, _ in _INSTALLERS:
+                ready = module.GetController(windowA)
+                _Check(ready is not None and module.GetController(apiB) is None
+                       and module.GetController(windowB) is None
+                       and module.GetController() is ready
+                       and module._controller is ready
+                       and stageViewReady.Controllers(tool) == [ready],
+                       "pending active session does not mask the sole ready tool")
+
+        _Host(apiB)._stageView = object()
+        _PumpUntil(lambda: all(r.status == "ready" for r in _Results(apiB)))
+        _Check([(api, tool) for api, tool, _ in built] == [
+            (api, _INSTALLERS[i][0]) for api in (apiA, apiB) for i in order],
+            "all factories run once, in registration order within each session")
+        _Check(probes[apiA] == 2 and probes[apiB] > probes[apiA],
+               "only one broker probe per session per turn")
+        _Check(old == [pending] * 4 and reentered == [(pending, None)] * 2,
+               "old snapshots and constructor reentry see pending")
+        gizmoA, gizmoB = (gizmoUI.GetController(api) for api in (apiA, apiB))
+        _Check(notified == [(apiA, gizmoUI.editorExtension.GIZMO, gizmoA,
+                             gizmoA, stageViewReady.GetResult(apiA, "gizmo"))],
+               "delegation is evaluated at construction and notified after ready")
+        _Check(gizmoA.args == (undoA,) and gizmoB.args == (undoB,) and
+               gizmoA.kwargs == {"openGraphEditor": _OpenGraphEditor,
+                                 "installFilters": False} and
+               gizmoB.kwargs == {"openGraphEditor": _OpenGraphEditor,
+                                 "installFilters": True} and
+               avarDock.GetController(apiA).args == (undoA,) and
+               avarDock.GetController(apiB).args == (undoB,),
+               "first undo and opener inputs win for each session")
+        for api in (apiA, apiB):
+            for request, (_, module, _) in zip(_Requests(api, ignored), _INSTALLERS):
+                controller = request()
+                _Check(controller is module.GetController(api) and
+                       controller.api is api and controller.view is _Host(api)._stageView,
+                       "repeat returns its own ready controller and view")
+        with _ActiveWindow(None):
+            for _, module, _ in _INSTALLERS:
+                _Check(module.GetController() is None and module._controller is None,
+                       "two ready sessions without active ownership are ambiguous")
+        with _ActiveWindow(windowB):
+            for _, module, _ in _INSTALLERS:
+                _Check(module._controller is module.GetController(apiB) and
+                       module._controller is not module.GetController(apiA),
+                       "active/legacy lookup selects B, not another session")
+        settled = probes.copy()
+        _PumpExtraTurns()
+        _Check(probes == settled and len(built) == 8, "settled sessions do no work")
     _Destroy(windowA)
     _Destroy(windowB)
-    print("  ok: pending installs are per session")
+    print("  ok: staggered readiness, FIFO, delegation, and ready-only lookups")
+
+
+def TestInstallProbeBounds():
+    windowLast, apiLast = _Session()
+    windowSmall, apiSmall = _Session()
+    windowZero, apiZero = _Session()
+    windowHeadless, apiHeadless = _Session()
+    _Host(apiHeadless)._noRender = True
+
+    def _RevealLast(api, count):
+        if api is apiLast and count == 3:
+            _Host(api)._stageView = object()
+
+    with _ToolDoubles(onProbe=_RevealLast) as (probes, built):
+        for api, retries in ((apiLast, 2), (apiSmall, 2), (apiZero, 0),
+                             (apiHeadless, stageViewReady.DEFAULT_RETRIES)):
+            _Check(_Requests(api, retries=retries)[0]() is None,
+                   "no view during first probe")
+        unavailable = stageViewReady.InstallResult("unavailable")
+        for api in (apiZero, apiHeadless):
+            _Check(_Results(api)[0] == unavailable,
+                   "zero retries and known no-render settle synchronously")
+        old = _Results(apiSmall)[0]
+        for api in (apiLast, apiSmall):
+            for request in _Requests(api)[1:]:
+                request()
+        _PumpUntil(lambda: all(r.status != "pending" for r in _Results(apiSmall))
+                   and all(r.status != "pending" for r in _Results(apiLast)))
+        _Check(all(r.status == "ready" for r in _Results(apiLast)) and
+               [api for api, _, _ in built] == [apiLast] * 4,
+               "the final allowed probe can still publish all waiting tools")
+        _Check(old == stageViewReady.InstallResult("pending"),
+               "exhaustion does not change the old snapshot")
+        for api in (apiSmall, apiZero, apiHeadless):
+            if api is not apiHeadless:
+                _Host(api)._stageView = object()
+            _Check(all(request() is None for request in _Requests(api)) and
+                   _Results(api) == [unavailable] * 4,
+                   "unavailability is terminal for repeated and new tools")
+        _PumpExtraTurns()
+        _Check(probes == {apiLast: 3, apiSmall: 3, apiZero: 1, apiHeadless: 1},
+               "late arrivals cannot extend the shared bound or rearm a timer")
+    for window in (windowLast, windowSmall, windowZero, windowHeadless):
+        _Destroy(window)
+    print("  ok: final probe, bounded retries, zero, and no-render outcomes")
+
+
+def TestInstallFailures():
+    timerType = QtCore.QTimer
+
+    class _Timer(timerType):
+        def start(self, interval):
+            if self.isSingleShot() and getattr(self, "started", False):
+                raise RuntimeError("timer rearm error")
+            self.started = True
+            super().start(interval)
+
+    for failure in ("factory", "probe", "timer"):
+        window, api = _Session()
+        with ExitStack() as patches:
+            def _FailProbe(api, count):
+                if failure == "probe" and count == 2:
+                    raise RuntimeError("probe error")
+
+            def _FailCube(api, tool):
+                if failure == "factory" and tool == "viewCube":
+                    raise RuntimeError("factory error")
+
+            probes, built = patches.enter_context(_ToolDoubles(_FailProbe, _FailCube))
+            warnings = []
+            logger = stageViewReady.logging.getLogger(stageViewReady.__name__)
+            patches.enter_context(_Patched(logger, warning=lambda fmt, *args:
+                                           warnings.append(fmt % args)))
+            if failure == "timer":
+                patches.enter_context(_Patched(QtCore, QTimer=_Timer))
+            requests = _Requests(api)
+            _Check(all(request() is None for request in requests) and
+                   all(r.status == "pending" for r in _Results(api)),
+                   "the failure must happen after all tools are waiting")
+            if failure == "factory":
+                _Host(api)._stageView = object()
+            _PumpUntil(lambda: all(r.status != "pending" for r in _Results(api)))
+            results = _Results(api)
+            failed = []
+            for (tool, _, _), result, request in zip(_INSTALLERS, results, requests):
+                if failure != "factory" or tool == "viewCube":
+                    failed.append(tool)
+                    _Check(result.status == "failed" and result.controller is None
+                           and failure in result.error and "error" in result.error,
+                           "affected tools fail with a diagnostic and no controller")
+                else:
+                    _Check(result.status == "ready" and result.controller is not None
+                           and result.error is None, "peers survive a factory error")
+                _Check(request() is result.controller, "repeat returns the same outcome")
+            _PumpExtraTurns()
+            _Check(len(built) == (4 if failure == "factory" else 0) and
+                   _Results(api) == results and probes[api] == 2,
+                   "failure settles without reconstructing or probing again")
+            _Check(len(warnings) == len(failed) and all(
+                tool in warning and failure in warning
+                for tool, warning in zip(failed, warnings)),
+                "warn once per failed tool with its cause")
+        _Destroy(window)
+    print("  ok: constructor isolation and shared probe/timer failures")
+
+
+def TestRetirePendingInstalls():
+    windowClosed, apiClosed = _Session()
+    windowForgotten, apiForgotten = _Session()
+    windowRetired, apiRetired = _Session()
+    windowSurvivor, apiSurvivor = _Session()
+    notified = []
+    oldUndo, freshUndo = object(), object()
+
+    def _RetireDuringCreate(api, tool):
+        if api is apiRetired and tool == "gizmo":
+            stageViewReady.Retire(api)
+            stageViewReady.Retire(api)
+
+    with _ToolDoubles(onCreate=_RetireDuringCreate) as (probes, built), \
+            _Patched(gizmoUI.editorExtension, OwnsInput=lambda api: True,
+                     EditorAdded=lambda api, kind, c: notified.append(api)):
+        for api in (apiClosed, apiForgotten, apiRetired, apiSurvivor):
+            _Check(all(request() is None for request in _Requests(api, oldUndo)),
+                   "pending before retirement")
+        old = _Results(apiForgotten)
+        _Destroy(windowClosed)
+        _Check(sessionRegistry.ForgetSession(windowForgotten) >= 1 and
+               _Results(apiForgotten) == [None] * 4, "forget detaches the generation")
+        _Check(all(request() is None for request in _Requests(apiForgotten, freshUndo)),
+               "the retained window registers a fresh generation before dispatch")
+        for api in (apiClosed, apiForgotten, apiRetired, apiSurvivor):
+            _Host(api)._stageView = object()
+        _PumpUntil(lambda: all(r.status == "ready" for r in _Results(apiSurvivor))
+                   and all(r.status == "ready" for r in _Results(apiForgotten))
+                   and _Results(apiRetired)[0] is None)
+        _PumpExtraTurns()
+        _Check(_Results(apiClosed) == _Results(apiRetired) == [None] * 4 and
+               old == [stageViewReady.InstallResult("pending")] * 4,
+               "retirement clears registrations without mutating snapshots")
+        _Check(probes == {apiClosed: 1, apiForgotten: 3, apiRetired: 2, apiSurvivor: 2}
+               and Counter(api for api, _, _ in built) == {
+                   apiForgotten: 4, apiRetired: 1, apiSurvivor: 4}
+               and Counter(notified) == {apiForgotten: 1, apiSurvivor: 1},
+               "no stale probes, remaining factories or onReady after retirement")
+        _Check(avarDock.GetController(apiForgotten).args == (freshUndo,) and
+               avarDock.GetController(apiSurvivor).args == (oldUndo,),
+               "fresh generation uses new inputs; survivor is unchanged")
+    for window in (windowForgotten, windowRetired, windowSurvivor):
+        _Destroy(window)
+    print("  ok: close, forget/re-register, and retirement during creation")
 
 
 class _FilterController(QtCore.QObject):
@@ -410,9 +726,8 @@ def TestUndoShortcutScoping():
     win = QtCore.Qt.WindowShortcut
     windowA, apiA = _Session()
     windowB, apiB = _Session()
-    view = object()
-    with _Patched(gizmoUI, GizmoController=_ShortcutController,
-                  StageView=lambda api: view):
+    _Host(apiA)._stageView = _Host(apiB)._stageView = object()
+    with _Patched(gizmoUI, GizmoController=_ShortcutController):
         with _Patched(QtWidgets.QApplication,
                       activeWindow=staticmethod(lambda: windowA)):
             ctrlA = gizmoUI.InstallViewportTools(apiA, None)
@@ -422,17 +737,21 @@ def TestUndoShortcutScoping():
             _Check(ctrlA.Contexts() == {app} and ctrlB.Contexts() == {win},
                    "A in front: A's undo is application-wide, B's is "
                    "window-scoped, so Ctrl+Z is never ambiguous")
+        panel = QtWidgets.QDialog(windowB)
         with _Patched(QtWidgets.QApplication,
-                      activeWindow=staticmethod(lambda: windowB)):
+                      activeWindow=staticmethod(lambda: panel)):
             for controller in (ctrlA, ctrlB):
                 controller._ScopeShortcuts()
             _Check(ctrlA.Contexts() == {win} and ctrlB.Contexts() == {app},
-                   "focus moved to B: the roles swap")
+                   "focus moved to B's panel: the roles swap")
+        unrelated = QtWidgets.QMainWindow()
         with _Patched(QtWidgets.QApplication,
-                      activeWindow=staticmethod(lambda: None)):
-            ctrlA._ScopeShortcuts()
-            _Check(ctrlA.Contexts() == {win},
-                   "a window no session owns changes nothing")
+                      activeWindow=staticmethod(lambda: unrelated)):
+            for controller in (ctrlA, ctrlB):
+                controller._ScopeShortcuts()
+            _Check(ctrlA.Contexts() == {win} and ctrlB.Contexts() == {app},
+                   "a window no ready gizmo owns changes nothing")
+        _Destroy(unrelated)
         _Destroy(windowB)
         ctrlA._ScopeShortcuts()
         _Check(ctrlA.Contexts() == {app},
@@ -737,6 +1056,52 @@ def TestRegistryDestroyedSlots():
     print("  ok: registry connections are owned by their entries")
 
 
+def TestRegistryRemovalHook():
+    windowA, apiA = _Session()
+    windowB, apiB = _Session()
+    windowC, apiC = _Session()
+    removed = []
+
+    def _Removed(value):
+        removed.append((value, len(registry), registry.Get(apiA)))
+
+    registry = sessionRegistry.SessionRegistry("test removal", _Removed)
+    first, replacement = object(), object()
+    registry.Set(apiA, first)
+    registry.Set(apiA, first)
+    _Check(not removed, "setting the identical value must not dispose it")
+    registry.Set(apiA, replacement)
+    _Check(removed == [(first, 1, replacement)],
+           "replacement is visible before the old value is disposed")
+    _Check(registry.Pop(apiA) is replacement and
+           removed[-1] == (replacement, 0, None) and
+           registry.Pop(apiA, "missing") == "missing" and len(removed) == 2,
+           "Pop detaches before cleanup, preserves the return, and runs once")
+
+    registry.Set(apiA, "A")
+    registry.Set(apiB, "B")
+    registry.Clear()
+    _Check(set(removed[2:]) == {("A", 0, None), ("B", 0, None)} and
+           len(removed) == 4, "Clear detaches all entries before cleanup")
+    registry.Set(apiC, "C")
+    _Destroy(windowC)
+    _Check(removed[4:] == [("C", 0, None)], "destroying a window notifies once")
+
+    key = _Api(None)
+    registry.Set(key, "headless")
+    del key
+    gc.collect()
+    _Check(removed[5:] == [("headless", 0, None)], "weak-key collection notifies once")
+    registry.Set(apiA, "forgotten")
+    _Check(sessionRegistry.ForgetSession(apiA) == 1 and
+           removed[6:] == [("forgotten", 0, None)],
+           "ForgetSession preserves count and uses the same removal hook")
+    _Destroy(windowA)
+    _Destroy(windowB)
+    _Check(len(removed) == 7, "previously removed entries are not disposed again")
+    print("  ok: removal hook for replacement, pop, clear, destruction, and collection")
+
+
 def TestTouchPoseMarqueeUsesOwnSession():
     """TouchPose's marquee projects through ITS session's gizmo.
 
@@ -780,9 +1145,9 @@ def TestTouchPoseMarqueeUsesOwnSession():
         def _Stage(self):
             return self._api.stage
 
-    view = object()
-    with _Patched(gizmoUI, GizmoController=_Gizmo,
-                  StageView=lambda api: view),             _Patched(gizmoMarquee, ControlsInBand=_ControlsInBand):
+    _Host(apiA)._stageView = _Host(apiB)._stageView = object()
+    with _Patched(gizmoUI, GizmoController=_Gizmo), \
+            _Patched(gizmoMarquee, ControlsInBand=_ControlsInBand):
         gizmoA = gizmoUI.InstallViewportTools(apiA, undoStack=None)
         gizmoB = gizmoUI.InstallViewportTools(apiB, undoStack=None)
         band = touchPoseUI.TouchPoseController._ControlsInBand
@@ -804,7 +1169,11 @@ def TestTouchPoseMarqueeUsesOwnSession():
 def main():
     TestRegistry()
     TestGizmoAndViewCubePerSession()
+    TestAllInstallersImmediate()
     TestPendingInstallPerSession()
+    TestInstallProbeBounds()
+    TestInstallFailures()
+    TestRetirePendingInstalls()
     TestHotkeyRouting()
     TestUndoShortcutScoping()
     TestPublishedReadersPerSession()
@@ -813,8 +1182,9 @@ def main():
     TestPanelInstanceView()
     TestContainerPerSession()
     TestRegistryDestroyedSlots()
+    TestRegistryRemovalHook()
     TestTouchPoseMarqueeUsesOwnSession()
-    print("SESSION_STATE_OK (12 groups)")
+    print("SESSION_STATE_OK (17 groups)")
     return 0
 
 

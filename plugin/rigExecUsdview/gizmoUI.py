@@ -21,6 +21,7 @@ try:
     import pathCurveModel
     import editorExtension
     import sessionRegistry
+    import stageViewReady
 except ImportError:                    # loader that did not add our dir
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import gizmoDrag
@@ -36,6 +37,7 @@ except ImportError:                    # loader that did not add our dir
     import pathCurveModel
     import editorExtension
     import sessionRegistry
+    import stageViewReady
 
 
 from gizmoWidgets import (GizmoOverlay, ViewportStatusBar, ViewportToolbar,
@@ -52,16 +54,7 @@ _CAMERA_MODIFIERS = (QtCore.Qt.AltModifier | QtCore.Qt.MetaModifier)
 
 
 def StageView(usdviewApi):
-    """
-    usdview's stage view widget, or None in a headless / pre-view state.
-
-    The private-name mangling is usdview's own (UsdviewApi keeps the app
-    controller as __appController).
-    """
-    try:
-        return usdviewApi._UsdviewApi__appController._stageView
-    except AttributeError:
-        return None
+    return stageViewReady.StageView(usdviewApi)
 
 
 class GizmoController(QtCore.QObject):
@@ -343,9 +336,12 @@ class GizmoController(QtCore.QObject):
         A window no session owns changes nothing.
         """
         context = QtCore.Qt.ApplicationShortcut
-        if len(_controllers) > 1:
-            owner = _controllers.SessionOf(
-                QtWidgets.QApplication.activeWindow())
+        installed = stageViewReady.Controllers("gizmo")
+        if len(installed) > 1:
+            windows = [controller._MainWindow() for controller in installed]
+            owner = next((window for window in sessionRegistry._WindowChain(
+                sessionRegistry.ActiveWindow())
+                if any(window is main for main in windows)), None)
             if owner is None:
                 return
             if owner is not self._MainWindow():
@@ -2891,77 +2887,41 @@ class GizmoController(QtCore.QObject):
 
 # Installation
 
-# One controller per usdview session, filed under the session's main window.
-# Several sessions can share this module in one process (usdOrchestrate's
-# host), and every one of them gets its own toolbar, overlay and hotkeys.
-# An entry goes away with its window.
-_controllers = sessionRegistry.SessionRegistry("gizmo controllers")
-
-# The pending install flag is per session, like the controller: one
-# session's pending install must not stop another session from queueing
-# its own.
-_INSTALL_RETRIES = 20
-_installPending = sessionRegistry.SessionRegistry("gizmo pending installs")
-
-
-def InstallViewportTools(usdviewApi, undoStack, retries=_INSTALL_RETRIES,
+def InstallViewportTools(usdviewApi, undoStack,
+                         retries=stageViewReady.DEFAULT_RETRIES,
                          openGraphEditor=None):
-    """
-    Put the toolbar and the overlay on this session's stage view once.
+    """Install this session's viewport tools once; return None until ready."""
+    yielded = False
 
-    `openGraphEditor` is the container's callable for the Graph… button;
-    passing it in rather than importing graphEditorUI here is what keeps
-    this module free of a Qt graph-editor import.
+    def _Create():
+        nonlocal yielded
+        yielded = editorExtension.OwnsInput(usdviewApi)
+        return GizmoController(usdviewApi, undoStack,
+                               openGraphEditor=openGraphEditor,
+                               installFilters=not yielded)
 
-    Returns the controller, or None when there is no stage view yet (in
-    which case an install is queued) or none at all.
-    """
-    controller = _controllers.Get(usdviewApi)
-    if controller is not None:
-        return controller
-    if StageView(usdviewApi) is None:
-        if retries > 0 and not _installPending.Get(usdviewApi, False):
-            _installPending.Set(usdviewApi, True)
+    def _OnReady(controller):
+        try:
+            if yielded:
+                editorExtension.EditorAdded(usdviewApi, editorExtension.GIZMO,
+                                            controller)
+        finally:
+            # Publishing another gizmo can change which shortcuts are global.
+            for installed in stageViewReady.Controllers("gizmo"):
+                scope = getattr(installed, "_ScopeShortcuts", None)
+                if scope is not None:
+                    scope()
 
-            def _Retry():
-                _installPending.Pop(usdviewApi)
-                InstallViewportTools(usdviewApi, undoStack, retries - 1,
-                                     openGraphEditor)
-
-            QtCore.QTimer.singleShot(0, _Retry)
-        return None
-    yielded = editorExtension.OwnsInput(usdviewApi)
-    controller = GizmoController(usdviewApi, undoStack,
-                                 openGraphEditor=openGraphEditor,
-                                 installFilters=not yielded)
-    _controllers.Set(usdviewApi, controller)
-    if yielded:
-        editorExtension.EditorAdded(usdviewApi, editorExtension.GIZMO,
-                                    controller)
-    # A second session changes which undo / redo may be application-wide.
-    for installed in _controllers.Values():
-        scope = getattr(installed, "_ScopeShortcuts", None)
-        if scope is not None:
-            scope()
-    return controller
+    return stageViewReady.Register(usdviewApi, "gizmo", _Create,
+                                   retries=retries, onReady=_OnReady).controller
 
 
 def GetController(usdviewApi=None):
-    """
-    The controller installed for `usdviewApi`'s session, or None.
-
-    Without an api: the controller of the session that owns the active
-    window, else of the only session there is (a plain usdview), else None.
-    """
-    if usdviewApi is None:
-        return _controllers.Current()
-    return _controllers.Get(usdviewApi)
+    """Return the ready gizmo for the explicit or current session."""
+    return stageViewReady.Controller(usdviewApi, "gizmo")
 
 
 def __getattr__(name):
-    # `_controller` is a view onto the per-session registry for the
-    # scripts that read it (the testusdview harness): in a plain
-    # usdview, the one controller.
     if name == "_controller":
-        return _controllers.Current()
+        return GetController()
     raise AttributeError("module %r has no attribute %r" % (__name__, name))
