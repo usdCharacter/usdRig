@@ -54,7 +54,6 @@
         "currentPrimPath": "coordinator",
         "_valueRowOnlyChange": "stage_sync",
         "_isPinPropertyChange": "stage_sync",
-        "_paintHotkeyPopups": "render",
         "_paintNodeCreationHotbox": "render",
         "_printProfilingStatsIfNeeded": "coordinator",
         "mouseDoubleClickEvent": "interaction",
@@ -72,26 +71,10 @@
         "_renderRelationshipArrowheads": "render",
         "_renderDanglingIndicators": "render",
         "_renderTemporaryLink": "render",
-        "paintText": "render",
         "paintStatusOverlay": "render",
-        "paintHotkeyPopup": "render",
-        "paintNavigationHotkeyPopup": "render",
         "paintMarquee": "render",
         "_frameNodeBounds": "coordinator",
-        "_valueTextBand": "render",
-        "_valueBaselineY": "render",
-        "_valueGlyph": "render",
-        "_emitValueText": "render",
-        "_paintValueCells": "render",
-        "_appendBoolSwitch": "render",
-        "_appendChevron": "render",
-        "_activeValueFlash": "render",
-        "_startValueFlash": "render",
-        "_paintValueEditor": "render",
-        "_paintMungLadder": "render",
-        "_paintTokenPopup": "render",
         "_afterUsdviewRefresh": "coordinator",
-        "_paintNodeRename": "render",
         "_makeCommandRegistry": "coordinator"
       }
     },
@@ -121,9 +104,12 @@
     },
     "plugin/usdNoodles/graphview/render_nodes.py": {
       "layer": "render"
+    },
+    "plugin/usdNoodles/graphview/render_text.py": {
+      "layer": "render"
     }
   },
   "line_ceilings": {
-    "plugin/usdNoodles/graphView.py": 3212
+    "plugin/usdNoodles/graphView.py": 2399
   }
 }

@@ -578,7 +578,9 @@ class RendererMirrorTest(unittest.TestCase):
         self.assertEqual(renderer.copies_last_draw, 3)
         self.assertEqual(renderer.builds_total, 1)
         self.assertEqual(renderer.draws_total, 1)
-        self.assertEqual(renderer.primitives_drawn, ("render_nodes",))
+        self.assertEqual(
+            renderer.primitives_drawn, ("render_nodes", "render_text")
+        )
         self.assertIs(renderer.hit_data, frame.hit_candidates)
 
     def test_idle_draw_reuses_mirror(self):

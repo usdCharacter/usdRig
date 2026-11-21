@@ -226,7 +226,12 @@ class PortRecord:
 class ValueInput:
     """The inputs one value cell renders from: row identity plus the raw
     components. Measured widths and fitted texts stay with the text
-    managers; the frame pins only what they measure from."""
+    managers; the frame pins only what they measure from.
+
+    ``type_name`` selects the fitted display format, ``state`` (spelling
+    ``noodlesValues.STATE_*``) and ``editable`` select the pill colors, so
+    the text primitive resolves both from the record, never a live row.
+    """
 
     pin_name: str = ""
     property_name: str = ""
@@ -234,6 +239,9 @@ class ValueInput:
     count: int = 0
     components: tuple = ()
     has_swatch: bool = False
+    type_name: str = ""
+    state: str = "authored"
+    editable: bool = True
 
     def __post_init__(self):
         object.__setattr__(self, "components", tuple(self.components))
@@ -438,11 +446,20 @@ class OverlayState:
     token_popup: PopupRecord = field(default_factory=PopupRecord)
     mung_visible: bool = False
     mung_rect: tuple | None = None
+    mung_target: tuple | None = None
     flash: FlashRecord | None = None
 
     def __post_init__(self):
         object.__setattr__(self, "marquee_rect", _rect(self.marquee_rect))
         object.__setattr__(self, "mung_rect", _rect(self.mung_rect))
+        if self.mung_target is not None:
+            try:
+                node_id, prop = tuple(self.mung_target)[:2]
+                object.__setattr__(
+                    self, "mung_target", (_str(node_id), _str(prop))
+                )
+            except Exception:
+                object.__setattr__(self, "mung_target", None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -729,6 +746,9 @@ def _value_inputs_for(node, live_time_code, show_values):
                 count=int(getattr(row, "count", 0) or 0),
                 components=_detached_components(row),
                 has_swatch=bool(getattr(row, "has_swatch", False)),
+                type_name=_str(getattr(row, "type_name", "")),
+                state=_str(getattr(row, "state", "authored"), "authored"),
+                editable=bool(getattr(row, "editable", True)),
             )
         )
     return tuple(inputs)
@@ -1707,6 +1727,7 @@ class FrameSource:
             token_popup=overlay.token_popup,
             mung_visible=overlay.mung_visible,
             mung_rect=overlay.mung_rect,
+            mung_target=overlay.mung_target,
             flash=active_flash,
         )
         pan_x, pan_y, pan_animating = advance_pan(
@@ -2022,6 +2043,20 @@ def _flash_from(value):
         return None
 
 
+def _mung_target_from(view):
+    """The ``(node_id, property_name)`` mung drag target, or None."""
+    if not bool(getattr(view, "_mungActive", False)):
+        return None
+    state = getattr(view, "_mungState", None)
+    if not isinstance(state, dict):
+        return None
+    node_id = _str(state.get("nodeId", ""))
+    prop = _str(state.get("prop", ""))
+    if not node_id or not prop:
+        return None
+    return (node_id, prop)
+
+
 def _value_editor_from(view):
     """Detach the inline value editor state, or None when idle."""
     target = getattr(view, "_valueEditTarget", None)
@@ -2228,6 +2263,7 @@ def interaction_state_from_view(view):
         token_popup=token_record,
         mung_visible=bool(getattr(view, "_mungActive", False)),
         mung_rect=_rect(getattr(view, "_mungRect", None)),
+        mung_target=_mung_target_from(view),
         flash=_flash_from(getattr(view, "_valueFlash", None)),
     )
     try:
