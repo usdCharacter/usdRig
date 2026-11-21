@@ -13,6 +13,8 @@ warning and synchronous reconciliation are supplied by the caller.
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+from threading import get_ident
+from weakref import WeakSet
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +171,45 @@ class _ReconcileTrace:
 _DISCARD_NOTICE = object()
 
 
+class _PropertyContinuity:
+    """A resync can replace a property without invalidating its Sdf handle."""
+
+    def __init__(self, path):
+        self.path = str(path)
+        self._replayThread = None
+
+    @contextmanager
+    def replay(self):
+        self._replayThread = get_ident()
+        try:
+            yield
+        finally:
+            self._replayThread = None
+
+    def resynced(self, paths, moves):
+        path = self.path
+        if path is None:
+            return
+        for source, dest in moves.items():
+            if path.startswith((source + "/", source + ".")):
+                moved = dest + path[len(source):]
+                if not any(
+                    changed not in (source, dest)
+                    and (_isPathRelated(changed, path) or _isPathRelated(changed, moved))
+                    for changed in paths
+                ):
+                    self.path = moved
+                    return
+        related = {changed for changed in paths if _isPathRelated(changed, path)}
+        if not related:
+            return
+        # The replay's own Sdf change block may resync the declaration.
+        if related == {path} and self._replayThread == get_ident():
+            self._replayThread = None
+        else:
+            self.path = None
+
+
 class _NoticeReceiver:
     """What the UsdNoticeHandler calls, stamped with a stage generation.
 
@@ -188,6 +229,19 @@ class _NoticeReceiver:
 
     def revoke(self):
         self._binding = None
+
+    def _selectUsdResyncs(self, sender):
+        binding = self._binding
+        watches = self._service._propertyWatches
+        if binding is None or binding[0] is not sender or not watches:
+            return None
+
+        def observe(paths, moves):
+            if self._binding is binding:
+                for watch in tuple(watches):
+                    watch.resynced(paths, moves)
+
+        return observe
 
     def _selectUsdChanges(self, sender):
         binding = self._binding
@@ -271,6 +325,7 @@ class StageSync:
         self._epoch = 0
         self._finishPending = False
         self._closed = False
+        self._propertyWatches = WeakSet()
         self._receiver = _NoticeReceiver(self)
         self._handler = listen(self._receiver)
         self._suppressionTokens = set()
@@ -407,11 +462,25 @@ class StageSync:
         """The stage that actually owns the adapter's live notice key."""
         return self._handler.getStage()
 
+    def watchProperty(self, stage, path):
+        watch = _PropertyContinuity(path)
+        if self._closed or self.boundStage() is not stage:
+            watch.path = None
+        else:
+            self._propertyWatches.add(watch)
+        return watch
+
+    def _revokeBinding(self):
+        self._receiver.revoke()
+        for watch in tuple(self._propertyWatches):
+            watch.path = None
+        self._propertyWatches.clear()
+
     def bind(self, stage):
         """Change the sender within this epoch and stamp its receiver."""
         if self._closed:
             return None
-        self._receiver.revoke()
+        self._revokeBinding()
         if self._suppressionTokens:
             self._noticeDelivery = _DISCARD_NOTICE
         if stage is None:
@@ -451,7 +520,7 @@ class StageSync:
         # is what makes the deferred callbacks return without touching the
         # model.
         self._epoch += 1
-        self._receiver.revoke()
+        self._revokeBinding()
         self._handler.unregister()
 
     # -- USD notices ------------------------------------------------------

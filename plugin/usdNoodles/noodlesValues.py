@@ -731,8 +731,7 @@ class ValuePreviewOpinion:
             index = prim.GetPrimIndex()
             node = index.GetNodeProvidingSpec(owner)
             self._anchor_map = node.mapToRoot.Evaluate() if node else None
-        self._prim = prim
-        self._prim_path = prim.GetPath()
+        self.scene_path = attr.GetPath()
         self._property_name = attr.GetName()
         self.time = (None if time.IsDefault() else
                      target.GetMapFunction().timeOffset.GetInverse() * time.GetValue())
@@ -786,7 +785,7 @@ class ValuePreviewOpinion:
                     else:
                         del prim.nameParent.nameChildren[prim.name]
 
-    def _removed_site(self, stage):
+    def _removed_site(self, stage, scene_path):
         anchor = self._anchor
         if not (stage and anchor and self._anchor_map):
             return None
@@ -798,19 +797,22 @@ class ValuePreviewOpinion:
         if not attr or attr.GetTypeName() != self._declaration[0]:
             return None
         prim = attr.GetPrim()
-        # Sdf handles can become valid again after recreation at the same path.
-        if prim.GetPath() == self._prim_path and prim != self._prim:
+        if str(attr.GetPath()) != scene_path:
             return None
         stack = attr.GetPropertyStack() if is_property else prim.GetPrimStack()
         if anchor not in stack:
             return None
         return self._target.MapToSpecPath(attr.GetPath())
 
-    def redo(self, stage):
-        if not (stage and self.layer.permissionToEdit and self.layer in stage.GetUsedLayers()):
+    def redo(self, stage, scene_path):
+        if not (scene_path and stage and self.layer.permissionToEdit
+                and self.layer in stage.GetUsedLayers()):
             return
         # Only resolve a new site when our own restore removed the spec.
-        path = self._removed_site(stage) if self._spec is None else self.path
+        mapped = self._target.MapToSpecPath(Sdf.Path(scene_path))
+        path = self._removed_site(stage, scene_path) if self._spec is None else self.path
+        if path != mapped:
+            return
         if not path or read_value_opinion(self.layer, path, self.time) != self.original:
             return
         spec = self.layer.GetPropertyAtPath(path)

@@ -106,23 +106,19 @@ class UsdNoticeHandler:
         else:
             callback = (self._graphView._handleUsdChanges if self._enabled else
                         getattr(self._graphView, "_handleSuppressedUsdChanges", None))
-        if callback is None:
+        selectResyncs = getattr(self._graphView, "_selectUsdResyncs", None)
+        observe = selectResyncs(sender) if selectResyncs is not None else None
+        if callback is None and observe is None:
             return
 
-        # Collect resynced paths (structural changes)
-        # These require full invalidation of affected nodes/links
-        resyncedPaths = set()
-        for path in notice.GetResyncedPaths():
-            pathStr = str(path)
-            # Skip absolute root - we only care about specific prims
-            if pathStr == "/":
-                continue
-            resyncedPaths.add(pathStr)
-
-        # Prims that moved rather than came and went, so reconciliation
-        # can rebuild their displayed nodes from the live destinations --
-        # even outside the loader's scope -- instead of dropping them.
+        resyncedPaths = {str(path) for path in notice.GetResyncedPaths()}
         movedPaths = self._movedPaths(notice)
+        if observe is not None and resyncedPaths:
+            # Identity evidence cannot wait for deferred or suppressed UI delivery.
+            observe(resyncedPaths, movedPaths)
+        if callback is None:
+            return
+        resyncedPaths.discard("/")
 
         # Collect info-only changes (property value changes)
         # These allow targeted cache invalidation

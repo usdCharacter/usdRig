@@ -739,7 +739,8 @@ class TestReloadLifecycle(unittest.TestCase):
     def test_layered_drag_removes_preview_specs_and_redoes_at_mapped_site(self):
         for action in ('cancel', 'undo', 'cancel_with_edits', 'undo_with_edits',
                        'cancel_with_parent_edit', 'undo_after_rename', 'undo_then_rename',
-                       'undo_then_replace', 'undo_with_existing_declaration',
+                       'undo_then_replace', 'undo_then_replace_property',
+                       'undo_then_replace_property_in_batch', 'undo_with_existing_declaration',
                        'cancel_with_existing_parent'):
             with self.subTest(action=action):
                 stage, view = Usd.Stage.CreateInMemory(), self.view
@@ -833,18 +834,41 @@ class TestReloadLifecycle(unittest.TestCase):
                         self.assertTrue(editor.ApplyEdits())
                         path = Sdf.Path('/Renamed/Value.number')
                         attr = stage.GetAttributeAtPath(path)
+                if action == 'undo_then_replace_property_in_batch':
+                    original_spec = weaker.GetAttributeAtPath(path)
+                    owner = original_spec.owner
+                    with view._stageSync.suppressed(), Sdf.ChangeBlock():
+                        owner.RemoveProperty(original_spec)
+                        self.assertFalse(weaker.GetAttributeAtPath(path))
+                        spec = Sdf.AttributeSpec(owner, 'number', Sdf.ValueTypeNames.Float,
+                                                 Sdf.VariabilityVarying, True)
+                        weaker.SetTimeSample(spec.path, 20, 8)
+                    replacement = stage.GetAttributeAtPath(path)
+                    self.assertEqual(stage.GetPrimAtPath(prim_path), prim)
+                replaced = action.startswith('undo_then_replace')
+                if action == 'undo_then_replace_property':
+                    owner = weaker.GetPrimAtPath(prim_path)
+                    owner.RemoveProperty(weaker.GetAttributeAtPath(path))
+                    self.assertFalse(weaker.GetAttributeAtPath(path))
+                    stage.SetEditTarget(weaker)
+                    replacement = prim.CreateAttribute('number', Sdf.ValueTypeNames.Float)
+                    self.assertTrue(replacement.Set(8, time))
+                    stage.SetEditTarget(root)
+                    self.assertEqual(stage.GetPrimAtPath(prim_path), prim)
+                    self.assertEqual(weaker.QueryTimeSample(path, 20), 8)
                 if commit:
                     active_target = stage.GetEditTarget()
                     history.redo(view)
                     self.assertEqual(stage.GetEditTarget(), active_target)
-                    if action in ('undo_then_rename', 'undo_then_replace'):
+                    if replaced:
+                        self.assertEqual(replacement.Get(time), 8)
+                        self.assertEqual(weaker.QueryTimeSample(path, 20), 8)
+                        self.assertEqual(layer.ExportToString(), before)
+                        continue
+                    if action == 'undo_then_rename':
                         self.assertFalse(layer.GetPrimAtPath('/Group'), layer.ExportToString())
                         self.assertFalse(layer.GetPrimAtPath('/Group/Value'))
                         self.assertFalse(layer.GetAttributeAtPath('/Group/Value.number'))
-                    if action == 'undo_then_replace':
-                        self.assertEqual(layer.ExportToString(), before)
-                        self.assertEqual(replacement.Get(time), 8)
-                        continue
                     self.assertTrue(layer.GetAttributeAtPath(path))
                     self.assertEqual(layer.QueryTimeSample(path, 5), 3.5)
                     self.assertEqual(attr.Get(time), 3.5)
