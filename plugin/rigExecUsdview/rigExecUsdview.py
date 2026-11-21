@@ -834,14 +834,19 @@ class RigExecUsdviewContainer(PluginContainer):
             return None
         try:
             import gizmoUI
-            return gizmoUI.InstallViewportTools(
+            controller = gizmoUI.InstallViewportTools(
                 self._api, self._UndoStack(),
                 openGraphEditor=self._OpenGraphEditor)
+            if controller is not None:
+                self._BindViewportTools()
+            return controller
         except Exception as error:
             Tf.Warn("rigExecUsdview: viewport tools unavailable: %s" % error)
             return None
 
     def _BindViewportTools(self):
+        if getattr(self, "_viewportBound", False):
+            return
         import gizmoMath
         import gizmoPreview
         import ikfkMatch
@@ -850,6 +855,7 @@ class RigExecUsdviewContainer(PluginContainer):
             self._ReadPublishedControlFrame, session=self._api)
         ikfkMatch.SetPublishedValuesReader(self._ReadPublishedValues, session=self._api)
         gizmoPreview.SetSink(self._PreviewSink(), session=self._api)
+        self._viewportBound = True
 
     def _PreviewSink(self):
         """

@@ -81,8 +81,9 @@ class Controller(gizmoUI.GizmoController):
         self.undoStack.AddListener(self._onUndoStackChanged)
         self._hotkeys = gizmoUI.ViewportHotkeyFilter(self)
         APP.installEventFilter(self._hotkeys)
-        APP.focusWindowChanged.connect(self._onFocusWindowChanged)
-        APP.aboutToQuit.connect(self.FlushReleasedEdit)
+        self._connections = []
+        self._Connect(APP, "focusWindowChanged", self._onFocusWindowChanged)
+        self._Connect(APP, "aboutToQuit", self.FlushReleasedEdit)
         self.toolbar.Sync()
     def _MainWindow(self): return self.window
     def _RebuildHandles(self): pass

@@ -20,6 +20,7 @@ Usage: test_session_state.py
 """
 from collections import Counter
 from contextlib import ExitStack, contextmanager
+from importlib import import_module
 import gc
 import os
 import sys
@@ -32,7 +33,7 @@ import rigexec_test_env
 rigexec_test_env.SetupPluginTest()
 
 from pxr import Gf, Sdf, Usd  # noqa: E402
-from pxr.Usdviewq.qt import QtCore, QtGui, QtWidgets  # noqa: E402
+from pxr.Usdviewq.qt import PySideModule, QtCore, QtGui, QtWidgets  # noqa: E402
 
 import avarDock  # noqa: E402
 import gizmoMath  # noqa: E402
@@ -543,9 +544,7 @@ def TestInstallFailures():
     print("  ok: constructor isolation and shared probe/timer failures")
 
 
-def TestRetireRealTools():
-    import rigExecUndo
-
+def _GizmoSession():
     class _View(QtWidgets.QWidget):
         signalFrustumChanged = QtCore.Signal()
 
@@ -570,6 +569,16 @@ def TestRetireRealTools():
     api.dataModel = model = _Model()
     model.selection = model.viewSettings = model
     api.frame = 0
+    api.UpdateViewport = lambda: None
+    return window, api, view, layout
+
+
+def TestRetireRealTools():
+    import rigExecUndo
+
+    window, api, view, layout = _GizmoSession()
+    model = api.dataModel
+    originalPick = view.pick
     stack = rigExecUndo.UndoStack()
     requests = _Requests(api, stack, retries=0)
     with _Patched(gizmoUI.GizmoController, RefreshTarget=lambda self: None):
@@ -584,7 +593,7 @@ def TestRetireRealTools():
                    not view.findChildren(QtWidgets.QWidget) and
                    panel.parentWidget() is window and not stack._listeners,
                    "retirement unparents widgets, returns the panel and removes listeners")
-            _Check(view.pick == _View.pick.__get__(view), "original picking restored")
+            _Check(view.pick == originalPick, "original picking restored")
             model.signalStageReplaced.emit()
 
         def _Retire(api):
@@ -610,6 +619,82 @@ def TestRetireRealTools():
                    "host rejection rolls back instead of publishing ready")
     _Destroy(window)
     print("  ok: retained Qt widgets, actions, picking, and host handoff rollback")
+
+
+def TestGizmoConstructionRollback():
+    import rigExecUndo
+
+    window, api, view, layout = _GizmoSession()
+    model = api.dataModel
+    stack = rigExecUndo.UndoStack()
+    pick = view.pick
+    hover = view.testAttribute(QtCore.Qt.WA_Hover)
+    bindings = {}
+    settings = []
+
+    def _TrackFilters(stack, owner):
+        installed = []
+        bindings[owner] = installed
+        install, remove = owner.installEventFilter, owner.removeEventFilter
+
+        def _Install(filter):
+            install(filter)
+            installed.append(filter)
+
+        def _Remove(filter):
+            remove(filter)
+            installed.remove(filter)
+
+        stack.enter_context(_Patched(owner, installEventFilter=_Install,
+                                     removeEventFilter=_Remove))
+
+    def _Listeners():
+        return tuple(owner.receivers("2" + signal + "()") for owner, signal in (
+            (model, "signalPrimSelectionChanged"), (model, "signalStageReplaced"),
+            (model, "currentFrameChanged"), (view, "signalFrustumChanged"),
+            (_APP, "aboutToQuit")))
+
+    baseline = _Listeners()
+
+    def _Fail(controller):
+        settings.append(controller.settings)
+        if len(settings) == 1:
+            raise RuntimeError("injected RefreshTarget failure")
+
+    try:
+        with ExitStack() as patches:
+            for owner in (_APP, view):
+                _TrackFilters(patches, owner)
+            patches.enter_context(_Patched(gizmoUI.GizmoController,
+                                           RefreshTarget=_Fail))
+            _Check(gizmoUI.InstallViewportTools(api, stack, retries=0) is None,
+                   "a failed constructor returns no controller")
+            result = stageViewReady.GetResult(api, "gizmo")
+            _Check(result.status == "failed" and result.controller is None and
+                   "injected RefreshTarget failure" in result.error and
+                   gizmoUI.GetController(api) is None,
+                   "the broker exposes the initialization failure only")
+            _Check(layout.count() == 1 and not view.findChildren(QtWidgets.QWidget)
+                   and not window.actions(), "rollback removes widgets and actions")
+            _Check(not any(bindings.values()) and view.pick == pick and
+                   view.testAttribute(QtCore.Qt.WA_Hover) == hover,
+                   "rollback restores filters, picking and hover")
+            _Check(_Listeners() == baseline and not stack._listeners and
+                   not settings[0]._listeners, "rollback removes all listeners")
+
+            sessionRegistry.ForgetSession(api)
+            gizmo = gizmoUI.InstallViewportTools(api, stack, retries=0)
+            _Check(gizmo is not None and len(window.actions()) == 2 and
+                   layout.count() == 3 and len(view.findChildren(QtWidgets.QWidget)) == 1,
+                   "reinstall creates only one set of actions and widgets")
+            _Check(all(len(filters) == 1 for filters in bindings.values()) and
+                   _Listeners() == tuple(n + 1 for n in baseline) and
+                   len(stack._listeners) == len(settings[1]._listeners) == 1,
+                   "reinstall attaches only one set of filters and listeners")
+            sessionRegistry.ForgetSession(api)
+    finally:
+        _Destroy(window)
+    print("  ok: partial gizmo construction rolls back before reinstall")
 
 
 def TestRetirePendingInstalls():
@@ -828,6 +913,64 @@ def TestUndoShortcutScoping():
                "the last session left is application-wide again")
     _Destroy(windowA)
     print("  ok: undo / redo shortcuts scoped to the session in front")
+
+
+def TestPendingSessionShortcuts():
+    import rigExecUndo
+
+    QtTest = import_module(PySideModule + ".QtTest")
+
+    windowA, apiA, _, _ = _GizmoSession()
+    windowB, apiB = _Session()
+    stack = rigExecUndo.UndoStack()
+    stage = Usd.Stage.CreateInMemory()
+    attr = stage.DefinePrim("/Control").CreateAttribute(
+        "value", Sdf.ValueTypeNames.Double)
+    attr.Set(0.0)
+
+    def _Activate(window):
+        window.activateWindow()
+        _PumpUntil(lambda: sessionRegistry.ActiveWindow() is window)
+
+    def _Key(modifiers):
+        QtTest.QTest.keyClick(sessionRegistry.ActiveWindow(), QtCore.Qt.Key_Z,
+                              modifiers)
+        _APP.processEvents()
+
+    undo = QtCore.Qt.ControlModifier
+    redo = undo | QtCore.Qt.ShiftModifier
+    try:
+        windowA.show()
+        windowB.show()
+        _Activate(windowA)
+        with _Patched(gizmoUI.GizmoController, RefreshTarget=lambda self: None):
+            gizmo = gizmoUI.InstallViewportTools(apiA, stack, retries=0)
+        _Check(gizmo is not None and
+               gizmoUI.InstallViewportTools(apiB, rigExecUndo.UndoStack(),
+                                            retries=0) is None and
+               stageViewReady.GetResult(apiB, "gizmo").status == "pending",
+               "A is ready and B is pending")
+        recorder = rigExecUndo.EditRecorder(stage, [attr.GetPath()])
+        recorder.Begin()
+        attr.Set(1.0)
+        stack.Push(recorder.Commit("edit in A"))
+        _Activate(windowB)
+        _Key(undo)
+        _Check(attr.Get() == 1.0 and stack.CanUndo(), "B cannot undo A's edit")
+        _Activate(windowA)
+        _Key(undo)
+        _Check(attr.Get() == 0.0 and stack.CanRedo(), "A can undo on focus")
+        _Activate(windowB)
+        _Key(redo)
+        _Check(attr.Get() == 0.0 and stack.CanRedo(), "B cannot redo A's edit")
+        _Activate(windowA)
+        _Key(redo)
+        _Check(attr.Get() == 1.0 and stack.CanUndo(), "A can redo on focus")
+    finally:
+        sessionRegistry.ForgetSession(apiA)
+        _Destroy(windowA)
+        _Destroy(windowB)
+    print("  ok: pending active session cannot use another session's shortcuts")
 
 
 def _TwinStages():
@@ -1161,6 +1304,47 @@ def TestContainerEnsureAndRetire():
           "shutdown retires one session")
 
 
+def TestContainerAdoptsReadyGizmo():
+    import ikfkMatch
+    import rigExecUsdview
+
+    class _Registry:
+        def registerCommandPlugin(self, name, label, callback):
+            return (name, callback)
+
+    window, api, _, _ = _GizmoSession()
+    undo = object()
+    bindings = Counter()
+
+    def _Track(kind):
+        def _Bind(value, session):
+            _Check(session is api and callable(value) == (kind != "sink"),
+                   "binding belongs to the adopted session")
+            bindings[kind] += 1
+        return _Bind
+
+    try:
+        with _ToolDoubles() as (_, built), \
+                _Patched(gizmoMath, SetPublishedControlFrameReader=_Track("frame")), \
+                _Patched(ikfkMatch, SetPublishedValuesReader=_Track("values")), \
+                _Patched(gizmoPreview, SetSink=_Track("sink")):
+            gizmo = gizmoUI.InstallViewportTools(api, undo, retries=0)
+            _Check(gizmo is not None and not bindings and
+                   rigExecUsdview.ContainerFor(api) is None,
+                   "the public gizmo is ready before container registration")
+            container = rigExecUsdview.RigExecUsdviewContainer()
+            container.registerPlugins(_Registry(), api)
+            container._undoStack = undo
+            for _ in range(2):
+                _Check(container._EnsureViewportTools() is gizmo,
+                       "the container adopts the existing controller")
+            _Check(len(built) == 1 and bindings == {"frame": 1, "values": 1, "sink": 1},
+                   "adoption binds all three services exactly once")
+    finally:
+        _Destroy(window)
+    print("  ok: a late container binds services to its already-ready gizmo")
+
+
 def TestRegistryDestroyedSlots():
     """Filing and removing a session repeatedly adds no slots to its window.
 
@@ -1354,19 +1538,22 @@ def main():
     TestInstallProbeBounds()
     TestInstallFailures()
     TestRetireRealTools()
+    TestGizmoConstructionRollback()
     TestRetirePendingInstalls()
     TestHotkeyRouting()
     TestUndoShortcutScoping()
+    TestPendingSessionShortcuts()
     TestPublishedReadersPerSession()
     TestPreviewPerSession()
     TestMemoScopePerStage()
     TestPanelInstanceView()
     TestContainerPerSession()
     TestContainerEnsureAndRetire()
+    TestContainerAdoptsReadyGizmo()
     TestRegistryDestroyedSlots()
     TestRegistryRemovalHook()
     TestTouchPoseMarqueeUsesOwnSession()
-    print("SESSION_STATE_OK (19 groups)")
+    print("SESSION_STATE_OK (22 groups)")
     return 0
 
 

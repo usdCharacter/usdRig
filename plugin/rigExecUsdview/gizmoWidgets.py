@@ -745,7 +745,7 @@ class ViewportToolbar(QtWidgets.QToolBar):
             self.undoAction.setShortcut(QtGui.QKeySequence("Ctrl+Z"))
             self.undoAction.setShortcutContext(QtCore.Qt.ApplicationShortcut)
         self.undoAction.triggered.connect(
-            lambda checked=False: self._controller.Undo())
+            lambda checked=False: self._controller._TriggerUndoRedo("Undo"))
         self.addAction(self.undoAction)
 
         self.redoAction = QtActionWidgets.QAction("Redo", self)
@@ -758,7 +758,7 @@ class ViewportToolbar(QtWidgets.QToolBar):
                                           QtGui.QKeySequence("Ctrl+Y")])
             self.redoAction.setShortcutContext(QtCore.Qt.ApplicationShortcut)
         self.redoAction.triggered.connect(
-            lambda checked=False: self._controller.Redo())
+            lambda checked=False: self._controller._TriggerUndoRedo("Redo"))
         self.addAction(self.redoAction)
 
     def _BuildSettingsButton(self):

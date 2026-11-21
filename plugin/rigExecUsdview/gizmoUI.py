@@ -158,6 +158,20 @@ class GizmoController(QtCore.QObject):
         view = StageView(usdviewApi)
         self._view = view
         self._viewDestroyed = False
+        self._connections = []
+        self._controlPicking = self.overlay = self.statusBar = self.toolbar = None
+        self._previousHover = None
+        try:
+            self._Attach(view)
+        except Exception:
+            stageViewReady._Cleanup("gizmo", self.Detach)
+            raise
+
+    def _Connect(self, owner, signal, slot):
+        getattr(owner, signal).connect(slot)
+        self._connections.append((owner, signal, slot))
+
+    def _Attach(self, view):
         from controlPicking import ControlPicking
         self._controlPicking = ControlPicking(view) if view is not None else None
         self.overlay = GizmoOverlay(self, view) if view is not None else None
@@ -166,24 +180,20 @@ class GizmoController(QtCore.QObject):
 
         self._InstallToolbar()
         self._InstallUndoShortcuts()
-        if installFilters:
+        if self._installFilters:
             self._hotkeys = ViewportHotkeyFilter(self)
         application = QtWidgets.QApplication.instance()
         if application is not None:
             if self._hotkeys is not None:
                 application.installEventFilter(self._hotkeys)
-            # Undo / redo are application-wide shortcuts, and two sessions
-            # in one process would make every Ctrl+Z an ambiguous overload
-            # that fires in neither window. See _ScopeShortcuts.
-            application.focusWindowChanged.connect(
-                self._onFocusWindowChanged)
-            application.aboutToQuit.connect(self.FlushReleasedEdit)
+            self._Connect(application, "focusWindowChanged", self._onFocusWindowChanged)
+            self._Connect(application, "aboutToQuit", self.FlushReleasedEdit)
         if view is not None:
             # The stage view keeps the MOUSE filter; keys go through the
             # application filter above (see ViewportHotkeyFilter).
-            if installFilters:
+            if self._installFilters:
                 view.installEventFilter(self)
-            view.destroyed.connect(self._onViewDestroyed)
+            self._Connect(view, "destroyed", self._onViewDestroyed)
             # WA_Hover, not setMouseTracking: the pre-selection
             # highlight needs mouse moves with no button down, and Qt
             # delivers those to a widget only if it tracks the mouse --
@@ -193,15 +203,14 @@ class GizmoController(QtCore.QObject):
             # instead, which nothing else in usdview listens for.
             self._previousHover = view.testAttribute(QtCore.Qt.WA_Hover)
             view.setAttribute(QtCore.Qt.WA_Hover, True)
-            view.signalFrustumChanged.connect(self._onFrustumChanged)
+            self._Connect(view, "signalFrustumChanged", self._onFrustumChanged)
         self.settings.AddListener(self._onSettingsChanged)
         self.undoStack.AddListener(self._onUndoStackChanged)
 
-        model = usdviewApi.dataModel
-        model.selection.signalPrimSelectionChanged.connect(
-            self._onSelectionChanged)
-        model.signalStageReplaced.connect(self._onStageReplaced)
-        model.currentFrameChanged.connect(self._onFrameChanged)
+        model = self.usdviewApi.dataModel
+        self._Connect(model.selection, "signalPrimSelectionChanged", self._onSelectionChanged)
+        self._Connect(model, "signalStageReplaced", self._onStageReplaced)
+        self._Connect(model, "currentFrameChanged", self._onFrameChanged)
         self._ObserveStage(model.stage)
 
         self.RefreshTarget()
@@ -288,26 +297,17 @@ class GizmoController(QtCore.QObject):
         view, self._view = self._view, None
         if view is not None:
             if self._installFilters:
-                view.removeEventFilter(self)
-            view.setAttribute(QtCore.Qt.WA_Hover, self._previousHover)
-            stageViewReady.Disconnect(view, "destroyed", self._onViewDestroyed)
-            stageViewReady.Disconnect(view, "signalFrustumChanged",
-                                      self._onFrustumChanged)
+                stageViewReady.IgnoreDeleted(lambda: view.removeEventFilter(self))
+            if self._previousHover is not None:
+                stageViewReady.IgnoreDeleted(lambda: view.setAttribute(
+                    QtCore.Qt.WA_Hover, self._previousHover))
         application = QtWidgets.QApplication.instance()
-        if application is not None:
-            if self._hotkeys is not None:
-                application.removeEventFilter(self._hotkeys)
-            stageViewReady.Disconnect(application, "focusWindowChanged",
-                                      self._onFocusWindowChanged)
-            stageViewReady.Disconnect(application, "aboutToQuit",
-                                      self.FlushReleasedEdit)
+        if application is not None and self._hotkeys is not None:
+            application.removeEventFilter(self._hotkeys)
         self._hotkeys = None
-        model = self.usdviewApi.dataModel
-        stageViewReady.Disconnect(getattr(model, "selection", None),
-                                  "signalPrimSelectionChanged",
-                                  self._onSelectionChanged)
-        stageViewReady.Disconnect(model, "signalStageReplaced", self._onStageReplaced)
-        stageViewReady.Disconnect(model, "currentFrameChanged", self._onFrameChanged)
+        for owner, signal, slot in reversed(self._connections):
+            stageViewReady.Disconnect(owner, signal, slot)
+        self._connections.clear()
         settings = getattr(self, "settings", None)
         if settings is not None:
             settings.RemoveListener(self._onSettingsChanged)
@@ -334,31 +334,14 @@ class GizmoController(QtCore.QObject):
         self._ScopeShortcuts()
 
     def _ScopeShortcuts(self):
-        """
-        Keep the toolbar's undo / redo application-wide only while this
-        session owns the active window.
-
-        Qt.ApplicationShortcut is what lets Ctrl+Z work with focus in a
-        panel, but when several usdview sessions share one process every
-        session's Ctrl+Z is the same application shortcut and Qt fires
-        none of them ("Ambiguous shortcut overload"). So, with more than
-        one session, the session in front keeps the application-wide
-        context and every other session's actions become window-scoped
-        (the rule usdOrchestrate's host applies to usdview's own
-        actions). A session alone in its process is exactly as before.
-        A window no session owns changes nothing.
-        """
+        # Application scope reaches owned floating panels; other sessions
+        # must be window-scoped even when the active session is still pending.
+        owner = sessionRegistry.KnownSessionOf(sessionRegistry.ActiveWindow())
         context = QtCore.Qt.ApplicationShortcut
-        installed = stageViewReady.Controllers("gizmo")
-        if len(installed) > 1:
-            windows = [controller._MainWindow() for controller in installed]
-            owner = next((window for window in sessionRegistry._WindowChain(
-                sessionRegistry.ActiveWindow())
-                if any(window is main for main in windows)), None)
-            if owner is None:
-                return
-            if owner is not self._MainWindow():
-                context = QtCore.Qt.WindowShortcut
+        if owner is None and len(stageViewReady.Controllers("gizmo")) > 1:
+            return
+        if owner is not None and owner is not self._MainWindow():
+            context = QtCore.Qt.WindowShortcut
         for action in self._UndoActions():
             try:
                 if action.shortcutContext() != context:
@@ -1221,6 +1204,12 @@ class GizmoController(QtCore.QObject):
         return list(getattr(target, "skippedChildren", []))
 
     # -- undo -----------------------------------------------------------
+
+    def _TriggerUndoRedo(self, operation):
+        # A new session can become known without a Qt focus change.
+        owner = sessionRegistry.KnownSessionOf(sessionRegistry.ActiveWindow())
+        if not self._viewDestroyed and (owner is None or owner is self._MainWindow()):
+            getattr(self, operation)()
 
     def Undo(self):
         self.FlushReleasedEdit()
