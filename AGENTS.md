@@ -45,6 +45,18 @@ starting its workflow, and keep this list current when adding or changing skills
   compile into the runtime. Runtime links the archive publicly. `rigExec`
   and the scene library link it privately, so an edit here does not select
   every evaluator test. Do not add a stage or `pxr/` include here.
+- `libs/rigExecEvalCore`: the shared step executor both front ends run.
+  The `rigExecEvalCore` target links only `rigExecGraph`; its contract
+  headers are `step.h` and `kinds.h` (step identity and wire ordinals),
+  `host.h` (the compile-time `Math`/`Inputs`/`State` binding), and the
+  family headers `envelope.h`, `skin.h`, `chain.h`, `gate.h`, `closure.h`,
+  `pose.h`, `weights.h`, `spaces.h` and `properties.h`, which define
+  `RunGeometryStep` and `RunValueStep` as header-only templates. The baked
+  program and `rigExecRuntime` each bind inputs and publish outputs through
+  their own host; neither keeps a second CPU step switch. Keep the headers
+  free of `pxr/` includes and of new `.cpp` files so the installed source
+  and include manifests stay byte-stable; `rigExecGraph` alone owns edges,
+  readiness, invalidation and invocation.
 - `libs/rigExecScene`: USD scene translation, built as `librigExecScene.so`.
   It links `tf`, `gf`, `vt`, `sdf`, `ts`, `usd`, `usdGeom`, and `rigExec`
   publicly; graph and math are private. `librigExec.so` does not link it.

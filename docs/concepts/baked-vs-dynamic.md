@@ -38,6 +38,21 @@ a later or held generation cannot reuse stale cyclic results. Unsupported
 source declarations or failed compilation produce an invalid pose with a
 reason, rather than selecting a second evaluator.
 
+Step execution itself is shared. `rigExecGraph` schedules one step at a time;
+`rigExecEvalCore` then executes that one already-scheduled step through
+`RunGeometryStep` for the revision chain and `RunValueStep` for the pose,
+weight, space and property families. The baked program and the `.rigexec`
+runtime are front-end adapters over that core: each translates its own step
+record into a `StepRef`, binds its captured or decoded inputs and typed
+stores through a compile-time host, runs the one body, and publishes through
+its own generation fence. Neither adapter keeps a second CPU step switch or
+starts a traversal of its own, so native, frozen and playback evaluation
+reach the same arithmetic decision for the same facts; only input binding,
+diagnostics wording and publication differ. The parity inventory in
+[Evaluation core parity](../specs/eval-core-parity.md) records, per
+operation, which body is canonical and which differences stay with a named
+front end.
+
 ## Exact floating point
 
 Every translation unit that instantiates the kernels compiles with the
