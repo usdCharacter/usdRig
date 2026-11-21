@@ -492,12 +492,23 @@ rigexec_add_mover(ClothMover BUILTIN
     SCHEMA libs/rigExecSchema/schema.usda
     SCHEMA_TYPE RigExecClothMover)
 # The standalone compiler check consumes the same generated module sources.
+# Snapshot SOURCES at configure time: the generator expression is evaluated
+# at generate time, when MSVC precompiled-header support has injected the
+# synthetic cmake_pch.cxx, and that compiler-generated unit must not reach
+# a manifest a separate consumer root builds. Generated mover units are
+# present here because rigexec_add_mover adds them with target_sources.
+get_property(_rigexec_runtime_manifest_sources TARGET rigExecRuntime PROPERTY SOURCES)
+list(FILTER _rigexec_runtime_manifest_sources EXCLUDE REGEX "(^|/|\\\\)(CMakeFiles/|cmake_pch\\.(cxx|cpp|c)$)")
+list(JOIN _rigexec_runtime_manifest_sources "\n" _rigexec_runtime_manifest_text)
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/runtimeSources.txt"
-    CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecRuntime,SOURCES>,\n>\n")
+    CONTENT "${_rigexec_runtime_manifest_text}\n")
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/runtimeIncludes.txt"
     CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecRuntime,INCLUDE_DIRECTORIES>,\n>\n")
+get_property(_rigexevevalcore_manifest_sources TARGET rigExecEvalCore PROPERTY SOURCES)
+list(FILTER _rigexevevalcore_manifest_sources EXCLUDE REGEX "(^|/|\\\\)(CMakeFiles/|cmake_pch\\.(cxx|cpp|c)$)")
+list(JOIN _rigexevevalcore_manifest_sources "\n" _rigexevevalcore_manifest_text)
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/evalCoreSources.txt"
-    CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecEvalCore,SOURCES>,\n>\n")
+    CONTENT "${_rigexevevalcore_manifest_text}\n")
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/evalCoreIncludes.txt"
     CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecEvalCore,INCLUDE_DIRECTORIES>,\n>\n")
 rigexec_apply_exact_fp_flags(rigExecRuntime)

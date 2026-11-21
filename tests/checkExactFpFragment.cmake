@@ -42,6 +42,19 @@ endif ()
 
 set(_export_dir "${BINARY_DIR}/exactFpFragmentCheck")
 set(_manifest_dir "${_export_dir}/${INSTALL_DATADIR}")
+# The manifests list translation units a separate consumer root builds;
+# CMake's precompiled-header support injects a synthetic cmake_pch.cxx
+# into a target's sources at generate time and it must stay out.
+foreach (_manifest runtimeSources evalCoreSources)
+    file(STRINGS "${BINARY_DIR}/${_manifest}.txt" _built)
+    foreach (_entry IN LISTS _built)
+        if (_entry MATCHES "(^|/|\\\\)CMakeFiles/"
+            OR _entry MATCHES "(^|/|\\\\)cmake_pch\\.(cxx|cpp|c)$")
+            message(FATAL_ERROR
+                "${_manifest}.txt lists compiler-generated unit ${_entry}")
+        endif ()
+    endforeach ()
+endforeach ()
 file(REMOVE_RECURSE "${_export_dir}")
 execute_process(COMMAND "${CMAKE_COMMAND}"
     "-DSOURCE_ROOT=${SOURCE_DIR}" "-DBUILD_DIR=${BINARY_DIR}"
