@@ -1,14 +1,11 @@
 include_guard(GLOBAL)
 
-# Single authority for exact floating-point compilation. Floating-point
-# speed options silently rewrite results, so every owned compile target must
-# see the same mode. A compiler resolves a duplicated family by its last
-# occurrence, so a conflicting option anywhere after the settings flips the
-# mode; a scoped or shared option must not be applied by text. These
-# functions return the flag list once per compiler family and enforce the
-# mode on a target. Each directory scope that declares compiled targets
-# calls the walk for its own targets; CMakeLists.txt states the placement
-# rule beside the root walk.
+# Single authority for exact floating-point compilation. A compiler
+# resolves a duplicated flag family by its last occurrence, so every
+# owned compile target must end its own option list with the canonical
+# flags, and no conflicting option may follow them. These functions
+# return the flag list once per compiler family and enforce the mode on
+# a target; each directory scope calls the walk for its own targets.
 #
 # See docs/concepts/baked-vs-dynamic.md.
 
@@ -26,13 +23,9 @@ function(rigexec_get_exact_fp_flags out_var)
 endfunction()
 
 # Directory-scope policy: the contraction family only, derived from the
-# canonical list so it cannot drift from it. A scope installs this with
-# add_compile_options to hold OpenUSD-style contraction off for every target
-# it declares, while a vendored target compiled in that scope can still
-# re-declare the fast family as its last own option and keep its codegen.
-# MSVC installs no directory option: its default is already /fp:precise, and
-# a directory /fp: would outrank an ambient /fp:fast that vendored scopes
-# expect to keep.
+# canonical list. MSVC installs no directory option: its default is
+# already /fp:precise, and a directory /fp: would outrank an ambient
+# /fp:fast that vendored scopes expect to keep.
 function(rigexec_get_exact_fp_directory_flags out_var)
     rigexec_get_exact_fp_flags(_rigexec_fp_all)
     set(_rigexec_fp_dir "")
@@ -88,14 +81,11 @@ function(rigexec_fp_genex_content entry out_var)
     set(${out_var} "${_rigexec_gc_content}" PARENT_SCOPE)
 endfunction()
 
-# PRIVATE: TRUE when the entry begins with "$<" and the ">" that closes
-# that opening expression is the entry's last character, so the whole
-# value is one expression. "$<1:Pkg::>Fast" and "$<1:a>$<2:b>" are
-# concatenations: the matching close is not the end, and only expanding
-# the entry reveals the dependency it names. The scan matches each
-# opening "$<" to its closing ">" by depth; the final character being
-# ">" is not sufficient.
-function(rigexec_fp_genex_complete entry out_var)
+# PRIVATE: index of the ">" closing the "$<" that opens the entry, or -1
+# when unbalanced. The entry's final character being ">" is not
+# sufficient: "$<1:a>$<2:b>" ends with one while its first close sits
+# mid-entry.
+function(rigexec_fp_genex_close_index entry out_var)
     string(LENGTH "${entry}" _rigexec_gx_len)
     set(_rigexec_gx_i 0)
     set(_rigexec_gx_depth 0)
@@ -117,26 +107,30 @@ function(rigexec_fp_genex_complete entry out_var)
         endif ()
         math(EXPR _rigexec_gx_i "${_rigexec_gx_i} + 1")
     endwhile ()
-    math(EXPR _rigexec_gx_last "${_rigexec_gx_len} - 1")
-    if (_rigexec_gx_close EQUAL _rigexec_gx_last)
+    set(${out_var} ${_rigexec_gx_close} PARENT_SCOPE)
+endfunction()
+
+# PRIVATE: TRUE when the entry is one expression: its opening "$<"
+# closes at the entry's last character. "$<1:Pkg::>Fast" and
+# "$<1:a>$<2:b>" are concatenations whose meaning only expansion reveals.
+function(rigexec_fp_genex_complete entry out_var)
+    rigexec_fp_genex_close_index("${entry}" _rigexec_gc_idx)
+    string(LENGTH "${entry}" _rigexec_gc_len)
+    math(EXPR _rigexec_gc_last "${_rigexec_gc_len} - 1")
+    if (_rigexec_gc_idx EQUAL _rigexec_gc_last)
         set(${out_var} TRUE PARENT_SCOPE)
     else ()
         set(${out_var} "" PARENT_SCOPE)
     endif ()
 endfunction()
 
-# PRIVATE: the settings belong to the translation units that instantiate the
-# kernels, not to their consumers. A compiler resolves a duplicated family by
-# its last occurrence, so the canonical flags must finish the target's own
-# option list: every literal or generator-expression copy of the family in
-# the target's options is removed token by token, so unrelated options
-# grouped in the same entry (including a SHELL: grouping prefix) keep their
-# place and order. Options the ordering
-# cannot outrank abort configuration instead: per-source COMPILE_OPTIONS,
-# which CMake places after the target's own options (and whose properties
-# are shared by every target of the directory that sets them, so they must
-# not be rewritten for other consumers), and the interface compile options of
-# the link closure.
+# PRIVATE: the canonical flags must finish the target's own option list:
+# every literal or generator-expression copy of the family in the
+# target's options is removed token by token (a SHELL: grouping prefix
+# survives). Options the ordering cannot outrank abort configuration
+# instead: per-source COMPILE_OPTIONS, which CMake places last and whose
+# properties are shared across targets, and the interface compile options
+# of the link closure.
 function(rigexec_apply_exact_fp_flags target)
     if (NOT TARGET "${target}")
         message(FATAL_ERROR "rigexec_apply_exact_fp_flags: no target ${target}")
@@ -252,30 +246,98 @@ function(rigexec_fp_genex_operator entry out_var)
     set(${out_var} "${_rigexec_go_op}" PARENT_SCOPE)
 endfunction()
 
-# PRIVATE: floating-point options that no ordering can outrank abort
-# configuration with the owning target, flag and source named: per-source
-# COMPILE_OPTIONS entries (last on the real command line, and shared by
-# every target of the directory that sets them) and the INTERFACE_COMPILE_OPTIONS
-# of the direct requirements and their transitive link closure. A conditional
-# link entry ($<$<CONFIG:Release>:Pkg::Fast>, $<BUILD_INTERFACE:lib>) still
-# names a target whose interface applies in some configuration, so generator
-# expressions are unwrapped to their real dependencies: $<IF:...> queues
-# both result branches but never its predicate, $<TARGET_PROPERTY:tgt,PROP>
-# is resolved to the property's value instead of queueing the lookup's own
-# operands (the one-operand form reads the property from the consuming
-# target), a mixed literal-and-expression entry such as Pkg::$<1:Fast>
-# expands to a name the link never spells and is rejected, a leading
-# expression whose matching close does not consume the whole entry (a
-# concatenation such as $<1:Pkg::>Fast) is rejected the same way because
-# only expanding it reveals the dependency it names, and a computed
-# result that cannot be resolved statically is rejected with the consuming
-# target and the full entry named. Nesting is
-# measured per branch: many shallow branches all get inspected, while a
-# chain deeper than the cutoff is reported with the consuming target and
-# the expression named, never accepted. Link-relevant transport operators
-# (LINK_ONLY, BUILD_INTERFACE, INSTALL_INTERFACE, $<0:...>, $<1:...>) and
-# the conditional form $<cond:...> unwrap; any other operator produces
-# text rather than a dependency name and is rejected the same way.
+# PRIVATE: reason text when a compile-option entry could contribute a
+# conflicting floating-point option after expansion, empty when it is
+# provably safe. Literal and conditional text is judged as written; a
+# $<TARGET_PROPERTY:...> lookup contributes its property's value, judged
+# recursively; unresolvable lookups and values past the nesting cutoff
+# are rejected.
+function(rigexec_fp_option_conflict_reason entry ctx_target depth out_var)
+    rigexec_get_exact_fp_flags(_rigexec_fp_canonical)
+    rigexec_get_exact_fp_conflict_regex(_rigexec_fp_conflict)
+    set(${out_var} "" PARENT_SCOPE)
+    if (${depth} GREATER 5)
+        set(${out_var} "option value nested past the inspection cutoff"
+            PARENT_SCOPE)
+        return ()
+    endif ()
+    if (entry MATCHES "[$]<(GENEX_EVAL|EVAL_EXPR):")
+        set(${out_var} "unevaluable option expression" PARENT_SCOPE)
+        return ()
+    endif ()
+    if (entry MATCHES "${_rigexec_fp_conflict}"
+        AND NOT entry IN_LIST _rigexec_fp_canonical)
+        set(${out_var} "conflicting option" PARENT_SCOPE)
+        return ()
+    endif ()
+    set(_rigexec_or_tail "${entry}")
+    set(_rigexec_or_offset 0)
+    while (1)
+        string(FIND "${_rigexec_or_tail}" "$<TARGET_PROPERTY:"
+            _rigexec_or_pos)
+        if (_rigexec_or_pos EQUAL -1)
+            break ()
+        endif ()
+        math(EXPR _rigexec_or_start "${_rigexec_or_offset} + ${_rigexec_or_pos}")
+        string(SUBSTRING "${entry}" ${_rigexec_or_start} -1
+            _rigexec_or_from)
+        rigexec_fp_genex_close_index("${_rigexec_or_from}" _rigexec_or_close)
+        if (_rigexec_or_close LESS 0)
+            set(${out_var} "unbalanced option expression" PARENT_SCOPE)
+            return ()
+        endif ()
+        math(EXPR _rigexec_or_len "${_rigexec_or_close} + 1")
+        string(SUBSTRING "${entry}" ${_rigexec_or_start} ${_rigexec_or_len}
+            _rigexec_or_expr)
+        rigexec_fp_genex_content("${_rigexec_or_expr}" _rigexec_or_body)
+        rigexec_fp_genex_segments("${_rigexec_or_body}" _rigexec_or_args)
+        list(LENGTH _rigexec_or_args _rigexec_or_n)
+        if (_rigexec_or_n EQUAL 1)
+            set(_rigexec_or_owner "${ctx_target}")
+            list(GET _rigexec_or_args 0 _rigexec_or_prop)
+        elseif (_rigexec_or_n EQUAL 2)
+            list(GET _rigexec_or_args 0 _rigexec_or_owner)
+            list(GET _rigexec_or_args 1 _rigexec_or_prop)
+        else ()
+            set(${out_var} "unresolvable option lookup" PARENT_SCOPE)
+            return ()
+        endif ()
+        if (_rigexec_or_prop STREQUAL ""
+            OR _rigexec_or_owner MATCHES "[$<>]"
+            OR _rigexec_or_prop MATCHES "[$<>]"
+            OR NOT TARGET "${_rigexec_or_owner}")
+            set(${out_var} "unresolvable option lookup" PARENT_SCOPE)
+            return ()
+        endif ()
+        get_target_property(_rigexec_or_value "${_rigexec_or_owner}"
+            "${_rigexec_or_prop}")
+        if (_rigexec_or_value
+            AND NOT _rigexec_or_value MATCHES "NOTFOUND$")
+            math(EXPR _rigexec_or_child "${depth} + 1")
+            foreach (_rigexec_or_part IN LISTS _rigexec_or_value)
+                rigexec_fp_option_conflict_reason("${_rigexec_or_part}"
+                    "${ctx_target}" ${_rigexec_or_child} _rigexec_or_sub)
+                if (_rigexec_or_sub)
+                    set(${out_var}
+                        "via ${_rigexec_or_prop} of ${_rigexec_or_owner}: ${_rigexec_or_sub} (${_rigexec_or_part})"
+                        PARENT_SCOPE)
+                    return ()
+                endif ()
+            endforeach ()
+        endif ()
+        math(EXPR _rigexec_or_offset "${_rigexec_or_start} + ${_rigexec_or_len}")
+        string(SUBSTRING "${entry}" ${_rigexec_or_offset} -1
+            _rigexec_or_tail)
+    endwhile ()
+endfunction()
+
+# PRIVATE: options no ordering can outrank abort configuration naming
+# the consuming target, option source and entry: per-source
+# COMPILE_OPTIONS and the INTERFACE_COMPILE_OPTIONS of the transitive
+# link closure, each judged by its effective value. Link entries are
+# unwrapped to their real dependencies; entries not known to name a
+# target and chains past the per-branch nesting cutoff are rejected
+# naming the full entry.
 function(rigexec_fp_reject_unrankable_conflicts target)
     rigexec_get_exact_fp_flags(_rigexec_fp_canonical)
     rigexec_get_exact_fp_conflict_regex(_rigexec_fp_conflict)
@@ -285,10 +347,11 @@ function(rigexec_fp_reject_unrankable_conflicts target)
         get_source_file_property(_rigexec_fp_sopts "${_rigexec_fp_src}"
             COMPILE_OPTIONS)
         foreach (_rigexec_fp_flag IN LISTS _rigexec_fp_sopts)
-            if (_rigexec_fp_flag MATCHES "${_rigexec_fp_conflict}"
-                AND NOT _rigexec_fp_flag IN_LIST _rigexec_fp_canonical)
+            rigexec_fp_option_conflict_reason("${_rigexec_fp_flag}"
+                "${target}" 1 _rigexec_fp_reason)
+            if (_rigexec_fp_reason)
                 list(APPEND _rigexec_fp_found
-                    "source ${_rigexec_fp_src}: ${_rigexec_fp_flag}")
+                    "source ${_rigexec_fp_src}: ${_rigexec_fp_flag} (${_rigexec_fp_reason})")
             endif ()
         endforeach ()
     endforeach ()
@@ -307,30 +370,24 @@ function(rigexec_fp_reject_unrankable_conflicts target)
         list(POP_FRONT _rigexec_fp_queue _rigexec_fp_lib)
         if (NOT _rigexec_fp_lib MATCHES "^[$]<"
             AND _rigexec_fp_lib MATCHES "[$]<")
-            # Mixed literal text and an expression ("Pkg::$<1:Fast>")
-            # expands to a dependency the link never spells: the
-            # unexpanded entry names no target, so the selected fast
-            # interface would pass un-inspected. Reject it naming the
-            # consumer and the full original entry.
+            # "Pkg::$<1:Fast>" expands to a dependency the raw entry
+            # never spells.
             list(APPEND _rigexec_fp_found
                 "${target}: mixed literal and expression link entry ${_rigexec_fp_lib}")
             continue ()
         endif ()
         if (_rigexec_fp_lib MATCHES "^[$]<")
-            # Unwrap generator expressions to their real dependencies. The
-            # local queue carries (depth, expression) pairs so the cutoff
-            # bounds one branch's nesting, not the total node count across
-            # sibling branches.
+            # The local queue carries (depth, expression) pairs so the
+            # cutoff bounds one branch's nesting, not the total node
+            # count across sibling branches.
             set(_rigexec_fp_local "1;${_rigexec_fp_lib}")
             while (_rigexec_fp_local)
                 list(POP_FRONT _rigexec_fp_local _rigexec_fp_depth
                     _rigexec_fp_probe)
                 if (NOT _rigexec_fp_probe MATCHES "^[$]<")
                     if (_rigexec_fp_probe MATCHES "[$]<")
-                        # A mixed branch (an IF result spelled
-                        # "Pkg::$<1:Fast>") selects a dependency no
-                        # listed name reveals: reject naming the
-                        # consumer, the branch text and the full entry.
+                        # A mixed branch ("Pkg::$<1:Fast>") selects a
+                        # dependency no listed name reveals.
                         list(APPEND _rigexec_fp_found
                             "${target}: mixed literal and expression link result ${_rigexec_fp_probe} in ${_rigexec_fp_lib}")
                     elseif (TARGET "${_rigexec_fp_probe}")
@@ -346,12 +403,8 @@ function(rigexec_fp_reject_unrankable_conflicts target)
                 rigexec_fp_genex_complete("${_rigexec_fp_probe}"
                     _rigexec_fp_whole)
                 if (NOT _rigexec_fp_whole)
-                    # Concatenated text after the matching close
-                    # ("$<1:Pkg::>Fast") names a dependency only the
-                    # expansion reveals: extracting the operator or
-                    # body of the leading expression would inspect the
-                    # wrong (or no) target. Reject naming the consumer
-                    # and the full original entry.
+                    # "$<1:Pkg::>Fast" names a dependency only after
+                    # expansion; its leading expression alone names none.
                     if (_rigexec_fp_probe STREQUAL _rigexec_fp_lib)
                         list(APPEND _rigexec_fp_found
                             "${target}: concatenated link expression ${_rigexec_fp_probe}")
@@ -381,17 +434,11 @@ function(rigexec_fp_reject_unrankable_conflicts target)
                     set(_rigexec_fp_segs "")
                 elseif (_rigexec_fp_op STREQUAL "TARGET_PROPERTY")
                     # The operands name a lookup, not a dependency: the
-                    # dependency is the property's value, itself possibly
-                    # a generator-expression string. A property name that
-                    # is not a literal cannot be resolved statically, so
-                    # that form is rejected with the consumer and the
-                    # full entry named.
+                    # dependency is the property's value. The one-operand
+                    # form reads it from the consuming target; a
+                    # non-literal owner or name is unresolvable.
                     list(LENGTH _rigexec_fp_segs _rigexec_fp_nsegs)
                     if (_rigexec_fp_nsegs EQUAL 1)
-                        # The one-operand form $<TARGET_PROPERTY:PROP>
-                        # reads the property from the target that owns
-                        # the link: resolve it there rather than index
-                        # a missing operand.
                         set(_rigexec_fp_owner "${target}")
                         list(GET _rigexec_fp_segs 0 _rigexec_fp_propname)
                     elseif (_rigexec_fp_nsegs EQUAL 2)
@@ -404,8 +451,6 @@ function(rigexec_fp_reject_unrankable_conflicts target)
                     endif ()
                     if ("${_rigexec_fp_owner}" MATCHES "[$<>]"
                         OR "${_rigexec_fp_propname}" MATCHES "[$<>]")
-                        # A computed owner or property name is not
-                        # statically resolvable.
                         list(APPEND _rigexec_fp_found
                             "${target}: unresolvable link expression ${_rigexec_fp_lib}")
                         continue ()
@@ -428,11 +473,7 @@ function(rigexec_fp_reject_unrankable_conflicts target)
                 elseif (NOT _rigexec_fp_op MATCHES "^[$]<"
                     AND NOT _rigexec_fp_op IN_LIST
                         _rigexec_fp_unwrap_operators)
-                    # The operator produces text (a configuration name, a
-                    # file path, a comparison result), not a dependency
-                    # name. Accepting it un-inspected would let a
-                    # dependency hide behind the text, so reject it with
-                    # the consuming target and the full entry named.
+                    # The operator produces text, not a dependency name.
                     list(APPEND _rigexec_fp_found
                         "${target}: link expression result not known to name a target: ${_rigexec_fp_lib}")
                     continue ()
@@ -460,10 +501,11 @@ function(rigexec_fp_reject_unrankable_conflicts target)
         get_target_property(_rigexec_fp_iopts
             "${_rigexec_fp_lib}" INTERFACE_COMPILE_OPTIONS)
         foreach (_rigexec_fp_flag IN LISTS _rigexec_fp_iopts)
-            if (_rigexec_fp_flag MATCHES "${_rigexec_fp_conflict}"
-                AND NOT _rigexec_fp_flag IN_LIST _rigexec_fp_canonical)
+            rigexec_fp_option_conflict_reason("${_rigexec_fp_flag}"
+                "${target}" 1 _rigexec_fp_reason)
+            if (_rigexec_fp_reason)
                 list(APPEND _rigexec_fp_found
-                    "${_rigexec_fp_lib}: ${_rigexec_fp_flag}")
+                    "${_rigexec_fp_lib}: ${_rigexec_fp_flag} (${_rigexec_fp_reason})")
             endif ()
         endforeach ()
         get_target_property(_rigexec_fp_next
@@ -487,13 +529,9 @@ function(rigexec_fp_reject_unrankable_conflicts target)
 endfunction()
 
 # Apply the exact-FP settings to every compiled target of the calling
-# directory scope. The directory option policy is inherited by
-# subdirectories, but this walk is not, so each scope calls it for its own
-# targets. A vendored target opts out with the RIGEXEC_VENDORED target
-# property: exemption is an explicit
-# ownership marker, never source-path text, so a generated source under a
-# build directory that happens to be named like a vendored tree still gets
-# the exact mode.
+# directory scope; the directory policy is inherited by subdirectories,
+# this walk is not. A vendored target opts out with the RIGEXEC_VENDORED
+# target property: an explicit ownership marker, never source-path text.
 function(rigexec_apply_exact_fp_flags_to_directory_targets)
     get_property(_rigexec_fp_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
     set(_rigexec_fp_done 0)

@@ -305,9 +305,8 @@ if (_out MATCHES "probe reassoc 00000000")
 endif ()
 
 # Leg 2: a conflict owned by a conditionally linked namespaced interface
-# target ($<$<CONFIG:Release>:Pkg::Fast>, no unqualified counterpart)
-# cannot be scrubbed or ordered away, so configuration must abort with the
-# actionable diagnostic naming the flag.
+# target cannot be scrubbed or ordered away; configuration must abort
+# naming the flag.
 set(_work2 "${BUILD_ROOT}/interface-conflict")
 _witness_configure("${_work2}" -DWITNESS_CONFLICT=interface)
 if (WITNESS_RC EQUAL 0)
@@ -321,10 +320,9 @@ if (NOT WITNESS_LOG MATCHES "${_conflict_flag}")
         "${WITNESS_LOG}")
 endif ()
 
-# Leg 3: a per-source floating-point conflict sits after the target's own
-# options on the real command and its property is shared by every target of
-# the directory, so the helper must reject it, naming the source, rather
-# than rewrite the shared property.
+# Leg 3: a per-source conflict sits after the target's own options and
+# its property is shared by every target of the directory; reject it
+# naming the source rather than rewrite the shared property.
 set(_work3 "${BUILD_ROOT}/source-conflict")
 _witness_configure("${_work3}" -DWITNESS_SOURCE_CONFLICT=ON)
 if (WITNESS_RC EQUAL 0)
@@ -335,11 +333,9 @@ if (NOT WITNESS_LOG MATCHES "source .*probe\\.cpp: ${_fast_head}")
         "flag:\n${WITNESS_LOG}")
 endif ()
 
-# Leg 4: an $<IF:cond,Pkg::Fast,Pkg::Quiet> link entry is the only route to
-# both namespaced targets (the short-conditional witness link is absent in
-# this configuration), and its comma-separated body must not be treated as
-# one value: the pass must inspect both result branches and reject the fast
-# one, naming the consuming target and the flag.
+# Leg 4: an $<IF:...> link entry's comma-separated body must be
+# segmented, both result branches inspected, and the fast one rejected
+# naming the consuming target and the flag.
 set(_work4 "${BUILD_ROOT}/iflink-conflict")
 _witness_configure("${_work4}" -DWITNESS_CONFLICT=interface -DWITNESS_IF_LINK=ON)
 if (WITNESS_RC EQUAL 0)
@@ -355,8 +351,7 @@ if (NOT WITNESS_LOG MATCHES "Pkg::Fast: .*${_conflict_flag}")
 endif ()
 
 # Leg 5: an interface nested past the inspection cutoff must be rejected
-# with the consuming target and the whole expression named, never silently
-# accepted at the nesting limit.
+# with the consuming target and the whole expression named.
 set(_work5 "${BUILD_ROOT}/deep-conflict")
 _witness_configure("${_work5}" -DWITNESS_CONFLICT=interface -DWITNESS_DEEP_LINK=ON)
 if (WITNESS_RC EQUAL 0)
@@ -371,11 +366,9 @@ if (NOT WITNESS_LOG MATCHES "Pkg::Fast")
         "${WITNESS_LOG}")
 endif ()
 
-# Leg 6: the IF result branch is computed -
-# $<TARGET_PROPERTY:witnessIf,FP_DEP> with FP_DEP set to Pkg::Fast. The
-# operator's operands are a lookup, not a dependency, so the pass must
-# resolve the property and inspect the selected target rather than queue
-# witnessIf and the literal property name.
+# Leg 6: an IF result computed by $<TARGET_PROPERTY:tgt,PROP>: the
+# operands are a lookup, not a dependency; resolve the property and
+# inspect the selected target.
 set(_work6 "${BUILD_ROOT}/proplink-conflict")
 _witness_configure("${_work6}" -DWITNESS_CONFLICT=interface
     -DWITNESS_PROP_LINK=ON)
@@ -392,11 +385,9 @@ if (NOT WITNESS_LOG MATCHES "Pkg::Fast: .*${_conflict_flag}")
         "dependency and its flag:\n${WITNESS_LOG}")
 endif ()
 
-# Leg 7: the mirror case - one IF entry with seven expression nodes
-# (excluding the predicate) but no branch deeper than four, all branches
-# quiet. Per-branch nesting must inspect every shallow branch and
-# configure successfully; a cutoff that counts nodes popped across
-# sibling branches rejects this legal rig.
+# Leg 7: the mirror case - seven expression nodes, none deeper than four
+# per branch, all branches quiet. Per-branch nesting must inspect every
+# shallow branch and configure successfully.
 set(_work7 "${BUILD_ROOT}/branch-shallow")
 _witness_configure("${_work7}" -DWITNESS_BRANCH_LINK=ON)
 if (NOT WITNESS_RC EQUAL 0)
@@ -411,10 +402,9 @@ if (NOT _rc EQUAL 0)
 endif ()
 _witness_run_and_check_exact("${_work7}${_cfgdir}/witnessBranching")
 
-# Leg 8: a computed result that cannot be resolved statically - the
-# property name is itself a generator expression - must abort configuration
-# naming the consumer and the full original entry, never accept the
-# un-inspected selection.
+# Leg 8: a result that cannot be resolved statically (the property name
+# is itself an expression) must abort naming the consumer and the full
+# entry.
 set(_work8 "${BUILD_ROOT}/unresolvable-conflict")
 _witness_configure("${_work8}" -DWITNESS_CONFLICT=interface
     -DWITNESS_UNSUPPORTED_LINK=ON)
@@ -431,10 +421,9 @@ if (NOT WITNESS_LOG MATCHES "TARGET_PROPERTY:witnessBad,")
         "expression:\n${WITNESS_LOG}")
 endif ()
 
-# Leg 9: a link entry mixing literal text and an expression -
-# Pkg::$<1:Fast> - expands to Pkg::Fast while the entry itself names no
-# target. The pass must reject it naming the consumer and the full
-# original entry, never test the unexpanded text as a target name.
+# Leg 9: an entry mixing literal text and an expression expands to a
+# dependency the entry itself never names; reject it naming the consumer
+# and the full original entry.
 set(_work9 "${BUILD_ROOT}/mixed-direct")
 _witness_configure("${_work9}" -DWITNESS_CONFLICT=interface
     -DWITNESS_MIXED_DIRECT=ON)
@@ -452,8 +441,7 @@ if (NOT WITNESS_LOG MATCHES "Pkg::[$]<1:Fast>")
 endif ()
 
 # Leg 10: the same expansion hidden in an IF result branch: the entry
-# unwraps cleanly, so the rejection must come from inspecting the branch
-# text, naming the consumer, the branch and the full original expression.
+# unwraps cleanly, so the rejection must come from the branch text.
 set(_work10 "${BUILD_ROOT}/mixed-if")
 _witness_configure("${_work10}" -DWITNESS_CONFLICT=interface
     -DWITNESS_MIXED_IF=ON)
@@ -470,10 +458,9 @@ if (NOT WITNESS_LOG MATCHES "Pkg::[$]<1:Fast> in [$]<IF")
         "full original expression:\n${WITNESS_LOG}")
 endif ()
 
-# Leg 11: the one-operand form $<TARGET_PROPERTY:FP_DEP> reads the
-# property from the consuming target: it must be resolved there (and its
-# selected fast interface rejected), not fail on a missing second
-# operand with a list-index error.
+# Leg 11: the one-operand form $<TARGET_PROPERTY:PROP> reads the
+# property from the consuming target; resolve it there, never fail on a
+# missing second operand.
 set(_work11 "${BUILD_ROOT}/one-arg-prop")
 _witness_configure("${_work11}" -DWITNESS_CONFLICT=interface
     -DWITNESS_ONE_ARG_PROP=ON)
@@ -490,13 +477,9 @@ if (NOT WITNESS_LOG MATCHES "Pkg::Fast: .*${_conflict_flag}")
         "on the consumer and name the selected dependency:\n${WITNESS_LOG}")
 endif ()
 
-# Leg 12: a link entry that opens with an expression but keeps literal
-# text after its matching close - $<1:Pkg::>Fast expands to Pkg::Fast -
-# must be rejected naming the consumer and the full original entry.
-# Treating the final '>' as the outer close extracts the body
-# Pkg::>Fas, which names no target, so the fast interface escapes
-# inspection; the only route to Pkg::Fast in this configuration is this
-# entry (the short conditional link is disabled).
+# Leg 12: an entry that opens with an expression but keeps literal text
+# after its matching close must be rejected naming the consumer and the
+# full original entry.
 set(_work12 "${BUILD_ROOT}/adjacent-direct")
 _witness_configure("${_work12}" -DWITNESS_CONFLICT=interface
     -DWITNESS_ADJACENT_DIRECT=ON)
@@ -513,10 +496,8 @@ if (NOT WITNESS_LOG MATCHES "[$]<1:Pkg::>Fast")
         "entry:\n${WITNESS_LOG}")
 endif ()
 
-# Leg 13: the same concatenation as an IF result branch: the entry's own
-# close is its final character, so only inspecting every nested result's
-# boundary catches this; the diagnostic must name the consumer, the
-# branch text and the full original expression.
+# Leg 13: the same concatenation as an IF result branch: only
+# inspecting every nested result's boundary catches this.
 set(_work13 "${BUILD_ROOT}/adjacent-if")
 _witness_configure("${_work13}" -DWITNESS_CONFLICT=interface
     -DWITNESS_ADJACENT_IF=ON)
@@ -532,6 +513,39 @@ if (NOT WITNESS_LOG MATCHES "[$]<1:Pkg::>Fast in [$]<IF")
     _witness_fail("concatenated-branch diagnostic drops the branch text "
         "or the full original expression:\n${WITNESS_LOG}")
 endif ()
+
+# Leg 14: the fast mode can reach the command line as the resolved value
+# of a $<TARGET_PROPERTY:...> interface compile option instead of
+# literal text; resolve computed options before judging them.
+set(_work14 "${BUILD_ROOT}/iface-option")
+_witness_configure("${_work14}" -DWITNESS_PROP_IFACE_OPTION=ON)
+if (WITNESS_RC EQUAL 0)
+    _witness_fail("computed interface compile option configured without a "
+        "diagnostic (rc=0)")
+endif ()
+foreach (_w_needle IN ITEMS
+    "fpIface: [$]<TARGET_PROPERTY:fpIface,FP_MODE>"
+    "via FP_MODE of fpIface: conflicting option \\([-]ffast-math\\)")
+    if (NOT WITNESS_LOG MATCHES "${_w_needle}")
+        _witness_fail("leg14 diagnostic lacks '${_w_needle}':\n${WITNESS_LOG}")
+    endif ()
+endforeach ()
+
+# Leg 15: the same resolved value supplied through per-source
+# COMPILE_OPTIONS must abort naming the source, expression and flag.
+set(_work15 "${BUILD_ROOT}/source-option")
+_witness_configure("${_work15}" -DWITNESS_PROP_SOURCE_OPTION=ON)
+if (WITNESS_RC EQUAL 0)
+    _witness_fail("computed per-source compile option configured without a "
+        "diagnostic (rc=0)")
+endif ()
+foreach (_w_needle IN ITEMS
+    "source .*probe\\.cpp: [$]<TARGET_PROPERTY:fpIface,FP_MODE>"
+    "via FP_MODE of fpIface: conflicting option \\([-]ffast-math\\)")
+    if (NOT WITNESS_LOG MATCHES "${_w_needle}")
+        _witness_fail("leg15 diagnostic lacks '${_w_needle}':\n${WITNESS_LOG}")
+    endif ()
+endforeach ()
 
 message(STATUS "exactFpCompilerWitness: command audit and numeric probes "
     "agree on the exact mode")

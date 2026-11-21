@@ -1,19 +1,11 @@
-# Throwaway project driven by tests/exactFpCompilerWitness.cmake: it applies
-# the root project's exact-FP helper to adversarial target shapes and the
-# witness driver then audits the real compiler commands and runs the
-# numeric probes. WITNESS_MODULE, WITNESS_FAST_FLAGS, WITNESS_FAST_HEAD,
-# WITNESS_FAST_TAIL and WITNESS_CONFLICT_FLAG come from the driver.
-# WITNESS_IF_LINK, WITNESS_PROP_LINK, WITNESS_BRANCH_LINK,
-# WITNESS_UNSUPPORTED_LINK, WITNESS_DEEP_LINK, WITNESS_MIXED_DIRECT,
-# WITNESS_MIXED_IF, WITNESS_ONE_ARG_PROP, WITNESS_ADJACENT_DIRECT and
-# WITNESS_ADJACENT_IF each add a target whose only route to Pkg::Fast or
-# Pkg::Quiet is a single link expression: a literal IF, a property-computed
-# IF branch, a many-node shallow branch tree, an unresolvable computed
-# result, a chain past the inspection cutoff, a mixed literal-and-
-# expression entry (direct and as an IF result), a one-operand
-# TARGET_PROPERTY read from the consumer, and a concatenation whose
-# leading expression closes before the entry ends (direct and as an IF
-# result).
+# Throwaway project driven by tests/exactFpCompilerWitness.cmake: it
+# applies the root project's exact-FP helper to adversarial target shapes;
+# the driver audits the real compiler commands and runs the numeric
+# probes. WITNESS_MODULE, WITNESS_FAST_FLAGS, WITNESS_FAST_HEAD,
+# WITNESS_FAST_TAIL and WITNESS_CONFLICT_FLAG come from the driver, and
+# each WITNESS_*_LINK, WITNESS_*_OPTION and WITNESS_MIXED/ADJACENT/
+# DEEP/ONE_ARG mode adds a target whose only route to a fast option is
+# that one link- or compile-option shape.
 cmake_minimum_required(VERSION 3.26)
 project(rigexec_exact_fp_witness LANGUAGES CXX)
 
@@ -58,16 +50,14 @@ if (NOT WITNESS_IF_LINK AND NOT WITNESS_DEEP_LINK AND NOT WITNESS_PROP_LINK
     AND NOT WITNESS_BRANCH_LINK AND NOT WITNESS_UNSUPPORTED_LINK
     AND NOT WITNESS_MIXED_DIRECT AND NOT WITNESS_MIXED_IF
     AND NOT WITNESS_ONE_ARG_PROP AND NOT WITNESS_ADJACENT_DIRECT
-    AND NOT WITNESS_ADJACENT_IF)
+    AND NOT WITNESS_ADJACENT_IF AND NOT WITNESS_PROP_IFACE_OPTION
+    AND NOT WITNESS_PROP_SOURCE_OPTION)
     target_link_libraries(witnessExact PRIVATE $<$<CONFIG:Release>:Pkg::Fast>)
 endif ()
 
 if (WITNESS_IF_LINK)
-    # An $<IF:cond,true,false> link entry is comma-separated, so an
-    # inspection pass that treats the expression body as one value queues
-    # neither branch and the fast branch's interface reaches the command
-    # line unchallenged in Release. This is the only path to Pkg::Fast and
-    # Pkg::Quiet, so the short-conditional witness above cannot mask it.
+    # An $<IF:cond,true,false> link entry: both result branches must be
+    # inspected, and this entry is the only route to Pkg::Fast.
     add_executable(witnessIf
         probe.cpp
         "${_gen_dir}/generatedProbe.cpp")
@@ -76,11 +66,9 @@ if (WITNESS_IF_LINK)
 endif ()
 
 if (WITNESS_PROP_LINK)
-    # The Release branch is computed: $<TARGET_PROPERTY:witnessIf,FP_DEP>
-    # resolves to Pkg::Fast only through the target property, so an
-    # inspection pass that treats the operator's operands as dependencies
-    # queues witnessIf and the literal property name and never sees the
-    # selected fast interface.
+    # The Release branch is computed through a target-property lookup:
+    # the selected dependency is the property's value, not the operand
+    # names, and it is Pkg::Fast.
     add_executable(witnessIf
         probe.cpp
         "${_gen_dir}/generatedProbe.cpp")
@@ -90,10 +78,9 @@ if (WITNESS_PROP_LINK)
 endif ()
 
 if (WITNESS_BRANCH_LINK)
-    # One IF entry with seven expression nodes (excluding the predicate)
-    # but no branch nested deeper than four: every branch must be
-    # inspected, and a cutoff that counts popped nodes across sibling
-    # branches would reject this legal quiet rig as too deeply nested.
+    # One IF entry with seven expression nodes but no branch deeper than
+    # four, all quiet: the nesting cutoff bounds one branch, not the
+    # total node count, so this legal rig must configure.
     add_executable(witnessBranching
         probe.cpp
         "${_gen_dir}/generatedProbe.cpp")
@@ -102,11 +89,9 @@ if (WITNESS_BRANCH_LINK)
 endif ()
 
 if (WITNESS_MIXED_DIRECT)
-    # The link entry itself mixes literal text and an expression: CMake
-    # expands Pkg::$<1:Fast> to Pkg::Fast, but the unexpanded entry
-    # names no target, so a pass that only recognises entries beginning
-    # with "$<" tests the raw text as a target name, finds nothing, and
-    # accepts the fast interface un-inspected.
+    # A link entry mixing literal text and an expression:
+    # Pkg::$<1:Fast> expands to Pkg::Fast, but the unexpanded entry
+    # names no target.
     add_executable(witnessMixed
         probe.cpp
         "${_gen_dir}/generatedProbe.cpp")
@@ -114,8 +99,7 @@ if (WITNESS_MIXED_DIRECT)
 endif ()
 
 if (WITNESS_MIXED_IF)
-    # The same expansion hidden in an IF result branch: only the branch
-    # text carries the expression, the entry itself unwraps cleanly.
+    # The same expansion hidden in an IF result branch.
     add_executable(witnessMixedIf
         probe.cpp
         "${_gen_dir}/generatedProbe.cpp")
@@ -125,8 +109,8 @@ endif ()
 
 if (WITNESS_ONE_ARG_PROP)
     # The one-operand TARGET_PROPERTY form reads the property from the
-    # target that owns the link: it must be resolved there with the
-    # correct diagnostic, not fail on a missing second operand.
+    # consuming target: it must be resolved there, not fail on a missing
+    # second operand.
     add_executable(witnessOneArg
         probe.cpp
         "${_gen_dir}/generatedProbe.cpp")
@@ -135,11 +119,8 @@ if (WITNESS_ONE_ARG_PROP)
 endif ()
 
 if (WITNESS_ADJACENT_DIRECT)
-    # The entry opens with a complete expression but literal text follows
-    # its matching close: "$<1:Pkg::>Fast" expands to Pkg::Fast, while a
-    # pass that assumes the final ">" closes the leading expression
-    # extracts the body "Pkg::>Fas", finds no such target, and accepts
-    # the fast interface un-inspected.
+    # A concatenation whose leading expression closes before the entry
+    # ends: "$<1:Pkg::>Fast" expands to Pkg::Fast.
     add_executable(witnessAdjacent
         probe.cpp
         "${_gen_dir}/generatedProbe.cpp")
@@ -147,9 +128,8 @@ if (WITNESS_ADJACENT_DIRECT)
 endif ()
 
 if (WITNESS_ADJACENT_IF)
-    # The same concatenation hidden in an IF result branch: the entry
-    # itself has its close at the end, so the boundary check must run on
-    # every nested result too, not only on direct link entries.
+    # The same concatenation as an IF result branch: the entry itself is
+    # complete, so the boundary check must cover nested results too.
     add_executable(witnessAdjacentIf
         probe.cpp
         "${_gen_dir}/generatedProbe.cpp")
@@ -157,11 +137,36 @@ if (WITNESS_ADJACENT_IF)
         $<IF:$<CONFIG:Release>,$<1:Pkg::>Fast,Pkg::Quiet>)
 endif ()
 
+if (WITNESS_PROP_IFACE_OPTION)
+    # The interface target exports a property lookup instead of a literal
+    # flag: the raw option entry names no floating-point option, but the
+    # lookup expands to FP_MODE's fast value after the consumer's exact
+    # options.
+    add_executable(witnessPropIface
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+    set_target_properties(fpIface PROPERTIES FP_MODE "${WITNESS_CONFLICT_FLAG}")
+    target_compile_options(fpIface INTERFACE
+        "$<TARGET_PROPERTY:fpIface,FP_MODE>")
+    target_link_libraries(witnessPropIface PRIVATE fpIface)
+endif ()
+
+if (WITNESS_PROP_SOURCE_OPTION)
+    # The same lookup supplied through per-source COMPILE_OPTIONS: the
+    # shared source property must be judged by its effective value, not
+    # its raw text.
+    set_target_properties(fpIface PROPERTIES FP_MODE "${WITNESS_CONFLICT_FLAG}")
+    set_source_files_properties(probe.cpp PROPERTIES
+        COMPILE_OPTIONS "$<TARGET_PROPERTY:fpIface,FP_MODE>")
+    add_executable(witnessPropSource
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+endif ()
+
 if (WITNESS_UNSUPPORTED_LINK)
-    # The property name is itself a generator expression, so the selected
-    # dependency cannot be resolved statically: the configure must abort
-    # naming the consumer and the full original entry, never accept the
-    # un-inspected result.
+    # The property name is itself a generator expression: the selected
+    # dependency cannot be resolved statically, so the configure must
+    # abort rather than accept the un-inspected result.
     add_executable(witnessBad
         probe.cpp
         "${_gen_dir}/generatedProbe.cpp")
@@ -171,8 +176,8 @@ if (WITNESS_UNSUPPORTED_LINK)
 endif ()
 
 if (WITNESS_DEEP_LINK)
-    # Nested one level past the inspection cutoff: the helper must not
-    # silently give up and accept the interface behind the nesting.
+    # A chain nested past the inspection cutoff: it must be reported,
+    # never accepted at the limit.
     add_executable(witnessDeep
         probe.cpp
         "${_gen_dir}/generatedProbe.cpp")
@@ -181,8 +186,7 @@ if (WITNESS_DEEP_LINK)
 endif ()
 
 # Own options grouped through SHELL:, so the conflicting flag and the two
-# independent definitions share one property entry. The scrub must drop the
-# flag while both -D definitions survive as separate options.
+# independent definitions share one property entry.
 add_executable(witnessGrouped
     probe.cpp
     "${_gen_dir}/generatedProbe.cpp")
@@ -190,10 +194,8 @@ target_compile_options(witnessGrouped PRIVATE
     "SHELL:${WITNESS_CONFLICT_FLAG} -DKEEP1 -DKEEP2")
 
 if (WITNESS_SOURCE_CONFLICT)
-    # Source-level conflicts sit after every target option on the real
-    # command line, so they cannot be ordered away and the shared source
-    # property must not be rewritten for other consumers: the helper must
-    # reject them with a specific diagnostic at configuration time.
+    # A per-source conflict cannot be ordered away, and its property is
+    # shared by every target of the directory: reject, never rewrite.
     set_source_files_properties(probe.cpp PROPERTIES
         COMPILE_OPTIONS "${WITNESS_FAST_HEAD}")
 endif ()
