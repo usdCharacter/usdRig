@@ -483,6 +483,58 @@ class TestReloadLifecycle(unittest.TestCase):
         self.assertIsNone(view._mungSuppression)
         self.assertIs(view._stageSync.boundStage(), replacement)
 
+    def test_cancel_preview_follows_renamed_property_spec(self):
+        stage, view = self.stage, self.view
+        root = stage.GetRootLayer()
+        layer = Sdf.Layer.CreateAnonymous()
+        root.subLayerPaths.append(layer.identifier)
+        root.subLayerOffsets[0] = Sdf.LayerOffset(10, 2)
+        stage.SetEditTarget(stage.GetEditTargetForLocalLayer(layer))
+        prim = stage.DefinePrim('/A', 'Xform')
+        attr = prim.CreateAttribute('x', Sdf.ValueTypeNames.Float)
+        time = Usd.TimeCode(20)
+        self.assertTrue(attr.Set(2.5, time))
+        view.loadStage(stage)
+        self.assertTrue(view._addPrimAsNode(prim, stage, []))
+        node = view.nodes['/A']
+        history = view._undoHistory
+        view._currentTimeCode = time
+        view._cachedValueWriteMode = 'animation'
+        hit = SimpleNamespace(
+            row=SimpleNamespace(editable=True, kind="numeric", mungable=True,
+                                components=(2.5,), type_name='float'),
+            comp=0, nodeId='/A', primPath='/A', propertyName='x',
+        )
+        view._onValueCellPressed(hit, SimpleNamespace(position=lambda: QtCore.QPointF()))
+        view._updateMung(SimpleNamespace(position=lambda: QtCore.QPointF(100, 0),
+                                        modifiers=lambda: QtCore.Qt.NoModifier))
+        self.assertEqual(stage.GetAttributeAtPath('/A.x').Get(time), 3.5)
+        self.assertEqual(layer.QueryTimeSample('/A.x', 5), 3.5)
+        self.assertIsNotNone(view._mungSuppression)
+
+        editor = Usd.NamespaceEditor(stage)
+        self.assertTrue(editor.MovePrimAtPath('/A', '/B'))
+        self.assertTrue(editor.ApplyEdits())
+        self.assertIs(view.nodes['/A'], node)
+        self.assertEqual(layer.QueryTimeSample('/B.x', 5), 3.5)
+        stage.SetEditTarget(root)
+        view._cancelMung()
+
+        self.assertFalse(stage.GetPrimAtPath('/A'))
+        self.assertIs(view.nodes.get('/B'), node)
+        self.assertEqual(stage.GetAttributeAtPath('/B.x').Get(time), 2.5)
+        self.assertEqual(layer.QueryTimeSample('/B.x', 5), 2.5)
+        self.assertEqual(layer.ListTimeSamplesForPath('/B.x'), [5.0])
+        self.assertFalse(root.GetAttributeAtPath('/B.x'))
+        self.assertIs(view._undoHistory, history)
+        self.assertFalse(history.canUndo())
+        self.assertFalse(history.canRedo())
+        self.assertIsNone(view._mungSuppression)
+
+        with patch.object(node, 'invalidate_value_row', wraps=node.invalidate_value_row) as invalidate:
+            self.assertTrue(stage.GetAttributeAtPath('/B.x').Set(7.0, time))
+            invalidate.assert_called_with('x')
+
     def test_history_reload_surfaces_missing_scope_without_publishing(self):
         self.stage.DefinePrim('/Scope', 'Blueprint')
         self.view.loadBlueprint(self.stage, '/Scope')

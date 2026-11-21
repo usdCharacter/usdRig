@@ -553,7 +553,8 @@ def pack_components(components, type_name):
 
 
 def write_value(
-    stage, prim, property_name, components, time_code=None, mode="auto", warn=True
+    stage, prim, property_name, components, time_code=None, mode="auto", warn=True,
+    *, on_authored=None,
 ):
     """Author *components* onto *property_name*.  (ok, reason).
 
@@ -589,6 +590,9 @@ def write_value(
         with Sdf.ChangeBlock():
             if not attr.Set(value, time):
                 return False, "USD refused the value"
+            if on_authored is not None:
+                # Capture the Sdf handle before synchronous USD notice delivery.
+                on_authored()
     except Exception as e:  # a locked layer USD refuses late, a bad value
         return False, str(e)
     return True, ""
@@ -708,6 +712,29 @@ def build_value_row(stage, prim, pin_name, property_name, time_code=None):
     if template is None:
         return None
     return build_value_row_from_template(stage, prim, template, time_code)
+
+
+class ValuePreviewOpinion:
+    """Snapshot one authored value and follow its Sdf spec through moves."""
+
+    def __init__(self, target, attr, time):
+        self.layer = target.GetLayer()
+        self._initial_path = target.MapToSpecPath(attr.GetPath())
+        self.time = (None if time.IsDefault() else
+                     target.GetMapFunction().timeOffset.GetInverse() * time.GetValue())
+        self.original = read_value_opinion(self.layer, self._initial_path, self.time)
+        self._spec = None
+
+    def capture(self):
+        self._spec = self.layer.GetAttributeAtPath(self._initial_path)
+
+    @property
+    def path(self):
+        return self._spec.path if self._spec else None
+
+    def restore(self):
+        if self._spec:
+            set_value_opinion(self.layer, self._spec.path, self.time, self.original)
 
 
 def read_value_opinion(layer, path, time):
