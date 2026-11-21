@@ -590,6 +590,47 @@ class TestReloadLifecycle(unittest.TestCase):
                 self.assertFalse(history.canRedo())
                 self.assertIsNone(view._mungSuppression)
 
+    def test_second_drag_update_preserves_intervening_sample(self):
+        for action in ('cancel', 'release_then_undo'):
+            with self.subTest(action=action):
+                view = self.view
+                stage = Usd.Stage.CreateInMemory()
+                attr = stage.DefinePrim('/Value').CreateAttribute('number', Sdf.ValueTypeNames.Float)
+                time = Usd.TimeCode(10)
+                self.assertTrue(attr.Set(2, time))
+                view.loadStage(stage)
+                view._currentTimeCode = time
+                view._cachedValueWriteMode = 'animation'
+                history = view._undoHistory
+                hit = SimpleNamespace(
+                    row=SimpleNamespace(editable=True, kind='numeric', mungable=True,
+                                        components=(2,), type_name='float'),
+                    comp=0, nodeId='/Value', primPath='/Value', propertyName='number',
+                )
+                view._onValueCellPressed(hit, SimpleNamespace(position=lambda: QtCore.QPointF()))
+                view._updateMung(SimpleNamespace(position=lambda: QtCore.QPointF(100, 0),
+                                                 modifiers=lambda: QtCore.Qt.NoModifier))
+                layer = stage.GetRootLayer()
+                self.assertEqual(layer.QueryTimeSample(attr.GetPath(), 10), 3)
+                self.assertFalse(view._stageSync._handler.isEnabled())
+                self.assertTrue(attr.Set(8, time))
+                view._updateMung(SimpleNamespace(position=lambda: QtCore.QPointF(200, 0),
+                                                 modifiers=lambda: QtCore.Qt.NoModifier))
+
+                if action == 'cancel':
+                    view._cancelMung()
+                else:
+                    view._finishMung()
+                    history.undo(view)
+
+                self.assertEqual(layer.QueryTimeSample(attr.GetPath(), 10), 8)
+                self.assertEqual(attr.Get(time), 8)
+                self.assertFalse(history.canUndo())
+                self.assertFalse(history.canRedo())
+                self.assertIsNone(view._mungState)
+                self.assertIsNone(view._mungSuppression)
+                self.assertTrue(view._stageSync._handler.isEnabled())
+
     def test_refused_first_preview_does_not_record_undo_or_flash(self):
         stage, view = self.stage, self.view
         attr = stage.DefinePrim('/Value').CreateAttribute('number', Sdf.ValueTypeNames.Float)

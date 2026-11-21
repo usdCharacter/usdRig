@@ -2266,7 +2266,8 @@ def _updateMung(view, event):
             target = stage.GetEditTarget() if stage else None
             opinion = state.get("opinion")
             if opinion and (target != state["editTarget"] or not attr
-                            or opinion.path != target.MapToSpecPath(attr.GetPath())):
+                            or opinion.path != target.MapToSpecPath(attr.GetPath())
+                            or not opinion.matches(opinion.path)):
                 view._cancelMung()
                 return
             if not opinion and attr:
