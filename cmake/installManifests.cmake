@@ -68,13 +68,17 @@ include(\"${CMAKE_CURRENT_FUNCTION_LIST_DIR}/verifyManifests.cmake\")")
 set(_staged \"${_staged}\")
 set(_dest \"${RIGEXEC_MANIFEST_INSTALL_DESTINATION}\")
 # file(INSTALL) prepends DESTDIR itself; the generated script only knows the
-# logical prefix, so find the installed copy among the staging layouts.
-set(_candidates \"\${CMAKE_INSTALL_PREFIX}/\${_dest}\")
+# logical prefix. The effective destination is exactly one layout: with
+# DESTDIR set it is the staged tree only, never the logical prefix, so a
+# manifest already installed on the host is left untouched and the packaged
+# copy is the one verified and refreshed.
 if (DEFINED ENV{DESTDIR} AND NOT \"\$ENV{DESTDIR}\" STREQUAL \"\")
     string(REGEX REPLACE \"^[A-Za-z]:\" \"\" _stripped \"\${CMAKE_INSTALL_PREFIX}\")
-    list(APPEND _candidates
+    set(_candidates
         \"\$ENV{DESTDIR}/\${_stripped}/\${_dest}\"
         \"\$ENV{DESTDIR}/\${CMAKE_INSTALL_PREFIX}/\${_dest}\")
+else ()
+    set(_candidates \"\${CMAKE_INSTALL_PREFIX}/\${_dest}\")
 endif ()
 foreach (_manifest IN ITEMS runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes)
     set(_installed \"\")

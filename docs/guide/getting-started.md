@@ -58,8 +58,9 @@ manifests under `share/rigExec`, and nothing is written to the logical prefix.
 `DESTDIR` is honored by the Makefile and Ninja generators; where a Windows
 generator ignores it, set `CMAKE_STAGING_PREFIX` at configure time instead,
 which stages the same layout. Reinstalling over a prefix or staging root
-refreshes files whose staged copies changed even when their timestamps match
-what is installed.
+re-verifies the four SDK manifests under `share/rigExec` and rewrites them
+when their staged bytes changed, even when their timestamps match what is
+installed; staged installs never read from or write to the logical prefix.
 
 Link the installed scene target when compiling rigs from USD stages:
 

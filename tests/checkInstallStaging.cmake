@@ -1,9 +1,10 @@
 # Runs real `cmake --install` over the SDK manifest rule: a plain prefix, a
 # DESTDIR-staged install, a CMAKE_STAGING_PREFIX-staged install, an
 # incomplete staged export, a stale staged export, a vanished generated
-# input, and a same-timestamp staged change reinstalled over the same prefix
-# and staging root. The fixture project carries the production install rule,
-# so the check exercises the shipped install rather than a copy of it. Child
+# input, a same-timestamp staged change reinstalled over the same prefix
+# and staging root, and a reconfigure-without-rebuild against changed
+# inputs. The fixture project carries the production install rule, so the
+# check exercises the shipped install rather than a copy of it. Child
 # configures forward the parent's build tool and must find the make program
 # only through that forwarding, never through PATH.
 
@@ -45,7 +46,7 @@ endif()
 if (_generator_platform AND GENERATOR MATCHES "Visual Studio|Xcode")
     list(APPEND _forward "-A;${_generator_platform}")
 endif()
-if (_generator_toolset AND GENERATOR MATCHES "Visual Studio")
+if (_generator_toolset AND GENERATOR MATCHES "Visual Studio|Xcode")
     list(APPEND _forward "-T;${_generator_toolset}")
 endif()
 
@@ -140,6 +141,37 @@ function(_check_manifests root label)
         _assert_identical("${_staged}/${_manifest}.txt"
             "${root}/${INSTALL_DATADIR}/${_manifest}.txt" "${label}")
     endforeach()
+endfunction()
+
+# Copy a reference file's timestamp onto a target with the platform's
+# timestamp tool, then prove the copy took. cmake -E has no reference-mode
+# touch; passing -r there creates a file literally named "-r".
+function(_copy_mtime reference target)
+    if (WIN32)
+        execute_process(COMMAND powershell -NoProfile -Command
+            "(Get-Item -LiteralPath '${target}').LastWriteTime = (Get-Item -LiteralPath '${reference}').LastWriteTime"
+            RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
+    else ()
+        execute_process(COMMAND touch -r "${reference}" "${target}"
+            RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
+    endif ()
+    if (NOT _rc EQUAL 0)
+        _clean_and_fail("timestamp copy failed for ${target}: ${_out}${_err}")
+    endif ()
+    file(TIMESTAMP "${reference}" _ref_time "%s" UTC)
+    file(TIMESTAMP "${target}" _tgt_time "%s" UTC)
+    if (NOT _ref_time STREQUAL _tgt_time)
+        _clean_and_fail("timestamp copy: ${target} (${_tgt_time}) still "
+            "differs from ${reference} (${_ref_time})")
+    endif ()
+endfunction()
+
+function(_assert_different_bytes first second label)
+    file(READ "${first}" _first_hex HEX)
+    file(READ "${second}" _second_hex HEX)
+    if (_first_hex STREQUAL _second_hex)
+        _clean_and_fail("${label}: ${first} and ${second} already hold the same bytes")
+    endif ()
 endfunction()
 
 foreach (_manifest IN LISTS _manifests)
@@ -380,16 +412,18 @@ message(STATUS "vanished input: pass (cmake --install exited ${_rc} naming ${_va
 # (g) a staged change with an equal timestamp: install(FILES) calls the
 # destination up to date and skips the copy, so the install rule must
 # refresh the bytes instead of leaving them stale. Runs over a plain
-# prefix and a DESTDIR staging root, driven by the real producer.
+# prefix and a DESTDIR staging root, driven by the real producer; the
+# staged tree must be the only destination the rule touches, with a
+# sentinel at the logical prefix checked byte for byte.
 set(_gInputs "${SCRATCH_DIR}/refreshInputs")
 set(_gStage "${SCRATCH_DIR}/refreshStaged")
-function(_produce_g tag)
-    file(WRITE "${_gInputs}/runtimeSources.txt" "libs/rigExecMath/${tag}.cpp\n")
-    file(WRITE "${_gInputs}/runtimeIncludes.txt" "libs/rigExecMath\n")
-    file(WRITE "${_gInputs}/evalCoreSources.txt" "libs/rigExecMath/${tag}Core.cpp\n")
-    file(WRITE "${_gInputs}/evalCoreIncludes.txt" "libs/rigExecMath\n")
+function(_produce_manifests inputs_dir stage_dir tag)
+    file(WRITE "${inputs_dir}/runtimeSources.txt" "libs/rigExecMath/${tag}.cpp\n")
+    file(WRITE "${inputs_dir}/runtimeIncludes.txt" "include/${tag}/runtime\n")
+    file(WRITE "${inputs_dir}/evalCoreSources.txt" "libs/rigExecMath/${tag}Core.cpp\n")
+    file(WRITE "${inputs_dir}/evalCoreIncludes.txt" "include/${tag}/evalCore\n")
     execute_process(COMMAND "${CMAKE_COMMAND}"
-        "-DSOURCE_ROOT=${SOURCE_DIR}" "-DBUILD_DIR=${_gInputs}" "-DOUT_DIR=${_gStage}"
+        "-DSOURCE_ROOT=${SOURCE_DIR}" "-DBUILD_DIR=${inputs_dir}" "-DOUT_DIR=${stage_dir}"
         -P "${_export}"
         RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
     if (NOT _rc EQUAL 0)
@@ -397,7 +431,7 @@ function(_produce_g tag)
     endif()
 endfunction()
 
-_produce_g(first)
+_produce_manifests("${_gInputs}" "${_gStage}" first)
 _configure_fixture("${SCRATCH_DIR}/refresh" "${_gStage}"
     "-DRIGEXEC_MANIFEST_INPUT_DIR=${_gInputs}")
 set(_gPrefix "${SCRATCH_DIR}/refreshInstall")
@@ -411,14 +445,18 @@ foreach (_manifest IN LISTS _manifests)
         "${_gPrefix}/${INSTALL_DATADIR}/${_manifest}.txt" "refresh install")
 endforeach()
 
-_produce_g(second)
-# Make the regenerated staged copy look as old as the installed one, which
-# is exactly when install(FILES) reports Up-to-date and skips the copy.
+_produce_manifests("${_gInputs}" "${_gStage}" second)
+# Bring the regenerated staged copies to the installed files' timestamps:
+# exactly when install(FILES) reports Up-to-date and skips the copy. Prove
+# the equal-mtime, different-bytes state before reinstalling, or the
+# scenario proves nothing.
 foreach (_manifest IN LISTS _manifests)
-    execute_process(COMMAND "${CMAKE_COMMAND}" -E touch
-        "-r" "${_gPrefix}/${INSTALL_DATADIR}/${_manifest}.txt"
+    _copy_mtime("${_gPrefix}/${INSTALL_DATADIR}/${_manifest}.txt"
         "${_gStage}/${_manifest}.txt")
+    _assert_different_bytes("${_gStage}/${_manifest}.txt"
+        "${_gPrefix}/${INSTALL_DATADIR}/${_manifest}.txt" "refresh precondition")
 endforeach()
+message(STATUS "refresh: staged mtimes match the installed copies and their bytes differ")
 _install("${SCRATCH_DIR}/refresh" "--prefix;${_gPrefix}")
 if (NOT _rc EQUAL 0)
     _clean_and_fail("refresh: reinstall over the same prefix exited ${_rc}: ${_out}")
@@ -455,9 +493,15 @@ if (_broot)
     if (NOT _rc EQUAL 0)
         _clean_and_fail("refresh (DESTDIR): producer rerun failed: ${_out}${_err}")
     endif()
-    execute_process(COMMAND "${CMAKE_COMMAND}" -E touch
-        "-r" "${_gdRoot}/${INSTALL_DATADIR}/runtimeSources.txt"
+    # A manifest already installed on the host sits at the logical prefix.
+    # Staged installs must neither read from there nor write there: leave a
+    # distinctive copy and check it after the reinstall.
+    file(WRITE "${_gdLogical}/${INSTALL_DATADIR}/runtimeSources.txt" "hostInstalledSentinel\n")
+    file(WRITE "${SCRATCH_DIR}/sentinelExpect.txt" "hostInstalledSentinel\n")
+    _copy_mtime("${_gdRoot}/${INSTALL_DATADIR}/runtimeSources.txt"
         "${_gStage2}/runtimeSources.txt")
+    _assert_different_bytes("${_gStage2}/runtimeSources.txt"
+        "${_gdRoot}/${INSTALL_DATADIR}/runtimeSources.txt" "refresh (DESTDIR) precondition")
     set(ENV{DESTDIR} "${_gdStage}")
     _install("${SCRATCH_DIR}/refreshDest" "--prefix;${_gdLogical}")
     set(ENV{DESTDIR} "")
@@ -466,13 +510,46 @@ if (_broot)
     endif()
     _assert_identical("${_gStage2}/runtimeSources.txt"
         "${_gdRoot}/${INSTALL_DATADIR}/runtimeSources.txt" "reinstall over the same staging root")
-    if (_gdLogical AND EXISTS "${_gdLogical}/share")
-        _clean_and_fail("refresh (DESTDIR): the reinstall wrote to the unstaged prefix ${_gdLogical}")
+    _assert_identical("${SCRATCH_DIR}/sentinelExpect.txt"
+        "${_gdLogical}/${INSTALL_DATADIR}/runtimeSources.txt" "logical prefix sentinel")
+    file(GLOB_RECURSE _logical_files LIST_DIRECTORIES FALSE "${_gdLogical}/*")
+    if (NOT "${_logical_files}" STREQUAL "${_gdLogical}/${INSTALL_DATADIR}/runtimeSources.txt")
+        _clean_and_fail("refresh (DESTDIR): the reinstall wrote more than "
+            "the sentinel into the unstaged prefix ${_gdLogical}: ${_logical_files}")
     endif()
-    message(STATUS "refresh: pass (plain prefix and ${_broot} both updated to the changed staged bytes)")
+    message(STATUS "refresh: pass (plain prefix and ${_broot} both updated "
+        "to the changed staged bytes; the logical prefix kept only its sentinel)")
 else()
     message(STATUS "refresh: plain prefix only (no supported DESTDIR staging root)")
 endif()
+
+# (h) reconfigure without rebuild: install a valid export once, then
+# reconfigure the same build tree while a regenerated input list changed
+# and the staged manifest was not rebuilt. The install must name that
+# manifest instead of reinstalling the previous generation's bytes.
+set(_hInputs "${SCRATCH_DIR}/reconfInputs")
+set(_hStage "${SCRATCH_DIR}/reconfStaged")
+_produce_manifests("${_hInputs}" "${_hStage}" first)
+_configure_fixture("${SCRATCH_DIR}/reconf" "${_hStage}"
+    "-DRIGEXEC_MANIFEST_INPUT_DIR=${_hInputs}")
+set(ENV{DESTDIR} "")
+_install("${SCRATCH_DIR}/reconf" "--prefix;${SCRATCH_DIR}/reconfInstall")
+if (NOT _rc EQUAL 0)
+    _clean_and_fail("reconfigure regression: first install exited ${_rc}: ${_out}")
+endif()
+file(WRITE "${_hInputs}/runtimeSources.txt" "libs/rigExecMath/regenerated.cpp\n")
+_configure_fixture("${SCRATCH_DIR}/reconf" "${_hStage}"
+    "-DRIGEXEC_MANIFEST_INPUT_DIR=${_hInputs}")
+_install("${SCRATCH_DIR}/reconf" "--prefix;${SCRATCH_DIR}/reconfInstall")
+if (_rc EQUAL 0)
+    _clean_and_fail("reconfigure regression: cmake --install exited 0 after a "
+        "reconfigure changed runtimeSources input without a rebuild of the "
+        "staged manifest")
+endif()
+if (NOT "${_out}" MATCHES "runtimeSources")
+    _clean_and_fail("reconfigure regression: install failed (${_rc}) without naming runtimeSources: ${_out}")
+endif()
+message(STATUS "reconfigure regression: pass (cmake --install exited ${_rc} naming runtimeSources.txt)")
 
 set(ENV{PATH} "${_saved_path}")
 file(REMOVE_RECURSE "${SCRATCH_DIR}")

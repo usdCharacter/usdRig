@@ -710,8 +710,15 @@ def ctest_label(model: dict, index: dict, result: dict) -> str:
     the selected executables' own link lines, so a test labeled
     rigExecImaging still matches when the edit is in a library imaging
     publishes. An executable with no project-library label cannot be
-    matched that way; callers then use -R alone.
+    matched that way; callers then use -R alone. A selection containing a
+    script test (no executable, so no label) also falls back to -R: a
+    label tier would AND the script test out of the run.
     """
+    exe_tests = set()
+    for exe in result["direct_executables"]:
+        exe_tests.update(index["tests_by_exe"].get(exe, []))
+    if any(name not in exe_tests for name in result["direct_tests"]):
+        return ""
     free = set(usd_free_exes(model, index))
     direct = result["direct_executables"]
     if direct and all(exe in free for exe in direct):
@@ -915,6 +922,30 @@ def self_test() -> int:
     check("manifestRelocate.cmake selects both manifest tests",
           res["direct_tests"],
           ["testRigExecExactFpFragment", "testRigExecInstallStaging"])
+
+    # (f) A selection mixing an executable test with script tests must
+    # not emit a label tier: -L AND -R would exclude both script tests.
+    res = select(["cmake/exportManifests.cmake",
+                  "tests/testRigExecCompiledProgram.cpp"],
+                 real_model, real_index, False)
+    check("the mixed pair selects all three tests",
+          res["direct_tests"],
+          ["testRigExecCompiledProgram", "testRigExecExactFpFragment",
+           "testRigExecInstallStaging"])
+    mixed_label = ctest_label(real_model, real_index, res)
+    if mixed_label:
+        failures.append("mixed script selection emits no label tier")
+        print(f"  FAIL mixed script selection emits no label tier (got {mixed_label!r})")
+    else:
+        print("  ok   mixed script selection emits no label tier")
+    # An executable-only selection still emits its label tier.
+    res_exe_only = select(["tests/testRigExecCompiledProgram.cpp"],
+                          real_model, real_index, False)
+    if not ctest_label(real_model, real_index, res_exe_only):
+        failures.append("executable-only selection keeps its label tier")
+        print("  FAIL executable-only selection keeps its label tier")
+    else:
+        print("  ok   executable-only selection keeps its label tier")
 
     if failures:
         print(f"self-test FAILED: {len(failures)} check(s)")
