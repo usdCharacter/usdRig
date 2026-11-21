@@ -4,11 +4,13 @@
 # numeric probes. WITNESS_MODULE, WITNESS_FAST_FLAGS, WITNESS_FAST_HEAD,
 # WITNESS_FAST_TAIL and WITNESS_CONFLICT_FLAG come from the driver.
 # WITNESS_IF_LINK, WITNESS_PROP_LINK, WITNESS_BRANCH_LINK,
-# WITNESS_UNSUPPORTED_LINK and WITNESS_DEEP_LINK each add a target whose
+# WITNESS_UNSUPPORTED_LINK, WITNESS_DEEP_LINK, WITNESS_MIXED_DIRECT,
+# WITNESS_MIXED_IF and WITNESS_ONE_ARG_PROP each add a target whose
 # only route to Pkg::Fast or Pkg::Quiet is a single link expression: a
 # literal IF, a property-computed IF branch, a many-node shallow branch
-# tree, an unresolvable computed result, and a chain past the inspection
-# cutoff.
+# tree, an unresolvable computed result, a chain past the inspection
+# cutoff, a mixed literal-and-expression entry (direct and as an IF
+# result), and a one-operand TARGET_PROPERTY read from the consumer.
 cmake_minimum_required(VERSION 3.26)
 project(rigexec_exact_fp_witness LANGUAGES CXX)
 
@@ -50,7 +52,9 @@ add_executable(witnessExact
     "${_gen_dir}/generatedProbe.cpp")
 target_precompile_headers(witnessExact PRIVATE probePch.h)
 if (NOT WITNESS_IF_LINK AND NOT WITNESS_DEEP_LINK AND NOT WITNESS_PROP_LINK
-    AND NOT WITNESS_BRANCH_LINK AND NOT WITNESS_UNSUPPORTED_LINK)
+    AND NOT WITNESS_BRANCH_LINK AND NOT WITNESS_UNSUPPORTED_LINK
+    AND NOT WITNESS_MIXED_DIRECT AND NOT WITNESS_MIXED_IF
+    AND NOT WITNESS_ONE_ARG_PROP)
     target_link_libraries(witnessExact PRIVATE $<$<CONFIG:Release>:Pkg::Fast>)
 endif ()
 
@@ -82,15 +86,48 @@ if (WITNESS_PROP_LINK)
 endif ()
 
 if (WITNESS_BRANCH_LINK)
-    # One IF entry with six expression nodes but no branch nested deeper
-    # than four: every branch must be inspected, and a cutoff that counts
-    # popped nodes across sibling branches would reject this legal quiet
-    # rig as too deeply nested.
+    # One IF entry with seven expression nodes (excluding the predicate)
+    # but no branch nested deeper than four: every branch must be
+    # inspected, and a cutoff that counts popped nodes across sibling
+    # branches would reject this legal quiet rig as too deeply nested.
     add_executable(witnessBranching
         probe.cpp
         "${_gen_dir}/generatedProbe.cpp")
     target_link_libraries(witnessBranching PRIVATE
-        $<IF:$<CONFIG:Release>,$<1:$<1:$<1:$<1:Pkg::Quiet>>>>,Pkg::Quiet>)
+        $<IF:$<CONFIG:Release>,$<1:$<1:$<1:Pkg::Quiet>>>,$<1:$<1:$<1:Pkg::Quiet>>>>)
+endif ()
+
+if (WITNESS_MIXED_DIRECT)
+    # The link entry itself mixes literal text and an expression: CMake
+    # expands Pkg::$<1:Fast> to Pkg::Fast, but the unexpanded entry
+    # names no target, so a pass that only recognises entries beginning
+    # with "$<" tests the raw text as a target name, finds nothing, and
+    # accepts the fast interface un-inspected.
+    add_executable(witnessMixed
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+    target_link_libraries(witnessMixed PRIVATE Pkg::$<1:Fast>)
+endif ()
+
+if (WITNESS_MIXED_IF)
+    # The same expansion hidden in an IF result branch: only the branch
+    # text carries the expression, the entry itself unwraps cleanly.
+    add_executable(witnessMixedIf
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+    target_link_libraries(witnessMixedIf PRIVATE
+        $<IF:$<CONFIG:Release>,Pkg::$<1:Fast>,Pkg::Quiet>)
+endif ()
+
+if (WITNESS_ONE_ARG_PROP)
+    # The one-operand TARGET_PROPERTY form reads the property from the
+    # target that owns the link: it must be resolved there with the
+    # correct diagnostic, not fail on a missing second operand.
+    add_executable(witnessOneArg
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+    set_target_properties(witnessOneArg PROPERTIES FP_DEP "Pkg::Fast")
+    target_link_libraries(witnessOneArg PRIVATE $<TARGET_PROPERTY:FP_DEP>)
 endif ()
 
 if (WITNESS_UNSUPPORTED_LINK)

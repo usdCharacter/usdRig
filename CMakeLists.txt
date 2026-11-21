@@ -535,7 +535,8 @@ set_tests_properties(testRigExecInstallStaging PROPERTIES LABELS "fast"
 # the same helper, then checks the real compiler commands and runs numeric
 # probes proving the exact mode survives generator expressions, per-source
 # options, PCH creation and reuse, a third_party-named generated path, and a
-# relocated build directory. Needs only a C++ compiler.
+# relocated build directory, and that unrankable link expressions abort the
+# configuration by name. Needs only a C++ compiler.
 add_test(NAME testRigExecExactFpCompiler
     COMMAND "${CMAKE_COMMAND}"
         "-DWITNESS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests/exactFpWitness"

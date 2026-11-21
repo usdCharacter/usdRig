@@ -225,8 +225,11 @@ endfunction()
 # expressions are unwrapped to their real dependencies: $<IF:...> queues
 # both result branches but never its predicate, $<TARGET_PROPERTY:tgt,PROP>
 # is resolved to the property's value instead of queueing the lookup's own
-# operands, and a computed result that cannot be resolved statically is
-# rejected with the consuming target and the full entry named. Nesting is
+# operands (the one-operand form reads the property from the consuming
+# target), a mixed literal-and-expression entry such as Pkg::$<1:Fast>
+# expands to a name the link never spells and is rejected, and a computed
+# result that cannot be resolved statically is rejected with the consuming
+# target and the full entry named. Nesting is
 # measured per branch: many shallow branches all get inspected, while a
 # chain deeper than the cutoff is reported with the consuming target and
 # the expression named, never accepted. Link-relevant transport operators
@@ -262,7 +265,18 @@ function(rigexec_fp_reject_unrankable_conflicts target)
         "LINK_ONLY;BUILD_INTERFACE;INSTALL_INTERFACE;1")
     while (_rigexec_fp_queue)
         list(POP_FRONT _rigexec_fp_queue _rigexec_fp_lib)
-        if (_rigexec_fp_lib MATCHES "^\\$<")
+        if (NOT _rigexec_fp_lib MATCHES "^[$]<"
+            AND _rigexec_fp_lib MATCHES "[$]<")
+            # Mixed literal text and an expression ("Pkg::$<1:Fast>")
+            # expands to a dependency the link never spells: the
+            # unexpanded entry names no target, so the selected fast
+            # interface would pass un-inspected. Reject it naming the
+            # consumer and the full original entry.
+            list(APPEND _rigexec_fp_found
+                "${target}: mixed literal and expression link entry ${_rigexec_fp_lib}")
+            continue ()
+        endif ()
+        if (_rigexec_fp_lib MATCHES "^[$]<")
             # Unwrap generator expressions to their real dependencies. The
             # local queue carries (depth, expression) pairs so the cutoff
             # bounds one branch's nesting, not the total node count across
@@ -271,8 +285,15 @@ function(rigexec_fp_reject_unrankable_conflicts target)
             while (_rigexec_fp_local)
                 list(POP_FRONT _rigexec_fp_local _rigexec_fp_depth
                     _rigexec_fp_probe)
-                if (NOT _rigexec_fp_probe MATCHES "^\\$<")
-                    if (TARGET "${_rigexec_fp_probe}")
+                if (NOT _rigexec_fp_probe MATCHES "^[$]<")
+                    if (_rigexec_fp_probe MATCHES "[$]<")
+                        # A mixed branch (an IF result spelled
+                        # "Pkg::$<1:Fast>") selects a dependency no
+                        # listed name reveals: reject naming the
+                        # consumer, the branch text and the full entry.
+                        list(APPEND _rigexec_fp_found
+                            "${target}: mixed literal and expression link result ${_rigexec_fp_probe} in ${_rigexec_fp_lib}")
+                    elseif (TARGET "${_rigexec_fp_probe}")
                         list(APPEND _rigexec_fp_queue "${_rigexec_fp_probe}")
                     endif ()
                     continue ()
@@ -308,16 +329,25 @@ function(rigexec_fp_reject_unrankable_conflicts target)
                     # that form is rejected with the consumer and the
                     # full entry named.
                     list(LENGTH _rigexec_fp_segs _rigexec_fp_nsegs)
-                    list(GET _rigexec_fp_segs 0 _rigexec_fp_owner)
-                    list(GET _rigexec_fp_segs 1 _rigexec_fp_propname)
-                    if (_rigexec_fp_nsegs LESS 2
-                        OR "${_rigexec_fp_owner}" MATCHES "[$<>]"
-                        OR "${_rigexec_fp_propname}" MATCHES "[$<>]"
-                        OR _rigexec_fp_nsegs GREATER 2)
-                        # A computed owner or property name, or the
-                        # alternate-value form whose literal alternates
-                        # can themselves name targets, is not statically
-                        # resolvable.
+                    if (_rigexec_fp_nsegs EQUAL 1)
+                        # The one-operand form $<TARGET_PROPERTY:PROP>
+                        # reads the property from the target that owns
+                        # the link: resolve it there rather than index
+                        # a missing operand.
+                        set(_rigexec_fp_owner "${target}")
+                        list(GET _rigexec_fp_segs 0 _rigexec_fp_propname)
+                    elseif (_rigexec_fp_nsegs EQUAL 2)
+                        list(GET _rigexec_fp_segs 0 _rigexec_fp_owner)
+                        list(GET _rigexec_fp_segs 1 _rigexec_fp_propname)
+                    else ()
+                        list(APPEND _rigexec_fp_found
+                            "${target}: unresolvable link expression ${_rigexec_fp_lib}")
+                        continue ()
+                    endif ()
+                    if ("${_rigexec_fp_owner}" MATCHES "[$<>]"
+                        OR "${_rigexec_fp_propname}" MATCHES "[$<>]")
+                        # A computed owner or property name is not
+                        # statically resolvable.
                         list(APPEND _rigexec_fp_found
                             "${target}: unresolvable link expression ${_rigexec_fp_lib}")
                         continue ()

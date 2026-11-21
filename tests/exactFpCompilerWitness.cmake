@@ -392,10 +392,11 @@ if (NOT WITNESS_LOG MATCHES "Pkg::Fast: .*${_conflict_flag}")
         "dependency and its flag:\n${WITNESS_LOG}")
 endif ()
 
-# Leg 7: the mirror case - one IF entry with six expression nodes but no
-# branch deeper than four, all branches quiet. Per-branch nesting must
-# inspect every shallow branch and configure successfully; a cutoff that
-# counts nodes popped across sibling branches rejects this legal rig.
+# Leg 7: the mirror case - one IF entry with seven expression nodes
+# (excluding the predicate) but no branch deeper than four, all branches
+# quiet. Per-branch nesting must inspect every shallow branch and
+# configure successfully; a cutoff that counts nodes popped across
+# sibling branches rejects this legal rig.
 set(_work7 "${BUILD_ROOT}/branch-shallow")
 _witness_configure("${_work7}" -DWITNESS_BRANCH_LINK=ON)
 if (NOT WITNESS_RC EQUAL 0)
@@ -428,6 +429,65 @@ endif ()
 if (NOT WITNESS_LOG MATCHES "TARGET_PROPERTY:witnessBad,")
     _witness_fail("unresolvable diagnostic drops the full original "
         "expression:\n${WITNESS_LOG}")
+endif ()
+
+# Leg 9: a link entry mixing literal text and an expression -
+# Pkg::$<1:Fast> - expands to Pkg::Fast while the entry itself names no
+# target. The pass must reject it naming the consumer and the full
+# original entry, never test the unexpanded text as a target name.
+set(_work9 "${BUILD_ROOT}/mixed-direct")
+_witness_configure("${_work9}" -DWITNESS_CONFLICT=interface
+    -DWITNESS_MIXED_DIRECT=ON)
+if (WITNESS_RC EQUAL 0)
+    _witness_fail("mixed literal/expression entry configured without a "
+        "diagnostic:\n${WITNESS_LOG}")
+endif ()
+if (NOT WITNESS_LOG MATCHES "witnessMixed: mixed literal and expression link entry")
+    _witness_fail("mixed-entry diagnostic does not name the consumer and "
+        "class:\n${WITNESS_LOG}")
+endif ()
+if (NOT WITNESS_LOG MATCHES "Pkg::[$]<1:Fast>")
+    _witness_fail("mixed-entry diagnostic drops the full original entry:\n"
+        "${WITNESS_LOG}")
+endif ()
+
+# Leg 10: the same expansion hidden in an IF result branch: the entry
+# unwraps cleanly, so the rejection must come from inspecting the branch
+# text, naming the consumer, the branch and the full original expression.
+set(_work10 "${BUILD_ROOT}/mixed-if")
+_witness_configure("${_work10}" -DWITNESS_CONFLICT=interface
+    -DWITNESS_MIXED_IF=ON)
+if (WITNESS_RC EQUAL 0)
+    _witness_fail("mixed IF result configured without a diagnostic:\n"
+        "${WITNESS_LOG}")
+endif ()
+if (NOT WITNESS_LOG MATCHES "witnessMixedIf: mixed literal and expression link result")
+    _witness_fail("mixed-branch diagnostic does not name the consumer and "
+        "class:\n${WITNESS_LOG}")
+endif ()
+if (NOT WITNESS_LOG MATCHES "Pkg::[$]<1:Fast> in [$]<IF")
+    _witness_fail("mixed-branch diagnostic drops the branch text or the "
+        "full original expression:\n${WITNESS_LOG}")
+endif ()
+
+# Leg 11: the one-operand form $<TARGET_PROPERTY:FP_DEP> reads the
+# property from the consuming target: it must be resolved there (and its
+# selected fast interface rejected), not fail on a missing second
+# operand with a list-index error.
+set(_work11 "${BUILD_ROOT}/one-arg-prop")
+_witness_configure("${_work11}" -DWITNESS_CONFLICT=interface
+    -DWITNESS_ONE_ARG_PROP=ON)
+if (WITNESS_RC EQUAL 0)
+    _witness_fail("one-operand property link configured without a "
+        "diagnostic:\n${WITNESS_LOG}")
+endif ()
+if (WITNESS_LOG MATCHES "out of range")
+    _witness_fail("one-operand TARGET_PROPERTY hit a list-index error "
+        "instead of the intended diagnostic:\n${WITNESS_LOG}")
+endif ()
+if (NOT WITNESS_LOG MATCHES "Pkg::Fast: .*${_conflict_flag}")
+    _witness_fail("one-operand property link did not resolve the property "
+        "on the consumer and name the selected dependency:\n${WITNESS_LOG}")
 endif ()
 
 message(STATUS "exactFpCompilerWitness: command audit and numeric probes "
