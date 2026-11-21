@@ -2,6 +2,9 @@
 #include "geometryKernels.h"
 #include "deltaMushKernel.h"
 #include "latticeKernel.h"
+#include "meshBoundsKernel.h"
+#include "smoothKernel.h"
+#include "surfaceProjectKernel.h"
 #include "spatialAccel.h"
 #include "wireBasisKernel.h"
 #include "wrinkleKernel.h"
@@ -14,8 +17,6 @@
 #include <cmath>
 #include <memory>
 #include <limits>
-#include <map>
-#include <set>
 #include <utility>
 
 namespace rigExec {
@@ -23,44 +24,14 @@ namespace rigExec {
 double
 RigExecBoundVolume(const GfVec3f *points, size_t count)
 {
-    if (count < 2) {
-        return 0.0;
-    }
-    GfVec3f lo = points[0], hi = points[0];
-    for (size_t i = 1; i < count; ++i) {
-        for (int a = 0; a < 3; ++a) {
-            lo[a] = std::min(lo[a], points[i][a]);
-            hi[a] = std::max(hi[a], points[i][a]);
-        }
-    }
-    const GfVec3f d = hi - lo;
-    return double(d[0]) * double(d[1]) * double(d[2]);
+    return RigExecBoundVolumeKernel(points, count);
 }
 
 void
 RigExecApplyVolumeCorrect(std::vector<GfVec3f> *points, double referenceVolume,
                           double strength)
 {
-    if (points->empty() || referenceVolume <= 0.0 || strength <= 0.0) {
-        return;
-    }
-    const double current = RigExecBoundVolume(points->data(), points->size());
-    if (current <= 0.0) {
-        return; // degenerate bound: no deterministic correction exists
-    }
-    // Uniform scale about the centroid moving the bound volume toward the
-    // reference; strength blends the correction.
-    const double full = std::cbrt(referenceVolume / current);
-    const double scale =
-        1.0 + std::min(std::max(strength, 0.0), 1.0) * (full - 1.0);
-    GfVec3f centroid(0);
-    for (const GfVec3f &p : *points) {
-        centroid += p;
-    }
-    centroid /= float(points->size());
-    for (GfVec3f &p : *points) {
-        p = centroid + (p - centroid) * float(scale);
-    }
+    RigExecApplyVolumeCorrectKernel(points, referenceVolume, strength);
 }
 
 bool
@@ -219,33 +190,8 @@ RigExecApplyLaplacianSmoothWithAdjacency(std::vector<GfVec3f> *points,
                                          double strength, const GfVec3f *source,
                                          size_t sourceCount)
 {
-    const double s = std::min(std::max(strength, 0.0), 1.0);
-    if (points->empty() || s <= 0.0) {
-        return;
-    }
-    if (!adjacency.Covers(points->size())) {
-        return; // invalid topology: pass through
-    }
-    std::vector<GfVec3f> owned;
-    const GfVec3f *src = source;
-    if (!src || sourceCount != points->size()) {
-        if (src) {
-            return; // a short range reads OOB: pass through instead
-        }
-        owned = *points;
-        src = owned.data();
-    }
-    for (size_t i = 0; i < points->size(); ++i) {
-        if (adjacency.neighbors[i].empty()) {
-            continue;
-        }
-        GfVec3f average(0);
-        for (int n : adjacency.neighbors[i]) {
-            average += src[n];
-        }
-        average /= float(adjacency.neighbors[i].size());
-        (*points)[i] = src[i] + (average - src[i]) * float(s);
-    }
+    RigExecApplyLaplacianSmoothWithAdjacencyKernel(points, adjacency, strength,
+                                                   source, sourceCount);
 }
 
 void
@@ -256,16 +202,9 @@ RigExecApplyLaplacianSmooth(std::vector<GfVec3f> *points,
                             size_t faceVertexIndicesSize, double strength,
                             const GfVec3f *source, size_t sourceCount)
 {
-    const double s = std::min(std::max(strength, 0.0), 1.0);
-    if (points->empty() || s <= 0.0) {
-        return;
-    }
-    RigExecMeshAdjacency adjacency;
-    RigExecBuildMeshAdjacency(points->size(), faceVertexCounts,
-                              faceVertexCountsSize, faceVertexIndices,
-                              faceVertexIndicesSize, &adjacency);
-    RigExecApplyLaplacianSmoothWithAdjacency(points, adjacency, strength,
-                                             source, sourceCount);
+    RigExecApplyLaplacianSmoothMeshKernel(
+        points, faceVertexCounts, faceVertexCountsSize, faceVertexIndices,
+        faceVertexIndicesSize, strength, source, sourceCount);
 }
 
 void
@@ -322,170 +261,10 @@ RigExecBuildVertexNormalsTopology(size_t pointsSize,
                                   const int *faceVertexIndices,
                                   size_t faceVertexIndicesSize)
 {
-    RigExecVertexNormalsTopology t;
-    t.pointCount = pointsSize;
-    t.pointIncidences.assign(pointsSize + 1, 0);
-    if ((faceVertexCountsSize > 0 && !faceVertexCounts) ||
-        (faceVertexIndicesSize > 0 && !faceVertexIndices)) {
-        t.pointCount = size_t(-1);
-        return t;
-    }
-    t.faceVertexCountsSize = faceVertexCountsSize;
-    t.faceVertexIndicesSize = faceVertexIndicesSize;
-    // The faces before the first malformed one (fewer than three corners,
-    // or running past the index array).
-    t.faceOffsets.reserve(faceVertexCountsSize);
-    size_t offset = 0;
-    for (size_t f = 0; f < faceVertexCountsSize; ++f) {
-        const int faceCount = faceVertexCounts[f];
-        if (faceCount < 3 ||
-            offset + static_cast<size_t>(faceCount) > faceVertexIndicesSize) {
-            t.malformed = true;
-            break;
-        }
-        t.faceOffsets.push_back(offset);
-        offset += faceCount;
-    }
-    const auto isPoint = [pointsSize](int v) {
-        return v >= 0 && static_cast<size_t>(v) < pointsSize;
-    };
-    for (size_t c = 0; c < offset; ++c) {
-        const int v = faceVertexIndices[c];
-        if (isPoint(v))
-            ++t.pointIncidences[size_t(v) + 1];
-    }
-    for (size_t i = 0; i < pointsSize; ++i)
-        t.pointIncidences[i + 1] += t.pointIncidences[i];
-    t.incidenceFaces.resize(t.pointIncidences[pointsSize]);
-    t.incidenceCorners.resize(t.pointIncidences[pointsSize]);
-    std::vector<size_t> cursor(t.pointIncidences.begin(),
-                               t.pointIncidences.end() - 1);
-    for (size_t f = 0; f < t.faceOffsets.size(); ++f) {
-        const size_t first = t.faceOffsets[f];
-        const int faceCount = faceVertexCounts[f];
-        for (int k = 0; k < faceCount; ++k) {
-            const int v = faceVertexIndices[first + k];
-            if (!isPoint(v))
-                continue;
-            const size_t slot = cursor[size_t(v)]++;
-            t.incidenceFaces[slot] = f;
-            t.incidenceCorners[slot] = first + k;
-        }
-    }
-    return t;
+    return RigExecBuildVertexNormalsTopologyKernel(
+        pointsSize, faceVertexCounts, faceVertexCountsSize, faceVertexIndices,
+        faceVertexIndicesSize);
 }
-
-namespace {
-
-// The walk over a \p topology built from these arrays.
-std::vector<GfVec3f>
-_ComputeVertexNormals(const GfVec3f *points, size_t pointsSize,
-                      const int *faceVertexCounts, const int *faceVertexIndices,
-                      const RigExecVertexNormalsTopology &topology,
-                      const RigExecRangeRunner *ranges)
-{
-    std::vector<GfVec3f> normals(pointsSize, GfVec3f(0));
-    const std::vector<size_t> &faceOffsets = topology.faceOffsets;
-    const size_t faces = faceOffsets.size();
-    const size_t corners =
-        faces ? faceOffsets.back() + size_t(faceVertexCounts[faces - 1]) : 0;
-    const auto isPoint = [pointsSize](int v) {
-        return v >= 0 && static_cast<size_t>(v) < pointsSize;
-    };
-
-    // Per face, independently: its unit Newell normal and each usable
-    // corner's interior angle. A face that contributes nothing (fewer than
-    // three usable corners, or fully degenerate) is marked and skipped.
-    std::vector<GfVec3f> faceNormals(faces, GfVec3f(0));
-    std::vector<char> contributes(faces, 0);
-    std::vector<float> cornerWeights(corners, 0.0f);
-    RigExecRunRanges(ranges, faces, 512, [&](size_t begin, size_t end) {
-        std::vector<int> ring;
-        std::vector<size_t> slots;
-        for (size_t f = begin; f < end; ++f) {
-            const size_t first = faceOffsets[f];
-            const int faceCount = faceVertexCounts[f];
-            ring.clear();
-            slots.clear();
-            for (int k = 0; k < faceCount; ++k) {
-                const int v = faceVertexIndices[first + k];
-                if (isPoint(v)) {
-                    ring.push_back(v);
-                    slots.push_back(first + k);
-                }
-            }
-            const size_t n = ring.size();
-            if (n < 3) {
-                continue;
-            }
-
-            // Newell's method: correct for a non-planar n-gon and
-            // independent of triangulation. A fan triangulation gives a
-            // vertex beside the anchor only a sliver triangle, and mirrored
-            // slivers along a symmetry seam cancel to a zero normal.
-            GfVec3f faceNormal(0);
-            for (size_t k = 0; k < n; ++k) {
-                const GfVec3f &p = points[ring[k]];
-                const GfVec3f &q = points[ring[(k + 1) % n]];
-                faceNormal += GfVec3f((p[1] - q[1]) * (p[2] + q[2]),
-                                      (p[2] - q[2]) * (p[0] + q[0]),
-                                      (p[0] - q[0]) * (p[1] + q[1]));
-            }
-            const float faceLength = faceNormal.GetLength();
-            if (faceLength < 1e-20f) {
-                continue;
-            }
-            faceNormal /= faceLength;
-            faceNormals[f] = faceNormal;
-            contributes[f] = 1;
-
-            // Weighted by the interior angle at each corner; zero-length
-            // edges fall back to an unweighted share.
-            for (size_t k = 0; k < n; ++k) {
-                const GfVec3f &p = points[ring[k]];
-                const GfVec3f a = points[ring[(k + 1) % n]] - p;
-                const GfVec3f b = points[ring[(k + n - 1) % n]] - p;
-                const float la = a.GetLength(), lb = b.GetLength();
-                float weight = 1.0f;
-                if (la > 1e-20f && lb > 1e-20f) {
-                    const GfVec3f ua = a / la, ub = b / lb;
-                    weight =
-                        std::atan2(GfCross(ua, ub).GetLength(), GfDot(ua, ub));
-                }
-                cornerWeights[slots[k]] = weight;
-            }
-        }
-    });
-
-    // Each point sums its own incidences in face order then corner order,
-    // the sequence of a single serial walk, so its bits do not depend on
-    // how the points are split. A malformed topology leaves the sums
-    // unnormalized.
-    const bool normalize = !topology.malformed;
-    RigExecRunRanges(ranges, pointsSize, 2048, [&](size_t begin, size_t end) {
-        for (size_t i = begin; i < end; ++i) {
-            GfVec3f sum(0);
-            for (size_t s = topology.pointIncidences[i];
-                 s < topology.pointIncidences[i + 1]; ++s) {
-                const size_t f = topology.incidenceFaces[s];
-                if (contributes[f]) {
-                    sum += faceNormals[f] *
-                           cornerWeights[topology.incidenceCorners[s]];
-                }
-            }
-            if (normalize) {
-                const float len = sum.GetLength();
-                if (len > 1e-12f) {
-                    sum /= len;
-                }
-            }
-            normals[i] = sum;
-        }
-    });
-    return normals;
-}
-
-} // namespace
 
 std::vector<GfVec3f>
 RigExecComputeVertexNormals(const GfVec3f *points, size_t pointsSize,
@@ -496,17 +275,9 @@ RigExecComputeVertexNormals(const GfVec3f *points, size_t pointsSize,
                             const RigExecVertexNormalsTopology &topology,
                             const RigExecRangeRunner *ranges)
 {
-    // A null range with a nonzero size answers like a mesh with no
-    // usable faces: zero normals.
-    if ((pointsSize > 0 && !points) ||
-        (faceVertexCountsSize > 0 && !faceVertexCounts) ||
-        (faceVertexIndicesSize > 0 && !faceVertexIndices) ||
-        !topology.Fits(pointsSize, faceVertexCountsSize,
-                       faceVertexIndicesSize)) {
-        return std::vector<GfVec3f>(pointsSize, GfVec3f(0));
-    }
-    return _ComputeVertexNormals(points, pointsSize, faceVertexCounts,
-                                 faceVertexIndices, topology, ranges);
+    return RigExecComputeVertexNormalsKernel(
+        points, pointsSize, faceVertexCounts, faceVertexCountsSize,
+        faceVertexIndices, faceVertexIndicesSize, &topology, ranges);
 }
 
 std::vector<GfVec3f>
@@ -517,17 +288,9 @@ RigExecComputeVertexNormals(const GfVec3f *points, size_t pointsSize,
                             size_t faceVertexIndicesSize,
                             const RigExecRangeRunner *ranges)
 {
-    if ((pointsSize > 0 && !points) ||
-        (faceVertexCountsSize > 0 && !faceVertexCounts) ||
-        (faceVertexIndicesSize > 0 && !faceVertexIndices)) {
-        return std::vector<GfVec3f>(pointsSize, GfVec3f(0));
-    }
-    return _ComputeVertexNormals(
-        points, pointsSize, faceVertexCounts, faceVertexIndices,
-        RigExecBuildVertexNormalsTopology(
-            pointsSize, faceVertexCounts, faceVertexCountsSize,
-            faceVertexIndices, faceVertexIndicesSize),
-        ranges);
+    return RigExecComputeVertexNormalsKernel(
+        points, pointsSize, faceVertexCounts, faceVertexCountsSize,
+        faceVertexIndices, faceVertexIndicesSize, nullptr, ranges);
 }
 
 std::vector<GfVec3f>
@@ -545,25 +308,7 @@ std::vector<GfVec3f>
 RigExecComputeExtent(const GfVec3f *points, size_t pointsSize,
                      const float *widths, size_t widthsSize)
 {
-    if (pointsSize == 0 || !points) {
-        return {};
-    }
-    // A null widths range reads as no widths, whatever its size claims.
-    const size_t widthsCount = widths ? widthsSize : 0;
-    GfVec3f lo = points[0], hi = points[0];
-    for (size_t i = 0; i < pointsSize; ++i) {
-        float pad = 0.0f;
-        if (widthsCount == pointsSize) {
-            pad = widths[i] * 0.5f;
-        } else if (widthsCount == 1) {
-            pad = widths[0] * 0.5f;
-        }
-        for (int a = 0; a < 3; ++a) {
-            lo[a] = std::min(lo[a], points[i][a] - pad);
-            hi[a] = std::max(hi[a], points[i][a] + pad);
-        }
-    }
-    return {lo, hi};
+    return RigExecComputeExtentKernel(points, pointsSize, widths, widthsSize);
 }
 
 std::vector<GfVec3f>
@@ -612,59 +357,6 @@ RigExecApplyLattice(std::vector<GfVec3f> *points,
                               divisions[1], divisions[2], cache);
 }
 
-namespace {
-
-GfVec3f
-_ClosestPointOnTriangle(const GfVec3f &p, const GfVec3f &a, const GfVec3f &b,
-                        const GfVec3f &c)
-{
-    // Ericson, Real-Time Collision Detection, 5.1.5.
-    const GfVec3f ab = b - a, ac = c - a, ap = p - a;
-    const float d1 = GfDot(ab, ap), d2 = GfDot(ac, ap);
-    if (d1 <= 0 && d2 <= 0)
-        return a;
-    const GfVec3f bp = p - b;
-    const float d3 = GfDot(ab, bp), d4 = GfDot(ac, bp);
-    if (d3 >= 0 && d4 <= d3)
-        return b;
-    const float vc = d1 * d4 - d3 * d2;
-    if (vc <= 0 && d1 >= 0 && d3 <= 0) {
-        const float v = d1 / (d1 - d3);
-        return a + ab * v;
-    }
-    const GfVec3f cp = p - c;
-    const float d5 = GfDot(ab, cp), d6 = GfDot(ac, cp);
-    if (d6 >= 0 && d5 <= d6)
-        return c;
-    const float vb = d5 * d2 - d1 * d6;
-    if (vb <= 0 && d2 >= 0 && d6 <= 0) {
-        const float w = d2 / (d2 - d6);
-        return a + ac * w;
-    }
-    const float va = d3 * d6 - d5 * d4;
-    if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) {
-        const float w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
-        return b + (c - b) * w;
-    }
-    const float denom = 1.0f / (va + vb + vc);
-    const float v = vb * denom, w = vc * denom;
-    return a + ab * v + ac * w;
-}
-
-// Whether an owned key still describes a borrowed range: same size and
-// same values. A null range only ever matches the empty key, and the
-// projector returns before validation on a null range with a nonzero
-// size, so every validated call below compares against real storage.
-template <typename T>
-bool
-_RangeMatches(const std::vector<T> &key, const T *data, size_t size)
-{
-    return key.size() == size &&
-           (size == 0 || std::equal(key.begin(), key.end(), data));
-}
-
-} // namespace
-
 void
 RigExecBuildSurfaceAccel(const int *faceVertexCounts,
                          size_t faceVertexCountsSize,
@@ -673,35 +365,9 @@ RigExecBuildSurfaceAccel(const int *faceVertexCounts,
                          const GfVec3f *surfacePoints, size_t surfacePointsSize,
                          RigExecSurfaceAccel *accel)
 {
-    if (!accel) {
-        return;
-    }
-    RigExecSurfaceAccel built;
-    if (faceVertexCounts) {
-        built.counts.assign(faceVertexCounts,
-                            faceVertexCounts + faceVertexCountsSize);
-    }
-    if (faceVertexIndices) {
-        built.indices.assign(faceVertexIndices,
-                             faceVertexIndices + faceVertexIndicesSize);
-    }
-    if (surfacePoints) {
-        built.points.assign(surfacePoints, surfacePoints + surfacePointsSize);
-    }
-    built.fan = std::make_shared<const RigExecFanTrisH7>(RigExecBuildFanTrisH7(
-        faceVertexCounts, faceVertexCountsSize, faceVertexIndices,
-        faceVertexIndicesSize, surfacePointsSize));
-    if (!built.fan->truncated && built.fan->tris.size() >= kRigExecBvhMinTris &&
-        (surfacePointsSize == 0 || surfacePoints)) {
-        auto bvh = std::make_shared<RigExecTriangleBvh<GfVec3f>>();
-        if (bvh->Build(surfacePoints, surfacePointsSize, built.fan->tris.data(),
-                       built.fan->tris.size())) {
-            built.bvh = std::move(bvh);
-        }
-        // Build failed (non-finite surface points): the null bvh runs the
-        // verbatim loop, whose NaN behavior is the defined one.
-    }
-    *accel = std::move(built);
+    RigExecBuildSurfaceAccelKernel(faceVertexCounts, faceVertexCountsSize,
+                                   faceVertexIndices, faceVertexIndicesSize,
+                                   surfacePoints, surfacePointsSize, accel);
 }
 
 void
@@ -725,80 +391,10 @@ RigExecApplySurfaceProject(std::vector<GfVec3f> *points,
                            size_t faceVertexIndicesSize, double weight,
                            const RigExecSurfaceAccel *accel)
 {
-    const double w = std::min(std::max(weight, 0.0), 1.0);
-    if (points->empty() || surfacePointsSize == 0 || w <= 0.0) {
-        return;
-    }
-    if (!surfacePoints || (faceVertexCountsSize > 0 && !faceVertexCounts) ||
-        (faceVertexIndicesSize > 0 && !faceVertexIndices)) {
-        return; // a null range with a nonzero size: pass through
-    }
-    // One fan triangulation for the whole call instead of one per point.
-    // A truncated walk returns with no point modified: the nested walk
-    // below always meets the overrun during its first point.
-    RigExecSurfaceAccel unretained;
-    // A stale entry -- same cardinality but new topology or, on the
-    // BVH path, new points -- rebuilds rather than answering wrong.
-    // The fan only depends on the topology and the point count, so
-    // below the gate the values are not compared: the verbatim loop
-    // walks the current inputs either way.
-    if (!accel || !accel->fan ||
-        !_RangeMatches(accel->counts, faceVertexCounts, faceVertexCountsSize) ||
-        !_RangeMatches(accel->indices, faceVertexIndices,
-                       faceVertexIndicesSize) ||
-        accel->points.size() != surfacePointsSize ||
-        (accel->bvh &&
-         !_RangeMatches(accel->points, surfacePoints, surfacePointsSize))) {
-        RigExecBuildSurfaceAccel(faceVertexCounts, faceVertexCountsSize,
-                                 faceVertexIndices, faceVertexIndicesSize,
-                                 surfacePoints, surfacePointsSize, &unretained);
-        accel = &unretained;
-    }
-    const RigExecFanTrisH7 &fan = *accel->fan;
-    if (fan.truncated) {
-        return;
-    }
-    if (fan.tris.size() >= kRigExecBvhMinTris &&
-        points->size() >= kRigExecBvhMinQueries && accel->bvh) {
-        for (GfVec3f &p : *points) {
-            const GfVec3f best = accel->bvh->QueryNearest(
-                p, surfacePoints, fan.tris.data(), _ClosestPointOnTriangle);
-            p = p + (best - p) * float(w);
-        }
-        return;
-    }
-    for (GfVec3f &p : *points) {
-        float bestDistSq = std::numeric_limits<float>::max();
-        GfVec3f best = p;
-        size_t offset = 0;
-        for (size_t f = 0; f < faceVertexCountsSize; ++f) {
-            const int faceCount = faceVertexCounts[f];
-            for (int c = 1; c + 1 < faceCount; ++c) {
-                const size_t i2 = offset + c + 1;
-                if (i2 >= faceVertexIndicesSize) {
-                    return;
-                }
-                const int ia = faceVertexIndices[offset];
-                const int ib = faceVertexIndices[offset + c];
-                const int ic = faceVertexIndices[i2];
-                if (ia < 0 || ib < 0 || ic < 0 ||
-                    size_t(ia) >= surfacePointsSize ||
-                    size_t(ib) >= surfacePointsSize ||
-                    size_t(ic) >= surfacePointsSize) {
-                    continue;
-                }
-                const GfVec3f q = _ClosestPointOnTriangle(
-                    p, surfacePoints[ia], surfacePoints[ib], surfacePoints[ic]);
-                const float distSq = (q - p).GetLengthSq();
-                if (distSq < bestDistSq) {
-                    bestDistSq = distSq;
-                    best = q;
-                }
-            }
-            offset += faceCount;
-        }
-        p = p + (best - p) * float(w);
-    }
+    RigExecApplySurfaceProjectKernel(points, surfacePoints, surfacePointsSize,
+                                     faceVertexCounts, faceVertexCountsSize,
+                                     faceVertexIndices, faceVertexIndicesSize,
+                                     weight, accel);
 }
 
 void

@@ -31,8 +31,7 @@ RigExecLatticeBernstein(int degree, int index, double t)
     for (int k = 0; k < index; ++k) {
         coefficient *= double(degree - k) / double(index - k);
     }
-    return coefficient * std::pow(t, index) *
-           std::pow(1.0 - t, degree - index);
+    return coefficient * std::pow(t, index) * std::pow(1.0 - t, degree - index);
 }
 
 /// A lattice bind: every rest point's Bernstein factors along the three cage
@@ -94,8 +93,8 @@ RigExecLatticePointFactors(const Point &restPoint, const Point &lo,
     bool bounded = true;
     for (int a = 0; a < 3; ++a) {
         // Bind coordinate from the REST point, clamped into the cage.
-        const float t = std::min(
-            1.0f, std::max(0.0f, (restPoint[a] - lo[a]) / size[a]));
+        const float t =
+            std::min(1.0f, std::max(0.0f, (restPoint[a] - lo[a]) / size[a]));
         const int d = divisions[a];
         int begin = d, end = 0;
         for (int k = 0; k < d; ++k) {
@@ -125,9 +124,9 @@ RigExecLatticePointFactors(const Point &restPoint, const Point &lo,
 /// fresh one would.
 template <class Point>
 void
-RigExecBuildLatticeBasis(const Point *restPoints, size_t count,
-                         const Point &lo, const Point &size, int dx, int dy,
-                         int dz, RigExecLatticeBasis *basis)
+RigExecBuildLatticeBasis(const Point *restPoints, size_t count, const Point &lo,
+                         const Point &size, int dx, int dy, int dz,
+                         RigExecLatticeBasis *basis)
 {
     const int divisions[3] = {dx, dy, dz};
     for (int a = 0; a < 3; ++a) {
@@ -195,8 +194,7 @@ RigExecLatticePointDelta(const Point *cageDeltas, int dx, int dy, int dz,
             for (int b = r[2]; b < r[3]; ++b) {
                 for (int a = r[0]; a < r[1]; ++a) {
                     delta += cageDeltas[(c * dy + b) * dx + a] *
-                             float(fa[a - r[0]] * fb[b - r[2]] *
-                                   fc[c - r[4]]);
+                             float(fa[a - r[0]] * fb[b - r[2]] * fc[c - r[4]]);
                 }
             }
         }
@@ -208,8 +206,8 @@ RigExecLatticePointDelta(const Point *cageDeltas, int dx, int dy, int dz,
                 for (int a = 0; a < dx; ++a) {
                     const double va =
                         a >= r[0] && a < r[1] ? fa[a - r[0]] : 0.0;
-                    delta += cageDeltas[(c * dy + b) * dx + a] *
-                             float(va * vb * vc);
+                    delta +=
+                        cageDeltas[(c * dy + b) * dx + a] * float(va * vb * vc);
                 }
             }
         }
@@ -229,7 +227,7 @@ RigExecApplyLatticeBasisGroup(Point *out, size_t count, size_t begin,
                               const Point *cageDeltas)
 {
     if (basis.ranges.size() != count * 6) {
-        return;  // a basis for other points: pass through
+        return; // a basis for other points: pass through
     }
     end = std::min(end, count);
     if (begin >= end) {
@@ -312,9 +310,8 @@ RigExecApplyLatticeStreamingGroup(Point *out, size_t begin, size_t end,
         const double *fa = scratch.data() + r[0];
         const double *fb = scratch.data() + dx + r[2];
         const double *fc = scratch.data() + dx + dy + r[4];
-        out[i - begin] += RigExecLatticePointDelta(cageDeltas, dx, dy, dz, r,
-                                                   fa, fb, fc,
-                                                   bounded && finite);
+        out[i - begin] += RigExecLatticePointDelta(
+            cageDeltas, dx, dy, dz, r, fa, fb, fc, bounded && finite);
     }
 }
 
@@ -357,8 +354,7 @@ RigExecApplyLatticeStreaming(Point *points, size_t count,
 /// shared_ptr<const>: RigExecSurfaceKernelCache::LatticeBasis builds a
 /// revision's own, and RigExecLatticeBindSharing hands revisions whose binds
 /// are equal one instance.
-template <class Point>
-struct RigExecLatticeBind {
+template <class Point> struct RigExecLatticeBind {
     static_assert(sizeof(Point) == 3 * sizeof(float),
                   "three packed floats per point");
     std::vector<Point> rest;
@@ -371,10 +367,9 @@ struct RigExecLatticeBind {
     /// factor of every point. In double, so no product wraps.
     static double Bytes(size_t count, int dx, int dy, int dz)
     {
-        return double(count) *
-               (double(sizeof(Point) + 6 * sizeof(int)) +
-                double(sizeof(double)) *
-                    (double(dx) + double(dy) + double(dz)));
+        return double(count) * (double(sizeof(Point) + 6 * sizeof(int)) +
+                                double(sizeof(double)) *
+                                    (double(dx) + double(dy) + double(dz)));
     }
 
     /// Whether this bind was built from these inputs, comparing every
@@ -431,11 +426,9 @@ struct RigExecLatticeBind {
 /// their revision's step writes. The binds are immutable and the answer is
 /// the bind's either way. A bind already shared compares by pointer, so a
 /// run that built none compares no points.
-template <class Point>
-class RigExecLatticeBindSharing {
+template <class Point> class RigExecLatticeBindSharing {
 public:
-    template <class Cache>
-    void Offer(Cache *cache)
+    template <class Cache> void Offer(Cache *cache)
     {
         const std::shared_ptr<const RigExecLatticeBind<Point>> &bind =
             cache->RetainedLatticeBind();
@@ -476,12 +469,11 @@ RigExecLatticeKernelSetup(size_t count, const Point *restPoints,
     const size_t cageCount = size_t(dx) * size_t(dy) * size_t(dz);
     if (count == 0 || restPointsSize != count || restCageSize != cageCount ||
         posedCageSize != cageCount || dx < 2 || dy < 2 || dz < 2) {
-        return false;  // invalid cage description: pass through
+        return false; // invalid cage description: pass through
     }
     if ((restPointsSize > 0 && !restPoints) ||
-        (restCageSize > 0 && !restCage) ||
-        (posedCageSize > 0 && !posedCage)) {
-        return false;  // a null range with a nonzero size: pass through
+        (restCageSize > 0 && !restCage) || (posedCageSize > 0 && !posedCage)) {
+        return false; // a null range with a nonzero size: pass through
     }
     if (!RigExecLatticeBindBox(restCage, restCageSize, lo, size)) {
         return false;
@@ -496,6 +488,30 @@ RigExecLatticeKernelSetup(size_t count, const Point *restPoints,
     return true;
 }
 
+namespace latticeDetail {
+
+// The range and whole forms address an absolute array; groups supply the
+// same entering points at a local offset. Both use the absolute bind cursor.
+template <class Point>
+void
+ApplyPrepared(Point *out, size_t count, size_t begin, size_t end,
+              const Point *restPoints, const Point &lo, const Point &size,
+              int dx, int dy, int dz, const Point *deltas,
+              const RigExecLatticeBasis *basis)
+{
+    if (begin >= end) {
+        return;
+    }
+    if (basis) {
+        RigExecApplyLatticeBasisGroup(out, count, begin, end, *basis, deltas);
+    } else {
+        RigExecApplyLatticeStreamingGroup(out, begin, end, restPoints, lo, size,
+                                          dx, dy, dz, deltas);
+    }
+}
+
+} // namespace latticeDetail
+
 /// RigExecApplyLatticeKernel over points [begin, end) of \p points (the whole
 /// array, holding the entering points there): the same pass-through checks
 /// over the whole size, the same bind box and cage deltas, and \p basis (or,
@@ -504,28 +520,25 @@ RigExecLatticeKernelSetup(size_t count, const Point *restPoints,
 /// touched.
 template <class Point>
 void
-RigExecApplyLatticeKernelRange(
-    std::vector<Point> *points, size_t begin, size_t end,
-    const Point *restPoints, size_t restPointsSize, const Point *restCage,
-    size_t restCageSize, const Point *posedCage, size_t posedCageSize, int dx,
-    int dy, int dz, const RigExecLatticeBasis *basis)
+RigExecApplyLatticeKernelRange(std::vector<Point> *points, size_t begin,
+                               size_t end, const Point *restPoints,
+                               size_t restPointsSize, const Point *restCage,
+                               size_t restCageSize, const Point *posedCage,
+                               size_t posedCageSize, int dx, int dy, int dz,
+                               const RigExecLatticeBasis *basis)
 {
     Point lo, size;
     std::vector<Point> cageDeltas;
-    if (!RigExecLatticeKernelSetup(points->size(), restPoints, restPointsSize,
-                                   restCage, restCageSize, posedCage,
-                                   posedCageSize, dx, dy, dz, &lo, &size,
-                                   &cageDeltas)) {
+    if (!RigExecLatticeKernelSetup(
+            points->size(), restPoints, restPointsSize, restCage, restCageSize,
+            posedCage, posedCageSize, dx, dy, dz, &lo, &size, &cageDeltas)) {
         return;
     }
     end = std::min(end, points->size());
-    if (basis) {
-        RigExecApplyLatticeBasisRange(points->data(), points->size(), begin,
-                                      end, *basis, cageDeltas.data());
-    } else {
-        RigExecApplyLatticeStreamingRange(points->data(), begin, end,
-                                          restPoints, lo, size, dx, dy, dz,
-                                          cageDeltas.data());
+    if (begin < end) {
+        latticeDetail::ApplyPrepared(points->data() + begin, points->size(),
+                                     begin, end, restPoints, lo, size, dx, dy,
+                                     dz, cageDeltas.data(), basis);
     }
 }
 
@@ -535,11 +548,13 @@ RigExecApplyLatticeKernelRange(
 /// setup refuses (an invalid cage), copies \p in to \p out and returns.
 template <class Point>
 void
-RigExecApplyLatticeKernelGroup(
-    const Point *in, Point *out, size_t count, size_t begin, size_t end,
-    const Point *restPoints, size_t restPointsSize, const Point *restCage,
-    size_t restCageSize, const Point *posedCage, size_t posedCageSize, int dx,
-    int dy, int dz, const RigExecLatticeBasis *basis)
+RigExecApplyLatticeKernelGroup(const Point *in, Point *out, size_t count,
+                               size_t begin, size_t end,
+                               const Point *restPoints, size_t restPointsSize,
+                               const Point *restCage, size_t restCageSize,
+                               const Point *posedCage, size_t posedCageSize,
+                               int dx, int dy, int dz,
+                               const RigExecLatticeBasis *basis)
 {
     end = std::min(end, count);
     if (begin >= end) {
@@ -551,20 +566,13 @@ RigExecApplyLatticeKernelGroup(
     std::copy(in, in + (end - begin), out);
     Point lo, size;
     std::vector<Point> cageDeltas;
-    if (!RigExecLatticeKernelSetup(count, restPoints, restPointsSize,
-                                   restCage, restCageSize, posedCage,
-                                   posedCageSize, dx, dy, dz, &lo, &size,
-                                   &cageDeltas)) {
+    if (!RigExecLatticeKernelSetup(count, restPoints, restPointsSize, restCage,
+                                   restCageSize, posedCage, posedCageSize, dx,
+                                   dy, dz, &lo, &size, &cageDeltas)) {
         return;
     }
-    if (basis) {
-        RigExecApplyLatticeBasisGroup(out, count, begin, end, *basis,
-                                      cageDeltas.data());
-    } else {
-        RigExecApplyLatticeStreamingGroup(out, begin, end, restPoints, lo,
-                                          size, dx, dy, dz,
-                                          cageDeltas.data());
-    }
+    latticeDetail::ApplyPrepared(out, count, begin, end, restPoints, lo, size,
+                                 dx, dy, dz, cageDeltas.data(), basis);
 }
 
 /// p'(u,v,w) = p + sum_abc B_a(u) B_b(v) B_c(w) (posed - rest)_abc over a
@@ -587,132 +595,219 @@ RigExecApplyLatticeKernel(std::vector<Point> *points, const Point *restPoints,
 {
     Point lo, size;
     std::vector<Point> cageDeltas;
-    if (!RigExecLatticeKernelSetup(points->size(), restPoints, restPointsSize,
-                                   restCage, restCageSize, posedCage,
-                                   posedCageSize, dx, dy, dz, &lo, &size,
-                                   &cageDeltas)) {
+    if (!RigExecLatticeKernelSetup(
+            points->size(), restPoints, restPointsSize, restCage, restCageSize,
+            posedCage, posedCageSize, dx, dy, dz, &lo, &size, &cageDeltas)) {
         return;
     }
     const RigExecLatticeBasis *basis =
         cache ? cache->LatticeBasis(restPoints, restPointsSize, lo, size, dx,
                                     dy, dz)
               : nullptr;
-    if (basis) {
-        RigExecApplyLatticeBasis(points->data(), points->size(), *basis,
-                                 cageDeltas.data());
-    } else {
-        RigExecApplyLatticeStreaming(points->data(), points->size(),
-                                     restPoints, lo, size, dx, dy, dz,
-                                     cageDeltas.data());
-    }
+    latticeDetail::ApplyPrepared(points->data(), points->size(), 0,
+                                 points->size(), restPoints, lo, size, dx, dy,
+                                 dz, cageDeltas.data(), basis);
 }
 
 // The regular-grid evaluation. Settings parse from a view, so token text
 // parses without a temporary or a registry lookup.
-enum class RigExecLatticeInterpolation { Linear, Cardinal, BSpline, CatmullRom };
-inline bool RigExecLatticeInterpolationFromString(std::string_view name,RigExecLatticeInterpolation *out) {
-    if(name=="linear")*out=RigExecLatticeInterpolation::Linear;
-    else if(name=="cardinal")*out=RigExecLatticeInterpolation::Cardinal;
-    else if(name=="bspline")*out=RigExecLatticeInterpolation::BSpline;
-    else if(name=="catmullRom")*out=RigExecLatticeInterpolation::CatmullRom;
-    else return false;
+enum class RigExecLatticeInterpolation {
+    Linear,
+    Cardinal,
+    BSpline,
+    CatmullRom
+};
+inline bool
+RigExecLatticeInterpolationFromString(std::string_view name,
+                                      RigExecLatticeInterpolation *out)
+{
+    if (name == "linear")
+        *out = RigExecLatticeInterpolation::Linear;
+    else if (name == "cardinal")
+        *out = RigExecLatticeInterpolation::Cardinal;
+    else if (name == "bspline")
+        *out = RigExecLatticeInterpolation::BSpline;
+    else if (name == "catmullRom")
+        *out = RigExecLatticeInterpolation::CatmullRom;
+    else
+        return false;
     return true;
 }
 /// The row-vector maps between the target's point space and the lattice's,
 /// from the cage and target frames: "local" relates the two frames, "common"
 /// reads both point sets in one shared space.
-template<class M> bool RigExecLatticeCoordinateMaps(std::string_view space,const M &cage,const M &target,
-    M *targetToLattice,M *latticeToTarget,M *cageToLattice) {
-    if(!RigExecSurfaceSnapValidMatrix(cage) || !RigExecSurfaceSnapValidMatrix(target))return false;
-    *cageToLattice=M(1.0);
-    if(space=="local") {*targetToLattice=target*RigExecSurfaceSnapAffineInverse(cage);*latticeToTarget=cage*RigExecSurfaceSnapAffineInverse(target);}
-    else if(space=="common") {*targetToLattice=RigExecSurfaceSnapAffineInverse(cage);*cageToLattice=RigExecSurfaceSnapAffineInverse(cage);*latticeToTarget=cage;}
-    else return false;
+template <class M>
+bool
+RigExecLatticeCoordinateMaps(std::string_view space, const M &cage,
+                             const M &target, M *targetToLattice,
+                             M *latticeToTarget, M *cageToLattice)
+{
+    if (!RigExecSurfaceSnapValidMatrix(cage) ||
+        !RigExecSurfaceSnapValidMatrix(target))
+        return false;
+    *cageToLattice = M(1.0);
+    if (space == "local") {
+        *targetToLattice = target * RigExecSurfaceSnapAffineInverse(cage);
+        *latticeToTarget = cage * RigExecSurfaceSnapAffineInverse(target);
+    } else if (space == "common") {
+        *targetToLattice = RigExecSurfaceSnapAffineInverse(cage);
+        *cageToLattice = RigExecSurfaceSnapAffineInverse(cage);
+        *latticeToTarget = cage;
+    } else
+        return false;
     return true;
 }
 /// The regular-grid settings. regularGrid false is the legacy Bernstein
 /// evaluation, whatever the other fields hold.
 struct RigExecLatticeSettings {
-    bool regularGrid=false;
-    std::array<RigExecLatticeInterpolation,3> interpolation={RigExecLatticeInterpolation::BSpline,RigExecLatticeInterpolation::BSpline,RigExecLatticeInterpolation::BSpline};
-    std::array<float,3> origin={-.5f,-.5f,-.5f},spacing={1,1,1};
-    float strength=1;
+    bool regularGrid = false;
+    std::array<RigExecLatticeInterpolation, 3> interpolation = {
+        RigExecLatticeInterpolation::BSpline,
+        RigExecLatticeInterpolation::BSpline,
+        RigExecLatticeInterpolation::BSpline};
+    std::array<float, 3> origin = {-.5f, -.5f, -.5f}, spacing = {1, 1, 1};
+    float strength = 1;
     std::vector<float> mask;
-    bool operator==(const RigExecLatticeSettings &o) const {
-        return regularGrid==o.regularGrid && interpolation==o.interpolation && origin==o.origin &&
-            spacing==o.spacing && strength==o.strength && mask==o.mask;
+    bool operator==(const RigExecLatticeSettings &o) const
+    {
+        return regularGrid == o.regularGrid &&
+               interpolation == o.interpolation && origin == o.origin &&
+               spacing == o.spacing && strength == o.strength && mask == o.mask;
     }
-    bool operator!=(const RigExecLatticeSettings &o) const { return !(*this==o); }
+    bool operator!=(const RigExecLatticeSettings &o) const
+    {
+        return !(*this == o);
+    }
 };
 namespace latticeDetail {
-inline std::array<float,4> Basis(float t,RigExecLatticeInterpolation mode) {
-    const float t2=t*t,t3=t2*t;
-    if(mode==RigExecLatticeInterpolation::Linear)return {0,1-t,t,0};
-    if(mode==RigExecLatticeInterpolation::BSpline)
-        return {(1-3*t+3*t2-t3)/6,(4-6*t2+3*t3)/6,(1+3*t+3*t2-3*t3)/6,t3/6};
-    const float c=mode==RigExecLatticeInterpolation::Cardinal?.71f:.5f;
-    return {-c*t3+2*c*t2-c*t,(2-c)*t3+(c-3)*t2+1,(c-2)*t3+(3-2*c)*t2+c*t,c*t3-c*t2};
+inline std::array<float, 4>
+Basis(float t, RigExecLatticeInterpolation mode)
+{
+    const float t2 = t * t, t3 = t2 * t;
+    if (mode == RigExecLatticeInterpolation::Linear)
+        return {0, 1 - t, t, 0};
+    if (mode == RigExecLatticeInterpolation::BSpline)
+        return {(1 - 3 * t + 3 * t2 - t3) / 6, (4 - 6 * t2 + 3 * t3) / 6,
+                (1 + 3 * t + 3 * t2 - 3 * t3) / 6, t3 / 6};
+    const float c = mode == RigExecLatticeInterpolation::Cardinal ? .71f : .5f;
+    return {-c * t3 + 2 * c * t2 - c * t, (2 - c) * t3 + (c - 3) * t2 + 1,
+            (c - 2) * t3 + (3 - 2 * c) * t2 + c * t, c * t3 - c * t2};
 }
-}
+} // namespace latticeDetail
 /// Displaces \p points by the regular grid's posed node offsets: a node's
 /// offset is its posed position (in lattice space through \p cageToLattice)
 /// less its grid position, mapped back by \p latticeToTarget, and a point
 /// reads the cubic blend of the 4x4x4 nodes around its lattice coordinate.
 /// Fails atomically, leaving \p points unchanged.
-template<class V,class D,class M,class Div>
-bool RigExecApplyLatticeGridKernel(std::vector<V> *points,const std::vector<V> &posed,
-    const Div &divisions,const RigExecLatticeSettings &s,const M &targetToLattice,
-    const M &latticeToTarget,const M &cageToLattice) {
-    if(!points || !s.regularGrid || !std::isfinite(s.strength) ||
-       (!s.mask.empty() && s.mask.size()!=points->size()) ||
-       !RigExecSurfaceSnapValidMatrix(targetToLattice) || !RigExecSurfaceSnapValidMatrix(latticeToTarget) ||
-       !RigExecSurfaceSnapValidMatrix(cageToLattice))return false;
-    for(float w:s.mask)if(!std::isfinite(w) || w<0 || w>1)return false;
-    size_t count=1;
-    for(int axis=0;axis<3;++axis) {
-        if(divisions[axis]<1 || size_t(divisions[axis])>std::numeric_limits<size_t>::max()/count ||
+template <class V, class D, class M, class Div>
+bool
+RigExecApplyLatticeGridKernel(std::vector<V> *points,
+                              const std::vector<V> &posed, const Div &divisions,
+                              const RigExecLatticeSettings &s,
+                              const M &targetToLattice,
+                              const M &latticeToTarget, const M &cageToLattice)
+{
+    if (!points || !s.regularGrid || !std::isfinite(s.strength) ||
+        (!s.mask.empty() && s.mask.size() != points->size()) ||
+        !RigExecSurfaceSnapValidMatrix(targetToLattice) ||
+        !RigExecSurfaceSnapValidMatrix(latticeToTarget) ||
+        !RigExecSurfaceSnapValidMatrix(cageToLattice))
+        return false;
+    for (float w : s.mask)
+        if (!std::isfinite(w) || w < 0 || w > 1)
+            return false;
+    size_t count = 1;
+    for (int axis = 0; axis < 3; ++axis) {
+        if (divisions[axis] < 1 ||
+            size_t(divisions[axis]) >
+                std::numeric_limits<size_t>::max() / count ||
             !std::isfinite(s.origin[axis]) || !std::isfinite(s.spacing[axis]) ||
-            (divisions[axis]>1 && s.spacing[axis]==0))return false;
-        count*=size_t(divisions[axis]);
+            (divisions[axis] > 1 && s.spacing[axis] == 0))
+            return false;
+        count *= size_t(divisions[axis]);
     }
-    if(posed.size()!=count)return false;
-    std::vector<V> deltas;deltas.reserve(count);
-    for(int k=0;k<divisions[2];++k)for(int j=0;j<divisions[1];++j)for(int i=0;i<divisions[0];++i) {
-        const auto &p=posed[(size_t(k)*divisions[1]+j)*divisions[0]+i];
-        if(!surfaceSnapDetail::Finite(p))return false;
-        const D local=cageToLattice.TransformAffine(D(p[0],p[1],p[2]));
-        const D delta=local-D(s.origin[0]+i*s.spacing[0],s.origin[1]+j*s.spacing[1],s.origin[2]+k*s.spacing[2]);
-        const D mapped=latticeToTarget.TransformDir(delta);
-        deltas.emplace_back(float(mapped[0]),float(mapped[1]),float(mapped[2]));
-        if(!surfaceSnapDetail::Finite(deltas.back()))return false;
-    }
-    auto candidate=*points;
-    for(size_t i=0;i<candidate.size();++i) {
-        const float weight=s.strength*(s.mask.empty()?1:s.mask[i]);if(weight==0)continue;
-        const auto &p=candidate[i];if(!surfaceSnapDetail::Finite(p))return false;
-        const D local=targetToLattice.TransformAffine(D(p[0],p[1],p[2]));
-        std::array<std::array<float,4>,3> weights;std::array<int,3> lower;
-        for(int axis=0;axis<3;++axis) {
-            if(divisions[axis]==1) {weights[axis]={0,1,0,0};lower[axis]=0;continue;}
-            const float coordinate=(float(local[axis])-s.origin[axis])/s.spacing[axis];
-            if(!std::isfinite(coordinate))return false;
+    if (posed.size() != count)
+        return false;
+    std::vector<V> deltas;
+    deltas.reserve(count);
+    for (int k = 0; k < divisions[2]; ++k)
+        for (int j = 0; j < divisions[1]; ++j)
+            for (int i = 0; i < divisions[0]; ++i) {
+                const auto &p =
+                    posed[(size_t(k) * divisions[1] + j) * divisions[0] + i];
+                if (!surfaceSnapDetail::Finite(p))
+                    return false;
+                const D local =
+                    cageToLattice.TransformAffine(D(p[0], p[1], p[2]));
+                const D delta = local - D(s.origin[0] + i * s.spacing[0],
+                                          s.origin[1] + j * s.spacing[1],
+                                          s.origin[2] + k * s.spacing[2]);
+                const D mapped = latticeToTarget.TransformDir(delta);
+                deltas.emplace_back(float(mapped[0]), float(mapped[1]),
+                                    float(mapped[2]));
+                if (!surfaceSnapDetail::Finite(deltas.back()))
+                    return false;
+            }
+    auto candidate = *points;
+    for (size_t i = 0; i < candidate.size(); ++i) {
+        const float weight = s.strength * (s.mask.empty() ? 1 : s.mask[i]);
+        if (weight == 0)
+            continue;
+        const auto &p = candidate[i];
+        if (!surfaceSnapDetail::Finite(p))
+            return false;
+        const D local = targetToLattice.TransformAffine(D(p[0], p[1], p[2]));
+        std::array<std::array<float, 4>, 3> weights;
+        std::array<int, 3> lower;
+        for (int axis = 0; axis < 3; ++axis) {
+            if (divisions[axis] == 1) {
+                weights[axis] = {0, 1, 0, 0};
+                lower[axis] = 0;
+                continue;
+            }
+            const float coordinate =
+                (float(local[axis]) - s.origin[axis]) / s.spacing[axis];
+            if (!std::isfinite(coordinate))
+                return false;
             // Beyond the supported range all four clamped indices coincide;
             // reducing the integer prevents overflow without clamping the query.
-            if(coordinate<-2) {lower[axis]=-2;weights[axis]={0,1,0,0};}
-            else if(coordinate>float(divisions[axis]+1)) {lower[axis]=divisions[axis];weights[axis]={0,1,0,0};}
-            else {lower[axis]=int(std::floor(coordinate));weights[axis]=latticeDetail::Basis(coordinate-lower[axis],s.interpolation[axis]);}
+            if (coordinate < -2) {
+                lower[axis] = -2;
+                weights[axis] = {0, 1, 0, 0};
+            } else if (coordinate > float(divisions[axis] + 1)) {
+                lower[axis] = divisions[axis];
+                weights[axis] = {0, 1, 0, 0};
+            } else {
+                lower[axis] = int(std::floor(coordinate));
+                weights[axis] = latticeDetail::Basis(coordinate - lower[axis],
+                                                     s.interpolation[axis]);
+            }
         }
         V delta(0);
-        for(int k=0;k<4;++k)for(int j=0;j<4;++j)for(int a=0;a<4;++a) {
-            const int x=std::clamp(lower[0]+a-1,0,divisions[0]-1),y=std::clamp(lower[1]+j-1,0,divisions[1]-1),z=std::clamp(lower[2]+k-1,0,divisions[2]-1);
-            const float w=weight*weights[2][k]*weights[1][j]*weights[0][a];
-            delta+=deltas[(size_t(z)*divisions[1]+y)*divisions[0]+x]*w;
-        }
-        candidate[i]+=delta;if(!surfaceSnapDetail::Finite(candidate[i]))return false;
+        for (int k = 0; k < 4; ++k)
+            for (int j = 0; j < 4; ++j)
+                for (int a = 0; a < 4; ++a) {
+                    const int x = std::clamp(lower[0] + a - 1, 0,
+                                             divisions[0] - 1),
+                              y = std::clamp(lower[1] + j - 1, 0,
+                                             divisions[1] - 1),
+                              z = std::clamp(lower[2] + k - 1, 0,
+                                             divisions[2] - 1);
+                    const float w =
+                        weight * weights[2][k] * weights[1][j] * weights[0][a];
+                    delta +=
+                        deltas[(size_t(z) * divisions[1] + y) * divisions[0] +
+                               x] *
+                        w;
+                }
+        candidate[i] += delta;
+        if (!surfaceSnapDetail::Finite(candidate[i]))
+            return false;
     }
-    *points=std::move(candidate);return true;
+    *points = std::move(candidate);
+    return true;
 }
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_MATH_LATTICE_KERNEL_H
+#endif // RIGEXEC_MATH_LATTICE_KERNEL_H
