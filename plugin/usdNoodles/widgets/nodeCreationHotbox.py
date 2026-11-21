@@ -185,6 +185,66 @@ class NodeCreationHotbox(OverlayWidget):
         """Pixel height of one row, for callers converting notches."""
         return self._selectable_list.row_height()
 
+    def capture_layout(self, text_renderer, width, height):
+        from ..graphview.frame import HotboxRecord
+
+        alpha = self.alpha
+        if not self.is_visible and alpha < 0.01:
+            return HotboxRecord()
+        entry, items = self._text_input, self._selectable_list
+        iw, ih = entry.calculate_size(text_renderer)
+        lw, lh = items.calculate_size(text_renderer)
+        pad = self._padding
+        w, h = max(iw, lw, 250.0) + pad * 2, ih + lh + pad * 3
+        x = max(10, min(self._position[0], width - w - 10))
+        y = max(10, min(self._position[1], height - h - 10))
+        left, right = x + pad, x + w - pad
+        top = items.content_top(y + 2 * pad + ih)
+        visible = min(items.view_height(), items.content_height())
+        items.bounds = (left, top, right - left, visible)
+        bar = items.scrollbar_metrics()
+        row_right = right - (items.scrollbar_width + items.scrollbar_gap if bar else 0)
+        rows, labels = [], []
+        atlas = getattr(text_renderer, "font_atlas", None)
+        ascender = atlas.ascender if atlas else 0.0
+        first, sub = items.first_visible_row()
+        for offset, (kind, payload) in enumerate(items._rows[first:first + items.max_visible_items + 1]):
+            row_y = top - sub + offset * items.item_height
+            if row_y >= top + visible:
+                break
+            header = kind == "header"
+            index = -1 if header else payload
+            is_selected = not header and index == items.selected_index
+            name = f"▸ {payload}" if header else items.filtered_items[index].name
+            if is_selected:
+                name = "► " + name
+            rows.append((index, (left, row_y, row_right, row_y + items.item_height)))
+            labels.append((name, left + items.padding * (1 if header else 2),
+                           row_y + (items.item_height + ascender * items.font_size) / 2,
+                           items.font_size, items.group_header_color if header else
+                           (1., 1., 1., 1.) if is_selected else items.item_color))
+        tx, ty = left + entry.padding, y + pad + entry.padding
+        entry._update_cursor_blink()
+        cursor = None
+        if entry.text and atlas and entry._cursor_visible:
+            cx = tx + text_renderer.calculateTextWidth(entry.text[:entry.cursor_position], entry.font_size)
+            cursor = (cx, ty, cx + 2.0, y + pad + ih - entry.padding)
+        return HotboxRecord(
+            visible=self.is_visible, rect=(x, y, x + w, y + h), alpha=alpha,
+            entries=tuple(item.name for item in items.filtered_items), selected_index=items.selected_index,
+            rows=tuple(rows), labels=tuple(labels), input_rect=(left, y + pad, right, y + pad + ih),
+            input_label=(entry.text or entry.placeholder, tx, ty + ascender * entry.font_size,
+                         entry.font_size, entry.text_color if entry.text else entry.placeholder_color),
+            cursor_rect=cursor, list_clip=(left, top, right, top + visible),
+            scrollbar=(*bar, items.is_scroll_dragging()) if bar else None,
+        )
+
+    def _input_layout(self):
+        parent = self._parent_widget
+        if parent is not None:
+            return self.capture_layout(getattr(parent, "textRenderer", None), parent.width(), parent.height())
+        return None
+
     def handle_mouse_press(self, screen_pos):
         """
         Handle mouse press events.
@@ -197,6 +257,22 @@ class NodeCreationHotbox(OverlayWidget):
         """
         if not self.is_visible:
             return False
+
+        layout = self._input_layout()
+        if layout is not None:
+            x, y = screen_pos.x(), screen_pos.y()
+            if not layout.contains(x, y):
+                self.hide()
+                return False
+            if self._selectable_list.scrollbar_hit(x, y):
+                self._selectable_list.begin_scroll_drag(y)
+                return True
+            index = layout.item_at(x, y)
+            if index >= 0:
+                if self.on_create:
+                    self.on_create(self._selectable_list.filtered_items[index].data, self._position)
+                self.hide()
+            return True
 
         # Check if click is within hotbox bounds
         if not hasattr(self, "_bounds") or not self._bounds:
@@ -266,6 +342,14 @@ class NodeCreationHotbox(OverlayWidget):
         if self._selectable_list.is_scroll_dragging():
             self._selectable_list.update_scroll_drag(screen_pos.y())
             return True
+
+        layout = self._input_layout()
+        if layout is not None:
+            index = layout.item_at(screen_pos.x(), screen_pos.y())
+            if index >= 0 and index != self._selectable_list.selected_index:
+                self._selectable_list.selected_index = index
+                return True
+            return False
 
         # Check if mouse is within hotbox bounds
         if not hasattr(self, "_bounds") or not self._bounds:

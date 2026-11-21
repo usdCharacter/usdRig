@@ -378,6 +378,8 @@ class LinkRecord:
     selected: bool = False
     hovered: bool = False
     generation: int = 0
+    highlighted: bool = False
+    target_property: str = ""
 
     def __post_init__(self):
         object.__setattr__(self, "start", _pair(self.start))
@@ -463,6 +465,16 @@ class OverlayState:
 
 
 @dataclass(frozen=True, slots=True)
+class TemporaryLinkRecord:
+    link: LinkRecord
+    free_at_end: bool = True
+    snapped: bool = False
+    color: tuple = (0.0, 0.8, 1.0)
+    radius: float = 8.0
+    stroke_width: float = 2.0
+
+
+@dataclass(frozen=True, slots=True)
 class HotboxRecord:
     """Node-creation hotbox: visibility, screen rect, entries, selection."""
 
@@ -470,12 +482,37 @@ class HotboxRecord:
     rect: tuple | None = None
     entries: tuple = ()
     selected_index: int = -1
+    rows: tuple = ()
+    alpha: float = 1.0
+    labels: tuple = ()
+    input_rect: tuple | None = None
+    input_label: tuple | None = None
+    scrollbar: tuple | None = None
+    list_clip: tuple | None = None
+    cursor_rect: tuple | None = None
 
     def __post_init__(self):
         object.__setattr__(self, "rect", _rect(self.rect))
         object.__setattr__(
             self, "entries", tuple(_str(e) for e in self.entries)
         )
+        object.__setattr__(self, "rows", tuple((int(i), _rect(r)) for i, r in self.rows))
+
+    def contains(self, x, y):
+        return self.rect is not None and _contains(self.rect, x, y)
+
+    def item_at(self, x, y):
+        if not self.contains(x, y) or (self.list_clip and not _contains(self.list_clip, x, y)):
+            return -1
+        if self.scrollbar:
+            left, top, width, height = self.scrollbar[:4]
+            if _contains((left, top, left + width, top + height), x, y):
+                return -1
+        for index, rect in self.rows:
+            if rect[0] <= x <= rect[2] and rect[1] <= y < rect[3]:
+                return index
+        return -1
+
 
 
 @dataclass(frozen=True, slots=True)
@@ -633,6 +670,12 @@ class InteractionState:
     link_dimming: float = 1.0
     overlay: OverlayState = field(default_factory=OverlayState)
     hotbox: HotboxRecord = field(default_factory=HotboxRecord)
+    temporary_link: TemporaryLinkRecord | None = None
+    draw_links: bool = True
+    dangling_hover: int = -1
+    link_colors: tuple = ((1.0, 1.0, 0.0, 1.0), (1.0, 1.0, 0.3, 1.0),
+                          (0.31, 0.55, 0.86, 1.0), (0.78, 0.24, 0.24, 1.0),
+                          (0.31, 0.78, 0.47, 1.0))
     value_cells: tuple = ()
 
     def __post_init__(self):
@@ -691,16 +734,11 @@ def _point_segment_distance_sq(px, py, ax, ay, bx, by):
 
 
 def _uses_vertical_curve(link):
-    """Whether a link takes the prim-target relationship curve.
-
-    Same predicate as the draw path's curve choice: a relationship link
-    whose target is a whole prim (no port, no property).
-    """
+    """Match the native LinkRenderManager instance tangent flag."""
     return (
-        bool(getattr(link, "is_relationship_link", False))
+        not bool(getattr(link, "isDangling", False))
         and bool(_str(getattr(link, "targetNodeId", "")))
         and not _str(getattr(link, "targetPort", ""))
-        and not _str(getattr(link, "targetPropertyName", ""))
     )
 
 
@@ -992,6 +1030,8 @@ def build_link_record(
         selected=bool(selected),
         hovered=bool(hovered),
         generation=int(generation),
+        highlighted=bool(getattr(link, "highlighted", False)),
+        target_property=_str(getattr(link, "targetPropertyName", "")),
     )
 
 
@@ -1043,6 +1083,12 @@ class Frame:
     dangling_links: tuple = ()
     overlay: OverlayState = field(default_factory=OverlayState)
     hotbox: HotboxRecord = field(default_factory=HotboxRecord)
+    temporary_link: TemporaryLinkRecord | None = None
+    draw_links: bool = True
+    dangling_hover: int = -1
+    link_colors: tuple = ((1.0, 1.0, 0.0, 1.0), (1.0, 1.0, 0.3, 1.0),
+                          (0.31, 0.55, 0.86, 1.0), (0.78, 0.24, 0.24, 1.0),
+                          (0.31, 0.78, 0.47, 1.0))
     transform_inputs: TransformFrameInputs = field(
         default_factory=TransformFrameInputs
     )
@@ -1102,7 +1148,7 @@ def _hit_overlay(frame, x, y):
     if hotbox.visible and hotbox.rect is not None and _contains(
         hotbox.rect, x, y
     ):
-        return ("hotbox", "", "", False, -1, None, 0, "")
+        return ("hotbox", "", "", False, -1, None, hotbox.item_at(x, y), "")
     editor = overlay.value_editor
     if (
         editor is not None
@@ -1620,6 +1666,7 @@ class FrameSource:
                 and index not in dirty_indices
                 and (key in selected) == old.selected
                 and (index == hover) == old.hovered
+                and bool(getattr(link, "highlighted", False)) == old.highlighted
             ):
                 records.append(old)
                 continue
@@ -1688,7 +1735,7 @@ class FrameSource:
             if callable(hook):
                 hook()
 
-    def capture(self, viewport, interaction_state, time=None):
+    def capture(self, viewport, interaction_state, time=None, *, advance_view=True):
         """Pin one immutable :class:`Frame` and return it.
 
         Runs on the owner thread. Advances the bound view's animations
@@ -1698,7 +1745,8 @@ class FrameSource:
         rebuilds everything.
         """
         self._check_thread()
-        self._advance_view_animations()
+        if advance_view:
+            self._advance_view_animations()
         now = time if time is not None else _now()
         try:
             now = float(now)
@@ -1773,6 +1821,8 @@ class FrameSource:
         self._pending_overflow = False
         if verify_all or value_dirty:
             dirty_nodes |= live_ids
+        if verify_all:
+            dirty_indices.update(range(len(links)))
 
         selected_nodes = frozenset(interaction_state.selected_nodes)
         selected_links = frozenset(
@@ -1906,6 +1956,10 @@ class FrameSource:
             dangling_links=dangling_tuple,
             overlay=resolved_overlay,
             hotbox=interaction_state.hotbox,
+            temporary_link=interaction_state.temporary_link,
+            draw_links=interaction_state.draw_links,
+            dangling_hover=interaction_state.dangling_hover,
+            link_colors=interaction_state.link_colors,
             transform_inputs=transforms,
             hit_candidates=candidates,
             hit_params=HitParams(
@@ -1936,14 +1990,14 @@ class FrameSource:
         self._latest = frame
         return frame
 
-    def capture_from_view(self, time=None):
+    def capture_from_view(self, time=None, *, advance_view=True):
         """Capture from the bound view's live state (input before paint)."""
         if self._view is None:
             raise RuntimeError("capture_from_view needs a bound view")
         return self.capture(
             viewport_from_view(self._view),
             interaction_state_from_view(self._view),
-            time,
+            time, advance_view=advance_view,
         )
 
     def hit(self, point):
@@ -2091,7 +2145,7 @@ def _value_editor_from(view):
 
 
 def _marquee_from(view):
-    """Normalized screen-space marquee rect, or None when idle."""
+    """Normalized world-space marquee rect, or None when idle."""
     if not bool(getattr(view, "marqueeActive", False)):
         return None
     try:
@@ -2109,6 +2163,10 @@ def _hotbox_from(view):
     box = getattr(view, "nodeCreationHotbox", None)
     if box is None:
         return HotboxRecord()
+    capture = getattr(box, "capture_layout", None)
+    if callable(capture):
+        viewport = viewport_from_view(view)
+        return capture(getattr(view, "textRenderer", None), viewport.width, viewport.height)
     try:
         entries = tuple(
             _str(e) for e in (getattr(box, "entries", ()) or ())
@@ -2124,6 +2182,30 @@ def _hotbox_from(view):
         rect=_rect(getattr(box, "rect", None)),
         entries=entries,
         selected_index=selected,
+    )
+
+
+def _temporary_link_from(view, hovered):
+    link = getattr(view, "_dragLinkTempLink", None)
+    if link is None or not getattr(view, "_draggingLink", False):
+        return None
+    from ..pinUtils import is_relationship_pin
+
+    record = build_link_record(link, -1, generation=0)
+    valid = bool(view._dragLinkValidTarget)
+    free_at_end = bool(view._dragLinkSourceIsOutput)
+    if valid:
+        color = (0.0, 1.0, 0.0)
+    elif hovered and hovered[2] == free_at_end:
+        color = (1.0, 0.0, 0.0)
+    elif is_relationship_pin(str(view._dragLinkSourcePort)):
+        color = tuple(view._cachedLinkRelationshipBaseColor[:3])
+    else:
+        color = tuple(view._cachedLinkActiveColor[:3])
+    renderer = getattr(view, "defaultRenderer", None)
+    return TemporaryLinkRecord(
+        record, free_at_end, valid and record.is_relationship, color,
+        renderer.getPortWidth() if renderer else 8.0, view._cachedPortRingThickness,
     )
 
 
@@ -2295,6 +2377,13 @@ def interaction_state_from_view(view):
         ),
         overlay=overlay,
         hotbox=_hotbox_from(view),
+        temporary_link=_temporary_link_from(view, hovered),
+        draw_links=bool(getattr(view, "drawLinks", True)),
+        dangling_hover=int(getattr(view, "_danglingIndicatorUnderCursor", -1)),
+        link_colors=tuple(tuple(getattr(view, "_cachedLink" + name + "Color", default))
+                          for name, default in zip(
+                              ("Hovered", "Selected", "AttributeBase", "RelationshipBase", "Highlighted"),
+                              InteractionState.__dataclass_fields__["link_colors"].default)),
         value_cells=(),
     )
 

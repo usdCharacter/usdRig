@@ -579,7 +579,8 @@ class RendererMirrorTest(unittest.TestCase):
         self.assertEqual(renderer.builds_total, 1)
         self.assertEqual(renderer.draws_total, 1)
         self.assertEqual(
-            renderer.primitives_drawn, ("render_nodes", "render_text")
+            renderer.primitives_drawn,
+            ("render_links", "render_nodes", "render_text", "render_overlays", "render_hotbox"),
         )
         self.assertIs(renderer.hit_data, frame.hit_candidates)
 

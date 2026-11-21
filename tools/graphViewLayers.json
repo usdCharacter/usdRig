@@ -54,7 +54,6 @@
         "currentPrimPath": "coordinator",
         "_valueRowOnlyChange": "stage_sync",
         "_isPinPropertyChange": "stage_sync",
-        "_paintNodeCreationHotbox": "render",
         "_printProfilingStatsIfNeeded": "coordinator",
         "mouseDoubleClickEvent": "interaction",
         "mousePressEvent": "interaction",
@@ -66,13 +65,6 @@
         "frameAll": "coordinator",
         "frameScene": "coordinator",
         "frameSelectionWithConnections": "coordinator",
-        "paintLinks": "render",
-        "_relationshipArrowheadPoints": "render",
-        "_renderRelationshipArrowheads": "render",
-        "_renderDanglingIndicators": "render",
-        "_renderTemporaryLink": "render",
-        "paintStatusOverlay": "render",
-        "paintMarquee": "render",
         "_frameNodeBounds": "coordinator",
         "_afterUsdviewRefresh": "coordinator",
         "_makeCommandRegistry": "coordinator"
@@ -107,9 +99,18 @@
     },
     "plugin/usdNoodles/graphview/render_text.py": {
       "layer": "render"
+    },
+    "plugin/usdNoodles/graphview/render_links.py": {
+      "layer": "render"
+    },
+    "plugin/usdNoodles/graphview/render_overlays.py": {
+      "layer": "render"
+    },
+    "plugin/usdNoodles/graphview/render_hotbox.py": {
+      "layer": "render"
     }
   },
   "line_ceilings": {
-    "plugin/usdNoodles/graphView.py": 2399
+    "plugin/usdNoodles/graphView.py": 1829
   }
 }

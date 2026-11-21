@@ -139,6 +139,11 @@ class RenderResources:
     """
 
     def __init__(self):
+        from .render import Renderer
+
+        self.frame_source = None
+        self.frame_renderer = Renderer(self)
+        self.link_config = None
         self.font_atlas = None
         self.shader_library = None
         self.node_render_manager = None

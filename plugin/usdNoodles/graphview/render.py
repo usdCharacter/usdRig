@@ -120,8 +120,9 @@ def _ortho(left, right, bottom, top, near, far):
 def transforms_for_viewport(viewport):
     """The :class:`RenderTransforms` for a frame viewport (no Qt needed)."""
     zoom = viewport.zoom if viewport.zoom else 1.0
-    scaled_width = viewport.width / zoom
-    scaled_height = viewport.height / zoom
+    width, height = max(viewport.width, 1.0), max(viewport.height, 1.0)
+    scaled_width = width / zoom
+    scaled_height = height / zoom
     world = _ortho(
         viewport.pan_x,
         viewport.pan_x + scaled_width,
@@ -132,8 +133,8 @@ def transforms_for_viewport(viewport):
     )
     screen = _ortho(
         0.0,
-        viewport.width,
-        viewport.height,
+        width,
+        height,
         0.0,
         -MAX_RENDER_DEPTH,
         MAX_RENDER_DEPTH,
@@ -233,10 +234,6 @@ def _populate_node(copy, record):
 def _populate_link(copy, record):
     """Populate every mirrored native field of *copy* from *record*.
 
-    Only bound struct fields are set: the native sync copies the struct, so
-    Python-only link attributes would not survive it. ``targetPropertyName``
-    stays default: the C++ renderer reads it solely for the whole-prim
-    relationship check, where the empty value is the correct one.
     """
     link_id = record.link_id
     copy.sourceNodeId = str(link_id.source_id)
@@ -247,6 +244,8 @@ def _populate_link(copy, record):
     copy.end = Gf.Vec2d(record.end[0], record.end[1])
     copy.selected = bool(record.selected)
     copy.hovered = bool(record.hovered)
+    copy.highlighted = bool(record.highlighted)
+    copy.targetPropertyName = record.target_property
     copy.isDangling = bool(record.is_dangling)
     copy.danglingDirection = str(record.dangling_direction)
     copy.is_relationship_link = bool(record.is_relationship)
@@ -355,8 +354,8 @@ class Renderer:
     """Owns the render mirror and draws frames through the primitives."""
 
     _PRIMITIVE_MODULES = (
-        "render_nodes",
         "render_links",
+        "render_nodes",
         "render_text",
         "render_overlays",
         "render_hotbox",
@@ -364,6 +363,7 @@ class Renderer:
 
     def __init__(self, resources=None):
         self._resources = resources
+        self._current_frame = None
         self._mirror = None
         self._mirror_revision = None
         self._mirror_generation = None
@@ -477,6 +477,18 @@ class Renderer:
         self._builds_total += 1
         return candidate
 
+    def _mirror_for_draw(self, frame):
+        current = self._current_frame
+        if current is not None and (
+            (frame.identity_generation, frame.revision) <
+            (current.identity_generation, current.revision)
+            or (frame is not current and frame.time < current.time)
+        ):
+            return Renderer().sync(frame)
+        mirror = self.sync(frame)
+        self._current_frame = frame
+        return mirror
+
     def draw(self, frame):
         """Draw *frame*: sync the mirror, apply transforms, run primitives.
 
@@ -484,7 +496,7 @@ class Renderer:
         ``MirrorBuildError`` before anything draws; a primitive failure
         propagates after the (already coherent) swap.
         """
-        mirror = self.sync(frame)
+        mirror = self._mirror_for_draw(frame)
         self._draws_total += 1
         self._apply_transform_inputs(frame)
         transforms = transforms_for_viewport(frame.viewport)
@@ -654,6 +666,17 @@ def _paintGLInner(view):
         GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
         GL.glDepthFunc(GL.GL_LEQUAL)
 
+    from . import render_hotbox, render_links, render_overlays
+    from .frame import FrameSource
+
+    resources = view._render_resources
+    if resources.frame_source is None:
+        resources.frame_source = FrameSource(view)
+    frame = resources.frame_source.capture_from_view(advance_view=False)
+    resources.link_config = view._renderConfig()
+    mirror = resources.frame_renderer._mirror_for_draw(frame)
+    transforms = transforms_for_viewport(frame.viewport)
+
     # Rendering:
 
     with _profile_section(view._profiler, "Group Stickers"):
@@ -662,13 +685,7 @@ def _paintGLInner(view):
             view.paintGroupStickers()
 
     with _profile_section(view._profiler, "Links"):
-        # links (below nodes)
-        if view.drawLinks:
-            view.paintLinks()
-
-    # Render temporary link during drag (after links, before nodes)
-    if view._draggingLink and view._dragLinkTempLink:
-        view._renderTemporaryLink()
+        render_links.draw(frame, resources, mirror, transforms)
 
     with _profile_section(view._profiler, "Nodes"):
         # nodes (on top of links)
@@ -694,7 +711,7 @@ def _paintGLInner(view):
 
     with _profile_section(view._profiler, "Status Overlay"):
         # status overlay (screen space, on top of everything)
-        view.paintStatusOverlay()
+        render_overlays.draw_status(frame, resources, transforms)
 
     with _profile_section(view._profiler, "Minimap"):
         # minimap (screen space, upper right corner)
@@ -706,12 +723,10 @@ def _paintGLInner(view):
 
     with _profile_section(view._profiler, "Marquee"):
         # marquee selection (on top of everything else)
-        if view.marqueeActive:
-            view.paintMarquee()
+        render_overlays.draw_marquee(frame, resources, transforms)
 
     with _profile_section(view._profiler, "Node Creation Hotbox"):
-        if view.nodeCreationHotbox.is_visible:
-            view._paintNodeCreationHotbox()
+        render_hotbox.draw(frame, resources, mirror, transforms)
 
     with _profile_section(view._profiler, "Node Rename"):
         if view._renamingNodeId:
