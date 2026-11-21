@@ -3,6 +3,12 @@
 # witness driver then audits the real compiler commands and runs the
 # numeric probes. WITNESS_MODULE, WITNESS_FAST_FLAGS, WITNESS_FAST_HEAD,
 # WITNESS_FAST_TAIL and WITNESS_CONFLICT_FLAG come from the driver.
+# WITNESS_IF_LINK, WITNESS_PROP_LINK, WITNESS_BRANCH_LINK,
+# WITNESS_UNSUPPORTED_LINK and WITNESS_DEEP_LINK each add a target whose
+# only route to Pkg::Fast or Pkg::Quiet is a single link expression: a
+# literal IF, a property-computed IF branch, a many-node shallow branch
+# tree, an unresolvable computed result, and a chain past the inspection
+# cutoff.
 cmake_minimum_required(VERSION 3.26)
 project(rigexec_exact_fp_witness LANGUAGES CXX)
 
@@ -43,7 +49,8 @@ add_executable(witnessExact
     probe.cpp
     "${_gen_dir}/generatedProbe.cpp")
 target_precompile_headers(witnessExact PRIVATE probePch.h)
-if (NOT WITNESS_IF_LINK AND NOT WITNESS_DEEP_LINK)
+if (NOT WITNESS_IF_LINK AND NOT WITNESS_DEEP_LINK AND NOT WITNESS_PROP_LINK
+    AND NOT WITNESS_BRANCH_LINK AND NOT WITNESS_UNSUPPORTED_LINK)
     target_link_libraries(witnessExact PRIVATE $<$<CONFIG:Release>:Pkg::Fast>)
 endif ()
 
@@ -58,6 +65,45 @@ if (WITNESS_IF_LINK)
         "${_gen_dir}/generatedProbe.cpp")
     target_link_libraries(witnessIf PRIVATE
         $<IF:$<CONFIG:Release>,Pkg::Fast,Pkg::Quiet>)
+endif ()
+
+if (WITNESS_PROP_LINK)
+    # The Release branch is computed: $<TARGET_PROPERTY:witnessIf,FP_DEP>
+    # resolves to Pkg::Fast only through the target property, so an
+    # inspection pass that treats the operator's operands as dependencies
+    # queues witnessIf and the literal property name and never sees the
+    # selected fast interface.
+    add_executable(witnessIf
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+    set_target_properties(witnessIf PROPERTIES FP_DEP "Pkg::Fast")
+    target_link_libraries(witnessIf PRIVATE
+        $<IF:$<CONFIG:Release>,$<TARGET_PROPERTY:witnessIf,FP_DEP>,Pkg::Quiet>)
+endif ()
+
+if (WITNESS_BRANCH_LINK)
+    # One IF entry with six expression nodes but no branch nested deeper
+    # than four: every branch must be inspected, and a cutoff that counts
+    # popped nodes across sibling branches would reject this legal quiet
+    # rig as too deeply nested.
+    add_executable(witnessBranching
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+    target_link_libraries(witnessBranching PRIVATE
+        $<IF:$<CONFIG:Release>,$<1:$<1:$<1:$<1:Pkg::Quiet>>>>,Pkg::Quiet>)
+endif ()
+
+if (WITNESS_UNSUPPORTED_LINK)
+    # The property name is itself a generator expression, so the selected
+    # dependency cannot be resolved statically: the configure must abort
+    # naming the consumer and the full original entry, never accept the
+    # un-inspected result.
+    add_executable(witnessBad
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+    set_target_properties(witnessBad PROPERTIES Release_DEP "Pkg::Fast")
+    target_link_libraries(witnessBad PRIVATE
+        $<TARGET_PROPERTY:witnessBad,$<CONFIG:Release>_DEP>)
 endif ()
 
 if (WITNESS_DEEP_LINK)
