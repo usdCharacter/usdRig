@@ -1346,6 +1346,62 @@ def TestAuxiliaryViewportRetirement():
     print("  ok: auxiliary viewport tools share readiness and retirement")
 
 
+def TestHoverPickerAttachmentRollback():
+    import pickerHoverUI
+
+    window, api, view, _ = _GizmoSession()
+    selection = api.dataModel.selection
+    panel = pickerHoverUI.pickerUI.PickerPanel.GetInstance(api)
+    listeners = list(panel._listeners)
+    signal = "2signalPrimSelectionChanged()"
+    receivers = selection.receivers(signal)
+    hover = view.testAttribute(QtCore.Qt.WA_Hover)
+    event = QtCore.QEvent(QtCore.QEvent.User)
+    deliveries = []
+    filterEvent = pickerHoverUI.HoverPickerController.eventFilter
+
+    def _Filter(controller, watched, incoming):
+        if incoming is event:
+            deliveries.append(controller)
+        return filterEvent(controller, watched, incoming)
+
+    def _Fail(controller):
+        _Check(controller._OnPanel in panel._listeners and
+               selection.receivers(signal) == receivers + 1 and
+               controller._overlay.parent() is view,
+               "the injected failure must follow viewport attachment")
+        QtCore.QCoreApplication.sendEvent(view, event)
+        _Check(deliveries == [controller], "the picker filter saw the probe")
+        deliveries.clear()
+        raise RuntimeError("injected Hover Picker _Rebuild failure")
+
+    try:
+        with _Patched(pickerHoverUI, LoadLayout=pickerHoverUI.hoverModel.Layout), \
+                _Patched(pickerHoverUI.HoverPickerController, _Rebuild=_Fail,
+                         eventFilter=_Filter):
+            _Check(pickerHoverUI.InstallHoverPicker(api) is None,
+                   "a failed picker must not publish a controller")
+            result = stageViewReady.GetResult(api, "hoverPicker")
+            _Check(result.status == "failed" and result.controller is None and
+                   "injected Hover Picker _Rebuild failure" in result.error,
+                   "the broker reports the injected failure")
+            for retire in (False, True):
+                if retire:
+                    sessionRegistry.ForgetSession(api)
+                QtCore.QCoreApplication.sendEvent(view, event)
+                leaks = [name for name, leaked in (
+                    ("panel listener", panel._listeners != listeners),
+                    ("selection connection", selection.receivers(signal) != receivers),
+                    ("event filter", bool(deliveries)),
+                    ("overlay", bool(view.findChildren(pickerHoverUI.HoverPickerOverlay))),
+                    ("hover attribute", view.testAttribute(QtCore.Qt.WA_Hover) != hover),
+                ) if leaked]
+                _Check(not leaks, "failed hover picker left attached: " + ", ".join(leaks))
+    finally:
+        _Destroy(window)
+    print("  ok: failed hover picker attachment rolls back on a retained window")
+
+
 def TestContainerAdoptsReadyGizmo():
     import ikfkMatch
     import rigExecUsdview
@@ -1593,10 +1649,11 @@ def main():
     TestContainerEnsureAndRetire()
     TestContainerAdoptsReadyGizmo()
     TestAuxiliaryViewportRetirement()
+    TestHoverPickerAttachmentRollback()
     TestRegistryDestroyedSlots()
     TestRegistryRemovalHook()
     TestTouchPoseMarqueeUsesOwnSession()
-    print("SESSION_STATE_OK (22 groups)")
+    print("SESSION_STATE_OK (23 groups)")
     return 0
 
 

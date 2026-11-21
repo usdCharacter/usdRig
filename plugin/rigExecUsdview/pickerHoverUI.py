@@ -127,8 +127,8 @@ class HoverPickerOverlay(QtWidgets.QWidget):
     """The paint surface: transparent to the mouse and to the eye except
     where the controller draws."""
 
-    def __init__(self, controller, parent):
-        super(HoverPickerOverlay, self).__init__(parent)
+    def __init__(self, controller):
+        super(HoverPickerOverlay, self).__init__()
         self._controller = controller
         self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
         # WA_NoSystemBackground plus no auto-fill leaves the stage view
@@ -193,48 +193,58 @@ class HoverPickerController(QtCore.QObject):
         self._font = pickerUI._load_font()
         self._panel = pickerUI.PickerPanel.GetInstance(usdviewApi,
                                                        undoStack)
-        self._panel.AddListener(self._OnPanel)
         self._overlay = None
-        if self._view is None:
-            return
-        self._overlay = HoverPickerOverlay(self, self._view)
+        self._selection = None
+        self._enabledHover = False
+        self._hostHandoff = False
+
+    def Attach(self):
+        self._panel.AddListener(self._OnPanel)
+        self._overlay = HoverPickerOverlay(self)
+        self._overlay.setParent(self._view)
         self._overlay.resize(self._view.size())
-        # Hover arrives as HoverMove (WA_Hover), as the gizmo's does: the
-        # stage view tracks no button-less moves, and turning tracking on
-        # would make it run a GPU pick on every one.
-        self._view.setAttribute(QtCore.Qt.WA_Hover, True)
-        if installFilters:
+        # Mouse tracking would make usdview run a GPU pick on every move.
+        if not self._view.testAttribute(QtCore.Qt.WA_Hover):
+            self._enabledHover = True
+            self._view.setAttribute(QtCore.Qt.WA_Hover, True)
+        if self._installFilters:
             self._view.installEventFilter(self)
-        selection = getattr(getattr(usdviewApi, "dataModel", None),
+        selection = getattr(getattr(self._api, "dataModel", None),
                             "selection", None)
-        self._selection = selection
         signal = getattr(selection, "signalPrimSelectionChanged", None)
         if signal is not None:
             signal.connect(self._OnSelectionChanged)
+            self._selection = selection
         self._Rebuild()
         self._OnSelectionChanged()
         self._overlay.setVisible(self._layout.enabled)
         if self._layout.enabled:
             QtCore.QTimer.singleShot(0, self._Raise)
+        if not self._installFilters:
+            self._hostHandoff = True
+            editorExtension.EditorAdded(self._api, editorExtension.HOVER_PICKER,
+                                        self, required=True)
 
     def Detach(self):
         view, self._view = self._view, None
         overlay, self._overlay = self._overlay, None
         self._gesture = None
         self._panel.RemoveListener(self._OnPanel)
-        stageViewReady.IgnoreDeleted(self._DisconnectSelection)
+        selection, self._selection = self._selection, None
+        stageViewReady.Disconnect(selection, "signalPrimSelectionChanged",
+                                  self._OnSelectionChanged)
         if view is not None:
             if self._installFilters:
                 stageViewReady.IgnoreDeleted(lambda: view.removeEventFilter(self))
+            if self._enabledHover:
+                stageViewReady.IgnoreDeleted(lambda: view.setAttribute(
+                    QtCore.Qt.WA_Hover, False))
             if self._cursorSet:
                 stageViewReady.IgnoreDeleted(view.unsetCursor)
         stageViewReady.RemoveWidget(overlay)
-        if not self._installFilters:
+        if self._hostHandoff:
+            self._hostHandoff = False
             editorExtension.EditorRemoved(self._api, editorExtension.HOVER_PICKER, self)
-
-    def _DisconnectSelection(self):
-        stageViewReady.Disconnect(getattr(self, "_selection", None),
-                                  "signalPrimSelectionChanged", self._OnSelectionChanged)
 
     # -- state ------------------------------------------------------------
 
@@ -818,13 +828,8 @@ def InstallHoverPicker(usdviewApi, undoStack=None):
         return HoverPickerController(usdviewApi, undoStack,
                                      installFilters=not editorExtension.OwnsInput(usdviewApi))
 
-    def _Prepare(controller):
-        if not controller.InstallsFilters():
-            editorExtension.EditorAdded(usdviewApi, editorExtension.HOVER_PICKER,
-                                        controller, required=True)
-
     return stageViewReady.Register(usdviewApi, "hoverPicker", _Create,
-                                   prepare=_Prepare).controller
+                                   prepare=HoverPickerController.Attach).controller
 
 
 def ToggleHoverPicker(usdviewApi, undoStack=None):
