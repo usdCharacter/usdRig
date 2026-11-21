@@ -231,14 +231,17 @@ def rebuiltScopePins(view, oldScope, newScope):
     """Fresh I/O models for a moved scope, generated from the destination.
 
     Blueprint and container I/O nodes are synthesized, not prim-backed:
-    their ids borrow the scope path (``/Bp#input:x``) and their pins are
-    the scope prim's authored attributes. A namespace move carries those
-    attributes to the new scope, so the fresh models are what the loader
-    run against the moved stage would emit -- never a copy of the cached
-    pin lists, which may hold view-only pins the stage never authored.
+    their ids borrow the scope path (``/Bp#input:x``) and their pins come
+    from the scope prim's attributes and its children's connection
+    metadata. A namespace move carries those to the new scope, so the
+    fresh models are exactly what the loader run against the moved stage
+    would emit -- the shared ``scope_endpoints`` derivation, under the
+    graph's own fieldname mode -- never a copy of the cached pin lists,
+    which may hold view-only pins the stage never authored.
 
     Only display placement carries over, for pins the destination still
-    has under the same suffix: the setters below never author USD.
+    has under the same complete suffix: the setters below never author
+    USD.
 
     Returns:
         dict[str, tuple]: ``{oldId: (newId, freshModel)}``.
@@ -246,12 +249,18 @@ def rebuiltScopePins(view, oldScope, newScope):
     from ..models import NodeModel
     from ..nodeGraphBlueprint import NodeGraphBlueprint
     from ..nodeGraphBpContainer import NodeGraphBpContainer
-    from ..pinUtils import split_direction_hint
+    from ..scopeEndpoints import (
+        accept_blueprint_child,
+        accept_container_child,
+        scope_endpoints,
+    )
 
     if isinstance(view.nodeGraph, NodeGraphBpContainer):
         inputType, outputType = "ContainerInput", "ContainerOutput"
+        acceptChild = accept_container_child
     elif isinstance(view.nodeGraph, NodeGraphBlueprint):
         inputType, outputType = "BlueprintInput", "BlueprintOutput"
+        acceptChild = accept_blueprint_child
     else:
         return {}
 
@@ -265,79 +274,47 @@ def rebuiltScopePins(view, oldScope, newScope):
     if not scopePrim or not scopePrim.IsValid():
         return {}
 
+    newScopeStr = str(newScope)
+    oldScopeStr = str(oldScope)
     try:
-        attributes = list(scopePrim.GetAttributes())
+        inputSpecs, outputSpecs = scope_endpoints(
+            scopePrim,
+            newScopeStr,
+            getattr(view.nodeGraph, "_useFieldnames", True),
+            acceptChild,
+        )
     except Exception:
-        attributes = []
-    inputs = []
-    outputs = []
-    for attr in attributes:
-        try:
-            if not attr.IsAuthored():
-                continue
-            attrName = attr.GetName()
-        except Exception:
-            continue
-        side, pinName = split_direction_hint(attrName)
-        if side == "input":
-            inputs.append(pinName)
-        elif side == "output":
-            outputs.append(pinName)
-        elif ":" not in attrName:
-            if attrName not in inputs:
-                inputs.append(attrName)
-            if attrName not in outputs:
-                outputs.append(attrName)
+        return {}
 
     rebuilt = {}
-    for pinName in inputs:
-        suffix = "#input:" + pinName
-        newId = newScope + suffix
-        oldId = oldScope + suffix
-        node = NodeModel()
-        node.id = newId
-        node.name = pinName
-        node.type = inputType
-        node.outputPins = [pinName]
-        old = view.nodes.get(oldId)
-        if old is not None:
-            position = getattr(old, "position", None)
-            if position is not None:
-                try:
-                    node.setDisplayPosition(position)
-                except Exception:
-                    pass
-            zOrder = getattr(old, "zOrder", None)
-            if zOrder is not None:
-                try:
-                    node.zOrder = zOrder
-                except Exception:
-                    pass
-        rebuilt[oldId] = (newId, node)
-    for pinName in outputs:
-        suffix = "#output:" + pinName
-        newId = newScope + suffix
-        oldId = oldScope + suffix
-        node = NodeModel()
-        node.id = newId
-        node.name = pinName
-        node.type = outputType
-        node.inputPins = [pinName]
-        old = view.nodes.get(oldId)
-        if old is not None:
-            position = getattr(old, "position", None)
-            if position is not None:
-                try:
-                    node.setDisplayPosition(position)
-                except Exception:
-                    pass
-            zOrder = getattr(old, "zOrder", None)
-            if zOrder is not None:
-                try:
-                    node.zOrder = zOrder
-                except Exception:
-                    pass
-        rebuilt[oldId] = (newId, node)
+    for isInput, specs in ((True, inputSpecs), (False, outputSpecs)):
+        for suffix, displayName in specs:
+            newId = newScopeStr + suffix
+            oldId = oldScopeStr + suffix
+            node = NodeModel()
+            node.id = newId
+            node.name = displayName
+            if isInput:
+                node.type = inputType
+                node.outputPins = [displayName]
+            else:
+                node.type = outputType
+                node.inputPins = [displayName]
+            old = view.nodes.get(oldId)
+            if old is not None:
+                position = getattr(old, "position", None)
+                if position is not None:
+                    try:
+                        node.setDisplayPosition(position)
+                    except Exception:
+                        pass
+                zOrder = getattr(old, "zOrder", None)
+                if zOrder is not None:
+                    try:
+                        node.zOrder = zOrder
+                    except Exception:
+                        pass
+            rebuilt[oldId] = (newId, node)
     return rebuilt
 
 

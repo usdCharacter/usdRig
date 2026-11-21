@@ -545,6 +545,45 @@ def _curatedStage():
     return stage
 
 
+def _fieldnameStage(scopeType):
+    """A scope with fieldname-bearing connections on both sides.
+
+    ``Node`` is the displayed child; ``Hidden`` never reaches the canvas,
+    but its connection still shapes the scope's endpoints, exactly as a
+    fresh load would read them.
+    """
+    stage = Usd.Stage.CreateInMemory()
+    scope = stage.DefinePrim("/Scope", scopeType)
+    scope.CreateAttribute("input:drive", Sdf.ValueTypeNames.Float).Set(1.0)
+    scope.CreateAttribute("output:result", Sdf.ValueTypeNames.Float)
+    node = stage.DefinePrim("/Scope/Node", "ExecNode")
+    x = node.CreateAttribute("input:x", Sdf.ValueTypeNames.Float)
+    x.AddConnection(Sdf.Path("/Scope.input:drive"))
+    x.SetCustomDataByKey("assetInfo", {"fieldname": "weight"})
+    y = node.CreateAttribute("output:y", Sdf.ValueTypeNames.Float)
+    y.AddConnection(Sdf.Path("/Scope.output:result"))
+    y.SetCustomDataByKey("assetInfo", {"fieldname": "total"})
+    hidden = stage.DefinePrim("/Scope/Hidden", "ExecNode")
+    h = hidden.CreateAttribute("input:h", Sdf.ValueTypeNames.Float)
+    h.AddConnection(Sdf.Path("/Scope.input:drive"))
+    h.SetCustomDataByKey("assetInfo", {"fieldname": "shadow"})
+    return stage
+
+
+def _fieldnameMeasure(text, size):
+    return len(text) * size * 0.5
+
+
+def _fieldnameFontMetrics():
+    from UsdNoodles import _usdNoodles as _noodles
+
+    fontMetrics = _noodles.FontMetrics()
+    fontMetrics.ascender = 0.8
+    fontMetrics.descender = -0.2
+    fontMetrics.lineHeight = 1.2
+    return fontMetrics
+
+
 @unittest.skipUnless(
     _has_graph_view and _has_prim_rename, "graphView module not available"
 )
@@ -992,6 +1031,171 @@ class RenameFromOutsideTheEditorTest(unittest.TestCase):
         node = self.view.nodes["/World/Deep/Renamed"]
         self.assertEqual(tuple(node.position), (500.0, 300.0))
         self.assertEqual(self.view._selectedNodes, {"/World/Deep/Renamed"})
+
+
+@unittest.skipUnless(
+    _has_graph_view and _has_prim_rename, "graphView module not available"
+)
+class MovedScopeFieldnameEndpointsTest(unittest.TestCase):
+    """A moved scope's synthetic pins match a fresh load at the destination.
+
+    Fieldname-qualified endpoints (``/Scope#input:drive:weight``) come
+    from the children's connection metadata, not the scope prim's
+    attributes alone, so reconciliation derives them through the same
+    shared endpoints the loaders use. Each graph type renames its scope
+    through ``Usd.NamespaceEditor`` and compares the resulting synthetic
+    ids, names, types and pin lists with an independent normal load.
+    """
+
+    def setUp(self):
+        from UsdNoodles.models import NodeModel
+        from UsdNoodles.usdNoticeHandler import UsdNoticeHandler
+
+        self.NodeModel = NodeModel
+        self.UsdNoticeHandler = UsdNoticeHandler
+
+    def _openScope(self, scopeType, graphClass):
+        self.stage = _fieldnameStage(scopeType)
+        self.view = _StubGraphView(self.stage)
+        handler = self.UsdNoticeHandler(self.view)
+        handler.register(self.stage)
+        self.addCleanup(handler.unregister)
+        graph = graphClass()
+        graph.setStage(self.stage)
+        graph.nodes.update(self.view.nodes)
+        self.view.nodeGraph = graph
+        self.view._currentPrimPath = Sdf.Path("/Scope")
+
+    def _addNode(self, path, displayPosition=(500.0, 300.0)):
+        node = self.NodeModel(stage=self.stage, primPath=Sdf.Path(path))
+        if displayPosition is not None:
+            node.setDisplayPosition(Gf.Vec2d(*displayPosition))
+        self.view.nodes[path] = node
+        return node
+
+    def _addSyntheticPin(self, nodeId, nodeType, position=(10.0, 20.0),
+                         zOrder=None):
+        node = self.NodeModel()
+        node.id = nodeId
+        node.name = nodeId.split("#", 1)[1]
+        node.type = nodeType
+        node.setDisplayPosition(Gf.Vec2d(*position))
+        if zOrder is not None:
+            node.zOrder = zOrder
+        self.view.nodes[nodeId] = node
+        return node
+
+    def _renameOnTheStage(self, path, newName):
+        options = Usd.NamespaceEditor.EditOptions()
+        options.allowRelocatesAuthoring = False
+        editor = Usd.NamespaceEditor(self.stage, options)
+        editor.RenamePrim(self.stage.GetPrimAtPath(path), newName)
+        self.assertTrue(editor.ApplyEdits())
+
+    def _independentSynthetic(self, graphClass, scopePath):
+        """What a normal load at *scopePath* emits for synthetic ids."""
+        graph = graphClass()
+        graph.load(
+            self.stage,
+            Sdf.Path(scopePath),
+            _fieldnameMeasure,
+            _fieldnameFontMetrics(),
+        )
+        return {
+            nodeId: node
+            for nodeId, node in graph.nodes.items()
+            if "#" in nodeId
+        }
+
+    def _movedScopeMatchesFreshLoad(self, scopeType, graphClass, inputType,
+                                    outputType):
+        self._openScope(scopeType, graphClass)
+        node = self._addNode("/Scope/Node")
+        inPin = self._addSyntheticPin(
+            "/Scope#input:drive:weight", inputType,
+            position=(10.0, 20.0), zOrder=3,
+        )
+        outPin = self._addSyntheticPin(
+            "/Scope#output:result:total", outputType,
+            position=(30.0, 40.0), zOrder=5,
+        )
+        self._addSyntheticPin("/Scope#input:stale", inputType)
+        unrelated = self._addSyntheticPin("/Other#input:keep", inputType)
+
+        self._renameOnTheStage("/Scope", "Moved")
+
+        self.assertEqual(str(self.view._currentPrimPath), "/Moved")
+        self.assertNotIn("/Scope/Node", self.view.nodes)
+        fresh = self.view.nodes["/Moved/Node"]
+        self.assertIsNot(fresh, node)
+        prim = fresh.getUsdPrim()
+        self.assertTrue(prim.IsValid())
+        self.assertEqual(str(prim.GetPath()), "/Moved/Node")
+        self.assertNotIn("/Scope/Hidden", self.view.nodes)
+        self.assertNotIn("/Moved/Hidden", self.view.nodes)
+
+        self.assertNotIn("/Scope#input:drive:weight", self.view.nodes)
+        self.assertNotIn("/Scope#output:result:total", self.view.nodes)
+        self.assertNotIn("/Scope#input:stale", self.view.nodes)
+        self.assertNotIn("/Moved#input:stale", self.view.nodes)
+        self.assertNotIn("/Moved#input:drive", self.view.nodes)
+        self.assertNotIn("/Moved#output:result", self.view.nodes)
+
+        self.assertIn("/Moved#input:drive:weight", self.view.nodes)
+        self.assertIn("/Moved#input:drive:shadow", self.view.nodes)
+        self.assertIn("/Moved#output:result:total", self.view.nodes)
+
+        rebuilt = self.view.nodes["/Moved#input:drive:weight"]
+        self.assertIsNot(rebuilt, inPin)
+        self.assertEqual(tuple(rebuilt.position), (10.0, 20.0))
+        self.assertEqual(rebuilt.zOrder, 3)
+        rebuiltOut = self.view.nodes["/Moved#output:result:total"]
+        self.assertIsNot(rebuiltOut, outPin)
+        self.assertEqual(tuple(rebuiltOut.position), (30.0, 40.0))
+        self.assertEqual(rebuiltOut.zOrder, 5)
+        self.assertIs(self.view.nodes["/Other#input:keep"], unrelated)
+
+        expected = self._independentSynthetic(graphClass, "/Moved")
+        self.assertEqual(
+            set(expected),
+            {
+                "/Moved#input:drive:shadow",
+                "/Moved#input:drive:weight",
+                "/Moved#output:result:total",
+            },
+        )
+        got = {
+            nodeId: node
+            for nodeId, node in self.view.nodes.items()
+            if nodeId.startswith("/Moved#")
+        }
+        self.assertEqual(set(got), set(expected))
+        for nodeId, want in expected.items():
+            have = got[nodeId]
+            self.assertEqual(have.name, want.name, nodeId)
+            self.assertEqual(have.type, want.type, nodeId)
+            self.assertEqual(
+                list(have.inputPins), list(want.inputPins), nodeId
+            )
+            self.assertEqual(
+                list(have.outputPins), list(want.outputPins), nodeId
+            )
+
+    def test_a_moved_blueprint_scope_matches_a_fresh_load(self):
+        from UsdNoodles.nodeGraphBlueprint import NodeGraphBlueprint
+
+        self._movedScopeMatchesFreshLoad(
+            "Blueprint", NodeGraphBlueprint, "BlueprintInput",
+            "BlueprintOutput",
+        )
+
+    def test_a_moved_container_scope_matches_a_fresh_load(self):
+        from UsdNoodles.nodeGraphBpContainer import NodeGraphBpContainer
+
+        self._movedScopeMatchesFreshLoad(
+            "Container", NodeGraphBpContainer, "ContainerInput",
+            "ContainerOutput",
+        )
 
 
 @unittest.skipUnless(_has_graph_view, "graphView module not available")
