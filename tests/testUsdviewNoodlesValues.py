@@ -52,8 +52,9 @@ def _Check(condition, message):
 
 def testUsdviewInputFunction(appController):
     import sys
+    from unittest.mock import patch
 
-    from pxr import Sdf, Usd
+    from pxr import Sdf, Tf, Usd
     from pxr.Usdviewq.qt import QtCore, QtGui, QtWidgets
 
     app = QtWidgets.QApplication.instance()
@@ -111,9 +112,8 @@ def testUsdviewInputFunction(appController):
 
     from UsdNoodles.graphView import GraphView
 
-    views = [w for w in app.allWidgets() if isinstance(w, GraphView)]
-    _Check(bool(views), "no GraphView after opening the Noodles Editor")
-    view = views[0]
+    view = editor.graphView
+    _Check(isinstance(view, GraphView), "no GraphView in the Noodles Editor")
     _pump(app, 30)
 
     stage = appController._dataModel.stage
@@ -212,6 +212,40 @@ def testUsdviewInputFunction(appController):
         for _ in range(len(view._valueEditInput.text) + 4):
             key(QtCore.Qt.Key_Backspace)
 
+    def offset(point, dx):
+        return QtCore.QPointF(point.x() + dx, point.y())
+
+    def probeDelivery(prim, node, *, delivered, phase):
+        # A live write refreshes its own row directly. Probe a different,
+        # already authored attribute so only notice delivery refreshes it.
+        attr = prim.GetAttribute("count")
+
+        def shown():
+            return node.value_row_for_property("count", view._currentTimeCode).components[0]
+
+        cached = shown()
+        new = attr.Get() + 1
+        paths = []
+
+        def onChange(notice, _sender):
+            paths.extend(notice.GetChangedInfoOnlyPaths())
+
+        listener = Tf.Notice.Register(Usd.Notice.ObjectsChanged, onChange, prim.GetStage())
+        try:
+            _Check(attr.Set(new), "%s: external write failed" % phase)
+            _Check(attr.GetPath() in paths, "%s: independent USD listener missed the change" % phase)
+            expected = new if delivered else cached
+            actual = shown()
+            _Check(actual == expected,
+                   "%s: editor showed count=%r, expected %r" % (phase, actual, expected))
+        finally:
+            listener.Revoke()
+
+    def checkMungCleared(phase):
+        _Check(view._mungState is None and not view._mungActive
+               and view._mungSuppression is None,
+               "%s: drag state or suppression survived" % phase)
+
     # --- the cells exist, and only for the simple types ------------------
     for prop in ("plain", "dbl", "count", "flag", "vec", "tint", "label",
                  "driven", "animated"):
@@ -243,9 +277,17 @@ def testUsdviewInputFunction(appController):
 
     # --- 1. click-edit a float -------------------------------------------
     undo.clear()
+    probeDelivery(valuesPrim, valuesNode, delivered=True, phase="before press")
+    settle()
     point = cellPoint(valuesNode, "plain")
     press(point)
-    release(point)
+    _Check(view._mungState is not None, "press did not arm the float drag")
+    probeDelivery(valuesPrim, valuesNode, delivered=True, phase="press")
+    for fraction in (0.25, 0.5):
+        underThreshold = offset(point, view._cachedMungDragThresholdPx * fraction)
+        move(underThreshold)
+        probeDelivery(valuesPrim, valuesNode, delivered=True, phase="below threshold")
+    release(underThreshold)
     _Check(view._valueEditTarget == (VALUES, "plain", 0),
            "a click did not open the editor (target=%r)" % (view._valueEditTarget,))
     _Check(view._mungState is None, "a click left a drag in progress")
@@ -281,16 +323,19 @@ def testUsdviewInputFunction(appController):
     press(point)
     _Check(view._mungState is not None,
            "pressing a float cell did not arm a value drag")
-    sawActive = False
-    for step in (30.0, 70.0, 100.0):
-        move(QtCore.QPointF(point.x() + step, point.y()))
-        sawActive = sawActive or view._mungActive
-    _Check(sawActive, "the drag never became active")
-    release(QtCore.QPointF(point.x() + 100.0, point.y()))
+    plainAttr = valuesPrim.GetAttribute("plain")
+    for dx in (30.0, 70.0, 100.0):
+        move(offset(point, dx))
+        _Check(view._mungActive, "drag not active at %g px" % dx)
+        _Check(abs(plainAttr.Get() - (2.5 + dx * 0.01)) < 1e-4,
+               "move at %g px did not preview the expected value" % dx)
+        _Check(not undo.canUndo(), "a preview pushed undo before release")
+        probeDelivery(valuesPrim, valuesNode, delivered=False, phase="move at %g px" % dx)
+    release(offset(point, 100.0))
     _pump(app, 20)
 
-    _Check(not view._mungActive, "the drag is still active after release")
-    _Check(view._mungState is None, "the drag state survived the release")
+    checkMungCleared("release")
+    probeDelivery(valuesPrim, valuesNode, delivered=True, phase="release")
     _Check(view._valueEditTarget is None, "a drag opened the keyboard editor")
     # 2.5 -> ladder_step(2.5) == 0.01 -> 100 px adds exactly 1.0
     got = valuesPrim.GetAttribute("plain").Get()
@@ -308,6 +353,28 @@ def testUsdviewInputFunction(appController):
     _Check(not undo.canUndo(),
            "the drag pushed more than one undo entry (%r still there)"
            % undo.undoDescription())
+
+    # --- A drag ending under an outer suppression -----------------------
+    undo.clear()
+    settle()
+    point = cellPoint(valuesNode, "plain")
+    outer = view._stageSync.acquireSuppression()
+    try:
+        press(point)
+        move(offset(point, 100.0))
+        _Check(abs(plainAttr.Get() - 3.5) < 1e-4, "nested drag did not preview")
+        probeDelivery(valuesPrim, valuesNode, delivered=False, phase="nested move")
+        release(offset(point, 100.0))
+        checkMungCleared("nested release")
+        probeDelivery(valuesPrim, valuesNode, delivered=False, phase="nested release")
+    finally:
+        outer.release()
+    probeDelivery(valuesPrim, valuesNode, delivered=True, phase="outer release")
+    _Check(undo.canUndo() and abs(plainAttr.Get() - 3.5) < 1e-4,
+           "nested release did not commit the preview")
+    undo.undo(view)
+    _Check(not undo.canUndo() and abs(plainAttr.Get() - 2.5) < 1e-4,
+           "nested release did not create exactly one undo")
 
     # --- 3. Shift multiplies the step by ten -----------------------------
     undo.clear()
@@ -432,21 +499,31 @@ def testUsdviewInputFunction(appController):
     _Check(not undo.canUndo(),
            "Esc in the editor pushed an undo entry: %r" % undo.undoDescription())
 
-    point = cellPoint(valuesNode, "dbl")
-    press(point)
-    move(QtCore.QPointF(point.x() + 150.0, point.y()))
-    _Check(abs(dblAttr.Get() - 2.5) > 1e-6,
-           "the drag never previewed a new value")
-    key(QtCore.Qt.Key_Escape)
-    _pump(app, 10)
-    _Check(view._mungState is None, "Esc left the drag in progress")
-    _Check(abs(dblAttr.Get() - 2.5) < 1e-6,
-           "Esc mid-drag left dbl at %r, expected the pre-drag 2.5"
-           % dblAttr.Get())
-    _Check(not undo.canUndo(),
-           "a cancelled drag pushed an undo entry: %r" % undo.undoDescription())
-    release(QtCore.QPointF(point.x() + 150.0, point.y()))
-    _pump(app, 10)
+    for withOuter in (False, True):
+        outer = view._stageSync.acquireSuppression() if withOuter else None
+        try:
+            point = cellPoint(valuesNode, "dbl")
+            press(point)
+            move(offset(point, 150.0))
+            _Check(abs(dblAttr.Get() - 2.5) > 1e-6,
+                   "the drag never previewed a new value")
+            probeDelivery(valuesPrim, valuesNode, delivered=False, phase="before Esc")
+            key(QtCore.Qt.Key_Escape)
+            checkMungCleared("Esc")
+            _Check(abs(dblAttr.Get() - 2.5) < 1e-6, "Esc did not restore dbl")
+            probeDelivery(valuesPrim, valuesNode, delivered=not withOuter, phase="Esc")
+            move(offset(point, 175.0))
+            release(offset(point, 175.0))
+            _Check(abs(dblAttr.Get() - 2.5) < 1e-6,
+                   "cancelled drag left dbl at %r, expected 2.5" % dblAttr.Get())
+            _Check(view._valueEditTarget is None, "release after Esc opened the editor")
+            _Check(not undo.canUndo() and not undo.canRedo(),
+                   "a cancelled drag changed undo history")
+        finally:
+            if outer is not None:
+                outer.release()
+        probeDelivery(valuesPrim, valuesNode, delivered=True, phase="after Esc cleanup")
+    print("RIGEXEC_NOODLES_VALUES: cross-event notice delivery, release and Esc verified")
 
     # --- 8. a row with no cell falls through to a node drag --------------
     undo.clear()
@@ -548,6 +625,83 @@ def testUsdviewInputFunction(appController):
     _Check(view.nodeCreationHotbox.is_showing,
            "Tab traversed focus instead of opening node creation")
     key(QtCore.Qt.Key_Tab)
+
+    # --- A live write raises inside the real move handler ---------------
+    from UsdNoodles import noodlesValues
+
+    undo.clear()
+    settle()
+    point = cellPoint(valuesNode, "plain")
+    before = plainAttr.Get()
+    press(point)
+    with patch.object(noodlesValues, "write_value",
+                      side_effect=RuntimeError("injected live-write failure")) as write:
+        move(offset(point, 100.0))
+        _Check(write.call_count == 1, "the move did not reach the failing writer")
+    checkMungCleared("failed write")
+    probeDelivery(valuesPrim, valuesNode, delivered=True, phase="failed write")
+    move(offset(point, 125.0))
+    release(offset(point, 125.0))
+    _Check(plainAttr.Get() == before and not undo.canUndo() and not undo.canRedo(),
+           "failed drag left a stale author or an undo entry")
+    _Check(view._valueEditTarget is None, "release after failed write opened an editor")
+    print("RIGEXEC_NOODLES_VALUES: live-write failure cleanup verified")
+
+    def startAbandonedDrag(phase):
+        point = cellPoint(valuesNode, "plain")
+        before = plainAttr.Get()
+        press(point)
+        move(offset(point, 100.0))
+        _Check(view._mungActive and plainAttr.Get() != before,
+               "%s: drag did not preview" % phase)
+        probeDelivery(valuesPrim, valuesNode, delivered=False, phase=phase)
+        return point, plainAttr.Get()
+
+    # Keep the target path on the replacement stage to detect stale writes
+    # to either stage.
+    replacement = Usd.Stage.Open(stage.Flatten())
+    replacementAttr = replacement.GetPrimAtPath(VALUES).GetAttribute("plain")
+    _Check(replacementAttr.Set(17.0), "failed to seed the replacement value")
+    point, preview = startAbandonedDrag("before switch")
+    view.loadStage(replacement)
+    checkMungCleared("switch")
+    replacementUndo = view._undoHistory
+    _Check(view.nodeGraph.getStage() == replacement and replacementUndo is not undo,
+           "switch did not install a new stage and history")
+    move(offset(point, 150.0))
+    _Check(plainAttr.Get() == preview and replacementAttr.Get() == 17.0,
+           "switch or the next move wrote to a stage")
+    _Check(not undo.canUndo() and not replacementUndo.canUndo(),
+           "abandoning the drag at switch pushed undo")
+    probeDelivery(valuesPrim, valuesNode, delivered=False, phase="old sender after switch")
+
+    view.loadStage(stage)
+    selection.clearPrims()
+    selection.addPrim(valuesPrim)
+    view.addNodesFromPrimTreeSelection()
+    settle()
+    valuesNode = view.nodes[VALUES]
+    probeDelivery(valuesPrim, valuesNode, delivered=True, phase="after switching back")
+    point = cellPoint(valuesNode, "plain")
+    press(point)
+    release(point)
+    _Check(view._valueEditTarget == (VALUES, "plain", 0),
+           "first click on the reloaded graph did not open a fresh editor")
+    key(QtCore.Qt.Key_Escape)
+    _Check(plainAttr.Get() == preview and not undo.canUndo(),
+           "first click after switching authored a value")
+    print("RIGEXEC_NOODLES_VALUES: mid-drag stage switch verified")
+
+    point, preview = startAbandonedDrag("before dock close")
+    editor.close()
+    _pump(app, 10)
+    checkMungCleared("dock close")
+    _Check(view._undoHistory is None, "dock close did not detach history")
+    probeDelivery(valuesPrim, valuesNode, delivered=False, phase="closed dock")
+    move(offset(point, 150.0))
+    _Check(plainAttr.Get() == preview and not undo.canUndo() and not undo.canRedo(),
+           "dock close or the next move wrote a value or pushed undo")
+    print("RIGEXEC_NOODLES_VALUES: mid-drag dock close verified")
 
     for widget in list(app.topLevelWidgets()):
         if type(widget).__module__.startswith("UsdNoodles"):
