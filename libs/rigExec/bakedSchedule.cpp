@@ -1308,8 +1308,8 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                                   earlierCandidate ? reader : -1);
                         }
                     };
-                // FinishCommit writes all candidate outcomes, including their
-                // fallback copies, before a descendant can carry one of them.
+                // The commit finish writes all candidate outcomes, including
+                // their fallback copies, before a descendant can carry one.
                 descendantCarries(kFin, commit.descendantCarry,
                                   commit.slotWrites);
                 descendantCarries(kBase, commit.descendantBaseCarry,

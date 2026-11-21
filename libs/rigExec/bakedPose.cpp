@@ -10,6 +10,7 @@
 // and the compiled walk arrives restated as RigExecBakedWalkEntry.
 #include "bakedProgramImpl.h"
 #include "bakedExecCrossCheckRows.h"
+#include "poseEvalHost.h"
 
 #include "frameExtraction.h"
 #include "frozenContextInternal.h"
@@ -2660,7 +2661,7 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
             }
         };
         // What the write-back CARRIES is a read too, and of a different
-        // version than the delta's: FinishCommit copies the version it found
+        // version than the delta's: the finish copies the version it found
         // into the storage it owns wherever it declines to write, so a step
         // that carries TOUCHES the version it carries. PoseFin's half is the
         // candidate read the unsplit arrangement declares just below for the
@@ -2691,7 +2692,7 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
         if (!commit.split) {
             // The delta this arrangement measures itself is against each
             // candidate slot's value BEFORE the commit revises it:
-            // ComputeCommitDeltas reads B.fin[slot] and the write-back then
+            // the finish reads B.fin[slot] and the write-back then
             // overwrites it, so the read is real and is not implied by the
             // write. The split arrangement declares exactly these on its
             // CommitDelta step; declaring them here too is what keeps a cone
@@ -4108,257 +4109,20 @@ RigExecBakedSampleLeaves(RigExecBakedProgramImpl *program, UsdTimeCode time,
     });
 }
 
-namespace {
-bool
-_ProviderActive(const RigExecBakedProgramImpl &B, size_t slot)
-{
-    // Isolated hand-built kernel fixtures may have no captured scene. Actual
-    // source-built programs always retain the complete activity table.
-    return B.providerActive.empty() ||
-           (slot < B.providerActive.size() && B.providerActive[slot]);
-}
-GfMatrix4d
-_UnavailableProviderSpace()
-{
-    GfMatrix4d value(1.0);
-    value[3][0] = std::numeric_limits<double>::quiet_NaN();
-    return value;
-}
-bool
-_SpaceReady(const RigExecBakedProgramImpl &B,
-            const RigExecBakedProgramImpl::Ladder &L, size_t channel)
-{
-    const int id = L.spaceValues[channel];
-    return id >= 0 && B.providerValues.Read<GfMatrix4d>(RigExecValueId(id));
-}
-GfMatrix4d
-_SpaceMatrix(const RigExecBakedProgramImpl &B,
-             const RigExecBakedProgramImpl::Ladder &L, size_t channel,
-             const GfMatrix4d &fallback)
-{
-    const int id = L.spaceValues[channel];
-    const auto *value =
-        id >= 0 ? B.providerValues.Read<GfMatrix4d>(RigExecValueId(id))
-                : nullptr;
-    return value ? *value : fallback;
-}
-} // namespace
-
 void
 RigExecBakedComposeRestRange(RigExecBakedProgramImpl *program, int begin,
                              int end, bool trackMoves)
 {
-    RigExecBakedProgramImpl &B = *program;
-    const GfMatrix4d identity(1.0);
-    // The channels as sampled for this run (RigExecBakedSampleLeaves ran
-    // first, at Build and in the prologue).
-    const auto rd = [&B](const auto &input) {
-        return RigExecBakedLeafRead(B, input);
-    };
-    for (int i = begin; i < end; ++i) {
-        const size_t slot = size_t(i);
-        if (B.slotKind[slot] != RigExecBakedSlotKind::FirstFramePose) {
-            // An xform-derived slot has no rest chain: the dynamic path
-            // gives it the identity rest frame outright. Build set it and
-            // nothing here may move it -- including the round trip, which
-            // stays the identity a descendant of one would inherit.
-            continue;
-        }
-        if (B.execCheckRows)
-            B.execCheckRows->BeforeSlot(B, RigExecBakedStepKind::RestCompose,
-                                        begin, i);
-        if (!_ProviderActive(B, slot)) {
-            RigExecPointFrame unavailableFrame;
-            unavailableFrame.flags = 0;
-            const auto unavailable = _UnavailableProviderSpace();
-            bool changed =
-                !RigExecTypedSame(B.restFrames[slot], unavailableFrame) ||
-                !RigExecTypedSame(B.restM[slot], unavailable) ||
-                !RigExecTypedSame(B.restRoundTrip[slot], unavailable);
-            for (size_t k = 0; k < unavailableFrame.points.size(); ++k)
-                changed =
-                    changed || !RigExecTypedSame(B.restPts[slot][k],
-                                                 unavailableFrame.points[k]);
-            B.restFrames[slot] = unavailableFrame;
-            B.restPts[slot] = unavailableFrame.points;
-            B.restM[slot] = unavailable;
-            B.restRoundTrip[slot] = unavailable;
-            if (trackMoves && changed)
-                B.restChanged[slot] = 1;
-            continue;
-        }
-        const RigExecBakedProgramImpl::Ladder &L = B.ladders[slot];
-        GfMatrix4d rest =
-            RigExecBakedComposeAvars(rd(L.restAvars[0]), rd(L.restAvars[1]),
-                                     rd(L.restAvars[2]), 1, 1, 1,
-                                     rd(L.restAvars[3]), rd(L.restAvars[4]),
-                                     rd(L.restAvars[5]), 0, B.xyzToken) *
-            _SpaceMatrix(B, L, 0, rd(L.restSpace));
-        rest.Orthonormalize(/* issueWarning = */ false);
-        const int parent = B.parent[slot];
-        const GfMatrix4d parentRest =
-            parent >= 0 ? B.restRoundTrip[size_t(parent)] : identity;
-        const GfMatrix4d intervening = rd(L.interveningSpace);
-        if (intervening != identity)
-            rest = rest * intervening;
-        B.restM[slot] = rest * parentRest;
-        B.restFrames[slot] = RigExecFrameFromMatrix(B.restM[slot]);
-        B.restPts[slot] = B.restFrames[slot].points;
-        B.restRoundTrip[slot] = RigExecBakedRoundTrip(B.restM[slot]);
-
-        // Compared BIT FOR BIT, as the op graph keys the rest: a recompose
-        // that lands on the same bits (a held NaN included) moved nothing,
-        // and the readers of the rest may sit it out; a flipped zero sign
-        // moved. `restPts`, `restFrames` and `restRoundTrip` are functions
-        // of `restM`, so it stands for all four.
-        if (trackMoves && !RigExecTypedSame(B.restM[slot], B.lastRestM[slot])) {
-            B.lastRestM[slot] = B.restM[slot];
-            if (!B.restChanged[slot]) {
-                B.restChanged[slot] = 1;
-            }
-        }
-    }
+    BakedPoseHost host(program, nullptr);
+    eval::RunRestComposeRange(host, begin, end, trackMoves);
 }
 
 void
 RigExecBakedComposeLadderRange(RigExecBakedProgramImpl *program, int begin,
                                int end, bool trackMoves)
 {
-    RigExecBakedProgramImpl &B = *program;
-    const GfMatrix4d identity(1.0);
-    const auto rd = [&B](const auto &input) {
-        return RigExecBakedLeafRead(B, input);
-    };
-    for (int i = begin; i < end; ++i) {
-        const size_t slot = size_t(i);
-        if (B.slotKind[slot] != RigExecBakedSlotKind::FirstFramePose) {
-            // No default-space ladder either; see the rest above.
-            continue;
-        }
-        if (B.execCheckRows)
-            B.execCheckRows->BeforeSlot(B, RigExecBakedStepKind::LadderCompose,
-                                        begin, i);
-        if (!_ProviderActive(B, slot)) {
-            const auto unavailable = _UnavailableProviderSpace();
-            const bool changed =
-                !RigExecTypedSame(B.selfD[slot], unavailable) ||
-                !RigExecTypedSame(B.parentDinv[slot], unavailable) ||
-                !RigExecTypedSame(B.restRoundTrip[slot], unavailable) ||
-                !RigExecTypedSame(B.defaultRoundTrip[slot], unavailable) ||
-                !RigExecTypedSame(B.posedAuthoredM[slot], unavailable) ||
-                !RigExecTypedSame(B.posedD[slot], unavailable) ||
-                !RigExecTypedSame(B.parentSpaceM[slot], unavailable) ||
-                B.posedAuthored[slot] != 0 ||
-                B.parentSpaceAuthored[slot] != 0 ||
-                B.rotOrder[slot] != B.xyzToken || B.rotationSign[slot] != 0;
-            B.selfD[slot] = B.parentDinv[slot] = B.restRoundTrip[slot] =
-                B.defaultRoundTrip[slot] = unavailable;
-            B.posedAuthoredM[slot] = B.posedD[slot] = B.parentSpaceM[slot] =
-                unavailable;
-            B.posedAuthored[slot] = B.parentSpaceAuthored[slot] = 0;
-            B.rotOrder[slot] = B.xyzToken;
-            B.rotationSign[slot] = 0;
-            if (trackMoves && changed)
-                B.ladderChanged[slot] = 1;
-            continue;
-        }
-        const RigExecBakedProgramImpl::Ladder &L = B.ladders[slot];
-        const auto authoritative = [&B](const auto &input, bool connected) {
-            const int index = input.overrideIndex;
-            return connected ||
-                   (index >= 0 && ((size_t(index) < B.overridden.size() &&
-                                    B.overridden[size_t(index)]) ||
-                                   (size_t(index) < B.upstreamOn.size() &&
-                                    B.upstreamOn[size_t(index)])));
-        };
-        const GfMatrix4d posed = _SpaceMatrix(B, L, 2, rd(L.posedSpace));
-        B.posedAuthored[slot] =
-            authoritative(L.posedSpace, L.posedSpaceConnected) ||
-            posed != identity;
-        B.posedAuthoredM[slot] = posed;
-        const int parent = B.parent[slot];
-        const GfMatrix4d parentRest =
-            parent >= 0 ? B.restRoundTrip[size_t(parent)] : identity;
-        const GfMatrix4d authoredParentDefault =
-            _SpaceMatrix(B, L, 4, rd(L.parentDefaultSpace));
-        const GfMatrix4d parentDefault =
-            _SpaceReady(B, L, 4) ||
-                    authoritative(L.parentDefaultSpace,
-                                  L.parentDefaultSpaceConnected) ||
-                    authoredParentDefault != identity
-                ? authoredParentDefault
-                : (parent >= 0 ? B.defaultRoundTrip[size_t(parent)] : identity);
-        const GfMatrix4d authoredDefault =
-            _SpaceMatrix(B, L, 1, rd(L.defaultSpace));
-        if (_SpaceReady(B, L, 1) ||
-            authoritative(L.defaultSpace, L.defaultSpaceConnected) ||
-            authoredDefault != identity) {
-            B.selfD[slot] = authoredDefault;
-        } else {
-            const GfMatrix4d offset = RigExecBakedComposeAvars(
-                rd(L.defaultAvars[0]), rd(L.defaultAvars[1]),
-                rd(L.defaultAvars[2]), 1, 1, 1, rd(L.defaultAvars[3]),
-                rd(L.defaultAvars[4]), rd(L.defaultAvars[5]), 0, B.xyzToken);
-            B.selfD[slot] = offset * B.restRoundTrip[slot] *
-                            parentRest.GetInverse() * parentDefault;
-        }
-        B.defaultRoundTrip[slot] = RigExecBakedRoundTrip(B.selfD[slot]);
-        const GfMatrix4d authoredAvarDefault =
-            _SpaceMatrix(B, L, 5, rd(L.avarDefaultSpace));
-        const GfMatrix4d avarDefault =
-            _SpaceReady(B, L, 5) ||
-                    authoritative(L.avarDefaultSpace,
-                                  L.avarDefaultSpaceConnected) ||
-                    authoredAvarDefault != identity
-                ? authoredAvarDefault
-                : B.selfD[slot];
-        const GfMatrix4d authoredPosedDefault =
-            _SpaceMatrix(B, L, 6, rd(L.posedDefaultSpace));
-        B.posedD[slot] = _SpaceReady(B, L, 6) ||
-                                 authoritative(L.posedDefaultSpace,
-                                               L.posedDefaultSpaceConnected) ||
-                                 authoredPosedDefault != identity
-                             ? authoredPosedDefault
-                             : avarDefault;
-        B.parentDinv[slot] = parentDefault.GetInverse();
-        B.parentSpaceM[slot] = _SpaceMatrix(B, L, 3, rd(L.parentSpace));
-        B.parentSpaceAuthored[slot] =
-            authoritative(L.parentSpace, L.parentSpaceConnected) ||
-            rd(L.parentSpace) != identity;
-        const GfVec3d sign = rd(L.rotationSign);
-        B.rotationSign[slot] =
-            RigExecRotationSignMask(sign[0], sign[1], sign[2]);
-        const TfToken order = rd(L.rotationOrder);
-        B.rotOrder[slot] = order.IsEmpty() ? B.xyzToken : order;
-
-        // Bit for bit, as the rest is; `defaultRoundTrip` is a function of
-        // `selfD`.
-        if (trackMoves &&
-            (!RigExecTypedSame(B.selfD[slot], B.lastSelfD[slot]) ||
-             !RigExecTypedSame(B.parentDinv[slot], B.lastParentDinv[slot]) ||
-             B.posedAuthored[slot] != B.lastPosedAuthored[slot] ||
-             !RigExecTypedSame(B.posedAuthoredM[slot],
-                               B.lastPosedAuthoredM[slot]) ||
-             B.rotOrder[slot] != B.lastRotOrder[slot] ||
-             !RigExecTypedSame(B.posedD[slot], B.lastPosedD[slot]) ||
-             !RigExecTypedSame(B.parentSpaceM[slot],
-                               B.lastParentSpaceM[slot]) ||
-             B.parentSpaceAuthored[slot] != B.lastParentSpaceAuthored[slot] ||
-             B.rotationSign[slot] != B.lastRotationSign[slot])) {
-            B.lastSelfD[slot] = B.selfD[slot];
-            B.lastParentDinv[slot] = B.parentDinv[slot];
-            B.lastPosedAuthored[slot] = B.posedAuthored[slot];
-            B.lastPosedAuthoredM[slot] = B.posedAuthoredM[slot];
-            B.lastRotOrder[slot] = B.rotOrder[slot];
-            B.lastPosedD[slot] = B.posedD[slot];
-            B.lastParentSpaceM[slot] = B.parentSpaceM[slot];
-            B.lastParentSpaceAuthored[slot] = B.parentSpaceAuthored[slot];
-            B.lastRotationSign[slot] = B.rotationSign[slot];
-            if (!B.ladderChanged[slot]) {
-                B.ladderChanged[slot] = 1;
-            }
-        }
-    }
+    BakedPoseHost host(program, nullptr);
+    eval::RunLadderComposeRange(host, begin, end, trackMoves);
 }
 
 namespace {
@@ -4785,17 +4549,13 @@ RigExecBakedIndexAvarBindings(RigExecBakedProgramImpl *program)
 void
 RigExecBakedRunAvarOp(RigExecBakedProgramImpl *program, RigExecBakedStep *step)
 {
-    auto &B = *program;
-    const auto read = [&](const auto &bindings,
-                          const std::vector<uint32_t> &begin) {
-        const auto range = RigExecBakedAvarBindingRange(begin, step->object);
-        for (size_t i = range.first; i < range.second; ++i) {
-            const auto &binding = bindings[i];
-            B.avars[binding.slot] = RigExecBakedLeafRead(B, binding.input);
-        }
-    };
-    read(B.avarBindings, B.avarBindingBegin);
-    read(B.avarConstantBindings, B.avarConstantBindingBegin);
+    BakedPoseHost host(program, step);
+    eval::StepRef ref;
+    ref.kind = uint32_t(step->kind);
+    ref.object = step->object;
+    ref.part = step->part;
+    ref.slot = 0;
+    eval::RunValueStep(host, ref);
 }
 
 void
@@ -4823,171 +4583,6 @@ RigExecBakedRunSolverSources(RigExecBakedProgramImpl *program, UsdTimeCode time)
 }
 
 namespace {
-
-/// The hierarchy delta each candidate of \p commit carries, once.
-///
-/// It depends only on the candidate's frame and the ancestor's frame before
-/// the commit, neither of which the descendant walk touches, so it can be
-/// hoisted out of the walk and the descendants staged in any order.
-void
-ComputeCommitDeltas(const RigExecBakedProgramImpl &B,
-                    RigExecBakedCommit *commit)
-{
-    for (size_t pos = 0; pos < commit->slots.size(); ++pos) {
-        if (!commit->present[pos]) {
-            commit->deltaOk[pos] = 0;
-            continue;
-        }
-        commit->deltas[pos] = GfMatrix4d(1.0);
-        commit->deltaOk[pos] =
-            RigExecPreparePoseDelta(B.fin[size_t(commit->slotReads[pos])],
-                                    commit->frames[pos], &commit->deltas[pos])
-                ? 1
-                : 2;
-    }
-}
-
-/// Stages descendants [\p begin, \p end) of \p commit.
-///
-/// Each pair is decided in the same order of tests as the pairs it
-/// replaces; what it does with the answer is recorded rather than returned,
-/// because the pair that decides the commit is the LOWEST-indexed
-/// failing one and a chunk cannot know whether an earlier chunk failed.
-void
-StageCommitPairs(const RigExecBakedProgramImpl &B, RigExecBakedCommit *commit,
-                 size_t begin, size_t end)
-{
-    for (size_t k = begin; k < end; ++k) {
-        const int pos = commit->closestPos[k];
-        bool parentBlocked = false;
-        for (int slot = commit->propagate[k].first;
-             slot >= 0 && slot != commit->propagate[k].second;
-             slot = B.propParent[size_t(slot)]) {
-            if (B.parentSpaceAuthored[size_t(slot)]) {
-                parentBlocked = true;
-                break;
-            }
-        }
-        if (parentBlocked || pos < 0 || !commit->present[size_t(pos)]) {
-            // No candidate leaves this descendant unchanged.
-            commit->outcome[k] = uint8_t(RigExecBakedPropagateOutcome::Skipped);
-            continue;
-        }
-        const RigExecPointFrame &current =
-            B.fin[size_t(commit->descendantReads[k])];
-        const RigExecPointFrame &before =
-            B.fin[size_t(commit->closestReads[k])];
-        commit->outcome[k] = uint8_t(RigExecPropagatePoseFrame(
-            current, before, commit->frames[size_t(pos)],
-            commit->deltas[size_t(pos)], commit->deltaOk[size_t(pos)] == 1,
-            commit->solverOutput, false, true, &commit->staged[k]));
-    }
-}
-
-/// Decides \p commit and writes it back, or says why it passed through.
-///
-/// The first pair that neither staged nor was stepped over decides;
-/// everything after it was staged for nothing and is dropped. A commit that
-/// passes through writes NOTHING -- not even its
-/// candidates -- which is what makes it atomic.
-void
-FinishCommit(RigExecBakedProgramImpl *program, RigExecBakedStep *step,
-             RigExecBakedCommit *commit)
-{
-    RigExecBakedProgramImpl &B = *program;
-    // What a write site that does not write leaves behind: the version this
-    // commit found, copied into the storage this commit owns, so that a
-    // reader bound to the commit's version reads the value the slot holds
-    // at this point in the walk. Cheap where it matters
-    // -- a commit that applies carries only the candidates its batch
-    // published nothing for -- and paid in full only by a commit that passes
-    // through, which is the arithmetic it did not do.
-    const auto carry = [&B, commit](size_t pos, size_t k, bool candidates,
-                                    bool descendants) {
-        if (candidates) {
-            B.fin[size_t(commit->slotWrites[pos])] =
-                B.fin[size_t(commit->slotCarry[pos])];
-            if (commit->solverOutput) {
-                B.base[size_t(commit->slotBaseWrites[pos])] =
-                    B.base[size_t(commit->slotBaseCarry[pos])];
-            }
-        }
-        if (descendants) {
-            B.fin[size_t(commit->descendantWrites[k])] =
-                B.fin[size_t(commit->descendantCarry[k])];
-            if (commit->solverOutput) {
-                B.base[size_t(commit->descendantBaseWrites[k])] =
-                    B.base[size_t(commit->descendantBaseCarry[k])];
-            }
-        }
-    };
-    const auto carryEverything = [&] {
-        for (size_t pos = 0; pos < commit->slots.size(); ++pos) {
-            carry(pos, 0, /* candidates = */ true, /* descendants = */ false);
-        }
-        for (size_t k = 0; k < commit->propagate.size(); ++k) {
-            carry(0, k, /* candidates = */ false, /* descendants = */ true);
-        }
-    };
-    if (commit->abandoned) {
-        carryEverything();
-        return;
-    }
-    // Spelled at Build: a body may not ask SdfPath for text.
-    const std::string &mover = commit->moverPathText;
-    for (size_t k = 0; k < commit->propagate.size(); ++k) {
-        const auto outcome = RigExecBakedPropagateOutcome(commit->outcome[k]);
-        if (outcome == RigExecBakedPropagateOutcome::Staged ||
-            outcome == RigExecBakedPropagateOutcome::Skipped) {
-            continue;
-        }
-        switch (outcome) {
-        case RigExecBakedPropagateOutcome::UnusableDescendant:
-            step->diagnostics.push_back(
-                mover + " could not propagate its pose revision through " +
-                (*B.pathTexts)[size_t(commit->propagate[k].first)] +
-                "; constraint passed through");
-            break;
-        case RigExecBakedPropagateOutcome::SingularDelta:
-            step->diagnostics.push_back(
-                mover + " produced a singular hierarchy delta; constraint "
-                        "passed through");
-            break;
-        default:
-            step->diagnostics.push_back(
-                mover + " produced an invalid descendant frame for " +
-                (*B.pathTexts)[size_t(commit->propagate[k].first)] +
-                "; constraint passed through");
-            break;
-        }
-        carryEverything();
-        return;
-    }
-    // In slot order for the candidates -- which is the order the dense table
-    // is in -- then in propagation order for the descendants, exactly as the
-    // two write-back loops of commitConstraintFrames run.
-    for (size_t pos = 0; pos < commit->slots.size(); ++pos) {
-        if (!commit->present[pos]) {
-            carry(pos, 0, /* candidates = */ true, /* descendants = */ false);
-            continue;
-        }
-        B.fin[size_t(commit->slotWrites[pos])] = commit->frames[pos];
-        if (commit->solverOutput) {
-            B.base[size_t(commit->slotBaseWrites[pos])] = commit->frames[pos];
-        }
-    }
-    for (size_t k = 0; k < commit->propagate.size(); ++k) {
-        if (RigExecBakedPropagateOutcome(commit->outcome[k]) !=
-            RigExecBakedPropagateOutcome::Staged) {
-            carry(0, k, /* candidates = */ false, /* descendants = */ true);
-            continue;
-        }
-        B.fin[size_t(commit->descendantWrites[k])] = commit->staged[k];
-        if (commit->solverOutput) {
-            B.base[size_t(commit->descendantBaseWrites[k])] = commit->staged[k];
-        }
-    }
-}
 
 /// Rebuilds one solver's rest description from the ladder this run composed.
 ///
@@ -5165,23 +4760,17 @@ void
 RigExecBakedRunSpaceCheckpoint(RigExecBakedProgramImpl *program,
                                RigExecBakedStep *step)
 {
-    auto &B = *program;
-    auto &context = B.switchFrameContexts[size_t(step->object)];
-    for (size_t k = 0; k < context.recompose.size(); ++k) {
-        const size_t slot = size_t(context.recompose[k]);
-        auto &input = context.kernelInputs[k];
-        input.avars = _ComposeAvarsOf(B, int(slot));
-        input.posedDefault = B.posedD[slot];
-        input.parentDefaultInverse = B.parentDinv[slot];
-        input.parentExpression = B.parentSpaceM[slot];
-        input.parentExpressionAuthored = B.parentSpaceAuthored[slot] != 0;
-        input.posedAuthoredMatrix = B.posedAuthoredM[slot];
-        input.posedAuthored = B.posedAuthored[slot] != 0;
+    BakedPoseHost host(program, step);
+    eval::StepRef ref;
+    ref.kind = uint32_t(step->kind);
+    ref.object = step->object;
+    ref.part = step->part;
+    ref.slot = 0;
+    if (eval::RunValueStep(host, ref).outcome == eval::Outcome::Invalid) {
+        step->diagnostics.push_back("space checkpoint " +
+                                    std::to_string(step->object) +
+                                    " names no checkpoint");
     }
-    B.switchFrames[size_t(step->object)] = RigExecRunSpaceCheckpoint(
-        context.anchor >= 0 ? B.posedM[size_t(context.anchor)]
-                            : GfMatrix4d(1.0),
-        context.kernelInputs);
 }
 
 RigExecBakedProgramImpl::Solver
@@ -5201,91 +4790,17 @@ RigExecBakedEvalFrameRecord(const RigExecBakedProgramImpl &B,
 {
     *matrix = GfMatrix4d(1.0);
     const RigExecBakedCommit &commit = B.commits[size_t(record.commit)];
-    if (commit.solverOutput) {
-        // This descriptor's current output presence gates its checkpoint.
-        if (record.position < 0 ||
-            size_t(record.position) >= commit.present.size() ||
-            !commit.present[size_t(record.position)]) {
-            return false;
-        }
-    } else if (!commit.recordAfter ||
-               (record.target > 0 && !commit.recordEveryTarget)) {
-        // The exit gates the walk's recordFrame calls sit behind: set by the
-        // commit's constraint step on every run, per exit.
+    if (!eval::FrameRecordRecorded(commit.solverOutput, record.position,
+                                   record.target, commit.present.data(),
+                                   commit.present.size(), commit.recordAfter,
+                                   commit.recordEveryTarget)) {
         return false;
     }
     const RigExecPointFrame &frame = B.fin[size_t(record.version)];
-    if (!frame.IsValid()) {
-        return false;
-    }
     const RigExecPointFrame &rest = B.restFrames[size_t(record.slot)];
-    const std::array<GfVec3d, 4> landmarks =
-        rest.IsValid() ? rest.points : RigExecIdentityLandmarks();
-    return RigExecPointsToMatrix(landmarks, frame.points, matrix);
+    return eval::FrameRecordMatrix<BakedPoseMath>(
+        rest.points, rest.flags, frame.points, frame.flags, matrix);
 }
-
-namespace {
-void
-PrepareConstraintArrays(RigExecBakedProgramImpl::ConstraintArrays *arrays)
-{
-    auto &a = *arrays;
-    a.diagnostics.clear();
-    a.poleDiagnostics.clear();
-    const auto weights = [&](size_t channel, size_t count, const char *name,
-                             std::vector<std::string> *diagnostics,
-                             std::vector<double> *values) {
-        const auto *raw = a.raw[channel].IsHolding<VtFloatArray>()
-                              ? &a.raw[channel].UncheckedGet<VtFloatArray>()
-                              : nullptr;
-        if (raw && !raw->empty() && raw->size() != count) {
-            diagnostics->push_back(a.pathText + " " + name + " has " +
-                                   std::to_string(raw->size()) +
-                                   " entries for " + std::to_string(count) +
-                                   " sources");
-            return false;
-        }
-        values->assign(count, 1.0);
-        if (raw)
-            for (size_t i = 0; i < raw->size(); ++i)
-                (*values)[i] = (*raw)[i];
-        return true;
-    };
-    const auto offsets = [&](size_t channel, const char *name,
-                             std::vector<GfVec3d> *values) {
-        const auto *raw = a.raw[channel].IsHolding<VtVec3dArray>()
-                              ? &a.raw[channel].UncheckedGet<VtVec3dArray>()
-                              : nullptr;
-        if (raw && !raw->empty() && raw->size() != a.sourceCount) {
-            a.diagnostics.push_back(a.pathText + " " + name + " has " +
-                                    std::to_string(raw->size()) +
-                                    " entries for " +
-                                    std::to_string(a.sourceCount) + " sources");
-            return false;
-        }
-        values->assign(a.sourceCount, GfVec3d(0));
-        if (raw)
-            for (size_t i = 0; i < raw->size(); ++i)
-                (*values)[i] = (*raw)[i];
-        return true;
-    };
-    a.ok = weights(0, a.sourceCount, SchemaAttrText::inputsSourceWeights,
-                   &a.diagnostics, &a.weights);
-    if (a.parentOffsets)
-        a.ok = a.ok &&
-               offsets(1, SchemaAttrText::inputsTranslationOffsets,
-                       &a.translationOffsets) &&
-               offsets(2, SchemaAttrText::inputsRotationOffsets,
-                       &a.rotationOffsets);
-    else {
-        a.translationOffsets.assign(a.sourceCount, GfVec3d(0));
-        a.rotationOffsets.assign(a.sourceCount, GfVec3d(0));
-    }
-    if (a.readPole)
-        a.poleOk =
-            weights(3, a.poleCount, SchemaAttrText::inputsPoleVectorWeights,
-                    &a.poleDiagnostics, &a.poleWeights);
-}
-} // namespace
 
 void
 RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
@@ -5316,31 +4831,41 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
     case RigExecBakedStepKind::ComposeSubtree: {
         const RigExecBakedComposeGroup &group =
             B.composeGroups[size_t(step->object)];
+        BakedPoseHost host(program, step);
         for (int i = group.begin; i < group.end; ++i) {
-            if (B.slotKind[size_t(i)] != RigExecBakedSlotKind::FirstFramePose) {
+            if (!host.inputs().isPoseSlot(size_t(i))) {
                 // An xform-derived slot is not composed from avars: the
                 // dynamic path seeds it from the stage, and until the program
                 // does the same nothing writes it.
                 continue;
             }
-            if (B.execCheckRows)
-                B.execCheckRows->BeforeSlot(
-                    B, RigExecBakedStepKind::ComposeSubtree, group.begin, i);
-            if (!_ProviderActive(B, size_t(i))) {
-                B.base[size_t(i)] = RigExecPointFrame();
-                B.base[size_t(i)].flags = 0;
-                B.fin[size_t(i)] = B.base[size_t(i)];
-                B.posedM[size_t(i)] = _UnavailableProviderSpace();
+            host.state().beforeSlot(eval::StepKind::ComposeSubtree, group.begin,
+                                    i);
+            if (!host.inputs().providerActive(size_t(i))) {
+                eval::PublishComposedSlotUnavailable(host, size_t(i));
                 continue;
             }
             const int switchIndex = B.spaceSwitchBySlot.empty()
                                         ? -1
                                         : B.spaceSwitchBySlot[size_t(i)];
             if (switchIndex < 0) {
-                const int parent = B.parent[size_t(i)];
-                B.base[size_t(i)] = _ComposeUnswitched(
-                    B, i,
-                    parent >= 0 ? B.posedM[size_t(parent)] : GfMatrix4d(1.0));
+                const int parent = host.inputs().parent(size_t(i));
+                GfMatrix4d parentPosed(1.0);
+                if (parent >= 0 &&
+                    !host.inputs().posedMatrix(size_t(parent), &parentPosed)) {
+                    step->diagnostics.push_back(
+                        "compose slot " + std::to_string(i) + " names no slot");
+                    continue;
+                }
+                std::array<GfVec3d, 4> points;
+                unsigned flags = 0;
+                if (!eval::ComposeSlotFrame(host, size_t(i), parentPosed,
+                                            &points, &flags)) {
+                    step->diagnostics.push_back(
+                        "compose slot " + std::to_string(i) + " names no slot");
+                    continue;
+                }
+                host.state().writeBase(size_t(i), points, flags);
             } else if (B.posedAuthored[size_t(i)]) {
                 // A non-identity authored posed:space is the pose: exec
                 // returns its frame and reads neither the avars nor the
@@ -5437,8 +4962,7 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
                         ac.values.Read<RigExecPointFrame>(ac.operation.output))
                     B.base[size_t(i)] = *frame;
             }
-            B.fin[size_t(i)] = B.base[size_t(i)];
-            B.posedM[size_t(i)] = _SpaceOfFrame(B.base[size_t(i)]);
+            eval::PublishFinPosedM(host, size_t(i));
         }
         return;
     }
@@ -5612,7 +5136,7 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
         if (commit.split) {
             return; // CommitApply finishes, and carries
         }
-        // A batch that published NOTHING still reaches FinishCommit, the
+        // A batch that published NOTHING still reaches the finish, the
         // same way a constraint that passes through does. It writes no
         // frame, but it owns a version of every slot it could have written,
         // and a write site that leaves its own storage untouched
@@ -5621,11 +5145,26 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
         // there. Reachable only from a batch whose every solver published an
         // empty aggregate, which until RigExecTwistDistribution baked no rig
         // in the tree could produce.
-        if (!commit.abandoned) {
-            ComputeCommitDeltas(B, &commit);
-            StageCommitPairs(B, &commit, 0, commit.propagate.size());
+        {
+            BakedPoseHost host(&B, step);
+            const eval::StepResult result =
+                eval::RunFinishCommit(host, size_t(step->object));
+            if (result.outcome == eval::Outcome::Invalid) {
+                const char *what = "commit";
+                if (result.detail == eval::pose_detail::kPoseDetailNoChunk) {
+                    what = "chunk";
+                } else if (result.detail ==
+                           eval::pose_detail::kPoseDetailNoSlot) {
+                    what = "slot";
+                } else if (result.detail ==
+                           eval::pose_detail::kPoseDetailNoVersion) {
+                    what = "version";
+                }
+                step->diagnostics.push_back("commit " +
+                                            std::to_string(step->object) +
+                                            " names no " + what);
+            }
         }
-        FinishCommit(&B, step, &commit);
         return;
     }
 
@@ -5639,41 +5178,6 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
         RigExecBakedProgramImpl::Constraint &c =
             B.constraints[size_t(B.walkSteps[size_t(step->object)].index)];
         c.matchValuesValid = false;
-        const auto runSourceConstraint =
-            [&](const RigExecPointFrame &incoming,
-                const std::vector<RigExecConstraintSource> &sources,
-                const auto &params) {
-                auto &record = c.kernelRecord;
-                auto &inputs = c.kernelInputs;
-                using T = std::decay_t<decltype(params)>;
-                inputs.incoming = incoming;
-                inputs.sources = sources;
-                inputs.carry.reset();
-                if constexpr (std::is_same_v<T,
-                                             RigExecPositionConstraintParams>) {
-                    record.kind = RigExecConstraintKind::Position;
-                    record.position = params;
-                } else if constexpr (std::is_same_v<
-                                         T, RigExecRotationConstraintParams>) {
-                    record.kind = RigExecConstraintKind::Rotation;
-                    record.rotation = params;
-                    if (params.carry)
-                        inputs.carry = *params.carry;
-                    record.rotation.carry = nullptr;
-                } else if constexpr (std::is_same_v<
-                                         T, RigExecScaleConstraintParams>) {
-                    record.kind = RigExecConstraintKind::Scale;
-                    record.scale = params;
-                } else {
-                    record.kind = RigExecConstraintKind::Parent;
-                    record.parent = params;
-                    if (params.carry)
-                        inputs.carry = *params.carry;
-                    record.parent.carry = nullptr;
-                }
-                RigExecRunConstraint(record, inputs, &c.kernelResult);
-                return c.kernelResult.frame;
-            };
         // Every exit below leaves `recordAfter`/`recordEveryTarget` saying
         // whether the dynamic walk records the target's frame there; the
         // commit's FrameMatrix steps, which run after its write-back, read
@@ -5683,11 +5187,24 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
             if (commit.split) {
                 return; // CommitApply finishes
             }
-            if (!commit.abandoned) {
-                ComputeCommitDeltas(B, &commit);
-                StageCommitPairs(B, &commit, 0, commit.propagate.size());
+            BakedPoseHost host(&B, step);
+            const eval::StepResult result =
+                eval::RunFinishCommit(host, size_t(step->object));
+            if (result.outcome == eval::Outcome::Invalid) {
+                const char *what = "commit";
+                if (result.detail == eval::pose_detail::kPoseDetailNoChunk) {
+                    what = "chunk";
+                } else if (result.detail ==
+                           eval::pose_detail::kPoseDetailNoSlot) {
+                    what = "slot";
+                } else if (result.detail ==
+                           eval::pose_detail::kPoseDetailNoVersion) {
+                    what = "version";
+                }
+                step->diagnostics.push_back("commit " +
+                                            std::to_string(step->object) +
+                                            " names no " + what);
             }
-            FinishCommit(&B, step, &commit);
         };
         // The GEOMETRY domain writes no transform: it measures a delta
         // against the target's authored transform and hands it to the Matrix
@@ -5702,614 +5219,92 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
             B.deltaPresent[size_t(deltaBase)] = 0;
         }
         c.matchShownMask = 0;
-        if (c.ikFkMatch) {
-            // Presentation and values only: the commit stays abandoned.
-            if (rd(c.enabled)) {
-                const double weight = rd(c.defaultWeight);
-                double scalars[7];
-                for (size_t k = 0; k < 7; ++k) {
-                    const auto &scalar = c.matchScalars[k];
-                    scalars[k] = scalar.isFloat ? double(rd(scalar.narrow))
-                                                : rd(scalar.wide);
+        {
+            BakedPoseHost host(program, step);
+            eval::StepRef ref;
+            ref.kind = uint32_t(step->kind);
+            ref.object = step->object;
+            ref.part = step->part;
+            ref.slot = 0;
+            const eval::StepResult result = eval::RunValueStep(host, ref);
+            if (result.outcome == eval::Outcome::Invalid) {
+                const char *what = "commit";
+                if (result.detail ==
+                    eval::pose_detail::kPoseDetailNoConstraint) {
+                    what = "IK/FK match";
+                } else if (result.detail ==
+                           eval::pose_detail::kPoseDetailNoChain) {
+                    what = "chain target";
+                } else if (result.detail ==
+                           eval::pose_detail::kPoseDetailNoRest) {
+                    what = "rest slot";
+                } else if (result.detail ==
+                           eval::pose_detail::kPoseDetailNoPole) {
+                    what = "pole object";
+                } else if (result.detail ==
+                           eval::pose_detail::kPoseDetailNoVersion) {
+                    what = "fin version";
+                } else if (result.detail ==
+                           eval::pose_detail::kPoseDetailNoDeltaPath) {
+                    what = "delta path";
+                } else if (result.detail ==
+                           eval::pose_detail::kPoseDetailNoCandidate) {
+                    what = "candidate slot";
+                } else if (result.detail ==
+                           eval::pose_detail::kPoseDetailNoTarget) {
+                    what = "target slot";
+                } else if (result.detail ==
+                           eval::pose_detail::kPoseDetailNoArrays) {
+                    what = "constraint arrays";
+                } else if (result.detail ==
+                           eval::pose_detail::kPoseDetailNoSource) {
+                    what = "constraint source";
+                } else if (result.detail ==
+                           eval::pose_detail::kPoseDetailNoSpace) {
+                    what = "space slot";
+                } else if (result.detail ==
+                           eval::pose_detail::kPoseDetailNoWindow) {
+                    what = "harmonics window";
+                } else if (result.detail ==
+                           eval::pose_detail::kPoseDetailNoSlot) {
+                    what = "slot";
+                } else if (result.detail ==
+                           eval::pose_detail::kPoseDetailNoChunk) {
+                    what = "chunk";
                 }
-                RigExecBakedRunIkFkMatch(B, step, c, commit,
-                                         std::isfinite(weight) ? weight : 0.0,
-                                         scalars);
-            }
-            finish();
-            return;
-        }
-        if (c.target < 0) {
-            // No slot to revise: nothing the walk can commit, and nothing to
-            // record. The dynamic path reaches its target through the frame
-            // map and finds nothing either.
-            finish();
-            return;
-        }
-        if (c.harmonics) {
-            RigExecBakedRunHarmonics(B, step, c, commit);
-            finish();
-            return;
-        }
-        if (!rd(c.enabled)) {
-            finish();
-            return;
-        }
-        // The envelope, in the dynamic path's THREE exclusive arms. A
-        // constraint copies the ORACLE -- the dynamic constraint path does
-        // not go through exec at all, it calls _ResolveWeights and takes its
-        // error string -- so this calls the same function with the same
-        // arguments and the answer is identical by construction.
-        // The finite-[0, 1] check belongs to the OTHER arm and must not be
-        // applied to a resolved envelope: the dynamic path does not check
-        // there, so checking would emit a diagnostic it never emits.
-        // The third arm is a GEOMETRY-domain constraint that binds a weight
-        // object, and it is the one this block did not have while the two
-        // features lived on different branches: weight objects on
-        // constraints were this group's, geometry-domain constraints were
-        // another's, and neither branch alone could build the rig that needs
-        // it. Such a constraint resolves NO envelope here. Its weight is per
-        // POINT and resolves after the solve, on the revision this delta
-        // feeds -- and because a constraint and its revision are the same
-        // mover prim, that revision's own weight packet IS this constraint's
-        // weight object. Leaving `weight` at 1.0 is what hands the revision
-        // a full-strength delta for the per-point lerp to scale; resolving
-        // one element here instead would apply a one-point answer to the
-        // whole mesh AND square the envelope on the point the packet also
-        // covers.
-        double weight = 1.0;
-        if (!c.weightObject.IsEmpty() && c.pointsTarget.IsEmpty()) {
-            const auto &field = B.weightFields[size_t(c.weightField)];
-            c.weightScratch = field.values;
-            c.weightError = field.error;
-            const bool resolved = field.ok;
-            if (!resolved || c.weightScratch.size() != 1) {
-                step->diagnostics.push_back(c.pathText + ": " + c.weightError +
-                                            "; constraint passed through");
-                finish();
+                step->diagnostics.push_back("constraint " +
+                                            std::to_string(step->object) +
+                                            " names no " + what);
                 return;
-            }
-            weight = c.weightScratch[0];
-        } else if (c.weightObject.IsEmpty()) {
-            weight = rd(c.defaultWeight);
-            if (!std::isfinite(weight) || weight < 0.0 || weight > 1.0) {
-                step->diagnostics.push_back(
-                    c.pathText +
-                    " has inputs:defaultWeight outside finite [0, 1]; "
-                    "constraint passed through");
-                finish();
-                return;
-            }
-        }
-        // Textually the dynamic path's gate, second clause included. With
-        // the three arms above the clause cannot change the answer -- the
-        // only constraint that reaches here with a bound geometry weight
-        // object has weight == 1.0 -- but the two conditions are kept alike
-        // on purpose: this is the pair that silently disagreed when the
-        // third arm was missing, and the next person to add an arm should
-        // find one shape to compare, not two.
-        if (weight <= 0.0 &&
-            (c.pointsTarget.IsEmpty() || c.weightObject.IsEmpty())) {
-            // A zero envelope is an exact dormant pass-through, decided
-            // before any source is resolved so a malformed disconnected input
-            // cannot make a disabled constraint fail. A DORMANT geometry
-            // constraint still publishes a delta -- the identity one -- so
-            // that the revision it feeds moves the points nowhere rather
-            // than falling back to whatever matrix it last held.
-            if (deltaBase >= 0) {
-                B.deltaValues[size_t(deltaBase)] = GfMatrix4d(1.0);
-                B.deltaPresent[size_t(deltaBase)] = 1;
-            }
-            finish();
-            return;
-        }
-        // One frame source, resolved in resolveBinding's order: the walk's
-        // own frame when it holds one, and otherwise the transform the
-        // prologue read off the stage, ridden on the revision of the deepest
-        // provider above it that the walk has already moved. The ride is the
-        // shared routine both paths call, so the two cannot pick different
-        // ancestors or measure different deltas.
-        const auto resolveSource =
-            [&B](int slot, uint32_t finRead, int native,
-                 const std::vector<RigExecBakedCommit::AncestorRead> &ancestors,
-                 RigExecPointFrame *out) {
-                if (slot >= 0) {
-                    *out = B.fin[size_t(finRead)];
-                    return out->IsValid();
-                }
-                if (native < 0 || !B.nativeFrameOk[size_t(native)]) {
-                    return false;
-                }
-                *out = B.nativeFrames[size_t(native)];
-                if (!out->IsValid()) {
-                    return false;
-                }
-                const auto enumerate =
-                    [&B, &ancestors](const RigExecPoseFrameVisitor &visit) {
-                        for (const RigExecBakedCommit::AncestorRead &a :
-                             ancestors) {
-                            visit(B.paths[size_t(a.slot)],
-                                  B.base[size_t(a.base)], B.fin[size_t(a.fin)]);
-                        }
-                    };
-                const RigExecPoseFrameEnumerator providers(enumerate);
-                return RigExecApplyRevisedAncestorDelta(
-                    B.nativeSources[size_t(native)].path, providers, out);
-            };
-        // This constraint's authored tables, as the prologue read them at
-        // this frame's time.
-        auto &arrays = B.constraintArrays[size_t(c.arrays)];
-        PrepareConstraintArrays(&arrays);
-        if (c.singleChainIk) {
-            // The one multi-target built-in, in the dynamic walk's order:
-            // the chain, the effector, the parameters, the pole, the
-            // rest-derived preparation, the solve, one atomic validity
-            // check, and then a commit over the whole chain.
-            bool inputsValid = true;
-            for (size_t k = 0; k < c.targetSlots.size(); ++k) {
-                commit.ikChain[k] = B.fin[size_t(commit.targetReads[k])];
-            }
-            RigExecPointFrame effector;
-            if (!resolveSource(c.effector, commit.effectorRead,
-                               c.effectorNative, commit.effectorAncestors,
-                               &effector)) {
-                step->diagnostics.push_back(
-                    c.pathText +
-                    " could not resolve its effector; constraint passed "
-                    "through");
-                inputsValid = false;
-            }
-            RigExecSingleChainIkParams params;
-            params.stretch = rd(c.stretch);
-            params.mode = c.ikMode;
-            params.preserveJointOrientation = c.preserveJointOrientation;
-            params.weight = weight;
-            // Read BEFORE the pole mode is consulted, and only in
-            // RotatePlane mode, which is where the dynamic walk reads them:
-            // object mode then overwrites params.pole. A different read
-            // order is numerically invisible and changes which inputs a drag
-            // reaches.
-            if (c.ikMode == RigExecSingleChainIkMode::RotatePlane) {
-                params.pole = rd(c.poleVector);
-                params.twistDegrees = rd(c.twistDegrees);
-            }
-            if (inputsValid &&
-                c.ikMode == RigExecSingleChainIkMode::RotatePlane &&
-                c.poleModeObject) {
-                if (c.poleObjects.empty()) {
-                    step->diagnostics.push_back(
-                        c.pathText +
-                        " uses object pole mode with no pole-vector objects; "
-                        "constraint passed through");
-                    inputsValid = false;
-                }
-                if (inputsValid && !arrays.poleOk) {
-                    for (const std::string &line : arrays.poleDiagnostics) {
-                        step->diagnostics.push_back(line);
-                    }
-                    inputsValid = false;
-                }
-                GfVec3d polePoint(0);
-                double total = 0;
-                for (size_t k = 0; inputsValid && k < c.poleObjects.size();
-                     ++k) {
-                    RigExecPointFrame poleFrame;
-                    if (!resolveSource(c.poleObjects[k], commit.poleReads[k],
-                                       c.poleObjectNatives[k],
-                                       commit.poleAncestors[k], &poleFrame) ||
-                        !std::isfinite(arrays.poleWeights[k]) ||
-                        arrays.poleWeights[k] < 0) {
-                        step->diagnostics.push_back(
-                            c.pathText +
-                            " has an invalid pole-vector source or weight; "
-                            "constraint passed through");
-                        inputsValid = false;
-                        break;
-                    }
-                    polePoint += poleFrame.Origin() * arrays.poleWeights[k];
-                    total += arrays.poleWeights[k];
-                }
-                if (inputsValid && total <= 0) {
-                    step->diagnostics.push_back(
-                        c.pathText +
-                        " has zero total pole-vector weight; constraint "
-                        "passed through");
-                    inputsValid = false;
-                }
-                if (inputsValid) {
-                    params.pole = polePoint / total;
-                }
-            }
-            // "neverTS" rebuilds the chain's layout from its rests, which is
-            // the better-conditioned question for a chain with no animated
-            // translations. Which of the two it is was settled at bake.
-            const std::vector<RigExecPointFrame> *solveChain = &commit.ikChain;
-            if (inputsValid && !c.useAnimatedTs) {
-                for (size_t k = 0; k < c.targetSlots.size(); ++k) {
-                    // The incoming frame IS the rest reference where a step
-                    // below this constraint wrote the joint.
-                    commit.ikRest[k] =
-                        (k < c.ikRestLive.size() && c.ikRestLive[k] &&
-                         k < commit.ikChain.size())
-                            ? commit.ikChain[k]
-                            : B.restFrames[size_t(c.targetSlots[k])];
-                }
-                if (!RigExecPrepareRestDerivedIkChain(
-                        commit.ikChain, commit.ikRest, &commit.ikPrepared)) {
-                    step->diagnostics.push_back(
-                        c.pathText +
-                        " could not prepare rest-derived IK inputs; "
-                        "constraint passed through");
-                    inputsValid = false;
-                } else {
-                    solveChain = &commit.ikPrepared;
-                }
-            }
-            commit.ikSolved.clear();
-            if (inputsValid) {
-                c.kernelRecord.kind = RigExecConstraintKind::SingleChainIk;
-                c.kernelRecord.singleChain = params;
-                c.kernelInputs.chain = *solveChain;
-                c.kernelInputs.effector = effector;
-                RigExecRunConstraint(c.kernelRecord, c.kernelInputs,
-                                     &c.kernelResult);
-                commit.ikSolved = c.kernelResult.chain;
-            }
-            // Atomic: the whole chain or none of it, and before any write.
-            if (inputsValid &&
-                (commit.ikSolved.size() != c.targetSlots.size() ||
-                 std::any_of(commit.ikSolved.begin(), commit.ikSolved.end(),
-                             [](const RigExecPointFrame &frame) {
-                                 return !RigExecBakedUsable(frame);
-                             }))) {
-                step->diagnostics.push_back(
-                    c.pathText +
-                    " failed to solve its joint chain; constraint passed "
-                    "through atomically");
-                inputsValid = false;
-            }
-            if (inputsValid) {
-                // commit.slots is the chain, sorted; targetSlots is the
-                // chain in SOLVE order, so each solved frame lands at its
-                // own slot's position rather than at its own index.
-                for (size_t k = 0; k < c.targetSlots.size(); ++k) {
-                    const auto found =
-                        std::lower_bound(commit.slots.begin(),
-                                         commit.slots.end(), c.targetSlots[k]);
-                    if (found == commit.slots.end() ||
-                        *found != c.targetSlots[k]) {
-                        continue;
-                    }
-                    const size_t pos = size_t(found - commit.slots.begin());
-                    commit.frames[pos] = commit.ikSolved[k];
-                    commit.present[pos] = 1;
-                }
-                commit.abandoned = false;
-            }
-            finish();
-            return;
-        }
-
-        // Past the IK exit, and so past the last exit the dynamic walk
-        // records every target on: its remaining two record targets[0].
-        commit.recordEveryTarget = false;
-
-        // buildSources' order, which is a diagnostic order as much as an
-        // arithmetic one: the authored tables first, then the source frames.
-        // A rig with both a bad cardinality and an unresolvable source says
-        // so in that order, and the comparator compares diagnostics in
-        // order.
-        bool sourcesReady = arrays.ok;
-        for (const std::string &line : arrays.diagnostics) {
-            step->diagnostics.push_back(line);
-        }
-        for (size_t k = 0; sourcesReady && k < c.sources.size(); ++k) {
-            RigExecPointFrame frame;
-            if (!resolveSource(c.sources[k], commit.sourceReads[k],
-                               c.sourceNatives[k], commit.sourceAncestors[k],
-                               &frame)) {
-                step->diagnostics.push_back(c.pathText +
-                                            " could not resolve source " +
-                                            c.sourcePathTexts[k]);
-                sourcesReady = false;
-                break;
-            }
-            commit.sources[k].frame = frame;
-            commit.sources[k].normalizedWeight = arrays.weights[k];
-            commit.sources[k].translationOffset = arrays.translationOffsets[k];
-            commit.sources[k].rotationOffsetDegrees = arrays.rotationOffsets[k];
-        }
-        if (!sourcesReady) {
-            step->diagnostics.push_back(
-                c.pathText +
-                " has unusable constraint inputs; constraint passed through");
-            finish();
-            return;
-        }
-        // Past this point the dynamic walk records nothing for a
-        // geometry-domain constraint: it revises no transform, so there is
-        // no "the target as of this mover" to record.
-        commit.recordAfter = deltaBase < 0;
-        // The envelope is applied exactly ONCE. In the transform domain the
-        // kernel's per-channel blend carries it; in the geometry domain the
-        // per-point lerp does, so the solve runs UNWEIGHTED and hands back
-        // the full-strength delta. Passing the envelope to both would square
-        // it, and 0.5 would come out as 0.25 on points.
-        const double solveWeight = deltaBase < 0 ? weight : 1.0;
-        const std::vector<RigExecConstraintSource> &sources = commit.sources;
-        const RigExecPointFrame input = B.fin[size_t(commit.targetRead)];
-        RigExecPointFrame candidate = input;
-        bool candidateReady = true;
-        RigExecConstraintAxisMask affect;
-        affect.x = rd(c.affectX);
-        affect.y = rd(c.affectY);
-        affect.z = rd(c.affectZ);
-        // rigExec:space: the space switch's carry, from the same two
-        // tables (see the compose above). -1 is "no space named", and the
-        // params keep their null carry so the kernel's untouched branch
-        // runs -- the dynamic path does the same.
-        GfMatrix4d carry(1.0);
-        const bool hasCarry = c.spaceSlot >= 0;
-        if (hasCarry) {
-            carry = B.defaultRoundTrip[size_t(c.spaceSlot)].GetInverse() *
-                    B.posedM[size_t(c.spaceSlot)];
-        }
-        if (c.type == SchemaTypeName::RigExecMatrixMover) {
-            // The transform-domain matrix mover, as the dynamic walk's arm:
-            // each source is measured as its rest->posed map, the transform
-            // in its space, and the envelope is applied to the target's four
-            // landmarks with the point kernel's rule.
-            const auto mapOf = [&](size_t k, GfMatrix4d *out) {
-                const int slot = c.sources[k];
-                const bool haveRest =
-                    slot >= 0 && B.restFrames[size_t(slot)].IsValid();
-                const auto &landmarks = haveRest
-                                            ? B.restFrames[size_t(slot)].points
-                                            : RigExecIdentityLandmarks();
-                return RigExecPointsToMatrix(landmarks, sources[k].frame, out);
-            };
-            GfMatrix4d transform(1.0);
-            if (sources.empty() || !mapOf(0, &transform)) {
-                step->diagnostics.push_back(
-                    c.pathText +
-                    " could not resolve rigExec:transform; mover passed "
-                    "through");
-                finish();
-                return;
-            }
-            if (sources.size() > 1) {
-                GfMatrix4d space(1.0);
-                if (!mapOf(1, &space)) {
-                    step->diagnostics.push_back(
-                        c.pathText +
-                        " could not resolve rigExec:transformSpace; mover "
-                        "passed through");
-                    finish();
-                    return;
-                }
-                transform = RigExecMeasureInSpace(transform, space);
-            }
-            RigExecPointFrame solved = input;
-            if (c.radialBlend) {
-                const GfMatrix4d partial =
-                    RigExecPartialTransform(transform, weight);
-                for (GfVec3d &q : solved.points) {
-                    q = partial.TransformAffine(q);
-                }
-            } else {
-                for (GfVec3d &q : solved.points) {
-                    q = q + weight * (transform.TransformAffine(q) - q);
-                }
-            }
-            candidate = solved;
-        } else if (c.type == SchemaTypeName::RigExecPositionConstraint) {
-            RigExecPositionConstraintParams params;
-            params.offset = rd(c.offset);
-            params.affect = affect;
-            params.weight = solveWeight;
-            candidate = runSourceConstraint(input, sources, params);
-        } else if (c.type == SchemaTypeName::RigExecRotationConstraint) {
-            RigExecRotationConstraintParams params;
-            params.offsetDegrees = rd(c.offset);
-            params.affect = affect;
-            params.rotationOrder = c.order;
-            params.weight = solveWeight;
-            params.carry = hasCarry ? &carry : nullptr;
-            candidate = runSourceConstraint(input, sources, params);
-        } else if (c.type == SchemaTypeName::RigExecScaleConstraint) {
-            RigExecScaleConstraintParams params;
-            params.offset = rd(c.offset);
-            params.affect = affect;
-            params.weight = solveWeight;
-            params.blendShear = c.blendShear;
-            candidate = runSourceConstraint(input, sources, params);
-        } else if (c.type == SchemaTypeName::RigExecParentConstraint) {
-            RigExecParentConstraintParams params;
-            params.translationAxes.x = rd(c.tX);
-            params.translationAxes.y = rd(c.tY);
-            params.translationAxes.z = rd(c.tZ);
-            params.rotationAxes.x = rd(c.rX);
-            params.rotationAxes.y = rd(c.rY);
-            params.rotationAxes.z = rd(c.rZ);
-            params.scaleAxes.x = rd(c.sX);
-            params.scaleAxes.y = rd(c.sY);
-            params.scaleAxes.z = rd(c.sZ);
-            params.rotationOrder = c.order;
-            params.weight = solveWeight;
-            params.carry = hasCarry ? &carry : nullptr;
-            params.blendShear = c.blendShear;
-            candidate = runSourceConstraint(input, sources, params);
-        } else {
-            // Aim: the same weighted source set reduced to the target point
-            // FBX's AimAtObjects contract specifies.
-            GfVec3d target(0);
-            double total = 0;
-            for (const RigExecConstraintSource &source : sources) {
-                if (!std::isfinite(source.normalizedWeight) ||
-                    source.normalizedWeight < 0) {
-                    step->diagnostics.push_back(
-                        c.pathText +
-                        " has an invalid source weight; constraint passed "
-                        "through");
-                    candidateReady = false;
-                    break;
-                }
-                target += source.frame.Origin() * source.normalizedWeight;
-                total += source.normalizedWeight;
-            }
-            if (candidateReady && total > 0) {
-                target /= total;
-                RigExecAimConstraintParams params;
-                params.localAimVector =
-                    c.aimVectorAuthored ? rd(c.aimVector) : c.aimAxisFallback;
-                params.localUpVector = rd(c.upVector);
-                params.rotationOffsetDegrees = rd(c.rotationOffset);
-                params.affectRotation = affect;
-                params.rotationOrder = c.order;
-                params.weight = solveWeight;
-                params.preserveInputUp = c.preserveInputUp;
-                const GfVec3d authoredWorldUp = rd(c.worldUpVector);
-                if (c.worldUpType == "sceneUp") {
-                    params.worldUpDirection = c.sceneUp;
-                } else if (c.worldUpType == "vector") {
-                    params.worldUpDirection = authoredWorldUp;
-                } else if (c.worldUpType == "objectUp") {
-                    // FBX ObjectUp with no reference object uses the world
-                    // origin as the object point.
-                    RigExecPointFrame upObject;
-                    if (!c.worldUpObjectNamed) {
-                        params.worldUpDirection = GfVec3d(-input.Origin());
-                    } else if (!resolveSource(
-                                   c.worldUpObject, commit.worldUpRead,
-                                   c.worldUpNative, commit.worldUpAncestors,
-                                   &upObject)) {
-                        step->diagnostics.push_back(
-                            c.pathText +
-                            " could not resolve its world-up object; "
-                            "constraint passed through");
-                        candidateReady = false;
-                    } else {
-                        params.worldUpDirection =
-                            upObject.Origin() - input.Origin();
-                    }
-                } else if (c.worldUpType == "objectRotationUp") {
-                    // With no object, FBX applies WorldUpVector directly in
-                    // world space rather than treating a missing binding as
-                    // a failed constraint.
-                    if (!c.worldUpObjectNamed) {
-                        params.worldUpDirection = authoredWorldUp;
-                    } else {
-                        RigExecPointFrame upObject;
-                        if (!resolveSource(c.worldUpObject, commit.worldUpRead,
-                                           c.worldUpNative,
-                                           commit.worldUpAncestors,
-                                           &upObject)) {
-                            step->diagnostics.push_back(
-                                c.pathText +
-                                " could not resolve its world-up object; "
-                                "constraint passed through");
-                            candidateReady = false;
-                        }
-                        GfMatrix4d up(1.0);
-                        if (candidateReady &&
-                            !RigExecPointsToMatrix(RigExecIdentityLandmarks(),
-                                                   upObject.points, &up)) {
-                            step->diagnostics.push_back(
-                                c.pathText +
-                                " has a degenerate world-up object");
-                            candidateReady = false;
-                        } else if (candidateReady) {
-                            // rigExec:worldUpRotationOnly, as the
-                            // dynamic path takes it.
-                            params.worldUpDirection =
-                                (c.worldUpRotationOnly
-                                     ? up.GetOrthonormalized(false)
-                                     : up)
-                                    .ExtractRotation()
-                                    .TransformDir(authoredWorldUp);
-                        }
-                    }
-                }
-                if (candidateReady) {
-                    c.kernelRecord.kind = RigExecConstraintKind::Aim;
-                    c.kernelRecord.aim = params;
-                    c.kernelInputs.incoming = input;
-                    c.kernelInputs.aimTarget = target;
-                    RigExecRunConstraint(c.kernelRecord, c.kernelInputs,
-                                         &c.kernelResult);
-                    candidate = c.kernelResult.frame;
-                }
-            }
-        }
-        if (candidateReady && B.execCheckRows)
-            B.execCheckRows->ObserveConstraintCandidate(step->object,
-                                                        candidate);
-        if (candidateReady && deltaBase >= 0) {
-            // The solve produced the same full-strength frame the transform
-            // domain would publish; the delta against the prim's own base
-            // transform is what the points ride.
-            //     D = F_solved * F_base^-1
-            // The prim's transform is NOT revised: a geometry-domain
-            // constraint writes points and nothing else.
-            const GfMatrix4d &baseMatrix = B.deltaBaseMatrix[size_t(deltaBase)];
-            GfMatrix4d solvedMatrix(1.0);
-            if (RigExecBakedUsable(candidate) &&
-                B.deltaBaseOk[size_t(deltaBase)] &&
-                std::isfinite(baseMatrix.GetDeterminant()) &&
-                baseMatrix.GetDeterminant() != 0.0 &&
-                RigExecPointsToMatrix(RigExecIdentityLandmarks(),
-                                      candidate.points, &solvedMatrix)) {
-                B.deltaValues[size_t(deltaBase)] =
-                    solvedMatrix * baseMatrix.GetInverse();
-                B.deltaPresent[size_t(deltaBase)] = 1;
-            } else {
-                step->diagnostics.push_back(c.pathText +
-                                            " could not measure its delta "
-                                            "against " +
-                                            c.deltaBasePathText +
-                                            "; constraint passed through");
-            }
-        } else if (candidateReady) {
-            // The candidate sweep a constraint commit opens with: an unusable
-            // revision is diagnosed and the whole commit passes through.
-            if (!RigExecBakedUsable(candidate)) {
-                step->diagnostics.push_back(
-                    c.pathText +
-                    " produced an invalid or degenerate frame for " +
-                    (*B.pathTexts)[size_t(c.target)] +
-                    "; constraint passed through");
-            } else {
-                commit.frames[0] = candidate;
-                commit.present[0] = 1;
-                commit.abandoned = false;
             }
         }
         finish();
         return;
     }
 
-    case RigExecBakedStepKind::CommitDelta: {
-        RigExecBakedCommit &commit = B.commits[size_t(step->object)];
-        if (!commit.abandoned) {
-            ComputeCommitDeltas(B, &commit);
-        }
-        return;
-    }
-
-    case RigExecBakedStepKind::PropagateChunk: {
-        RigExecBakedCommit &commit = B.commits[size_t(step->object)];
-        if (commit.abandoned) {
-            return;
-        }
-        const size_t begin = size_t(step->part) * kPropagateChunkSize;
-        const size_t end =
-            std::min(begin + kPropagateChunkSize, commit.propagate.size());
-        StageCommitPairs(B, &commit, begin, end);
-        return;
-    }
-
+    case RigExecBakedStepKind::CommitDelta:
+    case RigExecBakedStepKind::PropagateChunk:
     case RigExecBakedStepKind::CommitApply: {
-        FinishCommit(&B, step, &B.commits[size_t(step->object)]);
+        BakedPoseHost host(program, step);
+        eval::StepRef ref;
+        ref.kind = uint32_t(step->kind);
+        ref.object = step->object;
+        ref.part = step->part;
+        ref.slot = 0;
+        const eval::StepResult result = eval::RunValueStep(host, ref);
+        if (result.outcome == eval::Outcome::Invalid) {
+            const char *what = "commit";
+            if (result.detail == eval::pose_detail::kPoseDetailNoChunk) {
+                what = "chunk";
+            } else if (result.detail == eval::pose_detail::kPoseDetailNoSlot) {
+                what = "slot";
+            } else if (result.detail ==
+                       eval::pose_detail::kPoseDetailNoVersion) {
+                what = "version";
+            }
+            step->diagnostics.push_back(
+                "commit " + std::to_string(step->object) + " names no " + what);
+        }
         return;
     }
 
@@ -6358,14 +5353,27 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
     }
 
     case RigExecBakedStepKind::FrameMatrix: {
-        // Both fields every run, so a reader never sees a valid byte from
-        // another run beside this run's matrix.
-        const size_t record = size_t(step->object);
-        GfMatrix4d matrix(1.0);
-        const bool valid =
-            RigExecBakedEvalFrameRecord(B, B.frameRecords[record], &matrix);
-        B.frameMatrix[record] = matrix;
-        B.frameMatrixValid[record] = valid ? 1 : 0;
+        BakedPoseHost host(program, step);
+        eval::StepRef ref;
+        ref.kind = uint32_t(step->kind);
+        ref.object = step->object;
+        ref.part = step->part;
+        ref.slot = 0;
+        const eval::StepResult result = eval::RunValueStep(host, ref);
+        if (result.outcome == eval::Outcome::Invalid) {
+            const char *what = "frame record";
+            if (result.detail == eval::pose_detail::kPoseDetailNoCommit) {
+                what = "commit";
+            } else if (result.detail == eval::pose_detail::kPoseDetailNoSlot) {
+                what = "slot";
+            } else if (result.detail ==
+                       eval::pose_detail::kPoseDetailNoVersion) {
+                what = "fin version";
+            }
+            step->diagnostics.push_back("frame record " +
+                                        std::to_string(step->object) +
+                                        " names no " + what);
+        }
         return;
     }
 
