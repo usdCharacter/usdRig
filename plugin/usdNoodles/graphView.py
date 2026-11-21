@@ -233,8 +233,8 @@ def _makeStageSync(view):
         post=lambda callback: QtCore.QTimer.singleShot(0, callback),
         listen=lambda receiver: UsdNoticeHandler(receiver),
         warn=lambda message: Tf.Warn(message),
-        reconcile=lambda resynced, info, trace: stage_adapter.applyUsdChanges(
-            view, resynced, info, trace=trace
+        reconcile=lambda resynced, info, trace, moved: stage_adapter.applyUsdChanges(
+            view, resynced, info, trace=trace, movedPaths=moved
         ),
     )
 
@@ -1792,8 +1792,9 @@ class GraphView(QGLWidget):
             self, oldNodeId, newPathStr, *placement
         )
 
-    def _handleUsdChanges(self, resyncedPaths, infoChangedPaths):
-        stage_adapter.applyUsdChanges(self, resyncedPaths, infoChangedPaths)
+    def _handleUsdChanges(self, resyncedPaths, infoChangedPaths, movedPaths=None):
+        stage_adapter.applyUsdChanges(self, resyncedPaths, infoChangedPaths,
+                                      movedPaths=movedPaths)
 
     def _syncSelectionToPrimtree(self):
         with _ProfileSection(self._profiler, "Sync Selection to Primtree"):

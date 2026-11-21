@@ -170,10 +170,10 @@ class _NoticeReceiver:
     """What the UsdNoticeHandler calls, stamped with a stage generation.
 
     ``UsdNoticeHandler`` keeps its protocol -- an object with
-    ``_handleUsdChanges(resyncedPaths, infoChangedPaths)`` -- but in
-    production the object behind it is this receiver, not the widget. It
-    carries the epoch of its binding, so a delivery that no longer matches
-    the live generation never reaches the model.
+    ``_handleUsdChanges(resyncedPaths, infoChangedPaths, movedPaths)`` --
+    but in production the object behind it is this receiver, not the
+    widget. It carries the epoch of its binding, so a delivery that no
+    longer matches the live generation never reaches the model.
     """
 
     def __init__(self, service):
@@ -188,10 +188,12 @@ class _NoticeReceiver:
     def revoke(self):
         self._revoked = True
 
-    def _handleUsdChanges(self, resyncedPaths, infoChangedPaths):
+    def _handleUsdChanges(self, resyncedPaths, infoChangedPaths, movedPaths=None):
         if self._revoked:
             return
-        self._service.changed(self._epoch, resyncedPaths, infoChangedPaths)
+        self._service.changed(
+            self._epoch, resyncedPaths, infoChangedPaths, movedPaths
+        )
 
 
 class StageSync:
@@ -203,8 +205,8 @@ class StageSync:
     synchronously on the owner thread, ``post(callback)`` to schedule on the
     widget owner thread, ``listen(receiver)`` to build the editor's
     UsdNoticeHandler, and ``warn(message)`` for diagnostics.
-    ``reconcile(resyncedPaths, infoChangedPaths, trace)`` runs synchronously
-    on the owner thread for an admitted notice.
+    ``reconcile(resyncedPaths, infoChangedPaths, trace, movedPaths)`` runs
+    synchronously on the owner thread for an admitted notice.
 
     Every replace moves one *epoch*. Deferred callbacks and notice deliveries
     carry the epoch they were produced under, and anything that no longer
@@ -348,8 +350,14 @@ class StageSync:
 
     # -- USD notices ------------------------------------------------------
 
-    def changed(self, epoch, resyncedPaths, infoChangedPaths):
-        """One USD notice, delivered under the epoch that bound its stage."""
+    def changed(self, epoch, resyncedPaths, infoChangedPaths, movedPaths=None):
+        """One USD notice, delivered under the epoch that bound its stage.
+
+        ``movedPaths`` is the notice's own classification --
+        ``{oldPrimPath: newPrimPath}`` for prims USD reports as moved --
+        which reconciliation uses to rebuild displayed nodes from their
+        live destinations. It is never inferred from deletes and creates.
+        """
         if self._closed or epoch != self._epoch:
             return
         ctx = self._notice()
@@ -363,6 +371,7 @@ class StageSync:
                 if self._sink is not None
                 else None
             ),
+            movedPaths,
         )
 
     # -- internals --------------------------------------------------------

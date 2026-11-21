@@ -344,8 +344,8 @@ class _RecordingHooks:
     def publish(self, delta):
         self.events.append(("publish", delta))
 
-    def reconcile(self, resynced, info, trace):
-        self.events.append(("reconcile", resynced, info, trace))
+    def reconcile(self, resynced, info, trace, moved):
+        self.events.append(("reconcile", resynced, info, trace, moved))
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
@@ -832,6 +832,165 @@ class ApplyUsdChangesTest(unittest.TestCase):
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
+class ScopeMoveTest(unittest.TestCase):
+    """A namespace move retargets the scope, its pins and displayed nodes.
+
+    The blueprint/container scope is the prim the graph was opened on:
+    when it -- or one of its ancestors -- moves, reconciliation follows
+    the live scope before adopting children, and the synthetic I/O nodes
+    hanging off the old scope are rebuilt fresh under the new one.
+    Displayed move sources outside the loader's scope are rebuilt from
+    their live destinations; a prim the canvas never showed is never
+    admitted, and a delete plus an unrelated create never retargets.
+    """
+
+    def setUp(self) -> None:
+        self.stage = Usd.Stage.CreateInMemory()
+        for path in ("/World", "/World/Bp", "/World/Bp/A", "/Other"):
+            UsdGeom.Sphere.Define(self.stage, path)
+
+    def _scopedView(self, paths, scope="/World/Bp"):
+        view = _StubView(self.stage, paths, scope=scope)
+        nodes = view.nodeGraph.nodes
+        view.nodeGraph = NodeGraphBlueprint()
+        view.nodeGraph.setStage(self.stage)
+        view.nodeGraph.nodes.update(nodes)
+        return view
+
+    def _move(self, old, new):
+        edit = Sdf.BatchNamespaceEdit()
+        edit.Add(old, new)
+        self.assertTrue(self.stage.GetEditTarget().GetLayer().Apply(edit))
+
+    @unittest.skipUnless(_has_blueprint, "nodeGraphBlueprint not importable")
+    def test_a_moved_scope_is_retargeted_before_child_adoption(self) -> None:
+        view = self._scopedView(["/World/Bp/A"])
+        self._move("/World/Bp", "/World/Bp2")
+        before = _layer_text(self.stage)
+
+        stage_adapter.applyUsdChanges(
+            view,
+            {"/World/Bp", "/World/Bp2"},
+            set(),
+            movedPaths={"/World/Bp": "/World/Bp2"},
+        )
+
+        self.assertEqual(str(view._currentPrimPath), "/World/Bp2")
+        self.assertEqual(_layer_text(self.stage), before)
+        # A child created afterwards appears under the new scope.
+        UsdGeom.Sphere.Define(self.stage, "/World/Bp2/B")
+        stage_adapter.applyUsdChanges(view, {"/World/Bp2/B"}, set())
+        self.assertIn("/World/Bp2/B", view.nodes)
+
+    @unittest.skipUnless(_has_blueprint, "nodeGraphBlueprint not importable")
+    def test_scope_pins_exist_only_at_the_new_path(self) -> None:
+        view = self._scopedView([])
+        pin = _synthetic_node("/World/Bp#input:x")
+        view.nodes[pin.id] = pin
+        keep = _synthetic_node("/Other#input:y")
+        view.nodes[keep.id] = keep
+        self._move("/World/Bp", "/World/Bp2")
+
+        stage_adapter.applyUsdChanges(
+            view,
+            {"/World/Bp", "/World/Bp2"},
+            set(),
+            movedPaths={"/World/Bp": "/World/Bp2"},
+        )
+
+        self.assertNotIn("/World/Bp#input:x", view.nodes)
+        self.assertIsNot(view.nodes["/World/Bp2#input:x"], pin)
+        self.assertIs(view.nodes["/Other#input:y"], keep)
+
+    @unittest.skipUnless(_has_blueprint, "nodeGraphBlueprint not importable")
+    def test_an_ancestor_move_retargets_the_scope(self) -> None:
+        view = self._scopedView(["/World/Bp/A"])
+        view.nodes["/World/Bp#input:x"] = _synthetic_node(
+            "/World/Bp#input:x"
+        )
+        self._move("/World", "/Elsewhere")
+
+        stage_adapter.applyUsdChanges(
+            view,
+            {"/World", "/Elsewhere"},
+            set(),
+            movedPaths={"/World": "/Elsewhere"},
+        )
+
+        self.assertEqual(
+            str(view._currentPrimPath), "/Elsewhere/Bp"
+        )
+        self.assertNotIn("/World/Bp#input:x", view.nodes)
+        self.assertIn("/Elsewhere/Bp#input:x", view.nodes)
+        # Descendants of a moved prim drop like any other stale node --
+        # the same contract the inline rename keeps.
+        self.assertNotIn("/World/Bp/A", view.nodes)
+        self.assertNotIn("/Elsewhere/Bp/A", view.nodes)
+
+    @unittest.skipUnless(_has_blueprint, "nodeGraphBlueprint not importable")
+    def test_a_delete_plus_create_never_retargets_the_scope(self) -> None:
+        """Without a USD-classified pair, two resyncs are just a delete
+        and an unrelated create: the scope and its pins stay put."""
+        view = self._scopedView([])
+        pin = _synthetic_node("/World/Bp#input:x")
+        view.nodes[pin.id] = pin
+        self.stage.RemovePrim("/World/Bp")
+        UsdGeom.Sphere.Define(self.stage, "/World/Bp2")
+
+        stage_adapter.applyUsdChanges(
+            view, {"/World/Bp", "/World/Bp2"}, set(), movedPaths={}
+        )
+
+        self.assertEqual(str(view._currentPrimPath), "/World/Bp")
+        self.assertIs(view.nodes["/World/Bp#input:x"], pin)
+
+    def test_a_displayed_move_source_outside_scope_is_rebuilt_fresh(
+        self,
+    ) -> None:
+        UsdGeom.Sphere.Define(self.stage, "/World/Deep")
+        UsdGeom.Sphere.Define(self.stage, "/World/Deep/Node")
+        view = _StubView(self.stage, ["/World/Deep/Node"])
+        oldNode = view.nodes["/World/Deep/Node"]
+        oldNode.setDisplayPosition((500.0, 300.0))
+        oldNode.zOrder = 7
+        self._move("/World/Deep/Node", "/World/Deep/Elsewhere")
+        before = _layer_text(self.stage)
+
+        stage_adapter.applyUsdChanges(
+            view,
+            {"/World/Deep/Node", "/World/Deep/Elsewhere"},
+            set(),
+            movedPaths={"/World/Deep/Node": "/World/Deep/Elsewhere"},
+        )
+
+        self.assertNotIn("/World/Deep/Node", view.nodes)
+        rebuilt = view.nodes["/World/Deep/Elsewhere"]
+        self.assertIsNot(rebuilt, oldNode)
+        self.assertEqual(rebuilt.position, (500.0, 300.0))
+        self.assertEqual(rebuilt.zOrder, 7)
+        self.assertTrue(view.linksChanged)
+        self.assertEqual(_layer_text(self.stage), before)
+
+    def test_an_undisplayed_move_source_is_not_admitted(self) -> None:
+        UsdGeom.Sphere.Define(self.stage, "/World/Deep")
+        UsdGeom.Sphere.Define(self.stage, "/World/Deep/Node")
+        view = _StubView(self.stage, ["/Other"])
+        self._move("/World/Deep/Node", "/World/Deep/Elsewhere")
+
+        stage_adapter.applyUsdChanges(
+            view,
+            {"/World/Deep/Node", "/World/Deep/Elsewhere"},
+            set(),
+            movedPaths={"/World/Deep/Node": "/World/Deep/Elsewhere"},
+        )
+
+        self.assertNotIn("/World/Deep/Node", view.nodes)
+        self.assertNotIn("/World/Deep/Elsewhere", view.nodes)
+        self.assertEqual(sorted(view.nodes), ["/Other"])
+        view._addNewNodeFast.assert_not_called()
+
+
+@unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
 class ReplaceStalenessTest(unittest.TestCase):
     """Only the latest generation's deferred work may touch the model."""
 
@@ -908,11 +1067,26 @@ class ReplaceStalenessTest(unittest.TestCase):
         hooks.receiver._handleUsdChanges(*paths)
         self.assertEqual(hooks.events[:2], [("notice", muted), ("notice", admitted)])
         self.assertEqual(len(hooks.events), 3)
-        kind, resynced, info, trace = hooks.events[2]
+        kind, resynced, info, trace, moved = hooks.events[2]
         self.assertEqual(kind, "reconcile")
         for original, received in zip(paths, (resynced, info)):
             self.assertIs(received, original)
         self.assertIsNotNone(trace)
+        self.assertIsNone(moved)
+
+    def test_move_pairs_reach_reconciliation_untouched(self) -> None:
+        """The receiver carries the notice's own move classification to
+        reconciliation without interpreting it."""
+        hooks = _RecordingHooks()
+        hooks.sync.replace(object(), "stage", None, "frame")
+        hooks.events.clear()
+        moved = {"/Alpha": "/Renamed"}
+        hooks.receiver._handleUsdChanges(
+            {"/Alpha", "/Renamed"}, set(), moved
+        )
+        kind, _, _, _, received = hooks.events[-1]
+        self.assertEqual(kind, "reconcile")
+        self.assertIs(received, moved)
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
@@ -1068,8 +1242,10 @@ class NoticeRegistrationTest(unittest.TestCase):
             listen=lambda receiver: UsdNoticeHandler(receiver),
             warn=lambda message: None,
             sink=deltas.append,
-            reconcile=lambda resynced, info, trace: (
-                stage_adapter.applyUsdChanges(view, resynced, info, trace=trace)
+            reconcile=lambda resynced, info, trace, moved: (
+                stage_adapter.applyUsdChanges(
+                    view, resynced, info, trace=trace, movedPaths=moved
+                )
             ),
         )
         service.bind(stage)

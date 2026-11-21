@@ -55,6 +55,44 @@ class UsdNoticeHandler:
     def isEnabled(self):
         return self._enabled
 
+    @staticmethod
+    def _movedPaths(notice):
+        """Return ``{oldPath: newPath}`` for prims this notice *moved*.
+
+        A namespace move (rename, reparent, or both at once) reaches the
+        listener as two ordinary resyncs -- one for a path that no longer
+        resolves and one for a path that just appeared -- which is
+        indistinguishable from a delete plus an unrelated create unless you ask
+        USD. ``GetPrimResyncType`` is that question: it classifies each resynced
+        path and hands back the path it is paired with, so the editor can follow
+        the prim instead of throwing its node away and hoping something adds an
+        equivalent one back.
+
+        Only the *Source* half is reported; its paired path is the destination,
+        so the pair is complete from one side. Older USD builds have no
+        ``GetPrimResyncType`` -- there the result is empty and callers fall back
+        to plain drop-and-adopt reconciliation.
+        """
+        if not hasattr(notice, "GetPrimResyncType"):
+            return {}
+
+        moved = {}
+        for path in notice.GetResyncedPaths():
+            try:
+                resyncType, pairedPath = notice.GetPrimResyncType(path)
+            except Exception:
+                continue
+            if not pairedPath:
+                continue
+            if resyncType.name not in (
+                "RenameSource",
+                "ReparentSource",
+                "RenameAndReparentSource",
+            ):
+                continue
+            moved[str(path)] = str(pairedPath)
+        return moved
+
     def _onObjectsChanged(self, notice, sender):
         if not self._enabled:
             return
@@ -72,6 +110,11 @@ class UsdNoticeHandler:
                 continue
             resyncedPaths.add(pathStr)
 
+        # Prims that moved rather than came and went, so reconciliation
+        # can rebuild their displayed nodes from the live destinations --
+        # even outside the loader's scope -- instead of dropping them.
+        movedPaths = self._movedPaths(notice)
+
         # Collect info-only changes (property value changes)
         # These allow targeted cache invalidation
         infoChangedPaths = set()
@@ -82,7 +125,9 @@ class UsdNoticeHandler:
             infoChangedPaths.add(pathStr)
 
         if resyncedPaths or infoChangedPaths:
-            self._graphView._handleUsdChanges(resyncedPaths, infoChangedPaths)
+            self._graphView._handleUsdChanges(
+                resyncedPaths, infoChangedPaths, movedPaths
+            )
 
     def getStage(self):
         return self._stage

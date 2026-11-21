@@ -26,6 +26,7 @@ from .stage_sync import (
     NoticeContext,
     StageContext,
     _isPathRelated,
+    _nodeIdPrimPath,
 )
 
 
@@ -153,6 +154,174 @@ def adoptPrimsNewToScope(view, resyncedPaths):
         if nodeId:
             added.append(nodeId)
     return added
+
+
+def retargetMovedScope(view, movedPaths):
+    """Follow the blueprint/container scope across a namespace move.
+
+    The blueprint and container graphs scope themselves to the prim they
+    were opened on (see ``graphScopeParentPath``). When that prim -- or
+    one of its ancestors -- moves, the scope has to move with it or
+    reconciliation starts measuring against a path that no longer
+    resolves: new children never appear and the graph disagrees with
+    what a reload would produce. Runs before child adoption, which
+    measures against the scope.
+
+    Only USD-classified pairs are followed; a delete plus an unrelated
+    create never retargets the scope.
+
+    Returns:
+        tuple[str, str] | None: the ``(oldScope, newScope)`` the view
+        moved across, or None when the scope did not move.
+    """
+    if not movedPaths:
+        return None
+    current = getattr(view, "_currentPrimPath", None)
+    if current is None:
+        return None
+    currentStr = str(current)
+    for oldPath, newPath in movedPaths.items():
+        if _isPathRelated(currentStr, oldPath) and len(currentStr) >= len(
+            oldPath
+        ):
+            newScope = newPath + currentStr[len(oldPath):]
+            view._currentPrimPath = Sdf.Path(newScope)
+            return (currentStr, newScope)
+    return None
+
+
+def rebuiltScopePins(view, oldScope, newScope):
+    """Fresh I/O models for a moved scope, built before invalidation.
+
+    Blueprint and container I/O nodes are synthesized, not prim-backed:
+    their ids borrow the scope path (``/Bp#input:x``) and their pins are
+    the scope prim's attributes. A namespace move carries those
+    attributes to the new scope, so the loader, run against the moved
+    stage, would emit the same pins under the new ids -- and these
+    fresh models are that emission, never a re-keyed object.
+
+    Runs BEFORE the resync-invalidation pass, while the old models
+    still hold their content: invalidating a prim-less node wipes the
+    pin caches it cannot re-read from USD. The fresh models stay out
+    of the graph until ``installScopePins`` drops the stale ids and
+    inserts them after the pass.
+
+    Only the raw pin lists round-trip (the model's captured originals
+    when it has them): the pin setters expand namespaced pins into
+    their display form, so assigning the expanded lists back would
+    expand them a second time.
+
+    Returns:
+        dict[str, tuple]: ``{oldId: (newId, freshModel)}``.
+    """
+    from ..models import NodeModel
+
+    rebuilt = {}
+    for nodeId in [nodeId for nodeId in list(view.nodes) if "#" in nodeId]:
+        primHalf = _nodeIdPrimPath(nodeId)
+        if not (
+            _isPathRelated(primHalf, oldScope) and len(primHalf) >= len(oldScope)
+        ):
+            continue
+        newId = newScope + nodeId[len(oldScope):]
+        old = view.nodes[nodeId]
+        node = NodeModel()
+        node.id = newId
+        for field in ("name", "type", "zOrder", "size"):
+            value = getattr(old, field, None)
+            if value is not None:
+                setattr(node, field, value)
+        for field, original in (
+            ("inputPins", "_original_input_pins"),
+            ("outputPins", "_original_output_pins"),
+        ):
+            value = getattr(old, original, None)
+            if value is None:
+                value = getattr(old, field, None)
+            if value is not None:
+                setattr(node, field, list(value))
+        # Display-only placement, never the authoring setter: the fresh
+        # model is prim-less, and reconciliation authors nothing.
+        position = getattr(old, "position", None)
+        if position is not None:
+            node.setDisplayPosition(position)
+        rebuilt[nodeId] = (newId, node)
+    return rebuilt
+
+
+def installScopePins(view, rebuilt):
+    """Drop the stale synthetic ids and insert the prebuilt models.
+
+    Returns:
+        list[str]: the fresh synthetic node ids.
+    """
+    fresh = []
+    for oldId, (newId, node) in rebuilt.items():
+        if oldId in view.nodes:
+            _dropNodeId(view, oldId)
+        if newId in view.nodes:
+            continue
+        view.nodes[newId] = node
+        fresh.append(newId)
+    return fresh
+
+
+def capturedDisplayedMoves(view, movedPaths):
+    """The displayed nodes a namespace move must rebuild, and their state.
+
+    A node id IS a prim path, so a move source that is on the canvas
+    names a node whose prim now lives at the destination -- inside or
+    outside the loader's scope. The destination model is built from the
+    live prim after validation drops the source id, but the display-only
+    placement has to be read BEFORE that, while the source node is
+    still there.
+
+    Only exact move sources shown on the canvas are captured: a pair
+    whose source was never displayed is an unrelated prim the graph
+    must not admit, and descendants of a moved prim drop like any
+    other stale node, the same as the inline rename.
+
+    Returns:
+        dict[str, tuple]: ``{sourceId: (destination, position, zOrder)}``.
+    """
+    if not movedPaths:
+        return {}
+    nodes = view.nodes
+    captured = {}
+    for oldPath, newPath in movedPaths.items():
+        if oldPath not in nodes:
+            continue
+        position, zOrder, _ = savedRenamePlacement(nodes, oldPath)
+        captured[oldPath] = (newPath, position, zOrder)
+    return captured
+
+
+def adoptMovedDisplayedPrims(view, captured):
+    """Rebuild captured moves from their live destinations.
+
+    The fresh model is built from the prim at the destination path, so
+    node identity is always whatever the stage holds now -- never a
+    re-keyed object carried across the edit. Display-only placement
+    survives the same way the inline rename does it; an authored
+    position is left to the fresh model to read back from USD.
+
+    Returns:
+        list[str]: node ids adopted.
+    """
+    adopted = []
+    for oldPath in sorted(captured):
+        newPath, position, zOrder = captured[oldPath]
+        if newPath in view.nodes:
+            continue
+        if _addLivePrimNode(view, newPath) is None:
+            continue
+        node = view.nodes[newPath]
+        if zOrder is not None:
+            node.zOrder = zOrder
+        if position is not None and not node.hasAuthoredPosition():
+            node.setDisplayPosition(position)
+        adopted.append(newPath)
+    return adopted
 
 
 def savedRenamePlacement(nodes, oldNodeId):
@@ -334,7 +503,7 @@ def _applyPropertyChange(view, node, propName):
     return _otherPropertyChange(node, propName)
 
 
-def applyUsdChanges(view, resyncedPaths, infoChangedPaths, trace=None):
+def applyUsdChanges(view, resyncedPaths, infoChangedPaths, trace=None, movedPaths=None):
     """Handle USD changes detected via the Notice system.
 
     This is called by UsdNoticeHandler (through the service's receiver, and
@@ -350,6 +519,11 @@ def applyUsdChanges(view, resyncedPaths, infoChangedPaths, trace=None):
                          (positions, metadata)
         trace: Optional ``_ReconcileTrace`` publishing what this pass decided
                (see Remove / Adopt / Invalidate).
+        movedPaths: Optional ``{oldPrimPath: newPrimPath}`` as classified
+                    by the USD notice itself. Displayed move sources are
+                    rebuilt from their live destinations -- even outside
+                    the loader's scope -- and a moved blueprint/container
+                    scope is retargeted before child adoption.
     """
     # Ignore changes if we're in the middle of syncing selection
     # (those are likely our own edits)
@@ -367,6 +541,15 @@ def applyUsdChanges(view, resyncedPaths, infoChangedPaths, trace=None):
     # affect what USD authored, so they leave the cache intact.
     if resyncedPaths:
         view._invalidateBackReferenceLinkDataCache()
+
+    moved = movedPaths or {}
+    # A moving scope is retargeted -- and its synthetic pins rebuilt --
+    # BEFORE the invalidation pass below: invalidating a prim-less node
+    # wipes the pin caches it cannot re-read from USD, so the fresh
+    # models have to be built while the old ones still hold them. They
+    # stay out of the graph until the pass is over (see installScopePins).
+    scopeMove = retargetMovedScope(view, moved if resyncedPaths else {})
+    freshPins = rebuiltScopePins(view, *scopeMove) if scopeMove else {}
 
     # Process resynced paths (structural changes - more expensive)
     for pathStr in resyncedPaths:
@@ -407,8 +590,13 @@ def applyUsdChanges(view, resyncedPaths, infoChangedPaths, trace=None):
     # that are already nodes, so neither of them can notice that a prim was
     # deleted, deactivated or renamed out from under one.
     if resyncedPaths:
+        installScopePins(view, freshPins)
+        # Capture BEFORE validation drops the source ids: the adoption
+        # below rebuilds them from their live destinations.
+        displayMoves = capturedDisplayedMoves(view, moved)
         removed = validateNodesAgainstStage(view)
-        adopted = adoptPrimsNewToScope(view, resyncedPaths)
+        adopted = adoptMovedDisplayedPrims(view, displayMoves)
+        adopted.extend(adoptPrimsNewToScope(view, resyncedPaths))
         if removed or adopted:
             if trace is not None:
                 trace.remove(tuple(removed))
