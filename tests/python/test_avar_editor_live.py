@@ -19,6 +19,7 @@ and that a sample only touches the fields whose number changed.
 Usage: test_avar_editor_live.py
 """
 import os
+from types import SimpleNamespace
 
 # Before the first Qt import: the widgets are real, the screen is not.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -30,12 +31,15 @@ rigexec_test_env.SetupPluginTest()
 from pxr import Sdf, Tf, Usd  # noqa: E402
 from pxr.Usdviewq.qt import QtWidgets  # noqa: E402
 
+import avarDock  # noqa: E402
 import avarEditorModel  # noqa: E402
 import avarEditorUI  # noqa: E402
 import editorExtension  # noqa: E402
 import gizmoMath  # noqa: E402
 import gizmoPreview  # noqa: E402
 import rigExecUndo  # noqa: E402
+import sessionRegistry  # noqa: E402
+import stageViewReady  # noqa: E402
 
 
 def _Check(condition, message):
@@ -471,6 +475,74 @@ def TestResetAllIsOneNotice():
         panel.close()
 
 
+def TestDelayedDockKeepsTheFloatingPanelUntilExplicitToggle():
+    stage, prim = _Stage()
+    api = _Api(stage, prim)
+    window = QtWidgets.QMainWindow()
+    api.qMainWindow = window
+    host = SimpleNamespace(_stageView=None)
+    api._UsdviewApi__appController = host
+    undo = rigExecUndo.UndoStack()
+    layer = stage.GetSessionLayer()
+    emptyLayer = layer.ExportToString()
+    panel = avarEditorUI.OpenAvarEditorPanel(api, undo)
+    try:
+        _Check(panel.isVisible() and panel.isWindow()
+               and panel.parentWidget() is window,
+               "without a StageView the editor opens floating")
+        chosen = panel.property("rigExecAvarDockChosen")
+        _Check(not chosen and not undo.CanUndo()
+               and layer.ExportToString() == emptyLayer,
+               "opening did not make a dock choice or author an edit")
+        result = stageViewReady.GetResult(api, "avarDock")
+        _Check(result is not None and result.status == "pending",
+               "the floating editor queued installation for its own session")
+
+        panel.SetWriteMode(avarEditorModel.WRITE_DEFAULT)
+        panel.SetValue("tx", 4.0)
+        tx = prim.GetAttribute("avars:tx")
+        _Check(tx.Get() == 4.0 and undo.CanUndo(),
+               "the floating editor can author an undoable edit before readiness")
+        editedLayer = layer.ExportToString()
+
+        view = QtWidgets.QWidget()
+        window.setCentralWidget(view)
+        host._stageView = view
+        QtWidgets.QApplication.processEvents()
+
+        controller = avarDock.GetController(api)
+        _Check(controller is not None and controller.Widget().parentWidget() is view,
+               "the queued installer attached a dock to this session's view")
+        _Check(not controller.IsDocked() and panel.isVisible()
+               and panel.isWindow() and panel.parentWidget() is window,
+               "readiness alone leaves the original editor floating")
+        _Check(panel.property("rigExecAvarDockChosen") == chosen,
+               "readiness did not change the docking preference")
+        _Check(layer.ExportToString() == editedLayer and tx.Get() == 4.0
+               and undo.CanUndo() and not undo.CanRedo(),
+               "readiness preserved the layer, edit and undo state")
+
+        _Check(panel.ToggleDock() and controller.Widget().Body() is panel
+               and view.isAncestorOf(panel) and not panel.isWindow(),
+               "explicit docking reparents the same editor into the view")
+        _Check(not panel.ToggleDock() and not controller.IsDocked()
+               and panel.isVisible() and panel.isWindow()
+               and panel.parentWidget() is window,
+               "explicit undocking returns the same editor to its window")
+        _Check(panel.property("rigExecAvarDockChosen") is True,
+               "explicit toggles record the docking preference")
+        _Check(layer.ExportToString() == editedLayer,
+               "moving the panel did not author anything")
+        undo.Undo()
+        _Check(tx.Get() == 0.0 and _SessionSpec(stage, tx) is None
+               and not undo.CanUndo() and undo.CanRedo(),
+               "one undo removes the original edit after both toggles")
+    finally:
+        panel.close()
+        sessionRegistry.ForgetSession(api)
+        window.close()
+
+
 def main():
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     _ = app
@@ -485,6 +557,7 @@ def main():
     TestScrubCommitRoutesThroughDocumentEdit()
     TestPeerWriteIsOneNotice()
     TestResetAllIsOneNotice()
+    TestDelayedDockKeepsTheFloatingPanelUntilExplicitToggle()
     print("test_avar_editor_live OK")
 
 
