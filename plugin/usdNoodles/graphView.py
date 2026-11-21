@@ -737,25 +737,6 @@ class GraphView(QGLWidget):
                 % traceback.format_exc()
             )
 
-    def _clearValueInteractionState(self):
-        """Abandon any value edit / drag / popup without authoring.
-
-        Called wherever the graph underneath is about to be replaced. A mung
-        left live across a stage reload would hold a prim path that no longer
-        means anything and would author onto whatever now sits there.
-        """
-        if self._mungState is not None and self._mungActive:
-            self._noticeHandler.setEnabled(True)
-        self._mungState = None
-        self._mungActive = False
-        self._valueEditTarget = None
-        self._valueEditInput.clear()
-        self._tokenPopup = None
-        # The fitted-text cache is keyed by node id, so a rebuilt graph must
-        # not inherit it (stale entries would only miss on their component
-        # keys, but clearing bounds the map's growth across reloads).
-        self._valueFitCache.clear()
-
     def closeEvent(self, event):
         stage_sync.closeStageLifecycle(self)
         super().closeEvent(event)
@@ -2100,38 +2081,6 @@ class GraphView(QGLWidget):
         self._profiler.endFrame()
         self._printProfilingStatsIfNeeded()
 
-    def _updateAnimator(self):
-        """Advance the animator by the elapsed frame time."""
-        if not self.frameTimer.isValid():
-            self.frameTimer.start()
-            self.animator.update(0)
-        else:
-            nsecsElapsed = self.frameTimer.nsecsElapsed()
-            self.frameTimer.restart()
-            dt = nsecsElapsed / 1e9
-            self.animator.update(dt)
-
-    def _updatePanAnimation(self):
-        """Update pan position from animation and check for completion."""
-        if not self._panAnimating:
-            return
-        self.panX = self._panXAnim.current
-        self.panY = self._panYAnim.current
-
-        panXDone = abs(self._panXAnim.current - self._panXAnim.target) < 0.5
-        panYDone = abs(self._panYAnim.current - self._panYAnim.target) < 0.5
-        if panXDone and panYDone:
-            self.panX = self._panXAnim.target
-            self.panY = self._panYAnim.target
-            self._panAnimating = False
-
-    def _updateKeyboardState(self):
-        """Poll keyboard modifiers and update animation state."""
-        if self.animator.isAnimating():
-            self.update()
-        else:
-            self.frameTimer.invalidate()
-
     def _renderPortHighlightsCpp(self):
         """C++-owned port-highlight pass.
 
@@ -2302,315 +2251,37 @@ class GraphView(QGLWidget):
         """
         if event.button() != QtCore.Qt.LeftButton:
             return
-
-        worldMousePos = (
-            QtCore.QPointF(event.position().toPoint()) / self.zoom
-        ) + QtCore.QPointF(self.panX, self.panY)
-        worldPos = Gf.Vec2d(worldMousePos.x(), worldMousePos.y())
-
-        # Check if we clicked on a connected port that has a dangling link.
-        # _findDanglingLinkAtPort by construction only returns indices of
-        # links with isDangling=True, so we don't re-check the flag here.
-        portDanglingIdx = self._findDanglingLinkAtPort(worldPos)
-        if portDanglingIdx >= 0 and portDanglingIdx < len(self.links):
-            self._addNodesFromDanglingLink(self.links[portDanglingIdx])
+        if _interaction.double_click_gesture(self, event):
             return
-
-        # Also check via curve hit-test for backward compatibility
-        clickedLinkIndex = self.linkRenderer.findLinkUnderCursor(
-            worldPos,
-            self.links,
-            self.zoom,
-            self._cachedLinkLineWidth,
-            spatialIndex=self._spatialIndex,
-            debug=False,
-        )
-
-        if clickedLinkIndex >= 0 and clickedLinkIndex < len(self.links):
-            link = self.links[clickedLinkIndex]
-            if link.isDangling:
-                self._addNodesFromDanglingLink(link)
-                return
-            if getattr(link, "is_relationship_link", False):
-                if self._navigateAlongRelationshipLink(link, worldPos):
-                    return
-
-        # A node under the cursor: rename it. Last, so the link and port cases
-        # above keep the meaning they already had -- they hit-test geometry
-        # that sits on top of a node, and stealing their double-click would
-        # cost the only way to follow a dangling link.
-        nodeId = self._getNodeIdAtWorldPos(worldPos)
-        if nodeId:
-            self._beginRename(nodeId)
-            return
-
         # Default behavior for double-click on non-dangling elements
         super().mouseDoubleClickEvent(event)
 
     @_guardsQtBoundary
     def mousePressEvent(self, event):
-        self.setFocus()
-        # Clicking away commits, which is what a text field everywhere else
-        # does. Committing before the click is dispatched matters: the click
-        # may land on another node, and that node's selection should follow
-        # the rename rather than race it.
-        if self._renamingNodeId:
-            self._commitRename()
-        # An open token popup owns the click: inside it picks, outside closes.
-        # Either way the press stops here, so a pick cannot also select a node.
-        if self._tokenPopup:
-            self._handleTokenPopupPress(event.position().toPoint())
-            self.update()
+        if _interaction.press_intercept_overlays(self, event):
             return
-        # A value editor commits on click-away, the same as the rename above
-        # and as every text field everywhere else.
-        if self._valueEditTarget:
-            self._commitValueEdit()
-        self.lastMousePos = event.position().toPoint()
-        self.ctrlPressedOnMouseDown = event.modifiers() & QtCore.Qt.ControlModifier
-        self.mousePosOnMouseDown = event.position().toPoint()
-        # Resolve any unpainted position change before hit-testing what is under
-        # the cursor (e.g. a programmatic move then an immediate click). O(1) when
-        # nothing moved.
-        self._reconcileMovedNodes()
-
-        # If hotbox is visible, check if click is within hotbox
-        if self.nodeCreationHotbox.is_visible:
-            if self.nodeCreationHotbox.handle_mouse_press(event.position().toPoint()):
-                self.update()
-                return
-
-        if event.buttons() & QtCore.Qt.LeftButton and self._cachedShowMinimap:
-            if self.minimap.handleMousePress(event.position().toPoint()):
-                return
-
-        self._updateNodeUnderCursor(event.position().toPoint())
 
         if event.buttons() & QtCore.Qt.LeftButton and not self.spacePressed:
-            # Check if clicking on the title bar caret to toggle title collapse
-            if self.nodeIdUnderCursor and self.nodeIdUnderCursor in self.nodes:
-                clickedNodeForTitle = self.nodes[self.nodeIdUnderCursor]
-                if clickedNodeForTitle.renderer:
-                    worldMousePos = (
-                        QtCore.QPointF(event.position().toPoint()) / self.zoom
-                    ) + QtCore.QPointF(self.panX, self.panY)
-                    worldPos = Gf.Vec2d(worldMousePos.x(), worldMousePos.y())
-                    renderer = clickedNodeForTitle.renderer
-                    nodeMarginH = renderer.getPortMarginH()
-                    titleFontSize = renderer.getTitleFontSize()
-                    # Cached title height (includes the schema-type subtitle) so the
-                    # caret hit box matches the rendered title bar exactly.
-                    titleHeight = clickedNodeForTitle.layoutTitleHeight
-                    nx = clickedNodeForTitle.position[0]
-                    ny = clickedNodeForTitle.position[1]
-                    caret_size = titleFontSize * 0.5
-                    caret_x = nx + nodeMarginH
-                    caret_y_top = ny
-                    caret_y_bot = ny + titleHeight
-                    caret_x_right = caret_x + caret_size
-                    if (
-                        caret_x <= worldPos[0] <= caret_x_right
-                        and caret_y_top <= worldPos[1] <= caret_y_bot
-                    ):
-                        clickedNodeForTitle.toggle_title_fold()
-                        if self.fontAtlas:
-                            self.nodeGraph._calculateNodeSize(
-                                clickedNodeForTitle,
-                                self.textRenderer.calculateTextWidth,
-                                self.fontAtlas,
-                            )
-                        self.textChanged = True
-                        self.linksChanged = True
-                        self._nodeRenderManager.invalidateAll()
-                        self.update()
-                        return
-
-            # Check if clicking on a group header to toggle fold
-            if self.nodeIdUnderCursor and self.nodeIdUnderCursor in self.nodes:
-                clickedNodeForFold = self.nodes[self.nodeIdUnderCursor]
-                if clickedNodeForFold.renderer:
-                    worldMousePos = (
-                        QtCore.QPointF(event.position().toPoint()) / self.zoom
-                    ) + QtCore.QPointF(self.panX, self.panY)
-                    worldPos = Gf.Vec2d(worldMousePos.x(), worldMousePos.y())
-                    headerResult = clickedNodeForFold.renderer.getGroupHeaderAtPoint(
-                        clickedNodeForFold, worldPos, self.fontAtlas
-                    )
-                    if headerResult and headerResult["found"]:
-                        headerName = headerResult["portName"]
-                        isOutput = headerResult["isOutput"]
-                        clickedNodeForFold.toggle_fold(headerName, isOutput)
-                        if self.fontAtlas:
-                            self.nodeGraph._calculateNodeSize(
-                                clickedNodeForFold,
-                                self.textRenderer.calculateTextWidth,
-                                self.fontAtlas,
-                            )
-                        self.textChanged = True
-                        self.linksChanged = True
-                        self._nodeRenderManager.invalidateAll()
-                        self.update()
-                        return
-
-            # A value cell claims the press before anything else on the node.
-            #
-            # It is checked ahead of the hovered-port branch and well ahead of
-            # _findRowEdgeDragStart, but the ordering is belt and braces: the
-            # cell rect stops a full PAD short of the connection gutter
-            # (widgets/valueCell.cell_rect), so the two regions cannot both
-            # contain one point. Returning here is what guarantees a press on
-            # a value never degenerates into a connection drag even if a future
-            # layout change broke that inequality.
-            valueHit = self._valueCellAtPoint(
-                (
-                    QtCore.QPointF(event.position().toPoint()) / self.zoom
-                )
-                + QtCore.QPointF(self.panX, self.panY)
-            )
-            if valueHit is not None:
-                self._onValueCellPressed(valueHit, event)
-                self.update()
+            if _interaction.press_title_caret_toggle(self, event):
                 return
-
-            # Check if clicking on a port to start link creation
-            if self._hoveredPort:
-                nodeId, portName, isOutput = self._hoveredPort
-                # Start link drag
-                self._startLinkDrag(nodeId, portName, isOutput)
-                self.update()
+            if _interaction.press_group_fold_toggle(self, event):
                 return
-
-            worldMousePosForLink = (
-                QtCore.QPointF(event.position().toPoint()) / self.zoom
-            ) + QtCore.QPointF(self.panX, self.panY)
-            worldPosForLink = Gf.Vec2d(
-                worldMousePosForLink.x(), worldMousePosForLink.y()
-            )
-
-            # Grab a relationship arrowhead to reconnect it (or drop on empty to
-            # disconnect). Checked before node selection so an arrowhead that
-            # overlaps its target node is still grabbable.
-            arrowheadLinkIndex = self._findArrowheadUnderCursor(worldPosForLink)
-            if arrowheadLinkIndex >= 0:
-                self.clearSelection()
-                self.clearLinkSelection()
-                self._startLinkReconnect(arrowheadLinkIndex, worldPosForLink)
-                self.update()
+            if _interaction.press_value_cell(self, event):
                 return
-
-            # Start a new connection by dragging from a row's left/right edge
-            # band (the outer tenth of each side), even with no visible pin.
-            # Presses in the middle of the row, on the title, or below the last
-            # row fall through to node selection/drag.
-            if self.nodeIdUnderCursor and self.nodeIdUnderCursor in self.nodes:
-                edgeNode = self.nodes[self.nodeIdUnderCursor]
-                edgeHit = self._findRowEdgeDragStart(edgeNode, worldPosForLink)
-                if edgeHit:
-                    self._startLinkDrag(self.nodeIdUnderCursor, edgeHit[0], edgeHit[1])
-                    self.update()
-                    return
-
-            clickedNode = None
-            if self.nodeIdUnderCursor and self.nodeIdUnderCursor in self.nodes:
-                clickedNode = self.nodes[self.nodeIdUnderCursor]
-
-            if clickedNode:
-                if not self.ctrlPressedOnMouseDown:
-                    if not clickedNode.selected:
-                        self.clearSelection()
-                        self.clearLinkSelection()
-                    _selection.select_node(self, clickedNode.id)
-                else:
-                    _selection.select_node(self, clickedNode.id, toggle=True)
-                self.draggingNodes = True
-
-                # Bring the clicked node to front. Node-background quads are
-                # regenerated from node.zOrder every frame, so the box raises
-                # for free; for text we patch only this node's depth in the held
-                # vertex buffer (O(node glyphs)). We must NOT set
-                # self.textChanged here — that re-lays out every node's text and
-                # cost ~2s for a dozen nodes due to the O(N^2) string-by-string
-                # Python<->C++ vertex marshalling.
-                self._nextZOrder += 1
-                clickedNode.zOrder = self._nextZOrder
-                self.textRenderer.patchNodeTextDepth(clickedNode)
-                # Node-quad depth is baked at generation; re-bumping z-order needs
-                # a regen (the selection-set check above misses a re-click on an
-                # already-selected node).
-                self._nodeRenderManager.markNodeQuadDirty(True)
-                # The title icon's depth is also baked at generation, but the icon
-                # path only rebuilds on a content change (which selection skips for
-                # perf). Without this, the icon stays at its old depth and the
-                # re-raised node quad occludes it (the icon visibly drops on
-                # select). markIconsDirty re-bakes it at the new zOrder next frame,
-                # reading the snapshot the node-quad path re-syncs this same frame,
-                # so the icon rides to front with the node.
-                self._cppIconRenderer.markIconsDirty()
-
-                # Begin drag on all selected nodes for batched USD writes
-                for node in self.nodes.values():
-                    if node.selected:
-                        node.beginDrag()
-
-                # Update link selection based on current mode
-                self._updateLinkSelectionFromNodes()
-            else:
-                worldMousePos = (
-                    QtCore.QPointF(event.position().toPoint()) / self.zoom
-                ) + QtCore.QPointF(self.panX, self.panY)
-                worldPos = Gf.Vec2d(worldMousePos.x(), worldMousePos.y())
-
-                clickedLinkIndex = self.linkRenderer.findLinkUnderCursor(
-                    worldPos,
-                    self.links,
-                    self.zoom,
-                    self._cachedLinkLineWidth,
-                    spatialIndex=self._spatialIndex,
-                    debug=False,
-                )
-
-                if clickedLinkIndex >= 0:
-                    if self.ctrlPressedOnMouseDown:
-                        self._toggleLinkSelection(clickedLinkIndex)
-                    else:
-                        clickedLink = self.links[clickedLinkIndex]
-                        # Dangling links are selectable on click
-                        # Regular and relationship links start reconnect on click
-                        if clickedLink.isDangling:
-                            self.clearSelection()
-                            self._selectLink(clickedLinkIndex, addToSelection=False)
-                        else:
-                            self.clearSelection()
-                            self.clearLinkSelection()
-                            self._startLinkReconnect(clickedLinkIndex, worldPos)
-                else:
-                    if not self.ctrlPressedOnMouseDown:
-                        self.clearSelection()
-                        self.clearLinkSelection()
-                        # Do not sync empty selection back to prim tree — the user
-                        # may press A next to add the still-selected prim(s).
-                    self._marqueeBase = self._selection.copy()
-                    self._marqueeMode = "union" if self.ctrlPressedOnMouseDown else "replace"
-                    self.marqueeActive = True
-                    self.marqueeStart = worldMousePos
-                    self.marqueeCurrent = worldMousePos
+            if _interaction.press_hovered_port_link_start(self, event):
+                return
+            if _interaction.press_arrowhead_reconnect(self, event):
+                return
+            if _interaction.press_row_edge_link_start(self, event):
+                return
+            _interaction.press_node_or_empty(self, event)
 
         self.update()
 
     @_guardsQtBoundary
     def mouseMoveEvent(self, event):
-        # If hotbox is visible, update hover state
-        if self.nodeCreationHotbox.is_visible:
-            if self.nodeCreationHotbox.handle_mouse_move(event.position().toPoint()):
-                self.update()
-                return
-
-        if self._cachedShowMinimap:
-            self.minimap.updateHoverState(event.position().toPoint())
-
-            if self.minimap.handleMouseMove(event.position().toPoint()):
-                self.lastMousePos = event.position().toPoint()
-                return
+        if _interaction.move_intercept_overlays(self, event):
+            return
 
         # During an interactive pan or pan-zoom drag (middle-button, or
         # space + left-button), skip all hover/hit-testing entirely. The cursor
@@ -2624,217 +2295,29 @@ class GraphView(QGLWidget):
             self.spacePressed and bool(event.buttons() & QtCore.Qt.LeftButton)
         )
 
-        # A value drag owns the pointer: no hover work, no node drag, no link
-        # drag. Checked first so none of the scans below run per sample.
-        if self._mungState is not None and (event.buttons() & QtCore.Qt.LeftButton):
-            self._updateMung(event)
-            self.lastMousePos = event.position().toPoint()
-            self.update()
+        if _interaction.move_value_drag(self, event):
             return
 
-        if not isViewportDrag:
-            self._updateNodeUnderCursor(event.position().toPoint())
-            self._updateValueHoverCursor(event.position().toPoint())
-
-            if not self.draggingNodes:
-                if self._updateHoveredPort(event.position().toPoint()):
-                    self.update()
-
-            if not self.draggingNodes and not self._draggingLink:
-                # Update property tooltip on hover
-                self._updatePropertyTooltip(event.position().toPoint())
-
-                # Update link under cursor for hover highlighting
-                worldMousePos = (
-                    QtCore.QPointF(event.position().toPoint()) / self.zoom
-                ) + QtCore.QPointF(self.panX, self.panY)
-                worldPos = Gf.Vec2d(worldMousePos.x(), worldMousePos.y())
-
-                newLinkUnderCursor = self.linkRenderer.findLinkUnderCursor(
-                    worldPos,
-                    self.links,
-                    self.zoom,
-                    self._cachedLinkLineWidth,
-                    spatialIndex=self._spatialIndex,
-                )
-                if newLinkUnderCursor != self._linkUnderCursor:
-                    self._linkUnderCursor = newLinkUnderCursor
-                    self.update()
-
-        # Handle link dragging
-        if self._draggingLink:
-            self._updateLinkDrag(event.position().toPoint())
-            self.update()
+        _interaction.move_update_hover(self, event, isViewportDrag)
+        if _interaction.move_link_drag(self, event):
             return
-
-        if event.buttons() & QtCore.Qt.MiddleButton or (
-            self.spacePressed and event.buttons() & QtCore.Qt.LeftButton
-        ):
-            if self.ctrlPressedOnMouseDown:
-                newZoom = self.zoom * (
-                    1.0
-                    + (event.position().toPoint().x() - self.lastMousePos.x()) / 120.0
-                )
-                focus = (self.mousePosOnMouseDown.x(), self.mousePosOnMouseDown.y())
-                self._zoomAroundPoint(newZoom, focus)
-            else:
-                self.panX -= (
-                    event.position().toPoint().x() - self.lastMousePos.x()
-                ) / self.zoom
-                self.panY -= (
-                    event.position().toPoint().y() - self.lastMousePos.y()
-                ) / self.zoom
-            self.update()
-            self.lastMousePos = event.position().toPoint()
+        if _interaction.move_viewport_drag(self, event):
             return
-
-        if event.buttons() & QtCore.Qt.LeftButton:
-            if self.marqueeActive:
-                worldMousePos = (
-                    QtCore.QPointF(event.position().toPoint()) / self.zoom
-                ) + QtCore.QPointF(self.panX, self.panY)
-                self.marqueeCurrent = worldMousePos
-                self._updateMarqueeSelection()
-                self.update()
-                return
-
-            if self.draggingNodes:
-                dx = (
-                    event.position().toPoint().x() - self.lastMousePos.x()
-                ) / self.zoom
-                dy = (
-                    event.position().toPoint().y() - self.lastMousePos.y()
-                ) / self.zoom
-
-                movedNodeIds = set()
-                for node in self.nodes.values():
-                    if node.selected:
-                        node.position = node.position + Gf.Vec2d(dx, dy)
-                        movedNodeIds.add(node.id)
-                        # Cheap render-offset move (text + quad ride one frame).
-                        self._nodeTransformFrame.translate(node.id, dx, dy)
-
-                # Refresh derived state for the dragged nodes (the reconcile is
-                # skipped while dragging). This does not advance the reconcile
-                # watermark, so the release frame reconciles these nodes once more
-                # from their final positions.
-                self._applyMovedNodeDerivedState(movedNodeIds)
+        if _interaction.move_left_drag(self, event):
+            return
 
         self.lastMousePos = event.position().toPoint()
         self.update()
 
     @_guardsQtBoundary
     def mouseReleaseEvent(self, event):
-        # Release the hotbox scrollbar first. It is the only overlay that
-        # takes a press-drag-release, and the handlers below would otherwise
-        # treat the release as ending a marquee or a link drag that never
-        # started.
-        if self.nodeCreationHotbox.is_visible:
-            if self.nodeCreationHotbox.handle_mouse_release(
-                    event.position().toPoint()):
-                self.update()
-                return
-        # Finish a value press: a drag commits as ONE undo entry, a click with
-        # no motion opens the keyboard editor instead. Before the link-drag
-        # branch because a value press never started one.
-        if self._mungState is not None:
-            self._finishMung()
-            self.update()
+        if _interaction.release_intercept_overlays(self, event):
             return
-        # Handle link drag completion
-        if self._draggingLink:
-            # Refresh hover state at the release position so that
-            # _completeLinkDrag sees the actual cursor location.  On Windows,
-            # Qt may not emit a final mouseMoveEvent before the release,
-            # leaving _hoveredPort / _dragLinkValidTarget stale from a
-            # previous frame — which prevents _finishReconnectDisconnect
-            # from running and skips the "Disconnect" undo entry.
-            releasePos = event.position().toPoint()
-            self._updateHoveredPort(releasePos)
-            self._updateLinkDrag(releasePos)
-            self._completeLinkDrag()
-            self._draggingLink = False
-            self._dragLinkSyntheticTarget = None
-            self._dragLinkResolvedTarget = None
-            self.update()
+        if _interaction.release_link_drag(self, event):
             return
-
-        # Always release a minimap viewport drag, even if the minimap was hidden
-        # mid-drag: handleMouseRelease() is a no-op when no drag is in progress,
-        # but if "Show Minimap" is toggled off after a drag starts, gating this on
-        # _cachedShowMinimap would strand _viewportDragging=True and let a later
-        # move hijack a pan once the minimap is shown again.
-        if self.minimap.handleMouseRelease():
+        if _interaction.release_minimap(self, event):
             return
-
-        # End drag on all selected nodes - writes final positions to USD session layer
-        if self.draggingNodes:
-            self._finalizeNodeDrag()
-            # Final node positions were just baked into the snapshot; rebuild the
-            # port highlights once so the circles match (the drag itself kept them
-            # live via the geometryChanged signal while draggingNodes was True).
-            self._portHighlightsDirty = True
-
-        self.draggingNodes = False
-
-        if self.marqueeActive:
-            self._updateMarqueeSelection()
-            self.marqueeActive = False
-            self._marqueeBase = _selection.Selection()
-            if self._selectedLinks and not self._selectedNodes:
-                self._syncLinkSelectionToPrimtree()
-            self.update()
-
-        hasSelectedNodes = any(node.selected for node in self.nodes.values())
-
-        if hasSelectedNodes:
-            self._syncSelectionToPrimtree()
-
-
-
-
-    def _finalizeNodeDrag(self):
-        """Finalize a node drag: write positions to USD and push undo command."""
-        # Capture old positions (pre-drag) and new positions (post-drag)
-        # before calling endDrag() which writes to USD.
-        old_positions = {}
-        new_positions = {}
-        for nid, node in self.nodes.items():
-            if node.selected and node._dragging:
-                old_positions[nid] = (node._position[0], node._position[1])
-                if node._dragPosition is not None:
-                    new_positions[nid] = (
-                        node._dragPosition[0],
-                        node._dragPosition[1],
-                    )
-
-        def finish():
-            for node in self.nodes.values():
-                if node.selected:
-                    node.endDrag()
-
-        if new_positions and getattr(self, "_editor", None) is not None:
-            _editing.edit_node_positions(self, new_positions, "Move Nodes", finish,
-                                         old_display=old_positions)
-            return
-        self._noticeHandler.setEnabled(False)
-        try:
-            finish()
-        finally:
-            self._noticeHandler.setEnabled(True)
-
-        # Push undo command if positions actually changed
-        Tf.Status(
-            f"_finalizeNodeDrag: old_positions={len(old_positions)}, "
-            f"new_positions={len(new_positions)}"
-        )
-        if old_positions and new_positions:
-            _push_undo_command(
-                "Move Nodes",
-                lambda gv, p=new_positions: gv._restoreNodePositions(p),
-                lambda gv, p=old_positions: gv._restoreNodePositions(p),
-                view=self,
-            )
+        _interaction.release_node_drag_and_marquee(self, event)
 
     @_guardsQtBoundary
     def keyPressEvent(self, event):
@@ -3226,644 +2709,6 @@ class GraphView(QGLWidget):
         except RuntimeError as e:
             Tf.Warn(f"RuntimeError in event handling: {e}")
             return False
-
-    def _startLinkReconnect(self, linkIndex, worldClickPos):
-        """Disconnect a link from its nearest end and start dragging to reconnect.
-
-        The link is removed visually (local graph only) while the user drags.
-        USD is not modified until the drag completes, so cancelling restores
-        the original connection and a successful reconnection is a single undo.
-        """
-        link = self.links[linkIndex]
-
-        is_relationship_link = bool(getattr(link, "is_relationship_link", False))
-
-        if is_relationship_link:
-            # Relationship links always anchor on the source (the relationship
-            # pin) because the target is a whole-node prim target, not a pin.
-            anchorNodeId = link.sourceNodeId
-            anchorPort = link.sourcePort
-            anchorIsOutput = True
-        else:
-            startPos = link.start
-            endPos = link.end
-            startDistSq = (worldClickPos[0] - startPos[0]) ** 2 + (
-                worldClickPos[1] - startPos[1]
-            ) ** 2
-            endDistSq = (worldClickPos[0] - endPos[0]) ** 2 + (
-                worldClickPos[1] - endPos[1]
-            ) ** 2
-
-            if startDistSq < endDistSq:
-                anchorNodeId = link.targetNodeId
-                anchorPort = link.targetPort
-                anchorIsOutput = False
-            else:
-                anchorNodeId = link.sourceNodeId
-                anchorPort = link.sourcePort
-                anchorIsOutput = True
-
-        self._reconnectingLink = True
-        self._reconnectCapture = _editing._capture_reconnect(self, link)
-        self._reconnectOldSourceNodeId = link.sourceNodeId
-        self._reconnectOldSourcePort = link.sourcePort
-        self._reconnectOldTargetNodeId = link.targetNodeId
-        self._reconnectOldTargetPort = link.targetPort
-        self._reconnectOldSourcePropertyName = str(
-            getattr(link, "sourcePropertyName", "")
-        )
-        self._reconnectOldTargetPropertyName = str(
-            getattr(link, "targetPropertyName", "")
-        )
-
-        self._removeLinkFromGraph(
-            link.sourceNodeId,
-            link.sourcePort,
-            link.targetNodeId,
-            link.targetPort,
-            sourcePropertyName=str(getattr(link, "sourcePropertyName", "")),
-            targetPropertyName=str(getattr(link, "targetPropertyName", "")),
-        )
-
-        if anchorNodeId not in self.nodes:
-            self._cancelLinkReconnect()
-            return
-
-        self._startLinkDrag(anchorNodeId, anchorPort, anchorIsOutput)
-
-        if anchorIsOutput:
-            self._dragLinkTempLink.end = worldClickPos
-        else:
-            self._dragLinkTempLink.start = worldClickPos
-
-    def _clearReconnectState(self):
-        """Zero reconnect bookkeeping fields."""
-        self._reconnectingLink = False
-        self._reconnectOldSourceNodeId = None
-        self._reconnectOldSourcePort = None
-        self._reconnectOldTargetNodeId = None
-        self._reconnectOldTargetPort = None
-        self._reconnectOldSourcePropertyName = ""
-        self._reconnectOldTargetPropertyName = ""
-        self._reconnectCapture = None
-
-    def _cancelLinkReconnect(self):
-        """Restore the original link when reconnection fails (error recovery)."""
-        srcId = self._reconnectOldSourceNodeId
-        srcPort = self._reconnectOldSourcePort
-        tgtId = self._reconnectOldTargetNodeId
-        tgtPort = self._reconnectOldTargetPort
-        srcPropName = self._reconnectOldSourcePropertyName
-        tgtPropName = self._reconnectOldTargetPropertyName
-        capture = getattr(self, "_reconnectCapture", None)
-        self._clearReconnectState()
-        if isinstance(capture, _editing.ReconnectCapture):
-            _editing._refresh_connections(self, capture.order)
-            return
-
-        srcNode = self.nodes.get(srcId)
-        tgtNode = self.nodes.get(tgtId)
-        if srcNode and tgtNode:
-            self._addLinkToGraph(
-                srcId,
-                srcPort,
-                tgtId,
-                tgtPort,
-                srcNode,
-                tgtNode,
-                sourcePropertyName=srcPropName,
-                targetPropertyName=tgtPropName,
-            )
-
-    def _finishReconnectDisconnect(self):
-        """Delete the original connection when dropped on empty space."""
-        if isinstance(self.nodeGraph.getStage(), Usd.Stage):
-            capture = _editing._reconnect_endpoints(self)
-            self._clearReconnectState()
-            return _editing._dispatch_connection(self, _intents.Disconnect(
-                capture.endpoints, description="Disconnect", prior_order=capture.order))
-        srcId = self._reconnectOldSourceNodeId
-        srcPort = self._reconnectOldSourcePort
-        tgtId = self._reconnectOldTargetNodeId
-        tgtPort = self._reconnectOldTargetPort
-
-        inputNode = self.nodes.get(tgtId)
-        outputNode = self.nodes.get(srcId)
-        if not inputNode or not outputNode:
-            self._cancelLinkReconnect()
-            return
-
-        inputPrim = inputNode.getUsdPrim()
-        outputPrim = outputNode.getUsdPrim()
-        if not inputPrim or not outputPrim:
-            self._cancelLinkReconnect()
-            return
-
-        library = self._findLibraryForPrim(inputPrim)
-        if not library:
-            self._cancelLinkReconnect()
-            return
-
-        self._clearReconnectState()
-
-        stage = self.nodeGraph.getStage()
-        warn_if_non_persistent_edit_target(stage)
-
-        self._noticeHandler.setEnabled(False)
-        try:
-            success = library.delete_connection(
-                stage, outputPrim, srcPort, inputPrim, tgtPort
-            )
-            if success:
-                delete_fn = _make_connection_edit(
-                    srcId, srcPort, tgtId, tgtPort, create=False
-                )
-                create_fn = _make_connection_edit(
-                    srcId, srcPort, tgtId, tgtPort, create=True
-                )
-
-                def redo(gv):
-                    delete_fn(gv)
-                    gv.linksChanged = True
-                    gv.update()
-
-                def undo(gv):
-                    create_fn(gv)
-                    gv.linksChanged = True
-                    gv.update()
-
-                _push_undo_command("Disconnect", redo, undo, view=self)
-
-                # Re-derive links from USD so the disconnected pin's port
-                # highlight (the relationship arrow / port circle) reflects the
-                # now-empty target. GetTargets is the source of truth; the
-                # in-place removal done at reconnect-start is not guaranteed to
-                # match relationship links (their propertyName fields can differ
-                # from the record), which would otherwise leave a stale link in
-                # self.links keeping the port "connected" (arrow stuck yellow).
-                # Mirrors the not-found branch below and _deleteConnection.
-                self.linksChanged = True
-                self._rebuildLinks()
-                self.update()
-            else:
-                # Connection not found in USD — it may have been replaced by
-                # another connection to the same pin. Rebuild links from USD
-                # so the UI reflects the actual stage state.
-                self.linksChanged = True
-                self._rebuildLinks()
-        finally:
-            self._noticeHandler.setEnabled(True)
-
-    def _startLinkDrag(self, nodeId, portName, isOutput):
-        """
-        Begin dragging a new link from a port.
-
-        Args:
-            nodeId: ID of the source node
-            portName: Name of the source port
-            isOutput: True if dragging from output port, False for input port
-        """
-        self._draggingLink = True
-        self._dragLinkSourceNode = nodeId
-        self._dragLinkSourcePort = portName
-        self._dragLinkSourceIsOutput = isOutput
-        self._dragLinkSyntheticTarget = None
-        self._dragLinkResolvedTarget = None
-        _start_node = self.nodes.get(self._dragLinkSourceNode)
-        self._dragLinkTempLink.is_relationship_link = (
-            _start_node is not None
-            and _start_node.is_relationship_pin(
-                str(portName), self._dragLinkSourceIsOutput
-            )
-        )
-        self._dragLinkTempLink.sourcePropertyName = ""
-        self._dragLinkTempLink.targetPropertyName = ""
-
-        # Initialize temporary link
-        node = self.nodes[nodeId]
-        portPos = self._getPortPosition(node, portName, isOutput)
-
-        # Link renderer expects start=output, end=input for correct bezier direction.
-        # When dragging from an input port, the fixed port is the "end" (input side)
-        # and the cursor will be the "start" (output side).
-        if isOutput:
-            self._dragLinkTempLink.sourceNodeId = nodeId
-            self._dragLinkTempLink.sourcePort = portName
-            self._dragLinkTempLink.targetNodeId = ""
-            self._dragLinkTempLink.targetPort = ""
-            if self._dragLinkTempLink.is_relationship_link:
-                self._dragLinkTempLink.sourcePropertyName = str(portName)
-            self._dragLinkTempLink.start = portPos
-            self._dragLinkTempLink.end = portPos
-        else:
-            self._dragLinkTempLink.sourceNodeId = ""
-            self._dragLinkTempLink.sourcePort = ""
-            self._dragLinkTempLink.targetNodeId = nodeId
-            self._dragLinkTempLink.targetPort = portName
-            if self._dragLinkTempLink.is_relationship_link:
-                self._dragLinkTempLink.targetPropertyName = str(portName)
-            self._dragLinkTempLink.end = portPos
-            self._dragLinkTempLink.start = portPos
-
-        self._dragLinkValidTarget = False
-
-
-
-
-        if not isOutput and not self._reconnectingLink:
-            existingLink = self._findLinkToInput(nodeId, portName)
-            if existingLink and not getattr(existingLink, "isDangling", False):
-                self._reconnectingLink = True
-                self._reconnectCapture = _editing._capture_reconnect(self, existingLink)
-                self._reconnectOldSourceNodeId = existingLink.sourceNodeId
-                self._reconnectOldSourcePort = existingLink.sourcePort
-                self._reconnectOldTargetNodeId = existingLink.targetNodeId
-                self._reconnectOldTargetPort = existingLink.targetPort
-                self._reconnectOldSourcePropertyName = str(
-                    getattr(existingLink, "sourcePropertyName", "")
-                )
-                self._reconnectOldTargetPropertyName = str(
-                    getattr(existingLink, "targetPropertyName", "")
-                )
-                self._removeLinkFromGraph(
-                    existingLink.sourceNodeId,
-                    existingLink.sourcePort,
-                    existingLink.targetNodeId,
-                    existingLink.targetPort,
-                    sourcePropertyName=str(
-                        getattr(existingLink, "sourcePropertyName", "")
-                    ),
-                    targetPropertyName=str(
-                        getattr(existingLink, "targetPropertyName", "")
-                    ),
-                )
-
-    def _snapLinkDragToPort(self, nodeId, portName, isOutput, relationship_hover):
-        """Snap the temporary drag link to a hovered port and record the resolved target."""
-        targetNode = self.nodes[nodeId]
-        if relationship_hover:
-            # Attribute → relationship pin: store a resolved target so
-            # _completeLinkDrag uses it directly instead of falling back
-            # to _hoveredPort, which would apply the output-swap logic
-            # and incorrectly invert source/target routing.
-            targetPropertyName = self._resolvePortPropertyName(
-                targetNode, portName, isOutput
-            )
-            self._dragLinkResolvedTarget = (
-                nodeId,
-                portName,
-                isOutput,
-                targetPropertyName,
-            )
-            portPos = self._getPortPosition(targetNode, portName, isOutput)
-            self._dragLinkTempLink.targetNodeId = nodeId
-            self._dragLinkTempLink.targetPort = portName
-            self._dragLinkTempLink.end = portPos
-        else:
-            portPos = self._getPortPosition(targetNode, portName, isOutput)
-            if isOutput:
-                self._dragLinkTempLink.sourceNodeId = nodeId
-                self._dragLinkTempLink.sourcePort = portName
-                self._dragLinkTempLink.start = portPos
-            else:
-                self._dragLinkTempLink.targetNodeId = nodeId
-                self._dragLinkTempLink.targetPort = portName
-                self._dragLinkTempLink.end = portPos
-
-    def _updateLinkDrag(self, screenPos):
-        """
-        Update the temporary link being dragged.
-
-        Args:
-            screenPos: Screen position of cursor (QPoint)
-        """
-        worldMousePos = (QtCore.QPointF(screenPos) / self.zoom) + QtCore.QPointF(
-            self.panX, self.panY
-        )
-        worldPos = Gf.Vec2d(worldMousePos.x(), worldMousePos.y())
-        self._dragLinkCursorPos = worldPos
-
-        # Link renderer expects start=output, end=input for correct bezier direction.
-        # When dragging from an output port, cursor moves the "end" (input side).
-        # When dragging from an input port, cursor moves the "start" (output side).
-        if self._dragLinkSourceIsOutput:
-            self._dragLinkTempLink.targetNodeId = ""
-            self._dragLinkTempLink.targetPort = ""
-            self._dragLinkTempLink.targetPropertyName = ""
-            self._dragLinkTempLink.end = worldPos
-        else:
-            self._dragLinkTempLink.sourceNodeId = ""
-            self._dragLinkTempLink.sourcePort = ""
-            self._dragLinkTempLink.sourcePropertyName = ""
-            self._dragLinkTempLink.start = worldPos
-
-        # Check if hovering over a valid target port
-        self._dragLinkValidTarget = False
-        self._dragLinkSyntheticTarget = None
-        self._dragLinkResolvedTarget = None
-
-        if self._hoveredPort:
-            nodeId, portName, isOutput = self._hoveredPort
-
-            # Validate: output can only connect to input (and vice versa)
-            relationship_drag = getattr(
-                self._dragLinkTempLink, "is_relationship_link", False
-            )
-            _hover_node = self.nodes.get(nodeId)
-            relationship_hover = _hover_node is not None and getattr(
-                _hover_node, "is_relationship_pin", lambda *_: False
-            )(str(portName), isOutput)
-            if relationship_drag:
-                if nodeId in self.nodes and not (
-                    nodeId == self._dragLinkSourceNode
-                    and portName == self._dragLinkSourcePort
-                    and isOutput == self._dragLinkSourceIsOutput
-                ):
-                    targetNode = self.nodes[nodeId]
-                    targetPropertyName = self._resolvePortPropertyName(
-                        targetNode,
-                        portName,
-                        isOutput,
-                    )
-                    linkTargetIsOutput = not bool(self._dragLinkSourceIsOutput)
-                    self._dragLinkResolvedTarget = (
-                        nodeId,
-                        portName,
-                        linkTargetIsOutput,
-                        targetPropertyName,
-                    )
-                    self._dragLinkValidTarget = True
-                    self._dragLinkTempLink.is_relationship_link = True
-                    portPos = self._getLinkEndpointPosition(
-                        targetNode,
-                        portName,
-                        linkTargetIsOutput,
-                        targetPropertyName,
-                        preferPropertySide=relationship_drag,
-                    )
-                    if linkTargetIsOutput:
-                        self._dragLinkTempLink.sourceNodeId = nodeId
-                        self._dragLinkTempLink.sourcePort = portName
-                        self._dragLinkTempLink.sourcePropertyName = targetPropertyName
-                        self._dragLinkTempLink.start = portPos
-                    else:
-                        self._dragLinkTempLink.targetNodeId = nodeId
-                        self._dragLinkTempLink.targetPort = portName
-                        self._dragLinkTempLink.targetPropertyName = targetPropertyName
-                        self._dragLinkTempLink.end = portPos
-                    return
-            elif (
-                isOutput != self._dragLinkSourceIsOutput or relationship_hover
-            ) and not (
-                nodeId == self._dragLinkSourceNode
-                and portName == self._dragLinkSourcePort
-            ):
-                # Valid direction: opposite port types, or attribute dragged onto a
-                # relationship pin (USD relationships are directionless so the
-                # output/input distinction is relaxed for relationship drop targets).
-                self._dragLinkValidTarget = True
-                self._snapLinkDragToPort(nodeId, portName, isOutput, relationship_hover)
-                return
-
-        if getattr(self._dragLinkTempLink, "is_relationship_link", False):
-            targetNodeId = self.nodeIdUnderCursor
-            if not targetNodeId:
-                hover_margin = max(2.0, 4.0 / max(float(self.zoom), 1e-6))
-                targetNodeId = self._getNodeIdAtWorldPos(worldPos, margin=hover_margin)
-            if targetNodeId and targetNodeId in self.nodes:
-                targetNode = self.nodes[targetNodeId]
-                # Restrict the prim-target drop zone to the title bar area at the top of
-                # the node. Without this, dropping on a property row (especially when the
-                # relationship pin is itself the first property) creates a prim-target
-                # connection — which surprises users who meant to drop on the property's
-                # port or to cancel the drag. Self-prim-targets remain allowed as long
-                # as the drop lands inside the title bar.
-                renderer = getattr(targetNode, "renderer", None) or getattr(
-                    self, "defaultRenderer", None
-                )
-                if renderer is not None:
-                    get_metrics = getattr(self, "_getRowHitMetrics", None)
-                    if get_metrics is not None:
-                        port_start_y, _ = get_metrics(targetNode, renderer)
-                        if worldPos[1] >= port_start_y:
-                            return
-                targetIsOutput = not bool(self._dragLinkSourceIsOutput)
-                portPos = self._getNodeTopCenterPosition(
-                    targetNode,
-                )
-                self._dragLinkSyntheticTarget = (
-                    targetNodeId,
-                    "",
-                    targetIsOutput,
-                    "",
-                )
-                self._dragLinkValidTarget = True
-                self._dragLinkTempLink.is_relationship_link = True
-                if targetIsOutput:
-                    self._dragLinkTempLink.sourceNodeId = targetNodeId
-                    self._dragLinkTempLink.sourcePort = ""
-                    self._dragLinkTempLink.sourcePropertyName = ""
-                    self._dragLinkTempLink.start = portPos
-                else:
-                    self._dragLinkTempLink.targetNodeId = targetNodeId
-                    self._dragLinkTempLink.targetPort = ""
-                    self._dragLinkTempLink.targetPropertyName = ""
-                    self._dragLinkTempLink.end = portPos
-
-    def _completeLinkDrag(self):
-        """
-        Complete link drag - create connection if valid target.
-
-        This is called when the mouse is released during a link drag.
-        If a valid target port is hovered, creates the connection.
-        If the target is a collapsed node with multiple pins, shows a
-        context menu to let the user choose which pin to connect to.
-        Otherwise (released on empty space), cancels the drag.
-        """
-        targetData = self._dragLinkResolvedTarget or self._dragLinkSyntheticTarget
-        _temp_link = getattr(self, "_dragLinkTempLink", None)
-        relationship_drag = getattr(_temp_link, "is_relationship_link", False)
-        if targetData is None and self._hoveredPort and not relationship_drag:
-            hoveredNodeId, hoveredPortName, hoveredIsOutput = self._hoveredPort
-            targetData = (hoveredNodeId, hoveredPortName, hoveredIsOutput, "")
-        if not self._dragLinkValidTarget or not targetData:
-            # Cancelled - released on empty space or invalid target
-            self._dragLinkSyntheticTarget = None
-            self._dragLinkResolvedTarget = None
-            if self._reconnectingLink:
-                self._finishReconnectDisconnect()
-            return
-
-        targetNodeId, targetPortName, targetIsOutput, targetPropertyName = targetData
-        usingSyntheticTarget = targetData == self._dragLinkSyntheticTarget
-
-        # Check if target node is title-collapsed with multiple pins on this side
-        if (
-            not relationship_drag
-            and not usingSyntheticTarget
-            and targetNodeId in self.nodes
-        ):
-            targetNode = self.nodes[targetNodeId]
-            if getattr(targetNode, "_title_collapsed", False):
-                # Get the original pins for this side
-                if targetIsOutput:
-                    originalPins = list(
-                        getattr(targetNode, "_original_output_pins", None)
-                        or targetNode.outputPins
-                    )
-                else:
-                    originalPins = list(
-                        getattr(targetNode, "_original_input_pins", None)
-                        or targetNode.inputPins
-                    )
-                if len(originalPins) > 1:
-                    # Show context menu to choose pin
-                    self._showPinSelectionMenu(
-                        targetNodeId,
-                        originalPins,
-                        targetIsOutput,
-                    )
-                    return
-                elif len(originalPins) == 1:
-                    # Only one pin, use it directly
-                    targetPortName = originalPins[0]
-
-        # Normalize so we know which is input and which is output
-        target_node_model = self.nodes.get(targetNodeId)
-        target_is_relationship = (
-            target_node_model is not None
-            and target_node_model.is_relationship_pin(
-                str(targetPortName), targetIsOutput
-            )
-        )
-        if relationship_drag:
-            if self._dragLinkSourceIsOutput:
-                outputNodeId, outputPortName = (
-                    self._dragLinkSourceNode,
-                    self._dragLinkSourcePort,
-                )
-                inputNodeId, inputPortName = targetNodeId, targetPortName
-                outputPropertyName = str(self._dragLinkSourcePort)
-                inputPropertyName = targetPropertyName
-            else:
-                outputNodeId, outputPortName = targetNodeId, targetPortName
-                inputNodeId, inputPortName = (
-                    self._dragLinkSourceNode,
-                    self._dragLinkSourcePort,
-                )
-                outputPropertyName = targetPropertyName
-                inputPropertyName = str(self._dragLinkSourcePort)
-        elif target_is_relationship:
-            # Attribute → relationship pin: preserve the drag-source's original
-            # direction so the relationship-owner ends up on the opposite endpoint
-            # and create_connection can find it via GetRelationship(target_port).
-            if self._dragLinkSourceIsOutput:
-                outputNodeId, outputPortName = (
-                    self._dragLinkSourceNode,
-                    self._dragLinkSourcePort,
-                )
-                inputNodeId, inputPortName = targetNodeId, targetPortName
-            else:
-                outputNodeId, outputPortName = targetNodeId, targetPortName
-                inputNodeId, inputPortName = (
-                    self._dragLinkSourceNode,
-                    self._dragLinkSourcePort,
-                )
-            outputPropertyName = ""
-            inputPropertyName = ""
-        elif targetIsOutput:
-            # Target is output, source must be input - swap them
-            outputNodeId, outputPortName = targetNodeId, targetPortName
-            inputNodeId, inputPortName = (
-                self._dragLinkSourceNode,
-                self._dragLinkSourcePort,
-            )
-            outputPropertyName = ""
-            inputPropertyName = ""
-        else:
-            # Target is input, source must be output
-            inputNodeId, inputPortName = targetNodeId, targetPortName
-            outputNodeId, outputPortName = (
-                self._dragLinkSourceNode,
-                self._dragLinkSourcePort,
-            )
-            outputPropertyName = ""
-            inputPropertyName = ""
-
-        if self._reconnectingLink and (
-            outputNodeId == self._reconnectOldSourceNodeId
-            and outputPortName == self._reconnectOldSourcePort
-            and inputNodeId == self._reconnectOldTargetNodeId
-            and inputPortName == self._reconnectOldTargetPort
-        ):
-            self._cancelLinkReconnect()
-            return
-
-        # Reject exact duplicate connections
-        if self._hasExactLink(
-            outputNodeId,
-            outputPortName,
-            inputNodeId,
-            inputPortName,
-            outputPropertyName,
-            inputPropertyName,
-        ):
-            if self._reconnectingLink:
-                self._cancelLinkReconnect()
-            return
-
-        # Check if target input already has a connection
-        oldLink = (
-            None
-            if relationship_drag or target_is_relationship
-            else self._findLinkToInput(inputNodeId, inputPortName)
-        )
-        if oldLink:
-            # Highlight old link in red for brief moment
-            oldLink.highlighted = True
-            oldLink.highlightColor = (1.0, 0.0, 0.0, 1.0)
-            self._linksNeedSync = True
-            self.update()
-
-            # Snapshot and consume reconnect state now so a new reconnect
-            # started during the highlight delay cannot overwrite it.
-            reconnect_state = None
-            if self._reconnectingLink:
-                reconnect_state = (_editing._reconnect_endpoints(self)
-                                   if isinstance(self.nodeGraph.getStage(), Usd.Stage) else (
-                                       self._reconnectOldSourceNodeId, self._reconnectOldSourcePort,
-                                       self._reconnectOldTargetNodeId, self._reconnectOldTargetPort,
-                                   ))
-                self._clearReconnectState()
-
-            # Use QTimer to remove highlight after 200ms, then create new connection
-            from PySide6 import QtCore
-
-            QtCore.QTimer.singleShot(
-                200,
-                lambda: self._finishConnectionReplacement(
-                    oldLink,
-                    outputNodeId,
-                    outputPortName,
-                    inputNodeId,
-                    inputPortName,
-                    reconnect_state,
-                    outputPropertyName,
-                    inputPropertyName,
-                ),
-            )
-        else:
-            # No existing connection, create directly
-            self._createConnection(
-                outputNodeId,
-                outputPortName,
-                inputNodeId,
-                inputPortName,
-                sourcePropertyName=outputPropertyName,
-                targetPropertyName=inputPropertyName,
-            )
-        self._dragLinkSyntheticTarget = None
-        self._dragLinkResolvedTarget = None
 
     def _showPinSelectionMenu(self, targetNodeId, pins, targetIsOutput):
         """Show a context menu to select which pin to connect to on a collapsed node."""
@@ -5878,6 +4723,42 @@ class GraphView(QGLWidget):
                 "forward": "navigateForward",
             }[request.direction])(),
         )
+        registry.register(
+            _intents.BeginNodeDrag,
+            lambda request: _interaction.begin_node_drag(
+                self, request.node_id, request.toggle
+            ),
+        )
+        registry.register(
+            _intents.UpdateNodeDrag,
+            lambda request: _interaction.move_dragged_nodes(
+                self, request.dx, request.dy
+            ),
+        )
+        registry.register(
+            _intents.BeginMarquee,
+            lambda request: _interaction.begin_marquee(
+                self, request.origin, request.mode
+            ),
+        )
+        registry.register(
+            _intents.UpdateMarquee,
+            lambda request: _interaction.update_marquee(self, request.current),
+        )
+        registry.register(
+            _intents.FinishMarquee,
+            lambda request: _interaction.finish_marquee(self),
+        )
+        registry.register(
+            _intents.Pan,
+            lambda request: _interaction.pan_viewport(self, request.dx, request.dy),
+        )
+        registry.register(
+            _intents.Zoom,
+            lambda request: _interaction.zoom_viewport(
+                self, request.focus, request.zoom
+            ),
+        )
 
         return registry
 
@@ -5953,3 +4834,20 @@ class GraphView(QGLWidget):
     _jumpToSourceNodeInternal = _interaction._jumpToSourceNodeInternal
     _jumpToTargetNodeInternal = _interaction._jumpToTargetNodeInternal
     _navigateAlongRelationshipLink = _interaction._navigateAlongRelationshipLink
+
+    # Drag, marquee and reconnect gestures moved to graphview/interaction.py
+    # (nv-interaction-gestures). Explicit bindings, never forwarding bodies,
+    # so unbound GraphView._method(duck_self, ...) calls keep working.
+    _clearValueInteractionState = _interaction._clearValueInteractionState
+    _updateAnimator = _interaction._updateAnimator
+    _updatePanAnimation = _interaction._updatePanAnimation
+    _updateKeyboardState = _interaction._updateKeyboardState
+    _finalizeNodeDrag = _interaction._finalizeNodeDrag
+    _startLinkDrag = _interaction._startLinkDrag
+    _snapLinkDragToPort = _interaction._snapLinkDragToPort
+    _updateLinkDrag = _interaction._updateLinkDrag
+    _completeLinkDrag = _interaction._completeLinkDrag
+    _startLinkReconnect = _interaction._startLinkReconnect
+    _clearReconnectState = _interaction._clearReconnectState
+    _cancelLinkReconnect = _interaction._cancelLinkReconnect
+    _finishReconnectDisconnect = _interaction._finishReconnectDisconnect

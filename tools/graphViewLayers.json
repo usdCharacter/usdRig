@@ -33,7 +33,6 @@
         "timerEvent": "interaction",
         "setUsdviewApi": "coordinator",
         "_onFrameChanged": "coordinator",
-        "_clearValueInteractionState": "interaction",
         "closeEvent": "interaction",
         "_onStageReplaced": "stage_sync",
         "_finishStageReload": "stage_sync",
@@ -82,9 +81,6 @@
         "resizeGL": "render",
         "paintGL": "render",
         "_paintGLInner": "render",
-        "_updateAnimator": "render",
-        "_updatePanAnimation": "render",
-        "_updateKeyboardState": "interaction",
         "_renderPortHighlightsCpp": "render",
         "_paintHotkeyPopups": "render",
         "_paintNodeCreationHotbox": "render",
@@ -96,21 +92,12 @@
         "mousePressEvent": "interaction",
         "mouseMoveEvent": "interaction",
         "mouseReleaseEvent": "interaction",
-        "_finalizeNodeDrag": "interaction",
         "keyPressEvent": "interaction",
         "_reloadCurrentGraph": "stage_sync",
         "keyReleaseEvent": "interaction",
         "_shouldInterceptShortcut": "interaction",
         "_isStageViewMidTeardown": "stage_sync",
         "event": "interaction",
-        "_startLinkReconnect": "interaction",
-        "_clearReconnectState": "interaction",
-        "_cancelLinkReconnect": "interaction",
-        "_finishReconnectDisconnect": "interaction",
-        "_startLinkDrag": "interaction",
-        "_snapLinkDragToPort": "interaction",
-        "_updateLinkDrag": "interaction",
-        "_completeLinkDrag": "interaction",
         "_showPinSelectionMenu": "interaction",
         "_reloadLinksFromUSD": "stage_sync",
         "frameAll": "coordinator",
@@ -168,6 +155,6 @@
     }
   },
   "line_ceilings": {
-    "plugin/usdNoodles/graphView.py": 5955
+    "plugin/usdNoodles/graphView.py": 4853
   }
 }

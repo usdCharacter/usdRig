@@ -37,8 +37,48 @@ class ClearSelection:
 
 
 @dataclass(frozen=True)
+class BeginMarquee:
+    origin: tuple[float, float]
+    mode: Literal["replace", "union"]
+
+
+@dataclass(frozen=True)
+class UpdateMarquee:
+    current: tuple[float, float]
+
+
+@dataclass(frozen=True)
+class FinishMarquee:
+    pass
+
+
+@dataclass(frozen=True)
 class Navigate:
     direction: Literal["backward", "forward"]
+
+
+@dataclass(frozen=True)
+class Pan:
+    dx: float
+    dy: float
+
+
+@dataclass(frozen=True)
+class Zoom:
+    focus: tuple[float, float]
+    zoom: float
+
+
+@dataclass(frozen=True)
+class BeginNodeDrag:
+    node_id: str
+    toggle: bool
+
+
+@dataclass(frozen=True)
+class UpdateNodeDrag:
+    dx: float
+    dy: float
 
 
 @dataclass(frozen=True)
@@ -157,7 +197,9 @@ class Reconnect:
 
 
 _INTENT_TYPES = frozenset((
-    Select, SelectAll, ClearSelection, Navigate, FinishNodeDrag, AutoLayout,
+    Select, SelectAll, ClearSelection, BeginMarquee, UpdateMarquee,
+    FinishMarquee, Navigate, Pan, Zoom, BeginNodeDrag, UpdateNodeDrag,
+    FinishNodeDrag, AutoLayout,
     OpenContainer, SaveStage, Undo, Redo, Create, Activate, RemoveVisual,
     DeleteSelection,
     Rename, SetValue, Schema, Connect, Disconnect, Replace, Reconnect,
