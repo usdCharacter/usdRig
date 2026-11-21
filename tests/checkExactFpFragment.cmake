@@ -40,6 +40,7 @@ if (NOT _expected_text STREQUAL _generated_text)
     message(FATAL_ERROR "build/exactFpFlags.txt lists ${_generated_text}, the fragment says ${_expected_text}")
 endif ()
 
+
 foreach (_manifest runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes)
     if (NOT EXISTS "${STAGED_DIR}/${_manifest}.txt")
         message(FATAL_ERROR
@@ -64,6 +65,20 @@ foreach (_manifest runtimeSources runtimeIncludes evalCoreSources evalCoreInclud
             "${_manifest}.txt is not the ordered relocation of the current ${BINARY_DIR}/${_manifest}.txt (stale export)")
     endif ()
 endforeach ()
+
+# The manifests list translation units a separate consumer root builds;
+# CMake's precompiled-header support injects a synthetic cmake_pch.cxx
+# into a target's sources at generate time and it must stay out.
+foreach (_manifest runtimeSources evalCoreSources)
+    file(STRINGS "${BINARY_DIR}/${_manifest}.txt" _built)
+    foreach (_entry IN LISTS _built)
+        if (_entry MATCHES "(^|/|\\\\)CMakeFiles/"
+            OR _entry MATCHES "(^|/|\\\\)cmake_pch\\.(cxx|cpp|c)$")
+            message(FATAL_ERROR
+                "${_manifest}.txt lists compiler-generated unit ${_entry}")
+        endif ()
+    endforeach ()
+endforeach ()or PR #87)
 
 # A staged install ships the generated payload beside the manifests, so the
 # scratch tree mirrors that install(FILES) payload from the build tree before
