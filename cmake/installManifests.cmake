@@ -24,6 +24,7 @@ function(rigexec_add_sdk_manifest_export)
             "-DOUT_DIR=${RIGEXEC_MANIFEST_EXPORT_OUT_DIR}"
             -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/exportManifests.cmake"
         DEPENDS
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/exportManifests.cmake"
             "${RIGEXEC_MANIFEST_EXPORT_BUILD_DIR}/runtimeSources.txt"
             "${RIGEXEC_MANIFEST_EXPORT_BUILD_DIR}/runtimeIncludes.txt"
             "${RIGEXEC_MANIFEST_EXPORT_BUILD_DIR}/evalCoreSources.txt"
