@@ -19,8 +19,8 @@ each carry a copy.
 pxr must resolve from THIS USD install and no other. An unrelated pxr is
 routinely importable -- a pip usd-core in the venv, or another USD tree
 on the ambient PYTHONPATH -- and its binary modules are not loadable
-against this build, so the install's site-packages goes to the FRONT of
-sys.path unconditionally rather than only when pxr looks missing.
+against this build. Put the install's site-packages ahead of external
+paths, after the checkout's own Python directories.
 """
 import os
 import pathlib
@@ -35,7 +35,8 @@ _DLL_DIR_HANDLES = []
 def _Prepend(path):
     """Put `path` at the front of sys.path if it is a directory."""
     text = str(path)
-    if os.path.isdir(text) and text not in sys.path:
+    if os.path.isdir(text):
+        sys.path[:] = [entry for entry in sys.path if entry != text]
         sys.path.insert(0, text)
 
 
@@ -89,10 +90,9 @@ def ScrubForeignPxrFinders(usdInstall):
 
 def SetupPluginTest(buildRoot=None):
     """
-    Make pxr and the plugin/rigExecUsdview modules importable.
+    Make pxr, the RigExec plugin and its shared viewer dependency importable.
 
-    Idempotent: every step is a no-op when the ambient environment
-    already carries the entry.
+    Idempotent: repeated calls do not add duplicate path entries.
 
     `buildRoot` overrides the unittest-unfriendly argv derivation of the
     build directory (the noodle suite's sitecustomize passes its staged
@@ -125,7 +125,8 @@ def SetupPluginTest(buildRoot=None):
         if len(sys.argv) > 1:
             buildRoot = pathlib.Path(sys.argv[1]).parents[2]
         else:
-            buildRoot = repoRoot / "build"
+            buildRoot = repoRoot / (
+                os.environ.get("RIGEXEC_BUILD_DIR") or "build")
     else:
         buildRoot = pathlib.Path(buildRoot)
     if hasattr(os, "add_dll_directory"):
@@ -143,7 +144,8 @@ def SetupPluginTest(buildRoot=None):
             except OSError:
                 pass  # already registered or unsupported; harmless
 
-    # The modules under test are plain files, not an installed package.
+    _Prepend(repoRoot / "plugin" / "usdRigViewShared")
+    _Prepend(buildRoot / "python")
     _Prepend(repoRoot / "plugin" / "rigExecUsdview")
 
     # Meta-path finders outrank the sys.path order above, so scrub the

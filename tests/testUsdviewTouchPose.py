@@ -305,27 +305,14 @@ def testUsdviewInputFunction(appController):
     menus = _RigExecMenu(appController)
     _Check("RigExec" in menus, "there is a RigExec menu: %s" % sorted(menus))
     topMenu = menus["RigExec"]
-    # Two containers fill this menu, so this is where the layout is
-    # checked: one of each submenu, in order, whatever the load order.
-    top = [a.text() for a in topMenu.actions() if not a.isSeparator()]
-    _Check(top == ["Viewport", "General Editors", "Animation Editors"],
-           "the RigExec menu layout is three ranked submenus: %s" % top)
+    top = [action.text() for action in topMenu.actions()]
     rigMenu = _Submenu(topMenu, "Animation Editors")
-    titles = [a.text() for a in rigMenu.actions()]
-    _Check("TouchPose" in titles,
-           "RigExec -> Animation Editors carries TouchPose: %s" % titles)
-    # ...and it MERGED into the existing submenu rather than making a
-    # second one, which is the only reason a separate plugin container is
-    # acceptable here.
-    _Check("Control Picker" in titles,
-           "the same submenu still carries rigExecUsdview's own items: %s"
-           % titles)
-    order = ["Graph Editor", "Shape Editor", "Control Picker",
-             "Hover Picker", "TouchPose", "Volume Weight Editor"]
-    _Check([t for t in order if t in titles] == titles,
-           "and the items are in layout order: %s" % titles)
-    _Check("TouchPose" not in menus,
-           "and no second top-level menu was created: %s" % sorted(menus))
+    titles = [action.text() for action in rigMenu.actions()] if rigMenu else []
+    _Check(top == ["Viewport", "General Editors", "Animation Editors"]
+           and titles == ["Graph Editor", "Shape Editor", "Control Picker",
+                          "Hover Picker", "TouchPose", "Volume Weight Editor"]
+           and "TouchPose" not in menus,
+           "RigExec carries the shared menu layout: %s / %s" % (top, titles))
     viewportMenu = _Submenu(topMenu, "Viewport")
 
     _Check(_Trigger(rigMenu, "TouchPose"), "the menu item triggered")

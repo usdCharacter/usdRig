@@ -194,7 +194,7 @@ fi
 
 # build/python is where the build stages the UsdNoodles package beside its
 # native module; see rigexec_register_usdnoodles below.
-export PYTHONPATH="$RIG/plugin/rigExecUsdview:$_RIGEXEC_BUILD/python${PY_SITE:+:$PY_SITE}${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$RIG/plugin/rigExecUsdview:$_RIGEXEC_BUILD/python:$RIG/plugin/usdRigViewShared${PY_SITE:+:$PY_SITE}${PYTHONPATH:+:$PYTHONPATH}"
 
 # The schema resources MUST be the GENERATED directory: only the generated
 # plugInfo carries the LibraryPath and implementsComputeExtent that let Plug

@@ -52,6 +52,9 @@ rem launch_usdview.bat registers usdNoodles.
 set "PXR_PLUGINPATH_NAME=%PXR_PLUGINPATH_NAME%;%RIG%\plugin\touchPose"
 set "PYTHONPATH=%RIG%\plugin\touchPose;%PYTHONPATH%"
 
+set "PXR_PLUGINPATH_NAME=%PXR_PLUGINPATH_NAME%;%RIG%\plugin\shapeEditor"
+set "PYTHONPATH=%RIG%\plugin\shapeEditor;%PYTHONPATH%"
+
 rem testusdview `exec`s the script, so it has no __file__ to locate the
 rem package from. Supply the package path explicitly.
 set "TOUCHPOSE_PLUGIN_DIR=%RIG%\plugin\touchPose"

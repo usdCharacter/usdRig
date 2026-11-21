@@ -525,6 +525,14 @@ jobs:
           mkdir -p usd-install
           tar -C usd-install -xf usd-install-py.tar
 
+      - name: Check usdview menu contract
+        run: |
+          export USD="$GITHUB_WORKSPACE/usd-install"
+          export VENV="$GITHUB_WORKSPACE/noodles-venv"
+          export QT_QPA_PLATFORM=offscreen
+          source bin/_env.sh
+          "$PY" tests/python/test_usdview_menu.py
+
       - name: Configure
         run: |
           cmake -S . -B build -G Ninja \
@@ -652,6 +660,7 @@ jobs:
             "$P/lib/librigExecScene.so" \
             "$P/lib/librigExecOracle.so" \
             "$P/lib/librigExecImaging.so" \
+            "$P/lib/python/usdRigViewMenu.py" \
             "$P/lib/librigExecStandalone.so" \
             "$P/lib/librigExecAuthoring.so" \
             "$P/lib/usd/rigExecSchema/resources/plugInfo.json" \

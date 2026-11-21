@@ -261,7 +261,7 @@ jobs:
             $name, $value = $line -split "=", 2
             Set-Item "env:$name" $value
           }
-          & "$bundle/app/python/python.exe" -c "from pxr import Plug, Usd; import rigExecUsdview; rigExecUsdview._LoadRigExecImaging(); import rigexec, numpy; from UsdNoodles import _usdNoodles; assert Plug.Registry().GetPluginWithName('rigExecUsdview'); s = Usd.Stage.Open('$bundle/app/examples/rigexec_flat.usda'); assert s is not None; a = Usd.Stage.Open(str(s.GetRootLayer().realPath).replace('rigexec_flat.usda', 'ArmShotAnim.usda')); assert a and a.GetPrimAtPath('/Shot/HeroArm/Geom/ArmBody'); print('bundle smoke OK')"
+          & "$bundle/app/python/python.exe" -c "from pxr import Plug, Usd; import rigExecUsdview, shapeEditorUsdview, touchPoseUsdview, usdRigViewMenu; rigExecUsdview._LoadRigExecImaging(); import rigexec, numpy; from UsdNoodles import _usdNoodles; assert Plug.Registry().GetPluginWithName('rigExecUsdview'); s = Usd.Stage.Open('$bundle/app/examples/rigexec_flat.usda'); assert s is not None; a = Usd.Stage.Open(str(s.GetRootLayer().realPath).replace('rigexec_flat.usda', 'ArmShotAnim.usda')); assert a and a.GetPrimAtPath('/Shot/HeroArm/Geom/ArmBody'); print('bundle smoke OK')"
           if ($LASTEXITCODE -ne 0) { throw "bundle python smoke failed" }
           & "$bundle/app/python/python.exe" "$bundle/app/usd/bin/usdview" --help | Select-Object -First 5
           if ($LASTEXITCODE -ne 0) { throw "usdview --help failed" }
@@ -385,7 +385,7 @@ jobs:
             export "$name=$value"
           done < <("$exe" --usdRig-print-env)
           "$bundle/usdRigView.app/Contents/Resources/app/python/bin/python3" \
-            -c "from pxr import Usd; import rigExecUsdview, rigexec, numpy; s = Usd.Stage.Open('$bundle/usdRigView.app/Contents/Resources/app/examples/rigexec_flat.usda'); assert s is not None; a = Usd.Stage.Open(str(s.GetRootLayer().realPath).replace('rigexec_flat.usda', 'ArmShotAnim.usda')); assert a and a.GetPrimAtPath('/Shot/HeroArm/Geom/ArmBody'); print('bundle smoke OK')"
+            -c "from pxr import Usd; import rigExecUsdview, shapeEditorUsdview, touchPoseUsdview, usdRigViewMenu, rigexec, numpy; s = Usd.Stage.Open('$bundle/usdRigView.app/Contents/Resources/app/examples/rigexec_flat.usda'); assert s is not None; a = Usd.Stage.Open(str(s.GetRootLayer().realPath).replace('rigexec_flat.usda', 'ArmShotAnim.usda')); assert a and a.GetPrimAtPath('/Shot/HeroArm/Geom/ArmBody'); print('bundle smoke OK')"
           if [ -n "${MACOS_CERTIFICATE_BASE64:-}" ]; then
             keychain="$RUNNER_TEMP/signing.keychain-db"
             p12="$RUNNER_TEMP/certificate.p12"
@@ -420,7 +420,7 @@ jobs:
             export "$name=$value"
           done < <("$exe" --usdRig-print-env)
           "$bundle/usdRigView.app/Contents/Resources/app/python/bin/python3" \
-            -c "from pxr import Usd; import rigExecUsdview, rigexec, numpy; s = Usd.Stage.Open('$bundle/usdRigView.app/Contents/Resources/app/examples/rigexec_flat.usda'); assert s is not None; a = Usd.Stage.Open(str(s.GetRootLayer().realPath).replace('rigexec_flat.usda', 'ArmShotAnim.usda')); assert a and a.GetPrimAtPath('/Shot/HeroArm/Geom/ArmBody'); print('signed bundle smoke OK')"
+            -c "from pxr import Usd; import rigExecUsdview, shapeEditorUsdview, touchPoseUsdview, usdRigViewMenu, rigexec, numpy; s = Usd.Stage.Open('$bundle/usdRigView.app/Contents/Resources/app/examples/rigexec_flat.usda'); assert s is not None; a = Usd.Stage.Open(str(s.GetRootLayer().realPath).replace('rigexec_flat.usda', 'ArmShotAnim.usda')); assert a and a.GetPrimAtPath('/Shot/HeroArm/Geom/ArmBody'); print('signed bundle smoke OK')"
           tar -C dist -czf "$bundle.tar.gz" "$(basename "$bundle")"
 
       - name: Verify extracted macOS bundle without host Python
@@ -484,7 +484,7 @@ jobs:
             export "$name=$value"
           done < <("$bundle/usdRigView" --usdRig-print-env)
           "$bundle/app/python/bin/python3" \
-            -c "from pxr import Usd; import rigExecUsdview, rigexec, numpy; s = Usd.Stage.Open('$bundle/app/examples/rigexec_flat.usda'); assert s is not None; a = Usd.Stage.Open(str(s.GetRootLayer().realPath).replace('rigexec_flat.usda', 'ArmShotAnim.usda')); assert a and a.GetPrimAtPath('/Shot/HeroArm/Geom/ArmBody'); print('bundle smoke OK')"
+            -c "from pxr import Usd; import rigExecUsdview, shapeEditorUsdview, touchPoseUsdview, usdRigViewMenu, rigexec, numpy; s = Usd.Stage.Open('$bundle/app/examples/rigexec_flat.usda'); assert s is not None; a = Usd.Stage.Open(str(s.GetRootLayer().realPath).replace('rigexec_flat.usda', 'ArmShotAnim.usda')); assert a and a.GetPrimAtPath('/Shot/HeroArm/Geom/ArmBody'); print('bundle smoke OK')"
           "$bundle/app/python/bin/python3" "$bundle/app/usd/bin/usdview" \
             --help | head -5
           tar -C dist -czf "$bundle.tar.gz" "$(basename "$bundle")"

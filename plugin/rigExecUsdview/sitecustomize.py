@@ -44,7 +44,8 @@ def _main():
     import rigexec_test_env
     # An explicit build root: the argv derivation is for the test
     # runner's own command line, which a helper process does not have.
-    rigexec_test_env.SetupPluginTest(buildRoot=repo_root / "build")
+    build_root = repo_root / (_os.environ.get("RIGEXEC_BUILD_DIR") or "build")
+    rigexec_test_env.SetupPluginTest(buildRoot=build_root)
 
 
 try:

@@ -16,6 +16,8 @@ import sys
 from pxr import Gf, Tf, Usd, UsdUtils
 from pxr.Usdviewq.plugin import PluginContainer
 
+from usdRigViewMenu import AddToRigExecMenu
+
 try:
     import editorExtension
     import imagingHandle
@@ -104,24 +106,6 @@ def _LoadRigExecImaging():
     return lib
 
 
-# The RigExec menu layout: three ranked submenus, and every entry carries
-# a rank so that the order holds no matter which plugin container's
-# configureView runs first: usdview's PluginMenu only appends, and
-# plugin/touchPose and plugin/shapeEditor add their items to the same
-# submenus from their own containers.
-#
-#   Viewport            10: Viewport Tools 10, View Cube 20, View Axis 30
-#   General Editors     20: Avar Editor 10, Layer Stack 15,
-#                           Layer Opinions 20, Execution Stack 30,
-#                           Deformer Toggles 35, Profiler 40,
-#                           Cache Strip 50, AI Assistant 60
-#   Animation Editors   30: Graph Editor 10, Shape Editor 20,
-#                           Control Picker 30, TouchPose 40,
-#                           Volume Weight Editor 50
-_SUBMENU_RANKS = {"Viewport": 10, "General Editors": 20,
-                  "Animation Editors": 30}
-_MENU_RANK = "rigExecMenuRank"
-
 # How long a notice burst must be quiet before the pending edit-commit
 # warms. The flush samples the whole neighbor+sweep band synchronously on
 # the UI thread, so the delay keeps that burst out of a run of edits --
@@ -145,39 +129,6 @@ _FRAME_DEMAND_TICK_MS = 50
 # Native sampling can defer a declined frame before choosing its live
 # evaluation fallback. Allow that retry window before parking the driver.
 _WARMING_STALL_TICKS = 4
-
-
-def _PlaceByRank(qMenu, action, rank):
-    # Move `action` ahead of the first entry ranked above it, unless it
-    # is already there. Unranked entries (another plugin's) stay put.
-    action.setProperty(_MENU_RANK, rank)
-    for other in qMenu.actions():
-        if other == action:
-            return
-        otherRank = other.property(_MENU_RANK)
-        if otherRank is not None and otherRank > rank:
-            qMenu.removeAction(action)
-            qMenu.insertAction(other, action)
-            return
-
-
-def AddToRigExecMenu(plugUIBuilder, submenu, commandPlugin, rank):
-    """Add `commandPlugin` to RigExec (or RigExec -> `submenu`) at `rank`.
-
-    findOrCreateMenu and findOrCreateSubmenu hand every container the same
-    menu objects, so no load order can make a second RigExec menu or a
-    second copy of a submenu.
-    """
-    menu = plugUIBuilder.findOrCreateMenu("RigExec")
-    if submenu is not None:
-        menu = menu.findOrCreateSubmenu(submenu)
-    action = menu.addItem(commandPlugin)
-    qMenu = action.parent()
-    _PlaceByRank(qMenu, action, rank)
-    if submenu is not None:
-        _PlaceByRank(qMenu.parent(), qMenu.menuAction(),
-                     _SUBMENU_RANKS[submenu])
-    return action
 
 
 # Every session's container, filed under its main window. usdview's plugin
@@ -400,8 +351,6 @@ class RigExecUsdviewContainer(PluginContainer):
                          self._assistant, 60)
         AddToRigExecMenu(plugUIBuilder, "Animation Editors",
                          self._graphEditor, 10)
-        # Shape Editor (20) and TouchPose (40) come from their own
-        # plugin containers and slot in between by rank.
         AddToRigExecMenu(plugUIBuilder, "Animation Editors",
                          self._picker, 30)
         AddToRigExecMenu(plugUIBuilder, "Animation Editors",
