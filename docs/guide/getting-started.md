@@ -52,6 +52,10 @@ ctest --test-dir build --output-on-failure
 cmake --install build --prefix /path/to/rigexec-install
 ```
 
+Packagers staging a system tree set `DESTDIR` as well as `--prefix`; every file
+lands under `<DESTDIR><prefix>`, including the exact-FP flags and the USD-free
+manifests under `share/rigExec`, and nothing is written to the logical prefix.
+
 Link the installed scene target when compiling rigs from USD stages:
 
 ```cmake

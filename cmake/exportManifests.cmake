@@ -1,9 +1,8 @@
-# Install-time step: copy the build's USD-free source and include manifests
-# into the install prefix with every path made relative to the checkout that
-# holds it, so a host building those sources outside CMake joins the list with
-# its own root instead of copying it. Invoke with SOURCE_ROOT, BUILD_DIR,
-# PREFIX and DATA_DIR.
-foreach (_required SOURCE_ROOT BUILD_DIR PREFIX DATA_DIR)
+# Build-time step: rewrite the build's USD-free source and include manifests
+# with every path made relative to the checkout that holds it, so a host
+# building those sources outside CMake joins the list with its own root instead
+# of copying it. Invoke with SOURCE_ROOT, BUILD_DIR and OUT_DIR.
+foreach (_required SOURCE_ROOT BUILD_DIR OUT_DIR)
     if (NOT ${_required})
         message(FATAL_ERROR "exportManifests.cmake needs -D${_required}=...")
     endif ()
@@ -24,5 +23,12 @@ foreach (_manifest runtimeSources runtimeIncludes evalCoreSources evalCoreInclud
         list(APPEND _relocated "${_entry}")
     endforeach ()
     list(JOIN _relocated "\n" _text)
-    file(WRITE "${PREFIX}/${DATA_DIR}/${_manifest}.txt" "${_text}\n")
+    file(WRITE "${OUT_DIR}/${_manifest}.txt" "${_text}\n")
+endforeach ()
+
+foreach (_manifest runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes)
+    if (NOT EXISTS "${OUT_DIR}/${_manifest}.txt")
+        message(FATAL_ERROR
+            "exportManifests.cmake wrote no ${OUT_DIR}/${_manifest}.txt")
+    endif ()
 endforeach ()

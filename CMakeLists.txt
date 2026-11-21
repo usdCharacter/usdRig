@@ -40,6 +40,7 @@ endif()
 # must carry; rigexec_apply_exact_fp_flags adds them without repeating the
 # directory option above. Docs: docs/concepts/baked-vs-dynamic.md.
 include(cmake/rigexec_flags.cmake)
+include(cmake/installManifests.cmake)
 
 set(RIGEXEC_INSTALL_LIBDIR     "lib"
     CACHE STRING "Install directory for libraries, relative to the prefix")
@@ -501,6 +502,14 @@ file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/evalCoreIncludes.txt"
     CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecEvalCore,INCLUDE_DIRECTORIES>,\n>\n")
 rigexec_apply_exact_fp_flags(rigExecRuntime)
 
+# The shipped copies are staged install inputs, so DESTDIR and
+# CMAKE_STAGING_PREFIX apply to them like every other installed file.
+set(RIGEXEC_SDK_MANIFEST_DIR "${CMAKE_CURRENT_BINARY_DIR}/sdkManifests")
+rigexec_add_sdk_manifest_export(
+    SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}"
+    BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}"
+    OUT_DIR "${RIGEXEC_SDK_MANIFEST_DIR}")
+
 # What a host that builds these USD-free sources outside CMake needs: the
 # exact-FP flag list and the same source and include manifests this build
 # checks. The installed copies come from the same generated files, with paths
@@ -515,9 +524,18 @@ add_test(NAME testRigExecExactFpFragment
     COMMAND "${CMAKE_COMMAND}"
         "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
         "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
-        "-DEXPORT_SCRIPT=${CMAKE_CURRENT_LIST_DIR}/cmake/exportManifests.cmake"
-        "-DINSTALL_DATADIR=${RIGEXEC_INSTALL_DATADIR}"
+        "-DSTAGED_DIR=${RIGEXEC_SDK_MANIFEST_DIR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/checkExactFpFragment.cmake")
+add_test(NAME testRigExecInstallStaging
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+        "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+        "-DSCRATCH_DIR=${CMAKE_CURRENT_BINARY_DIR}/installStagingCheck"
+        "-DINSTALL_DATADIR=${RIGEXEC_INSTALL_DATADIR}"
+        "-DGENERATOR=${CMAKE_GENERATOR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/checkInstallStaging.cmake")
+set_tests_properties(testRigExecInstallStaging PROPERTIES LABELS "fast"
+    TIMEOUT 120)
 
 # rigExecSampler: hands a .rigexec's Animated inputs the values a stage holds
 # at each new time (RigExecInputSampler), for every consumer that plays the
@@ -2702,6 +2720,7 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
                          testAutoClavicle
                          testAvarEditorModel
                          testGizmoPreview testGizmoDeferredRelease testGizmoOwnCommit
+                         testGizmoDocumentEdit
                          testGizmoSettings testGizmoDrag testGizmoSnap
                          testViewCubeMath testRigExecStageEdits
                          testGraphModel testGraphEditorModel testVolumeWeightModel
@@ -3085,12 +3104,8 @@ install(FILES
 # CMake (the Godot and Unreal extensions).
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/exactFpFlags.txt"
     DESTINATION "${RIGEXEC_INSTALL_DATADIR}")
-install(CODE "execute_process(COMMAND \"${CMAKE_COMMAND}\"
-    -DSOURCE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}
-    -DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}
-    -DPREFIX=\$<INSTALL_PREFIX>
-    -DDATA_DIR=${RIGEXEC_INSTALL_DATADIR}
-    -P \"${CMAKE_CURRENT_LIST_DIR}/cmake/exportManifests.cmake\")")
+rigexec_install_sdk_manifests(BUILD_DIR "${RIGEXEC_SDK_MANIFEST_DIR}"
+    DESTINATION "${RIGEXEC_INSTALL_DATADIR}")
 
 install(FILES LICENSE NOTICE THIRD_PARTY_NOTICES.md
     DESTINATION "share/rigExec")
