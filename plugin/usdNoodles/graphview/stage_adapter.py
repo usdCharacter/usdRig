@@ -1019,6 +1019,50 @@ def readNoticeContext(view):
     return NoticeContext(syncing_selection=view._syncingSelection)
 
 
+def prepareGraphSwitch(view):
+    view._startupSamplePending = False
+    view._clearValueInteractionState()
+    view._lastPrimTreeSelection = []
+    view._lastSelectedNode = None
+    view._selectedNodes.clear()
+    view._selectedLinks.clear()
+    view._marqueeBaseSelectedNodes.clear()
+    view._marqueeBaseSelectedLinks.clear()
+    view._marqueePrevSelectedNodes.clear()
+    view._marqueePrevSelectedLinks.clear()
+    view.marqueeActive = False
+    view.draggingNodes = False
+    view.nodeIdUnderCursor = ""
+    view._renamingNodeId = ""
+    view._renameInput.clear()
+    view._linkUnderCursor = -1
+    view._lastSyncedLinkHover = -1
+    view._hoveredPort = None
+    view._tooltipTimer.stop()
+    view._tooltipProperty = None
+    view._tooltipScreenPos = None
+    view._draggingLink = False
+    view._dragLinkSourceNode = None
+    view._dragLinkSourcePort = None
+    view._dragLinkSourceIsOutput = None
+    view._dragLinkCursorPos = None
+    view._dragLinkValidTarget = False
+    view._dragLinkSyntheticTarget = None
+    view._dragLinkResolvedTarget = None
+    view._clearReconnectState()
+    view._lastPinIndex = -1
+    view._lastLinkCycleIndex = 0
+    view._lastInputLinkIndex = -1
+    view._lastOutputLinkIndex = -1
+    view._lastDanglingLinkIndex = -1
+    view._reconcilePositionGen = 0
+    view._reconciledPositionVersions.clear()
+    view._spatialIndex.clear()
+    view._invalidateBackReferenceLinkDataCache()
+    view._linksNeedSync = True
+    view._portHighlightsDirty = True
+
+
 def _beginReloadOnView(view, frame):
     # Block paint events at the Qt level.  Python-level guards
     # (view.initialized) are insufficient because QGLWidget's internal event
