@@ -1,0 +1,66 @@
+# Throwaway project driven by tests/exactFpCompilerWitness.cmake: it applies
+# the root project's exact-FP helper to adversarial target shapes and the
+# witness driver then audits the real compiler commands and runs the
+# numeric probes. WITNESS_MODULE, WITNESS_FAST_FLAGS, WITNESS_FAST_HEAD,
+# WITNESS_FAST_TAIL and WITNESS_CONFLICT_FLAG come from the driver.
+cmake_minimum_required(VERSION 3.26)
+project(rigexec_exact_fp_witness LANGUAGES CXX)
+
+if (NOT DEFINED WITNESS_MODULE)
+    message(FATAL_ERROR "exactFpWitness: WITNESS_MODULE is required")
+endif ()
+include("${WITNESS_MODULE}")
+
+# Same contraction-family directory policy the root project installs at top
+# scope.
+rigexec_get_exact_fp_directory_flags(_fp_directory_flags)
+add_compile_options(${_fp_directory_flags})
+
+# A generated source under a build-directory component named like a vendored
+# tree: only an ownership marker may exempt a target from the exact-FP walk.
+set(_gen_dir "${CMAKE_BINARY_DIR}/third_party/generated")
+add_custom_command(OUTPUT "${_gen_dir}/generatedProbe.cpp"
+    COMMAND "${CMAKE_COMMAND}" "-DOUT=${_gen_dir}/generatedProbe.cpp"
+            -P "${CMAKE_CURRENT_LIST_DIR}/genSource.cmake")
+
+add_library(fpIface INTERFACE)
+if (WITNESS_CONFLICT STREQUAL "interface")
+    # A conflict owned by a linked interface target cannot be scrubbed or
+    # reordered, so the helper must abort configuration.
+    target_compile_options(fpIface INTERFACE
+        "$<$<CONFIG:Release>:${WITNESS_CONFLICT_FLAG}>")
+endif ()
+
+add_executable(witnessExact
+    probe.cpp
+    "${_gen_dir}/generatedProbe.cpp")
+target_precompile_headers(witnessExact PRIVATE probePch.h)
+target_link_libraries(witnessExact PRIVATE fpIface)
+
+if (WITNESS_SOURCE_CONFLICT)
+    # Enforceable source-level conflicts: a literal copy of the family and a
+    # generator expression, both of which must leave the real commands.
+    set_source_files_properties(probe.cpp PROPERTIES
+        COMPILE_OPTIONS "${WITNESS_FAST_HEAD}")
+    set_source_files_properties("${_gen_dir}/generatedProbe.cpp" PROPERTIES
+        COMPILE_OPTIONS "$<$<CONFIG:Release>:${WITNESS_FAST_TAIL}>")
+endif ()
+
+add_executable(witnessReuse
+    probe.cpp
+    reuse.cpp
+    "${_gen_dir}/generatedProbe.cpp")
+# Own generator-expression floating-point options plus PCH reuse.
+target_compile_options(witnessReuse PRIVATE
+    "$<$<CONFIG:Release>:${WITNESS_FAST_TAIL}>")
+target_precompile_headers(witnessReuse REUSE_FROM witnessExact)
+
+add_executable(witnessVendored
+    probe.cpp
+    "${_gen_dir}/generatedProbe.cpp")
+target_compile_options(witnessVendored PRIVATE ${WITNESS_FAST_FLAGS})
+set_target_properties(witnessVendored PROPERTIES RIGEXEC_VENDORED TRUE)
+
+# The root project's placement invariant: this is the last CMake code in
+# this scope that touches a target.
+rigexec_apply_exact_fp_flags_to_directory_targets()
