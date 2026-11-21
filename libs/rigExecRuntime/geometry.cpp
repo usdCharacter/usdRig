@@ -1,7 +1,9 @@
 #include "rigExecSchema/schemaNames.h"
+#include "rigExecEvalCore/envelope.h"
 #include "rigExecMath/blendLayoutKernel.h"
 #include "rigExecMath/blendRangeKernel.h"
 #include "rigExecMath/dualQuatKernel.h"
+#include "rigExecMath/envelope.h"
 // rigExecRuntime geometry family:RevisionStatic, InfluenceFold,
 // RevisionChunk, RevisionFuse, ChainStatus, Derived.
 // A zero-USD port of the baked geometry loop (libs/rigExec/bakedGeometry.cpp
@@ -735,21 +737,11 @@ struct RrGeoMoverStatus {
     }
 };
 
-// Envelope (envelope.h, solvers.cpp, moverGraph.cpp): the common blend,
-// the weighted-matrix rule, and the full-strength predicate.
-
-template <class T, class Weight>
-T
-RrGeoBlendEnvelope(const T &preceding, const T &full, Weight weight)
-{
-    if (weight <= Weight(0)) {
-        return preceding;
-    }
-    if (weight >= Weight(1)) {
-        return full;
-    }
-    return preceding + (full - preceding) * weight;
-}
+// Envelope (rigExecEvalCore/envelope.h): the eligibility predicates, the
+// resolve, the blend, and the matrix dispatch are the shared definitions;
+// what is here is this front end's view of the packet and its call sites.
+// The weighted-matrix rule stays as the shared matrix bodies' scalar arm,
+// shared with its SSE2 form below.
 
 RrVec3d
 RrGeoApplyWeightedMatrix(const RrVec3d &point, const RrMat4d &transform,
@@ -773,16 +765,38 @@ RrGeoPartialTransform(const RrMat4d &transform, double weight)
     return RrPartialTransform(transform, weight);
 }
 
+// The packet as EvalCore's EnvelopePacketView: representation and range
+// policy classified to its integer codes, the arrays borrowed.
+eval::EnvelopePacketView
+RrGeoEnvelopeView(const RrGeoWeightPacket &w)
+{
+    eval::EnvelopePacketView v;
+    v.valid = w.valid;
+    v.defaultWeight = w.defaultWeight;
+    v.values = w.Values().data();
+    v.valueCount = w.Values().size();
+    v.indices = w.Indices().data();
+    v.indexCount = w.Indices().size();
+    v.rangePolicyEmpty = w.rangePolicy.empty();
+    v.representation = w.representation == SchemaValueText::constant
+                           ? eval::kWeightConstant
+                           : (w.representation == SchemaValueText::sparse
+                                  ? eval::kWeightSparse
+                                  : (w.representation == SchemaValueText::dense
+                                         ? eval::kWeightDense
+                                         : eval::kWeightRepresentationUnknown));
+    v.rangePolicy = w.rangePolicy == SchemaValueText::strict
+                        ? eval::kWeightPolicyStrict
+                        : (w.rangePolicy == SchemaValueText::clamp
+                               ? eval::kWeightPolicyClamp
+                               : eval::kWeightPolicyUnknown);
+    return v;
+}
+
 bool
 RrGeoEnvelopeIsFullStrength(const RrGeoWeightPacket &envelope)
 {
-    return envelope.valid &&
-           envelope.representation == SchemaValueText::constant &&
-           envelope.Values().empty() && envelope.Indices().empty() &&
-           envelope.defaultWeight == 1.0f &&
-           (envelope.rangePolicy.empty() ||
-            envelope.rangePolicy == SchemaValueText::strict ||
-            envelope.rangePolicy == SchemaValueText::clamp);
+    return eval::EnvelopeIsFullStrength(RrGeoEnvelopeView(envelope));
 }
 
 // RigExecRevisionAcceptance: a revision's apply-or-fail answer, decided from
@@ -793,51 +807,18 @@ enum class RrGeoAcceptance : uint8_t {
     Deferred = 2,
 };
 
-// A valid sparse field with a zero default, which the matrix and wire
-// kernels walk point by point (RigExecWireTakesSparseEnvelope).
+// The one eligibility predicate, shared with the core gate.
 bool
 RrGeoEnvelopeIsSparseWalk(const RrGeoWeightPacket &w)
 {
-    return w.valid && w.representation == SchemaValueText::sparse &&
-           w.defaultWeight == 0.0f && w.Indices().size() == w.Values().size() &&
-           (w.rangePolicy.empty() || w.rangePolicy == SchemaValueText::strict ||
-            w.rangePolicy == SchemaValueText::clamp);
+    return eval::EnvelopeIsSparseWalk(RrGeoEnvelopeView(w));
 }
 
-// Every entry a sparse walk names in range, strictly ascending, finite and
-// in [0, 1], as ResolveAll would validate it: the matrix and wire kernels'
-// check before they write (moverGraph.cpp, _SparseWalkIsUsable).
+// Entry validation, shared with the core's check before it writes.
 bool
 RrGeoSparseEnvelopeIsUsable(const RrGeoWeightPacket &w, size_t count)
 {
-    for (size_t k = 0; k < w.Indices().size(); ++k) {
-        const int index = w.Indices()[k];
-        const float value = w.Values()[k];
-        if (index < 0 || size_t(index) >= count ||
-            (k > 0 && index <= w.Indices()[k - 1]) || !std::isfinite(value) ||
-            value < 0.0f || value > 1.0f) {
-            return false;
-        }
-    }
-    return true;
-}
-
-void
-RrGeoBlendEnvelopeRange(const RrVec3f *preceding, const float *envelope,
-                        size_t begin, size_t end, RrVec3f *blended)
-{
-    for (size_t i = begin; i < end; ++i) {
-        blended[i] = RrGeoBlendEnvelope(preceding[i], blended[i], envelope[i]);
-    }
-}
-
-void
-RrGeoBlendEnvelopeAll(const RrVec3f *preceding, const float *envelope,
-                      size_t count, RrVec3f *blended)
-{
-    // The runtime runs serially; a point range is an independent
-    // sub-problem, so the serial loop is the parallel loop's answer.
-    RrGeoBlendEnvelopeRange(preceding, envelope, 0, count, blended);
+    return eval::SparseEnvelopeIsUsable(RrGeoEnvelopeView(w), count);
 }
 
 // Skin tables (simdKernels.*, dualQuat.*, solvers.cpp, pointFrame.cpp).
@@ -1018,6 +999,64 @@ RrGeoApplyLinearBlendSkinSimd(const RrVec3f *in, RrVec3f *out,
 
 #endif // RIGEXEC_RUNTIME_HAS_SSE2
 
+// The matrix kernels run EvalCore's shared bodies (rigExecEvalCore/
+// envelope.h) through this front end's numbers: the scalar weighted-matrix
+// rule and its SSE2 form above, runtimeMath.h's radial arc factorization,
+// and the Rr* vector and matrix types.
+struct RrGeoEnvelopeMath {
+    using Vec3f = RrVec3f;
+    using Vec3d = RrVec3d;
+    using Mat4 = RrMat4d;
+    using PartialDecomposition = RrPartialDecomposition;
+    static Vec3f ToFloat(const Vec3d &v)
+    {
+        return RrGeoToVec3f(v);
+    }
+    static Vec3d ToDouble(const Vec3f &v)
+    {
+        return RrGeoToVec3d(v);
+    }
+    static double Clamp(double v, double lo, double hi)
+    {
+        return RrClamp(v, lo, hi);
+    }
+    static Mat4 Identity()
+    {
+        return Mat4(1.0);
+    }
+    static const unsigned char *TransformBytes(const Mat4 &t)
+    {
+        return reinterpret_cast<const unsigned char *>(&t);
+    }
+    static PartialDecomposition DecomposePartialTransform(const Mat4 &t)
+    {
+        return RrDecomposePartialTransform(t);
+    }
+    static Mat4 ApplyPartialDecomposition(const PartialDecomposition &d,
+                                          double weight)
+    {
+        return RrApplyPartialDecomposition(d, weight);
+    }
+    static Vec3d ApplyWeightedMatrix(const Vec3d &point, const Mat4 &t,
+                                     double weight)
+    {
+        return RrGeoApplyWeightedMatrix(point, t, weight);
+    }
+    static void ApplyWeightedMatrixSimd(const Vec3f *in, Vec3f *out,
+                                        const float *weights, size_t count,
+                                        const Mat4 &t)
+    {
+        RrGeoApplyWeightedMatrixSimd(in, out, weights, count, t);
+    }
+    // The core's radial identity shortcut is licensed only where the host
+    // computes under round-to-nearest with no flush-to-zero; playback keeps
+    // its exact doubles and reports its environment as unknown.
+    static bool FloatEnvironmentIsDefault()
+    {
+        return false;
+    }
+};
+
 // \p useSimd is the program's RrGeoSettings::useSimd. Reads \p in and writes
 // \p pts, which may be the same array: point i is written only after it is
 // read.
@@ -1026,196 +1065,40 @@ RrGeoApplyMatrixKernelRange(const RrGeoMoverParameters &p,
                             const float *envelope, size_t begin, size_t end,
                             const RrVec3f *in, RrVec3f *pts, bool useSimd)
 {
-    if (p.radialWeight) {
-        // Factored per WEIGHT rather than per point: a painted falloff is
-        // mostly a handful of distinct values. Mirrors
-        // RigExecApplyMatrixKernelRange exactly.
-        double cachedWeight = -1.0;
-        RrPartialDecomposition decomposition;
-        bool haveDecomposition = false;
-        RrMat4d partial(1.0);
-        for (size_t i = begin; i < end; ++i) {
-            const double w = envelope ? envelope[i] : 1.0;
-            if (w != cachedWeight) {
-                const double clamped = RrClamp(w, 0.0, 1.0);
-                if (clamped <= 0.0)
-                    partial = RrMat4d(1.0);
-                else if (clamped >= 1.0)
-                    partial = p.transform;
-                else {
-                    if (!haveDecomposition) {
-                        decomposition =
-                            RrDecomposePartialTransform(p.transform);
-                        haveDecomposition = true;
-                    }
-                    partial =
-                        RrApplyPartialDecomposition(decomposition, clamped);
-                }
-                cachedWeight = w;
-            }
-            pts[i] = RrGeoToVec3f(partial.TransformAffine(RrGeoToVec3d(in[i])));
-        }
-        return;
-    }
-    if (useSimd) {
-        RrGeoApplyWeightedMatrixSimd(in + begin, pts + begin,
-                                     envelope ? envelope + begin : nullptr,
-                                     end - begin, p.transform);
-    } else {
-        // Element i is written only after it is read, so in-place is safe.
-        for (size_t i = begin; i < end; ++i) {
-            pts[i] = RrGeoToVec3f(
-                RrGeoApplyWeightedMatrix(RrGeoToVec3d(in[i]), p.transform,
-                                         envelope ? envelope[i] : 1.0f));
-        }
-    }
+    eval::ApplyMatrixKernelRange<RrGeoEnvelopeMath>(
+        p.radialWeight, p.transform, envelope, begin, end, in, pts, useSimd);
 }
 
 // The matrix kernel's validation, the one definition it runs first and
-// RrGeoRevisionKernelAcceptance decides by (moverGraph.cpp,
-// _MatrixKernelAccepts). Given \p weights, a dense resolve writes into it.
+// RrGeoRevisionKernelAcceptance decides by. Given \p weights, a dense
+// resolve writes into it.
 bool
 RrGeoMatrixKernelAccepts(const RrGeoMoverParameters &p, size_t count,
                          std::vector<float> *weights)
 {
-    const RrGeoWeightPacket &w = p.weights;
-    if (RrGeoEnvelopeIsFullStrength(w)) {
-        return true;
-    }
-    if (RrGeoEnvelopeIsSparseWalk(w)) {
-        return RrGeoSparseEnvelopeIsUsable(w, count);
-    }
-    // A cardinality mismatch fails atomically.
-    return weights ? w.ResolveAll(count, weights) : w.ResolvesAll(count);
+    return eval::MatrixKernelAccepts(RrGeoEnvelopeView(p.weights), p.weights,
+                                     count, weights);
 }
 
-// The sparse walk's entries [kBegin, kEnd), applied in place to \p data: the
-// one loop the whole kernel runs over every entry and a group over the
-// entries whose indices fall in it, \p data[index - offset] holding point
-// index. The radial arc's per-weight memo only skips recomputing a pure
-// function of the weight, so where a walk starts changes no bit.
-//
-// An entry's result is a pure function of the blend arm, the transform, its
-// weight and its entering point. Given \p memo (a group's own,
-// pointBlocks.h), a walk whose arm and transform are the last walk's records
-// its entries, and an entry whose weight and entering point hold the bits
-// recorded takes the recorded result, as _ApplyMatrixSparseWalk does: the
-// same bits either way.
+// The sparse walk's entries [kBegin, kEnd), applied in place to \p data,
+// \p data[index - offset] holding point index, under the shared memo rules.
 void
 RrGeoApplyMatrixSparseWalk(const RrGeoMoverParameters &p, size_t kBegin,
                            size_t kEnd, RrVec3f *data, size_t offset = 0,
                            RigExecSparseWalkMemo<RrVec3f> *memo = nullptr)
 {
-    const RrGeoWeightPacket &w = p.weights;
-    using Mode = RigExecSparseWalkMode;
-    Mode mode = Mode::Compute;
-    if (memo) {
-        // The arm, then the transform's sixteen doubles.
-        static_assert(sizeof(RrMat4d) == 16 * sizeof(double),
-                      "the transform keys by its sixteen doubles");
-        unsigned char params[1 + sizeof(RrMat4d)];
-        params[0] = p.radialWeight ? 1 : 0;
-        std::memcpy(params + 1, &p.transform, sizeof(RrMat4d));
-        mode =
-            RigExecSparseWalkBegin(memo, params, sizeof(params), kEnd - kBegin);
-    }
-    // Whether the memo answers for entry k's point; if not and the walk
-    // records, its inputs are noted for the result `keep` stores.
-    const auto reuse = [&](size_t k, RrVec3f *point) {
-        if (mode == Mode::Compute) {
-            return false;
-        }
-        const size_t j = k - kBegin;
-        if (mode == Mode::Reuse &&
-            RigExecSparseWalkHolds(*memo, j, w.Indices()[k], w.Values()[k],
-                                   *point)) {
-            *point = memo->out[j];
-            ++memo->reused;
-            return true;
-        }
-        RigExecSparseWalkNote(memo, j, w.Indices()[k], w.Values()[k], *point);
-        return false;
-    };
-    const auto keep = [&](size_t k, const RrVec3f &point) {
-        if (mode != Mode::Compute) {
-            memo->out[k - kBegin] = point;
-        }
-        if (memo) {
-            ++memo->computed;
-        }
-    };
-    if (p.radialWeight) {
-        // The sparse walk takes the same arc the dense kernel does; a
-        // painted cluster falloff is almost always sparse, so this is
-        // the branch every radial cluster on a real rig reaches.
-        double cachedWeight = -1.0;
-        RrPartialDecomposition decomposition;
-        bool haveDecomposition = false;
-        RrMat4d partial(1.0);
-        for (size_t k = kBegin; k < kEnd; ++k) {
-            RrVec3f &point = data[size_t(w.Indices()[k]) - offset];
-            if (reuse(k, &point)) {
-                continue;
-            }
-            const double value = w.Values()[k];
-            if (value != cachedWeight) {
-                const double clamped = RrClamp(value, 0.0, 1.0);
-                if (clamped <= 0.0)
-                    partial = RrMat4d(1.0);
-                else if (clamped >= 1.0)
-                    partial = p.transform;
-                else {
-                    if (!haveDecomposition) {
-                        decomposition =
-                            RrDecomposePartialTransform(p.transform);
-                        haveDecomposition = true;
-                    }
-                    partial =
-                        RrApplyPartialDecomposition(decomposition, clamped);
-                }
-                cachedWeight = value;
-            }
-            point = RrGeoToVec3f(partial.TransformAffine(RrGeoToVec3d(point)));
-            keep(k, point);
-        }
-        return;
-    }
-    for (size_t k = kBegin; k < kEnd; ++k) {
-        RrVec3f &point = data[size_t(w.Indices()[k]) - offset];
-        if (reuse(k, &point)) {
-            continue;
-        }
-        point = RrGeoToVec3f(RrGeoApplyWeightedMatrix(
-            RrGeoToVec3d(point), p.transform, w.Values()[k]));
-        keep(k, point);
-    }
+    eval::ApplyMatrixSparseWalk<RrGeoEnvelopeMath>(
+        p.radialWeight, p.transform, RrGeoEnvelopeView(p.weights), kBegin, kEnd,
+        data, offset, memo);
 }
 
 bool
 RrGeoApplyMatrixKernel(const RrGeoMoverParameters &p, std::vector<RrVec3f> *pts,
                        bool useSimd)
 {
-    const size_t count = pts->size();
-    std::vector<float> weights;
-    if (!RrGeoMatrixKernelAccepts(p, count, &weights)) {
-        return false;
-    }
-    const RrGeoWeightPacket &w = p.weights;
-    if (RrGeoEnvelopeIsSparseWalk(w)) {
-        if (p.transform == RrGeoIdentity()) {
-            return true; // at rest every weighted point maps to itself
-        }
-        RrGeoApplyMatrixSparseWalk(p, 0, w.Indices().size(), pts->data());
-        return true;
-    }
-    if (RrGeoEnvelopeIsFullStrength(p.weights)) {
-        RrGeoApplyMatrixKernelRange(p, nullptr, 0, count, pts->data(),
-                                    pts->data(), useSimd);
-        return true;
-    }
-    RrGeoApplyMatrixKernelRange(p, weights.data(), 0, count, pts->data(),
-                                pts->data(), useSimd);
-    return true;
+    return eval::ApplyMatrixKernel<RrGeoEnvelopeMath>(
+        RrGeoEnvelopeView(p.weights), p.weights, p.radialWeight, p.transform,
+        pts, useSimd);
 }
 
 // Dual-quaternion skinning: rigExecMath/dualQuatKernel.h over the runtime
@@ -1972,8 +1855,8 @@ RrGeoApplyBlendShapeKernel(
     // sub-problem, so the serial loop is the parallel loop's answer.
     for (size_t i = 0; i < count; ++i) {
         const RrVec3f preceding = points[i];
-        points[i] = RrGeoBlendEnvelope(preceding, preceding + delta[i],
-                                       full ? 1.0f : weight[i]);
+        points[i] = RigExecBlendEnvelope(preceding, preceding + delta[i],
+                                         full ? 1.0f : weight[i]);
     }
     return true;
 }
@@ -2012,7 +1895,7 @@ RrGeoApplyDerivedKernel(int op, const RrGeoMoverParameters &p,
     }
 
     for (size_t i = 0; i < values.size(); ++i) {
-        (*pts)[i] = RrGeoBlendEnvelope((*pts)[i], values[i], envelope[i]);
+        (*pts)[i] = RigExecBlendEnvelope((*pts)[i], values[i], envelope[i]);
     }
     return true;
 }
@@ -2072,14 +1955,12 @@ RrGeoWireKernelAcceptance(const RrGeoMoverParameters &p, size_t count)
                : RrGeoAcceptance::Refuses;
 }
 
-// RigExecRevisionTakesSeparateBlend: the ops RrGeoRunRevisionKernel blends
-// back over the entering points afterwards.
+// The ops RrGeoRunRevisionKernel blends back over the entering points
+// afterwards: the shared predicate (rigExecEvalCore/envelope.h).
 bool
 RrGeoRevisionTakesSeparateBlend(int op, const RrGeoWeightPacket &w)
 {
-    return !(op == RrGeoOpMatrix || op == RrGeoOpBlendShape ||
-             op == RrGeoOpRecomputeNormals || op == RrGeoOpRecomputeExtent ||
-             (op == RrGeoOpWire && RrGeoWireTakesSparseEnvelope(w)));
+    return eval::RevisionTakesSeparateBlend(op, RrGeoEnvelopeView(w));
 }
 
 // The packet check every revision kernel makes first.
@@ -2763,8 +2644,8 @@ RrGeoRunRevisionKernel(
             }
             weights = resolved.data();
         }
-        RrGeoBlendEnvelopeAll(source ? source : preceding.data(), weights,
-                              pts->size(), pts->data());
+        eval::BlendEnvelopeAll(source ? source : preceding.data(), weights,
+                               pts->size(), pts->data());
     }
     return true;
 }
@@ -3074,8 +2955,8 @@ RrGeoRunRevisionGroup(
             full ? nullptr : prepared.blendWeights.data() + begin;
         for (size_t k = 0; k < n; ++k) {
             const RrVec3f preceding = in[k];
-            out[k] = RrGeoBlendEnvelope(preceding, preceding + delta[k],
-                                        full ? 1.0f : weight[k]);
+            out[k] = RigExecBlendEnvelope(preceding, preceding + delta[k],
+                                          full ? 1.0f : weight[k]);
         }
         return true;
     }
@@ -3105,8 +2986,8 @@ RrGeoRunRevisionGroup(
     }
     if (blend) {
         for (size_t k = 0; k < n; ++k) {
-            out[k] =
-                RrGeoBlendEnvelope(in[k], out[k], separateEnvelope[begin + k]);
+            out[k] = RigExecBlendEnvelope(in[k], out[k],
+                                          separateEnvelope[begin + k]);
         }
     }
     return true;
@@ -3752,7 +3633,8 @@ RrGeoSkinGroup(const RrGeometryScratch::Revision &rev, const RrVec3f *in,
             return false;
         }
         for (size_t k = 0; k < n; ++k) {
-            out[k] = RrGeoBlendEnvelope(in[k], out[k], rev.envelope[begin + k]);
+            out[k] =
+                RigExecBlendEnvelope(in[k], out[k], rev.envelope[begin + k]);
         }
     }
     return true;
@@ -6564,11 +6446,11 @@ RrGeoSkinRange(RrGeometryScratch::Revision *rev, const RrVec3f *preceding,
     }
     if (!rev->fullStrength) {
         if (whole) {
-            RrGeoBlendEnvelopeAll(preceding, rev->envelope.data(), end,
-                                  out.data());
+            eval::BlendEnvelopeAll(preceding, rev->envelope.data(), end,
+                                   out.data());
         } else {
-            RrGeoBlendEnvelopeRange(preceding, rev->envelope.data(), begin, end,
-                                    out.data());
+            eval::BlendEnvelopeRange(preceding, rev->envelope.data(), begin,
+                                     end, out.data());
         }
     }
     return true;
@@ -7384,14 +7266,14 @@ RrGeoRunInfluenceFoldStep(RrProgram *program, RrGeometryScratch *scratch,
 void
 RrGeoResolveEnvelope(RrGeometryScratch::Revision *rev, size_t count)
 {
-    // As ResolveAll into `envelope` leaves it (unchanged when it fails),
-    // with its content version (bakedGeometry.cpp, ResolveEnvelope).
-    rev->envelopeOk =
-        rev->parameters.weights.ResolveAll(count, &rev->resolveScratch);
-    if (rev->envelopeOk) {
-        RrGeoNoteFloats(&rev->envelope, &rev->resolveScratch,
-                        &rev->envelopeVersion);
-    }
+    // The shared resolve (rigExecEvalCore/envelope.h): as ResolveAll into
+    // `envelope` leaves it (unchanged when it fails), with its content
+    // version.
+    rev->envelopeOk = eval::ResolveEnvelopeInto(
+        rev->parameters.weights, count, &rev->envelope, &rev->resolveScratch,
+        [rev](std::vector<float> *field, std::vector<float> *scratch) {
+            RrGeoNoteFloats(field, scratch, &rev->envelopeVersion);
+        });
 }
 
 bool
@@ -7703,7 +7585,7 @@ RrGeoRunGroupStep(RrProgram *program, RrGeometryScratch *scratch,
             const bool full =
                 RrGeoEnvelopeIsFullStrength(rev->parameters.weights);
             for (size_t i = 0; i < n; ++i)
-                buffer[i] = RrGeoBlendEnvelope(
+                buffer[i] = RigExecBlendEnvelope(
                     entering.data[i], entering.data[i] + deltas[i],
                     full ? 1.0f : rev->rangeInputs.blendWeights[begin + i]);
             RigExecPublishOwnGroup(&state, k);

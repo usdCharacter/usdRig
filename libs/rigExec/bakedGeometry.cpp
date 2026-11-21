@@ -23,6 +23,7 @@
 #include "pathText.h"
 #include "rigEvaluator.h"
 #include "types.h"
+#include "rigExecEvalCore/envelope.h"
 
 #include "rigExecMath/dualQuat.h"
 #include "rigExecMath/skinAcceptance.h"
@@ -2974,11 +2975,11 @@ SkinRange(RigExecBakedProgramImpl::GeomRevision *revision,
         if (whole) {
             // `whole` means the whole array -- the full-range kernel above
             // ignores the bounds -- so begin is 0 and the count is `end`.
-            RigExecBlendEnvelopeAll(preceding, revision->envelope.data(), end,
-                                    out.data());
+            eval::BlendEnvelopeAll(preceding, revision->envelope.data(), end,
+                                   out.data(), RigExecGeometryRanges());
         } else {
-            RigExecBlendEnvelopeRange(preceding, revision->envelope.data(),
-                                      begin, end, out.data());
+            eval::BlendEnvelopeRange(preceding, revision->envelope.data(),
+                                     begin, end, out.data());
         }
     }
     return true;
@@ -3626,18 +3627,47 @@ AssembleRevision(RigExecBakedProgramImpl &B,
     return invalid;
 }
 
+/// The packet as EvalCore's EnvelopePacketView: representation and range
+/// policy classified to its integer codes, the arrays borrowed.
+eval::EnvelopePacketView
+BakedEnvelopeView(const RigExecWeightPacket &w)
+{
+    eval::EnvelopePacketView v;
+    v.valid = w.valid;
+    v.defaultWeight = w.defaultWeight;
+    v.values = w.values.data();
+    v.valueCount = w.values.size();
+    v.indices = w.indices.data();
+    v.indexCount = w.indices.size();
+    v.rangePolicyEmpty = w.rangePolicy.IsEmpty();
+    v.representation =
+        w.representation == rigExec::SchemaValueText::constant
+            ? eval::kWeightConstant
+            : (w.representation == rigExec::SchemaValueText::sparse
+                   ? eval::kWeightSparse
+                   : (w.representation == rigExec::SchemaValueText::dense
+                          ? eval::kWeightDense
+                          : eval::kWeightRepresentationUnknown));
+    v.rangePolicy = w.rangePolicy == rigExec::SchemaValueText::strict
+                        ? eval::kWeightPolicyStrict
+                        : (w.rangePolicy == rigExec::SchemaValueText::clamp
+                               ? eval::kWeightPolicyClamp
+                               : eval::kWeightPolicyUnknown);
+    return v;
+}
+
 /// The packet's envelope resolved at the full \p count, as ResolveAll into
 /// `envelope` would leave it (unchanged when it fails), with
 /// `envelopeVersion` moved exactly when the bytes did.
 void
 ResolveEnvelope(RigExecBakedProgramImpl::GeomRevision *revision, size_t count)
 {
-    revision->envelopeOk = revision->parameters.weights.ResolveAll(
-        count, &revision->resolveScratch);
-    if (revision->envelopeOk) {
-        RigExecBakedNoteFloats(&revision->envelope, &revision->resolveScratch,
-                               &revision->envelopeVersion);
-    }
+    revision->envelopeOk = eval::ResolveEnvelopeInto(
+        revision->parameters.weights, count, &revision->envelope,
+        &revision->resolveScratch,
+        [revision](std::vector<float> *field, std::vector<float> *scratch) {
+            RigExecBakedNoteFloats(field, scratch, &revision->envelopeVersion);
+        });
 }
 
 /// The skin revision over its whole array, out of the fuse.
@@ -3927,8 +3957,8 @@ RunGroupStep(RigExecBakedProgramImpl &B,
                 revision->blendSamples[size_t(c)].samples, weight, begin, end,
                 deltas.data());
         }
-        const bool full =
-            RigExecEnvelopeIsFullStrength(revision->parameters.weights);
+        const bool full = eval::EnvelopeIsFullStrength(
+            BakedEnvelopeView(revision->parameters.weights));
         auto &out = *state.own[size_t(k)];
         for (size_t i = 0; i < end - begin; ++i)
             out[i] = RigExecBlendEnvelope(
@@ -5624,8 +5654,8 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                     RigExecDualQuatWeightsSafe(RigExecSkinLayoutForPacket(
                         revision.parameters,
                         RigExecSkinTransformsOf(revision.parameters), count));
-                revision.fullStrength =
-                    RigExecEnvelopeIsFullStrength(revision.parameters.weights);
+                revision.fullStrength = eval::EnvelopeIsFullStrength(
+                    BakedEnvelopeView(revision.parameters.weights));
                 if (!revision.fullStrength)
                     ResolveEnvelope(&revision, count);
                 revision.acceptance = SkinAcceptance(revision);
@@ -5687,10 +5717,11 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
             // which fills the revision's own caches; a blend's per-point
             // weights). A lattice whose rest is the held base names that
             // base's version, so its bind skips only the rest comparison.
-            if (RigExecRevisionTakesSeparateBlend(
-                    revision.op, revision.parameters.weights)) {
-                revision.fullStrength =
-                    RigExecEnvelopeIsFullStrength(revision.parameters.weights);
+            if (eval::RevisionTakesSeparateBlend(
+                    int(revision.op),
+                    BakedEnvelopeView(revision.parameters.weights))) {
+                revision.fullStrength = eval::EnvelopeIsFullStrength(
+                    BakedEnvelopeView(revision.parameters.weights));
                 if (!revision.fullStrength) {
                     ResolveEnvelope(&revision, count);
                 }
@@ -5707,10 +5738,11 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
             // kernel; resolved here at the full count, as a skin's is, and
             // its chunk blends with this array.
             if (revision.op == RigExecRevisionOp::Wire &&
-                RigExecRevisionTakesSeparateBlend(
-                    revision.op, revision.parameters.weights)) {
-                revision.fullStrength =
-                    RigExecEnvelopeIsFullStrength(revision.parameters.weights);
+                eval::RevisionTakesSeparateBlend(
+                    int(revision.op),
+                    BakedEnvelopeView(revision.parameters.weights))) {
+                revision.fullStrength = eval::EnvelopeIsFullStrength(
+                    BakedEnvelopeView(revision.parameters.weights));
                 if (!revision.fullStrength) {
                     ResolveEnvelope(&revision, count);
                 }
@@ -5728,8 +5760,8 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
         // share this decision, with DQ blend validity supplied by InfluenceFold.
         revision.layoutUsable =
             RigExecSkinLayoutIsUsable(revision.parameters, count);
-        revision.fullStrength =
-            RigExecEnvelopeIsFullStrength(revision.parameters.weights);
+        revision.fullStrength = eval::EnvelopeIsFullStrength(
+            BakedEnvelopeView(revision.parameters.weights));
         if (!revision.fullStrength) {
             ResolveEnvelope(&revision, count);
         }
@@ -7162,9 +7194,9 @@ RigExecBakedVerifyRangeChains(RigExecBakedProgramImpl *program)
                         applied = revision.envelopeOk &&
                                   revision.envelope.size() == count;
                         if (applied) {
-                            RigExecBlendEnvelopeAll(entering,
-                                                    revision.envelope.data(),
-                                                    count, whole.data());
+                            eval::BlendEnvelopeAll(
+                                entering, revision.envelope.data(), count,
+                                whole.data(), RigExecGeometryRanges());
                         }
                     }
                 }
