@@ -218,7 +218,8 @@ class AiAssistant(QtWidgets.QDockWidget):
         self.apply_button = _button('Run Code', 'aiGhost')
         self.apply_button.setToolTip(
             'Run the last Python block in the reply in usdview. Needs "Run '
-            'code" on. Ctrl+Z undoes what it changed on the edit target.')
+            'code" on. What it changed on the layers the stage was already '
+            'using becomes one undo step; files it saved stay saved.')
         self.apply_button.clicked.connect(self.apply_code)
         code_row.addWidget(self.apply_button)
         self.copy_button = _button('Copy Code', 'aiGhost')
@@ -299,8 +300,9 @@ class AiAssistant(QtWidgets.QDockWidget):
         self.edit_check = _chip(
             'Edit stage', 'The assistant can pose and key controls, and '
             'make, change and delete prims, attributes, connections and '
-            'layers on the edit target, and save layers. All the changes '
-            'in a reply are one undo step, so Ctrl+Z takes them back.')
+            'layers on the edit target, and save layers. The changes a '
+            'reply makes are one undo step; what it saved, selected, or '
+            'switched the edit target to is not.')
         self.edit_check.setChecked(bool(self.prefs.get(
             host.USER_PREF.AI_ALLOW_EDITS, True)))
         self.edit_check.toggled.connect(self.on_edit_toggled)
@@ -637,11 +639,35 @@ class AiAssistant(QtWidgets.QDockWidget):
             self.access_loop.quit()
 
     def end_tools(self):
-        """The changes the reply made become one undo step."""
+        """Close one reply's transaction: its changes are one undo step.
+        finish() is terminal, so this cannot open a second step."""
         toolbox, self.toolbox = self.toolbox, None
         if toolbox is not None:
             toolbox.finish()
         return toolbox
+
+    @staticmethod
+    def _detach(thread):
+        """Stop a reply that is over from feeding the panel any more."""
+        if thread is None:
+            return
+        for signal in (thread.chunk, thread.failed, thread.tools_dropped,
+                       thread.finished):
+            try:
+                signal.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+
+    @staticmethod
+    def _outcomes(toolbox, message):
+        """What a finished reply changed, what no undo takes back, and
+        what it could not. Read after finish(), which is where a stack
+        problem is reported."""
+        if toolbox is None or message is None:
+            return
+        message['done'] = list(toolbox.done)
+        message['failed'] = list(toolbox.failed)
+        message['effects'] = list(toolbox.effects)
 
     @staticmethod
     def tools_record(events):
@@ -650,25 +676,39 @@ class AiAssistant(QtWidgets.QDockWidget):
                 for e in events]
 
     def on_finished(self):
-        toolbox = self.end_tools()
-        if self.reply or (toolbox and toolbox.done):
-            message = {'role': 'assistant', 'content': self.reply,
-                       'who': self.speaker,
-                       'time': self.reply_time or time.time()}
-            if self.reply_tools:
-                message['tools'] = self.tools_record(self.reply_tools)
-            if toolbox is not None and (toolbox.done or toolbox.failed or
-                                        toolbox.effects):
-                message['done'] = list(toolbox.done)
-                message['failed'] = list(toolbox.failed)
-                message['effects'] = list(toolbox.effects)
-            self.messages.append(message)
-            self.apply_changes(message)
-        elif self.messages and self.messages[-1]['role'] == 'user':
-            # Nothing came back, so let the question be asked again.
-            failed = self.messages.pop()
-            if not self.input.toPlainText():
-                self.input.setPlainText(failed['shown'])
+        """A reply is over: run its action blocks on its own toolbox, then
+        close the reply as exactly one undo step."""
+        toolbox = self.toolbox
+        self.toolbox = None
+        self._detach(self.thread)
+        message = None
+        try:
+            if self.reply or (toolbox is not None and
+                             (toolbox.done or toolbox.failed or
+                              toolbox.effects)):
+                message = {'role': 'assistant', 'content': self.reply,
+                           'who': self.speaker,
+                           'time': self.reply_time or time.time()}
+                if self.reply_tools:
+                    message['tools'] = self.tools_record(self.reply_tools)
+                self.messages.append(message)
+                # A stopped reply keeps only what its tools already did; a
+                # half-written action block is never run.
+                if toolbox is not None and not toolbox.cancelled.is_set():
+                    self.apply_changes(message, toolbox)
+        finally:
+            if toolbox is not None:
+                toolbox.finish()
+            self._outcomes(toolbox, message)
+        if message is None:
+            if self.messages and self.messages[-1]['role'] == 'user':
+                # Nothing came back, so let the question be asked again.
+                failed = self.messages.pop()
+                if not self.input.toPlainText():
+                    self.input.setPlainText(failed['shown'])
+        elif message.get('failed'):
+            self.show_error('{} of the changes could not be made.'.format(
+                len(message['failed'])))
         self.save_chat()
         self.reply = ''
         self.reply_tools = []
@@ -728,8 +768,10 @@ class AiAssistant(QtWidgets.QDockWidget):
         if at_end:
             bar.setValue(bar.maximum())
 
-    def apply_changes(self, message):
-        """Make the changes a reply asks for, if it may."""
+    def apply_changes(self, message, toolbox):
+        """Make the changes a reply asks for on the reply's own toolbox, so
+        they land in the reply's single undo step. finish() is the caller's,
+        and runs after every action of the reply."""
         actions, problems = stage_actions.find_actions(message['content'])
         if not actions and not problems:
             return
@@ -740,19 +782,14 @@ class AiAssistant(QtWidgets.QDockWidget):
         if self.stage is None:
             message['note'] = 'Open a stage for it to change.'
             return
-        toolbox = tools.Toolbox(self.session, can_edit=True, parent=self,
-                                memory=self.memory)
+        if toolbox is None or toolbox.stage is not self.stage:
+            message['note'] = ('The stage changed while the reply was coming, '
+                              'so its changes were not made.')
+            return
+        if problems:
+            toolbox.failed += problems
         if actions:
             toolbox.change_stage({'changes': actions})
-        toolbox.finish()
-        done, failed = toolbox.done, problems + toolbox.failed
-        message['done'] = message.get('done', []) + done
-        message['failed'] = message.get('failed', []) + failed
-        message['effects'] = message.get('effects', []) + list(
-            toolbox.effects)
-        if failed:
-            self.show_error('{} of the changes could not be made.'.format(
-                len(failed)))
 
     # Chats
     def save_chat(self):
@@ -838,24 +875,18 @@ class AiAssistant(QtWidgets.QDockWidget):
         if not (thread and thread.isRunning()):
             return
         thread.cancel()
-        for signal in (thread.chunk, thread.failed, thread.finished):
-            try:
-                signal.disconnect()
-            except (RuntimeError, TypeError):
-                pass
+        self._detach(thread)
         toolbox = self.end_tools()
-        if self.reply or self.reply_tools:
+        if self.reply or self.reply_tools or (toolbox is not None and
+                                             (toolbox.done or toolbox.failed or
+                                              toolbox.effects)):
             message = {
                 'role': 'assistant', 'content': self.reply,
                 'who': self.speaker, 'time': self.reply_time or time.time(),
                 'note': 'Stopped when you left the chat.'}
             if self.reply_tools:
                 message['tools'] = self.tools_record(self.reply_tools)
-            if toolbox is not None and (toolbox.done or toolbox.failed or
-                                        toolbox.effects):
-                message['done'] = list(toolbox.done)
-                message['failed'] = list(toolbox.failed)
-                message['effects'] = list(toolbox.effects)
+            self._outcomes(toolbox, message)
             self.messages.append(message)
         elif self.messages and self.messages[-1]['role'] == 'user':
             self.messages.pop()
@@ -925,7 +956,8 @@ class AiAssistant(QtWidgets.QDockWidget):
         return ''
 
     def apply_code(self):
-        """Run the reply's last Python block in usdview."""
+        """Run the reply's last Python block in usdview, as one undo step of
+        its own."""
         code = context.last_code_block(self.last_reply())
         if code is None or not self.can_run:
             return
@@ -941,6 +973,10 @@ class AiAssistant(QtWidgets.QDockWidget):
             lines = (result.get('error') or text).strip().splitlines()
             self.show_error('The code failed: {}'.format(
                 lines[-1] if lines else ''))
+            return
+        if toolbox.failed:
+            self.show_error('The code ran, but its changes may have no undo '
+                            'step: {}'.format('; '.join(toolbox.failed)))
             return
         self.clear_error()
         printed = (result.get('printed') or '').strip().splitlines()
@@ -982,5 +1018,23 @@ class AiAssistant(QtWidgets.QDockWidget):
 
     def closeEvent(self, event):
         self.stop()
-        self.end_tools()
+        toolbox = self.end_tools()
+        if toolbox is not None and (toolbox.done or toolbox.failed or
+                                    toolbox.effects):
+            # The panel is gone, so the reply's report cannot be shown in it:
+            # keep it in the chat and say it in the log.
+            message = {'role': 'assistant', 'content': self.reply,
+                       'who': self.speaker,
+                       'time': self.reply_time or time.time(),
+                       'note': 'The assistant closed with changes made.'}
+            if self.reply_tools:
+                message['tools'] = self.tools_record(self.reply_tools)
+            self._outcomes(toolbox, message)
+            self.messages.append(message)
+            self.save_chat()
+            logger.info('AI Assistant closed with %d change(s), %d effect(s), '
+                        '%d problem(s): %s', len(toolbox.done),
+                        len(toolbox.effects), len(toolbox.failed),
+                        '; '.join(toolbox.done + toolbox.effects +
+                                  toolbox.failed))
         super(AiAssistant, self).closeEvent(event)

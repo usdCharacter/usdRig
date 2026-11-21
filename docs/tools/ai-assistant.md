@@ -42,11 +42,17 @@ you ask it something.
       what it prints. It is off until you turn it on, and shows orange when
       on.
 
-All the changes in one reply are one step on the RigExec undo stack, so
-++ctrl+z++ takes the whole reply back. Python it runs can be undone too, as
-long as it only changed the edit target. What a reply saved to a file,
-selected, or switched the edit target to is listed under the reply too:
-++ctrl+z++ does not take those back.
+The stage work one reply does in memory is one step on the RigExec undo
+stack, so ++ctrl+z++ takes the whole reply back at once. Undo does not reach
+what the reply did outside the stage: the files it saved, the edit target it
+switched to, the prims it selected, the viewport, and the Python
+environment. The Python a reply runs is covered for the layers the
+stage was already using when the reply started, not for a layer the reply
+opened.
+Stopping a reply, or leaving its chat, does not roll back what it already
+made; those changes are kept and are the undo step. What a reply saved,
+selected, or switched the edit target to is listed under it as **Not
+undoable**, apart from the changes it authored.
 
 ## Signing in
 
