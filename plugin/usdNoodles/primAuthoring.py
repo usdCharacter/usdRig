@@ -54,7 +54,7 @@ class PrimAuthor:
 
         # Find the highest numbered variant of this base name
         max_number = 0
-        for child in parent_prim.GetChildren():
+        for child in parent_prim.GetAllChildren():
             child_name = child.GetName()
             if child_name.startswith(base_name):
                 # Try to extract the number suffix
@@ -100,18 +100,22 @@ class PrimAuthor:
 
         prim_path = Sdf.Path(prim_path)
 
-        # Get the layer to edit
-        if edit_target:
-            layer = edit_target.GetLayer()
-        else:
-            layer = stage.GetEditTarget().GetLayer()
+        target = edit_target or stage.GetEditTarget()
+        layer = target.GetLayer()
+        spec_path = target.MapToSpecPath(prim_path)
+        if not spec_path:
+            Tf.Warn(f"Cannot map {prim_path} into the edit target")
+            return None
 
         if not layer:
             Tf.Warn("No edit target layer found")
             return None
+        if layer.GetPrimAtPath(spec_path):
+            Tf.Warn(f"A prim spec already exists at {spec_path}")
+            return None
 
         try:
-            primSpec = Sdf.CreatePrimInLayer(layer, prim_path)
+            primSpec = Sdf.CreatePrimInLayer(layer, spec_path)
             if not primSpec:
                 Tf.Warn(f"Failed to create prim spec at {prim_path}")
                 return None

@@ -24,6 +24,13 @@ from ..nodeLibraries import NodeLibrary
 from ..pinUtils import collect_links_for_prim, direction_hint_candidate_names
 
 
+def _matching_connections(attr, other_prim_path, port_name):
+    variants = (*direction_hint_candidate_names(port_name, is_input=True),
+                *direction_hint_candidate_names(port_name, is_input=False))
+    return tuple(path for path in attr.GetConnections()
+                 if path.GetPrimPath() == other_prim_path and path.name in variants)
+
+
 def _remove_matching_connections(
     attr: Usd.Attribute | None,
     other_prim_path: Sdf.Path,
@@ -38,18 +45,10 @@ def _remove_matching_connections(
     """
     if attr is None or not attr.IsValid():
         return False
-    variants = (
-        *direction_hint_candidate_names(port_name, is_input=True),
-        *direction_hint_candidate_names(port_name, is_input=False),
-    )
-    removed_any = False
-    for conn_path in list(attr.GetConnections()):
-        if conn_path.GetPrimPath() != other_prim_path:
-            continue
-        if conn_path.name in variants:
-            attr.RemoveConnection(conn_path)
-            removed_any = True
-    return removed_any
+    matches = _matching_connections(attr, other_prim_path, port_name)
+    for path in matches:
+        attr.RemoveConnection(path)
+    return bool(matches)
 
 
 def _delete_relationship_target(
@@ -139,12 +138,17 @@ class UsdTypedPrimLibraryBase(NodeLibrary):
             else:
                 prim_path = Sdf.Path(f"{parent_path_str}/{unique_name}")
 
-            layer = stage.GetEditTarget().GetLayer()
+            target = stage.GetEditTarget()
+            layer = target.GetLayer()
+            spec_path = target.MapToSpecPath(prim_path)
+            if not spec_path:
+                Tf.Warn(f"Cannot map {prim_path} into the edit target")
+                return None
             if not layer:
                 Tf.Warn("No edit target layer found")
                 return None
 
-            prim_spec = Sdf.CreatePrimInLayer(layer, prim_path)
+            prim_spec = Sdf.CreatePrimInLayer(layer, spec_path)
             if not prim_spec:
                 Tf.Warn(f"Failed to create prim spec at {prim_path}")
                 return None
@@ -339,6 +343,32 @@ class UsdTypedPrimLibraryBase(NodeLibrary):
         except (Tf.ErrorException, RuntimeError, TypeError) as e:
             Tf.Warn(f"{self.get_name()}: Failed to delete connection: {e}")
             return False
+
+    def prepare_connection_removal(
+        self, source_prim, source_port, target_prim, target_port, *,
+        source_property_name='', target_property_name='',
+    ):
+        """Resolve composed endpoints before Sdf authoring invalidates them."""
+        for prim, name, other, other_port, other_name, is_input in (
+            (source_prim, source_property_name or source_port,
+             target_prim, target_port, target_property_name, True),
+            (target_prim, target_property_name or target_port,
+             source_prim, source_port, source_property_name, False),
+        ):
+            rel = prim.GetRelationship(name) if name else None
+            if rel:
+                path = self._resolve_endpoint_path(other, other_port, other_name, is_input=is_input)
+                return ((rel, (path,)),) if path in rel.GetTargets() else ()
+        changes = []
+        for prim, port, other, other_port, is_input in (
+            (target_prim, target_port, source_prim, source_port, True),
+            (source_prim, source_port, target_prim, target_port, False),
+        ):
+            for name in direction_hint_candidate_names(port, is_input=is_input):
+                attr = prim.GetAttribute(name)
+                if attr and (paths := _matching_connections(attr, other.GetPath(), other_port)):
+                    changes.append((attr, paths))
+        return tuple(changes)
 
     def can_connect(
         self,

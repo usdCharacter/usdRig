@@ -975,6 +975,13 @@ def removeSelectedNodes(view):
         view._showPopupMessage("No nodes selected")
         return
 
+    if getattr(view, '_editor', None) is not None and view.nodeGraph.getStage():
+        from .intents import RemoveVisual
+
+        count = view._editor.execute(RemoveVisual(tuple(view._selectedNodes)))
+        view._showPopupMessage(f"Removed {count} node(s)" if count else "No nodes removed")
+        return
+
     removedCount = 0
     nodesToRemove = list(view._selectedNodes)
 

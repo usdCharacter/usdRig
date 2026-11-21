@@ -21,9 +21,12 @@ class ActivationEdit:
 
 
 def capture_activation(prim):
-    target = prim.GetStage().GetEditTarget()
+    return capture_activation_at(prim.GetStage().GetEditTarget(), prim.GetPath())
+
+
+def capture_activation_at(target, scene_path):
     layer = target.GetLayer()
-    path = target.MapToSpecPath(prim.GetPath())
+    path = target.MapToSpecPath(Sdf.Path(scene_path))
     if not layer or path == Sdf.Path.emptyPath:
         raise RuntimeError("Node cannot be mapped into the current edit target")
     spec = layer.GetPrimAtPath(path)
@@ -45,15 +48,20 @@ def replay_activation(edits, restore):
                 spec.SetInfo("active", value)
             elif spec:
                 spec.ClearInfo("active")
-                for path in reversed(edit.path.GetPrefixes()):
-                    # Preserve pre-existing specs and the variant's container.
-                    if path in edit.existing_paths or path.IsPrimVariantSelectionPath():
-                        break
-                    ancestor = edit.layer.GetPrimAtPath(path)
-                    if not ancestor or not ancestor.IsInert():
-                        break
-                    parent = ancestor.nameParent
-                    if parent is None:
-                        del edit.layer.rootPrims[ancestor.name]
-                    else:
-                        del parent.nameChildren[ancestor.name]
+                prune_activation_ancestors(edit)
+
+
+def prune_activation_ancestors(edit):
+    """Remove only newly introduced, still inert prim specs."""
+    for path in reversed(edit.path.GetPrefixes()):
+        # Preserve pre-existing specs and the variant's container.
+        if path in edit.existing_paths or path.IsPrimVariantSelectionPath():
+            break
+        ancestor = edit.layer.GetPrimAtPath(path)
+        if not ancestor or not ancestor.IsInert():
+            break
+        parent = ancestor.nameParent
+        if parent is None:
+            del edit.layer.rootPrims[ancestor.name]
+        else:
+            del parent.nameChildren[ancestor.name]

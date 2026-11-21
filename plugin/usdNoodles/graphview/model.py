@@ -2451,14 +2451,20 @@ def auto_layout_nodes(view):
     if not new_positions:
         return
 
-    view._applyNodePositions(new_positions)
+    if getattr(view, '_editor', None) is not None:
+        from .editing import edit_node_positions
 
-    legacy_symbol("_push_undo_command")(
-        "Auto Layout",
-        lambda gv, p=new_positions: gv._restoreNodePositions(p),
-        lambda gv, p=old_positions: gv._restoreNodePositions(p),
-        view=view,
-    )
+        edit_node_positions(view, new_positions, "Auto Layout",
+                            lambda: view._applyNodePositions(new_positions))
+    else:
+        view._applyNodePositions(new_positions)
+
+        legacy_symbol("_push_undo_command")(
+            "Auto Layout",
+            lambda gv, p=new_positions: gv._restoreNodePositions(p),
+            lambda gv, p=old_positions: gv._restoreNodePositions(p),
+            view=view,
+        )
 
     view.frameAll()
 

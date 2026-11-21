@@ -43,6 +43,8 @@ from ._schema_pin_names import (
 # The stage reconciliation algorithms live in graphview/stage_sync; the two
 # path helpers are re-exported here for the existing callers and tests that
 # import them from this module.
+from .graphview import editing as _editing
+from .graphview.editing import _make_prim_activation_undo, _make_rename_undo, _push_undo_command
 from .graphview import intents as _intents
 from .graphview import selection as _selection
 from .graphview import stage_sync
@@ -51,7 +53,6 @@ from .graphview import model as _graphview_model
 from .constants import MAX_RENDER_DEPTH, node_content_depth
 from .linkRenderer import computeLinkCurveBounds, LinkRenderer, sampleLinkCurve
 from .nodeFactory import NodeFactory
-from .nodeActivation import capture_activation, replay_activation
 from .nodeGraph import (
     createNodeRenderer,
     NodeGraph,
@@ -77,7 +78,6 @@ from .pinUtils import (
 )
 from .textRenderer import TextRenderer
 from .usdNoticeHandler import UsdNoticeHandler
-from .undoHistory import history_for_stage
 from .utils import M, MenuBuilder
 from .widgets import valueCell
 from .widgets.selectableList import SelectableList, SelectableListItem
@@ -123,73 +123,6 @@ def _guardsQtBoundary(handler):
             return None
 
     return guarded
-
-
-def _push_undo_command(description, do_func, undo_func, *, view):
-    """Record an already applied edit in the view's stage history.
-
-    Callbacks accept the view invoking undo/redo and capture edit data only.
-    """
-    if view._undoHistory is not None:
-        if getattr(view._undoHistory, "bridged", lambda: False)():
-            # An external history backend (undoHistory.set_history_backend)
-            # records the push; the view is kept weakly for replays.
-            view._undoHistory.push(description, do_func, undo_func,
-                                   view=view)
-        else:
-            view._undoHistory.push(description, do_func, undo_func)
-
-
-def _make_prim_activation_undo(paths, activate):
-    """Return a callable that activates or deactivates prims at *paths*.
-
-    The activation opinion is authored to the stage's current edit target.
-
-    Args:
-        paths: List of prim path strings.
-        activate: True to set prims active, False to deactivate.
-    """
-
-    def _fn(gv, _paths=paths, _activate=activate):
-        stage = gv.nodeGraph.getStage()
-        if not stage:
-            return
-        for path_str in _paths:
-            prim = stage.GetPrimAtPath(path_str)
-            if prim:
-                prim.SetActive(_activate)
-
-    return _fn
-
-
-def _make_rename_undo(parent_path, from_name, to_name):
-    """Return a callable that renames a sibling of *parent_path*.
-
-    Named by (parent, name) rather than by a captured prim, because the prim
-    the caller held is invalidated by the rename that this reverses -- the
-    path it was fetched from no longer resolves.
-    """
-
-    def _fn(gv, _parent=parent_path, _from=from_name, _to=to_name):
-        from .primRename import RENAMED, rename_prim
-
-        stage = gv.nodeGraph.getStage()
-        if not stage:
-            return
-        oldPath = f"{_parent}/{_from}".replace("//", "/")
-        prim = stage.GetPrimAtPath(oldPath)
-        if not prim or not prim.IsValid():
-            Tf.Warn("Rename undo: no prim named %s under %s" % (_from, _parent))
-            return
-        status, newPath, message = rename_prim(stage, prim, _to)
-        if status != RENAMED:
-            Tf.Warn("Rename undo failed (%s): %s" % (status, message))
-            return
-        # Follow the node across, exactly as the forward rename does. Reloading
-        # instead would undo the name and lose the graph in the same gesture.
-        gv._remapMovedNodes({oldPath: str(newPath)})
-
-    return _fn
 
 
 # One value cell under the cursor. ``rect`` is the SUB-cell (one component of
@@ -456,6 +389,7 @@ class GraphView(QGLWidget):
         self._nodeGraph = None
         self._undoHistory = None
         self._commandRegistry = self._makeCommandRegistry()
+        self._editor = _editing.editor_for_view(self, self._commandRegistry)
         self._assetsPath = None
 
         glFormat = QGLFormat()
@@ -1991,10 +1925,6 @@ class GraphView(QGLWidget):
             self._nextZOrder += 1
             node.zOrder = self._nextZOrder
 
-    def _initUndoTracking(self, stage):
-        """Bind this view to the stage's history without resetting other views."""
-        self._undoHistory = history_for_stage(stage)
-
     def _resetRenderCachesAfterBulkMove(self, rebuild_links=True):
         """Invalidate every baked vertex cache + the drag-transform frame and flag
         text for rebuild, after nodes are repositioned or (re)loaded wholesale.
@@ -2013,56 +1943,6 @@ class GraphView(QGLWidget):
         self.textChanged = True
         if rebuild_links:
             self.linksChanged = True
-
-    def _applyNodePositions(self, positions):
-        """Author ``{nodeId: (x, y)}`` to USD in one batched change and re-render.
-
-        Writes every position inside a single ``Sdf.ChangeBlock`` with the USD
-        notice handler disabled (mirrors ``_finalizeNodeDrag`` /
-        ``_persistNodePositions``) so the move emits one notice instead of N,
-        then re-bakes the node/text/icon caches and refreshes only the moved
-        links' endpoints (connections are unchanged, so it skips the full
-        connection re-read). Used by auto-layout and its undo/redo.
-        """
-        self._noticeHandler.setEnabled(False)
-        try:
-            with Sdf.ChangeBlock():
-                for node_id, pos in positions.items():
-                    self._authorNodePosition(node_id, pos)
-        finally:
-            self._noticeHandler.setEnabled(True)
-        # Only positions changed (not connections): re-bake the node/text/icon
-        # drawables, then refresh the moved links' endpoints incrementally
-        # (paintLinks re-syncs to the C++ renderer each frame) -- far cheaper at
-        # scale than a full _rebuildLinks that re-reads every prim's connections.
-        # Authoring above bumped each node's position version, so
-        # _reconcileMovedNodes refreshes the spatial index, link endpoints, and
-        # port highlights before the next paint and hit-test. This method only
-        # re-bakes the drawables (which bake in the position) and requests a
-        # repaint.
-        self._resetRenderCachesAfterBulkMove(rebuild_links=False)
-        self.update()
-
-    def _restoreNodePositions(self, positions):
-        """Replay positions even for nodes absent from the invoking canvas."""
-        from .models import write_node_position
-
-        stage = self.nodeGraph.getStage()
-        with Sdf.ChangeBlock():
-            for node_id, pos in positions.items():
-                write_node_position(stage.GetPrimAtPath(_nodeIdPrimPath(node_id)), pos)
-                node = self.nodes.get(node_id)
-                if node is not None:
-                    node.setDisplayPosition(Gf.Vec2d(*pos))
-
-    def _authorNodePosition(self, node_id, pos):
-        """Write one node's position to USD and update its render caches."""
-        node = self.nodes.get(node_id)
-        if node is None:
-            return
-        vec = Gf.Vec2d(pos[0], pos[1])
-        node._writePositionToUsdRaw(vec)
-        node.setDisplayPosition(vec)
 
     @property
     def currentPrimPath(self):
@@ -3427,12 +3307,18 @@ class GraphView(QGLWidget):
                         node._dragPosition[1],
                     )
 
-        # Temporarily disable notice handler to avoid recursive updates
-        self._noticeHandler.setEnabled(False)
-        try:
+        def finish():
             for node in self.nodes.values():
                 if node.selected:
                     node.endDrag()
+
+        if new_positions and getattr(self, "_editor", None) is not None:
+            _editing.edit_node_positions(self, new_positions, "Move Nodes", finish,
+                                         old_display=old_positions)
+            return
+        self._noticeHandler.setEnabled(False)
+        try:
+            finish()
         finally:
             self._noticeHandler.setEnabled(True)
 
@@ -3560,7 +3446,11 @@ class GraphView(QGLWidget):
             hasLinks = bool(self._selectedLinks)
             hasNodes = bool(self._selectedNodes)
             if hasLinks or hasNodes:
-                self._deleteAllSelected()
+                registry = getattr(self, "_commandRegistry", None)
+                if registry is None:
+                    self._deleteAllSelected()
+                else:
+                    registry.dispatch(_intents.DeleteSelection())
             return
 
         # L: auto-layout the whole graph (plain key, no Ctrl/Alt/Meta).
@@ -3597,50 +3487,6 @@ class GraphView(QGLWidget):
                     action.trigger()
                     event.accept()
                     return
-
-    def _performUndo(self):
-        """Execute undo in this view's stage history."""
-        mgr = self._undoHistory
-        if mgr is None:
-            return
-        if not mgr.canUndo():
-            Tf.Status("Undo: nothing to undo")
-            return
-
-        Tf.Status(f"Undo: executing '{mgr.undoDescription()}'")
-        # A bridged backend reloads every view after its replay; reload
-        # here only on failure.
-        bridged = getattr(mgr, "bridged", lambda: False)()
-        failed = False
-        try:
-            mgr.undo(self)
-        except Exception as e:
-            failed = True
-            Tf.Warn(f"Undo callback failed: {e}")
-        # Always reload so the visual state matches the USD layer state,
-        # even when the undo callback raised an exception.
-        if not bridged or failed:
-            self._reloadCurrentGraph()
-
-    def _performRedo(self):
-        """Execute redo in this view's stage history."""
-        mgr = self._undoHistory
-        if mgr is None:
-            return
-        if not mgr.canRedo():
-            return
-
-        bridged = getattr(mgr, "bridged", lambda: False)()
-        failed = False
-        try:
-            mgr.redo(self)
-        except Exception as e:
-            failed = True
-            Tf.Warn(f"Redo callback failed: {e}")
-        # Always reload so the visual state matches the USD layer state,
-        # even when the redo callback raised an exception.
-        if not bridged or failed:
-            self._reloadCurrentGraph()
 
     def _reloadCurrentGraph(self):
         """Reload the graph from USD after undo/redo.
@@ -5047,160 +4893,6 @@ class GraphView(QGLWidget):
 
 
 
-    def _persistNodePositions(self, stage, layer):
-        """Write all current node positions to the given layer.
-
-        Positions live in the session layer during interactive edits.
-        This flushes them to a persistent layer before saving so they
-        survive reload.
-        """
-        from pxr import Sdf
-
-        prev = stage.GetEditTarget()
-        with Sdf.ChangeBlock():
-            stage.SetEditTarget(layer)
-            try:
-                for node in self.nodes.values():
-                    node._writePositionToUsdRaw(node.position)
-            finally:
-                stage.SetEditTarget(prev)
-
-    @staticmethod
-    def _saveLayerAsSpelled(layer):
-        """Save `layer`, keeping each path spelled as it was typed.
-
-        A plain ``layer.Save()`` writes every relationship target and
-        connection absolute -- USD anchors relative paths the moment they
-        are authored -- so a relative path typed in the RigExec Layer
-        Opinions panel, or read from the file, would be rewritten by this
-        save.  The RigExec plugin's pathSpelling module keeps the spelling;
-        it is on the path whenever that plugin is loaded, and without it
-        there is no spelling to keep.
-        """
-        try:
-            import pathSpelling
-        except ImportError:
-            layer.Save()
-            return
-        report = pathSpelling.SaveLayer(layer)
-        if report.note:
-            Tf.Warn("Save Stage: %s" % report)
-
-    def _saveStage(self):
-        """Save the current edit target layer to disk.
-
-        Saves whichever layer is currently selected as the Edit Target.
-        Triggered by Ctrl+S (Cmd+S on Mac).
-        """
-        stage = self.nodeGraph.getStage() if self.nodeGraph else None
-        if not stage:
-            self._showPopupMessage("No stage to save")
-            return
-
-        try:
-            layer = stage.GetEditTarget().GetLayer()
-
-            if not layer:
-                self._showPopupMessage("No edit target layer to save")
-                return
-
-            if layer.anonymous:
-                self._showPopupMessage(
-                    f"Layer '{layer.identifier}' is anonymous — use File > Save As"
-                )
-                return
-
-            self._persistNodePositions(stage, layer)
-            self._saveLayerAsSpelled(layer)
-
-            # Warn if other layers have unsaved edits that this save didn't cover.
-            unsaved = []
-            try:
-                for otherLayer in stage.GetLayerStack(includeSessionLayers=False):
-                    if otherLayer and otherLayer != layer and otherLayer.dirty:
-                        unsaved.append(
-                            os.path.basename(otherLayer.identifier)
-                            or otherLayer.identifier
-                        )
-            except Exception:
-                pass
-            if unsaved:
-                names = ", ".join(unsaved[:3])
-                suffix = f" (+{len(unsaved) - 3} more)" if len(unsaved) > 3 else ""
-                self._showPopupMessage(
-                    f"Saved layer: {layer.identifier}\n"
-                    f"⚠ Unsaved changes on: {names}{suffix}"
-                )
-            else:
-                self._showPopupMessage(f"Saved layer: {layer.identifier}")
-
-        except Exception as e:
-            self._showPopupMessage(f"Save failed: {e}")
-            import traceback
-
-            traceback.print_exc()
-
-    def _deleteAllSelected(self):
-        """Delete all selected links and nodes in a single undo block.
-
-        This ensures that pressing Delete once removes everything that is
-        selected, and a single Ctrl+Z restores it all. Links incident to a
-        deleted node are also removed from USD so their authored connections
-        do not persist as dangling links after the node is deactivated.
-        """
-        linksToDelete = self._collectSelectedLinkData()
-        selectedNodes = [
-            (nodeId, node) for nodeId, node in self.nodes.items() if node.selected
-        ]
-
-        if not linksToDelete and not selectedNodes:
-            return
-
-        if selectedNodes:
-            selectedNodeIds = {nodeId for nodeId, _ in selectedNodes}
-            linksToDelete.extend(
-                self._collectIncidentLinkKeys(selectedNodeIds, linksToDelete)
-            )
-
-        stage = self.nodeGraph.getStage()
-        if not stage:
-            return
-
-        self._noticeHandler.setEnabled(False)
-        try:
-            # _deleteLinksInUsd handles layer targeting internally via
-            # _findConnectionAuthoringLayer for each connection.
-            actually_deleted_links, deletedLinks = self._deleteLinksInUsd(
-                stage, linksToDelete
-            )
-            # Deactivation is authored to the stage's current edit target.
-            activation_edits, deletedNodes = self._deactivateNodesInUsd(selectedNodes)
-        finally:
-            self._noticeHandler.setEnabled(True)
-
-        # Push undo command if anything was deleted
-        if deletedLinks > 0 or deletedNodes > 0:
-            self._pushDeleteSelectedUndo(actually_deleted_links, activation_edits)
-
-        self.clearLinkSelection()
-
-        if deletedLinks > 0 or deletedNodes > 0:
-            self.linksChanged = True
-            self.textChanged = True
-            self._clearRenderCache()
-            if deletedNodes > 0:
-                self._rebuildLinks()
-            self.update()
-
-            parts = []
-            if deletedNodes > 0:
-                parts.append(f"{deletedNodes} node(s)")
-            if deletedLinks > 0:
-                parts.append(f"{deletedLinks} connection(s)")
-            msg = "Deleted " + " and ".join(parts)
-            self._showPopupMessage(msg)
-            Tf.Status(f"[DELETE] {msg}")
-
     def _deleteLinksInUsd(self, stage, linksToDelete):
         """Delete connections in USD and remove from local link list.
 
@@ -5265,150 +4957,6 @@ class GraphView(QGLWidget):
                     f"fallback deletion returned False"
                 )
         return actually_deleted, count
-
-    def _deactivateNodesInUsd(self, selectedNodes):
-        """Deactivate selected nodes in USD and remove from graph state.
-
-        Returns (activation_edits, count), captured before each authored edit.
-        """
-        activation_edits = []
-        count = 0
-        for nodeId, node in selectedNodes:
-            prim = node.getUsdPrim()
-            if not prim or not prim.IsValid():
-                continue
-            try:
-                edit = capture_activation(prim)
-                if not prim.SetActive(False):
-                    continue
-                activation_edits.append(edit)
-                del self.nodes[nodeId]
-                self._selectedNodes.discard(nodeId)
-                self._spatialIndex.removeNode(nodeId)
-                count += 1
-            except Exception as e:
-                Tf.Warn(f"Failed to delete node {nodeId}: {e}")
-                import traceback
-
-                traceback.print_exc()
-        return activation_edits, count
-
-    def _pushDeleteSelectedUndo(self, deleted_links, activation_edits):
-        """Push an undo command that restores deleted links and nodes.
-
-        Links and nodes are stored with their layer info so undo/redo
-        can operate on the correct layers regardless of the current edit target.
-        """
-        stage = self.nodeGraph.getStage()
-        if not stage:
-            Tf.Warn(
-                "Cannot register undo for delete: no stage available. "
-                f"{len(deleted_links)} link(s) and {len(activation_edits)} node(s) "
-                "have already been deleted and will not be undoable."
-            )
-            return
-
-        # Links already have layer info from _deleteLinksInUsd
-        link_data_with_layers = deleted_links
-
-        def _undo(gv, link_data=link_data_with_layers, node_data=tuple(activation_edits)):
-            gv._applyRestoreDeleted(link_data, node_data)
-            gv.linksChanged = True
-            gv._rebuildLinks()
-            gv.update()
-
-        def _redo(gv, link_data=link_data_with_layers, node_data=tuple(activation_edits)):
-            gv._applyDeleteSelected(link_data, node_data)
-            gv.linksChanged = True
-            gv._rebuildLinks()
-            gv.update()
-
-        _push_undo_command("Delete Selected", _redo, _undo, view=self)
-
-    def _applyRestoreDeleted(self, link_data, node_data):
-        """Restore recorded activation opinions before reconnecting prims."""
-        stage = self.nodeGraph.getStage()
-        if not stage:
-            return
-        replay_activation(node_data, restore=True)
-        # Stage recomposition must finish before looking up reactivated prims.
-        for layer_id, link_records in self._groupLinksByLayer(link_data).items():
-            self._runLinkOperationOnLayer(
-                stage, layer_id, link_records, "create_connection", "restore"
-            )
-
-    def _applyDeleteSelected(self, link_data, node_data):
-        """Remove connections, then reapply deletion at the captured spec paths."""
-        stage = self.nodeGraph.getStage()
-        if not stage:
-            return
-        for layer_id, link_records in self._groupLinksByLayer(link_data).items():
-            self._runLinkOperationOnLayer(
-                stage, layer_id, link_records, "delete_connection", "delete"
-            )
-        replay_activation(node_data, restore=False)
-
-    def deleteSelectedNodes(self):
-        """Delete all selected nodes (and their incident links) from USD.
-
-        Nodes are deactivated via ``prim.SetActive(False)`` on the stage's
-        current edit target. Incident links are removed from whichever layer
-        authored the connection (determined via
-        ``_findConnectionAuthoringLayer``) so they do not persist as dangling
-        links after deactivation.
-        """
-        if not self.nodes:
-            return
-
-        selectedNodes = [
-            (nodeId, node) for nodeId, node in self.nodes.items() if node.selected
-        ]
-        if not selectedNodes:
-            Tf.Status("[DELETE] No nodes selected to delete")
-            return
-
-        Tf.Status(f"[DELETE] Deleting {len(selectedNodes)} selected node(s)")
-
-        stage = self.nodeGraph.getStage()
-        if not stage:
-            Tf.Warn("Cannot delete nodes: no stage available")
-            return
-
-        selectedNodeIds = {nodeId for nodeId, _ in selectedNodes}
-        incidentLinks = self._collectIncidentLinkKeys(selectedNodeIds)
-
-        warn_if_non_persistent_edit_target(stage)
-
-        self._noticeHandler.setEnabled(False)
-        try:
-            # _deleteLinksInUsd handles layer targeting internally via
-            # _findConnectionAuthoringLayer for each connection.
-            actually_deleted_links, _ = self._deleteLinksInUsd(stage, incidentLinks)
-            activation_edits, deletedCount = self._deactivateNodesInUsd(selectedNodes)
-        finally:
-            self._noticeHandler.setEnabled(True)
-
-        if deletedCount > 0:
-            self._pushDeleteSelectedUndo(actually_deleted_links, activation_edits)
-
-            # Mark caches as dirty to trigger proper rebuild
-            self.linksChanged = True
-            self.textChanged = True
-
-            # IMPORTANT: makeCurrent() ensures clearCache() deletes GL resources
-            # (VBOs/VAOs) from this widget's OpenGL context, not the stageView's.
-            # Without this, glDeleteBuffers/glDeleteVertexArrays may operate on
-            # the wrong context, corrupting the 3D viewport's render state.
-            self._clearRenderCache()
-
-            self._rebuildLinks()
-            self.update()
-
-            self._showPopupMessage(f"Deleted {deletedCount} node(s)")
-            Tf.Status(f"[DELETE] Deleted {deletedCount} node(s)")
-        else:
-            self._showPopupMessage("No nodes deleted")
-            Tf.Status("[DELETE] No nodes were deleted")
 
     def _abortConnection(self, message, reconnect_state=None):
         Tf.Warn(message)
@@ -6657,73 +6205,6 @@ class GraphView(QGLWidget):
         self.panY = bounds.GetMin()[1] - offset[1]
 
 
-    def _createNodeFromHotbox(self, node_data, screen_pos):
-        """Create a new node using the appropriate library.
-
-        API schema entries are not node types: choosing one applies the schema
-        to the selected prims instead of creating a prim.
-
-        Args:
-            node_data: Dict with 'identifier', 'library' and 'kind' keys from
-                the hotbox
-            screen_pos: Screen position tuple (x, y) where hotbox was opened
-        """
-        from .apiSchemas import API_SCHEMA_KIND
-
-        if node_data.get("kind") == API_SCHEMA_KIND:
-            self._applyApiSchemaFromHotbox(node_data["identifier"])
-            return
-
-        if not self._usdviewApi:
-            self._showPopupMessage("Cannot create node: no USD stage")
-            return
-
-        from pxr import Gf
-
-        stage = self._usdviewApi.stage
-        if not stage:
-            self._showPopupMessage("Cannot create node: no USD stage")
-            return
-
-        library = node_data["library"]
-        identifier = node_data["identifier"]
-
-        world_pos = (
-            QtCore.QPointF(screen_pos[0], screen_pos[1]) / self.zoom
-        ) + QtCore.QPointF(self.panX, self.panY)
-
-        parent_path = self._resolveParentPath(stage)
-        if not parent_path:
-            self._showPopupMessage("No Blueprint/Container found to add node to")
-            return
-
-        self._noticeHandler.setEnabled(False)
-        prim_path = None
-        try:
-            prim_path = library.create_node(
-                stage,
-                parent_path,
-                identifier,
-                Gf.Vec2d(world_pos.x(), world_pos.y()),
-            )
-
-            if not prim_path:
-                self._showPopupMessage(f"Failed to create {identifier}")
-                return
-
-            prim = stage.GetPrimAtPath(prim_path)
-            if prim and prim.IsValid():
-                self._onNodeCreated(prim, prim_path, stage, identifier)
-            else:
-                self._showPopupMessage("Failed to get created prim")
-
-        finally:
-            self._noticeHandler.setEnabled(True)
-
-        if prim_path:
-            prim_name = str(prim_path).split("/")[-1]
-            self._showPopupMessage(f"Created {prim_name}")
-
     def _applyApiSchemaFromHotbox(self, identifier):
         """Apply an API schema chosen in the hotbox to the selected prims.
 
@@ -6812,27 +6293,6 @@ class GraphView(QGLWidget):
             self._showWarningPopup(message)
         else:
             self._showPopupMessage(message)
-
-    def _resolveParentPath(self, stage):
-        """Resolve the parent path for node creation.
-
-        The usdview selection wins: new prims are created under the prim
-        focused in the prim tree. With nothing selected, fall back to the
-        container the graph is currently displaying, then to the first
-        Blueprint on the stage, then to the root.
-        """
-        from .primAuthoring import PrimAuthor
-
-        selectedParent = self._resolveSelectedParentPrim()
-        if selectedParent is not None:
-            return selectedParent.GetPath()
-
-        parent_path = self._currentPrimPath if self._currentPrimPath else None
-        if not parent_path:
-            parent_path = PrimAuthor.get_current_container_path(
-                stage, self._usdviewApi.dataModel if self._usdviewApi else None
-            )
-        return parent_path
 
     # Inline attribute values
     #
@@ -7984,108 +7444,6 @@ class GraphView(QGLWidget):
             projection,
         )
 
-    def _beginRename(self, nodeId):
-        """Open the inline editor on *nodeId*, seeded with its current name."""
-        # Blueprint I/O nodes are synthesized rather than backed by a prim, so
-        # there is no name to change.
-        if "#" in nodeId:
-            self._showPopupMessage("This node is not backed by a prim")
-            return
-
-        stage = self._usdviewApi.stage if self._usdviewApi else None
-        prim = stage.GetPrimAtPath(nodeId) if stage else None
-        if not prim or not prim.IsValid():
-            self._showWarningPopup("Cannot rename: the prim is gone")
-            return
-
-        self._renamingNodeId = nodeId
-        self._renameInput.text = prim.GetName()
-        self._renameInput.cursor_position = len(self._renameInput.text)
-        self.update()
-
-    def _cancelRename(self):
-        """Abandon the inline editor without authoring anything."""
-        self._renamingNodeId = ""
-        self._renameInput.clear()
-        self.update()
-
-    def _commitRename(self):
-        """Apply the typed name to the prim, with everything a rename implies.
-
-        A recoverable objection -- an invalid identifier, a name a sibling
-        already has -- leaves the editor open so the typo can be fixed. A
-        refusal from USD closes it, because no amount of retyping changes a
-        composition arc.
-        """
-        from .primRename import (
-            INVALID_NAME,
-            NAME_TAKEN,
-            RENAMED,
-            UNCHANGED,
-            rename_prim,
-        )
-
-        nodeId = self._renamingNodeId
-        newName = self._renameInput.text.strip()
-        if not nodeId:
-            return
-
-        stage = self._usdviewApi.stage if self._usdviewApi else None
-        prim = stage.GetPrimAtPath(nodeId) if stage else None
-        if not prim or not prim.IsValid():
-            self._cancelRename()
-            self._showWarningPopup("Cannot rename: the prim is gone")
-            return
-
-        oldName = prim.GetName()
-        status, newPath, message = rename_prim(stage, prim, newName)
-
-        if status == UNCHANGED:
-            self._cancelRename()
-            return
-
-        if status in (INVALID_NAME, NAME_TAKEN):
-            self._showWarningPopup(message)
-            return  # stay open; the name is fixable
-
-        if status != RENAMED:
-            self._cancelRename()
-            self._showWarningPopup(f"Cannot rename {oldName}: {message}")
-            return
-
-        self._renamingNodeId = ""
-        self._renameInput.clear()
-
-        # The resync notice the rename emitted has already moved the node to its
-        # new path (USD classifies the pair as RenameSource / RenameDestination,
-        # and _handleUsdChanges follows it). This call is the belt-and-braces
-        # half for the cases where it did not -- notices suppressed by an
-        # enclosing edit, or a USD build without GetPrimResyncType -- and is a
-        # no-op when the node is already where it belongs.
-        #
-        # What must NOT happen here is a reload. Graph membership is the user's
-        # ('A' adds prims at any depth, 'D' takes them off, neither touches USD)
-        # and no loader can reproduce it, so re-running one would answer a
-        # rename by emptying the canvas down to whatever the loader's scope
-        # holds.
-        newNodeId = str(newPath)
-        self._remapMovedNodes({nodeId: newNodeId})
-
-        self.clearSelection()
-        if newNodeId in self.nodes:
-            _selection.select_node(self, newNodeId)
-            self._afterUsdviewRefresh(self._syncSelectionToPrimtree)
-
-        _push_undo_command(
-            f"Rename: {oldName} -> {newName}",
-            _make_rename_undo(str(newPath.GetParentPath()), oldName, newName),
-            _make_rename_undo(str(newPath.GetParentPath()), newName, oldName),
-            view=self,
-        )
-
-        self._showPopupMessage(f"Renamed {oldName} to {newName}")
-        self.update()
-
     def _afterUsdviewRefresh(self, callback):
         """Run *callback* once usdview has rebuilt its prim browser.
 
@@ -8138,42 +7496,27 @@ class GraphView(QGLWidget):
             projection,
         )
 
-    def _onNodeCreated(self, prim, prim_path, stage, identifier):
-        """Handle post-creation setup: add to graph, select, push undo."""
-        newNodeId = self._addNewNodeFast(prim, stage)
-        if not newNodeId:
-            self._showPopupMessage(f"Failed to add {identifier} to graph")
-            return
-
-        self.textChanged = True
-        self._nodeRenderManager.invalidateAll()
-        self.nodeGraph.syncSelectionToPrimTree = True
-
-        self.clearSelection()
-        if newNodeId in self.nodes:
-            _selection.select_node(self, newNodeId)
-            # ...and carry that into usdview, which is the other half of
-            # "the new prim is selected". Marking node.selected only lights
-            # it up on this canvas; the prim tree, the property editor and
-            # the viewport all read dataModel.selection, and nothing else on
-            # the creation path writes it.
-            #
-            # Every other selecting path already syncs -- click, marquee,
-            # Select All, navigate-to-connected. Creation was the one that
-            # did not, so a freshly made prim was the only way to end up
-            # with the two halves of the app disagreeing about what is
-            # selected.
-            self._syncSelectionToPrimtree()
-
-        created_path = str(prim_path)
-        _push_undo_command(
-            f"Create Node: {identifier}",
-            _make_prim_activation_undo([created_path], activate=True),
-            _make_prim_activation_undo([created_path], activate=False),
-            view=self,
-        )
-
-        self.update()
+    _initUndoTracking = _editing._initUndoTracking
+    _applyNodePositions = _editing._applyNodePositions
+    _restoreNodePositions = _editing._restoreNodePositions
+    _authorNodePosition = _editing._authorNodePosition
+    _performUndo = _editing._performUndo
+    _performRedo = _editing._performRedo
+    _persistNodePositions = _editing._persistNodePositions
+    _saveLayerAsSpelled = staticmethod(_editing._saveLayerAsSpelled)
+    _saveStage = _editing._saveStage
+    _deleteAllSelected = _editing._deleteAllSelected
+    _deactivateNodesInUsd = _editing._deactivateNodesInUsd
+    _pushDeleteSelectedUndo = _editing._pushDeleteSelectedUndo
+    _applyRestoreDeleted = _editing._applyRestoreDeleted
+    _applyDeleteSelected = _editing._applyDeleteSelected
+    deleteSelectedNodes = _editing.deleteSelectedNodes
+    _createNodeFromHotbox = _editing._createNodeFromHotbox
+    _resolveParentPath = _editing._resolveParentPath
+    _beginRename = _editing._beginRename
+    _cancelRename = _editing._cancelRename
+    _commitRename = _editing._commitRename
+    _onNodeCreated = _editing._onNodeCreated
 
     linkSelectionMode = property(
         _selection.get_link_selection_mode, _selection.set_link_selection_mode
