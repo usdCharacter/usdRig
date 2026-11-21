@@ -39,6 +39,7 @@
 #include "pxr/base/tf/errorMark.h"
 #include "pxr/base/tf/getenv.h"
 #include "pxr/base/tf/setenv.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/tf/stringUtils.h"
 #include "pxr/usd/sdf/layer.h"
 #include "pxr/usd/sdf/types.h"
@@ -53,6 +54,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstddef>
 #include <cstring>
 #include <functional>
 #include <limits>
@@ -5283,9 +5285,18 @@ TestRangeChainWarmsBitIdentical()
 // it landed. The facts queries and the counts that guard them are the only
 // route these tests take to the compiled chain.
 
+// Schema names the structural-rebuild fixture below authors, each declared
+// once; the RigExec spelling stays single-sourced in schemaNames.h.
+TF_DEFINE_PRIVATE_TOKENS(
+    _heldViewTokens,
+    ((points, "points"))
+    ((pointsType, "Points"))
+    ((moves, rigExec::SchemaAttrText::rigExecMoves))
+);
+
 // The points \p target publishes in \p pose, as exact bytes; empty when the
 // pose publishes no such array.
-static std::vector<float>
+static std::vector<std::byte>
 _PublishedPointBytes(const RigExecRigPose &pose, const SdfPath &target)
 {
     const auto found = pose.movedProperties.find(target);
@@ -5294,9 +5305,10 @@ _PublishedPointBytes(const RigExecRigPose &pose, const SdfPath &target)
         return {};
     }
     const VtVec3fArray &points = found->second.UncheckedGet<VtVec3fArray>();
-    std::vector<float> bytes(points.size() * 3);
+    std::vector<std::byte> bytes(points.size() * sizeof(GfVec3f));
     if (!points.empty()) {
-        std::memcpy(bytes.data(), points.data(), bytes.size() * sizeof(float));
+        std::memcpy(bytes.data(), points.data(),
+                    points.size() * sizeof(GfVec3f));
     }
     return bytes;
 }
@@ -5435,7 +5447,7 @@ TestAHeldFactsViewAndJobSurviveAValueEdit()
     CHECK(preDriver != nullptr && preDriver->IsHolding<double>());
     const RigExecRigPose liveBefore = evaluator.Evaluate(UsdTimeCode(2.0));
     CHECK(liveBefore.valid);
-    const std::vector<float> expected =
+    const std::vector<std::byte> expected =
         _PublishedPointBytes(liveBefore, target);
     CHECK(!expected.empty());
 
@@ -5460,7 +5472,8 @@ TestAHeldFactsViewAndJobSurviveAValueEdit()
 
     const RigExecRigPose liveAfter = evaluator.Evaluate(UsdTimeCode(2.0));
     CHECK(liveAfter.valid);
-    const std::vector<float> after = _PublishedPointBytes(liveAfter, target);
+    const std::vector<std::byte> after =
+        _PublishedPointBytes(liveAfter, target);
     CHECK(!after.empty());
     CHECK(after != expected);
 
@@ -5482,7 +5495,8 @@ TestAHeldFactsViewAndJobSurviveAValueEdit()
     const RigExecRigPose heldRun = _RunHeldFrozenJob(preEdit, &scheduler);
     CheckJobAccepted("held pre-edit job", preEdit.inputs, heldRun);
     CheckSameReadings("held pre-edit job", liveBefore, heldRun);
-    const std::vector<float> heldBytes = _PublishedPointBytes(heldRun, target);
+    const std::vector<std::byte> heldBytes =
+        _PublishedPointBytes(heldRun, target);
     CHECK(heldBytes == expected);
     CHECK(heldBytes != after);
 }
@@ -5533,21 +5547,21 @@ TestAHeldFactsViewAndJobSurviveAStructuralRebuild()
     CHECK(_BindHeldFrozenJob(evaluator, rig, UsdTimeCode(2.0), &preEdit));
     const RigExecRigPose liveBefore = evaluator.Evaluate(UsdTimeCode(2.0));
     CHECK(liveBefore.valid);
-    const std::vector<float> expected =
+    const std::vector<std::byte> expected =
         _PublishedPointBytes(liveBefore, target);
     CHECK(!expected.empty());
 
     // The edit: M1 moves to a second target, so its old chain loses that
     // revision and a new chain appears.
     const UsdPrim shape2 =
-        stage->DefinePrim(second.GetPrimPath(), TfToken("Points"));
+        stage->DefinePrim(second.GetPrimPath(), _heldViewTokens->pointsType);
     VtVec3fArray base2(64);
     for (size_t i = 0; i < base2.size(); ++i) {
         base2[i] = GfVec3f(float(i % 8) * 0.5f, float(i / 8) * -0.25f, 0.0f);
     }
-    CHECK(shape2.GetAttribute(TfToken("points")).Set(base2));
+    CHECK(shape2.GetAttribute(_heldViewTokens->points).Set(base2));
     CHECK(stage->GetPrimAtPath(mover1)
-              .GetRelationship(TfToken("rigExec:moves"))
+              .GetRelationship(_heldViewTokens->moves)
               .SetTargets({second}));
 
     // The first evaluation after the edit rebuilds, and that frame's pose
@@ -5610,7 +5624,8 @@ TestAHeldFactsViewAndJobSurviveAStructuralRebuild()
     CHECK(revision.moverPath == mover1 && revision.target == target &&
           revision.op == RigExecRevisionOp::Matrix);
 
-    const std::vector<float> after = _PublishedPointBytes(liveAfter, target);
+    const std::vector<std::byte> after =
+        _PublishedPointBytes(liveAfter, target);
     CHECK(!after.empty());
     CHECK(after != expected);
     CHECK(_PublishedPointBytes(rebuilt, target) == after);
@@ -5631,7 +5646,8 @@ TestAHeldFactsViewAndJobSurviveAStructuralRebuild()
                      heldRun);
     CheckSameReadings("held pre-edit job across the rebuild", liveBefore,
                       heldRun);
-    const std::vector<float> heldBytes = _PublishedPointBytes(heldRun, target);
+    const std::vector<std::byte> heldBytes =
+        _PublishedPointBytes(heldRun, target);
     CHECK(heldBytes == expected);
     CHECK(heldBytes != after);
 }
