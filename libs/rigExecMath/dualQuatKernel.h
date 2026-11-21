@@ -660,20 +660,26 @@ RigExecBlendDualQuatsKernel(
         result);
 }
 
-/// Accessor form of the scale-aware blend: the rigid accumulation and the
-/// stretch mean both run over GetSdq(i) / GetWeight(i).
+/// Accessor form of the scale-aware blend: a null record is a missing
+/// influence, rejected (false, identity) unless its weight is exactly zero.
 template <class ScaledDualQuat, class GetSdq, class GetWeight>
 bool
 RigExecBlendScaledDualQuatsKernel(size_t count, GetSdq getSdq,
                                   GetWeight getWeight, ScaledDualQuat *result)
 {
     *result = ScaledDualQuat();
-    if (!RigExecBlendDualQuatsKernel(
-            count, [&getSdq](size_t i) { return &getSdq(i)->rigid; }, getWeight,
-            &result->rigid)) {
+    auto getRigid = [&getSdq](size_t i) -> decltype(&getSdq(i)->rigid) {
+        auto *sdq = getSdq(i);
+        if (!sdq) {
+            return nullptr;
+        }
+        return &sdq->rigid;
+    };
+    if (!RigExecBlendDualQuatsKernel(count, getRigid, getWeight,
+                                     &result->rigid)) {
         return false;
     }
-    // Every non-zero-weight index was validated by the rigid blend.
+    // Every non-zero-weight record was validated by the rigid blend.
     return dualQuatDetail::BlendStretch<ScaledDualQuat>(count, getSdq,
                                                         getWeight, result);
 }

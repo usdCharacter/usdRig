@@ -778,6 +778,16 @@ add_executable(testRigExecDualQuat tests/testRigExecDualQuat.cpp)
 target_link_libraries(testRigExecDualQuat PRIVATE rigExecMath)
 add_test(NAME testRigExecDualQuat COMMAND testRigExecDualQuat)
 
+# The shared kernel's contract over both host traits; no stage, no plugin.
+add_executable(testRigExecDualQuatKernel tests/testRigExecDualQuatKernel.cpp)
+target_link_libraries(testRigExecDualQuatKernel PRIVATE rigExecMath rigExecRuntime)
+add_test(NAME testRigExecDualQuatKernel COMMAND testRigExecDualQuatKernel)
+# cmake/TestLabels.cmake derives labels from the test's COMMAND property,
+# which CMake 3.28 reads back empty at configure time, so nothing it derives
+# lands today. Spell this test's the way the other kernel tests do.
+set_tests_properties(testRigExecDualQuatKernel PROPERTIES
+    LABELS "rigExecMath;rigExecRuntime;fast")
+
 add_executable(testRigExecSplineIk tests/testRigExecSplineIk.cpp)
 target_link_libraries(testRigExecSplineIk PRIVATE rigExecMath)
 add_test(NAME testRigExecSplineIk COMMAND testRigExecSplineIk)

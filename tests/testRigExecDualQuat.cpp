@@ -24,12 +24,12 @@ using namespace rigExec;
 static int failures = 0;
 static constexpr double kPi = 3.141592653589793238462643383279502884;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 static bool
@@ -76,7 +76,7 @@ Rigid(const GfVec3d &axis, double degrees, const GfVec3d &translation)
 static GfVec3d
 Apply(const GfMatrix4d &m, const GfVec3d &p)
 {
-    return m.TransformAffine(p);  // p * M, row-vector convention
+    return m.TransformAffine(p); // p * M, row-vector convention
 }
 
 // The whole module hinges on p * M == q.Transform(p) for the quaternion
@@ -106,16 +106,21 @@ static void
 TestMatrixRoundTrip()
 {
     const GfVec3d axes[] = {
-        GfVec3d(1, 0, 0), GfVec3d(0, 1, 0), GfVec3d(0, 0, 1),
-        GfVec3d(1, 1, 0).GetNormalized(), GfVec3d(-1, 2, 3).GetNormalized(),
+        GfVec3d(1, 0, 0),
+        GfVec3d(0, 1, 0),
+        GfVec3d(0, 0, 1),
+        GfVec3d(1, 1, 0).GetNormalized(),
+        GfVec3d(-1, 2, 3).GetNormalized(),
         GfVec3d(0.3, -0.9, 0.2).GetNormalized(),
     };
     const double angles[] = {
-        0.0, 1e-7, 13.5, 45.0, 90.0, 135.0, 179.999, 180.0, -180.0,
-        222.0, -90.0, 359.0,
+        0.0,     1e-7,  13.5,   45.0,  90.0,  135.0,
+        179.999, 180.0, -180.0, 222.0, -90.0, 359.0,
     };
     const GfVec3d translations[] = {
-        GfVec3d(0), GfVec3d(1, 2, 3), GfVec3d(-1000, 0.001, 42),
+        GfVec3d(0),
+        GfVec3d(1, 2, 3),
+        GfVec3d(-1000, 0.001, 42),
     };
     int cases = 0;
     for (const GfVec3d &axis : axes) {
@@ -129,11 +134,12 @@ TestMatrixRoundTrip()
                 const GfMatrix4d back = RigExecDualQuatToMatrix(dq);
                 // Tight relative tolerance: the -1000 translation column
                 // carries magnitude 1e3 so allow 1e3 ulps-ish there.
-                CHECK(NearMatrix(m, back, 1e-12 * std::max(1.0, t.GetLength())));
+                CHECK(
+                    NearMatrix(m, back, 1e-12 * std::max(1.0, t.GetLength())));
                 // The direct point transform agrees with the matrix path.
                 const GfVec3d p(0.7, -1.3, 2.9);
-                CHECK(Near(RigExecDualQuatTransformPoint(dq, p),
-                           Apply(m, p), 1e-11 * std::max(1.0, t.GetLength())));
+                CHECK(Near(RigExecDualQuatTransformPoint(dq, p), Apply(m, p),
+                           1e-11 * std::max(1.0, t.GetLength())));
                 ++cases;
             }
         }
@@ -151,8 +157,8 @@ TestMatrixRoundTrip()
 static void
 TestSingleInfluenceExact()
 {
-    const GfMatrix4d m = Rigid(
-        GfVec3d(2, -1, 0.5).GetNormalized(), 123.0, GfVec3d(4, -5, 6));
+    const GfMatrix4d m =
+        Rigid(GfVec3d(2, -1, 0.5).GetNormalized(), 123.0, GfVec3d(4, -5, 6));
     const RigExecDualQuat joint = RigExecDualQuatFromMatrix(m);
 
     // Weight 1 on one joint: bit-identical to the input, since the
@@ -176,7 +182,8 @@ TestSingleInfluenceExact()
 
     // Zero-weighted companions do not perturb the single influence.
     const RigExecDualQuat pair[2] = {
-        RigExecDualQuatFromMatrix(Rigid(GfVec3d(0, 1, 0), 170.0, GfVec3d(9, 9, 9))),
+        RigExecDualQuatFromMatrix(
+            Rigid(GfVec3d(0, 1, 0), 170.0, GfVec3d(9, 9, 9))),
         joint};
     const double weights[2] = {0.0, 1.0};
     CHECK(RigExecBlendDualQuats(pair, weights, 2, &blended));
@@ -205,8 +212,8 @@ TestPureTranslationBlendIsExact()
     // Unnormalised weights give the weighted mean, still exactly.
     const double lopsided[2] = {3.0, 1.0};
     CHECK(RigExecBlendDualQuats(dqs, lopsided, 2, &blended));
-    CHECK(Near(RigExecDualQuatTranslation(blended),
-               (ta * 3.0 + tb) * 0.25, 1e-15));
+    CHECK(Near(RigExecDualQuatTranslation(blended), (ta * 3.0 + tb) * 0.25,
+               1e-15));
 }
 
 // The reason DQS exists: linear blending of two joint matrices with a large
@@ -217,8 +224,8 @@ TestLengthPreservationVersusLinearBlend()
 {
     const GfMatrix4d ma = Rigid(GfVec3d(0, 0, 1), 0.0, GfVec3d(0));
     const GfMatrix4d mb = Rigid(GfVec3d(0, 0, 1), 150.0, GfVec3d(0));
-    const RigExecDualQuat dqs[2] = {
-        RigExecDualQuatFromMatrix(ma), RigExecDualQuatFromMatrix(mb)};
+    const RigExecDualQuat dqs[2] = {RigExecDualQuatFromMatrix(ma),
+                                    RigExecDualQuatFromMatrix(mb)};
     const double half[2] = {0.5, 0.5};
     RigExecDualQuat blended;
     CHECK(RigExecBlendDualQuats(dqs, half, 2, &blended));
@@ -237,27 +244,28 @@ TestLengthPreservationVersusLinearBlend()
     const GfVec3d dqsPoint = RigExecDualQuatTransformPoint(blended, p);
     CHECK(Near(dqsPoint.GetLength(), 1.0, 1e-14));
     // And it is the 75 degree rotation of p, i.e. the screw midpoint.
-    CHECK(Near(dqsPoint, GfVec3d(std::cos(75.0 * kPi / 180.0),
-                                 std::sin(75.0 * kPi / 180.0), 0.0), 1e-13));
-    CHECK(std::abs(dqsPoint.GetLength() - 1.0) <
-          std::abs(linearLength - 1.0));
+    CHECK(Near(dqsPoint,
+               GfVec3d(std::cos(75.0 * kPi / 180.0),
+                       std::sin(75.0 * kPi / 180.0), 0.0),
+               1e-13));
+    CHECK(std::abs(dqsPoint.GetLength() - 1.0) < std::abs(linearLength - 1.0));
 
     // With translations on both joints the blended motion is still rigid:
     // the distance between two co-skinned points is preserved by DQS and
     // shortened by the linear blend.
     const GfMatrix4d mat = Rigid(GfVec3d(0, 0, 1), 0.0, GfVec3d(1, 2, 3));
     const GfMatrix4d mbt = Rigid(GfVec3d(0, 0, 1), 150.0, GfVec3d(-2, 0, 5));
-    const RigExecDualQuat dqt[2] = {
-        RigExecDualQuatFromMatrix(mat), RigExecDualQuatFromMatrix(mbt)};
+    const RigExecDualQuat dqt[2] = {RigExecDualQuatFromMatrix(mat),
+                                    RigExecDualQuatFromMatrix(mbt)};
     const double w[2] = {0.6, 0.4};
     CHECK(RigExecBlendDualQuats(dqt, w, 2, &blended));
     CHECK(RigExecDualQuatIsUnit(blended, 1e-14));
     const GfVec3d q0(0.3, 0.1, -0.4);
     const GfVec3d q1(1.3, -0.7, 0.2);
     const double restDistance = (q1 - q0).GetLength();
-    const double dqsDistance =
-        (RigExecDualQuatTransformPoint(blended, q1) -
-         RigExecDualQuatTransformPoint(blended, q0)).GetLength();
+    const double dqsDistance = (RigExecDualQuatTransformPoint(blended, q1) -
+                                RigExecDualQuatTransformPoint(blended, q0))
+                                   .GetLength();
     const GfVec3d l0 = Apply(mat, q0) * w[0] + Apply(mbt, q0) * w[1];
     const GfVec3d l1 = Apply(mat, q1) * w[0] + Apply(mbt, q1) * w[1];
     const double linearDistance = (l1 - l0).GetLength();
@@ -277,8 +285,8 @@ TestShortestArcSignCorrection()
     // Antipodal representation of the same motion: -dq encodes exactly the
     // transform dq does. Blending them 0.5/0.5 without sign correction
     // would sum to zero; with it, the result is dq itself.
-    const GfMatrix4d m = Rigid(
-        GfVec3d(1, 1, 1).GetNormalized(), 100.0, GfVec3d(1, -2, 3));
+    const GfMatrix4d m =
+        Rigid(GfVec3d(1, 1, 1).GetNormalized(), 100.0, GfVec3d(1, -2, 3));
     const RigExecDualQuat dq = RigExecDualQuatFromMatrix(m);
     const RigExecDualQuat neg(-dq.real, -dq.dual);
     CHECK(NearMatrix(RigExecDualQuatToMatrix(neg), m, 1e-13));
@@ -306,18 +314,20 @@ TestShortestArcSignCorrection()
     const double c85 = std::cos(85.0 * kPi / 180.0);
     const double s85 = std::sin(85.0 * kPi / 180.0);
     const RigExecDualQuat wrap[2] = {
-        RigExecDualQuatFromRotationTranslation(
-            GfQuatd(c85, GfVec3d(0, 0, s85)), GfVec3d(0)),
+        RigExecDualQuatFromRotationTranslation(GfQuatd(c85, GfVec3d(0, 0, s85)),
+                                               GfVec3d(0)),
         RigExecDualQuatFromRotationTranslation(
             GfQuatd(c85, GfVec3d(0, 0, -s85)), GfVec3d(0)),
     };
     CHECK(GfDot(wrap[0].real, wrap[1].real) < 0.0);
-    CHECK(Near(RigExecDualQuatTransformPoint(wrap[0], GfVec3d(1, 0, 0)),
-               Apply(Rigid(GfVec3d(0, 0, 1), 170.0, GfVec3d(0)),
-                     GfVec3d(1, 0, 0)), 1e-13));
-    CHECK(Near(RigExecDualQuatTransformPoint(wrap[1], GfVec3d(1, 0, 0)),
-               Apply(Rigid(GfVec3d(0, 0, 1), -170.0, GfVec3d(0)),
-                     GfVec3d(1, 0, 0)), 1e-13));
+    CHECK(Near(
+        RigExecDualQuatTransformPoint(wrap[0], GfVec3d(1, 0, 0)),
+        Apply(Rigid(GfVec3d(0, 0, 1), 170.0, GfVec3d(0)), GfVec3d(1, 0, 0)),
+        1e-13));
+    CHECK(Near(
+        RigExecDualQuatTransformPoint(wrap[1], GfVec3d(1, 0, 0)),
+        Apply(Rigid(GfVec3d(0, 0, 1), -170.0, GfVec3d(0)), GfVec3d(1, 0, 0)),
+        1e-13));
     CHECK(RigExecBlendDualQuats(wrap, half, 2, &blended));
     CHECK(Near(RigExecDualQuatTransformPoint(blended, GfVec3d(1, 0, 0)),
                GfVec3d(-1, 0, 0), 1e-13));
@@ -331,9 +341,11 @@ TestShortestArcSignCorrection()
 
     // Three influences where only the middle one needs flipping.
     const RigExecDualQuat three[3] = {
-        RigExecDualQuatFromMatrix(Rigid(GfVec3d(0, 1, 0), 10.0, GfVec3d(1, 0, 0))),
+        RigExecDualQuatFromMatrix(
+            Rigid(GfVec3d(0, 1, 0), 10.0, GfVec3d(1, 0, 0))),
         RigExecDualQuat(-wrap[0].real, -wrap[0].dual),
-        RigExecDualQuatFromMatrix(Rigid(GfVec3d(0, 1, 0), 20.0, GfVec3d(0, 1, 0))),
+        RigExecDualQuatFromMatrix(
+            Rigid(GfVec3d(0, 1, 0), 20.0, GfVec3d(0, 1, 0))),
     };
     const RigExecDualQuat threeUnflipped[3] = {three[0], wrap[0], three[2]};
     const double thirds[3] = {1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0};
@@ -341,7 +353,8 @@ TestShortestArcSignCorrection()
     RigExecDualQuat b;
     CHECK(RigExecBlendDualQuats(three, thirds, 3, &a));
     CHECK(RigExecBlendDualQuats(threeUnflipped, thirds, 3, &b));
-    CHECK(NearMatrix(RigExecDualQuatToMatrix(a), RigExecDualQuatToMatrix(b), 1e-13));
+    CHECK(NearMatrix(RigExecDualQuatToMatrix(a), RigExecDualQuatToMatrix(b),
+                     1e-13));
 }
 
 static void
@@ -350,16 +363,19 @@ TestUnitNormInvariant()
     std::vector<RigExecDualQuat> dqs;
     std::vector<double> weights;
     const GfVec3d axes[] = {
-        GfVec3d(1, 0, 0), GfVec3d(0, 1, 0), GfVec3d(0, 0, 1),
+        GfVec3d(1, 0, 0),
+        GfVec3d(0, 1, 0),
+        GfVec3d(0, 0, 1),
         GfVec3d(1, -1, 1).GetNormalized(),
     };
     for (int i = 0; i < 8; ++i) {
         dqs.push_back(RigExecDualQuatFromMatrix(Rigid(
             axes[i % 4], 37.0 * i - 100.0, GfVec3d(i, -2.0 * i, 0.5 * i))));
-        weights.push_back(0.1 * (i + 1));  // sums to 3.6, deliberately not 1
+        weights.push_back(0.1 * (i + 1)); // sums to 3.6, deliberately not 1
     }
     RigExecDualQuat blended;
-    CHECK(RigExecBlendDualQuats(dqs.data(), weights.data(), dqs.size(), &blended));
+    CHECK(RigExecBlendDualQuats(dqs.data(), weights.data(), dqs.size(),
+                                &blended));
     CHECK(RigExecDualQuatIsUnit(blended, 1e-14));
     CHECK(Near(blended.real.GetLength(), 1.0, 1e-15));
     CHECK(Near(GfDot(blended.real, blended.dual), 0.0, 1e-15));
@@ -385,11 +401,14 @@ static void
 TestDegenerateWeights()
 {
     const RigExecDualQuat dqs[3] = {
-        RigExecDualQuatFromMatrix(Rigid(GfVec3d(1, 0, 0), 40.0, GfVec3d(1, 0, 0))),
-        RigExecDualQuatFromMatrix(Rigid(GfVec3d(0, 1, 0), -80.0, GfVec3d(0, 2, 0))),
-        RigExecDualQuatFromMatrix(Rigid(GfVec3d(0, 0, 1), 120.0, GfVec3d(0, 0, 3))),
+        RigExecDualQuatFromMatrix(
+            Rigid(GfVec3d(1, 0, 0), 40.0, GfVec3d(1, 0, 0))),
+        RigExecDualQuatFromMatrix(
+            Rigid(GfVec3d(0, 1, 0), -80.0, GfVec3d(0, 2, 0))),
+        RigExecDualQuatFromMatrix(
+            Rigid(GfVec3d(0, 0, 1), 120.0, GfVec3d(0, 0, 3))),
     };
-    RigExecDualQuat out(dqs[2].real, dqs[2].dual);  // pre-dirty the output
+    RigExecDualQuat out(dqs[2].real, dqs[2].dual); // pre-dirty the output
 
     // Empty.
     CHECK(!RigExecBlendDualQuats(dqs, nullptr, 0, &out));
@@ -442,8 +461,8 @@ TestDegenerateWeights()
     RigExecDualQuat zero(GfQuatd(0.0), GfQuatd(0.0));
     CHECK(!RigExecDualQuatNormalize(&zero));
     CHECK(IsIdentity(zero));
-    RigExecDualQuat bad(
-        GfQuatd(1.0), GfQuatd(std::numeric_limits<double>::quiet_NaN()));
+    RigExecDualQuat bad(GfQuatd(1.0),
+                        GfQuatd(std::numeric_limits<double>::quiet_NaN()));
     CHECK(!RigExecDualQuatNormalize(&bad));
     CHECK(IsIdentity(bad));
 }
@@ -452,9 +471,12 @@ static void
 TestIndexedBlend()
 {
     const RigExecDualQuat palette[3] = {
-        RigExecDualQuatFromMatrix(Rigid(GfVec3d(1, 0, 0), 40.0, GfVec3d(1, 0, 0))),
-        RigExecDualQuatFromMatrix(Rigid(GfVec3d(0, 1, 0), -80.0, GfVec3d(0, 2, 0))),
-        RigExecDualQuatFromMatrix(Rigid(GfVec3d(0, 0, 1), 120.0, GfVec3d(0, 0, 3))),
+        RigExecDualQuatFromMatrix(
+            Rigid(GfVec3d(1, 0, 0), 40.0, GfVec3d(1, 0, 0))),
+        RigExecDualQuatFromMatrix(
+            Rigid(GfVec3d(0, 1, 0), -80.0, GfVec3d(0, 2, 0))),
+        RigExecDualQuatFromMatrix(
+            Rigid(GfVec3d(0, 0, 1), 120.0, GfVec3d(0, 0, 3))),
     };
     // Same influences through both entry points give the same motion.
     const int indices[2] = {2, 0};
@@ -465,7 +487,8 @@ TestIndexedBlend()
     RigExecDualQuat b;
     CHECK(RigExecBlendDualQuats(palette, 3, indices, fweights, 2, &a));
     CHECK(RigExecBlendDualQuats(gathered, dweights, 2, &b));
-    CHECK(NearMatrix(RigExecDualQuatToMatrix(a), RigExecDualQuatToMatrix(b), 1e-14));
+    CHECK(NearMatrix(RigExecDualQuatToMatrix(a), RigExecDualQuatToMatrix(b),
+                     1e-14));
 
     // Out-of-range index with non-zero weight: degenerate.
     const int badIndices[2] = {0, 3};
@@ -498,7 +521,7 @@ TestScaleShearPolicy()
     // Non-uniform scale plus shear: still the polar rotation.
     GfMatrix4d sheared = Rigid(GfVec3d(1, 0, 0), -35.0, GfVec3d(0));
     GfMatrix4d shear(1.0);
-    shear[0][1] = 0.4;  // row-vector shear: x picks up 0.4 of y
+    shear[0][1] = 0.4; // row-vector shear: x picks up 0.4 of y
     sheared = shear * GfMatrix4d().SetScale(GfVec3d(1.5, 0.5, 3.0)) * sheared;
     sheared.SetTranslateOnly(GfVec3d(-4, 0, 9));
     rigid = true;
@@ -574,11 +597,12 @@ MeasureTransformCost()
             const auto t0 = Clock::now();
             body(sink);
             const auto t1 = Clock::now();
-            best = std::min(best, std::chrono::duration<double, std::nano>(
-                                      t1 - t0).count());
+            best = std::min(
+                best,
+                std::chrono::duration<double, std::nano>(t1 - t0).count());
         }
-        std::printf("  %-44s %7.1f ns/point (sink %.3g)\n",
-                    label, best / static_cast<double>(n), sink[0]);
+        std::printf("  %-44s %7.1f ns/point (sink %.3g)\n", label,
+                    best / static_cast<double>(n), sink[0]);
     };
 
     std::printf("testRigExecDualQuat: transform cost, %zu points\n", n);
@@ -621,14 +645,15 @@ MeasureTransformCost()
 static void
 TestRotateVector()
 {
-    const GfMatrix4d m = Rigid(
-        GfVec3d(1, 2, -3).GetNormalized(), 77.0, GfVec3d(10, 20, 30));
+    const GfMatrix4d m =
+        Rigid(GfVec3d(1, 2, -3).GetNormalized(), 77.0, GfVec3d(10, 20, 30));
     const RigExecDualQuat dq = RigExecDualQuatFromMatrix(m);
     const GfVec3d v(0.5, -0.25, 2.0);
     // Rotation only: matches TransformDir (no translation) ...
     CHECK(Near(RigExecDualQuatRotateVector(dq, v), m.TransformDir(v), 1e-13));
     // ... and rotation plus hoisted translation matches the full transform.
-    CHECK(Near(RigExecDualQuatRotateVector(dq, v) + RigExecDualQuatTranslation(dq),
+    CHECK(Near(RigExecDualQuatRotateVector(dq, v) +
+                   RigExecDualQuatTranslation(dq),
                RigExecDualQuatTransformPoint(dq, v), 1e-13));
     CHECK(Near(RigExecDualQuatRotateVector(dq, v).GetLength(), v.GetLength(),
                1e-14));
@@ -695,8 +720,8 @@ TestScaledUniformScale()
     // A single scaled influence reproduces its transform exactly: the
     // decomposition of S * R with S = 2I is unique, so the round trip is
     // tight, and weight 1 through the blend is that same transform.
-    const GfMatrix4d m = Scaled(
-        Diag(2, 2, 2), GfVec3d(1, 2, 3).GetNormalized(), 70.0, GfVec3d(1, -1, 4));
+    const GfMatrix4d m = Scaled(Diag(2, 2, 2), GfVec3d(1, 2, 3).GetNormalized(),
+                                70.0, GfVec3d(1, -1, 4));
     const RigExecScaledDualQuat single = RigExecScaledDualQuatFromMatrix(m);
     CHECK(!single.isRigid);
     CHECK(NearMatrix3(single.stretch, Diag(2, 2, 2), 1e-13));
@@ -707,15 +732,18 @@ TestScaledUniformScale()
     CHECK(RigExecBlendScaledDualQuats(&single, &one, 1, &blended));
     CHECK(NearMatrix(RigExecScaledDualQuatToMatrix(blended), m, 1e-12));
     const GfVec3d p(0.3, -0.6, 0.9);
-    CHECK(Near(RigExecScaledDualQuatTransformPoint(blended, p), Apply(m, p), 1e-12));
+    CHECK(Near(RigExecScaledDualQuatTransformPoint(blended, p), Apply(m, p),
+               1e-12));
 
     // Two influences with the same uniform scale s and a large relative
     // rotation blend to scale s exactly: |p'| == s * |p| on the unit
     // sphere, with the rotation the DQS midpoint (75 degrees about Z).
     const double s = 2.0;
     const RigExecScaledDualQuat pair[2] = {
-        RigExecScaledDualQuatFromMatrix(Scaled(Diag(s, s, s), GfVec3d(0, 0, 1), 0.0, GfVec3d(0))),
-        RigExecScaledDualQuatFromMatrix(Scaled(Diag(s, s, s), GfVec3d(0, 0, 1), 150.0, GfVec3d(0))),
+        RigExecScaledDualQuatFromMatrix(
+            Scaled(Diag(s, s, s), GfVec3d(0, 0, 1), 0.0, GfVec3d(0))),
+        RigExecScaledDualQuatFromMatrix(
+            Scaled(Diag(s, s, s), GfVec3d(0, 0, 1), 150.0, GfVec3d(0))),
     };
     const double half[2] = {0.5, 0.5};
     CHECK(RigExecBlendScaledDualQuats(pair, half, 2, &blended));
@@ -724,8 +752,10 @@ TestScaledUniformScale()
     const GfVec3d x(1, 0, 0);
     const GfVec3d out = RigExecScaledDualQuatTransformPoint(blended, x);
     CHECK(Near(out.GetLength(), s, 1e-13));
-    CHECK(Near(out, GfVec3d(s * std::cos(75.0 * kPi / 180.0),
-                            s * std::sin(75.0 * kPi / 180.0), 0.0), 1e-13));
+    CHECK(Near(out,
+               GfVec3d(s * std::cos(75.0 * kPi / 180.0),
+                       s * std::sin(75.0 * kPi / 180.0), 0.0),
+               1e-13));
 }
 
 static void
@@ -736,8 +766,10 @@ TestScaledNonUniformScale()
     // rotation is the DQ blend of 0 and 90 degrees, i.e. 45 degrees (equal
     // weights make nlerp and slerp agree about one axis).
     const RigExecScaledDualQuat ab[2] = {
-        RigExecScaledDualQuatFromMatrix(Scaled(Diag(2, 1, 0.5), GfVec3d(0, 0, 1), 0.0, GfVec3d(0))),
-        RigExecScaledDualQuatFromMatrix(Scaled(Diag(1, 3, 1), GfVec3d(0, 0, 1), 90.0, GfVec3d(0))),
+        RigExecScaledDualQuatFromMatrix(
+            Scaled(Diag(2, 1, 0.5), GfVec3d(0, 0, 1), 0.0, GfVec3d(0))),
+        RigExecScaledDualQuatFromMatrix(
+            Scaled(Diag(1, 3, 1), GfVec3d(0, 0, 1), 90.0, GfVec3d(0))),
     };
     CHECK(NearMatrix3(ab[0].stretch, Diag(2, 1, 0.5), 1e-13));
     CHECK(NearMatrix3(ab[1].stretch, Diag(1, 3, 1), 1e-13));
@@ -759,7 +791,8 @@ TestScaledNonUniformScale()
     // Matrix form agrees with the direct form.
     const GfMatrix4d bm = RigExecScaledDualQuatToMatrix(blended);
     const GfVec3d p(0.2, -0.7, 1.1);
-    CHECK(Near(RigExecScaledDualQuatTransformPoint(blended, p), Apply(bm, p), 1e-13));
+    CHECK(Near(RigExecScaledDualQuatTransformPoint(blended, p), Apply(bm, p),
+               1e-13));
 
     // Unequal weights 0.25/0.75, plus translations: S = diag(1.25, 2.5,
     // 0.875); the rotation is the normalised weighted quaternion sum about
@@ -768,8 +801,10 @@ TestScaledNonUniformScale()
     const GfVec3d ta(1, 0, 0);
     const GfVec3d tb(0, 2, 0);
     const RigExecScaledDualQuat abt[2] = {
-        RigExecScaledDualQuatFromMatrix(Scaled(Diag(2, 1, 0.5), GfVec3d(0, 0, 1), 0.0, ta)),
-        RigExecScaledDualQuatFromMatrix(Scaled(Diag(1, 3, 1), GfVec3d(0, 0, 1), 90.0, tb)),
+        RigExecScaledDualQuatFromMatrix(
+            Scaled(Diag(2, 1, 0.5), GfVec3d(0, 0, 1), 0.0, ta)),
+        RigExecScaledDualQuatFromMatrix(
+            Scaled(Diag(1, 3, 1), GfVec3d(0, 0, 1), 90.0, tb)),
     };
     const double w[2] = {0.25, 0.75};
     CHECK(RigExecBlendScaledDualQuats(abt, w, 2, &blended));
@@ -789,9 +824,10 @@ static void
 TestScaledShearSurvives()
 {
     GfMatrix3d shear(1.0);
-    shear[0][1] = 0.4;  // row-vector shear: x picks up 0.4 of y
+    shear[0][1] = 0.4; // row-vector shear: x picks up 0.4 of y
     const GfMatrix3d stretch = Diag(1.5, 0.5, 3.0) * shear;
-    const GfMatrix4d m = Scaled(stretch, GfVec3d(1, 0, 0), -35.0, GfVec3d(-4, 0, 9));
+    const GfMatrix4d m =
+        Scaled(stretch, GfVec3d(1, 0, 0), -35.0, GfVec3d(-4, 0, 9));
 
     // The rigid-only path drops the shear (its documented policy) ...
     bool rigid = true;
@@ -807,23 +843,25 @@ TestScaledShearSurvives()
     CHECK(!kept.isRigid);
     CHECK(NearMatrix(RigExecScaledDualQuatToMatrix(kept), m, 1e-12));
     CHECK(NearMatrix3(kept.stretch, kept.stretch.GetTranspose(), 1e-12));
-    CHECK(std::abs(kept.stretch[0][1]) > 0.05);  // shear is really there
+    CHECK(std::abs(kept.stretch[0][1]) > 0.05); // shear is really there
     const GfVec3d p(0.5, 1.5, -2.0);
-    CHECK(Near(RigExecScaledDualQuatTransformPoint(kept, p), Apply(m, p), 1e-12));
+    CHECK(
+        Near(RigExecScaledDualQuatTransformPoint(kept, p), Apply(m, p), 1e-12));
 
     // Blended with a rigid partner at 0.5/0.5: S = (S_shear + I) / 2, and
     // the partner's isRigid does not make the blend rigid.
     const RigExecScaledDualQuat pair[2] = {
         kept,
-        RigExecScaledDualQuatFromMatrix(Rigid(GfVec3d(0, 1, 0), 20.0, GfVec3d(1, 1, 1))),
+        RigExecScaledDualQuatFromMatrix(
+            Rigid(GfVec3d(0, 1, 0), 20.0, GfVec3d(1, 1, 1))),
     };
     CHECK(pair[1].isRigid);
     const double half[2] = {0.5, 0.5};
     RigExecScaledDualQuat blended;
     CHECK(RigExecBlendScaledDualQuats(pair, half, 2, &blended));
     CHECK(!blended.isRigid);
-    CHECK(NearMatrix3(blended.stretch,
-                      (kept.stretch + GfMatrix3d(1.0)) * 0.5, 1e-13));
+    CHECK(NearMatrix3(blended.stretch, (kept.stretch + GfMatrix3d(1.0)) * 0.5,
+                      1e-13));
 }
 
 static void
@@ -834,8 +872,8 @@ TestScaledVolumePreservationStillHolds()
     // linear matrix blend still collapses to cos 75 degrees.
     const GfMatrix4d ma = Rigid(GfVec3d(0, 0, 1), 0.0, GfVec3d(0));
     const GfMatrix4d mb = Rigid(GfVec3d(0, 0, 1), 150.0, GfVec3d(0));
-    const RigExecScaledDualQuat pair[2] = {
-        RigExecScaledDualQuatFromMatrix(ma), RigExecScaledDualQuatFromMatrix(mb)};
+    const RigExecScaledDualQuat pair[2] = {RigExecScaledDualQuatFromMatrix(ma),
+                                           RigExecScaledDualQuatFromMatrix(mb)};
     const double half[2] = {0.5, 0.5};
     RigExecScaledDualQuat blended;
     CHECK(RigExecBlendScaledDualQuats(pair, half, 2, &blended));
@@ -856,10 +894,12 @@ TestScaledWithLargeRelativeRotation()
     // (1, 0, 0) -> (1.5, 0, 0) -> 1.5 (cos75, sin75, 0): length exactly 1.5,
     // the mean scale, with the rotation part length-preserving. The naive
     // full-matrix linear blend collapses instead.
-    const GfMatrix4d ma = Scaled(Diag(2, 1, 1), GfVec3d(0, 0, 1), 0.0, GfVec3d(0));
-    const GfMatrix4d mb = Scaled(Diag(1, 2, 1), GfVec3d(0, 0, 1), 150.0, GfVec3d(0));
-    const RigExecScaledDualQuat pair[2] = {
-        RigExecScaledDualQuatFromMatrix(ma), RigExecScaledDualQuatFromMatrix(mb)};
+    const GfMatrix4d ma =
+        Scaled(Diag(2, 1, 1), GfVec3d(0, 0, 1), 0.0, GfVec3d(0));
+    const GfMatrix4d mb =
+        Scaled(Diag(1, 2, 1), GfVec3d(0, 0, 1), 150.0, GfVec3d(0));
+    const RigExecScaledDualQuat pair[2] = {RigExecScaledDualQuatFromMatrix(ma),
+                                           RigExecScaledDualQuatFromMatrix(mb)};
     const double half[2] = {0.5, 0.5};
     RigExecScaledDualQuat blended;
     CHECK(RigExecBlendScaledDualQuats(pair, half, 2, &blended));
@@ -874,8 +914,10 @@ TestScaledWithLargeRelativeRotation()
     // Naive linear blend of the full matrices, inline:
     // 0.5 * (2, 0, 0) + 0.5 * (cos150, sin150, 0) = (1 + 0.5 cos150, 0.5 sin150, 0).
     const GfVec3d linear = Apply(ma, p) * 0.5 + Apply(mb, p) * 0.5;
-    CHECK(Near(linear, GfVec3d(1.0 + 0.5 * std::cos(150.0 * kPi / 180.0),
-                               0.5 * std::sin(150.0 * kPi / 180.0), 0.0), 1e-13));
+    CHECK(Near(linear,
+               GfVec3d(1.0 + 0.5 * std::cos(150.0 * kPi / 180.0),
+                       0.5 * std::sin(150.0 * kPi / 180.0), 0.0),
+               1e-13));
     CHECK(linear.GetLength() < 0.7);
     CHECK(std::abs(out.GetLength() - 1.5) < std::abs(linear.GetLength() - 1.5));
 
@@ -898,7 +940,8 @@ TestScaledWithLargeRelativeRotation()
     // 2 atan2(0.25 sin75, 0.75 + 0.25 cos75).
     const double phi = 2.0 * std::atan2(0.25 * s75, 0.75 + 0.25 * c75);
     CHECK(Near(RigExecScaledDualQuatTransformPoint(blended, p),
-               GfVec3d(1.75 * std::cos(phi), 1.75 * std::sin(phi), 0.0), 1e-13));
+               GfVec3d(1.75 * std::cos(phi), 1.75 * std::sin(phi), 0.0),
+               1e-13));
 }
 
 static void
@@ -909,7 +952,9 @@ TestScaledPathMatchesRigidPathBitForBit()
     // identity stretch, so every intermediate is bit-for-bit the same as
     // the rigid-only path. Quantified: zero differing bits over the grid.
     const GfVec3d axes[] = {
-        GfVec3d(1, 0, 0), GfVec3d(0, 1, 0), GfVec3d(0, 0, 1),
+        GfVec3d(1, 0, 0),
+        GfVec3d(0, 1, 0),
+        GfVec3d(0, 0, 1),
         GfVec3d(-1, 2, 3).GetNormalized(),
     };
     const double angles[] = {0.0, 13.5, 90.0, 135.0, 180.0, -170.0, 222.0};
@@ -959,8 +1004,10 @@ static void
 TestScaledDegenerates()
 {
     const RigExecScaledDualQuat sdqs[2] = {
-        RigExecScaledDualQuatFromMatrix(Scaled(Diag(2, 1, 1), GfVec3d(1, 0, 0), 40.0, GfVec3d(1, 0, 0))),
-        RigExecScaledDualQuatFromMatrix(Scaled(Diag(1, 3, 1), GfVec3d(0, 1, 0), -80.0, GfVec3d(0, 2, 0))),
+        RigExecScaledDualQuatFromMatrix(
+            Scaled(Diag(2, 1, 1), GfVec3d(1, 0, 0), 40.0, GfVec3d(1, 0, 0))),
+        RigExecScaledDualQuatFromMatrix(
+            Scaled(Diag(1, 3, 1), GfVec3d(0, 1, 0), -80.0, GfVec3d(0, 2, 0))),
     };
     RigExecScaledDualQuat out = sdqs[1];
     const double zeros[2] = {0.0, 0.0};
@@ -988,7 +1035,8 @@ TestScaledDegenerates()
 
     // Singular influence: rotation identity, raw linear part as stretch,
     // so alone it still reproduces its transform exactly.
-    GfMatrix4d flat = Scaled(Diag(1, 0, 1), GfVec3d(0, 0, 1), 30.0, GfVec3d(7, 8, 9));
+    GfMatrix4d flat =
+        Scaled(Diag(1, 0, 1), GfVec3d(0, 0, 1), 30.0, GfVec3d(7, 8, 9));
     const RigExecScaledDualQuat single = RigExecScaledDualQuatFromMatrix(flat);
     CHECK(!single.isRigid);
     CHECK(single.rigid.real == GfQuatd(1.0));
@@ -996,12 +1044,15 @@ TestScaledDegenerates()
 
     // Reflection: negative scale on the pinned axis survives as a stretch
     // that is symmetric but not positive-definite; the transform is exact.
-    const GfMatrix4d mirrored = Scaled(Diag(1, -1, 1), GfVec3d(0, 0, 1), 30.0, GfVec3d(0));
-    const RigExecScaledDualQuat refl = RigExecScaledDualQuatFromMatrix(mirrored);
+    const GfMatrix4d mirrored =
+        Scaled(Diag(1, -1, 1), GfVec3d(0, 0, 1), 30.0, GfVec3d(0));
+    const RigExecScaledDualQuat refl =
+        RigExecScaledDualQuatFromMatrix(mirrored);
     CHECK(!refl.isRigid);
     CHECK(NearMatrix(RigExecScaledDualQuatToMatrix(refl), mirrored, 1e-12));
     const GfVec3d p(0.3, 0.4, 0.5);
-    CHECK(Near(RigExecScaledDualQuatTransformPoint(refl, p), Apply(mirrored, p), 1e-12));
+    CHECK(Near(RigExecScaledDualQuatTransformPoint(refl, p), Apply(mirrored, p),
+               1e-12));
 }
 
 // Palette-indexed scale-aware blend and the skinning kernel over
@@ -1027,10 +1078,14 @@ TestPaletteBlendMatchesArrayBlend()
     // bit-identical rigid part and stretch. A palette index outside the
     // table is ignored at weight zero and degenerate otherwise.
     const std::vector<RigExecScaledDualQuat> palette = {
-        RigExecScaledDualQuatFromMatrix(Scaled(Diag(2, 1, 1), GfVec3d(1, 0, 0), 40.0, GfVec3d(1, 0, 0))),
-        RigExecScaledDualQuatFromMatrix(Rigid(GfVec3d(0, 1, 0), -80.0, GfVec3d(0, 2, 0))),
-        RigExecScaledDualQuatFromMatrix(Scaled(Diag(1, 3, 1), GfVec3d(0, 0, 1), 120.0, GfVec3d(0, 0, 3))),
-        RigExecScaledDualQuatFromMatrix(Rigid(GfVec3d(0, 0, 1), 170.0, GfVec3d(9, 9, 9))),
+        RigExecScaledDualQuatFromMatrix(
+            Scaled(Diag(2, 1, 1), GfVec3d(1, 0, 0), 40.0, GfVec3d(1, 0, 0))),
+        RigExecScaledDualQuatFromMatrix(
+            Rigid(GfVec3d(0, 1, 0), -80.0, GfVec3d(0, 2, 0))),
+        RigExecScaledDualQuatFromMatrix(
+            Scaled(Diag(1, 3, 1), GfVec3d(0, 0, 1), 120.0, GfVec3d(0, 0, 3))),
+        RigExecScaledDualQuatFromMatrix(
+            Rigid(GfVec3d(0, 0, 1), 170.0, GfVec3d(9, 9, 9))),
     };
     const int indices[4] = {3, 1, 0, 2};
     const double weights[4] = {0.4, 0.3, 0.2, 0.1};
@@ -1040,8 +1095,8 @@ TestPaletteBlendMatchesArrayBlend()
     }
     RigExecScaledDualQuat fromArray, fromPalette;
     CHECK(RigExecBlendScaledDualQuats(gathered, weights, 4, &fromArray));
-    CHECK(RigExecBlendScaledDualQuats(
-        palette.data(), palette.size(), indices, weights, 4, &fromPalette));
+    CHECK(RigExecBlendScaledDualQuats(palette.data(), palette.size(), indices,
+                                      weights, 4, &fromPalette));
     CHECK(SameBits(fromArray.rigid, fromPalette.rigid));
     CHECK(SameBits(fromArray.stretch, fromPalette.stretch));
     CHECK(fromArray.isRigid == fromPalette.isRigid && !fromPalette.isRigid);
@@ -1051,14 +1106,71 @@ TestPaletteBlendMatchesArrayBlend()
     const double zeroLastGathered[3] = {0.4, 0.3, 0.3};
     RigExecScaledDualQuat a, b;
     CHECK(RigExecBlendScaledDualQuats(gathered, zeroLastGathered, 3, &a));
-    CHECK(RigExecBlendScaledDualQuats(
-        palette.data(), palette.size(), badIgnored, zeroLast, 4, &b));
+    CHECK(RigExecBlendScaledDualQuats(palette.data(), palette.size(),
+                                      badIgnored, zeroLast, 4, &b));
     CHECK(SameBits(a.rigid, b.rigid) && SameBits(a.stretch, b.stretch));
     const double badWeighted[4] = {0.4, 0.3, 0.2, 0.1};
     b = fromPalette;
-    CHECK(!RigExecBlendScaledDualQuats(
-        palette.data(), palette.size(), badIgnored, badWeighted, 4, &b));
+    CHECK(!RigExecBlendScaledDualQuats(palette.data(), palette.size(),
+                                       badIgnored, badWeighted, 4, &b));
     CHECK(b.isRigid && IsIdentity(b.rigid));
+}
+
+static void
+TestPaletteBlendRejectsInvalidIndicesAndIgnoresPadding()
+{
+    const RigExecScaledDualQuat palette[] = {
+        RigExecScaledDualQuatFromMatrix(
+            Scaled(Diag(2, 1, 1), GfVec3d(1, 0, 0), 40.0, GfVec3d(1, 0, 0))),
+        RigExecScaledDualQuatFromMatrix(
+            Rigid(GfVec3d(0, 1, 0), -80.0, GfVec3d(0, 2, 0))),
+    };
+    const RigExecScaledDualQuat sentinel = palette[0];
+    CHECK(!sentinel.isRigid);
+    CHECK(!IsIdentity(sentinel.rigid));
+    CHECK(!SameBits(sentinel.stretch, Diag(1, 1, 1)));
+
+    auto checkRejected = [&](const RigExecScaledDualQuat *table,
+                             const int *indices, const double *weights,
+                             size_t count) {
+        RigExecScaledDualQuat blended = sentinel;
+        CHECK(!RigExecBlendScaledDualQuats(table, 2, indices, weights, count,
+                                           &blended));
+        CHECK(blended.isRigid);
+        CHECK(IsIdentity(blended.rigid));
+        CHECK(SameBits(blended.stretch, Diag(1, 1, 1)));
+    };
+
+    const int validIndices[] = {0, 1};
+    const double weights[] = {0.25, 0.75};
+    RigExecScaledDualQuat fromArray;
+    CHECK(RigExecBlendScaledDualQuats(palette, weights, 2, &fromArray));
+
+    for (const int invalid : {2, -1}) {
+        const int invalidIndices[] = {0, invalid};
+        checkRejected(palette, invalidIndices, weights, 2);
+
+        const int paddedIndices[][3] = {
+            {invalid, 0, 1}, {0, invalid, 1}, {0, 1, invalid}};
+        const double paddedWeights[][3] = {{0.0, weights[0], weights[1]},
+                                           {weights[0], 0.0, weights[1]},
+                                           {weights[0], weights[1], 0.0}};
+        for (size_t slot = 0; slot < 3; ++slot) {
+            RigExecScaledDualQuat blended;
+            const bool paddingIgnored =
+                RigExecBlendScaledDualQuats(palette, 2, paddedIndices[slot],
+                                            paddedWeights[slot], 3, &blended);
+            CHECK(paddingIgnored);
+            CHECK(SameBits(blended.rigid, fromArray.rigid));
+            CHECK(SameBits(blended.stretch, fromArray.stretch));
+            CHECK(blended.isRigid == fromArray.isRigid);
+        }
+    }
+
+    checkRejected(palette, validIndices, weights, 0);
+    checkRejected(palette, nullptr, weights, 2);
+    checkRejected(palette, validIndices, nullptr, 2);
+    checkRejected(nullptr, validIndices, weights, 2);
 }
 
 static RigExecSkinLayout
@@ -1094,27 +1206,34 @@ TestSkinAcceptance()
     const std::vector<int> indices = {0, 1, 2};
     const GfVec3f in(1, 2, 3);
     GfVec3f out;
-    for (const std::vector<float> weights : {
-             std::vector<float>{0, 0, 0}, {0.1f, 0.2f, 0.7f},
-             {0.3f, 0.3f, 0}, {0.5f, 0.5f, 0}, {2, 2, 0}, {3, 1, 0}}) {
+    for (const std::vector<float> weights : {std::vector<float>{0, 0, 0},
+                                             {0.1f, 0.2f, 0.7f},
+                                             {0.3f, 0.3f, 0},
+                                             {0.5f, 0.5f, 0},
+                                             {2, 2, 0},
+                                             {3, 1, 0}}) {
         const auto layout = Layout(transforms, indices, weights, 3);
         const auto palette = RigExecSkinDualQuatPalette(layout);
-        const bool exact = RigExecDualQuatBlendsAccept(layout,
-            [&](const int *ids, const double *ws, size_t n) {
+        const bool exact = RigExecDualQuatBlendsAccept(
+            layout, [&](const int *ids, const double *ws, size_t n) {
                 RigExecScaledDualQuat blend;
-                return RigExecBlendScaledDualQuats(palette.data(), palette.size(),
-                                                   ids, ws, n, &blend);
+                return RigExecBlendScaledDualQuats(
+                    palette.data(), palette.size(), ids, ws, n, &blend);
             });
         CHECK(exact == RigExecApplyDualQuatSkin(&in, &out, layout));
         const bool safe = RigExecDualQuatWeightsSafe(layout);
         CHECK(RigExecDualQuatPaletteSafe(palette.data(), palette.size()));
         CHECK(!safe || exact);
-        if (weights[0] <= 0.5f) CHECK(safe);
-        if (weights[0] == 2) CHECK(!safe && !exact);
-        if (weights[0] == 3) CHECK(!safe && exact);
+        if (weights[0] <= 0.5f)
+            CHECK(safe);
+        if (weights[0] == 2)
+            CHECK(!safe && !exact);
+        if (weights[0] == 3)
+            CHECK(!safe && exact);
     }
     const std::vector<float> normalized{0.1f, 0.2f, 0.7f};
-    auto palette = RigExecSkinDualQuatPalette(Layout(transforms, indices, normalized, 3));
+    auto palette =
+        RigExecSkinDualQuatPalette(Layout(transforms, indices, normalized, 3));
     palette[0].rigid.real *= 2.0;
     CHECK(!RigExecDualQuatPaletteSafe(palette.data(), palette.size()));
     palette[0].rigid.real *= 0.5;
@@ -1144,7 +1263,8 @@ TestSkinKernelRules()
     {
         const std::vector<int> indices = {0, 0};
         const std::vector<float> weights = {0.5f, 0.0f};
-        const RigExecSkinLayout layout = Layout(transforms, indices, weights, 1);
+        const RigExecSkinLayout layout =
+            Layout(transforms, indices, weights, 1);
         const GfVec3f in[2] = {GfVec3f(1, 0, 0), GfVec3f(1, 0, 0)};
         GfVec3f out[2];
         CHECK(RigExecApplyDualQuatSkin(in, out, layout));
@@ -1157,8 +1277,8 @@ TestSkinKernelRules()
         CHECK(palette.size() == transforms.size() + 1);
         CHECK(palette.back().isRigid && IsIdentity(palette.back().rigid));
         GfVec3d single;
-        CHECK(RigExecApplyDualQuatSkin(
-            GfVec3d(in[0]), palette.data(), palette.size(), layout, 0, &single));
+        CHECK(RigExecApplyDualQuatSkin(GfVec3d(in[0]), palette.data(),
+                                       palette.size(), layout, 0, &single));
         CHECK(SameBits(GfVec3f(single), out[0]));
     }
 
@@ -1167,7 +1287,8 @@ TestSkinKernelRules()
     {
         const std::vector<int> indices = {1, 2};
         const std::vector<float> weights = {0.25f, 0.25f};
-        const RigExecSkinLayout layout = Layout(transforms, indices, weights, 2);
+        const RigExecSkinLayout layout =
+            Layout(transforms, indices, weights, 2);
         const GfVec3f in[1] = {GfVec3f(2, 0, 0)};
         GfVec3f dq[1], lbs[1];
         CHECK(RigExecApplyDualQuatSkin(in, dq, layout));
@@ -1186,8 +1307,10 @@ TestSkinKernelRules()
         const std::vector<float> wba = {0.7f, 0.3f};
         const GfVec3f in[1] = {GfVec3f(1, 0.5f, -2)};
         GfVec3f outAb[1], outBa[1];
-        CHECK(RigExecApplyDualQuatSkin(in, outAb, Layout(transforms, ab, wab, 2)));
-        CHECK(RigExecApplyDualQuatSkin(in, outBa, Layout(transforms, ba, wba, 2)));
+        CHECK(RigExecApplyDualQuatSkin(in, outAb,
+                                       Layout(transforms, ab, wab, 2)));
+        CHECK(RigExecApplyDualQuatSkin(in, outBa,
+                                       Layout(transforms, ba, wba, 2)));
         CHECK(SameBits(outAb[0], outBa[0]));
     }
 
@@ -1195,7 +1318,8 @@ TestSkinKernelRules()
     {
         const std::vector<int> indices = {0, 1};
         const std::vector<float> weights = {0.5f, 0.5f};
-        const RigExecSkinLayout layout = Layout(transforms, indices, weights, 2);
+        const RigExecSkinLayout layout =
+            Layout(transforms, indices, weights, 2);
         GfVec3f separate[1], inPlace[1] = {GfVec3f(1, 2, 3)};
         const GfVec3f in[1] = {inPlace[0]};
         CHECK(RigExecApplyDualQuatSkin(in, separate, layout));
@@ -1215,7 +1339,8 @@ TestSkinKernelRules()
     {
         const std::vector<int> indices = {3, 4};
         const std::vector<float> weights = {2.0f, 2.0f};
-        const RigExecSkinLayout layout = Layout(transforms, indices, weights, 2);
+        const RigExecSkinLayout layout =
+            Layout(transforms, indices, weights, 2);
         const GfVec3f in[1] = {GfVec3f(0, 1, 0)};
         GfVec3f out[1];
         CHECK(!RigExecApplyDualQuatSkin(in, out, layout));
@@ -1239,8 +1364,9 @@ MeasureSkinningCost()
             const auto t0 = Clock::now();
             body();
             const auto t1 = Clock::now();
-            best = std::min(best, std::chrono::duration<double, std::nano>(
-                                      t1 - t0).count());
+            best = std::min(
+                best,
+                std::chrono::duration<double, std::nano>(t1 - t0).count());
         }
         return best;
     };
@@ -1253,12 +1379,13 @@ MeasureSkinningCost()
             GfVec3d(std::sin(a), std::cos(1.3 * a), 0.5).GetNormalized();
         const GfVec3d t(a, -0.5 * a, 2.0 * std::sin(a));
         rigidJoints.push_back(Rigid(axis, 30.0 + 2.0 * a, t));
-        scaledJoints.push_back(Scaled(
-            Diag(1.0, 1.0 + 0.1 * std::sin(a), 1.0 + 0.1 * std::sin(a)),
-            axis, 30.0 + 2.0 * a, t));
+        scaledJoints.push_back(
+            Scaled(Diag(1.0, 1.0 + 0.1 * std::sin(a), 1.0 + 0.1 * std::sin(a)),
+                   axis, 30.0 + 2.0 * a, t));
     }
     std::printf("testRigExecDualQuat: scale-aware decomposition cost, "
-                "%zu influences\n", influenceCount);
+                "%zu influences\n",
+                influenceCount);
     bool sink = false;
     const int decompReps = 20;
     const double rigidNs = bestOf(decompReps, [&]() {
@@ -1275,8 +1402,8 @@ MeasureSkinningCost()
                 "rigid input (orthonormality test only)",
                 rigidNs / influenceCount, rigidNs / 1000.0);
     std::printf("  %-44s %8.1f ns/influence (%.1f us per evaluation)\n",
-                "scaled input (polar decomposition)",
-                scaledNs / influenceCount, scaledNs / 1000.0);
+                "scaled input (polar decomposition)", scaledNs / influenceCount,
+                scaledNs / 1000.0);
 
     const size_t pointCount = 26276;
     const size_t elementSize = 4;
@@ -1301,30 +1428,32 @@ MeasureSkinningCost()
     std::vector<GfVec3f> out(pointCount);
     const int kernelReps = 5;
     auto report = [&](const char *label, double ns) {
-        std::printf("  %-44s %7.1f ns/point (%.2f ms per evaluation)\n",
-                    label, ns / static_cast<double>(pointCount), ns / 1e6);
+        std::printf("  %-44s %7.1f ns/point (%.2f ms per evaluation)\n", label,
+                    ns / static_cast<double>(pointCount), ns / 1e6);
     };
     std::printf("testRigExecDualQuat: skinning kernel cost, %zu points x %zu "
-                "influences\n", pointCount, elementSize);
+                "influences\n",
+                pointCount, elementSize);
     for (const bool scaled : {false, true}) {
         const RigExecSkinLayout layout = Layout(
             scaled ? scaledJoints : rigidJoints, indices, weights, elementSize);
         report(scaled ? "classicLinear scalar, scaled joints"
                       : "classicLinear scalar, rigid joints",
                bestOf(kernelReps, [&]() {
-                   RigExecApplyLinearBlendSkin(points.data(), out.data(), layout);
+                   RigExecApplyLinearBlendSkin(points.data(), out.data(),
+                                               layout);
                }));
         report(scaled ? "classicLinear SSE2, scaled joints"
                       : "classicLinear SSE2, rigid joints",
                bestOf(kernelReps, [&]() {
-                   RigExecApplyLinearBlendSkinSimd(
-                       points.data(), out.data(), layout);
+                   RigExecApplyLinearBlendSkinSimd(points.data(), out.data(),
+                                                   layout);
                }));
         report(scaled ? "dualQuaternion scalar, scaled joints"
                       : "dualQuaternion scalar, rigid joints",
                bestOf(kernelReps, [&]() {
-                   sink ^= RigExecApplyDualQuatSkin(
-                       points.data(), out.data(), layout);
+                   sink ^= RigExecApplyDualQuatSkin(points.data(), out.data(),
+                                                    layout);
                }));
     }
     std::printf("  (sink %d)\n", sink ? 1 : 0);
@@ -1352,6 +1481,7 @@ main()
     TestScaledPathMatchesRigidPathBitForBit();
     TestScaledDegenerates();
     TestPaletteBlendMatchesArrayBlend();
+    TestPaletteBlendRejectsInvalidIndicesAndIgnoresPadding();
     TestSkinKernelRules();
     TestSkinAcceptance();
     MeasureTransformCost();
