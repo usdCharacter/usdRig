@@ -364,17 +364,22 @@ def _block(name, name_color, background, body, when=None):
 
 
 def changes_html(message):
-    """What a reply changed, and what it could not."""
+    """What a reply changed, what it did that no undo takes back, and what
+    it could not."""
     parts = []
     if message.get('note'):
         parts.append('<p style="color:{}; font-style:italic">{}</p>'.format(
             COLORS['note'], inline(message['note'])))
     done = message.get('done') or []
+    effects = message.get('effects') or []
     failed = message.get('failed') or []
     if done:
         items = ''.join('<li>{}</li>'.format(inline(d)) for d in done)
-        parts.append(_block('Changed (Ctrl+Z undoes it all)',
-                            COLORS['done_name'], COLORS['done_bg'],
+        parts.append(_block('Changed', COLORS['done_name'], COLORS['done_bg'],
+                            '<ul style="margin:0">{}</ul>'.format(items)))
+    if effects:
+        items = ''.join('<li>{}</li>'.format(inline(e)) for e in effects)
+        parts.append(_block('Not undoable', COLORS['note'], COLORS['code_bg'],
                             '<ul style="margin:0">{}</ul>'.format(items)))
     if failed:
         items = ''.join('<li>{}</li>'.format(inline(f)) for f in failed)

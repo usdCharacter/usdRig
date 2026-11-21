@@ -59,6 +59,36 @@ def same_content(a, b):
     return a.ExportToString() == b.ExportToString()
 
 
+def stage_layers(stage):
+    """Every layer a stage reads: the layers it uses, its session layer and
+    its edit target, each once."""
+    if stage is None:
+        return []
+    try:
+        layers = list(stage.GetUsedLayers())
+    except Exception:
+        logger.debug('Could not list the used layers', exc_info=True)
+        layers = []
+    for extra in (stage.GetSessionLayer(), stage.GetEditTarget().GetLayer()):
+        if extra is not None:
+            layers.append(extra)
+    seen = {}
+    for layer in layers:
+        if layer is not None and not layer.expired:
+            seen[layer] = None
+    return list(seen)
+
+
+def layer_baseline(stage):
+    """A content copy of every layer the stage reads now, keyed by layer.
+
+    Keyed by the layer handle and not its identifier: the copy has to go
+    back into this very layer, and an anonymous identifier only carries the
+    address of a layer that may already be gone. A layer the code brings in
+    afterwards has no entry here, so there is nothing to restore it to."""
+    return {layer: snapshot(layer) for layer in stage_layers(stage)}
+
+
 class Session(object):
     """What the tools reach in usdview, through its usdviewApi."""
 
