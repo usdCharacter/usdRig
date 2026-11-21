@@ -43,9 +43,6 @@
         "_setValueWriteMode": "coordinator",
         "_toggleLinkDimming": "coordinator",
         "_clearRenderCache": "render",
-        "_cleanupNodeVBOs": "render",
-        "_reinitializeGL": "render",
-        "initializeGL": "render",
         "_loadSampleGraph": "compat",
         "loadBlueprint": "stage_sync",
         "loadContainer": "stage_sync",
@@ -53,21 +50,15 @@
         "_visibleWorldBounds": "coordinator",
         "_isVisible": "coordinator",
         "_viewportAnchor": "coordinator",
-        "_seedNodeZOrders": "render",
         "_resetRenderCachesAfterBulkMove": "render",
         "currentPrimPath": "coordinator",
         "_drawNodeVertices": "render",
         "_valueRowOnlyChange": "stage_sync",
         "_isPinPropertyChange": "stage_sync",
-        "resizeGL": "render",
-        "paintGL": "render",
-        "_paintGLInner": "render",
         "_renderPortHighlightsCpp": "render",
         "_paintHotkeyPopups": "render",
         "_paintNodeCreationHotbox": "render",
         "_printProfilingStatsIfNeeded": "coordinator",
-        "_worldSpaceProjectionMatrix": "render",
-        "_screenSpaceProjectionMatrix": "render",
         "mouseDoubleClickEvent": "interaction",
         "mousePressEvent": "interaction",
         "mouseMoveEvent": "interaction",
@@ -85,7 +76,6 @@
         "_renderRelationshipArrowheads": "render",
         "_renderDanglingIndicators": "render",
         "_renderTemporaryLink": "render",
-        "_renderConfig": "render",
         "paintNodes": "render",
         "paintGroupStickers": "render",
         "paintText": "render",
@@ -128,9 +118,15 @@
     },
     "plugin/usdNoodles/graphview/frame.py": {
       "layer": "render"
+    },
+    "plugin/usdNoodles/graphview/resources.py": {
+      "layer": "render"
+    },
+    "plugin/usdNoodles/graphview/render.py": {
+      "layer": "render"
     }
   },
   "line_ceilings": {
-    "plugin/usdNoodles/graphView.py": 3789
+    "plugin/usdNoodles/graphView.py": 3464
   }
 }

@@ -51,6 +51,8 @@ from .graphview.editing import (
 )
 from .graphview import intents as _intents
 from .graphview import interaction as _interaction
+from .graphview import render as _render
+from .graphview import resources as _resources
 from .graphview import selection as _selection
 from .graphview import stage_sync
 from .graphview.stage_sync import _isPathRelated, _nodeIdPrimPath
@@ -855,143 +857,6 @@ class GraphView(_interaction.GraphWidgetBase):
         self._nodeRenderManager.clearCache()
         self.doneCurrent()
 
-    def _cleanupNodeVBOs(self):
-        """
-        Clean up all rendering resources.
-
-        Called when the OpenGL context is lost or being reinitialized.
-        """
-        self._nodeRenderManager.cleanup()
-        self._groupStickerRenderer.cleanup()
-        self.linkRenderer.cleanup()
-        self.textRenderer._cpp.cleanup()
-        self._nodeTransformFrame.cleanup()
-        if hasattr(self, "_cppIconRenderer") and self._cppIconRenderer.isInitialized:
-            self._cppIconRenderer.cleanup()
-
-    def _reinitializeGL(self):
-        """Handle GL context change — clean up stale resources and reinitialize."""
-        self.makeCurrent()
-        self._cleanupNodeVBOs()
-        if self.shaderLibrary:
-            self.shaderLibrary.cleanup()
-        if self.fontAtlas:
-            self.fontAtlas.cleanup()
-        self.initialized = False
-        self.fontAtlas = None
-        self.shaderLibrary = None
-        self.initializeGL()
-        # initializeGL() calls doneCurrent() — restore context for callers
-        # (paintGL needs it current for _paintGLInner)
-        self.makeCurrent()
-        self.linksChanged = True
-        # The atlas was regenerated, so every cached glyph vertex and every
-        # width-derived fit is suspect. Dropping them only costs one warmup
-        # frame; keeping them risks wrong UVs.
-        self._valueGlyphCache.clear()
-        self._valueFitCache.clear()
-        self._valueAxisWidthCache.clear()
-        self._valueTextBandCache.clear()
-        self._valueDigitAdvanceCache.clear()
-
-    def initializeGL(self):
-        needsInit = not self.initialized
-
-        if self.initialized:
-            self.makeCurrent()
-            contextChanged = False
-
-            if self.fontAtlas and self.fontAtlas.texture:
-                if not GL.glIsTexture(self.fontAtlas.texture):
-                    contextChanged = True
-            elif self.fontAtlas is None:
-                contextChanged = True
-
-            if contextChanged:
-                self._cleanupNodeVBOs()
-                if self.shaderLibrary:
-                    self.shaderLibrary.cleanup()
-                if self.fontAtlas:
-                    self.fontAtlas.cleanup()
-                needsInit = True
-                self.initialized = False
-                self.fontAtlas = None
-                self.shaderLibrary = None
-
-        if not needsInit:
-            return
-
-        self.makeCurrent()
-
-        Glf.RegisterDefaultDebugOutputMessageCallback()
-
-        from pxr import Plug
-
-        plugin = Plug.Registry().GetPluginWithName("UsdNoodles")
-
-        if plugin:
-            # Plugin resource path points to: <install>/plugin/usd/usdNoodles/resources/
-            resourcePath = Path(plugin.resourcePath)
-
-            assetsInResources = resourcePath / "assets"
-            if assetsInResources.exists():
-                assetsPath = assetsInResources
-            else:
-                assetsPath = resourcePath
-        else:
-            resourcePath = Path(__file__).parent
-            assetsPath = resourcePath / "assets"
-            if not assetsPath.exists():
-                assetsPath = resourcePath
-        self._assetsPath = assetsPath
-
-        atlasTexturePath = assetsPath / "fonts" / "Poppins-Regular.png"
-        fontMetricsPath = assetsPath / "fonts" / "Poppins-Regular.json"
-
-        if not atlasTexturePath.exists():
-            Tf.Warn(f"Font atlas not found at {atlasTexturePath}")
-            self.doneCurrent()
-            return
-
-        self.fontAtlas = FontAtlas()
-        self.fontAtlas.initialize(str(atlasTexturePath), str(fontMetricsPath))
-
-        if not self.nodes:
-            sampleGraphPath = assetsPath / "bodyGraph.json"
-            if sampleGraphPath.exists():
-                self._loadSampleGraph(str(sampleGraphPath))
-                if self.nodes:
-                    self.frameScene()
-
-        self.shaderLibrary = ShaderLibrary()
-        self.shaderLibrary.initialize(str(assetsPath))
-
-        # Initialize icon renderer
-        from .iconRenderer import CppIconRenderer
-
-
-
-
-
-        self._cppIconRenderer = CppIconRenderer()
-        self._cppIconRenderer.initialize(self.shaderLibrary, str(assetsPath))
-
-        # Initialize rendering managers
-        self._nodeRenderManager.initialize(self.shaderLibrary)
-        self._groupStickerRenderer.initialize(self.shaderLibrary)
-        self.linkRenderer.initialize(self.shaderLibrary)
-        self.textRenderer.initialize(self.shaderLibrary, self.fontAtlas)
-
-        # All C++ render paths share one transform frame (text + node quads +
-        # icons) so they sample one transform texture and move together on drag.
-        self._nodeRenderManager.setTransformFrame(self._nodeTransformFrame)
-        self.textRenderer.setTransformFrame(self._nodeTransformFrame)
-        self._cppIconRenderer.setTransformFrame(self._nodeTransformFrame)
-
-        self.initialized = True
-        self.textChanged = True
-        self.doneCurrent()
-
     def _loadSampleGraph(self, jsonPath):
         self.nodeGraph = NodeGraphJson()
         self._initUndoTracking(None)
@@ -1118,22 +983,6 @@ class GraphView(_interaction.GraphWidgetBase):
             visible.GetMin()[0] + size[0] * 0.05,
             visible.GetMin()[1] + size[1] * 0.05,
         )
-
-    def _seedNodeZOrders(self):
-        """Give each freshly loaded node a distinct, increasing zOrder.
-
-        Loaded nodes otherwise keep the C++ default zOrder = 0, so every node
-        lands in the same depth band; overlapping node backgrounds, title bars,
-        shadows, and title text then z-fight under GL_LEQUAL on the first frame.
-        Assigning a distinct zOrder per node (mirroring the runtime add-node and
-        reload paths) separates the depth bands so overlaps render cleanly
-        front-to-back. _nextZOrder is left at the max so later add / bring-to-front
-        actions stack on top.
-        """
-        self._nextZOrder = 0
-        for node in self.nodes.values():
-            self._nextZOrder += 1
-            node.zOrder = self._nextZOrder
 
     def _resetRenderCachesAfterBulkMove(self, rebuild_links=True):
         """Invalidate every baked vertex cache + the drag-transform frame and flag
@@ -1313,153 +1162,6 @@ class GraphView(_interaction.GraphWidgetBase):
         hide_ui = bool(NoodlesConfig.get("hideUiNamespacePins", True))
         return not is_hidden_namespace_pin(propertyName, hide_ui=hide_ui)
 
-    def resizeGL(self, w, h):
-        self.makeCurrent()
-        ctx = self.context()
-        if ctx is None or not ctx.isValid():
-            return
-        GL.glViewport(0, 0, w, h)
-        # Invalidate caches on resize
-        self._nodeRenderManager.invalidateAll()
-        self.doneCurrent()
-
-    def paintGL(self):
-        if not self.isVisible():
-            return
-
-        if not self.initialized:
-            self.initializeGL()
-            if not self.initialized:
-                return
-
-        self.makeCurrent()
-
-        # Verify the GL context is actually current before issuing GL calls.
-        # When docked alongside another QOpenGLWidget (e.g. usdview's Hydra
-        # viewport), makeCurrent() can silently fail if the context was lost
-        # or the surface is not yet valid.
-        ctx = self.context()
-        if ctx is None or not ctx.isValid():
-            return
-
-        # Detect stale GL context (e.g. after usdview "Reopen Stage").
-        # The font atlas texture serves as a canary — if it is no longer
-        # a valid texture name, the context was recreated and all cached
-        # GL resources (VAOs, VBOs, shaders) are stale.
-        if self.fontAtlas and self.fontAtlas.texture:
-            if not GL.glIsTexture(self.fontAtlas.texture):
-                self._reinitializeGL()
-                if not self.initialized:
-                    return
-
-        try:
-            self._paintGLInner()
-        except GLError as e:
-            Tf.Warn(f"GL error during paintGL: {e}")
-
-    def _paintGLInner(self):
-        # Enable profiling based on cached config
-        self._profiler.enabled = self._cachedEnableRenderProfiling
-        self._profiler.startFrame()
-
-        with _ProfileSection(self._profiler, "Animator Update"):
-            self._updateAnimator()
-
-        with _ProfileSection(self._profiler, "Pan Animation"):
-            self._updatePanAnimation()
-
-        with _ProfileSection(self._profiler, "Keyboard State"):
-            self._updateKeyboardState()
-
-        # Apply any node-position changes to the spatial index / links / port
-        # highlights before rendering or hit-testing this frame. O(1) when
-        # nothing moved.
-        with _ProfileSection(self._profiler, "Reconcile Moves"):
-            self._reconcileMovedNodes()
-
-        with _ProfileSection(self._profiler, "Rebuild Links"):
-            if self.linksChanged:
-                self._rebuildLinks()
-
-        with _ProfileSection(self._profiler, "GL Clear"):
-            GL.glClearColor(0.25, 0.25, 0.25, 1.0)
-            GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
-            GL.glDepthFunc(GL.GL_LEQUAL)
-
-        # Rendering:
-
-        with _ProfileSection(self._profiler, "Group Stickers"):
-            # group stickers first (background layer, behind everything)
-            if self.drawNodes and self.groupStickers:
-                self.paintGroupStickers()
-
-        with _ProfileSection(self._profiler, "Links"):
-            # links (below nodes)
-            if self.drawLinks:
-                self.paintLinks()
-
-        # Render temporary link during drag (after links, before nodes)
-        if self._draggingLink and self._dragLinkTempLink:
-            self._renderTemporaryLink()
-
-        with _ProfileSection(self._profiler, "Nodes"):
-            # nodes (on top of links)
-            if self.drawNodes:
-                self.paintNodes()
-
-        with _ProfileSection(self._profiler, "Port Highlights"):
-            if self.nodes:
-                self._renderPortHighlightsCpp()
-
-        with _ProfileSection(self._profiler, "Text"):
-            # text (on top of nodes)
-            if self.drawText:
-                self.paintText()
-
-        with _ProfileSection(self._profiler, "Value Cells"):
-            # Inline attribute values. A separate Python pass, because node
-            # text is generated and drawn entirely in C++ by the pinned
-            # external noodles renderer -- there is no hook to add a string to
-            # a row's layout. Same shape as the marquee and status overlay.
-            if self.drawText and self._cachedShowAttributeValues:
-                self._paintValueCells()
-
-        with _ProfileSection(self._profiler, "Status Overlay"):
-            # status overlay (screen space, on top of everything)
-            self.paintStatusOverlay()
-
-        with _ProfileSection(self._profiler, "Minimap"):
-            # minimap (screen space, upper right corner)
-            if self._cachedShowMinimap:
-                self.minimap.paint(NodeVertex, MAX_RENDER_DEPTH)
-
-        with _ProfileSection(self._profiler, "Hotkey Popups"):
-            self._paintHotkeyPopups()
-
-        with _ProfileSection(self._profiler, "Marquee"):
-            # marquee selection (on top of everything else)
-            if self.marqueeActive:
-                self.paintMarquee()
-
-        with _ProfileSection(self._profiler, "Node Creation Hotbox"):
-            if self.nodeCreationHotbox.is_visible:
-                self._paintNodeCreationHotbox()
-
-        with _ProfileSection(self._profiler, "Node Rename"):
-            if self._renamingNodeId:
-                self._paintNodeRename()
-
-        with _ProfileSection(self._profiler, "Value Editor"):
-            if self._valueEditTarget:
-                self._paintValueEditor()
-            if self._tokenPopup:
-                self._paintTokenPopup()
-            if self._mungActive:
-                self._paintMungLadder()
-
-        self._profiler.endFrame()
-        self._printProfilingStatsIfNeeded()
-
     def _renderPortHighlightsCpp(self):
         """C++-owned port-highlight pass.
 
@@ -1546,37 +1248,6 @@ class GraphView(_interaction.GraphWidgetBase):
                 self._profiler.printStats()
                 self._profilingFrameCount = 0
                 self._profiler.reset()
-
-    def _worldSpaceProjectionMatrix(self):
-        # Reuse the cached matrix unless the view (pan/zoom/size) changed since
-        # it was built; the key comparison makes this self-invalidating.
-        key = (self.panX, self.panY, self.zoom, self.width(), self.height())
-        if key != self._worldProjCacheKey:
-            projection = QtGui.QMatrix4x4()
-            scaledWidth = self.width() / self.zoom
-            scaledHeight = self.height() / self.zoom
-            projection.ortho(
-                self.panX,
-                self.panX + scaledWidth,
-                self.panY + scaledHeight,
-                self.panY,
-                -MAX_RENDER_DEPTH,
-                MAX_RENDER_DEPTH,
-            )
-            self._worldProjCacheKey = key
-            self._worldProjCache = projection
-        return self._worldProjCache
-
-    def _screenSpaceProjectionMatrix(self):
-        key = (self.width(), self.height())
-        if key != self._screenProjCacheKey:
-            projection = QtGui.QMatrix4x4()
-            projection.ortho(
-                0, self.width(), self.height(), 0, -MAX_RENDER_DEPTH, MAX_RENDER_DEPTH
-            )
-            self._screenProjCacheKey = key
-            self._screenProjCache = projection
-        return self._screenProjCache
 
     @_guardsQtBoundary
     def mouseDoubleClickEvent(self, event):
@@ -2329,19 +2000,6 @@ class GraphView(_interaction.GraphWidgetBase):
                 strokeColor,
                 strokeWidth,
             )
-
-    def _renderConfig(self):
-        """Cached C++ RenderConfig shared by the node-quad and link paths.
-
-        The config depends only on settings, so it is rebuilt lazily after a
-        settings change (invalidated to None in _initCachedSettings), never per
-        frame or per geometry rebuild.
-        """
-        if self._cachedRenderConfig is None:
-            from .nodeGraph import build_render_config
-
-            self._cachedRenderConfig = build_render_config()
-        return self._cachedRenderConfig
 
     def paintNodes(self):
         if not self.nodes or not self.shaderLibrary or not self.fontAtlas:
@@ -3787,3 +3445,20 @@ class GraphView(_interaction.GraphWidgetBase):
     _clearReconnectState = _interaction._clearReconnectState
     _cancelLinkReconnect = _interaction._cancelLinkReconnect
     _finishReconnectDisconnect = _interaction._finishReconnectDisconnect
+
+    # GL lifecycle moved to graphview/resources.py (nv-render-resources).
+    # Explicit bindings, never forwarding bodies, so unbound
+    # GraphView._method(duck_self, ...) calls keep working.
+    initializeGL = _resources.initializeGL
+    _reinitializeGL = _resources._reinitializeGL
+    resizeGL = _resources.resizeGL
+
+    # Drawing entry moved to graphview/render.py (nv-render-resources).
+    # Explicit bindings, never forwarding bodies, so unbound
+    # GraphView._method(duck_self, ...) calls keep working.
+    paintGL = _render.paintGL
+    _paintGLInner = _render._paintGLInner
+    _renderConfig = _render._renderConfig
+    _seedNodeZOrders = _render._seedNodeZOrders
+    _worldSpaceProjectionMatrix = _render._worldSpaceProjectionMatrix
+    _screenSpaceProjectionMatrix = _render._screenSpaceProjectionMatrix

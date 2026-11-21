@@ -254,7 +254,10 @@ class NodeRecord:
 
     ``position`` is the base position; transient drag offsets ride in
     :class:`TransformFrameInputs` and are applied by the renderer (and
-    by the hit candidates) without rewriting this record.
+    by the hit candidates) without rewriting this record. ``node_type``,
+    the pin-type pairs and ``title_icon_path`` exist for the render-owned
+    mirror, whose C++ readers fall back to ``node.type`` for colors and
+    labels when display color and pin types are absent.
     """
 
     node_id: str = ""
@@ -263,9 +266,13 @@ class NodeRecord:
     z_order: int = 0
     title: str = ""
     type_name: str = ""
+    node_type: str = ""
+    title_icon_path: str = ""
     title_collapsed: bool = False
     input_pins: tuple = ()
     output_pins: tuple = ()
+    input_pin_types: tuple = ()
+    output_pin_types: tuple = ()
     port_start_y: float = 0.0
     port_line_height: float = 0.0
     input_centers: tuple = ()
@@ -290,6 +297,22 @@ class NodeRecord:
         object.__setattr__(self, "size", _pair(self.size))
         object.__setattr__(self, "input_pins", tuple(self.input_pins))
         object.__setattr__(self, "output_pins", tuple(self.output_pins))
+        object.__setattr__(
+            self,
+            "input_pin_types",
+            tuple(
+                (str(pin), str(pin_type))
+                for pin, pin_type in self.input_pin_types
+            ),
+        )
+        object.__setattr__(
+            self,
+            "output_pin_types",
+            tuple(
+                (str(pin), str(pin_type))
+                for pin, pin_type in self.output_pin_types
+            ),
+        )
         object.__setattr__(
             self, "input_centers", tuple(float(v) for v in self.input_centers)
         )
@@ -808,6 +831,25 @@ def _port_width_for(node, view):
         return 0.0
 
 
+def _pin_type_pairs(mapping):
+    """Deterministic ``((pin, type), ...)`` pairs for a pin-type map."""
+    if mapping is None:
+        return ()
+    try:
+        if hasattr(mapping, "items"):
+            items = list(mapping.items())
+        elif hasattr(mapping, "keys"):
+            items = [(key, mapping[key]) for key in mapping.keys()]
+        else:
+            items = [(key, mapping[key]) for key in list(mapping)]
+    except Exception:
+        return ()
+    try:
+        return tuple(sorted((str(k), str(v)) for k, v in items))
+    except Exception:
+        return ()
+
+
 def build_node_record(
     node_id,
     node,
@@ -876,9 +918,15 @@ def build_node_record(
             getattr(node, "schemaTypeName", "")
             or getattr(node, "typeName", "")
         ),
+        node_type=_str(getattr(node, "type", "")),
+        title_icon_path=_str(getattr(node, "titleIconPath", "") or ""),
         title_collapsed=collapsed,
         input_pins=input_pins,
         output_pins=output_pins,
+        input_pin_types=_pin_type_pairs(getattr(node, "inputPinTypes", None)),
+        output_pin_types=_pin_type_pairs(
+            getattr(node, "outputPinTypes", None)
+        ),
         port_start_y=_float(getattr(node, "layoutPortStartY", 0.0)),
         port_line_height=_float(
             getattr(node, "layoutPortLineHeight", 0.0)
