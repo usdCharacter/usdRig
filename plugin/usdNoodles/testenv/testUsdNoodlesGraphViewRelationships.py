@@ -27,6 +27,52 @@ try:
     )
     from UsdNoodles.pinUtils import RELATIONSHIP_LINK_BASE_COLOR
     from pxr.Usdviewq.qt import QtCore
+    from _relationshipFixtures import (
+        Projection,
+        back_ref_link_data,
+        back_ref_stage,
+        collect_record,
+        fake_node_vertex,
+        graph_link,
+        make_arrowhead_view,
+        make_back_ref_view,
+        make_box_node,
+        make_change_block_view,
+        make_complete_drag_view,
+        make_connection_view,
+        make_dangling_link,
+        make_edge_drag_node,
+        make_edge_drag_view,
+        make_endpoint_node,
+        make_endpoint_pin_link,
+        make_endpoint_view,
+        make_graph_node,
+        make_link_click_link,
+        make_link_click_view,
+        make_link_drag_view,
+        make_mouse_press_event,
+        make_node_expansion_view,
+        make_node_prim,
+        make_paint_links_view,
+        make_pinnable_node,
+        make_prim_tree_view,
+        make_regular_link,
+        make_relationship_link,
+        make_row_hover_node,
+        make_row_hover_view,
+        make_row_metrics_renderer,
+        make_row_metrics_view,
+        make_row_renderer,
+        make_sdf_prim,
+        make_stage_at_path,
+        make_surface_view,
+        make_temp_link_render_view,
+        make_temp_link_triangle_view,
+        make_typed_row_node,
+        patched_collect_links,
+        patched_graph_symbol,
+        patched_module_collect_links,
+    )
 
     _has_graph = True
 except ImportError as e:
@@ -34,33 +80,9 @@ except ImportError as e:
     _has_graph = False
 
 
-class _Projection:
-    def data(self):
-        return [1.0] * 16
-
-
-def _fake_node_vertex(*args):
-    return SimpleNamespace(x=args[0], y=args[1], z=args[2], raw=args)
-
-
-def _relationship_link():
-    return SimpleNamespace(
-        sourceNodeId="/Constraint",
-        sourcePort="affects",
-        targetNodeId="/Driven",
-        targetPort="affects",
-        sourcePropertyName="affects",
-        targetPropertyName="",
-        start=Gf.Vec2d(0.0, 0.0),
-        end=Gf.Vec2d(20.0, 0.0),
-        hovered=False,
-        selected=False,
-        is_relationship_link=True,
-        isDangling=False,
-    )
-
-
 @unittest.skipUnless(_has_graph, "GraphView modules not available")
+
+
 class GraphViewRelationshipHelpersTest(unittest.TestCase):
     def test_populate_node_links_from_prim_copies_metadata(self):
         node = SimpleNamespace(inputLinks=["stale"], outputLinks=["stale"])
@@ -68,35 +90,11 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
             _makeLinkFromUsdData=GraphView._makeLinkFromUsdData,
         )
 
-        with patch(
-            "UsdNoodles.graphView.collect_links_for_prim",
-            return_value=[
-                {
-                    "sourceNodeId": "/Constraint",
-                    "sourcePinName": "sources",
-                    "targetNodeId": "/Driver",
-                    "targetPinName": "",
-                    "is_input_link": False,
-                    "propertyOwnerNodeId": "/Constraint",
-                    "propertyName": "sources",
-                    "is_relationship_link": True,
-                    "sourcePropertyName": "sources",
-                    "targetPropertyName": "",
-                },
-                {
-                    "sourceNodeId": "/Constraint",
-                    "sourcePinName": "affects",
-                    "targetNodeId": "/Driven",
-                    "targetPinName": "",
-                    "is_input_link": False,
-                    "propertyOwnerNodeId": "/Constraint",
-                    "propertyName": "affects",
-                    "is_relationship_link": True,
-                    "sourcePropertyName": "affects",
-                    "targetPropertyName": "",
-                },
-            ],
-        ):
+        records = [
+            collect_record("/Constraint", "sources", "/Driver", ""),
+            collect_record("/Constraint", "affects", "/Driven", ""),
+        ]
+        with patched_collect_links(return_value=records):
             GraphView._populateNodeLinksFromPrim(view, node, MagicMock())
 
         self.assertEqual(len(node.inputLinks), 0)
@@ -145,41 +143,12 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         # connection cache is rebuilt, so the cache reflects the current links.
         view.nodeGraph.syncLinksFromModels.assert_called_once_with(view.links)
 
-    def _make_back_ref_view(self, stage, nodes, links=None):
-        """Build a SimpleNamespace view shaped for _addBackReferenceDanglingLinks."""
-        view = SimpleNamespace(
-            links=list(links or []),
-            nodes=dict(nodes),
-            nodeGraph=SimpleNamespace(getStage=MagicMock(return_value=stage)),
-            _backReferenceLinkDataCache=None,
-            _setupDanglingLinkEndpoint=MagicMock(),
-            _makeLinkFromUsdData=lambda d: SimpleNamespace(
-                sourceNodeId=d["sourceNodeId"],
-                sourcePort=d.get("sourcePinName", ""),
-                targetNodeId=d["targetNodeId"],
-                targetPort=d.get("targetPinName", ""),
-                sourcePropertyName=d.get("sourcePropertyName", ""),
-                targetPropertyName=d.get("targetPropertyName", ""),
-                isDangling=False,
-            ),
-        )
-        view._invalidateBackReferenceLinkDataCache = (
-            lambda: GraphView._invalidateBackReferenceLinkDataCache(view)
-        )
-        return view
-
     def test_add_back_reference_swallows_collect_links_runtime_error(self):
         """RuntimeError from collect_links_for_prim must not surface; loop continues."""
-        prim_a = MagicMock()
-        prim_a.GetPath.return_value = "/A"
-        stage = MagicMock()
-        stage.Traverse.return_value = [prim_a]
-        view = self._make_back_ref_view(stage, nodes={"/Present": SimpleNamespace()})
+        stage = back_ref_stage("/A")
+        view = make_back_ref_view(stage, nodes={"/Present": SimpleNamespace()})
 
-        with patch(
-            "UsdNoodles.graphView.collect_links_for_prim",
-            side_effect=RuntimeError("usd boom"),
-        ):
+        with patched_collect_links(side_effect=RuntimeError("usd boom")):
             GraphView._addBackReferenceDanglingLinks(view)
 
         self.assertEqual(view.links, [])
@@ -187,56 +156,38 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         self.assertEqual(view._backReferenceLinkDataCache, {})
 
     def test_add_back_reference_swallows_collect_links_type_error(self):
-        prim_a = MagicMock()
-        prim_a.GetPath.return_value = "/A"
-        stage = MagicMock()
-        stage.Traverse.return_value = [prim_a]
-        view = self._make_back_ref_view(stage, nodes={"/Present": SimpleNamespace()})
+        stage = back_ref_stage("/A")
+        view = make_back_ref_view(stage, nodes={"/Present": SimpleNamespace()})
 
-        with patch(
-            "UsdNoodles.graphView.collect_links_for_prim",
-            side_effect=TypeError("bad type"),
-        ):
+        with patched_collect_links(side_effect=TypeError("bad type")):
             GraphView._addBackReferenceDanglingLinks(view)
 
         self.assertEqual(view.links, [])
 
     def test_add_back_reference_swallows_collect_links_attribute_error(self):
-        prim_a = MagicMock()
-        prim_a.GetPath.return_value = "/A"
-        stage = MagicMock()
-        stage.Traverse.return_value = [prim_a]
-        view = self._make_back_ref_view(stage, nodes={"/Present": SimpleNamespace()})
+        stage = back_ref_stage("/A")
+        view = make_back_ref_view(stage, nodes={"/Present": SimpleNamespace()})
 
-        with patch(
-            "UsdNoodles.graphView.collect_links_for_prim",
-            side_effect=AttributeError("no attr"),
-        ):
+        with patched_collect_links(side_effect=AttributeError("no attr")):
             GraphView._addBackReferenceDanglingLinks(view)
 
         self.assertEqual(view.links, [])
 
     def test_add_back_reference_present_is_source_branch(self):
         """Absent prim's link with present-prim source → output-side dangling link."""
-        absent_prim = MagicMock()
-        absent_prim.GetPath.return_value = "/Absent"
-        stage = MagicMock()
-        stage.Traverse.return_value = [absent_prim]
+        stage = back_ref_stage("/Absent")
         present_node = SimpleNamespace(id="/Present")
-        view = self._make_back_ref_view(stage, nodes={"/Present": present_node})
+        view = make_back_ref_view(stage, nodes={"/Present": present_node})
 
-        link_data = {
-            "sourceNodeId": "/Present",
-            "sourcePinName": "out",
-            "targetNodeId": "/Absent",
-            "targetPinName": "inp",
-            "sourcePropertyName": "outputs:out",
-            "targetPropertyName": "inputs:inp",
-        }
-        with patch(
-            "UsdNoodles.graphView.collect_links_for_prim",
-            return_value=[link_data],
-        ):
+        link_data = back_ref_link_data(
+            "/Present",
+            "out",
+            "/Absent",
+            "inp",
+            source_property="outputs:out",
+            target_property="inputs:inp",
+        )
+        with patched_collect_links(return_value=[link_data]):
             GraphView._addBackReferenceDanglingLinks(view)
 
         self.assertEqual(len(view.links), 1)
@@ -250,25 +201,19 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
 
     def test_add_back_reference_present_is_target_branch(self):
         """Absent prim's link with present-prim target → input-side dangling link."""
-        absent_prim = MagicMock()
-        absent_prim.GetPath.return_value = "/Absent"
-        stage = MagicMock()
-        stage.Traverse.return_value = [absent_prim]
+        stage = back_ref_stage("/Absent")
         present_node = SimpleNamespace(id="/Present")
-        view = self._make_back_ref_view(stage, nodes={"/Present": present_node})
+        view = make_back_ref_view(stage, nodes={"/Present": present_node})
 
-        link_data = {
-            "sourceNodeId": "/Absent",
-            "sourcePinName": "out",
-            "targetNodeId": "/Present",
-            "targetPinName": "inp",
-            "sourcePropertyName": "outputs:out",
-            "targetPropertyName": "inputs:inp",
-        }
-        with patch(
-            "UsdNoodles.graphView.collect_links_for_prim",
-            return_value=[link_data],
-        ):
+        link_data = back_ref_link_data(
+            "/Absent",
+            "out",
+            "/Present",
+            "inp",
+            source_property="outputs:out",
+            target_property="inputs:inp",
+        )
+        with patched_collect_links(return_value=[link_data]):
             GraphView._addBackReferenceDanglingLinks(view)
 
         self.assertEqual(len(view.links), 1)
@@ -282,60 +227,43 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
 
     def test_add_back_reference_skips_when_both_endpoints_absent(self):
         """Links between two absent prims are not surfaced."""
-        absent_prim = MagicMock()
-        absent_prim.GetPath.return_value = "/Absent"
-        stage = MagicMock()
-        stage.Traverse.return_value = [absent_prim]
-        view = self._make_back_ref_view(stage, nodes={"/Present": SimpleNamespace()})
+        stage = back_ref_stage("/Absent")
+        view = make_back_ref_view(stage, nodes={"/Present": SimpleNamespace()})
 
-        link_data = {
-            "sourceNodeId": "/OtherAbsent",
-            "sourcePinName": "out",
-            "targetNodeId": "/Absent",
-            "targetPinName": "inp",
-            "sourcePropertyName": "outputs:out",
-            "targetPropertyName": "inputs:inp",
-        }
-        with patch(
-            "UsdNoodles.graphView.collect_links_for_prim",
-            return_value=[link_data],
-        ):
+        link_data = back_ref_link_data(
+            "/OtherAbsent",
+            "out",
+            "/Absent",
+            "inp",
+            source_property="outputs:out",
+            target_property="inputs:inp",
+        )
+        with patched_collect_links(return_value=[link_data]):
             GraphView._addBackReferenceDanglingLinks(view)
 
         self.assertEqual(view.links, [])
 
     def test_add_back_reference_dedups_against_existing_link(self):
         """A back-ref matching an already-added link's full key is skipped."""
-        absent_prim = MagicMock()
-        absent_prim.GetPath.return_value = "/Absent"
-        stage = MagicMock()
-        stage.Traverse.return_value = [absent_prim]
+        stage = back_ref_stage("/Absent")
         present_node = SimpleNamespace(id="/Present")
         # Pre-seed an existing forward-direction link with the same key.
-        existing = SimpleNamespace(
-            sourceNodeId="/Present",
-            sourcePort="out",
-            targetNodeId="/Absent",
-            targetPort="inp",
-            sourcePropertyName="outputs:out",
-            targetPropertyName="inputs:inp",
-        )
-        view = self._make_back_ref_view(
+        existing = graph_link("/Present", "out", "/Absent", "inp",
+                              source_property="outputs:out",
+                              target_property="inputs:inp")
+        view = make_back_ref_view(
             stage, nodes={"/Present": present_node}, links=[existing]
         )
 
-        link_data = {
-            "sourceNodeId": "/Present",
-            "sourcePinName": "out",
-            "targetNodeId": "/Absent",
-            "targetPinName": "inp",
-            "sourcePropertyName": "outputs:out",
-            "targetPropertyName": "inputs:inp",
-        }
-        with patch(
-            "UsdNoodles.graphView.collect_links_for_prim",
-            return_value=[link_data],
-        ):
+        link_data = back_ref_link_data(
+            "/Present",
+            "out",
+            "/Absent",
+            "inp",
+            source_property="outputs:out",
+            target_property="inputs:inp",
+        )
+        with patched_collect_links(return_value=[link_data]):
             GraphView._addBackReferenceDanglingLinks(view)
 
         self.assertEqual(view.links, [existing])
@@ -347,24 +275,21 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         present_prim.GetPath.return_value = "/Present"
         stage = MagicMock()
         stage.Traverse.return_value = [present_prim]
-        view = self._make_back_ref_view(stage, nodes={"/Present": SimpleNamespace()})
+        view = make_back_ref_view(stage, nodes={"/Present": SimpleNamespace()})
 
         # Return non-empty data so the present prim's path IS cached, then
         # verify the use-time loop still skips it (no _setupDangling call,
         # no link appended) because membership is checked per call, not per
         # cache build.
-        link_data = {
-            "sourceNodeId": "/Present",
-            "sourcePinName": "out",
-            "targetNodeId": "/Other",
-            "targetPinName": "inp",
-            "sourcePropertyName": "outputs:out",
-            "targetPropertyName": "inputs:inp",
-        }
-        with patch(
-            "UsdNoodles.graphView.collect_links_for_prim",
-            return_value=[link_data],
-        ):
+        link_data = back_ref_link_data(
+            "/Present",
+            "out",
+            "/Other",
+            "inp",
+            source_property="outputs:out",
+            target_property="inputs:inp",
+        )
+        with patched_collect_links(return_value=[link_data]):
             GraphView._addBackReferenceDanglingLinks(view)
 
         self.assertEqual(view.links, [])
@@ -385,11 +310,8 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
 
     def test_add_back_reference_reuses_cache_across_calls(self):
         """Second call must NOT re-traverse the stage (cache is reused)."""
-        absent_prim = MagicMock()
-        absent_prim.GetPath.return_value = "/Absent"
-        stage = MagicMock()
-        stage.Traverse.return_value = [absent_prim]
-        view = self._make_back_ref_view(stage, nodes={"/Present": SimpleNamespace()})
+        stage = back_ref_stage("/Absent")
+        view = make_back_ref_view(stage, nodes={"/Present": SimpleNamespace()})
 
         collect = MagicMock(return_value=[])
         with patch("UsdNoodles.graphView.collect_links_for_prim", collect):
@@ -403,13 +325,10 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
 
     def test_invalidate_back_reference_cache_forces_retraversal(self):
         """After invalidation, the next call must re-traverse."""
-        absent_prim = MagicMock()
-        absent_prim.GetPath.return_value = "/Absent"
-        stage = MagicMock()
-        stage.Traverse.return_value = [absent_prim]
-        view = self._make_back_ref_view(stage, nodes={"/Present": SimpleNamespace()})
+        stage = back_ref_stage("/Absent")
+        view = make_back_ref_view(stage, nodes={"/Present": SimpleNamespace()})
 
-        with patch("UsdNoodles.graphView.collect_links_for_prim", return_value=[]):
+        with patched_collect_links(return_value=[]):
             GraphView._addBackReferenceDanglingLinks(view)
             GraphView._invalidateBackReferenceLinkDataCache(view)
             self.assertIsNone(view._backReferenceLinkDataCache)
@@ -420,36 +339,30 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
     def test_add_back_reference_shared_absent_prim_to_multiple_present(self):
         """A single absent prim with links to two different present prims
         produces two distinct back-reference dangling links."""
-        absent_prim = MagicMock()
-        absent_prim.GetPath.return_value = "/Absent"
-        stage = MagicMock()
-        stage.Traverse.return_value = [absent_prim]
+        stage = back_ref_stage("/Absent")
         present_a = SimpleNamespace(id="/PresentA")
         present_b = SimpleNamespace(id="/PresentB")
-        view = self._make_back_ref_view(
+        view = make_back_ref_view(
             stage, nodes={"/PresentA": present_a, "/PresentB": present_b}
         )
 
-        link_to_a = {
-            "sourceNodeId": "/PresentA",
-            "sourcePinName": "out",
-            "targetNodeId": "/Absent",
-            "targetPinName": "inp_a",
-            "sourcePropertyName": "outputs:out",
-            "targetPropertyName": "inputs:inp_a",
-        }
-        link_to_b = {
-            "sourceNodeId": "/PresentB",
-            "sourcePinName": "out",
-            "targetNodeId": "/Absent",
-            "targetPinName": "inp_b",
-            "sourcePropertyName": "outputs:out",
-            "targetPropertyName": "inputs:inp_b",
-        }
-        with patch(
-            "UsdNoodles.graphView.collect_links_for_prim",
-            return_value=[link_to_a, link_to_b],
-        ):
+        link_to_a = back_ref_link_data(
+            "/PresentA",
+            "out",
+            "/Absent",
+            "inp_a",
+            source_property="outputs:out",
+            target_property="inputs:inp_a",
+        )
+        link_to_b = back_ref_link_data(
+            "/PresentB",
+            "out",
+            "/Absent",
+            "inp_b",
+            source_property="outputs:out",
+            target_property="inputs:inp_b",
+        )
+        with patched_collect_links(return_value=[link_to_a, link_to_b]):
             GraphView._addBackReferenceDanglingLinks(view)
 
         self.assertEqual(len(view.links), 2)
@@ -461,24 +374,18 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
     def test_add_back_reference_self_referencing_absent_prim_is_skipped(self):
         """An absent prim whose connection points at itself (both endpoints
         absent) is not surfaced — there is no present-prim port to attach to."""
-        absent_prim = MagicMock()
-        absent_prim.GetPath.return_value = "/Absent"
-        stage = MagicMock()
-        stage.Traverse.return_value = [absent_prim]
-        view = self._make_back_ref_view(stage, nodes={"/Present": SimpleNamespace()})
+        stage = back_ref_stage("/Absent")
+        view = make_back_ref_view(stage, nodes={"/Present": SimpleNamespace()})
 
-        self_link = {
-            "sourceNodeId": "/Absent",
-            "sourcePinName": "out",
-            "targetNodeId": "/Absent",
-            "targetPinName": "inp",
-            "sourcePropertyName": "outputs:out",
-            "targetPropertyName": "inputs:inp",
-        }
-        with patch(
-            "UsdNoodles.graphView.collect_links_for_prim",
-            return_value=[self_link],
-        ):
+        self_link = back_ref_link_data(
+            "/Absent",
+            "out",
+            "/Absent",
+            "inp",
+            source_property="outputs:out",
+            target_property="inputs:inp",
+        )
+        with patched_collect_links(return_value=[self_link]):
             GraphView._addBackReferenceDanglingLinks(view)
 
         self.assertEqual(view.links, [])
@@ -491,69 +398,27 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         pass; the back-ref scan must not double-add. We verify by including a
         present-prim self-link in the existing self.links keyset — the scan
         sees the absent prim's view of any data and must dedup correctly."""
-        absent_prim = MagicMock()
-        absent_prim.GetPath.return_value = "/Absent"
-        stage = MagicMock()
-        stage.Traverse.return_value = [absent_prim]
+        stage = back_ref_stage("/Absent")
         present = SimpleNamespace(id="/Present")
         # forward pass already added the present prim's self-link
-        existing_self = SimpleNamespace(
-            sourceNodeId="/Present",
-            sourcePort="out",
-            targetNodeId="/Present",
-            targetPort="inp",
-            sourcePropertyName="outputs:out",
-            targetPropertyName="inputs:inp",
-        )
-        view = self._make_back_ref_view(
+        existing_self = graph_link("/Present", "out", "/Present", "inp",
+                                   source_property="outputs:out",
+                                   target_property="inputs:inp")
+        view = make_back_ref_view(
             stage, nodes={"/Present": present}, links=[existing_self]
         )
 
         # Absent prim has no links of its own; back-ref must add nothing.
-        with patch("UsdNoodles.graphView.collect_links_for_prim", return_value=[]):
+        with patched_collect_links(return_value=[]):
             GraphView._addBackReferenceDanglingLinks(view)
 
         self.assertEqual(view.links, [existing_self])
         view._setupDanglingLinkEndpoint.assert_not_called()
 
     def test_create_connection_preserves_relationship_property_metadata(self):
-        stage = MagicMock()
-        root_layer = MagicMock()
-        edit_target = MagicMock()
-        edit_target.GetLayer.return_value = root_layer
-        stage.GetEditTarget.return_value = edit_target
-        stage.GetRootLayer.return_value = root_layer
-        library = MagicMock()
-        library.create_connection.return_value = True
-        output_node = SimpleNamespace(outputLinks=[])
-        input_node = SimpleNamespace(inputLinks=[])
-        view = SimpleNamespace(
-            _resolveConnectionEndpoints=MagicMock(
-                return_value=(
-                    output_node,
-                    input_node,
-                    MagicMock(),
-                    MagicMock(),
-                    library,
-                )
-            ),
-            nodeGraph=SimpleNamespace(getStage=MagicMock(return_value=stage)),
-            _noticeHandler=SimpleNamespace(setEnabled=MagicMock()),
-            _showPopupMessage=MagicMock(),
-            _abortConnection=MagicMock(),
-            _deleteOldConnection=MagicMock(return_value=True),
-            _addLinkToGraph=MagicMock(),
-            _clearReconnectState=MagicMock(),
-            _invalidateBackReferenceLinkDataCache=MagicMock(),
-            _reconnectingLink=False,
-            _reconnectOldSourceNodeId=None,
-            _reconnectOldSourcePort=None,
-            _reconnectOldTargetNodeId=None,
-            _reconnectOldTargetPort=None,
-            update=MagicMock(),
-        )
+        view, library, output_node, input_node = make_connection_view()
 
-        with patch("UsdNoodles.graphView._push_undo_command"):
+        with patched_graph_symbol("_push_undo_command"):
             GraphView._createConnection(
                 view,
                 "/ConstraintA",
@@ -580,43 +445,11 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         """When _deleteOldConnection returns False (implicit replacement by
         create_connection), the reconnect must still succeed: link added,
         undo pushed, no abort."""
-        stage = MagicMock()
-        root_layer = MagicMock()
-        edit_target = MagicMock()
-        edit_target.GetLayer.return_value = root_layer
-        stage.GetEditTarget.return_value = edit_target
-        stage.GetRootLayer.return_value = root_layer
-        library = MagicMock()
-        library.create_connection.return_value = True
-        output_node = SimpleNamespace(outputLinks=[])
-        input_node = SimpleNamespace(inputLinks=[])
-        view = SimpleNamespace(
-            _resolveConnectionEndpoints=MagicMock(
-                return_value=(
-                    output_node,
-                    input_node,
-                    MagicMock(),
-                    MagicMock(),
-                    library,
-                )
-            ),
-            nodeGraph=SimpleNamespace(getStage=MagicMock(return_value=stage)),
-            _noticeHandler=SimpleNamespace(setEnabled=MagicMock()),
-            _showPopupMessage=MagicMock(),
-            _abortConnection=MagicMock(),
-            _deleteOldConnection=MagicMock(return_value=False),
-            _addLinkToGraph=MagicMock(),
-            _clearReconnectState=MagicMock(),
-            _invalidateBackReferenceLinkDataCache=MagicMock(),
-            _reconnectingLink=False,
-            _reconnectOldSourceNodeId=None,
-            _reconnectOldSourcePort=None,
-            _reconnectOldTargetNodeId=None,
-            _reconnectOldTargetPort=None,
-            update=MagicMock(),
+        view, _library, _output_node, _input_node = make_connection_view(
+            delete_old_returns=False
         )
 
-        with patch("UsdNoodles.graphView._push_undo_command") as mock_push:
+        with patched_graph_symbol("_push_undo_command") as mock_push:
             GraphView._createConnection(
                 view,
                 "/C",
@@ -639,41 +472,11 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
 
 
 
-        stage = MagicMock()
-        root_layer = MagicMock()
-        edit_target = MagicMock()
-        edit_target.GetLayer.return_value = root_layer
-        stage.GetEditTarget.return_value = edit_target
-        stage.GetRootLayer.return_value = root_layer
-        library = MagicMock()
-        library.create_connection.return_value = True
-        output_node = SimpleNamespace(outputLinks=[])
-        input_node = SimpleNamespace(inputLinks=[])
-        view = SimpleNamespace(
-            _resolveConnectionEndpoints=MagicMock(
-                return_value=(
-                    output_node,
-                    input_node,
-                    MagicMock(),
-                    MagicMock(),
-                    library,
-                )
-            ),
-            nodeGraph=SimpleNamespace(getStage=MagicMock(return_value=stage)),
-            _noticeHandler=SimpleNamespace(setEnabled=MagicMock()),
-            _abortConnection=MagicMock(),
-            _addLinkToGraph=MagicMock(),
-            _clearReconnectState=MagicMock(),
-            _invalidateBackReferenceLinkDataCache=MagicMock(),
-            _reconnectingLink=False,
-            _reconnectOldSourceNodeId=None,
-            _reconnectOldSourcePort=None,
-            _reconnectOldTargetNodeId=None,
-            _reconnectOldTargetPort=None,
-            update=MagicMock(),
+        view, _library, _output_node, _input_node = make_connection_view(
+            show_popup=False
         )
 
-        with patch("UsdNoodles.graphView._push_undo_command"):
+        with patched_graph_symbol("_push_undo_command"):
             GraphView._createConnection(
                 view,
                 "/A",
@@ -716,7 +519,7 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
             _invalidateBackReferenceLinkDataCache=MagicMock(),
         )
 
-        with patch("UsdNoodles.graphView._push_undo_command"):
+        with patched_graph_symbol("_push_undo_command"):
             GraphView._deleteConnection(
                 view,
                 "/A",
@@ -731,34 +534,14 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         view._invalidateBackReferenceLinkDataCache.assert_called_once()
 
     def test_add_node_from_dangling_link_uses_population_helper(self):
-        prim = MagicMock()
-        prim.IsValid.return_value = True
-        prim.GetTypeName.return_value = "RigJoint"
-        prim.GetName.return_value = "Missing"
+        prim = make_node_prim("Missing", type_name="RigJoint")
         node = SimpleNamespace(id="/Missing", inputLinks=[], outputLinks=[], zOrder=0)
-        stage = MagicMock()
-        stage.GetPrimAtPath.return_value = prim
-        view = SimpleNamespace(
-            _usdviewApi=SimpleNamespace(stage=stage),
-            _showPopupMessage=MagicMock(),
-            _nodeFactory=SimpleNamespace(
-                create_node_from_prim=MagicMock(return_value=node),
-            ),
-            _populateNodeLinksFromPrim=MagicMock(),
-            _placeAddedNodes=MagicMock(return_value=[]),
-            _viewportAnchor=MagicMock(return_value=(10.0, 20.0)),
-            _nextZOrder=5,
-            fontAtlas=None,
-            nodeGraph=SimpleNamespace(
-                _calculateNodeSize=MagicMock(),
-                syncSelectionToPrimTree=False,
-            ),
-            textRenderer=SimpleNamespace(calculateTextWidth=MagicMock()),
+        view = make_node_expansion_view(
+            stage=make_stage_at_path(prim),
+            create_node_from_prim=MagicMock(return_value=node),
             nodes={},
-            _clearRenderCache=MagicMock(),
-            update=MagicMock(),
-            linksChanged=False,
-            textChanged=False,
+            viewport_anchor=(10.0, 20.0),
+            real_placement=False,
         )
         link = SimpleNamespace(
             isDangling=True,
@@ -812,36 +595,12 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
             outputLinks=[],
             setDisplayPosition=MagicMock(side_effect=_record_position),
         )
-        prim = MagicMock()
-        prim.IsValid.return_value = True
-        prim.GetTypeName.return_value = "Material"
-        prim.GetName.return_value = "Mat"
-        stage = MagicMock()
-        stage.GetPrimAtPath.return_value = prim
-        view = SimpleNamespace(
-            _usdviewApi=SimpleNamespace(stage=stage),
-            _showPopupMessage=MagicMock(),
-            _nodeFactory=SimpleNamespace(
-                create_node_from_prim=MagicMock(return_value=node),
-            ),
-            _populateNodeLinksFromPrim=MagicMock(),
-            _viewportAnchor=MagicMock(return_value=(5000.0, 5000.0)),
-            _nextZOrder=5,
-            fontAtlas=None,
-            nodeGraph=SimpleNamespace(
-                _calculateNodeSize=MagicMock(),
-                syncSelectionToPrimTree=False,
-            ),
-            textRenderer=SimpleNamespace(calculateTextWidth=MagicMock()),
+        prim = make_node_prim("Mat", type_name="Material")
+        view = make_node_expansion_view(
+            stage=make_stage_at_path(prim),
+            create_node_from_prim=MagicMock(return_value=node),
             nodes={"/Mesh": present},
-            _clearRenderCache=MagicMock(),
-            update=MagicMock(),
-            linksChanged=False,
-            textChanged=False,
-        )
-        # Bind the real placement helper onto the fake view.
-        view._placeAddedNodes = lambda nodes, fallback=None: (
-            GraphView._placeAddedNodes(view, nodes, fallback=fallback)
+            viewport_anchor=(5000.0, 5000.0),
         )
         link = SimpleNamespace(
             isDangling=True,
@@ -898,39 +657,16 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
             created[node.id] = node
             return node
 
-        def _prim_at_path(path):
-            prim = MagicMock()
-            prim.IsValid.return_value = True
-            prim.GetTypeName.return_value = "Material"
-            prim.GetName.return_value = str(path).rsplit("/", 1)[-1]
-            return prim
-
-        stage = MagicMock()
-        stage.GetPrimAtPath.side_effect = _prim_at_path
-        view = SimpleNamespace(
-            _usdviewApi=SimpleNamespace(stage=stage),
-            _showPopupMessage=MagicMock(),
-            _nodeFactory=SimpleNamespace(
-                create_node_from_prim=MagicMock(side_effect=_make_node),
+        view = make_node_expansion_view(
+            stage=make_stage_at_path(
+                side_effect=lambda path: make_node_prim(
+                    str(path).rsplit("/", 1)[-1], type_name="Material"
+                )
             ),
-            _populateNodeLinksFromPrim=MagicMock(),
-            _viewportAnchor=MagicMock(return_value=(5000.0, 5000.0)),
-            _nextZOrder=5,
-            fontAtlas=None,
-            nodeGraph=SimpleNamespace(
-                _calculateNodeSize=MagicMock(),
-                syncSelectionToPrimTree=False,
-            ),
-            textRenderer=SimpleNamespace(calculateTextWidth=MagicMock()),
+            create_node_from_prim=MagicMock(side_effect=_make_node),
             nodes={"/Mesh": present},
+            viewport_anchor=(5000.0, 5000.0),
             links=[],
-            _clearRenderCache=MagicMock(),
-            update=MagicMock(),
-            linksChanged=False,
-            textChanged=False,
-        )
-        view._placeAddedNodes = lambda nodes, fallback=None: (
-            GraphView._placeAddedNodes(view, nodes, fallback=fallback)
         )
         view._collectSiblingDanglingLinks = lambda seed: (
             GraphView._collectSiblingDanglingLinks(view, seed)
@@ -939,16 +675,8 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
             GraphView._addNodeFromDanglingLink(view, link)
         )
         view.links = [
-            SimpleNamespace(
-                isDangling=True,
-                sourceNodeId="/Mesh",
-                sourcePort="material:binding",
-                sourcePropertyName="material:binding",
-                targetNodeId=f"/Mat{i}",
-                targetPort="",
-                targetPropertyName="",
-                data_sourceNodeId="/Mesh",
-                data_targetNodeId=f"/Mat{i}",
+            make_dangling_link(
+                "/Mesh", "material:binding", f"/Mat{i}", with_endpoints=True
             )
             for i in range(3)
         ]
@@ -982,52 +710,14 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         # LinkData objects that all share (sourceNodeId, sourcePort) on the
         # present side.  Expansion needs every sibling, not just the first
         # one a port-hit search returns.
-        seed = SimpleNamespace(
-            isDangling=True,
-            sourceNodeId="/Mesh",
-            sourcePort="material:binding",
-            sourcePropertyName="material:binding",
-            targetNodeId="/Mat1",
-            targetPort="",
-            targetPropertyName="",
-        )
-        sibling_b = SimpleNamespace(
-            isDangling=True,
-            sourceNodeId="/Mesh",
-            sourcePort="material:binding",
-            sourcePropertyName="material:binding",
-            targetNodeId="/Mat2",
-            targetPort="",
-            targetPropertyName="",
-        )
-        sibling_c = SimpleNamespace(
-            isDangling=True,
-            sourceNodeId="/Mesh",
-            sourcePort="material:binding",
-            sourcePropertyName="material:binding",
-            targetNodeId="/Mat3",
-            targetPort="",
-            targetPropertyName="",
-        )
+        seed = make_dangling_link("/Mesh", "material:binding", "/Mat1")
+        sibling_b = make_dangling_link("/Mesh", "material:binding", "/Mat2")
+        sibling_c = make_dangling_link("/Mesh", "material:binding", "/Mat3")
         # A dangling link on a DIFFERENT relationship on the same prim must
         # not be folded into this expansion.
-        unrelated = SimpleNamespace(
-            isDangling=True,
-            sourceNodeId="/Mesh",
-            sourcePort="proxyPrim",
-            sourcePropertyName="proxyPrim",
-            targetNodeId="/Proxy",
-            targetPort="",
-            targetPropertyName="",
-        )
-        non_dangling = SimpleNamespace(
-            isDangling=False,
-            sourceNodeId="/Mesh",
-            sourcePort="material:binding",
-            sourcePropertyName="material:binding",
-            targetNodeId="/Mat4",
-            targetPort="",
-            targetPropertyName="",
+        unrelated = make_dangling_link("/Mesh", "proxyPrim", "/Proxy")
+        non_dangling = make_dangling_link(
+            "/Mesh", "material:binding", "/Mat4", is_dangling=False
         )
         view = SimpleNamespace(
             links=[non_dangling, seed, sibling_b, unrelated, sibling_c],
@@ -1043,33 +733,9 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         # bring in every missing target, not just the first one
         # ``_findDanglingLinkAtPort`` happens to return.
         present_node = SimpleNamespace()
-        seed = SimpleNamespace(
-            isDangling=True,
-            sourceNodeId="/Mesh",
-            sourcePort="material:binding",
-            sourcePropertyName="material:binding",
-            targetNodeId="/Mat1",
-            targetPort="",
-            targetPropertyName="",
-        )
-        sibling_b = SimpleNamespace(
-            isDangling=True,
-            sourceNodeId="/Mesh",
-            sourcePort="material:binding",
-            sourcePropertyName="material:binding",
-            targetNodeId="/Mat2",
-            targetPort="",
-            targetPropertyName="",
-        )
-        sibling_c = SimpleNamespace(
-            isDangling=True,
-            sourceNodeId="/Mesh",
-            sourcePort="material:binding",
-            sourcePropertyName="material:binding",
-            targetNodeId="/Mat3",
-            targetPort="",
-            targetPropertyName="",
-        )
+        seed = make_dangling_link("/Mesh", "material:binding", "/Mat1")
+        sibling_b = make_dangling_link("/Mesh", "material:binding", "/Mat2")
+        sibling_c = make_dangling_link("/Mesh", "material:binding", "/Mat3")
         view = SimpleNamespace(
             links=[seed, sibling_b, sibling_c],
             nodes={"/Mesh": present_node},
@@ -1091,19 +757,16 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
     def test_find_dangling_link_at_port_hits_present_endpoint(self):
         renderer = SimpleNamespace(getPortWidth=MagicMock(return_value=8.0))
         node = SimpleNamespace(renderer=renderer)
-        present_link = SimpleNamespace(
-            isDangling=True,
-            sourceNodeId="/Missing",
-            sourcePort="out",
-            targetNodeId="/Present",
-            targetPort="inp",
+        present_link = make_dangling_link(
+            "/Missing", "out", "/Present", "inp", with_properties=False
         )
-        non_dangling_link = SimpleNamespace(
-            isDangling=False,
-            sourceNodeId="/Present",
-            sourcePort="out",
-            targetNodeId="/Other",
-            targetPort="inp",
+        non_dangling_link = make_dangling_link(
+            "/Present",
+            "out",
+            "/Other",
+            "inp",
+            with_properties=False,
+            is_dangling=False,
         )
         view = SimpleNamespace(
             links=[non_dangling_link, present_link],
@@ -1123,13 +786,13 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
     def test_find_dangling_link_at_port_skips_when_both_endpoints_missing(self):
         view = SimpleNamespace(
             links=[
-                SimpleNamespace(
-                    isDangling=True,
-                    sourceNodeId="/MissingA",
-                    sourcePort="out",
-                    targetNodeId="/MissingB",
-                    targetPort="inp",
-                ),
+                make_dangling_link(
+                    "/MissingA",
+                    "out",
+                    "/MissingB",
+                    "inp",
+                    with_properties=False,
+                )
             ],
             nodes={},
             defaultRenderer=None,
@@ -1174,192 +837,31 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         self.assertEqual(added_node_ids, ["/Node"])
 
     def test_add_nodes_from_prim_tree_selection_processes_all_selected(self):
-        def _make_prim(path):
-            sdf_path = MagicMock()
-            sdf_path.pathString = path
-            sdf_path.__str__ = MagicMock(return_value=path)
-            prim = MagicMock()
-            prim.IsValid.return_value = True
-            prim.GetPath.return_value = sdf_path
-            prim.GetTypeName.return_value = "Shader"
-            prim.GetName.return_value = path.rsplit("/", 1)[-1]
-            return prim, sdf_path
-
-        driver_prim, _ = _make_prim("/Scope/DriverNode")
-        driven_prim, _ = _make_prim("/Scope/DrivenNode")
-
-        added_paths = []
-
-        def fake_add(prim, _stage, addedNodeIds):
-            path = str(prim.GetPath())
-            added_paths.append(path)
-            view.nodes[path] = SimpleNamespace(
-                id=path,
-                selected=False,
-                position=Gf.Vec2d(0.0, 0.0),
-                size=Gf.Vec2d(10.0, 10.0),
-            )
-            addedNodeIds.append(path)
-            return True
-
-        selection = SimpleNamespace(
-            getPrims=MagicMock(return_value=[driver_prim, driven_prim]),
-        )
-        dataModel = SimpleNamespace(selection=selection)
-        view = SimpleNamespace(
-            _usdviewApi=SimpleNamespace(dataModel=dataModel, stage=MagicMock()),
-            _lastPrimTreeSelection=[],
-            _showPopupMessage=MagicMock(),
-            nodes={},
-            _selectedNodes=set(),
-            _addPrimAsNode=MagicMock(side_effect=fake_add),
-            _getContainerChildNodes=MagicMock(return_value=[]),
-            nodeGraph=SimpleNamespace(syncSelectionToPrimTree=False),
-            _clearRenderCache=MagicMock(),
-            textRenderer=SimpleNamespace(resetPositionCaches=MagicMock()),
-            _nodeRenderManager=SimpleNamespace(resetNodeQuadCaches=MagicMock()),
-            _nodeTransformFrame=SimpleNamespace(reset=MagicMock()),
-            # addNodesFromPrimTreeSelection places the freshly added nodes
-            # and resets the text + icon position caches.
-            _placeAddedNodes=MagicMock(return_value=[]),
-            _cppIconRenderer=SimpleNamespace(resetPositionCaches=MagicMock()),
-            _viewportAnchor=MagicMock(return_value=(0.0, 0.0)),
-            _isVisible=MagicMock(return_value=True),
-            _frameNodeBounds=MagicMock(),
-            update=MagicMock(),
-            linksChanged=False,
-            textChanged=False,
-        )
+        driver_prim = make_sdf_prim("/Scope/DriverNode")
+        driven_prim = make_sdf_prim("/Scope/DrivenNode")
+        view, added_paths = make_prim_tree_view([driver_prim, driven_prim])
 
         GraphView.addNodesFromPrimTreeSelection(view)
 
         self.assertEqual(added_paths, ["/Scope/DriverNode", "/Scope/DrivenNode"])
         view._showPopupMessage.assert_called_with("Added 2 node(s)")
-
-
-
-
-
         view._frameNodeBounds.assert_called_once()
 
     def test_add_nodes_from_prim_tree_selection_deduplicates(self):
-        sdf_path = MagicMock()
-        sdf_path.pathString = "/Scope/Node"
-        sdf_path.__str__ = MagicMock(return_value="/Scope/Node")
-        prim = MagicMock()
-        prim.IsValid.return_value = True
-        prim.GetPath.return_value = sdf_path
-        prim.GetTypeName.return_value = "Shader"
-
-        added_paths = []
-
-        def fake_add(p, _stage, addedNodeIds):
-            path = str(p.GetPath())
-            added_paths.append(path)
-            view.nodes[path] = SimpleNamespace(
-                id=path,
-                selected=False,
-                position=Gf.Vec2d(0.0, 0.0),
-                size=Gf.Vec2d(10.0, 10.0),
-            )
-            addedNodeIds.append(path)
-            return True
-
-        selection = SimpleNamespace(
-            getPrims=MagicMock(return_value=[prim, prim]),
-        )
-        dataModel = SimpleNamespace(selection=selection)
-        view = SimpleNamespace(
-            _usdviewApi=SimpleNamespace(dataModel=dataModel, stage=MagicMock()),
-            _lastPrimTreeSelection=[],
-            _showPopupMessage=MagicMock(),
-            nodes={},
-            _selectedNodes=set(),
-            _addPrimAsNode=MagicMock(side_effect=fake_add),
-            _getContainerChildNodes=MagicMock(return_value=[]),
-            nodeGraph=SimpleNamespace(syncSelectionToPrimTree=False),
-            _clearRenderCache=MagicMock(),
-            textRenderer=SimpleNamespace(resetPositionCaches=MagicMock()),
-            _nodeRenderManager=SimpleNamespace(resetNodeQuadCaches=MagicMock()),
-            _nodeTransformFrame=SimpleNamespace(reset=MagicMock()),
-            # addNodesFromPrimTreeSelection places the freshly added nodes
-            # and resets the text + icon position caches. Missing either of
-            # these makes production raise inside the method's own try/except,
-            # which turns everything below the raise into a vacuous pass.
-            _placeAddedNodes=MagicMock(return_value=[]),
-            _cppIconRenderer=SimpleNamespace(resetPositionCaches=MagicMock()),
-            _viewportAnchor=MagicMock(return_value=(0.0, 0.0)),
-            _isVisible=MagicMock(return_value=True),
-            _frameNodeBounds=MagicMock(),
-            update=MagicMock(),
-            linksChanged=False,
-            textChanged=False,
-        )
+        prim = make_sdf_prim("/Scope/Node")
+        view, added_paths = make_prim_tree_view([prim, prim])
 
         GraphView.addNodesFromPrimTreeSelection(view)
 
         self.assertEqual(added_paths, ["/Scope/Node"])
 
     def test_add_nodes_from_prim_tree_selection_uses_cached_when_richer(self):
-        def _make_prim(path):
-            sdf_path = MagicMock()
-            sdf_path.pathString = path
-            sdf_path.__str__ = MagicMock(return_value=path)
-            prim = MagicMock()
-            prim.IsValid.return_value = True
-            prim.GetPath.return_value = sdf_path
-            prim.GetTypeName.return_value = "Shader"
-            prim.GetName.return_value = path.rsplit("/", 1)[-1]
-            return prim
-
-        driver_prim = _make_prim("/Scope/DriverNode")
-        driven_prim = _make_prim("/Scope/DrivenNode")
-
-        added_paths = []
-
-        def fake_add(p, _stage, addedNodeIds):
-            path = str(p.GetPath())
-            added_paths.append(path)
-            view.nodes[path] = SimpleNamespace(
-                id=path,
-                selected=False,
-                position=Gf.Vec2d(0.0, 0.0),
-                size=Gf.Vec2d(10.0, 10.0),
-            )
-            addedNodeIds.append(path)
-            return True
-
         # Live API returns only one prim (e.g. focus narrowed),
         # but the cached selection captured both.
-        selection = SimpleNamespace(
-            getPrims=MagicMock(return_value=[driver_prim]),
-        )
-        dataModel = SimpleNamespace(selection=selection)
-        view = SimpleNamespace(
-            _usdviewApi=SimpleNamespace(dataModel=dataModel, stage=MagicMock()),
-            _lastPrimTreeSelection=[driver_prim, driven_prim],
-            _showPopupMessage=MagicMock(),
-            nodes={},
-            _selectedNodes=set(),
-            _addPrimAsNode=MagicMock(side_effect=fake_add),
-            _getContainerChildNodes=MagicMock(return_value=[]),
-            nodeGraph=SimpleNamespace(syncSelectionToPrimTree=False),
-            _clearRenderCache=MagicMock(),
-            textRenderer=SimpleNamespace(resetPositionCaches=MagicMock()),
-            _nodeRenderManager=SimpleNamespace(resetNodeQuadCaches=MagicMock()),
-            _nodeTransformFrame=SimpleNamespace(reset=MagicMock()),
-            # addNodesFromPrimTreeSelection places the freshly added nodes
-            # and resets the text + icon position caches. Missing either of
-            # these makes production raise inside the method's own try/except,
-            # which turns everything below the raise into a vacuous pass.
-            _placeAddedNodes=MagicMock(return_value=[]),
-            _cppIconRenderer=SimpleNamespace(resetPositionCaches=MagicMock()),
-            _viewportAnchor=MagicMock(return_value=(0.0, 0.0)),
-            _isVisible=MagicMock(return_value=True),
-            _frameNodeBounds=MagicMock(),
-            update=MagicMock(),
-            linksChanged=False,
-            textChanged=False,
+        driver_prim = make_sdf_prim("/Scope/DriverNode")
+        driven_prim = make_sdf_prim("/Scope/DrivenNode")
+        view, added_paths = make_prim_tree_view(
+            [driver_prim], last_selection=[driver_prim, driven_prim]
         )
 
         GraphView.addNodesFromPrimTreeSelection(view)
@@ -1377,55 +879,12 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         batch is anchored in the viewport instead, so it is visible without
         moving anything.
         """
-        sdf_path = MagicMock()
-        sdf_path.pathString = "/Scope/NewNode"
-        sdf_path.__str__ = MagicMock(return_value="/Scope/NewNode")
-        prim = MagicMock()
-        prim.IsValid.return_value = True
-        prim.GetPath.return_value = sdf_path
-        prim.GetTypeName.return_value = "Shader"
-
-        def fake_add(p, _stage, addedNodeIds):
-            path = str(p.GetPath())
-            view.nodes[path] = SimpleNamespace(
-                id=path,
-                selected=False,
-                position=Gf.Vec2d(0.0, 0.0),
-                size=Gf.Vec2d(10.0, 10.0),
-            )
-            addedNodeIds.append(path)
-            return True
-
-        existing = SimpleNamespace(
-            id="/Scope/Existing",
-            selected=False,
-            position=Gf.Vec2d(4000.0, 9000.0),
-            size=Gf.Vec2d(10.0, 10.0),
-        )
-        selection = SimpleNamespace(getPrims=MagicMock(return_value=[prim]))
-        dataModel = SimpleNamespace(selection=selection)
-        view = SimpleNamespace(
-            _usdviewApi=SimpleNamespace(dataModel=dataModel, stage=MagicMock()),
-            _lastPrimTreeSelection=[],
-            _showPopupMessage=MagicMock(),
+        prim = make_sdf_prim("/Scope/NewNode")
+        existing = make_graph_node("/Scope/Existing", position=(4000.0, 9000.0))
+        view, _added_paths = make_prim_tree_view(
+            [prim],
             nodes={"/Scope/Existing": existing},
-            _selectedNodes=set(),
-            _addPrimAsNode=MagicMock(side_effect=fake_add),
-            _getContainerChildNodes=MagicMock(return_value=[]),
-            nodeGraph=SimpleNamespace(syncSelectionToPrimTree=False),
-            _clearRenderCache=MagicMock(),
-            textRenderer=SimpleNamespace(resetPositionCaches=MagicMock()),
-            _nodeRenderManager=SimpleNamespace(resetNodeQuadCaches=MagicMock()),
-            _nodeTransformFrame=SimpleNamespace(reset=MagicMock()),
-            _placeAddedNodes=MagicMock(return_value=[]),
-            _cppIconRenderer=SimpleNamespace(resetPositionCaches=MagicMock()),
-            _viewportAnchor=MagicMock(return_value=(120.0, 240.0)),
-            # The placed batch lands where the camera is looking.
-            _isVisible=MagicMock(return_value=True),
-            _frameNodeBounds=MagicMock(),
-            update=MagicMock(),
-            linksChanged=False,
-            textChanged=False,
+            viewport_anchor=(120.0, 240.0),
         )
 
         GraphView.addNodesFromPrimTreeSelection(view)
@@ -1451,56 +910,15 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         "the camera never moves" would then mean "added, invisible, and
         unfindable". Visibility, not emptiness, is the gate.
         """
-        sdf_path = MagicMock()
-        sdf_path.pathString = "/Scope/FarAway"
-        sdf_path.__str__ = MagicMock(return_value="/Scope/FarAway")
-        prim = MagicMock()
-        prim.IsValid.return_value = True
-        prim.GetPath.return_value = sdf_path
-        prim.GetTypeName.return_value = "Shader"
-
-        def fake_add(p, _stage, addedNodeIds):
-            path = str(p.GetPath())
-            view.nodes[path] = SimpleNamespace(
-                id=path,
-                selected=False,
-                # An authored position, thousands of units from the camera.
-                position=Gf.Vec2d(40000.0, 40000.0),
-                size=Gf.Vec2d(10.0, 10.0),
-            )
-            addedNodeIds.append(path)
-            return True
-
-        existing = SimpleNamespace(
-            id="/Scope/Existing",
-            selected=False,
-            position=Gf.Vec2d(0.0, 0.0),
-            size=Gf.Vec2d(10.0, 10.0),
-        )
-        selection = SimpleNamespace(getPrims=MagicMock(return_value=[prim]))
-        dataModel = SimpleNamespace(selection=selection)
-        view = SimpleNamespace(
-            _usdviewApi=SimpleNamespace(dataModel=dataModel, stage=MagicMock()),
-            _lastPrimTreeSelection=[],
-            _showPopupMessage=MagicMock(),
+        prim = make_sdf_prim("/Scope/FarAway")
+        existing = make_graph_node("/Scope/Existing")
+        view, _added_paths = make_prim_tree_view(
+            [prim],
             nodes={"/Scope/Existing": existing},
-            _selectedNodes=set(),
-            _addPrimAsNode=MagicMock(side_effect=fake_add),
-            _getContainerChildNodes=MagicMock(return_value=[]),
-            nodeGraph=SimpleNamespace(syncSelectionToPrimTree=False),
-            _clearRenderCache=MagicMock(),
-            textRenderer=SimpleNamespace(resetPositionCaches=MagicMock()),
-            _nodeRenderManager=SimpleNamespace(resetNodeQuadCaches=MagicMock()),
-            _nodeTransformFrame=SimpleNamespace(reset=MagicMock()),
-            _placeAddedNodes=MagicMock(return_value=[]),
-            _cppIconRenderer=SimpleNamespace(resetPositionCaches=MagicMock()),
-            _viewportAnchor=MagicMock(return_value=(0.0, 0.0)),
-            # The authored position is outside the viewport.
-            _isVisible=MagicMock(return_value=False),
-            _frameNodeBounds=MagicMock(),
-            update=MagicMock(),
-            linksChanged=False,
-            textChanged=False,
+            # An authored position, thousands of units from the camera, and
+            # outside the viewport.
+            added_position=(40000.0, 40000.0),
+            is_visible=False,
         )
 
         GraphView.addNodesFromPrimTreeSelection(view)
@@ -1513,22 +931,16 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
 
     def test_update_link_drag_rejects_regular_to_relationship_hover(self):
         temp_link = SimpleNamespace(start=None, end=None)
-        view = SimpleNamespace(
-            zoom=1.0,
-            panX=0.0,
-            panY=0.0,
-            _dragLinkCursorPos=None,
-            _dragLinkSourceIsOutput=True,
-            _dragLinkSourcePort="translate",
-            _dragLinkTempLink=temp_link,
-            _dragLinkValidTarget=True,
-            _dragLinkSyntheticTarget=("old", "sources", False),
-            _dragLinkResolvedTarget=("old", "sources", False, "sources"),
-            _hoveredPort=("constraint", "sources", True),
+        view = make_link_drag_view(
+            temp_link,
+            source_port="translate",
+            source_node="/Driver",
             nodes={"constraint": SimpleNamespace()},
+            valid_target=True,
+            synthetic_target=("old", "sources", False),
+            resolved_target=("old", "sources", False, "sources"),
+            hovered_port=("constraint", "sources", True),
             _getPortPosition=MagicMock(return_value=Gf.Vec2d(5.0, 6.0)),
-            nodeIdUnderCursor="",
-            _dragLinkSourceNode="/Driver",
         )
 
         GraphView._updateLinkDrag(view, QtCore.QPoint(0, 0))
@@ -1539,27 +951,13 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
 
     def test_update_link_drag_creates_prim_target_for_relationship_pin(self):
         temp_link = SimpleNamespace(start=None, end=None, is_relationship_link=True)
-        view = SimpleNamespace(
-            zoom=1.0,
-            panX=0.0,
-            panY=0.0,
-            _dragLinkCursorPos=None,
-            _dragLinkSourceIsOutput=True,
-            _dragLinkSourcePort="sources",
-            _dragLinkTempLink=temp_link,
-            _dragLinkValidTarget=False,
-            _dragLinkSyntheticTarget=None,
-            _dragLinkResolvedTarget=None,
-            _hoveredPort=None,
-            nodes={
-                "driver": SimpleNamespace(
-                    position=Gf.Vec2d(10.0, 12.0),
-                    size=Gf.Vec2d(30.0, 40.0),
-                )
-            },
+        view = make_link_drag_view(
+            temp_link,
+            source_port="sources",
+            source_node="/Constraint",
+            nodes={"driver": make_box_node()},
             _getNodeTopCenterPosition=GraphView._getNodeTopCenterPosition,
-            nodeIdUnderCursor="driver",
-            _dragLinkSourceNode="/Constraint",
+            node_id_under_cursor="driver",
         )
 
         GraphView._updateLinkDrag(view, QtCore.QPoint(1, 2))
@@ -1567,51 +965,6 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         self.assertTrue(view._dragLinkValidTarget)
         self.assertEqual(view._dragLinkSyntheticTarget, ("driver", "", False, ""))
         self.assertEqual(temp_link.end, Gf.Vec2d(25.0, 12.0))
-
-    def _make_temp_link_render_view(self, temp_link, valid_target):
-        """Fake self for _renderTemporaryLink; captures the noodle's free end
-        as it is passed to renderLinks so the prim-target inset is observable."""
-        captured = {}
-
-        def _capture_render(links, *args, **kwargs):
-            captured["free_end"] = (float(links[0].end[0]), float(links[0].end[1]))
-
-        return (
-            SimpleNamespace(
-                _dragLinkValidTarget=valid_target,
-                _hoveredPort=None,
-                _dragLinkSourceIsOutput=True,
-                _dragLinkSourcePort="myRel",
-                _dragLinkTempLink=temp_link,
-                _cachedLinkRelationshipBaseColor=[1.0, 0.5, 0.5, 1.0],
-                _cachedLinkActiveColor=[0.0, 0.0, 1.0, 1.0],
-                _cachedLinkHoveredColor=[1.0, 1.0, 0.0],
-                _cachedLinkSelectedColor=[1.0, 1.0, 0.3],
-                _cachedPortRingThickness=1.0,
-                zoom=1.0,
-                panX=0.0,
-                panY=0.0,
-                width=MagicMock(return_value=800),
-                height=MagicMock(return_value=600),
-                _worldSpaceProjectionMatrix=MagicMock(
-                    return_value=SimpleNamespace(
-                        data=MagicMock(return_value=[0.0] * 16)
-                    )
-                ),
-                _renderConfig=MagicMock(return_value=MagicMock()),
-                linkRenderer=SimpleNamespace(
-                    renderLinks=MagicMock(side_effect=_capture_render)
-                ),
-                _nodeRenderManager=SimpleNamespace(
-                    renderEndpointTriangle=MagicMock(),
-                    renderEndpointCircle=MagicMock(),
-                ),
-                defaultRenderer=SimpleNamespace(
-                    getPortWidth=MagicMock(return_value=8.0)
-                ),
-            ),
-            captured,
-        )
 
     def test_render_temporary_link_insets_prim_target_noodle_to_arrow_base(self):
         """A snapped whole-prim relationship drag draws the preview noodle to the
@@ -1625,7 +978,7 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
             end=Gf.Vec2d(node_top[0], node_top[1]),
             is_relationship_link=True,
         )
-        view, captured = self._make_temp_link_render_view(temp_link, valid_target=True)
+        view, captured = make_temp_link_render_view(temp_link, valid_target=True)
 
         GraphView._renderTemporaryLink(view)
 
@@ -1644,7 +997,7 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
             end=Gf.Vec2d(cursor[0], cursor[1]),
             is_relationship_link=True,
         )
-        view, captured = self._make_temp_link_render_view(temp_link, valid_target=False)
+        view, captured = make_temp_link_render_view(temp_link, valid_target=False)
 
         GraphView._renderTemporaryLink(view)
 
@@ -1653,27 +1006,13 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
 
     def test_update_link_drag_allows_self_prim_target_for_relationship_pin(self):
         temp_link = SimpleNamespace(start=None, end=None, is_relationship_link=True)
-        view = SimpleNamespace(
-            zoom=1.0,
-            panX=0.0,
-            panY=0.0,
-            _dragLinkCursorPos=None,
-            _dragLinkSourceIsOutput=True,
-            _dragLinkSourcePort="sources",
-            _dragLinkTempLink=temp_link,
-            _dragLinkValidTarget=False,
-            _dragLinkSyntheticTarget=None,
-            _dragLinkResolvedTarget=None,
-            _hoveredPort=None,
-            nodes={
-                "/Constraint": SimpleNamespace(
-                    position=Gf.Vec2d(10.0, 12.0),
-                    size=Gf.Vec2d(30.0, 40.0),
-                )
-            },
+        view = make_link_drag_view(
+            temp_link,
+            source_port="sources",
+            source_node="/Constraint",
+            nodes={"/Constraint": make_box_node()},
             _getNodeTopCenterPosition=GraphView._getNodeTopCenterPosition,
-            nodeIdUnderCursor="/Constraint",
-            _dragLinkSourceNode="/Constraint",
+            node_id_under_cursor="/Constraint",
         )
 
         GraphView._updateLinkDrag(view, QtCore.QPoint(1, 2))
@@ -1694,29 +1033,21 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
             targetPropertyName="",
             is_relationship_link=True,
         )
-        target_node = SimpleNamespace(
-            position=Gf.Vec2d(10.0, 20.0),
-            size=Gf.Vec2d(60.0, 90.0),
-        )
-        view = SimpleNamespace(
-            zoom=1.0,
-            panX=0.0,
-            panY=0.0,
-            _dragLinkCursorPos=None,
-            _dragLinkSourceIsOutput=True,
-            _dragLinkSourcePort="sources",
-            _dragLinkTempLink=temp_link,
-            _dragLinkValidTarget=False,
-            _dragLinkSyntheticTarget=None,
-            _dragLinkResolvedTarget=None,
-            _hoveredPort=("/Constraint", "sourceTranslations", False),
-            nodes={"/Constraint": target_node},
+        view = make_link_drag_view(
+            temp_link,
+            source_port="sources",
+            source_node="/Constraint",
+            nodes={
+                "/Constraint": make_box_node(
+                    position=(10.0, 20.0), size=(60.0, 90.0)
+                )
+            },
+            hovered_port=("/Constraint", "sourceTranslations", False),
             _resolvePortPropertyName=MagicMock(
                 return_value="inputs:sourceTranslations"
             ),
             _getLinkEndpointPosition=MagicMock(return_value=Gf.Vec2d(10.0, 72.0)),
-            nodeIdUnderCursor="/Constraint",
-            _dragLinkSourceNode="/Constraint",
+            node_id_under_cursor="/Constraint",
         )
 
         GraphView._updateLinkDrag(view, QtCore.QPoint(10, 72))
@@ -1734,28 +1065,13 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
 
     def test_update_link_drag_recovers_prim_target_when_border_misses_node_hit(self):
         temp_link = SimpleNamespace(start=None, end=None, is_relationship_link=True)
-        view = SimpleNamespace(
-            zoom=1.0,
-            panX=0.0,
-            panY=0.0,
-            _dragLinkCursorPos=None,
-            _dragLinkSourceIsOutput=True,
-            _dragLinkSourcePort="affects",
-            _dragLinkTempLink=temp_link,
-            _dragLinkValidTarget=False,
-            _dragLinkSyntheticTarget=None,
-            _dragLinkResolvedTarget=None,
-            _hoveredPort=None,
-            nodes={
-                "driver": SimpleNamespace(
-                    position=Gf.Vec2d(10.0, 12.0),
-                    size=Gf.Vec2d(30.0, 40.0),
-                )
-            },
+        view = make_link_drag_view(
+            temp_link,
+            source_port="affects",
+            source_node="/Constraint",
+            nodes={"driver": make_box_node()},
             _getNodeTopCenterPosition=GraphView._getNodeTopCenterPosition,
             _getNodeIdAtWorldPos=MagicMock(return_value="driver"),
-            nodeIdUnderCursor="",
-            _dragLinkSourceNode="/Constraint",
         )
 
         GraphView._updateLinkDrag(view, QtCore.QPoint(25, 12))
@@ -1767,23 +1083,15 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
 
     def test_update_link_drag_accepts_any_property_for_relationship_pin(self):
         temp_link = SimpleNamespace(start=None, end=None, is_relationship_link=True)
-        view = SimpleNamespace(
-            zoom=1.0,
-            panX=0.0,
-            panY=0.0,
-            _dragLinkCursorPos=None,
-            _dragLinkSourceIsOutput=True,
-            _dragLinkSourcePort="sources",
-            _dragLinkTempLink=temp_link,
-            _dragLinkValidTarget=False,
-            _dragLinkSyntheticTarget=None,
-            _dragLinkResolvedTarget=None,
-            _hoveredPort=("driver", "translate", False),
+        view = make_link_drag_view(
+            temp_link,
+            source_port="sources",
+            source_node="/Constraint",
             nodes={"driver": SimpleNamespace()},
+            hovered_port=("driver", "translate", False),
             _resolvePortPropertyName=MagicMock(return_value="inputs:translate"),
             _getLinkEndpointPosition=MagicMock(return_value=Gf.Vec2d(7.0, 9.0)),
-            nodeIdUnderCursor="driver",
-            _dragLinkSourceNode="/Constraint",
+            node_id_under_cursor="driver",
         )
 
         GraphView._updateLinkDrag(view, QtCore.QPoint(1, 2))
@@ -1797,23 +1105,15 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
 
     def test_update_link_drag_accepts_visible_relationship_pin_as_target(self):
         temp_link = SimpleNamespace(start=None, end=None, is_relationship_link=True)
-        view = SimpleNamespace(
-            zoom=1.0,
-            panX=0.0,
-            panY=0.0,
-            _dragLinkCursorPos=None,
-            _dragLinkSourceIsOutput=True,
-            _dragLinkSourcePort="sources",
-            _dragLinkTempLink=temp_link,
-            _dragLinkValidTarget=False,
-            _dragLinkSyntheticTarget=None,
-            _dragLinkResolvedTarget=None,
-            _hoveredPort=("constraintB", "affects", True),
+        view = make_link_drag_view(
+            temp_link,
+            source_port="sources",
+            source_node="/ConstraintA",
             nodes={"constraintB": SimpleNamespace()},
+            hovered_port=("constraintB", "affects", True),
             _resolvePortPropertyName=MagicMock(return_value="affects"),
             _getLinkEndpointPosition=MagicMock(return_value=Gf.Vec2d(11.0, 13.0)),
-            nodeIdUnderCursor="constraintB",
-            _dragLinkSourceNode="/ConstraintA",
+            node_id_under_cursor="constraintB",
         )
 
         GraphView._updateLinkDrag(view, QtCore.QPoint(1, 2))
@@ -1962,75 +1262,9 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         self.assertEqual(link.propertyName, "material:binding")
 
     def test_update_hovered_port_accepts_relationship_row_hit_during_drag(self):
-        renderer = SimpleNamespace(
-            getPortAtPoint=MagicMock(return_value={"found": False}),
-            getPortWidth=MagicMock(return_value=8.0),
-            getPortMarginV=MagicMock(return_value=4.0),
-            getTitleFontSize=MagicMock(return_value=12.0),
-            getPortFontSize=MagicMock(return_value=10.0),
-            getPortTypeFontSize=MagicMock(return_value=8.0),
-            getPortSpacing=MagicMock(return_value=6.0),
-        )
-        node = SimpleNamespace(
-            renderer=renderer,
-            position=Gf.Vec2d(10.0, 20.0),
-            size=Gf.Vec2d(120.0, 80.0),
-            # Cached layout _getRowHitMetrics reads: title=12*1.0+4*2=20, row=10+8+6=24.
-            layoutPortStartY=20.0,
-            layoutPortLineHeight=24.0,
-            outputPins=["affects"],
-            _output_row_kinds=[0],
-            _output_row_slots=[0],
-            # C++ view-model accessor names the migrated readers consume (the
-            # _*_row_kinds/_*_row_slots mirrors above are kept so the pre-rename
-            # readers lower in the stack still pass).
-            outputRowKinds=[0],
-            outputRowSlots=[0],
-            _title_collapsed=False,
-            is_relationship_pin=lambda pin_name, is_output: (
-                pin_name == "affects" and is_output
-            ),
-        )
-        view = SimpleNamespace(
-            zoom=1.0,
-            panX=0.0,
-            panY=0.0,
-            defaultRenderer=None,
-            fontAtlas=SimpleNamespace(ascender=0.8, descender=-0.2, lineHeight=1.0),
-            _cachedPortHitRadiusMultiplier=1.5,
-            _draggingLink=True,
-            _dragLinkSourcePort="sources",
-            _hoveredPort=None,
-            nodeIdUnderCursor="constraintB",
-            nodes={"constraintB": node},
-            _spatialIndex=SimpleNamespace(
-                queryRegion=MagicMock(return_value=(["constraintB"], []))
-            ),
-            _setHoveredPort=lambda new_hover: GraphView._setHoveredPort(
-                view, new_hover
-            ),
-            _nodeRenderManager=SimpleNamespace(
-                portAtPoint=MagicMock(return_value={"found": False})
-            ),
-            nodeGraph=SimpleNamespace(),
-            _relationshipDragRowHover=lambda world_pos_arg, port_extent_arg: (
-                GraphView._relationshipDragRowHover(
-                    view,
-                    world_pos_arg,
-                    port_extent_arg,
-                )
-            ),
-            _dragLinkTempLink=SimpleNamespace(is_relationship_link=True),
-            _findRelationshipRowHover=lambda node_arg, node_id_arg, world_pos_arg: (
-                GraphView._findRelationshipRowHover(
-                    view,
-                    node_arg,
-                    node_id_arg,
-                    world_pos_arg,
-                )
-            ),
-            _getRowHitMetrics=lambda n, r: GraphView._getRowHitMetrics(view, n, r),
-            _getPortPosition=MagicMock(return_value=Gf.Vec2d(130.0, 56.0)),
+        node = make_row_hover_node(make_row_renderer())
+        view = make_row_hover_view(
+            node, port_position=MagicMock(return_value=Gf.Vec2d(130.0, 56.0))
         )
 
         changed = GraphView._updateHoveredPort(view, QtCore.QPoint(60, 50))
@@ -2041,79 +1275,19 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
     def test_update_hovered_port_accepts_property_row_hit_during_relationship_drag(
         self,
     ):
-        renderer = SimpleNamespace(
-            getPortAtPoint=MagicMock(return_value={"found": False}),
-            getPortWidth=MagicMock(return_value=8.0),
-            getPortMarginV=MagicMock(return_value=4.0),
-            getTitleFontSize=MagicMock(return_value=12.0),
-            getPortFontSize=MagicMock(return_value=10.0),
-            getPortTypeFontSize=MagicMock(return_value=8.0),
-            getPortSpacing=MagicMock(return_value=6.0),
+        node = make_row_hover_node(
+            make_row_renderer(),
+            size=(120.0, 100.0),
+            input_pins=["inputs", "sourceTranslations"],
+            input_row_kinds=[2, 3],
+            input_row_slots=[0, 1],
+            output_row_slots=[2],
         )
-        node = SimpleNamespace(
-            renderer=renderer,
-            position=Gf.Vec2d(10.0, 20.0),
-            size=Gf.Vec2d(120.0, 100.0),
-            # Cached layout _getRowHitMetrics reads: title=12*1.0+4*2=20, row=10+8+6=24.
-            layoutPortStartY=20.0,
-            layoutPortLineHeight=24.0,
-            inputPins=["inputs", "sourceTranslations"],
-            outputPins=["affects"],
-            _input_row_kinds=[2, 3],
-            _input_row_slots=[0, 1],
-            _output_row_kinds=[0],
-            _output_row_slots=[2],
-            # C++ view-model accessor names the migrated readers consume.
-            inputRowKinds=[2, 3],
-            inputRowSlots=[0, 1],
-            outputRowKinds=[0],
-            outputRowSlots=[2],
-            _title_collapsed=False,
-            is_relationship_pin=lambda pin_name, is_output: (
-                pin_name == "affects" and is_output
-            ),
-        )
-        view = SimpleNamespace(
-            zoom=1.0,
-            panX=0.0,
-            panY=0.0,
-            defaultRenderer=None,
-            fontAtlas=SimpleNamespace(ascender=0.8, descender=-0.2, lineHeight=1.0),
-            _cachedPortHitRadiusMultiplier=1.5,
-            _draggingLink=True,
-            _dragLinkSourcePort="sources",
-            _hoveredPort=None,
-            nodeIdUnderCursor="constraintB",
-            nodes={"constraintB": node},
-            _spatialIndex=SimpleNamespace(
-                queryRegion=MagicMock(return_value=(["constraintB"], []))
-            ),
-            _setHoveredPort=lambda new_hover: GraphView._setHoveredPort(
-                view, new_hover
-            ),
-            _nodeRenderManager=SimpleNamespace(
-                portAtPoint=MagicMock(return_value={"found": False})
-            ),
-            nodeGraph=SimpleNamespace(),
-            _relationshipDragRowHover=lambda world_pos_arg, port_extent_arg: (
-                GraphView._relationshipDragRowHover(
-                    view,
-                    world_pos_arg,
-                    port_extent_arg,
-                )
-            ),
-            _dragLinkTempLink=SimpleNamespace(is_relationship_link=True),
-            _findRelationshipRowHover=MagicMock(return_value=None),
-            _findPropertyRowHover=lambda node_arg, node_id_arg, world_pos_arg: (
-                GraphView._findPropertyRowHover(
-                    view,
-                    node_arg,
-                    node_id_arg,
-                    world_pos_arg,
-                )
-            ),
-            _getRowHitMetrics=lambda n, r: GraphView._getRowHitMetrics(view, n, r),
-            _getPortPosition=MagicMock(
+        view = make_row_hover_view(
+            node,
+            relationship_row_hover=MagicMock(return_value=None),
+            property_row_hover=True,
+            port_position=MagicMock(
                 side_effect=lambda _node_arg, pin_name, is_output: (
                     Gf.Vec2d(10.0, 75.0)
                     if pin_name == "sourceTranslations" and not is_output
@@ -2249,49 +1423,8 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
     def test_get_link_endpoint_position_uses_visible_output_side_for_relationship_source(
         self,
     ):
-        node = SimpleNamespace(
-            position=Gf.Vec2d(10.0, 20.0),
-            size=Gf.Vec2d(40.0, 30.0),
-            renderer=SimpleNamespace(
-                getPortPosition=MagicMock(return_value=Gf.Vec2d(50.0, 35.0))
-            ),
-            outputPins=["affects"],
-            inputPins=[],
-            _dual_pin_names=set(),
-        )
-        view = SimpleNamespace(
-            defaultRenderer=None,
-            fontAtlas=None,
-            _getNodeTopCenterPosition=GraphView._getNodeTopCenterPosition,
-            _resolveLinkDisplayPinName=MagicMock(return_value="affects"),
-            _getPropertyOutputSide=GraphView._getPropertyOutputSide,
-            _mirrorPortPosition=GraphView._mirrorPortPosition,
-            _getVisiblePortPosition=lambda node_arg, pin_name, is_output: (
-                GraphView._getVisiblePortPosition(
-                    view,
-                    node_arg,
-                    pin_name,
-                    is_output,
-                )
-            ),
-            _getRelationshipRowEndpointPosition=lambda node_arg, pin_name, is_output: (
-                GraphView._getRelationshipRowEndpointPosition(
-                    view,
-                    node_arg,
-                    pin_name,
-                    is_output,
-                )
-            ),
-            _nodeHasVisiblePort=lambda node_arg, pin_name, is_output: (
-                GraphView._nodeHasVisiblePort(
-                    view,
-                    node_arg,
-                    pin_name,
-                    is_output,
-                )
-            ),
-            _getPortPosition=MagicMock(),
-        )
+        node = make_endpoint_node("affects")
+        view = make_endpoint_view(node, display_pin="affects")
 
         position = GraphView._getLinkEndpointPosition(
             view,
@@ -2308,49 +1441,8 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
     def test_get_link_endpoint_position_uses_left_row_anchor_for_relationship_target(
         self,
     ):
-        node = SimpleNamespace(
-            position=Gf.Vec2d(10.0, 20.0),
-            size=Gf.Vec2d(40.0, 30.0),
-            renderer=SimpleNamespace(
-                getPortPosition=MagicMock(return_value=Gf.Vec2d(50.0, 35.0))
-            ),
-            outputPins=["sources"],
-            inputPins=[],
-            _dual_pin_names=set(),
-        )
-        view = SimpleNamespace(
-            defaultRenderer=None,
-            fontAtlas=None,
-            _getNodeTopCenterPosition=GraphView._getNodeTopCenterPosition,
-            _resolveLinkDisplayPinName=MagicMock(return_value="sources"),
-            _getPropertyOutputSide=GraphView._getPropertyOutputSide,
-            _mirrorPortPosition=GraphView._mirrorPortPosition,
-            _getVisiblePortPosition=lambda node_arg, pin_name, is_output: (
-                GraphView._getVisiblePortPosition(
-                    view,
-                    node_arg,
-                    pin_name,
-                    is_output,
-                )
-            ),
-            _getRelationshipRowEndpointPosition=lambda node_arg, pin_name, is_output: (
-                GraphView._getRelationshipRowEndpointPosition(
-                    view,
-                    node_arg,
-                    pin_name,
-                    is_output,
-                )
-            ),
-            _nodeHasVisiblePort=lambda node_arg, pin_name, is_output: (
-                GraphView._nodeHasVisiblePort(
-                    view,
-                    node_arg,
-                    pin_name,
-                    is_output,
-                )
-            ),
-            _getPortPosition=MagicMock(),
-        )
+        node = make_endpoint_node("sources")
+        view = make_endpoint_view(node, display_pin="sources")
 
         position = GraphView._getLinkEndpointPosition(
             view,
@@ -2367,49 +1459,8 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
     def test_get_link_endpoint_position_uses_collapsed_parent_row_for_relationship_target(
         self,
     ):
-        node = SimpleNamespace(
-            position=Gf.Vec2d(10.0, 20.0),
-            size=Gf.Vec2d(40.0, 30.0),
-            renderer=SimpleNamespace(
-                getPortPosition=MagicMock(return_value=Gf.Vec2d(50.0, 35.0))
-            ),
-            outputPins=["Group"],
-            inputPins=[],
-            _dual_pin_names=set(),
-        )
-        view = SimpleNamespace(
-            defaultRenderer=None,
-            fontAtlas=None,
-            _getNodeTopCenterPosition=GraphView._getNodeTopCenterPosition,
-            _resolveLinkDisplayPinName=MagicMock(return_value="Group"),
-            _getPropertyOutputSide=GraphView._getPropertyOutputSide,
-            _mirrorPortPosition=GraphView._mirrorPortPosition,
-            _getVisiblePortPosition=lambda node_arg, pin_name, is_output: (
-                GraphView._getVisiblePortPosition(
-                    view,
-                    node_arg,
-                    pin_name,
-                    is_output,
-                )
-            ),
-            _getRelationshipRowEndpointPosition=lambda node_arg, pin_name, is_output: (
-                GraphView._getRelationshipRowEndpointPosition(
-                    view,
-                    node_arg,
-                    pin_name,
-                    is_output,
-                )
-            ),
-            _nodeHasVisiblePort=lambda node_arg, pin_name, is_output: (
-                GraphView._nodeHasVisiblePort(
-                    view,
-                    node_arg,
-                    pin_name,
-                    is_output,
-                )
-            ),
-            _getPortPosition=MagicMock(),
-        )
+        node = make_endpoint_node("Group")
+        view = make_endpoint_view(node, display_pin="Group")
 
         position = GraphView._getLinkEndpointPosition(
             view,
@@ -2426,26 +1477,17 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
     def test_complete_link_drag_creates_relationship_property_link_without_replacement(
         self,
     ):
-        view = SimpleNamespace(
-            _dragLinkTempLink=SimpleNamespace(is_relationship_link=True),
-            _dragLinkSourcePort="affects",
-            _dragLinkSourceIsOutput=True,
-            _dragLinkSourceNode="/Constraint",
-            _dragLinkValidTarget=True,
+        view = make_complete_drag_view(
+            source_port="affects",
+            source_node="/Constraint",
+            temp_link=SimpleNamespace(is_relationship_link=True),
             _dragLinkResolvedTarget=(
                 "/Driven",
                 "translate",
                 False,
                 "inputs:translate",
             ),
-            _dragLinkSyntheticTarget=None,
             _hoveredPort=("ignored", "ignored", False),
-            _findLinkToInput=MagicMock(),
-            _createConnection=MagicMock(),
-            _hasExactLink=MagicMock(return_value=False),
-            update=MagicMock(),
-            nodes={},
-            _reconnectingLink=None,
         )
 
         GraphView._completeLinkDrag(view)
@@ -2462,21 +1504,11 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         self.assertIsNone(view._dragLinkResolvedTarget)
 
     def test_complete_link_drag_creates_self_relationship_prim_link(self) -> None:
-        view = SimpleNamespace(
-            _dragLinkTempLink=SimpleNamespace(is_relationship_link=True),
-            _dragLinkSourcePort="sources",
-            _dragLinkSourceIsOutput=True,
-            _dragLinkSourceNode="/Constraint",
-            _dragLinkValidTarget=True,
-            _dragLinkResolvedTarget=None,
+        view = make_complete_drag_view(
+            source_port="sources",
+            source_node="/Constraint",
+            temp_link=SimpleNamespace(is_relationship_link=True),
             _dragLinkSyntheticTarget=("/Constraint", "", False, ""),
-            _hoveredPort=None,
-            _findLinkToInput=MagicMock(),
-            _createConnection=MagicMock(),
-            _hasExactLink=MagicMock(return_value=False),
-            update=MagicMock(),
-            nodes={},
-            _reconnectingLink=None,
         )
 
         GraphView._completeLinkDrag(view)
@@ -2501,26 +1533,13 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         self.assertIs(GraphView._findLinkToInput(view, "/Node", "weight"), regular_link)
 
     def test_render_relationship_arrowheads_draws_triangle_vertices(self):
-        link = _relationship_link()
-        view = SimpleNamespace(
-            zoom=1.0,
-            links=[link],
-            _cachedLinkRelationshipBaseColor=RELATIONSHIP_LINK_BASE_COLOR + (1.0,),
-            _appendTriangleVertices=lambda v, pts, d, c: (
-                GraphView._appendTriangleVertices(None, v, pts, d, c)
-            ),
-            _drawNodeVertices=MagicMock(),
-        )
-        view._relationshipLinkColor = lambda rel_link, hovered, selected: (
-            GraphView._relationshipLinkColor(view, rel_link, hovered, selected)
-        )
+        link = make_relationship_link()
+        view = make_arrowhead_view(link)
 
-        with patch(
-            "UsdNoodles.graphView.NodeVertex", side_effect=_fake_node_vertex
-        ):
+        with patched_graph_symbol("NodeVertex", side_effect=fake_node_vertex):
             GraphView._renderRelationshipArrowheads(
                 view,
-                _Projection(),
+                Projection(),
                 (1.0, 1.0, 0.0, 1.0),
                 (1.0, 1.0, 0.3, 1.0),
             )
@@ -2529,7 +1548,7 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         self.assertEqual(len(drawn_vertices), 3)
 
     def test_navigate_along_relationship_link_jumps_to_target_when_near_source(self):
-        link = _relationship_link()
+        link = make_relationship_link()
         # Source-side click — should navigate to the (off-screen) target.
         worldPos = Gf.Vec2d(0.0, 0.0)
         view = SimpleNamespace(
@@ -2545,7 +1564,7 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         view._jumpToSourceNodeInternal.assert_not_called()
 
     def test_navigate_along_relationship_link_jumps_to_source_when_near_target(self):
-        link = _relationship_link()
+        link = make_relationship_link()
         # Target-side click — should navigate back to the source.
         worldPos = Gf.Vec2d(20.0, 0.0)
         view = SimpleNamespace(
@@ -2561,7 +1580,7 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         view._jumpToTargetNodeInternal.assert_not_called()
 
     def test_navigate_along_relationship_link_falls_back_when_preferred_missing(self):
-        link = _relationship_link()
+        link = make_relationship_link()
         # Click is near source so target is preferred; but target node is not
         # present in self.nodes, so we should fall back to the source jump.
         worldPos = Gf.Vec2d(0.0, 0.0)
@@ -2578,7 +1597,7 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         view._jumpToTargetNodeInternal.assert_not_called()
 
     def test_navigate_along_relationship_link_returns_false_when_no_nodes_known(self):
-        link = _relationship_link()
+        link = make_relationship_link()
         view = SimpleNamespace(
             nodes={},
             _jumpToTargetNodeInternal=MagicMock(),
@@ -2601,27 +1620,14 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         be drawn; the noodle body and the arrowhead must both be suppressed
         so the user sees a stub instead of a connection.
         """
-        link = _relationship_link()
+        link = make_relationship_link()
         link.isDangling = True
-        view = SimpleNamespace(
-            zoom=1.0,
-            links=[link],
-            _cachedLinkRelationshipBaseColor=RELATIONSHIP_LINK_BASE_COLOR + (1.0,),
-            _appendTriangleVertices=lambda v, pts, d, c: (
-                GraphView._appendTriangleVertices(None, v, pts, d, c)
-            ),
-            _drawNodeVertices=MagicMock(),
-        )
-        view._relationshipLinkColor = lambda rel_link, hovered, selected: (
-            GraphView._relationshipLinkColor(view, rel_link, hovered, selected)
-        )
+        view = make_arrowhead_view(link)
 
-        with patch(
-            "UsdNoodles.graphView.NodeVertex", side_effect=_fake_node_vertex
-        ):
+        with patched_graph_symbol("NodeVertex", side_effect=fake_node_vertex):
             GraphView._renderRelationshipArrowheads(
                 view,
-                _Projection(),
+                Projection(),
                 (1.0, 1.0, 0.0, 1.0),
                 (1.0, 1.0, 0.3, 1.0),
             )
@@ -2629,7 +1635,7 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         view._drawNodeVertices.assert_not_called()
 
     def test_relationship_arrowhead_points_down_for_prim_target(self):
-        link = _relationship_link()
+        link = make_relationship_link()
         link.targetPort = ""
         link.targetPropertyName = ""
         link.end = Gf.Vec2d(30.0, 18.0)
@@ -2651,7 +1657,7 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
 
 
 
-        link = _relationship_link()
+        link = make_relationship_link()
         link.targetPort = ""
         link.targetPropertyName = ""
         self.assertTrue(GraphView._isPrimTargetRelationshipLink(link))
@@ -2664,36 +1670,12 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         # longer mutates link.end (the old Python prim_target_tips hack). Verify
         # the end is left untouched and rendering goes through the held-vector path
         # (syncLinksFromModels + renderLinksFromGraph), not the per-call renderLinks.
-        relationship_link = _relationship_link()
+        relationship_link = make_relationship_link()
         relationship_link.targetPort = ""
         relationship_link.targetPropertyName = ""
         relationship_link.end = Gf.Vec2d(30.0, 18.0)
 
-        render_from_graph = MagicMock()
-        view = SimpleNamespace(
-            linkRenderer=SimpleNamespace(renderLinksFromGraph=render_from_graph),
-            nodeGraph=SimpleNamespace(syncLinksFromModels=MagicMock()),
-            links=[relationship_link],
-            _linkUnderCursor=-1,
-            _lastSyncedLinkHover=-1,
-            _linksNeedSync=True,
-            _worldSpaceProjectionMatrix=lambda: _Projection(),
-            _cachedLinkHoveredColor=(1.0, 1.0, 0.0, 1.0),
-            _cachedLinkSelectedColor=(1.0, 1.0, 0.3, 1.0),
-            _cachedLinkAttributeBaseColor=(0.5, 0.5, 0.5, 1.0),
-            _cachedLinkRelationshipBaseColor=RELATIONSHIP_LINK_BASE_COLOR + (1.0,),
-            _cachedLinkHighlightedColor=(1.0, 1.0, 1.0, 1.0),
-            zoom=1.0,
-            panX=0.0,
-            panY=0.0,
-            width=lambda: 100,
-            height=lambda: 80,
-            _renderRelationshipArrowheads=MagicMock(),
-            _renderConfig=lambda: None,
-        )
-        view._syncLinksIfNeeded = lambda graph: GraphView._syncLinksIfNeeded(
-            view, graph
-        )
+        view, render_from_graph = make_paint_links_view([relationship_link])
 
         GraphView.paintLinks(view)
 
@@ -2703,43 +1685,10 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         self.assertTrue(render_from_graph.called)
 
     def test_paint_links_batches_relationship_links_with_red_base_color(self):
-        relationship_link = _relationship_link()
-        regular_link = SimpleNamespace(
-            sourceNodeId="/A",
-            sourcePort="out",
-            targetNodeId="/B",
-            targetPort="in",
-            start=Gf.Vec2d(0.0, 0.0),
-            end=Gf.Vec2d(10.0, 10.0),
-            hovered=False,
-            selected=False,
-            is_relationship_link=False,
-            isDangling=False,
-        )
-        render_from_graph = MagicMock()
-        view = SimpleNamespace(
-            linkRenderer=SimpleNamespace(renderLinksFromGraph=render_from_graph),
-            nodeGraph=SimpleNamespace(syncLinksFromModels=MagicMock()),
-            links=[regular_link, relationship_link],
-            _linkUnderCursor=-1,
-            _lastSyncedLinkHover=-1,
-            _linksNeedSync=True,
-            _worldSpaceProjectionMatrix=lambda: _Projection(),
-            _cachedLinkHoveredColor=(1.0, 1.0, 0.0, 1.0),
-            _cachedLinkSelectedColor=(1.0, 1.0, 0.3, 1.0),
-            _cachedLinkAttributeBaseColor=(0.5, 0.5, 0.5, 1.0),
-            _cachedLinkRelationshipBaseColor=RELATIONSHIP_LINK_BASE_COLOR + (1.0,),
-            _cachedLinkHighlightedColor=(1.0, 1.0, 1.0, 1.0),
-            _renderRelationshipArrowheads=MagicMock(),
-            zoom=1.0,
-            panX=0.0,
-            panY=0.0,
-            width=lambda: 100,
-            height=lambda: 60,
-            _renderConfig=lambda: None,
-        )
-        view._syncLinksIfNeeded = lambda graph: GraphView._syncLinksIfNeeded(
-            view, graph
+        relationship_link = make_relationship_link()
+        regular_link = make_regular_link()
+        view, render_from_graph = make_paint_links_view(
+            [regular_link, relationship_link], height=60
         )
 
         GraphView.paintLinks(view)
@@ -2799,25 +1748,17 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         self.assertFalse(GraphView._hasExactLink(view, "/A", "out", "/B", "in"))
 
     def test_complete_link_drag_rejects_duplicate_relationship_link(self):
-        view = SimpleNamespace(
-            _dragLinkSourcePort="affects",
-            _dragLinkSourceIsOutput=True,
-            _dragLinkSourceNode="/Constraint",
-            _dragLinkValidTarget=True,
+        view = make_complete_drag_view(
+            source_port="affects",
+            source_node="/Constraint",
+            has_exact=True,
             _dragLinkResolvedTarget=(
                 "/Driven",
                 "translate",
                 False,
                 "inputs:translate",
             ),
-            _dragLinkSyntheticTarget=None,
             _hoveredPort=("ignored", "ignored", False),
-            _findLinkToInput=MagicMock(),
-            _createConnection=MagicMock(),
-            _hasExactLink=MagicMock(return_value=True),
-            update=MagicMock(),
-            nodes={},
-            _reconnectingLink=False,
         )
 
         GraphView._completeLinkDrag(view)
@@ -2825,25 +1766,18 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         view._createConnection.assert_not_called()
 
     def test_complete_link_drag_cancels_reconnect_on_duplicate(self):
-        view = SimpleNamespace(
-            _dragLinkSourcePort="affects",
-            _dragLinkSourceIsOutput=True,
-            _dragLinkSourceNode="/Constraint",
-            _dragLinkValidTarget=True,
+        view = make_complete_drag_view(
+            source_port="affects",
+            source_node="/Constraint",
+            has_exact=True,
             _dragLinkResolvedTarget=(
                 "/Driven",
                 "translate",
                 False,
                 "inputs:translate",
             ),
-            _dragLinkSyntheticTarget=None,
             _hoveredPort=("ignored", "ignored", False),
-            _findLinkToInput=MagicMock(),
-            _createConnection=MagicMock(),
-            _hasExactLink=MagicMock(return_value=True),
             _cancelLinkReconnect=MagicMock(),
-            update=MagicMock(),
-            nodes={},
             _reconnectingLink=True,
             _reconnectOldSourceNodeId="/OldConstraint",
             _reconnectOldSourcePort="old_port",
@@ -2886,7 +1820,7 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         )
 
     def test_start_link_reconnect_saves_property_names(self):
-        link = _relationship_link()
+        link = make_relationship_link()
         view = SimpleNamespace(
             links=[link],
             nodes={"/Constraint": SimpleNamespace()},
@@ -2908,47 +1842,8 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         self.assertEqual(view._reconnectOldSourcePropertyName, "affects")
         self.assertEqual(view._reconnectOldTargetPropertyName, "")
 
-    def _render_temp_link_triangle_view(self, *, end_pos, start_pos, valid_target):
-        """Build a minimal view mock for _renderTemporaryLink triangle path."""
-        temp_link = SimpleNamespace(
-            start=start_pos,
-            end=end_pos,
-            is_relationship_link=True,
-        )
-        render_triangle = MagicMock()
-        return (
-            SimpleNamespace(
-                _dragLinkValidTarget=valid_target,
-                _hoveredPort=None,
-                _dragLinkSourceIsOutput=True,
-                _dragLinkSourcePort="affects",
-                _dragLinkTempLink=temp_link,
-                _cachedLinkHoveredColor=(1.0, 1.0, 0.0, 1.0),
-                _cachedLinkSelectedColor=(1.0, 1.0, 0.3, 1.0),
-                _cachedLinkActiveColor=(0.5, 0.5, 0.5, 1.0),
-                _cachedLinkRelationshipBaseColor=(1.0, 0.5, 0.5, 1.0),
-                linkRenderer=SimpleNamespace(renderLinks=MagicMock()),
-                nodes={},
-                zoom=1.0,
-                panX=0.0,
-                panY=0.0,
-                width=lambda: 100,
-                height=lambda: 80,
-                _worldSpaceProjectionMatrix=lambda: _Projection(),
-                _nodeRenderManager=SimpleNamespace(
-                    renderEndpointTriangle=render_triangle
-                ),
-                defaultRenderer=SimpleNamespace(
-                    getPortWidth=MagicMock(return_value=8.0)
-                ),
-                _cachedPortRingThickness=2.0,
-                _renderConfig=lambda: None,
-            ),
-            render_triangle,
-        )
-
     def test_render_temporary_link_triangle_faces_down_when_valid(self):
-        view, render_tri = self._render_temp_link_triangle_view(
+        view, render_tri = make_temp_link_triangle_view(
             end_pos=Gf.Vec2d(50.0, 30.0),
             start_pos=Gf.Vec2d(10.0, 10.0),
             valid_target=True,
@@ -2969,7 +1864,7 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
 
 
 
-        view, render_tri = self._render_temp_link_triangle_view(
+        view, render_tri = make_temp_link_triangle_view(
             end_pos=Gf.Vec2d(50.0, 30.0),
             start_pos=Gf.Vec2d(10.0, 10.0),
             valid_target=True,
@@ -2982,7 +1877,7 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         self.assertEqual(tip_y, 30.0)
 
     def test_render_temporary_link_triangle_faces_right_when_dx_positive(self):
-        view, render_tri = self._render_temp_link_triangle_view(
+        view, render_tri = make_temp_link_triangle_view(
             end_pos=Gf.Vec2d(50.0, 30.0),
             start_pos=Gf.Vec2d(10.0, 30.0),
             valid_target=False,
@@ -2997,7 +1892,7 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
         self.assertGreater(tip_x, base2_x)
 
     def test_render_temporary_link_triangle_faces_left_when_dx_negative(self):
-        view, render_tri = self._render_temp_link_triangle_view(
+        view, render_tri = make_temp_link_triangle_view(
             end_pos=Gf.Vec2d(10.0, 30.0),
             start_pos=Gf.Vec2d(50.0, 30.0),
             valid_target=False,
@@ -3042,26 +1937,15 @@ class GraphViewRelationshipHelpersTest(unittest.TestCase):
 
 
 @unittest.skipUnless(_has_graph, "GraphView modules not available")
+
+
 class NodeGraphRelationshipHelpersTest(unittest.TestCase):
     def test_stage_helper_copies_relationship_link_metadata(self):
         node = SimpleNamespace(inputLinks=[], outputLinks=[])
+        records = [collect_record("/Constraint", "sources", "/Driver", "")]
 
-        with patch(
-            "UsdNoodles.nodeGraphStage.collect_links_for_prim",
-            return_value=[
-                {
-                    "sourceNodeId": "/Constraint",
-                    "sourcePinName": "sources",
-                    "targetNodeId": "/Driver",
-                    "targetPinName": "",
-                    "is_input_link": False,
-                    "propertyOwnerNodeId": "/Constraint",
-                    "propertyName": "sources",
-                    "is_relationship_link": True,
-                    "sourcePropertyName": "sources",
-                    "targetPropertyName": "",
-                }
-            ],
+        with patched_module_collect_links(
+            "UsdNoodles.nodeGraphStage", return_value=records
         ):
             append_stage_collected_links(node, MagicMock())
 
@@ -3071,35 +1955,13 @@ class NodeGraphRelationshipHelpersTest(unittest.TestCase):
 
     def test_blueprint_helper_filters_root_relationship_links(self):
         node = SimpleNamespace(inputLinks=[], outputLinks=[])
+        records = [
+            collect_record("/Constraint", "sources", "/Blueprint", ""),
+            collect_record("/Constraint", "affects", "/Driven", ""),
+        ]
 
-        with patch(
-            "UsdNoodles.nodeGraphBlueprint.collect_links_for_prim",
-            return_value=[
-                {
-                    "sourceNodeId": "/Constraint",
-                    "sourcePinName": "sources",
-                    "targetNodeId": "/Blueprint",
-                    "targetPinName": "",
-                    "is_input_link": False,
-                    "propertyOwnerNodeId": "/Constraint",
-                    "propertyName": "sources",
-                    "is_relationship_link": True,
-                    "sourcePropertyName": "sources",
-                    "targetPropertyName": "",
-                },
-                {
-                    "sourceNodeId": "/Constraint",
-                    "sourcePinName": "affects",
-                    "targetNodeId": "/Driven",
-                    "targetPinName": "",
-                    "is_input_link": False,
-                    "propertyOwnerNodeId": "/Constraint",
-                    "propertyName": "affects",
-                    "is_relationship_link": True,
-                    "sourcePropertyName": "affects",
-                    "targetPropertyName": "",
-                },
-            ],
+        with patched_module_collect_links(
+            "UsdNoodles.nodeGraphBlueprint", return_value=records
         ):
             append_blueprint_relationship_links(node, MagicMock(), "/Blueprint")
 
@@ -3109,35 +1971,13 @@ class NodeGraphRelationshipHelpersTest(unittest.TestCase):
 
     def test_container_helper_filters_root_relationship_links(self):
         node = SimpleNamespace(inputLinks=[], outputLinks=[])
+        records = [
+            collect_record("/Constraint", "sources", "/Container", ""),
+            collect_record("/Constraint", "affects", "/Driven", ""),
+        ]
 
-        with patch(
-            "UsdNoodles.nodeGraphBpContainer.collect_links_for_prim",
-            return_value=[
-                {
-                    "sourceNodeId": "/Constraint",
-                    "sourcePinName": "sources",
-                    "targetNodeId": "/Container",
-                    "targetPinName": "",
-                    "is_input_link": False,
-                    "propertyOwnerNodeId": "/Constraint",
-                    "propertyName": "sources",
-                    "is_relationship_link": True,
-                    "sourcePropertyName": "sources",
-                    "targetPropertyName": "",
-                },
-                {
-                    "sourceNodeId": "/Constraint",
-                    "sourcePinName": "affects",
-                    "targetNodeId": "/Driven",
-                    "targetPinName": "",
-                    "is_input_link": False,
-                    "propertyOwnerNodeId": "/Constraint",
-                    "propertyName": "affects",
-                    "is_relationship_link": True,
-                    "sourcePropertyName": "affects",
-                    "targetPropertyName": "",
-                },
-            ],
+        with patched_module_collect_links(
+            "UsdNoodles.nodeGraphBpContainer", return_value=records
         ):
             append_container_relationship_links(node, MagicMock(), "/Container")
 
@@ -3147,112 +1987,31 @@ class NodeGraphRelationshipHelpersTest(unittest.TestCase):
 
 
 @unittest.skipUnless(_has_graph, "GraphView modules not available")
+
+
 class LinkClickDispatchTest(unittest.TestCase):
     """Verify isDangling controls whether click selects or starts reconnect."""
 
-    def _make_link(self, *, isDangling):
-        return SimpleNamespace(
-            isDangling=isDangling,
-            selected=False,
-            hovered=False,
-            highlighted=False,
-            sourceNodeId="/A",
-            sourcePort="out",
-            targetNodeId="/B",
-            targetPort="in",
-            start=Gf.Vec2d(0.0, 0.0),
-            end=Gf.Vec2d(20.0, 0.0),
-            is_relationship_link=False,
-            sourcePropertyName="out",
-            targetPropertyName="in",
-            data_sourceNodeId="/A",
-            data_targetNodeId="/B",
-            is_input_link=False,
-        )
-
-    def _make_view(self, link):
-        return SimpleNamespace(
-            setFocus=MagicMock(),
-            lastMousePos=None,
-            ctrlPressedOnMouseDown=False,
-            mousePosOnMouseDown=None,
-            nodeCreationHotbox=SimpleNamespace(is_visible=False),
-            # No rename in progress; a press commits one when there is.
-            _renamingNodeId="",
-            # Same for the value editor and the token popup, and the value
-            # cells are off so a press cannot be claimed by one.
-            _valueEditTarget=None,
-            _tokenPopup=None,
-            _mungState=None,
-            _cachedShowAttributeValues=False,
-            _valueCellAtPoint=MagicMock(return_value=None),
-            minimap=SimpleNamespace(handleMousePress=MagicMock(return_value=False)),
-            # mousePressEvent now gates the minimap branch on this; production
-            # sets it in _initCachedSettings (default True), which this
-            # unbound-call fixture never runs.
-            _cachedShowMinimap=True,
-            _updateNodeUnderCursor=MagicMock(),
-            _reconcileMovedNodes=MagicMock(),
-            spacePressed=False,
-            nodeIdUnderCursor=None,
-            nodes={},
-            _hoveredPort=None,
-            zoom=1.0,
-            panX=0.0,
-            panY=0.0,
-            links=[link],
-            linkRenderer=SimpleNamespace(
-                findLinkUnderCursor=MagicMock(return_value=0),
-            ),
-            _cachedLinkLineWidth=12.0,
-            _spatialIndex=None,
-            _selectedNodes=set(),
-            _selectedLinks=set(),
-            clearSelection=MagicMock(),
-            clearLinkSelection=MagicMock(),
-            _selectLink=MagicMock(),
-            _startLinkReconnect=MagicMock(),
-            # No relationship arrowhead under the cursor (these are data links),
-            # so the click falls through to the regular link-dispatch path.
-            _findArrowheadUnderCursor=MagicMock(return_value=-1),
-            _toggleLinkSelection=MagicMock(),
-            _updateLinkSelectionFromNodes=MagicMock(),
-            _syncLinkSelectionToPrimtree=MagicMock(),
-            marqueeActive=False,
-            marqueeStart=None,
-            marqueeCurrent=None,
-            update=MagicMock(),
-            draggingNodes=False,
-            _nextZOrder=0,
-            textChanged=False,
-            linksChanged=False,
-        )
-
-    def _make_event(self):
-        event = MagicMock()
-        event.buttons.return_value = QtCore.Qt.MouseButton.LeftButton
-        event.position.return_value.toPoint.return_value = QtCore.QPoint(50, 50)
-        event.modifiers.return_value = QtCore.Qt.KeyboardModifier(0)
-        return event
-
     def test_click_dangling_link_selects(self):
-        link = self._make_link(isDangling=True)
-        view = self._make_view(link)
-        GraphView.mousePressEvent(view, self._make_event())
+        link = make_link_click_link(isDangling=True)
+        view = make_link_click_view(link)
+        GraphView.mousePressEvent(view, make_mouse_press_event())
 
         view._selectLink.assert_called_once_with(0, addToSelection=False)
         view._startLinkReconnect.assert_not_called()
 
     def test_click_regular_link_starts_reconnect(self):
-        link = self._make_link(isDangling=False)
-        view = self._make_view(link)
-        GraphView.mousePressEvent(view, self._make_event())
+        link = make_link_click_link(isDangling=False)
+        view = make_link_click_view(link)
+        GraphView.mousePressEvent(view, make_mouse_press_event())
 
         view._startLinkReconnect.assert_called_once()
         view._selectLink.assert_not_called()
 
 
 @unittest.skipUnless(_has_graph, "GraphView modules not available")
+
+
 class RowHitMetricsSchemaTypeTest(unittest.TestCase):
     """_getRowHitMetrics reserves the schema-type subtitle line (Bug 2).
 
@@ -3264,49 +2023,15 @@ class RowHitMetricsSchemaTypeTest(unittest.TestCase):
     the rendered pins/noodles.
     """
 
-    def _renderer(self):
-        return SimpleNamespace(
-            getPortMarginV=MagicMock(return_value=4.0),
-            getTitleFontSize=MagicMock(return_value=14.0),
-            getPortFontSize=MagicMock(return_value=10.0),
-            getPortTypeFontSize=MagicMock(return_value=8.0),
-            getPortSpacing=MagicMock(return_value=2.0),
-            getPortWidth=MagicMock(return_value=8.0),
-        )
-
-    def _view(self):
-        return SimpleNamespace(
-            fontAtlas=SimpleNamespace(ascender=0.8, descender=-0.2, lineHeight=1.2),
-        )
-
-    def _node(self, schemaTypeName):
-        # The migrated _getRowHitMetrics reads the cached layout (layoutPortStartY
-        # / layoutPortLineHeight) instead of computing from the renderer. layoutNode
-        # bakes the title + (optional schema subtitle) into layoutPortStartY, so a
-        # typed node's band starts below a bare node's; model that here. (The
-        # schema-subtitle offset itself is unit-tested in NoodlesCoreTest.) Values
-        # mirror the renderer mocks so this also holds on the pre-migration
-        # renderer-computed path in the lower diffs.
-        return SimpleNamespace(
-            position=Gf.Vec2d(0.0, 0.0),
-            size=Gf.Vec2d(100.0, 200.0),
-            schemaTypeName=schemaTypeName,
-            layoutPortLineHeight=10.0 * 1.2 + 8.0 * 1.2 + 2.0,
-            layoutPortStartY=(
-                14.0 * 1.0
-                + 4.0 * 2.0
-                + 4.0
-                + (14.0 * 0.65 * 1.2 if schemaTypeName else 0.0)
-            ),
-        )
-
     def test_schema_type_shifts_first_row_band_down(self):
-        view = self._view()
-        renderer = self._renderer()
+        view = make_row_metrics_view()
+        renderer = make_row_metrics_renderer()
         typed_start, typed_h = GraphView._getRowHitMetrics(
-            view, self._node("IrFkController"), renderer
+            view, make_typed_row_node("IrFkController"), renderer
         )
-        bare_start, bare_h = GraphView._getRowHitMetrics(view, self._node(""), renderer)
+        bare_start, bare_h = GraphView._getRowHitMetrics(
+            view, make_typed_row_node(""), renderer
+        )
         # Bare baseline: pos.y + (titleFont*(asc-desc) + marginV*2) + marginV
         #             = 0 + (14*1.0 + 8) + 4 = 26.0
         self.assertAlmostEqual(bare_start, 26.0)
@@ -3318,6 +2043,8 @@ class RowHitMetricsSchemaTypeTest(unittest.TestCase):
 
 
 @unittest.skipUnless(_has_graph, "GraphView modules not available")
+
+
 class RowEdgeDragStartTest(unittest.TestCase):
     """Pressing a row's outer-tenth edge band starts a connection.
 
@@ -3332,71 +2059,13 @@ class RowEdgeDragStartTest(unittest.TestCase):
     offset together with the edge-band resolution.
     """
 
-    def _renderer(self):
-        return SimpleNamespace(
-            getPortMarginV=MagicMock(return_value=4.0),
-            getTitleFontSize=MagicMock(return_value=14.0),
-            getPortFontSize=MagicMock(return_value=10.0),
-            getPortTypeFontSize=MagicMock(return_value=8.0),
-            getPortSpacing=MagicMock(return_value=2.0),
-            getPortWidth=MagicMock(return_value=8.0),
-        )
-
-    def _node(self):
-        # Typed node (schemaTypeName set, like every REQ 1 USD-prim node), one
-        # input row and one output row, both at slot 0. No glyphs are drawn
-        # (REQ 3) since neither pin is connected.
-        return SimpleNamespace(
-            position=Gf.Vec2d(0.0, 0.0),
-            size=Gf.Vec2d(100.0, 200.0),
-            schemaTypeName="IrFkController",
-            renderer=None,
-            inputPins=["a"],
-            outputPins=["x"],
-            _input_row_slots=[0],
-            _output_row_slots=[0],
-            _input_row_kinds=[0],
-            _output_row_kinds=[0],
-            # Cached layout the migrated _getRowHitMetrics reads at PR7+ (typed
-            # node: title 14*1.0 + marginV*2 + marginV + schema subtitle
-            # 14*0.65*1.2 = 36.92; row = portFont*1.2 + portTypeFont*1.2 +
-            # spacing = 23.6). y=45 lands in the first row band [36.92, 60.52];
-            # y=5 is above it.
-            layoutPortStartY=14.0 * 1.0 + 4.0 * 2.0 + 4.0 + 14.0 * 0.65 * 1.2,
-            layoutPortLineHeight=10.0 * 1.2 + 8.0 * 1.2 + 2.0,
-            # C++ view-model accessor names the migrated _rowEdgePinCandidates /
-            # _getRowHitMetrics read (slot==index==0 here, so the toy node still
-            # passes; grouped nodes where slot != index exercise the real path).
-            inputRowSlots=[0],
-            outputRowSlots=[0],
-            inputRowKinds=[0],
-            outputRowKinds=[0],
-            _dual_pin_names=set(),
-            _title_collapsed=False,
-        )
-
-    def _view(self):
-        view = SimpleNamespace(
-            fontAtlas=SimpleNamespace(ascender=0.8, descender=-0.2, lineHeight=1.2),
-            defaultRenderer=self._renderer(),
-        )
-        # Bind the real production methods so the full resolution stack runs.
-        view._getRowHitMetrics = GraphView._getRowHitMetrics.__get__(view)
-        view._rowEdgePinCandidates = GraphView._rowEdgePinCandidates.__get__(view)
-        view._pinAtRowEdge = GraphView._pinAtRowEdge.__get__(view)
-        view._findRowEdgeDragStart = GraphView._findRowEdgeDragStart.__get__(view)
-        # No glyph is drawn (REQ 3), so there is no port position to snap to;
-        # this exercises the band-center fallback inside _pinAtRowEdge.
-        view._getPortPosition = lambda node, pin, is_output: None
-        return view
-
     def test_edge_press_on_typed_node_row_starts_drag(self):
         # Band = 10% of the 100px node = 10px on each side. A press in the outer
         # tenth resolves to the row's pin even though no glyph is drawn (REQ 3);
         # the side is the one pressed. y=45 lands in the first row band
         # regardless of the schema-subtitle offset.
-        view = self._view()
-        node = self._node()
+        view = make_edge_drag_view()
+        node = make_edge_drag_node()
         self.assertEqual(
             view._findRowEdgeDragStart(node, Gf.Vec2d(3.0, 45.0)), ("a", False)
         )
@@ -3407,48 +2076,44 @@ class RowEdgeDragStartTest(unittest.TestCase):
     def test_middle_press_falls_through_to_node_drag(self):
         # The middle 80% of the row is a node-body drag handle, so a press there
         # returns None and the node moves instead of starting a connection.
-        view = self._view()
+        view = make_edge_drag_view()
         self.assertIsNone(
-            view._findRowEdgeDragStart(self._node(), Gf.Vec2d(50.0, 45.0))
+            view._findRowEdgeDragStart(make_edge_drag_node(), Gf.Vec2d(50.0, 45.0))
         )
 
     def test_press_above_first_row_falls_through(self):
         # In the left edge band horizontally, but above the first row band
         # vertically -> no pin -> None (falls through to node selection/drag).
-        view = self._view()
-        self.assertIsNone(view._findRowEdgeDragStart(self._node(), Gf.Vec2d(3.0, 5.0)))
+        view = make_edge_drag_view()
+        self.assertIsNone(
+            view._findRowEdgeDragStart(make_edge_drag_node(), Gf.Vec2d(3.0, 5.0))
+        )
 
 
 @unittest.skipUnless(_has_graph, "GraphView modules not available")
+
+
 class ChangeBlockBatchingTest(unittest.TestCase):
     """Verify _applyRestoreDeleted and _applyDeleteSelected use Sdf.ChangeBlock."""
 
-    def _make_view(self):
-        stage = MagicMock()
-        return SimpleNamespace(
-            nodeGraph=SimpleNamespace(getStage=MagicMock(return_value=stage)),
-            _groupNodesByLayer=MagicMock(return_value={}),
-            _groupLinksByLayer=MagicMock(return_value={}),
-            _setNodesActiveOnLayer=MagicMock(),
-            _runLinkOperationOnLayer=MagicMock(),
-        )
-
     @patch("pxr.Sdf.ChangeBlock")
     def test_applyRestoreDeleted_uses_change_block(self, mock_block):
-        view = self._make_view()
+        view = make_change_block_view()
         GraphView._applyRestoreDeleted(view, [], [])
         mock_block.assert_called_once()
         mock_block.return_value.__enter__.assert_called_once()
 
     @patch("pxr.Sdf.ChangeBlock")
     def test_applyDeleteSelected_uses_change_block(self, mock_block):
-        view = self._make_view()
+        view = make_change_block_view()
         GraphView._applyDeleteSelected(view, [], [])
         mock_block.assert_called_once()
         mock_block.return_value.__enter__.assert_called_once()
 
 
 @unittest.skipUnless(_has_graph, "GraphView modules not available")
+
+
 class SurfaceConnectionEndpointPinsTest(unittest.TestCase):
     """_surfaceConnectionEndpointPins materializes a pin for every endpoint.
 
@@ -3459,44 +2124,12 @@ class SurfaceConnectionEndpointPinsTest(unittest.TestCase):
     pass surfaces each non-relationship endpoint as a dual pin on its node.
     """
 
-    def _link(self, src_id, src_port, tgt_id, tgt_port, *, is_rel=False):
-        return SimpleNamespace(
-            sourceNodeId=src_id,
-            sourcePort=src_port,
-            targetNodeId=tgt_id,
-            targetPort=tgt_port,
-            is_relationship_link=is_rel,
-        )
-
-    def _node(self, node_id, *, input_links=None, output_links=None, add_returns=True):
-        calls = []
-
-        def add(input_names=(), output_names=()):
-            calls.append((list(input_names), list(output_names)))
-            return add_returns
-
-        return SimpleNamespace(
-            id=node_id,
-            inputLinks=list(input_links or []),
-            outputLinks=list(output_links or []),
-            add_connection_endpoint_pins=add,
-            added_calls=calls,
-        )
-
-    def _view(self, nodes, *, font_atlas=True):
-        return SimpleNamespace(
-            nodes={n.id: n for n in nodes},
-            fontAtlas=object() if font_atlas else None,
-            textRenderer=SimpleNamespace(calculateTextWidth=lambda *a, **k: 0.0),
-            nodeGraph=SimpleNamespace(_calculateNodeSize=MagicMock()),
-        )
-
     def test_surfaces_producer_output_and_consumer_input(self):
         # The link is stored on the consumer; it names the producer as source.
-        link = self._link("/FK1", "space", "/Switch1", "rig1:space")
-        fk1 = self._node("/FK1")
-        switch1 = self._node("/Switch1", input_links=[link])
-        view = self._view([fk1, switch1])
+        link = make_endpoint_pin_link("/FK1", "space", "/Switch1", "rig1:space")
+        fk1 = make_pinnable_node("/FK1")
+        switch1 = make_pinnable_node("/Switch1", input_links=[link])
+        view = make_surface_view([fk1, switch1])
 
         GraphView._surfaceConnectionEndpointPins(view)
 
@@ -3506,10 +2139,10 @@ class SurfaceConnectionEndpointPinsTest(unittest.TestCase):
         self.assertEqual(switch1.added_calls, [(["rig1:space"], [])])
 
     def test_relationship_links_are_skipped(self):
-        link = self._link("/A", "affects", "/B", "x", is_rel=True)
-        node_a = self._node("/A", output_links=[link])
-        node_b = self._node("/B")
-        view = self._view([node_a, node_b])
+        link = make_endpoint_pin_link("/A", "affects", "/B", "x", is_rel=True)
+        node_a = make_pinnable_node("/A", output_links=[link])
+        node_b = make_pinnable_node("/B")
+        view = make_surface_view([node_a, node_b])
 
         GraphView._surfaceConnectionEndpointPins(view)
 
@@ -3518,39 +2151,39 @@ class SurfaceConnectionEndpointPinsTest(unittest.TestCase):
 
     def test_endpoint_to_absent_node_is_ignored(self):
         # Source node not in the graph: only the present endpoint is surfaced.
-        link = self._link("/Absent", "out", "/B", "in")
-        node_b = self._node("/B", input_links=[link])
-        view = self._view([node_b])
+        link = make_endpoint_pin_link("/Absent", "out", "/B", "in")
+        node_b = make_pinnable_node("/B", input_links=[link])
+        view = make_surface_view([node_b])
 
         GraphView._surfaceConnectionEndpointPins(view)
 
         self.assertEqual(node_b.added_calls, [(["in"], [])])
 
     def test_recomputes_node_size_when_pins_added(self):
-        link = self._link("/FK1", "space", "/Switch1", "rig1:space")
-        fk1 = self._node("/FK1")
-        switch1 = self._node("/Switch1", input_links=[link])
-        view = self._view([fk1, switch1])
+        link = make_endpoint_pin_link("/FK1", "space", "/Switch1", "rig1:space")
+        fk1 = make_pinnable_node("/FK1")
+        switch1 = make_pinnable_node("/Switch1", input_links=[link])
+        view = make_surface_view([fk1, switch1])
 
         GraphView._surfaceConnectionEndpointPins(view)
 
         self.assertEqual(view.nodeGraph._calculateNodeSize.call_count, 2)
 
     def test_no_size_recompute_when_nothing_added(self):
-        link = self._link("/FK1", "space", "/Switch1", "rig1:space")
-        fk1 = self._node("/FK1", add_returns=False)
-        switch1 = self._node("/Switch1", input_links=[link], add_returns=False)
-        view = self._view([fk1, switch1])
+        link = make_endpoint_pin_link("/FK1", "space", "/Switch1", "rig1:space")
+        fk1 = make_pinnable_node("/FK1", add_returns=False)
+        switch1 = make_pinnable_node("/Switch1", input_links=[link], add_returns=False)
+        view = make_surface_view([fk1, switch1])
 
         GraphView._surfaceConnectionEndpointPins(view)
 
         view.nodeGraph._calculateNodeSize.assert_not_called()
 
     def test_no_font_atlas_skips_size_recompute_but_still_surfaces(self):
-        link = self._link("/FK1", "space", "/Switch1", "rig1:space")
-        fk1 = self._node("/FK1")
-        switch1 = self._node("/Switch1", input_links=[link])
-        view = self._view([fk1, switch1], font_atlas=False)
+        link = make_endpoint_pin_link("/FK1", "space", "/Switch1", "rig1:space")
+        fk1 = make_pinnable_node("/FK1")
+        switch1 = make_pinnable_node("/Switch1", input_links=[link])
+        view = make_surface_view([fk1, switch1], font_atlas=False)
 
         GraphView._surfaceConnectionEndpointPins(view)
 

@@ -127,6 +127,7 @@ class TestFinishConnectionReplacementFlagsResync(unittest.TestCase):
         )
         view = SimpleNamespace(
             _linksNeedSync=False,
+            nodeGraph=SimpleNamespace(getStage=lambda: None),
             _createConnection=MagicMock(),
             _rebuildLinks=MagicMock(),
             linksChanged=False,

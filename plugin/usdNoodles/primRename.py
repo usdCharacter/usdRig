@@ -99,13 +99,17 @@ def rename_prim(stage, prim, new_name):
     if status != RENAMED:
         return status, None, message
 
-    oldPath = prim.GetPath()
-    newPath = oldPath.GetParentPath().AppendChild(new_name)
+    newPath = prim.GetPath().ReplaceName(new_name)
+    editor, message = prepare_rename(stage, prim, new_name)
+    if editor is None:
+        return REFUSED, None, message
+    if not editor.ApplyEdits():
+        return REFUSED, None, "the rename could not be applied"
+    return RENAMED, newPath, ""
 
 
-
-
-
+def prepare_rename(stage, prim, new_name):
+    """Prepare a validated namespace edit without authoring it."""
     options = Usd.NamespaceEditor.EditOptions()
     options.allowRelocatesAuthoring = False
 
@@ -117,9 +121,5 @@ def rename_prim(stage, prim, new_name):
     # it names the actual composition reason.
     canApply = editor.CanApplyEdits()
     if not canApply:
-        return REFUSED, None, canApply.whyNot or "USD declined the rename"
-
-    if not editor.ApplyEdits():
-        return REFUSED, None, "the rename could not be applied"
-
-    return RENAMED, newPath, ""
+        return None, canApply.whyNot or "USD declined the rename"
+    return editor, ""

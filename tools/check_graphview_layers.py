@@ -3,11 +3,13 @@ import argparse
 import ast
 import json
 import pathlib
+import subprocess
 import sys
 import tempfile
 
 GRAPHVIEW_FILE = "plugin/usdNoodles/graphView.py"
 PACKAGE_DIR = "plugin/usdNoodles/graphview"
+VIEW_FILE = f"{PACKAGE_DIR}/view.py"
 INVENTORY = "tools/graphViewLayers.json"
 CLASS_NAME = "GraphView"
 LAYERS = (
@@ -21,8 +23,15 @@ LAYERS = (
     "coordinator",
     "compat",
 )
-UI_LAYERS = {"interaction", "render"}
-MODULE_CEILING = 3000
+PLUGIN_CEILING = 3000
+VIEW_CEILING = 800
+MODEL_WRITERS = {"model", "selection", "editing", "view"}
+RIG_EDITOR_MODULES = {
+    f"plugin/rigExecUsdview/{name}.py" for name in (
+        "gizmoFrames", "gizmoRotation", "gizmoTargets", "gizmoWidgets",
+        "gizmoModel", "graphCanvas", "graphEditorModel", "volumeWeightModel",
+    )
+}
 
 QT_ROOTS = {"PySide2", "PySide6", "QtCore", "QtGui", "QtWidgets", "QtOpenGL"}
 GL_ROOTS = {"OpenGL"}
@@ -30,7 +39,8 @@ USDVIEWQ = "Usdviewq"
 
 
 def _physical_lines(path):
-    return len(path.read_text(encoding="utf-8", errors="replace").splitlines())
+    with path.open(encoding="utf-8", errors="replace") as source:
+        return sum(1 for _ in source)
 
 
 def _read_json(path):
@@ -57,7 +67,7 @@ def _graphview_definitions(root):
             if not class_line:
                 class_line = node.lineno
             for child in node.body:
-                if isinstance(child, ast.FunctionDef):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     total += 1
                     definitions.setdefault(child.name, child.lineno)
     return list(definitions.items()), total, class_line
@@ -72,6 +82,114 @@ def _package_modules(root):
         for path in sorted(package.rglob("*.py"))
         if path.is_file()
     ]
+
+
+def _plugin_files(root):
+    if (root / ".git").exists():
+        # Keep tracked files even when ignored; use the repository's ignore
+        # rules for untracked files, not a separate architecture allowlist.
+        paths = subprocess.check_output(
+            ["git", "ls-files", "-z", "--cached", "--others",
+             "--exclude-per-directory=.gitignore", "--", ":(glob)plugin/**/*.py"],
+            cwd=root,
+        )
+        return sorted({rel for rel in paths.decode("utf-8", "surrogateescape").split("\0")
+                       if rel and (root / rel).is_file()})
+    return sorted(path.relative_to(root).as_posix()
+                  for path in (root / "plugin").rglob("*.py") if path.is_file())
+
+
+def _writer_import(node, rel):
+    if isinstance(node, ast.Import):
+        candidates = [alias.name for alias in node.names]
+    else:
+        module = node.module or ""
+        if node.level:
+            parent = pathlib.PurePosixPath(rel).parent.parts[2:]
+            if node.level > len(parent) + 1:
+                return None
+            prefix = parent[:len(parent) + 1 - node.level]
+            module = ".".join((*prefix, module)) if module else ".".join(prefix)
+        candidates = [module, *(f"{module}.{alias.name}" for alias in node.names)]
+    for candidate in candidates:
+        parts = candidate.split(".")
+        if parts[0].casefold() == "usdnoodles":
+            parts = parts[1:]
+        if len(parts) >= 2 and parts[0] == "graphview" and parts[1] in MODEL_WRITERS:
+            return parts[1]
+    return None
+
+
+def _bound_symbols(body, receiver=None):
+    """Collect direct methods and explicit descriptor bindings, not class constants."""
+    names = {}
+    for node in body:
+        if receiver is None and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.setdefault(node.name, node.lineno)
+        if not isinstance(node, ast.Assign) or not isinstance(
+            node.value, (ast.Name, ast.Attribute, ast.Call)
+        ):
+            continue
+        for target in node.targets:
+            if receiver is None and isinstance(target, ast.Name):
+                names.setdefault(target.id, node.lineno)
+            elif (isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name)
+                  and target.value.id == receiver):
+                names.setdefault(target.attr, node.lineno)
+    return names
+
+
+def _composed_symbols(root):
+    for module, owner, receiver in (
+        ("view", CLASS_NAME, None),
+        ("interaction", "GraphWidgetBase", None),
+        ("compat", "bind_compat", "cls"),
+    ):
+        rel = f"{PACKAGE_DIR}/{module}.py"
+        path = root / rel
+        if not path.is_file():
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue  # R2 reports the parse failure for checked modules.
+        for node in tree.body:
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef)) and node.name == owner:
+                yield rel, node.lineno, _bound_symbols(node.body, receiver)
+                break
+        else:
+            yield rel, 1, {}
+
+
+def _check_symbols(rel, class_line, names, symbols, *, composed=False):
+    violations = []
+    for name, line in names.items():
+        layer = symbols.get(name)
+        if layer is None:
+            violations.append(
+                f'{rel}:{line}: R1 {name}: no layer assigned; add "{name}": '
+                f'"<layer>" to the {rel} symbols map in {INVENTORY}'
+            )
+        elif layer == "unassigned":
+            violations.append(
+                f"{rel}:{line}: R1 {name}: layer is still unassigned; "
+                f"pick one of {', '.join(LAYERS)}"
+            )
+        elif layer not in LAYERS:
+            violations.append(
+                f"{rel}:{line}: R1 {name}: layer {layer!r} is not in the "
+                f"vocabulary ({', '.join(LAYERS)})"
+            )
+        elif composed and layer == "compat" and name != "_loadSampleGraph":
+            violations.append(
+                f"{rel}:{line}: R1 {name}: record its owning layer, not the compat binding"
+            )
+    for name in sorted(symbols.keys() - names.keys()):
+        violations.append(
+            f"{rel}:{class_line}: R1 {name}: the inventory assigns a layer to a "
+            f"definition GraphView no longer has; remove the stale entry"
+        )
+    return violations
 
 
 def _forbidden_module(dotted):
@@ -104,7 +222,8 @@ def _check(root, inventory):
     files = inventory.get("files") or {}
 
     entry = files.get(GRAPHVIEW_FILE)
-    if entry is not None and entry.get("class") != CLASS_NAME:
+    shim = (entry or {}).get("layer") == "compat"
+    if entry is not None and not shim and entry.get("class") != CLASS_NAME:
         violations.append(
             f"{GRAPHVIEW_FILE}:0: R1 {INVENTORY} records class "
             f"{entry.get('class')!r} for {GRAPHVIEW_FILE}, expected "
@@ -118,35 +237,41 @@ def _check(root, inventory):
         )
     else:
         names, _, class_line = definitions
-        symbols = (entry or {}).get("symbols") or {}
-        for name, line in names:
-            layer = symbols.get(name)
-            if layer is None:
+        if shim:
+            legacy_tree = ast.parse((root / GRAPHVIEW_FILE).read_text(encoding="utf-8"))
+            reexports = any(
+                isinstance(node, ast.ImportFrom)
+                and node.level == 1 and node.module == "graphview.view"
+                and any(alias.name == CLASS_NAME and alias.asname in (None, CLASS_NAME)
+                        for alias in node.names)
+                for node in legacy_tree.body
+            )
+            canonical = root / VIEW_FILE
+            owns_class = canonical.is_file() and any(
+                isinstance(node, ast.ClassDef) and node.name == CLASS_NAME
+                and any(isinstance(base, ast.Name) and base.id == "GraphWidgetBase"
+                        for base in node.bases)
+                for node in ast.parse(canonical.read_text(encoding="utf-8")).body
+            )
+            if class_line or not reexports or not owns_class:
                 violations.append(
-                    f"{GRAPHVIEW_FILE}:{line}: R1 {name}: no layer assigned "
-                    f'in {INVENTORY}; add "{name}": "<layer>" to the '
-                    f"{GRAPHVIEW_FILE} symbols map"
+                    f"{GRAPHVIEW_FILE}:1: R1 compatibility shim must re-export "
+                    f"{VIEW_FILE}'s {CLASS_NAME}(GraphWidgetBase) without defining it"
                 )
-            elif layer == "unassigned":
-                violations.append(
-                    f"{GRAPHVIEW_FILE}:{line}: R1 {name}: layer is still "
-                    f"unassigned; pick one of {', '.join(LAYERS)}"
-                )
-            elif layer not in LAYERS:
-                violations.append(
-                    f"{GRAPHVIEW_FILE}:{line}: R1 {name}: layer {layer!r} is "
-                    f"not in the vocabulary ({', '.join(LAYERS)})"
-                )
-        for name, layer in symbols.items():
-            if name not in dict(names):
-                violations.append(
-                    f"{GRAPHVIEW_FILE}:{class_line}: R1 {name}: the inventory "
-                    f"assigns a layer to a definition class GraphView no "
-                    f"longer has; remove the stale entry"
-                )
+        violations.extend(_check_symbols(
+            GRAPHVIEW_FILE, class_line, dict(names), (entry or {}).get("symbols", {}),
+        ))
+        if shim:
+            for rel, line, bound in _composed_symbols(root):
+                violations.extend(_check_symbols(
+                    rel, line, bound, files.get(rel, {}).get("symbols", {}), composed=True,
+                ))
 
-    modules = _package_modules(root)
-    for rel in modules:
+    plugin_files = _plugin_files(root)
+    modules = set(_package_modules(root)) | RIG_EDITOR_MODULES.intersection(plugin_files)
+    for rel in sorted(set(files) - modules - {GRAPHVIEW_FILE}):
+        violations.append(f"{rel}:0: R2 {INVENTORY} lists a module outside the source tree")
+    for rel in sorted(modules):
         path = root / rel
         module_entry = files.get(rel)
         if module_entry is None:
@@ -170,7 +295,7 @@ def _check(root, inventory):
                 f"{rel}:1: R2 {rel}: layer {layer!r} is not in the "
                 f"vocabulary ({', '.join(LAYERS)})"
             )
-        if layer in UI_LAYERS:
+        if layer == "interaction":
             continue
         try:
             tree = ast.parse(
@@ -180,6 +305,16 @@ def _check(root, inventory):
             violations.append(f"{rel}:{error.lineno or 1}: R2 cannot parse {rel}")
             continue
         for node in ast.walk(tree):
+            if layer == "render":
+                if rel.startswith(f"{PACKAGE_DIR}/") and isinstance(node, (ast.Import, ast.ImportFrom)):
+                    writer = _writer_import(node, rel)
+                    if writer:
+                        violations.append(
+                            f"{rel}:{node.lineno}: R4 {writer} imported by a render-layer "
+                            "module; consume Frame records instead. A static import check "
+                            "does not prove read-only behavior; behavioral version tests do."
+                        )
+                continue
             if isinstance(node, ast.Import):
                 offending = _forbidden_import("", [alias.name for alias in node.names])
             elif isinstance(node, ast.ImportFrom):
@@ -195,18 +330,27 @@ def _check(root, inventory):
                     f"pxr.Usdviewq belong to interaction and render only"
                 )
 
-    for rel in modules:
-        count = _physical_lines(root / rel)
-        if count > MODULE_CEILING:
+    counts = {rel: _physical_lines(root / rel) for rel in plugin_files}
+    for rel, count in counts.items():
+        if count > PLUGIN_CEILING:
             violations.append(
                 f"{rel}:{count}: R3 {count} physical lines exceeds the "
-                f"{MODULE_CEILING}-line ceiling for modules under "
-                f"{PACKAGE_DIR}"
+                f"{PLUGIN_CEILING}-line ceiling for plugin Python files"
             )
 
-    for rel, ceiling in (inventory.get("line_ceilings") or {}).items():
+    ceilings = inventory.get("line_ceilings") or {}
+    required = (GRAPHVIEW_FILE, VIEW_FILE) if shim or (root / VIEW_FILE).is_file() else ()
+    for rel in required:
+        ceiling = ceilings.get(rel)
+        if type(ceiling) is not int or not 0 < ceiling <= VIEW_CEILING:
+            violations.append(
+                f"{rel}:0: R3 {INVENTORY} must record an explicit ceiling "
+                f"of at most {VIEW_CEILING} lines"
+            )
+
+    for rel, ceiling in ceilings.items():
         path = root / rel
-        if not isinstance(ceiling, int) or ceiling <= 0:
+        if type(ceiling) is not int or ceiling <= 0:
             violations.append(
                 f"{rel}:0: R3 {INVENTORY} records an invalid ceiling "
                 f"{ceiling!r} for {rel}"
@@ -217,7 +361,7 @@ def _check(root, inventory):
                 f"no longer exists"
             )
         else:
-            count = _physical_lines(path)
+            count = counts[rel] if rel in counts else _physical_lines(path)
             if count > ceiling:
                 violations.append(
                     f"{rel}:{count}: R3 {count} physical lines exceeds the "
@@ -240,10 +384,16 @@ def _write_inventory(root, inventory):
             if name not in symbols:
                 symbols[name] = "unassigned"
                 added.append(name)
-    for rel in _package_modules(root):
+    for rel in sorted(set(_package_modules(root)) | RIG_EDITOR_MODULES.intersection(_plugin_files(root))):
         if rel not in files:
             files[rel] = {"layer": "unassigned"}
             added.append(rel)
+    if files.get(GRAPHVIEW_FILE, {}).get("layer") == "compat":
+        for rel, _, bound in _composed_symbols(root):
+            symbols = files[rel].setdefault("symbols", {})
+            for name in sorted(bound.keys() - symbols.keys()):
+                symbols[name] = "unassigned"
+                added.append(f"{rel}:{name}")
     if added:
         (root / INVENTORY).write_text(
             json.dumps(inventory, indent=2) + "\n", encoding="utf-8", newline="\n"
@@ -533,9 +683,9 @@ _SELF_CASES = [
                     "line_ceilings": {},
                 }
             ),
-            f"{PACKAGE_DIR}/model.py": "# pad\n" * (MODULE_CEILING + 1),
+            f"{PACKAGE_DIR}/model.py": "# pad\n" * (PLUGIN_CEILING + 1),
         },
-        [f"R3 {MODULE_CEILING + 1} physical lines"],
+        [f"R3 {PLUGIN_CEILING + 1} physical lines"],
     ),
     (
         "grown ceiling",
@@ -692,6 +842,68 @@ _SELF_CASES = [
 ]
 
 
+_RENDER_PROBE = f"{PACKAGE_DIR}/render_nodes.py"
+_PLUGIN_PROBE = "plugin/rigExecUsdview/testenv/testLineLimit.py"
+
+# Start from the smallest composed view; the legacy cases above still exercise R1.
+_COMPOSED_SOURCES = {
+    GRAPHVIEW_FILE: "from .graphview.view import GraphView\n",
+    VIEW_FILE: "class GraphView(GraphWidgetBase):\n    def refresh(self): pass\n",
+    _RENDER_PROBE: "from .frame import Frame\nfrom OpenGL import GL\n",
+}
+_COMPOSED_INVENTORY = {
+    "files": {
+        GRAPHVIEW_FILE: {"layer": "compat"},
+        VIEW_FILE: {"layer": "coordinator", "symbols": {"refresh": "coordinator"}},
+        _RENDER_PROBE: {"layer": "render"},
+    },
+    "line_ceilings": {GRAPHVIEW_FILE: 800, VIEW_FILE: 800},
+}
+
+
+def _composed_case(label, overrides, expected):
+    return (label, {**_COMPOSED_SOURCES, INVENTORY: json.dumps(_COMPOSED_INVENTORY),
+                    **overrides}, expected)
+
+
+_SELF_CASES += [
+    _composed_case("clean composed tree at the limits", {
+        VIEW_FILE: _COMPOSED_SOURCES[VIEW_FILE] + "# pad\n" * 798,
+        _PLUGIN_PROBE: "# pad\n" * 3000,
+    }, []),
+    _composed_case("plugin test over the ceiling", {
+        _PLUGIN_PROBE: "# pad\n" * 3001,
+    }, [f"{_PLUGIN_PROBE}:3001: R3 3001 physical lines"]),
+    _composed_case("coordinator over the ceiling", {
+        VIEW_FILE: _COMPOSED_SOURCES[VIEW_FILE] + "# pad\n" * 799,
+    }, [f"{VIEW_FILE}:801: R3 801 physical lines exceeds the ceiling 800"]),
+    _composed_case("shim over the ceiling", {
+        GRAPHVIEW_FILE: _COMPOSED_SOURCES[GRAPHVIEW_FILE] + "# pad\n" * 800,
+    }, [f"{GRAPHVIEW_FILE}:801: R3 801 physical lines exceeds the ceiling 800"]),
+    _composed_case("renderer imports model writers", {
+        _RENDER_PROBE: "import graphview.model as m\n"
+        "from UsdNoodles.graphview import selection as s\n"
+        "from .editing import Editor as E\n"
+        "def helper():\n    from . import view as v\n",
+    }, [f"R4 {name} imported by a render-layer module" for name in
+        ("model", "selection", "editing", "view")]),
+    _composed_case("shim cannot hide an unassigned method", {
+        VIEW_FILE: _COMPOSED_SOURCES[VIEW_FILE] + "    def new_method(self): pass\n",
+    }, ["R1 new_method: no layer assigned"]),
+    _composed_case("methods need an owning layer", {
+        f"{PACKAGE_DIR}/compat.py": "def bind_compat(cls):\n    cls.draw = render.draw\n",
+        INVENTORY: json.dumps({**_COMPOSED_INVENTORY, "files": {
+            **_COMPOSED_INVENTORY["files"],
+            f"{PACKAGE_DIR}/compat.py": {"layer": "compat", "symbols": {"draw": "compat"}},
+        }}),
+    }, ["R1 draw: record its owning layer"]),
+    _composed_case("explicit ceilings cannot exceed 800 or be omitted", {
+        INVENTORY: json.dumps({**_COMPOSED_INVENTORY, "line_ceilings": {VIEW_FILE: 801}}),
+    }, [f"{rel}:0: R3 {INVENTORY} must record an explicit ceiling"
+        for rel in (GRAPHVIEW_FILE, VIEW_FILE)]),
+]
+
+
 def _self_test():
     failures = []
     with tempfile.TemporaryDirectory() as tmp:
@@ -776,13 +988,20 @@ def main(argv=None):
     symbols = (inventory.get("files", {}).get(GRAPHVIEW_FILE) or {}).get(
         "symbols"
     ) or {}
-    print(
-        f"ok: {len(symbols)} layer assignments cover the {total} direct "
-        f"definitions ({len(definitions)} unique names) of class "
-        f"{CLASS_NAME} in {GRAPHVIEW_FILE}; "
-        f"{len(_package_modules(root))} module(s) under {PACKAGE_DIR} within "
-        f"the {MODULE_CEILING}-line ceiling"
-    )
+    if (inventory.get("files", {}).get(GRAPHVIEW_FILE) or {}).get("layer") == "compat":
+        print(f"ok: {GRAPHVIEW_FILE} re-exports {VIEW_FILE}; "
+              f"both have explicit ceilings at or below {VIEW_CEILING} lines")
+    else:
+        print(
+            f"ok: {len(symbols)} layer assignments cover the {total} direct "
+            f"definitions ({len(definitions)} unique names) of class "
+            f"{CLASS_NAME} in {GRAPHVIEW_FILE}"
+        )
+    print(f"ok: {len(_plugin_files(root))} plugin Python files within the "
+          f"{PLUGIN_CEILING}-line ceiling")
+    for rel, ceiling in sorted(inventory.get("line_ceilings", {}).items()):
+        print(f"ok: {rel}: {_physical_lines(root / rel)} physical lines "
+              f"within the {ceiling}-line ceiling")
     return 0
 
 

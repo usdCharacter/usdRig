@@ -206,7 +206,7 @@ class UsdPrimLibrary(UsdTypedPrimLibraryBase):
         if schema_reg.FindConcretePrimDefinition(identifier) is not None:
             prim_path = super().create_node(stage, parent_path, identifier, position)
             if prim_path:
-                self._apply_auto_api_schemas(stage.GetPrimAtPath(prim_path))
+                self._apply_auto_api_schemas_at_spec(stage, prim_path, identifier)
             return prim_path
 
         # Not a concrete typed schema — check Sdr for shader identifiers.
@@ -248,6 +248,59 @@ class UsdPrimLibrary(UsdTypedPrimLibraryBase):
             except (AttributeError, RuntimeError):
                 pass
 
+    @staticmethod
+    def _apply_auto_api_schemas_at_spec(stage, prim_path, identifier):
+        """Companion schemas from the definition and the spec, not the prim.
+
+        Same rule and bytes as `_apply_auto_api_schemas`, safe inside an
+        Sdf.ChangeBlock where the new prim does not compose yet.
+        """
+        definition = Usd.SchemaRegistry().FindConcretePrimDefinition(identifier)
+        if definition is None:
+            return
+        applied = {str(s) for s in definition.GetAppliedAPISchemas()}
+        if not any("LightAPI" in s for s in applied):
+            return
+
+        try:
+            from pxr import UsdLux
+        except ImportError:
+            return
+
+        target = stage.GetEditTarget()
+        spec = target.GetLayer().GetPrimAtPath(
+            target.MapToSpecPath(Sdf.Path(prim_path))
+        )
+        if not spec:
+            return
+        try:
+            current = spec.GetInfo("apiSchemas") or Sdf.TokenListOp()
+            have = set(applied)
+            have.update(current.GetAppliedItems())
+            missing = [
+                cls.__name__
+                for cls in (UsdLux.ShadowAPI, UsdLux.ShapingAPI)
+                if cls.__name__ not in have
+            ]
+            if not missing:
+                return
+            merged = Sdf.TokenListOp()
+            if current.isExplicit:
+                merged.explicitItems = list(current.explicitItems) + missing
+            else:
+                for bucket in (
+                    "addedItems",
+                    "prependedItems",
+                    "appendedItems",
+                    "deletedItems",
+                    "orderedItems",
+                ):
+                    setattr(merged, bucket, getattr(current, bucket))
+                merged.prependedItems = list(merged.prependedItems) + missing
+            spec.SetInfo("apiSchemas", merged)
+        except (AttributeError, RuntimeError):
+            pass
+
     def _create_shader_node(
         self,
         stage: Usd.Stage,
@@ -273,12 +326,17 @@ class UsdPrimLibrary(UsdTypedPrimLibraryBase):
             else:
                 shader_path = Sdf.Path(f"{parent_str}/{unique_name}")
 
-            layer = stage.GetEditTarget().GetLayer()
+            target = stage.GetEditTarget()
+            layer = target.GetLayer()
+            spec_path = target.MapToSpecPath(shader_path)
+            if not spec_path:
+                Tf.Warn(f"Cannot map {shader_path} into the edit target")
+                return None
             if not layer:
                 Tf.Warn("No edit target layer found")
                 return None
 
-            prim_spec = Sdf.CreatePrimInLayer(layer, shader_path)
+            prim_spec = Sdf.CreatePrimInLayer(layer, spec_path)
             if not prim_spec:
                 Tf.Warn(f"Failed to create prim spec at {shader_path}")
                 return None

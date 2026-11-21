@@ -159,6 +159,7 @@ nav:
       - Bake and inverse APIs: specs/python-bake-inverse.md
       - Composition arcs: specs/composition-arcs.md
       - Editor extensions: specs/editor-extensions.md
+      - usdNoodles graph editor: concepts/graph-editor-architecture.md
       - Control guides: specs/control-guides.md
       - Volume weights: specs/volume-weights.md
       - Default spaces: specs/xformable-default-spaces.md

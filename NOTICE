@@ -101,7 +101,8 @@ carry no upstream header. tests/fixtures/rigLogicReference.inc holds values
 OpenRigLogic's own solver and table produced at that commit.
 
 The adapted attribute widgets in plugin/rigExecUsdview/volumeWeightUI.py
-retain their existing Copyright 2026 Pixar and OpenUSD license notice.
+and plugin/rigExecUsdview/volumeWeightModel.py retain their existing
+Copyright 2026 Pixar and OpenUSD license notice.
 The Squarebit Eye shader in examples/biped/shaders keeps its own EULA;
 see THIRD_PARTY_NOTICES.md.
 

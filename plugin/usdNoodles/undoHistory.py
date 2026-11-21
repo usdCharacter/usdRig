@@ -160,27 +160,32 @@ class UndoHistory:
         command = source[-1]
         self._replaying = True
         try:
-            with Usd.EditContext(self.stage, command[3]):
-                command[callback_index](view)
+            callback = command[callback_index]
+            if getattr(callback, "manages_edit_target", False) is True:
+                result = callback(view)
+            else:
+                with Usd.EditContext(self.stage, command[3]):
+                    result = callback(view)
         finally:
             self._replaying = False
         # A failed callback retains its entry so it can be retried.
         destination.append(command)
         source.pop()
+        return result is True
 
     def undo(self, view):
         backend = self._backend(view)
         if backend is not None:
             backend.Undo()
             return
-        self._replay(view, self._undo, self._redo, 2)
+        return self._replay(view, self._undo, self._redo, 2)
 
     def redo(self, view):
         backend = self._backend(view)
         if backend is not None:
             backend.Redo()
             return
-        self._replay(view, self._redo, self._undo, 1)
+        return self._replay(view, self._redo, self._undo, 1)
 
     def bridged(self):
         """True while an external history backend serves this stage."""

@@ -61,12 +61,13 @@ class NoodlesHeadlessTestCase(unittest.TestCase):
 
     def setUp(self):
         super().setUp()
-        # Clear undo stack
-        self.helper.clear_undo_stack()
         # Create fresh empty stage with Blueprint
         self._stage, self._bp_path = self.harness.create_empty_stage()
-        # Load into GraphView
+        # Load into GraphView (this binds the stage's undo history)
         self.harness.load_blueprint(self._stage, self._bp_path)
+        # Clear undo stack last: clearing before the first load would
+        # clear the pre-load None history.
+        self.helper.clear_undo_stack()
 
     def tearDown(self):
         self._stage = None

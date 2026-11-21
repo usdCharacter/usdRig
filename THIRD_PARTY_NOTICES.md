@@ -28,7 +28,8 @@ Python, Qt/PySide, and other dependencies retain their respective terms;
 the root license does not relicense a dependency installation.
 
 The OpenUSD Gf-derived math in `libs/rigExecRuntime/runtimeMath.h` and the
-adapted widgets in `plugin/rigExecUsdview/volumeWeightUI.py` also retain
+adapted widgets in `plugin/rigExecUsdview/volumeWeightUI.py` and
+`plugin/rigExecUsdview/volumeWeightModel.py` also retain
 OpenUSD license terms and their Pixar notices.
 
 `thirdparty/flatbuffers` holds unmodified C++ runtime headers of

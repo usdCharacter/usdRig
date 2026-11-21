@@ -256,7 +256,7 @@ missing tail.
 | CPU reference | `libs/rigExecOracle/weightReference.cpp` |
 | Compiled rig and falloff tables | `libs/rigExec/rigEvaluatorCompile.cpp`, `libs/rigExec/rigEvaluatorGeometry.cpp` (`_BakeFalloffLut`) |
 | Resolved field for tools | `RigExecRigPose::weightFields` |
-| Authoring UI | `plugin/rigExecUsdview/volumeWeightUI.py`, `plugin/rigExecUsdview/weightViewport.py` |
+| Authoring UI | `plugin/rigExecUsdview/volumeWeightUI.py`, `plugin/rigExecUsdview/volumeWeightModel.py`, `plugin/rigExecUsdview/weightViewport.py` |
 | Influence overlay + guides | `libs/rigExecImaging/` (`RigExecImaging_SetWeightOverlayForStage`) |
 | Example | `examples/11_VolumeWeights.usda` |
 | Tests | `tests/testRigExecWeightFields.cpp`, `tests/testRigExecWeightProgram.cpp`, `tests/testRigExecVolumeWeights.cpp`, `tests/testRigExecWeightOverlay.cpp`, `bin/test/run_testusdview_overlay.bat` |
