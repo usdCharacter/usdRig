@@ -17,6 +17,7 @@ moved code reads. Names the suite never patches are imported directly by
 the owning layer instead.
 """
 
+from importlib import import_module
 import sys
 
 
@@ -27,8 +28,8 @@ def legacy_symbol(name):
     """Return the current ``UsdNoodles.graphView.<name>`` binding.
 
     Looks the legacy module up in ``sys.modules`` on every call so a
-    patched binding is what the caller sees. Raises ``KeyError`` when the
-    legacy module was never imported and ``AttributeError`` for an
-    unknown name, matching plain attribute access.
+    patched binding is what the caller sees. Import the shim lazily if
+    a consumer entered through the canonical module.
     """
-    return getattr(sys.modules[_LEGACY_MODULE], name)
+    module = sys.modules.get(_LEGACY_MODULE) or import_module(_LEGACY_MODULE)
+    return getattr(module, name)

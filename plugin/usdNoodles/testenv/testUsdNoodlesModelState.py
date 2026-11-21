@@ -46,7 +46,7 @@ except ImportError as error:  # pragma: no cover - OpenUSD not installed
 if _has_usd:
     from UsdNoodles.graphview import legacy as legacy_module
     from UsdNoodles.graphview import model
-    from UsdNoodles.graphview import stage_sync
+    from UsdNoodles.graphview import stage_adapter, stage_sync
 
 try:
     from UsdNoodles.core import LinkData
@@ -646,7 +646,7 @@ class StageSyncApplyTest(unittest.TestCase):
         self.view._selectedNodes = {"/A"}
         self.stage.DefinePrim("/A2")
         self.stage.RemovePrim("/A")
-        remapped = stage_sync.remapMovedNodes(self.view, {"/A": "/A2"})
+        remapped = stage_adapter.remapMovedNodes(self.view, {"/A": "/A2"})
         self.assertEqual(remapped, {"/A": "/A2"})
         self.assertEqual(len(self.published), 1)
         changeset = self.published[0]
@@ -667,7 +667,7 @@ class StageSyncApplyTest(unittest.TestCase):
         node_a, _, link = self._wire_ab()
         self.view._selectedNodes = {"/A", "/B"}
         self.stage.RemovePrim("/B")
-        removed = stage_sync.validateNodesAgainstStage(self.view)
+        removed = stage_adapter.validateNodesAgainstStage(self.view)
         self.assertEqual(removed, ["/B"])
         self.assertEqual(len(self.published), 1)
         changeset = self.published[0]
@@ -684,7 +684,7 @@ class StageSyncApplyTest(unittest.TestCase):
     def test_adopt_hook_inserts_through_apply(self):
         self._wire_ab()
         UsdGeom.Sphere.Define(self.stage, "/New")
-        added = stage_sync.adoptPrimsNewToScope(self.view, {"/New"})
+        added = stage_adapter.adoptPrimsNewToScope(self.view, {"/New"})
         self.assertEqual(added, ["/New"])
         self.assertEqual(len(self.published), 1)
         changeset = self.published[0]
@@ -700,7 +700,7 @@ class StageSyncApplyTest(unittest.TestCase):
         self._wire_ab()
         self.stage.RemovePrim("/B")
         UsdGeom.Sphere.Define(self.stage, "/New")
-        stage_sync.applyUsdChanges(
+        stage_adapter.applyUsdChanges(
             self.view, {"/B", "/New"}, set(), None
         )
         self.assertEqual(len(self.published), 1)
@@ -718,7 +718,7 @@ class StageSyncApplyTest(unittest.TestCase):
         self.view._addNewNodeFast = add_fast
         self.assertIsNone(model.state_for_view(self.view))
         UsdGeom.Sphere.Define(self.stage, "/New")
-        added = stage_sync.adoptPrimsNewToScope(self.view, {"/New"})
+        added = stage_adapter.adoptPrimsNewToScope(self.view, {"/New"})
         self.assertEqual(added, ["/New"])
         add_fast.assert_called_once()
         self.assertEqual(self.published, [])
@@ -751,7 +751,7 @@ class StageSyncApplyTest(unittest.TestCase):
         self.view.loadStage = lambda _stage: setattr(
             self.view, "nodeGraph", new_graph
         )
-        stage_sync.applyStageDelta(
+        stage_adapter.applyStageDelta(
             self.view,
             stage_sync.Load(3, self.stage, stage_sync.MODE_STAGE, None),
         )

@@ -215,13 +215,16 @@ class StageSync:
     """
 
     def __init__(
-        self, read, notice, apply, post, listen, warn=None, sink=None, *, reconcile
+        self, read, notice, apply, post, listen, warn=None, sink=None, *, reconcile,
+        on_owner=None, post_notice=None
     ):
         self._read = read
         self._notice = notice
         self._reconcile = reconcile
         self._apply = apply
         self._post = post
+        self._on_owner = on_owner
+        self._post_notice = post_notice or post
         self._warn = warn
         self._sink = sink
         self._epoch = 0
@@ -359,6 +362,11 @@ class StageSync:
         live destinations. It is never inferred from deletes and creates.
         """
         if self._closed or epoch != self._epoch:
+            return
+        if self._on_owner is not None and not self._on_owner():
+            self._post_notice(
+                lambda: self.changed(epoch, resyncedPaths, infoChangedPaths, movedPaths)
+            )
             return
         ctx = self._notice()
         if ctx.syncing_selection:

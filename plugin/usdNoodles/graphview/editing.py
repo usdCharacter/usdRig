@@ -29,6 +29,7 @@ from . import intents
 from . import selection as _selection
 from .legacy import legacy_symbol
 from .selection import LinkKey
+from .stage_adapter import savedRenamePlacement
 from .stage_sync import _nodeIdPrimPath
 
 
@@ -1555,82 +1556,14 @@ def _make_rename_undo(parent_path, from_name, to_name):
         if not prim or not prim.IsValid():
             Tf.Warn("Rename undo: no prim named %s under %s" % (_from, _parent))
             return
+        placement = savedRenamePlacement(gv.nodes, oldPath)
         status, newPath, message = rename_prim(stage, prim, _to)
         if status != RENAMED:
             Tf.Warn("Rename undo failed (%s): %s" % (status, message))
             return
         # Follow the node across, exactly as the forward rename does. Reloading
         # instead would undo the name and lose the graph in the same gesture.
-        gv._remapMovedNodes({oldPath: str(newPath)})
-
-    return _fn
-
-
-def _make_value_edit(prim_path, property_name, components, time_code, mode):
-    """Return a callable that authors *components* onto one attribute.
-
-    Named by path rather than by a captured ``Usd.Prim``: ``_performUndo``
-    calls ``_reloadCurrentGraph`` afterwards, which rebuilds every node from
-    the stage, so a prim handle captured here would be talking about an
-    object nobody else is looking at any more.
-    """
-
-    def _fn(
-        gv,
-        _path=str(prim_path),
-        _prop=property_name,
-        _components=tuple(components),
-        _time=time_code,
-        _mode=mode,
-    ):
-        stage = gv.nodeGraph.getStage()
-        if not stage:
-            return
-        prim = stage.GetPrimAtPath(_path)
-        if not prim or not prim.IsValid():
-            Tf.Warn("Value undo: no prim at %s" % _path)
-            return
-        ok, reason = noodlesValues.write_value(
-            stage, prim, _prop, _components, _time, mode=_mode
-        )
-        if not ok:
-            Tf.Warn("Value undo failed on %s.%s: %s" % (_path, _prop, reason))
-            return
-        node = gv.nodes.get(_path)
-        if node is not None and hasattr(node, "invalidate_value_row"):
-            node.invalidate_value_row(_prop)
-
-    return _fn
-
-
-def _make_api_schema_undo(identifier, applied, apply):
-    """Return a callable that applies or removes an API schema.
-
-    The instance names chosen when the schema was first applied are captured
-    here so that redo reuses them instead of generating new ones.
-
-    Args:
-        identifier: USD schema identifier.
-        applied: List of (primPath, instanceName) pairs; instanceName is ""
-            for single-apply schemas.
-        apply: True to apply the schema on redo, False to remove it on undo.
-    """
-
-    def _fn(gv, _identifier=identifier, _applied=list(applied), _apply=apply):
-        from ..apiSchemas import apply_named, remove_from_prim
-
-        stage = gv.nodeGraph.getStage()
-        if not stage:
-            return
-        for path_str, instance_name in _applied:
-            prim = stage.GetPrimAtPath(path_str)
-            if not prim or not prim.IsValid():
-                continue
-            if _apply:
-                apply_named(prim, _identifier, instance_name)
-            else:
-                remove_from_prim(prim, _identifier, instance_name)
-        gv._reloadCurrentGraph()
+        gv._adoptRenamedPrim(oldPath, str(newPath), *placement)
 
     return _fn
 
@@ -2213,6 +2146,43 @@ def _writeValueComponents(view, state, components, warn=True):
     return _set_value(view, intent, warn=False, preview=state.setdefault('preview', {}))
 
 
+def _make_value_edit(prim_path, property_name, components, time_code, mode):
+    """Return a callable that authors *components* onto one attribute.
+
+    Named by path rather than by a captured ``Usd.Prim``: ``_performUndo``
+    calls ``_reloadCurrentGraph`` afterwards, which rebuilds every node from
+    the stage, so a prim handle captured here would be talking about an
+    object nobody else is looking at any more.
+    """
+
+    def _fn(
+        gv,
+        _path=str(prim_path),
+        _prop=property_name,
+        _components=tuple(components),
+        _time=time_code,
+        _mode=mode,
+    ):
+        stage = gv.nodeGraph.getStage()
+        if not stage:
+            return
+        prim = stage.GetPrimAtPath(_path)
+        if not prim or not prim.IsValid():
+            Tf.Warn("Value undo: no prim at %s" % _path)
+            return
+        ok, reason = noodlesValues.write_value(
+            stage, prim, _prop, _components, _time, mode=_mode
+        )
+        if not ok:
+            Tf.Warn("Value undo failed on %s.%s: %s" % (_path, _prop, reason))
+            return
+        node = gv.nodes.get(_path)
+        if node is not None and hasattr(node, "invalidate_value_row"):
+            node.invalidate_value_row(_prop)
+
+    return _fn
+
+
 def _pushValueUndo(view, primPath, propertyName, oldComponents, newComponents,
                    timeCode):
     """Record the local opinion delta accumulated by a completed drag."""
@@ -2224,6 +2194,14 @@ def _pushValueUndo(view, primPath, propertyName, oldComponents, newComponents,
         path = Sdf.Path(primPath).AppendProperty(propertyName)
         _record_opinions(view, stage, f'Set {path}', (site,), preview['patches'],
                          partial(_refresh_value, path))
+    else:
+        # Direct callers supply a committed edit without a drag journal.
+        mode = view._cachedValueWriteMode
+        legacy_symbol('_push_undo_command')(
+            f'Set {primPath}.{propertyName}',
+            _make_value_edit(primPath, propertyName, newComponents, timeCode, mode),
+            _make_value_edit(primPath, propertyName, oldComponents, timeCode, mode),
+            view=view)
 
 
 def _updateMung(view, event):

@@ -11,10 +11,14 @@ Reconciliation reads USD without authoring opinions and updates the graph
 through the view's state and hooks.
 """
 
-from pxr import Sdf, Tf
+from pxr import Gf, Sdf, Tf, Usd
 
 from UsdNoodles.nodeGraph import unsubscribe_edit_target_warning
 
+from ..nodeGraphBlueprint import NodeGraphBlueprint
+from ..pinUtils import is_hidden_namespace_pin, is_relationship_pin, split_direction_hint
+from ..usdNoticeHandler import UsdNoticeHandler
+from .legacy import legacy_symbol
 from . import model, selection
 from .stage_sync import (
     MODE_BLUEPRINT,
@@ -26,6 +30,7 @@ from .stage_sync import (
     Load,
     NoticeContext,
     StageContext,
+    StageSync,
     _isPathRelated,
     _nodeIdPrimPath,
 )
@@ -583,6 +588,176 @@ def adoptRenamedPrim(
     return nodeId
 
 
+def remapMovedNodes(view, movedPaths):
+    """Carry nodes across a namespace move instead of dropping them.
+
+    A node id IS a prim path, so a rename or reparent changes the identity
+    of every node at or under the moved prim. The alternative -- rebuilding
+    the graph from a loader -- cannot work here, because graph membership
+    is not derivable from the stage: 'A' (``addNodesFromPrimTreeSelection``)
+    puts prims at ANY depth on the canvas and 'D' takes them off again
+    without touching USD, so the set of nodes on screen is the user's, not
+    the loader's. Re-keying is the only operation that preserves it.
+
+    Everything keyed by the old id moves with it: the node dict, the
+    NodeModel's own identity and its expired ``Usd.Prim``, the selection and
+    marquee sets, the spatial index, and the scattered cursor / drag / hover
+    ids. Links are NOT re-keyed -- ``_rebuildLinks`` re-derives every one of
+    them from USD, which is also what picks up the relationship targets and
+    connections USD retargeted as part of the move.
+
+    Idempotent: paths with no node behind them are skipped, so it is safe to
+    call from the authoring site as well as from the notice, whichever gets
+    there first.
+
+    Args:
+        movedPaths: ``{oldPrimPath: newPrimPath}`` as strings.
+
+    Returns:
+        dict[str, str]: the ``{oldNodeId: newNodeId}`` actually applied.
+    """
+    if not movedPaths:
+        return {}
+
+    stage = view.nodeGraph.getStage()
+
+    # A move of /A implies a move of everything under it, but USD reports
+    # only the prim that actually moved -- descendants are not enumerated in
+    # the notice. Walk the graph instead and rewrite every id that sits at
+    # or under a moved path.
+    remap = {}
+    for nodeId in view.nodes:
+        primPath = _nodeIdPrimPath(nodeId)
+        for oldPath, newPath in movedPaths.items():
+            if not _isPathRelated(primPath, oldPath) or len(primPath) < len(
+                oldPath
+            ):
+                continue
+            newId = newPath + nodeId[len(oldPath):]
+            if newId != nodeId:
+                remap[nodeId] = newId
+            break
+
+    if not remap:
+        return {}
+
+    state = model.state_for_view(view)
+    if state is not None:
+        # The model performs the node-object updates, the
+        # order-preserving re-key, and the incident-link endpoint
+        # re-keying as one delta; the view-owned selection, cursor,
+        # scope, and render lines below are unchanged.
+        state.apply(
+            model.GraphDelta(
+                ops=(model.MoveNodes(pairs=tuple(remap.items())),)
+            )
+        )
+    else:
+        for oldId, newId in remap.items():
+            node = view.nodes[oldId]
+            node.id = newId
+            # Synthesized Blueprint I/O nodes are not prim-backed: their id only
+            # borrows the blueprint's path, and their title is a pin name. Move
+            # the id and leave the rest of the model alone.
+            if "#" not in newId:
+                # Repoint the model at the prim's new home. The Usd.Prim
+                # captured at construction expired the moment the namespace edit
+                # landed -- left in place it reads as "this node's prim is
+                # gone", and the next resync would have
+                # validateNodesAgainstStage drop the node we just rescued.
+                node._primPath = Sdf.Path(newId)
+                if stage is not None:
+                    node._prim = stage.GetPrimAtPath(newId)
+                # The title is the prim's name, and the name changed.
+                node.name = Sdf.Path(newId).name
+            # Hit-testing resolves through the spatial index, and the link
+            # rebuild that refills it is deferred to the next paint -- drop the
+            # dead key now so a click landing first cannot hit it.
+            try:
+                view._spatialIndex.removeNode(oldId)
+            except Exception:
+                pass
+
+        # Re-key the node dict in one pass, preserving insertion order: it is
+        # the draw and iteration order, and a pop/re-insert would send every
+        # renamed node to the back.
+        view.nodeGraph.nodes = {
+            remap.get(nodeId, nodeId): node for nodeId, node in view.nodes.items()
+        }
+
+    def _remapId(value):
+        return remap.get(value, value)
+
+    def _remapIdInTuple(value, index=0):
+        if not value:
+            return value
+        asList = list(value)
+        asList[index] = _remapId(asList[index])
+        return tuple(asList)
+
+    if hasattr(view, '_selection'):
+        # Link topology is re-derived from USD on the deferred rebuild.
+        view._selection._rewrite(movedPaths)
+        view._marqueeBase._rewrite(movedPaths)
+    else:
+        view._selectedNodes = {_remapId(n) for n in view._selectedNodes}
+        view._marqueeBaseSelectedNodes = {
+            _remapId(n) for n in view._marqueeBaseSelectedNodes
+        }
+        view._marqueePrevSelectedNodes = {
+            _remapId(n) for n in view._marqueePrevSelectedNodes
+        }
+    view._reconciledPositionVersions = {
+        _remapId(n): v for n, v in view._reconciledPositionVersions.items()
+    }
+    view.nodeIdUnderCursor = _remapId(view.nodeIdUnderCursor)
+    view._renamingNodeId = _remapId(view._renamingNodeId)
+    # An open value editor / drag / popup follows the prim it is editing,
+    # for the same reason the rename does: the node is still on screen and
+    # still the one being typed into, only its id changed.
+    view._valueEditTarget = _remapIdInTuple(view._valueEditTarget)
+    for _state in (view._mungState, view._tokenPopup):
+        if _state and _state.get("nodeId") in remap:
+            _state["nodeId"] = remap[_state["nodeId"]]
+            _state["primPath"] = _nodeIdPrimPath(_state["nodeId"])
+    view._hoveredPort = _remapIdInTuple(view._hoveredPort)
+    view._tooltipProperty = _remapIdInTuple(view._tooltipProperty)
+    view._dragLinkSourceNode = _remapId(view._dragLinkSourceNode)
+    view._dragLinkSyntheticTarget = _remapIdInTuple(view._dragLinkSyntheticTarget)
+    view._dragLinkResolvedTarget = _remapIdInTuple(view._dragLinkResolvedTarget)
+    view._reconnectOldSourceNodeId = _remapId(view._reconnectOldSourceNodeId)
+    view._reconnectOldTargetNodeId = _remapId(view._reconnectOldTargetNodeId)
+
+    # The blueprint / container graphs scope themselves to the prim they were
+    # opened on (see graphScopeParentPath). If that prim moved, the scope has
+    # to move with it or reconciliation starts measuring against a path that
+    # no longer resolves and empties the graph.
+    if view._currentPrimPath is not None:
+        currentStr = str(view._currentPrimPath)
+        for oldPath, newPath in movedPaths.items():
+            if _isPathRelated(currentStr, oldPath) and len(currentStr) >= len(
+                oldPath
+            ):
+                view._currentPrimPath = Sdf.Path(
+                    newPath + currentStr[len(oldPath):]
+                )
+                break
+
+    # Node ids are baked into the vertex, text and icon caches, so the old
+    # id's geometry would linger while the new id drew nothing. Links are
+    # re-derived from USD by the rebuild this schedules, which is also what
+    # refills the spatial index.
+    view._invalidateBackReferenceLinkDataCache()
+    view._nodeRenderManager.invalidateAll()
+    view._resetRenderCachesAfterBulkMove()
+
+    Tf.Status(
+        "Graph followed %d node(s) across a namespace move: %s"
+        % (len(remap), ", ".join(f"{o} -> {n}" for o, n in sorted(remap.items())))
+    )
+    return remap
+
+
 def _nodePositionChange(node):
     """An authored position moved: only the cached position is stale."""
     node._position = None
@@ -701,7 +876,6 @@ def applyUsdChanges(view, resyncedPaths, infoChangedPaths, trace=None, movedPath
 
 
 def _applyUsdChangesPass(view, resyncedPaths, infoChangedPaths, trace, movedPaths):
-
     needsLinkRebuild = False
     needsRepaint = False
     needsTextUpdate = False
@@ -949,3 +1123,346 @@ def closeStageLifecycle(view):
     unsubscribe_edit_target_warning(view._showWarningPopup)
     view._undoHistory = None
     service.close()
+    dispose = getattr(view, "_disposeView", None)
+    if dispose is not None:
+        dispose()
+
+
+def _onStageReplaced(view):
+    sync = getattr(view, "_stageSync", None)
+    if not isinstance(sync, StageSync):
+        # Test doubles never ran __init__: same policy, transient service.
+        sync = _makeStageSync(view)
+        view._stageSync = sync
+    if sync.isClosed():
+        # usdview keeps this signal connected and a closed widget is not
+        # a destroyed one: decide before the api or graph is read.
+        return
+    frame = _frameOf(
+        getattr(view._usdviewApi, "frame", Usd.TimeCode.Default())
+        if view._usdviewApi
+        else Usd.TimeCode.Default()
+    )
+    stage = view._usdviewApi.stage if view._usdviewApi else None
+    sync.replace(
+        stage, stageLoadMode(view), view._currentPrimPath, frame
+    )
+
+
+def _finishStageReload(view, epoch=None):
+    sync = getattr(view, "_stageSync", None)
+    if not isinstance(sync, StageSync):
+        # Test doubles never ran __init__: run the same policy through a
+        # transient service rather than a second copy of it.
+        sync = _makeStageSync(view)
+        view._stageSync = sync
+    sync.finish(sync.epoch() if epoch is None else epoch)
+
+
+def loadBlueprint(view, stage, primPath, useFieldnames=True):
+    view._currentPrimPath = primPath
+
+    view.nodeGraph = NodeGraphBlueprint()
+    view.nodeGraph.setStage(stage)
+    view._initUndoTracking(stage)
+    view.nodeGraph.load(
+        stage,
+        primPath,
+        view.textRenderer.calculateTextWidth,
+        view.fontAtlas,
+        useFieldnames,
+        nodeFactory=view._nodeFactory,  # Pass the factory
+    )
+
+    view._seedNodeZOrders()
+    view._gridPlaceNodes(list(view.nodes.values()))
+
+    view._resetRenderCachesAfterBulkMove()
+
+    view._noticeHandler.register(stage)
+
+    if view.nodes:
+        view.frameAll()
+
+
+def loadContainer(view, stage, primPath, useFieldnames=True):
+    from ..nodeGraphBpContainer import NodeGraphBpContainer
+
+    view._currentPrimPath = primPath
+
+    view.nodeGraph = NodeGraphBpContainer()
+    view.nodeGraph.setStage(stage)
+    view._initUndoTracking(stage)
+    view.nodeGraph.load(
+        stage,
+        primPath,
+        view.textRenderer.calculateTextWidth,
+        view.fontAtlas,
+        useFieldnames,
+        nodeFactory=view._nodeFactory,  # Pass the factory
+    )
+
+    view._seedNodeZOrders()
+    view._gridPlaceNodes(list(view.nodes.values()))
+
+    view._resetRenderCachesAfterBulkMove()
+
+    # Register for USD change notices on this stage
+    view._noticeHandler.register(stage)
+
+    if view.nodes:
+        view.frameAll()
+
+
+def loadStage(view, stage):
+    """Open an EMPTY graph on *stage*: no prims graphed at all.
+
+    The canvas is the user's, not the loader's: prims arrive via 'A'
+    (``addNodesFromPrimTreeSelection``), node creation, and the
+    notice-driven adoption of newly appearing scope children -- never
+    from an opening scan. ``NodeGraphStage.load`` keeps its
+    root-children scan as the explicit loader primitive; the view
+    simply does not invoke it here.
+    """
+    from ..nodeGraphStage import NodeGraphStage
+
+    view._currentPrimPath = None
+
+    view.nodeGraph = NodeGraphStage()
+    view.nodeGraph.setStage(stage)
+    view._initUndoTracking(stage)
+    view.nodeGraph.syncSelectionToPrimTree = True
+    view.nodeGraph.linksChanged = True
+
+    view._seedNodeZOrders()
+
+    view._resetRenderCachesAfterBulkMove()
+    view._noticeHandler.register(stage)
+
+
+def _valueRowOnlyChange(node, propertyName):
+    """Whether a property change is *only* a value an inline cell shows.
+
+    True means the view can answer it by re-reading one node's value rows
+    -- no cache invalidation, no relayout, no link rebuild. See the call
+    site in ``_handleUsdChanges`` for why that distinction is the single
+    most important performance decision in the value feature.
+
+    A connection-driven attribute is excluded: its links are the thing
+    that changed shape, and the older branches below know how to rebuild
+    them.
+    """
+    if not propertyName:
+        return False
+    has_value_row = getattr(node, "has_value_row", None)
+    if has_value_row is None:
+        return False
+    try:
+        if not has_value_row(propertyName):
+            return False
+        prim = getattr(node, "_prim", None)
+        if prim is not None and prim.IsValid():
+            attr = prim.GetAttribute(propertyName)
+            if attr and attr.IsValid() and attr.HasAuthoredConnections():
+                return False
+    except Exception:
+        return False
+    return True
+
+
+def _isPinPropertyChange(propertyName):
+    """True when a property change should rebuild links.
+
+    Covers any direction-hint pin (``in:``/``input:``/``inputs:`` and
+    ``out:``/``output:``/``outputs:``), relationship pins, and any other
+    namespaced attribute shown as a pin (e.g. ``rig1:space``) — but not
+    hidden ``ui:`` editor metadata. Bare attrs are left to the existing
+    value-change handling.
+    """
+    if split_direction_hint(propertyName)[0] is not None:
+        return True
+    if is_relationship_pin(propertyName):
+        return True
+    if ":" not in propertyName:
+        return False
+    hide_ui = bool(legacy_symbol("NoodlesConfig").get("hideUiNamespacePins", True))
+    return not is_hidden_namespace_pin(propertyName, hide_ui=hide_ui)
+
+
+def _reloadLinksFromUSD(view):
+    """Rebuild links from USD connections without reloading the graph."""
+    view._rebuildLinks()
+    view.update()
+
+
+def _reloadCurrentGraph(view):
+    """Reload the graph from USD after undo/redo.
+
+    Creates a fresh nodeGraph and re-runs the full load path so that
+    nodes, links, spatial index, and text are rebuilt cleanly from
+    the (now-modified) USD layer state.
+
+    What the loader produces is not the whole graph, though. A loader walks
+    the direct children of one scope; the canvas holds whatever the user put
+    there, at any depth, via 'A' (``addNodesFromPrimTreeSelection``) or node
+    creation under a prim-tree selection -- membership that lives only in
+    memory and that no loader can re-derive. Those nodes are re-added
+    afterwards, along with the positions they were placed at when nothing
+    authored ``ui:nodegraph:node:pos`` to read back. Without that, an
+    unrelated undo answers by wiping the canvas: stage graphs open
+    empty, so the loader contributes nothing and the re-add loop below
+    is the whole membership.
+    """
+    from ..nodeGraphBpContainer import NodeGraphBpContainer
+    from ..nodeGraphStage import NodeGraphStage
+
+    stage = view.nodeGraph.getStage()
+    if not stage:
+        view.update()
+        return
+
+    # Every node object is about to be rebuilt, so a value edit or drag
+    # holding one is already talking about the previous graph.
+    view._clearValueInteractionState()
+
+    # Save z-order map before reload so restored nodes keep their
+    # front-to-back visual ordering (important for undo of deletes).
+    savedZOrders = {nid: node.zOrder for nid, node in view.nodes.items()}
+    # Membership and display-only placement: view state with no USD backing,
+    # so the reload below is the only thing that could lose it.
+    savedNodeIds = list(view.nodes.keys())
+    savedDisplayPositions = {
+        nid: Gf.Vec2d(node.position)
+        for nid, node in view.nodes.items()
+        if not view._nodeHasAuthoredPosition(node)
+    }
+
+    # Disable notice handler during reload to avoid recursive processing
+    view._noticeHandler.setEnabled(False)
+    try:
+        # Create a fresh nodeGraph of the same type
+        if isinstance(view.nodeGraph, NodeGraphBpContainer):
+            view.nodeGraph = NodeGraphBpContainer()
+            view.nodeGraph.setStage(stage)
+            view.nodeGraph.load(
+                stage,
+                view._currentPrimPath,
+                view.textRenderer.calculateTextWidth,
+                view.fontAtlas,
+                nodeFactory=view._nodeFactory,
+            )
+        elif isinstance(view.nodeGraph, NodeGraphStage):
+            # No loader scan: stage graphs open empty, so a reload
+            # preserves exactly the curated membership the loop below
+            # re-adds rather than re-deriving the loader's idea of the
+            # graph (which would graph root prims the user never asked
+            # for after the first undo).
+            view.nodeGraph = NodeGraphStage()
+            view.nodeGraph.setStage(stage)
+            view.nodeGraph.syncSelectionToPrimTree = True
+        else:
+            view.nodeGraph = NodeGraphBlueprint()
+            view.nodeGraph.setStage(stage)
+            view.nodeGraph.load(
+                stage,
+                view._currentPrimPath,
+                view.textRenderer.calculateTextWidth,
+                view.fontAtlas,
+                nodeFactory=view._nodeFactory,
+            )
+
+        # Put back the nodes the user curated onto the canvas that the
+        # loader's scope does not cover. A prim that genuinely went away
+        # (deleted, or deactivated by an undo of its creation) is skipped --
+        # the loaders apply the same rule.
+        for nodeId in savedNodeIds:
+            if nodeId in view.nodes or "#" in nodeId:
+                continue
+            prim = stage.GetPrimAtPath(nodeId)
+            if not prim or not prim.IsValid() or not prim.IsActive():
+                continue
+            try:
+                view._addPrimAsNode(prim, stage, [])
+            except Exception as error:
+                Tf.Warn("Graph reload could not re-add %s: %s" % (nodeId, error))
+
+        # Re-apply placements that were never authored. A node whose
+        # position IS authored is left alone -- USD owns that one, and the
+        # reload may be undoing a move that authored it.
+        for nodeId, position in savedDisplayPositions.items():
+            node = view.nodes.get(nodeId)
+            if node is not None and not view._nodeHasAuthoredPosition(node):
+                node.setDisplayPosition(position)
+
+        # Restore saved zOrder values for nodes that existed before reload.
+        # New nodes (from undo restoring deleted nodes) get the next zOrder.
+        # This preserves front-to-back visual ordering across undo/redo.
+        maxSaved = max(savedZOrders.values()) if savedZOrders else 0
+        view._nextZOrder = maxSaved
+        for nid, node in view.nodes.items():
+            if nid in savedZOrders:
+                node.zOrder = savedZOrders[nid]
+            else:
+                view._nextZOrder += 1
+                node.zOrder = view._nextZOrder
+
+        view.textChanged = True
+        view.linksChanged = True
+        view._clearRenderCache()
+        view._nodeRenderManager.invalidateAll()
+        # Reset position caches so text, icons, and node quads pick up new positions
+        view.textRenderer.resetPositionCaches()
+        view._cppIconRenderer.resetPositionCaches()
+        view._nodeRenderManager.resetNodeQuadCaches()
+        view._nodeTransformFrame.reset()
+        view.update()
+    finally:
+        view._noticeHandler.setEnabled(True)
+
+
+def _isStageViewMidTeardown(view):
+    if not view._usdviewApi:
+        return False
+    try:
+        controller = view._usdviewApi._UsdviewApi__appController
+        sv = getattr(controller, "_stageView", None)
+        return sv is not None and not sv.updatesEnabled()
+    except AttributeError:
+        return False
+
+
+def _frameOf(value):
+    """A ``Usd.TimeCode`` from whatever usdview handed us.
+
+    usdview's ``frame`` is a TimeCode on some paths and a bare float on
+    others; both have to end up as one thing here. Copied from
+    ``rigExecUsdview/avarEditorUI.py:_FrameOf`` so the two agree.
+    """
+    if isinstance(value, Usd.TimeCode):
+        return value
+    try:
+        return Usd.TimeCode(float(value))
+    except (TypeError, ValueError):
+        return Usd.TimeCode.Default()
+
+
+def _makeStageSync(view):
+    """This editor's stage-lifecycle service, bound to *view*.
+
+    Policy lives in graphview/stage_sync, which imports no Qt or GL; the
+    widget-owned post and warn resolve this module's ``QtCore`` and ``Tf``
+    at call time, so the StageReload patch points keep intercepting them.
+    """
+    return StageSync(
+        read=lambda: readStageContext(view),
+        notice=lambda: readNoticeContext(view),
+        apply=lambda delta: applyStageDelta(view, delta),
+        post=lambda callback: legacy_symbol("QtCore").QTimer.singleShot(0, callback),
+        on_owner=getattr(type(view), "_isOwnerThread", None) and view._isOwnerThread,
+        post_notice=getattr(type(view), "_postOwnerCallback", None) and view._postOwnerCallback,
+        listen=lambda receiver: UsdNoticeHandler(receiver),
+        warn=lambda message: Tf.Warn(message),
+        reconcile=lambda resynced, info, trace, moved: applyUsdChanges(
+            view, resynced, info, trace=trace, movedPaths=moved
+        ),
+    )

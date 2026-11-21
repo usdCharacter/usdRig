@@ -542,7 +542,7 @@ class LiveEventDeliveryTests:
         self.addCleanup(extra.deleteLater)
         event = QtGui.QCloseEvent()
         with patch(
-            "UsdNoodles.graphview.stage_sync.closeStageLifecycle"
+            "UsdNoodles.graphview.stage_adapter.closeStageLifecycle"
         ) as closed:
             extra.closeEvent(event)
         closed.assert_called_once_with(extra)

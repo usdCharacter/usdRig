@@ -58,6 +58,7 @@ call time through ``legacy_symbol``, never through an import-time copy.
 from __future__ import annotations
 
 import importlib
+import time
 from dataclasses import dataclass, field
 
 from OpenGL import GL
@@ -806,3 +807,63 @@ def _screenSpaceProjectionMatrix(view):
         view._screenProjCacheKey = key
         view._screenProjCache = projection
     return view._screenProjCache
+
+
+def _clearRenderCache(view):
+    """Clear the node render manager cache within this widget's GL context.
+
+    makeCurrent()/doneCurrent() ensures that glDeleteBuffers/glDeleteVertexArrays
+    operate on this widget's OpenGL context, not the stageView's.  Without the
+    context switch the 3D viewport's render state may be corrupted.
+
+    When view._deferRenderCacheClear is True (set by _onStageReplaced),
+    only flag the pending clear; _finishStageReload will run the actual
+    glDelete* calls after the next event-loop tick.  This avoids issuing
+    GL deletes during the NVIDIA Windows non-functional window while the
+    stageView's renderer is mid-teardown.
+    """
+    if view._deferRenderCacheClear:
+        view._renderCacheClearPending = True
+        return
+    view.makeCurrent()
+    view._nodeRenderManager.clearCache()
+    view.doneCurrent()
+
+
+def _resetRenderCachesAfterBulkMove(view, rebuild_links=True):
+    """Invalidate every baked vertex cache + the drag-transform frame and flag
+    text for rebuild, after nodes are repositioned or (re)loaded wholesale.
+
+    ``rebuild_links`` controls link refresh. The load paths pass True
+    (connections are new, so a full rebuild is required). A pure move
+    (auto-layout) passes False and refreshes only the moved links' endpoints
+    afterward via ``_updateLinksForMovedNodes`` -- connections are unchanged,
+    so re-reading every prim's connections from USD would be wasted work.
+    """
+    view._clearRenderCache()
+    view.textRenderer.resetPositionCaches()
+    view._cppIconRenderer.resetPositionCaches()
+    view._nodeRenderManager.resetNodeQuadCaches()
+    view._nodeTransformFrame.reset()
+    view.textChanged = True
+    if rebuild_links:
+        view.linksChanged = True
+
+
+class _ProfileSection:
+    """Context manager that records elapsed time into a RenderProfiler."""
+
+    __slots__ = ("_profiler", "_name", "_t0")
+
+    def __init__(self, profiler, name):
+        self._profiler = profiler
+        self._name = name
+
+    def __enter__(self):
+        self._t0 = time.perf_counter()
+        return self
+
+    def __exit__(self, *_exc):
+        elapsed_ms = (time.perf_counter() - self._t0) * 1000.0
+        self._profiler.recordTime(self._name, elapsed_ms)
+        return False

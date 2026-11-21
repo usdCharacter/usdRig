@@ -34,7 +34,8 @@ from ..noodlesPreferences import NoodlesPreferences
 from ..utils import M, MenuBuilder
 from ..widgets.selectableList import SelectableListItem
 from . import intents as _intents
-from . import stage_sync
+from . import interaction as _gestures
+from . import stage_adapter
 from .legacy import legacy_symbol
 
 
@@ -139,7 +140,7 @@ def timerEvent(view, event):
 
 
 def closeEvent(view, event):
-    stage_sync.closeStageLifecycle(view)
+    stage_adapter.closeStageLifecycle(view)
     QGLWidget.closeEvent(view, event)
 
 
@@ -341,6 +342,12 @@ def _setupShortcuts(view):
 
         # Store for dynamic updates
         view._shortcutActions[configKey] = action
+
+    view._saveAction = QtGui.QAction("Save Stage", view)
+    view._saveAction.setShortcut(QtGui.QKeySequence.Save)
+    view._saveAction.setShortcutContext(QtCore.Qt.WidgetWithChildrenShortcut)
+    view._saveAction.triggered.connect(view._saveStage)
+    view.addAction(view._saveAction)
 
 
 def updateShortcuts(view):
@@ -1080,3 +1087,83 @@ def _handleTokenPopupPress(view, screenPos):
 def focusNextPrevChild(view, nextChild):
     """Let keyPressEvent use Tab for creation and inline value editing."""
     return False
+
+
+def mouseDoubleClickEvent(view, event):
+    """Handle double-click events.
+
+    Double-clicking on a dangling link or on a connected port whose
+    connected node is missing adds the missing node to the graph.
+    Double-clicking a non-dangling relationship link jumps to the
+    endpoint farthest from the cursor so users can follow links to
+    connected nodes that lie outside the current viewport.
+    """
+    if event.button() != QtCore.Qt.LeftButton:
+        return
+    if _gestures.double_click_gesture(view, event):
+        return
+    # Default behavior for double-click on non-dangling elements
+    QGLWidget.mouseDoubleClickEvent(view, event)
+
+
+def mousePressEvent(view, event):
+    if _gestures.press_intercept_overlays(view, event):
+        return
+
+    if event.buttons() & QtCore.Qt.LeftButton and not view.spacePressed:
+        if _gestures.press_title_caret_toggle(view, event):
+            return
+        if _gestures.press_group_fold_toggle(view, event):
+            return
+        if _gestures.press_value_cell(view, event):
+            return
+        if _gestures.press_hovered_port_link_start(view, event):
+            return
+        if _gestures.press_arrowhead_reconnect(view, event):
+            return
+        if _gestures.press_row_edge_link_start(view, event):
+            return
+        _gestures.press_node_or_empty(view, event)
+
+    view.update()
+
+
+def mouseMoveEvent(view, event):
+    if _gestures.move_intercept_overlays(view, event):
+        return
+
+    # During an interactive pan or pan-zoom drag (middle-button, or
+    # space + left-button), skip all hover/hit-testing entirely. The cursor
+    # is not hovering content during a viewport drag, and these per-move
+    # scans (node-under-cursor, hovered port, property tooltip, and link
+    # hit-testing) are the dominant cost on large scenes -- they are why
+    # panning feels heavier than zooming. The pan/zoom itself is handled
+    # below; this mirrors the node-drag and link-drag branches, which also
+    # bypass hover updates.
+    isViewportDrag = bool(event.buttons() & QtCore.Qt.MiddleButton) or (
+        view.spacePressed and bool(event.buttons() & QtCore.Qt.LeftButton)
+    )
+
+    if _gestures.move_value_drag(view, event):
+        return
+
+    _gestures.move_update_hover(view, event, isViewportDrag)
+    if _gestures.move_link_drag(view, event):
+        return
+    if _gestures.move_viewport_drag(view, event):
+        return
+    if _gestures.move_left_drag(view, event):
+        return
+
+    view.lastMousePos = event.position().toPoint()
+    view.update()
+
+
+def mouseReleaseEvent(view, event):
+    if _gestures.release_intercept_overlays(view, event):
+        return
+    if _gestures.release_link_drag(view, event):
+        return
+    if _gestures.release_minimap(view, event):
+        return
+    _gestures.release_node_drag_and_marquee(view, event)

@@ -39,11 +39,14 @@ until their own layer moves them.
 """
 
 import functools
+from collections import namedtuple
 import traceback
+from threading import get_ident
 
 from pxr import Gf, Tf, Usd
-from pxr.Usdviewq.qt import QGLWidget, QtCore
+from pxr.Usdviewq.qt import QGLFormat, QGLWidget, QtCore
 
+from .. import noodlesValues
 from ..widgets import valueCell
 from . import editing as _editing
 from . import interaction_events as _events
@@ -2368,6 +2371,32 @@ def guards_qt_boundary(handler):
     return guarded
 
 
+# One value cell under the cursor. ``rect`` is the SUB-cell (one component of
+# a vector), which is the unit everything downstream edits.
+_ValueHit = namedtuple("_ValueHit", "nodeId primPath propertyName comp rect row")
+
+
+def start_refresh_timer(view, callback):
+    """Start after usdview's zero timer; posted events can run before timers."""
+    if getattr(view, "_callbacksClosed", False):
+        return
+    timer = QtCore.QTimer(view)
+    timer.setSingleShot(True)
+    timers = getattr(view, "_refreshTimers", None)
+    if timers is not None:
+        timers.add(timer)
+
+    def fire():
+        if timers is not None:
+            timers.discard(timer)
+        timer.deleteLater()
+        if not getattr(view, "_callbacksClosed", False):
+            callback()
+
+    timer.timeout.connect(fire)
+    timer.start(0)
+
+
 class GraphWidgetBase(QGLWidget):
     """Qt base for the noodle graph view: signals, guards, event overrides.
 
@@ -2385,6 +2414,68 @@ class GraphWidgetBase(QGLWidget):
     # Listeners that subscribed to NodeGraph callbacks need this so they can
     # re-register on the new instance.
     nodeGraphReplaced = QtCore.Signal()
+
+    _VALUE_CURSORS = {
+        noodlesValues.KIND_FLOAT: QtCore.Qt.SizeHorCursor,
+        noodlesValues.KIND_INT: QtCore.Qt.SizeHorCursor,
+        noodlesValues.KIND_TEXT: QtCore.Qt.IBeamCursor,
+        noodlesValues.KIND_TOKEN_ENUM: QtCore.Qt.PointingHandCursor,
+        noodlesValues.KIND_BOOL: QtCore.Qt.PointingHandCursor,
+    }
+
+
+    _ownerCallback = QtCore.Signal(object)
+    _widgetPoint = staticmethod(QtCore.QPoint)
+    _widgetPointF = staticmethod(QtCore.QPointF)
+    _widgetElapsedTimer = staticmethod(QtCore.QElapsedTimer)
+
+    def _configureWidgetFormat(self):
+        glFormat = QGLFormat()
+        glFormat.setVersion(3, 2)
+        glFormat.setProfile(QGLFormat.OpenGLContextProfile.CoreProfile)
+        glFormat.setSamples(4)
+        QGLFormat.setDefaultFormat(glFormat)
+        self.setFormat(glFormat)
+
+    def _configureWidgetInput(self):
+        self.setAttribute(QtCore.Qt.WA_Hover, True)
+        self.setFocusPolicy(QtCore.Qt.StrongFocus)
+        self.setMouseTracking(True)
+        self.setMinimumSize(400, 300)
+
+    def _createTooltipTimer(self):
+        timer = QtCore.QTimer(self)
+        timer.setSingleShot(True)
+        timer.setInterval(500)
+        timer.timeout.connect(self._showPropertyTooltip)
+        return timer
+
+    def _initOwnerCallbacks(self):
+        self._ownerThread = get_ident()
+        self._callbacksClosed = False
+        self._refreshTimers = set()
+        self._ownerCallback.connect(self._runOwnerCallback, QtCore.Qt.QueuedConnection)
+
+    def _isOwnerThread(self):
+        return self._ownerThread == get_ident()
+
+    def _postOwnerCallback(self, callback):
+        if not self._callbacksClosed:
+            self._ownerCallback.emit(callback)
+
+    @QtCore.Slot(object)
+    def _runOwnerCallback(self, callback):
+        if not self._callbacksClosed:
+            callback()
+
+    def _disposeOwnerCallbacks(self):
+        self._callbacksClosed = True
+        self._tooltipTimer.stop()
+        self._tooltipTimer.timeout.disconnect(self._showPropertyTooltip)
+        for timer in self._refreshTimers:
+            timer.stop()
+            timer.deleteLater()
+        self._refreshTimers.clear()
 
     # Raw Qt event dispatch and the keyboard/mouse-wheel overrides.
     event = _events.event

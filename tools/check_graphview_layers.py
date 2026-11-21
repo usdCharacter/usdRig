@@ -8,6 +8,7 @@ import tempfile
 
 GRAPHVIEW_FILE = "plugin/usdNoodles/graphView.py"
 PACKAGE_DIR = "plugin/usdNoodles/graphview"
+VIEW_FILE = f"{PACKAGE_DIR}/view.py"
 INVENTORY = "tools/graphViewLayers.json"
 CLASS_NAME = "GraphView"
 LAYERS = (
@@ -104,7 +105,8 @@ def _check(root, inventory):
     files = inventory.get("files") or {}
 
     entry = files.get(GRAPHVIEW_FILE)
-    if entry is not None and entry.get("class") != CLASS_NAME:
+    shim = (entry or {}).get("layer") == "compat"
+    if entry is not None and not shim and entry.get("class") != CLASS_NAME:
         violations.append(
             f"{GRAPHVIEW_FILE}:0: R1 {INVENTORY} records class "
             f"{entry.get('class')!r} for {GRAPHVIEW_FILE}, expected "
@@ -118,6 +120,27 @@ def _check(root, inventory):
         )
     else:
         names, _, class_line = definitions
+        if shim:
+            legacy_tree = ast.parse((root / GRAPHVIEW_FILE).read_text(encoding="utf-8"))
+            reexports = any(
+                isinstance(node, ast.ImportFrom)
+                and node.level == 1 and node.module == "graphview.view"
+                and any(alias.name == CLASS_NAME and alias.asname in (None, CLASS_NAME)
+                        for alias in node.names)
+                for node in legacy_tree.body
+            )
+            canonical = root / VIEW_FILE
+            owns_class = canonical.is_file() and any(
+                isinstance(node, ast.ClassDef) and node.name == CLASS_NAME
+                and any(isinstance(base, ast.Name) and base.id == "GraphWidgetBase"
+                        for base in node.bases)
+                for node in ast.parse(canonical.read_text(encoding="utf-8")).body
+            )
+            if class_line or not reexports or not owns_class:
+                violations.append(
+                    f"{GRAPHVIEW_FILE}:1: R1 compatibility shim must re-export "
+                    f"{VIEW_FILE}'s {CLASS_NAME}(GraphWidgetBase) without defining it"
+                )
         symbols = (entry or {}).get("symbols") or {}
         for name, line in names:
             layer = symbols.get(name)
@@ -776,6 +799,10 @@ def main(argv=None):
     symbols = (inventory.get("files", {}).get(GRAPHVIEW_FILE) or {}).get(
         "symbols"
     ) or {}
+    if not total and inventory["files"][GRAPHVIEW_FILE].get("layer") == "compat":
+        print(f"ok: {GRAPHVIEW_FILE} re-exports {VIEW_FILE}; "
+              f"{len(_package_modules(root))} layer modules checked")
+        return 0
     print(
         f"ok: {len(symbols)} layer assignments cover the {total} direct "
         f"definitions ({len(definitions)} unique names) of class "

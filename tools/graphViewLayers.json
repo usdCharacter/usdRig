@@ -4,9 +4,6 @@
     "plugin/usdNoodles/graphview/__init__.py": {
       "layer": "coordinator"
     },
-    "plugin/usdNoodles/graphview/stage_adapter.py": {
-      "layer": "stage_sync"
-    },
     "plugin/usdNoodles/graphview/stage_sync.py": {
       "layer": "stage_sync"
     },
@@ -17,58 +14,8 @@
       "layer": "model"
     },
     "plugin/usdNoodles/graphView.py": {
-      "class": "GraphView",
-      "symbols": {
-        "nodeGraph": "model",
-        "__init__": "coordinator",
-        "nodes": "model",
-        "links": "model",
-        "groupStickers": "model",
-        "linksChanged": "model",
-        "setUsdviewApi": "coordinator",
-        "_onFrameChanged": "coordinator",
-        "_onStageReplaced": "stage_sync",
-        "_finishStageReload": "stage_sync",
-        "_graphScopeParentPath": "stage_sync",
-        "_validateNodesAgainstStage": "stage_sync",
-        "_adoptPrimsNewToScope": "stage_sync",
-        "_adoptRenamedPrim": "stage_sync",
-        "_handleUsdChanges": "stage_sync",
-        "_onSettingsChanged": "coordinator",
-        "_initCachedSettings": "coordinator",
-        "_toggleDrawLinks": "coordinator",
-        "_toggleDrawNodes": "coordinator",
-        "_toggleDrawText": "coordinator",
-        "_toggleShowAttributeValues": "coordinator",
-        "_setValueWriteMode": "coordinator",
-        "_toggleLinkDimming": "coordinator",
-        "_clearRenderCache": "render",
-        "_loadSampleGraph": "compat",
-        "loadBlueprint": "stage_sync",
-        "loadContainer": "stage_sync",
-        "loadStage": "stage_sync",
-        "_visibleWorldBounds": "coordinator",
-        "_isVisible": "coordinator",
-        "_viewportAnchor": "coordinator",
-        "_resetRenderCachesAfterBulkMove": "render",
-        "currentPrimPath": "coordinator",
-        "_valueRowOnlyChange": "stage_sync",
-        "_isPinPropertyChange": "stage_sync",
-        "_printProfilingStatsIfNeeded": "coordinator",
-        "mouseDoubleClickEvent": "interaction",
-        "mousePressEvent": "interaction",
-        "mouseMoveEvent": "interaction",
-        "mouseReleaseEvent": "interaction",
-        "_reloadCurrentGraph": "stage_sync",
-        "_isStageViewMidTeardown": "stage_sync",
-        "_reloadLinksFromUSD": "stage_sync",
-        "frameAll": "coordinator",
-        "frameScene": "coordinator",
-        "frameSelectionWithConnections": "coordinator",
-        "_frameNodeBounds": "coordinator",
-        "_afterUsdviewRefresh": "coordinator",
-        "_makeCommandRegistry": "coordinator"
-      }
+      "layer": "compat",
+      "symbols": {}
     },
     "plugin/usdNoodles/graphview/selection.py": {
       "layer": "selection"
@@ -108,9 +55,19 @@
     },
     "plugin/usdNoodles/graphview/render_hotbox.py": {
       "layer": "render"
+    },
+    "plugin/usdNoodles/graphview/view.py": {
+      "layer": "coordinator"
+    },
+    "plugin/usdNoodles/graphview/compat.py": {
+      "layer": "compat"
+    },
+    "plugin/usdNoodles/graphview/stage_adapter.py": {
+      "layer": "stage_sync"
     }
   },
   "line_ceilings": {
-    "plugin/usdNoodles/graphView.py": 1829
+    "plugin/usdNoodles/graphView.py": 25,
+    "plugin/usdNoodles/graphview/view.py": 799
   }
 }
