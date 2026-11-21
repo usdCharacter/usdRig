@@ -279,8 +279,8 @@ class ViewAxisWidget(QtWidgets.QWidget):
 class ViewAxisController(viewCubeUI.ViewCubeController):
     """The view cube's camera controller, driving the axis gizmo."""
 
-    def _MakeWidget(self, view):
-        return ViewAxisWidget(self, view)
+    def _MakeWidget(self):
+        return ViewAxisWidget(self, None)
 
     def _Place(self):
         view, widget = self._view, self._widget
@@ -322,7 +322,7 @@ class ViewAxisController(viewCubeUI.ViewCubeController):
 def InstallViewAxis(usdviewApi, retries=stageViewReady.DEFAULT_RETRIES):
     return stageViewReady.Register(
         usdviewApi, "viewAxis", lambda: ViewAxisController(usdviewApi),
-        retries=retries).controller
+        retries=retries, prepare=viewCubeUI._AttachOverlay).controller
 
 
 def GetController(usdviewApi=None):

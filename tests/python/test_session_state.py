@@ -109,6 +109,9 @@ class _FakeController(object):
         self.usdviewApi = usdviewApi
         _FakeController.built.append(self)
 
+    def _Attach(self):
+        pass
+
 
 class _Patched(object):
     """Swap module attributes for the duration of a block."""
@@ -282,7 +285,8 @@ def _ToolDoubles(onProbe=None, onCreate=None):
         def _Create(api, *args, **kwargs):
             # Read the fake host field without incrementing the broker count.
             controller = SimpleNamespace(api=api, view=stageView(api),
-                                         args=args, kwargs=kwargs)
+                                         args=args, kwargs=kwargs,
+                                         _Attach=lambda: None)
             built.append((api, tool, controller))
             if onCreate is not None:
                 onCreate(api, tool)
@@ -695,6 +699,60 @@ def TestGizmoConstructionRollback():
     finally:
         _Destroy(window)
     print("  ok: partial gizmo construction rolls back before reinstall")
+
+
+def TestNavigationOverlayAttachmentRollback():
+    for tool, install, widgetType in (
+        ("viewCube", viewCubeUI.InstallViewCube, viewCubeUI.ViewCubeWidget),
+        ("viewAxis", viewAxisUI.InstallViewAxis, viewAxisUI.ViewAxisWidget),
+    ):
+        window, api, view, _ = _GizmoSession()
+        model = api.dataModel
+        event = QtCore.QEvent(QtCore.QEvent.User)
+        deliveries = []
+        filterEvent = viewCubeUI.ViewCubeController.eventFilter
+
+        def _Filter(controller, watched, incoming):
+            if incoming is event:
+                deliveries.append(controller)
+            return filterEvent(controller, watched, incoming)
+
+        def _FailConnect(slot):
+            QtCore.QCoreApplication.sendEvent(view, event)
+            _Check(len(deliveries) == 1 and len(view.findChildren(widgetType)) == 1,
+                   tool + ": injection must follow filter and overlay attachment")
+            deliveries.clear()
+            raise RuntimeError("injected view settings connection failure")
+
+        def _StageListeners():
+            return model.receivers("2signalStageReplaced()")
+
+        listeners = _StageListeners()
+        try:
+            with _Patched(viewCubeUI.ViewCubeController, eventFilter=_Filter):
+                with _Patched(model.viewSettings, signalSettingChanged=
+                              SimpleNamespace(connect=_FailConnect)):
+                    _Check(install(api, retries=0) is None,
+                           tool + ": a failed install must not publish a controller")
+                    result = stageViewReady.GetResult(api, tool)
+                    _Check(result.status == "failed" and result.controller is None and
+                           "injected view settings connection failure" in result.error,
+                           tool + ": broker must report the injected failure")
+                    QtCore.QCoreApplication.sendEvent(view, event)
+                    _Check(not view.findChildren(widgetType) and not deliveries and
+                           _StageListeners() == listeners,
+                           tool + ": rollback must leave no overlay, filter or stage listener")
+
+                sessionRegistry.ForgetSession(api)
+                controller = install(api, retries=0)
+                QtCore.QCoreApplication.sendEvent(view, event)
+                _Check(controller is not None and
+                       view.findChildren(widgetType) == [controller.Widget()] and
+                       deliveries == [controller] and _StageListeners() == listeners + 1,
+                       tool + ": reinstall must attach exactly one overlay, filter and listener")
+        finally:
+            _Destroy(window)
+    print("  ok: failed View Cube and View Axis attachment rolls back before reinstall")
 
 
 def TestRetirePendingInstalls():
@@ -1637,6 +1695,7 @@ def main():
     TestInstallFailures()
     TestRetireRealTools()
     TestGizmoConstructionRollback()
+    TestNavigationOverlayAttachmentRollback()
     TestRetirePendingInstalls()
     TestHotkeyRouting()
     TestUndoShortcutScoping()
@@ -1653,7 +1712,7 @@ def main():
     TestRegistryDestroyedSlots()
     TestRegistryRemovalHook()
     TestTouchPoseMarqueeUsesOwnSession()
-    print("SESSION_STATE_OK (23 groups)")
+    print("SESSION_STATE_OK (24 groups)")
     return 0
 
 

@@ -444,22 +444,27 @@ class ViewCubeController(QtCore.QObject):
         self._animClock = None
         self._animStart = None
         self._animTarget = None
-        view = StageView(usdviewApi)
-        self._view = view
+        self._detached = False
+        self._filterInstalled = False
+        self._connections = []
+
+    def _Attach(self):
+        view = self._view = StageView(self.usdviewApi)
         if view is None:
             return
-        widget = self._MakeWidget(view)
-        self._widget = widget
+        widget = self._widget = self._MakeWidget()
+        widget.setParent(view)
         # Resize/Show re-place the widget (and re-raise it on a
         # zero-length timer so it ends above the gizmo overlay, which
         # raises itself synchronously in its own Resize handler).
         view.installEventFilter(self)
-        view.signalFrustumChanged.connect(self._onFrustumChanged)
-        view.destroyed.connect(self._onViewDestroyed)
-        model = usdviewApi.dataModel
-        model.signalStageReplaced.connect(self._onStageReplaced)
-        model.viewSettings.signalSettingChanged.connect(
-            self._onSettingChanged)
+        self._filterInstalled = True
+        self._Connect(view, "signalFrustumChanged", self._onFrustumChanged)
+        self._Connect(view, "destroyed", self._onViewDestroyed)
+        model = self.usdviewApi.dataModel
+        self._Connect(model, "signalStageReplaced", self._onStageReplaced)
+        self._Connect(model.viewSettings, "signalSettingChanged",
+                      self._onSettingChanged)
         self._isZUp = self._ReadUpAxis()
         # Harmless while the view is still hidden: a child is shown
         # with its parent.
@@ -467,12 +472,12 @@ class ViewCubeController(QtCore.QObject):
         widget.show()
         self._RefreshBasis()
 
-    def _MakeWidget(self, view):
-        """The overlay widget; the view axis controller overrides it."""
-        widget = ViewCubeWidget(self, view)
-        widget.resize(int(viewCubeMath.WIDGET_SIZE),
-                      int(viewCubeMath.WIDGET_SIZE))
-        return widget
+    def _Connect(self, owner, name, slot):
+        getattr(owner, name).connect(slot)
+        self._connections.append((owner, name, slot))
+
+    def _MakeWidget(self):
+        return ViewCubeWidget(self, None)
 
     # -- state ----------------------------------------------------------
 
@@ -754,30 +759,28 @@ class ViewCubeController(QtCore.QObject):
         self._RefreshBasis()
 
     def _onViewDestroyed(self, _obj=None):
-        # The view's C++ object is already gone: disconnecting signals
-        # from it would print libpyside warnings, and its child widget
-        # dies with it, so just drop the references. Every later call
-        # is a no-op through the None guards.
+        # Qt removes the view's connections, filter and child widget.
         self.CancelAnimation()
-        self._view = None
+        view, self._view = self._view, None
+        self._filterInstalled = False
+        self._connections = [entry for entry in self._connections
+                             if entry[0] is not view]
         widget, self._widget = self._widget, None
         if widget is not None:
             widget._controller = None
 
     def Detach(self):
-        if getattr(self, "_detached", False):
+        if self._detached:
             return
         self._detached = True
         self.CancelAnimation()
         view, self._view = self._view, None
-        if view is not None:
-            view.removeEventFilter(self)
-            stageViewReady.Disconnect(view, "signalFrustumChanged", self._onFrustumChanged)
-            stageViewReady.Disconnect(view, "destroyed", self._onViewDestroyed)
-        model = self.usdviewApi.dataModel
-        stageViewReady.Disconnect(model, "signalStageReplaced", self._onStageReplaced)
-        stageViewReady.Disconnect(model.viewSettings, "signalSettingChanged",
-                                  self._onSettingChanged)
+        if self._filterInstalled:
+            self._filterInstalled = False
+            stageViewReady.IgnoreDeleted(lambda: view.removeEventFilter(self))
+        for owner, name, slot in reversed(self._connections):
+            stageViewReady.Disconnect(owner, name, slot)
+        self._connections.clear()
         widget, self._widget = self._widget, None
         if widget is not None:
             widget._controller = None
@@ -787,7 +790,11 @@ class ViewCubeController(QtCore.QObject):
 def InstallViewCube(usdviewApi, retries=stageViewReady.DEFAULT_RETRIES):
     return stageViewReady.Register(
         usdviewApi, "viewCube", lambda: ViewCubeController(usdviewApi),
-        retries=retries).controller
+        retries=retries, prepare=_AttachOverlay).controller
+
+
+def _AttachOverlay(controller):
+    controller._Attach()
 
 
 def GetController(usdviewApi=None):
