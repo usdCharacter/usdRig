@@ -148,6 +148,30 @@ class TestReloadLifecycle(unittest.TestCase):
         view.doneCurrent.assert_called_once()
         self.assertTrue(view.updatesEnabled())
 
+    def test_posted_finish_resumes_after_cache_clear_failure_without_retry(self):
+        view = self.view
+        view.loadStage(self.stage)
+        view._onStageReplaced()
+        self.assertFalse(view.updatesEnabled())
+        self.assertTrue(view._renderCacheClearPending)
+        view.doneCurrent.reset_mock()
+        clear = view._nodeRenderManager.clearCache
+        clear.assert_not_called()
+        clear.side_effect = RuntimeError('native cache deletion failed')
+
+        with (patch.object(view, 'context', return_value=Mock(isValid=lambda: True)),
+              patch.object(view, '_hasCurrentRenderContext', return_value=True),
+              patch('UsdNoodles.graphview.stage_adapter.Tf.Warn') as warn):
+            self.posts.pop()()
+            warn.assert_called_once()
+            self.assertIn('native cache deletion failed', warn.call_args.args[0])
+            view.doneCurrent.assert_called_once()
+            self.assertTrue(view.initialized)
+            self.assertTrue(view.updatesEnabled())
+            self.assertFalse(view._renderCacheClearPending)
+            view._clearPendingRenderCache()
+        clear.assert_called_once()
+
     def _queueReplacement(self):
         view = self.view
         self.effects = Mock()
