@@ -705,19 +705,32 @@ def ResetValue(channel, time, mode):
     return ApplyPlans([PlanReset(channel, time, mode)])[0]
 
 
-def ApplyPlans(plans):
+def ApplyPlanWrites(plans):
     """
     Author every plan's writes in one Sdf.ChangeBlock, so listeners see one
     notice for the whole multi-channel edit. Each plan's reads were taken
-    when it was made, so nothing is read inside the block. Returns each
-    plan's warning, in order.
+    when it was made, so nothing is read inside the block. A caller that
+    opened its own block is still inside it here, so it can record its
+    undo step before the notice goes out; read the warnings with
+    PlanWarning once every block has closed, since a stage does not
+    recompose inside a change block.
     """
     with Sdf.ChangeBlock():
         for writes, _ in plans:
             for write in writes:
                 write()
-    return [warning() if callable(warning) else warning
-            for _, warning in plans]
+
+
+def PlanWarning(plan):
+    """A plan's warning, read after its writes: None, or a string."""
+    warning = plan[1]
+    return warning() if callable(warning) else warning
+
+
+def ApplyPlans(plans):
+    """ApplyPlanWrites, then each plan's warning, in order."""
+    ApplyPlanWrites(plans)
+    return [PlanWarning(plan) for plan in plans]
 
 
 def PlanWrite(channel, value, time, mode):

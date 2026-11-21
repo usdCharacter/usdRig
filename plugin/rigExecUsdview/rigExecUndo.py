@@ -410,19 +410,6 @@ class UndoStack(object):
         of its own only while it is still the newest."""
         return self._undo[-1] if self._undo else None
 
-    def Withdraw(self, edit):
-        """Take back the newest step, only while it still is `edit`. A
-        producer that opened its step before making the change uses this
-        when the change turned out to touch nothing. Unlike Push, it
-        leaves the redo branch as it is."""
-        if self._replaying:
-            raise RuntimeError("Cannot record an edit during undo or redo")
-        if not self._undo or self._undo[-1] is not edit:
-            return False
-        self._undo.pop()
-        self._Notify()
-        return True
-
     def CanUndo(self):
         return bool(self._undo)
 

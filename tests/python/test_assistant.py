@@ -639,6 +639,146 @@ def TestAWriteAfterAnUndoDoesNotGrowAnOlderStep():
            "the older change is still undone on its own")
 
 
+def _CommitFromAPoseNotice(pose, label):
+    """The reply poses a control to 11, and the artist's slider release
+    arrives from the USD notice that write fires. The reply's step is
+    already on the history when the notice runs, so Undo takes 23 back
+    first and 11 after it, with no empty step between them, and Redo
+    puts them back in the order they were made."""
+    stage = _Stage()
+    container = _Container()
+    box, _api = _Toolbox(stage, container, can_edit=True)
+    channel = stage.GetAttributeAtPath('/Char/Ctl.avars:rx')
+    made = []
+
+    def artist_releases_the_slider(notice, sender):
+        if made or channel.Get() != 11:
+            return
+        made.append(channel.Get())
+        container.stack.Push(_ArtistEdit(channel, 23))
+        channel.Set(23)
+
+    listener = Tf.Notice.Register(Usd.Notice.ObjectsChanged,
+                                  artist_releases_the_slider, stage)
+    text, failed = pose(box)
+    listener.Revoke()
+    _Check(not failed and made == [11] and channel.Get() == 23,
+           'the artist commit came from the notice the pose fired: %s' % text)
+    _Check(len(container.stack._undo) == 2 and
+           _UndoState(container.stack) == (True, 'Artist rotation', False,
+                                           ''),
+           'the pose is on the history before the artist commit, and '
+           'nothing empty is left between them')
+    _Check(container.stack.Undo() and channel.Get() == 11 and
+           container.stack.UndoText() == label,
+           'the first undo takes back the change made last')
+    _Check(container.stack.Undo() and channel.Get() == 0 and
+           not container.stack.CanUndo(),
+           'the next undo takes back the change that began first, and the '
+           'history stops there')
+    for wanted in (11, 23):
+        _Check(container.stack.Redo() and channel.Get() == wanted,
+               'redo puts the changes back in the order they were made')
+    _Check(not container.stack.CanRedo(), 'redo stops at the newest change')
+
+
+def TestAPoseCommitFromAStageNoticeKeepsTheAuthoredOrder():
+    _CommitFromAPoseNotice(
+        lambda box: box.call('set_avars', {
+            'values': [{'path': '/Char/Ctl', 'name': 'avars:rx',
+                        'value': 11}], 'key': False}),
+        'AI Assistant pose')
+
+
+def _LayeredStage(base_rotation):
+    """The rig authored in a base layer under a blank root, so clearing a
+    value the reply wrote resolves back to the base instead of nothing."""
+    base = Sdf.Layer.CreateAnonymous('assistant_base.usda')
+    base.ImportFromString(
+        _LAYER.replace('avars:rx = 0', 'avars:rx = %g' % base_rotation))
+    root = Sdf.Layer.CreateAnonymous('assistant_root.usda')
+    root.subLayerPaths.append(base.identifier)
+    return Usd.Stage.Open(root)
+
+
+def TestAResetCommitFromAStageNoticeKeepsTheAuthoredOrder():
+    """The reset producer is sealed the same way as the pose one: the
+    artist commit its notice carries follows the reset in history."""
+    stage = _LayeredStage(4)
+    container = _Container()
+    box, _api = _Toolbox(stage, container, can_edit=True)
+    channel = stage.GetAttributeAtPath('/Char/Ctl.avars:rx')
+    channel.Set(11)  # the control sits at 11 already
+    _Check(channel.Get() == 11, 'the reset starts from eleven')
+    made = []
+
+    def artist_pushes_it_back(notice, sender):
+        if made or channel.Get() != 4:
+            return
+        made.append(channel.Get())
+        container.stack.Push(_ArtistEdit(channel, 23))
+        channel.Set(23)
+
+    listener = Tf.Notice.Register(Usd.Notice.ObjectsChanged,
+                                  artist_pushes_it_back, stage)
+    text, failed = box.call('reset_avars', {'paths': ['/Char/Ctl'],
+                                            'names': ['avars:rx'],
+                                            'key': False})
+    listener.Revoke()
+    _Check(not failed and made == [4] and channel.Get() == 23,
+           'the artist commit came from the notice the reset fired: %s'
+           % text)
+    _Check([step.label for step in container.stack._undo] ==
+           ['AI Assistant reset', 'Artist rotation'],
+           'the reset is on the history before the artist commit, with no '
+           'empty step between them')
+    _Check(container.stack.Undo() and channel.Get() == 4 and
+           container.stack.UndoText() == 'AI Assistant reset',
+           'the first undo takes back the change made last')
+    _Check(container.stack.Undo() and channel.Get() == 11 and
+           not container.stack.CanUndo(),
+           'the next undo takes back the reset that began first, and the '
+           'history stops there')
+    for wanted in (4, 23):
+        _Check(container.stack.Redo() and channel.Get() == wanted,
+               'redo puts the changes back in the order they were made')
+    _Check(not container.stack.CanRedo(), 'redo stops at the newest change')
+
+
+def TestACallThatChangesNothingLeavesHistoryAlone():
+    """A read-only call, a change that cannot be made and a write of the
+    value that is already there record no undo step: the redo branch an
+    undo left is still there, and so is every step under it."""
+    stage = _Stage()
+    container = _Container()
+    box, _api = _Toolbox(stage, container, can_edit=True, can_run=True)
+    _SetRotation(box, 11)
+    container.stack.Undo()
+    _Check(_UndoState(container.stack) == (False, '', True,
+                                          'AI Assistant changes') and
+           _Values(stage) == (0.0, 0.0),
+           'undo leaves the change waiting to be redone')
+    text, failed = box.call('run_python', {
+        'code': "print(stage.GetPrimAtPath('/Char/Ctl').GetPath())"})
+    _Check(not failed and _UndoState(container.stack) ==
+           (False, '', True, 'AI Assistant changes'),
+           'a read-only call leaves the history as it was: %s' % text)
+    text, failed = box.call('change_stage', {'changes': [
+        {'action': 'set_attr', 'path': '/Char/Nope', 'name': 'avars:rx',
+         'value': 3}]})
+    _Check(text.startswith('Could not') and container.stack.CanRedo(),
+           'a change that could not be made leaves the redo branch: %s'
+           % text)
+    text, failed = _SetRotation(box, 0)
+    _Check(not failed and container.stack.CanRedo() and
+           not container.stack.CanUndo(),
+           'writing the value that is already there records nothing: %s'
+           % text)
+    _Check(container.stack.Redo() and _Values(stage) == (11.0, 0.0) and
+           not container.stack.CanRedo(),
+           'the redo branch still holds the change the reply made')
+
+
 class _ProtocolStack(object):
     """An undo stack that implements the documented host protocol and
     nothing more, so it cannot say which edit is newest."""
@@ -730,6 +870,79 @@ def TestHostUndoStackWithoutLastEdit():
     _Check(container.stack.Redo() and _Values(stage) == (11.0, 0.0) and
            container.stack.Redo() and _Values(stage) == (23.0, 0.0),
            "both writes come back on redo")
+
+
+class _GroupingHostStack(_ProtocolStack):
+    """A host stack that can also say which step is newest, and offers no
+    way to take a step back: the assistant can only record what it
+    actually changed."""
+
+    def LastEdit(self):
+        return self._undo[-1] if self._undo else None
+
+
+class _GroupingHostContainer(_ProtocolContainer):
+    def __init__(self):
+        self.stack = _GroupingHostStack()
+
+
+def TestHostUndoStackWithoutWithdraw():
+    """A host stack with the newest-step identity and nothing to take a
+    step back still gets no empty step from a call that changes nothing."""
+    stage = _Stage()
+    container = _GroupingHostContainer()
+    box, _api = _Toolbox(stage, container, can_edit=True, can_run=True)
+    channel = stage.GetAttributeAtPath('/Char/Ctl.avars:rx')
+    _SetRotation(box, 11)
+    container.stack.Push(_ArtistEdit(channel, 30))
+    channel.Set(30)
+    _Check(len(container.stack._undo) == 2 and
+           container.stack.UndoText() == 'Artist rotation',
+           'the reply and the artist each have their own step')
+    _SetRotation(box, 30)
+    box.call('run_python', {'code': "stage.GetPrimAtPath('/Char/Ctl')"})
+    text, failed = box.call('change_stage', {'changes': [
+        {'action': 'set_attr', 'path': '/Char/Nope', 'name': 'avars:rx',
+         'value': 5}]})
+    _Check(len(container.stack._undo) == 2 and
+           text.startswith('Could not') and
+           container.stack.UndoText() == 'Artist rotation',
+           'the calls that changed nothing left no step behind: %s' % text)
+    for wanted in (11.0, 0.0):
+        _Check(container.stack.Undo() and _Values(stage) == (wanted, 0.0),
+               'each step undoes on its own')
+    _Check(not container.stack.CanUndo() and container.stack.CanRedo(),
+           'the redo branch holds the two steps')
+    for wanted in (11.0, 30.0):
+        _Check(container.stack.Redo() and _Values(stage) == (wanted, 0.0),
+               'and redo puts them back in order')
+    _Check(not container.stack.CanRedo(), 'redo stops at the newest step')
+
+
+def TestANoChangeAtTheHistoryLimitKeepsTheOldestStep():
+    """A full history keeps its oldest step through a call that records
+    nothing: there is no empty step to push and drop it."""
+    stage = _Stage()
+    container = _Container()
+    box, _api = _Toolbox(stage, container, can_edit=True, can_run=True)
+    rx = stage.GetAttributeAtPath('/Char/Ctl.avars:rx')
+    limit = rigExecUndo.UndoStack.LIMIT
+    oldest = _ArtistEdit(rx, 1)
+    container.stack.Push(oldest)
+    for _ in range(limit - 1):
+        container.stack.Push(_ArtistEdit(rx, 2))
+    _Check(len(container.stack._undo) == limit, 'the history is full')
+    _SetRotation(box, 0)
+    text, failed = box.call('change_stage', {'changes': [
+        {'action': 'set_attr', 'path': '/Char/Nope', 'name': 'avars:rx',
+         'value': 5}]})
+    _Check(len(container.stack._undo) == limit and
+           container.stack._undo[0] is oldest,
+           'a call that changed nothing pushed nothing at the limit: %s'
+           % text)
+    _Check(container.stack.Undo() and rx.Get() == 0 and
+           container.stack.Redo() and rx.Get() == 2,
+           'the full history still undoes and redoes')
 
 
 def TestStageReplacementMidBatchStopsTheRest():
@@ -1629,8 +1842,13 @@ def main():
                  TestArtistCommitStartsANewStep,
                  TestEditsUndoInTheOrderTheyWereMade,
                  TestACommitFromAStageNoticeKeepsTheAuthoredOrder,
+                 TestAPoseCommitFromAStageNoticeKeepsTheAuthoredOrder,
+                 TestAResetCommitFromAStageNoticeKeepsTheAuthoredOrder,
+                 TestACallThatChangesNothingLeavesHistoryAlone,
                  TestAWriteAfterAnUndoDoesNotGrowAnOlderStep,
                  TestHostUndoStackWithoutLastEdit,
+                 TestHostUndoStackWithoutWithdraw,
+                 TestANoChangeAtTheHistoryLimitKeepsTheOldestStep,
                  TestStageReplacementMidBatchStopsTheRest,
                  TestSharedLayerReplacementMidBatchStopsTheRest,
                  TestToolboxSwapDuringActivity,

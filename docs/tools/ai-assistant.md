@@ -55,7 +55,8 @@ the changes were made. Uninterrupted edits from one reply share a step when
 the host supports grouping. If an artist or another reply commits an edit
 between them, the next Assistant edit starts a new step so Undo and Redo follow
 the order of the writes. A new Assistant write after an Undo discards the redo
-branch. Hosts without grouping support receive one undo step per edit. Python
+branch. A call that changes nothing records no step, and leaves Undo and Redo
+as they were. Hosts without grouping support receive one undo step per edit. Python
 changes can be undone when they only affect the edit target. Undo entries
 from the old reply are not added to the replacement stage's stack.
 
