@@ -12,8 +12,11 @@ line. This script is not wired into CI.
 Limitations are printed with --explain. Schedule/cone variants that
 rigexec_add_graph_test() adds are synthesized. Tests registered from
 example-fixture lists are named but not expanded (those lists live in
-tests/exampleFixtures.cmake). Selection follows PUBLIC and INTERFACE
-links. A PRIVATE dependency does not pull in the dependents of the
+tests/exampleFixtures.cmake). A test whose command is `cmake -P script.cmake`
+has no executable: changing that script, or a module listed for it in
+SCRIPT_TEST_CONTRIBUTORS, selects the test by name and the producer target
+it consumes instead of every executable. Selection follows PUBLIC and
+INTERFACE links. A PRIVATE dependency does not pull in the dependents of the
 library that links it. An OBJECT library is the exception: its sources
 are compiled into every target that composes it (by a link at any
 visibility or by $<TARGET_OBJECTS:...>), so they are attributed to
@@ -59,6 +62,26 @@ PXR_LIBS = {
 # target_link_libraries edges in CMakeLists.txt. Recomputed after parse
 # when the file says otherwise.
 USD_FREE_SEEDS = {"rigExecGraph", "rigExecBinary", "rigExecRuntime", "rigExecLzma", "rigExecFlatBuffers"}
+
+# Script tests (add_test ... COMMAND cmake -P script.cmake) have no
+# executable, so the link graph never selects them; their -P script is an
+# edge parsed from the add_test itself. These module dependencies are the
+# others: keep in sync with the include()s and fixture usage of the
+# scripts they name.
+SCRIPT_TEST_CONTRIBUTORS = {
+    "cmake/exportManifests.cmake": [
+        "testRigExecInstallStaging", "testRigExecExactFpFragment"],
+    "cmake/manifestRelocate.cmake": [
+        "testRigExecInstallStaging", "testRigExecExactFpFragment"],
+    "cmake/installManifests.cmake": ["testRigExecInstallStaging"],
+    "cmake/verifyManifests.cmake": ["testRigExecInstallStaging"],
+    "tests/installStaging/CMakeLists.txt": ["testRigExecInstallStaging"],
+}
+# Targets that regenerate the staged inputs the script tests consume.
+SCRIPT_TEST_BUILD_TARGETS = {
+    "testRigExecInstallStaging": ["rigexecSdkManifests"],
+    "testRigExecExactFpFragment": ["rigexecSdkManifests"],
+}
 
 
 def parse_cmake_files() -> dict:
@@ -356,7 +379,17 @@ def parse(cmake_text: str) -> dict:
                 exe = gen.group(1)
             if exe in {"${CMAKE_COMMAND}", "cmake"} or exe.endswith(".cmake"):
                 exe = ""
-            tests.append({"name": tname, "executable": exe, "command": command})
+            script = ""
+            if "-P" in command:
+                idx = command.index("-P")
+                if idx + 1 < len(command):
+                    script = command[idx + 1].strip('"')
+                    for var in ("${CMAKE_CURRENT_SOURCE_DIR}/",
+                                "${CMAKE_CURRENT_LIST_DIR}/"):
+                        script = script.replace(var, "")
+                    script = os.path.normpath(script) if script else ""
+            tests.append({"name": tname, "executable": exe,
+                          "script": script, "command": command})
 
     deduped = []
     seen_tests = set()
@@ -448,15 +481,19 @@ def build_index(model: dict) -> dict:
         exe_closure[exe] = sorted(reached)
 
     tests_by_exe = defaultdict(list)
+    tests_by_script = defaultdict(list)
     for test in model["tests"]:
         if test["executable"]:
             tests_by_exe[test["executable"]].append(test["name"])
+        if test.get("script"):
+            tests_by_script[test["script"]].append(test["name"])
 
     return {
         "source_to_lib": source_to_lib,
         "owner_notes": owner_notes,
         "exe_closure": exe_closure,
         "tests_by_exe": tests_by_exe,
+        "tests_by_script": tests_by_script,
         "lib_edges": lib_edges,
         "public_edges": public_edges,
     }
@@ -534,8 +571,20 @@ def select(paths: list[str], model: dict, index: dict, follow_headers: bool) -> 
     libs = set()
     reasons = defaultdict(list)
     header_fans = {}
+    script_tests = set()
     for raw in paths:
         rel = os.path.normpath(raw)
+        script_hit = False
+        for name in index["tests_by_script"].get(rel, []):
+            script_tests.add(name)
+            reasons["script"].append(rel + " (-P script of " + name + ")")
+            script_hit = True
+        for name in SCRIPT_TEST_CONTRIBUTORS.get(rel, []):
+            script_tests.add(name)
+            reasons["script"].append(rel + " (consumed by " + name + ")")
+            script_hit = True
+        if script_hit:
+            continue
         if rel.startswith("libs" + os.sep) or rel.startswith("tests" + os.sep):
             owners = index["source_to_lib"].get(rel, [])
             if owners:
@@ -614,13 +663,25 @@ def select(paths: list[str], model: dict, index: dict, follow_headers: bool) -> 
         return ordered
 
     ordered = names_for(exes)
+    for name in sorted(script_tests):
+        if name not in ordered:
+            ordered.append(name)
     direct_tests = names_for(direct_exes)
+    for name in sorted(script_tests):
+        if name not in direct_tests:
+            direct_tests.append(name)
+    build_targets = sorted({
+        target
+        for name in script_tests
+        for target in SCRIPT_TEST_BUILD_TARGETS.get(name, [])
+    })
     return {
         "libraries": sorted(l for l in libs if not l.startswith("exe:")),
         "executables": exes,
         "direct_executables": direct_exes,
         "tests": ordered,
         "direct_tests": direct_tests,
+        "build_targets": build_targets,
         "reasons": {k: v for k, v in reasons.items()},
         "header_includers": header_fans,
     }
@@ -703,6 +764,8 @@ target_link_libraries(selPrivParent PRIVATE selPrivDep)
 add_executable(testSelPriv tests/testSelPriv.cpp)
 target_link_libraries(testSelPriv PRIVATE selPrivParent)
 add_test(NAME testSelPriv COMMAND testSelPriv)
+add_test(NAME testSelScript COMMAND ${CMAKE_COMMAND} -DSCRATCH_DIR=x
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/checkSelScript.cmake")
 """
 
 # The imaging inventory at the base of the registry split: every
@@ -819,6 +882,39 @@ def self_test() -> int:
           res["direct_executables"], IMAGING_EXECUTABLES)
     check("the imaging sources together select the imaging tests",
           res["direct_tests"], IMAGING_TESTS)
+
+    # (e) Script tests (add_test ... cmake -P script.cmake) have no
+    # executable: the -P script itself and the modules listed in
+    # SCRIPT_TEST_CONTRIBUTORS select the test by name, plus the producer
+    # target that regenerates its staged inputs.
+    res = select(["tests/checkSelScript.cmake"], model, index, False)
+    check("a -P script selects its script test",
+          res["direct_tests"], ["testSelScript"])
+    res = select(["cmake/exportManifests.cmake"], real_model, real_index, False)
+    check("exportManifests.cmake selects the manifest script tests",
+          res["direct_tests"],
+          ["testRigExecExactFpFragment", "testRigExecInstallStaging"])
+    check("exportManifests.cmake names the manifest producer target",
+          res["build_targets"], ["rigexecSdkManifests"])
+    res = select(["tests/checkInstallStaging.cmake"], real_model, real_index, False)
+    check("checkInstallStaging.cmake selects its script test",
+          res["direct_tests"], ["testRigExecInstallStaging"])
+    res = select(["tests/checkExactFpFragment.cmake"], real_model, real_index, False)
+    check("checkExactFpFragment.cmake selects its script test",
+          res["direct_tests"], ["testRigExecExactFpFragment"])
+    res = select(["tests/installStaging/CMakeLists.txt"], real_model, real_index, False)
+    check("the staging fixture list selects its test, not every test",
+          res["direct_tests"], ["testRigExecInstallStaging"])
+    res = select(["cmake/installManifests.cmake"], real_model, real_index, False)
+    check("installManifests.cmake selects the staging test",
+          res["direct_tests"], ["testRigExecInstallStaging"])
+    res = select(["cmake/verifyManifests.cmake"], real_model, real_index, False)
+    check("verifyManifests.cmake selects the staging test",
+          res["direct_tests"], ["testRigExecInstallStaging"])
+    res = select(["cmake/manifestRelocate.cmake"], real_model, real_index, False)
+    check("manifestRelocate.cmake selects both manifest tests",
+          res["direct_tests"],
+          ["testRigExecExactFpFragment", "testRigExecInstallStaging"])
 
     if failures:
         print(f"self-test FAILED: {len(failures)} check(s)")
@@ -948,11 +1044,11 @@ def main(argv: list[str]) -> int:
         elif regex:
             print("ctest (direct):")
             print(f"  ctest --test-dir build -R '{regex}' --output-on-failure")
-        if result["direct_executables"]:
+        if result["direct_executables"] or result["build_targets"]:
             print("build (direct):")
             print(
                 "  cmake --build build --target "
-                + " ".join(result["direct_executables"])
+                + " ".join(result["direct_executables"] + result["build_targets"])
             )
         if args.explain:
             print("why:")
