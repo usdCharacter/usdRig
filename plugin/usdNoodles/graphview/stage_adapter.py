@@ -1108,6 +1108,19 @@ def _finishReloadOnView(view, epoch):
     # initializeGL() replace them while the context IS current --
     # the old destructors then run safely.
 
+    if view._renderCacheClearPending:
+        context = view.context()
+        if context is not None and context.isValid():
+            view.makeCurrent()
+            try:
+                # Leave the clear pending for paintGL if makeCurrent failed.
+                view._clearPendingRenderCache()
+            finally:
+                if view._hasCurrentRenderContext():
+                    view.doneCurrent()
+
+    if view._stageSync.isClosed() or view._stageSync.epoch() != epoch:
+        return
     view.linksChanged = True
     view.textChanged = True
     view.initialized = True

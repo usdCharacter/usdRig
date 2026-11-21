@@ -127,6 +127,27 @@ class TestReloadLifecycle(unittest.TestCase):
             view._nodeRenderManager.clearCache.assert_called_once()
         self.assertFalse(view._renderCacheClearPending)
 
+    def test_reload_clears_with_current_context_before_enabling_updates(self):
+        view = self.view
+        view.loadStage(self.stage)
+        view._onStageReplaced()
+        view._nodeRenderManager.clearCache.assert_not_called()
+        view.makeCurrent.reset_mock()
+        view.doneCurrent.reset_mock()
+
+        def clear_cache():
+            self.assertFalse(view.updatesEnabled())
+            self.assertFalse(view._renderCacheClearPending)
+
+        view._nodeRenderManager.clearCache.side_effect = clear_cache
+        with (patch.object(view, 'context', return_value=Mock(isValid=lambda: True)),
+              patch.object(view, '_hasCurrentRenderContext', return_value=True)):
+            self.posts.pop()()
+        view.makeCurrent.assert_called_once()
+        view._nodeRenderManager.clearCache.assert_called_once()
+        view.doneCurrent.assert_called_once()
+        self.assertTrue(view.updatesEnabled())
+
     def _queueReplacement(self):
         view = self.view
         self.effects = Mock()
@@ -425,6 +446,64 @@ class TestReloadLifecycle(unittest.TestCase):
                 self.assertIsNone(view._mungSuppression)
                 self.assertIs(view._stageSync.boundStage(), replacement if action == 'switch' else None)
 
+    def test_preview_end_preserves_a_later_external_opinion(self):
+        for action, during_notice in (
+            ('switch', False), ('close', False), ('release', False),
+            ('switch', True), ('close', True), ('release', True),
+        ):
+            with self.subTest(action=action, during_notice=during_notice):
+                view = GraphView()
+                self.addCleanup(view.close)
+                view._nodeRenderManager = MagicMock()
+                stage = Usd.Stage.CreateInMemory()
+                attr = stage.DefinePrim('/Value').CreateAttribute('number', Sdf.ValueTypeNames.Float)
+                time = Usd.TimeCode(10)
+                self.assertTrue(attr.Set(2, time))
+                view.loadStage(stage)
+                view._currentTimeCode = time
+                view._cachedValueWriteMode = 'animation'
+                history = view._undoHistory
+                hit = SimpleNamespace(
+                    row=SimpleNamespace(editable=True, kind='numeric', mungable=True,
+                                        components=(2,), type_name='float'),
+                    comp=0, nodeId='/Value', primPath='/Value', propertyName='number',
+                )
+                view._onValueCellPressed(hit, SimpleNamespace(position=lambda: QtCore.QPointF()))
+
+                layer = stage.GetRootLayer()
+                observed = []
+
+                def external_write():
+                    observed.append(layer.QueryTimeSample(attr.GetPath(), 10))
+                    self.assertTrue(attr.Set(4, time))
+
+                if during_notice:
+                    def on_preview(notice, sender):
+                        key.Revoke()
+                        external_write()
+
+                    key = Tf.Notice.Register(Usd.Notice.ObjectsChanged, on_preview, stage)
+                    self.addCleanup(key.Revoke)
+                view._updateMung(SimpleNamespace(position=lambda: QtCore.QPointF(100, 0),
+                                                modifiers=lambda: QtCore.Qt.NoModifier))
+                if not during_notice:
+                    external_write()
+                self.assertEqual(observed, [3])
+
+                with patch.object(view, '_startValueFlash') as flash:
+                    if action == 'switch':
+                        view.loadStage(Usd.Stage.CreateInMemory())
+                    elif action == 'close':
+                        view.close()
+                    else:
+                        view._finishMung()
+                    flash.assert_not_called()
+                self.assertEqual(layer.QueryTimeSample(attr.GetPath(), 10), 4)
+                self.assertEqual(attr.Get(time), 4)
+                self.assertFalse(history.canUndo())
+                self.assertFalse(history.canRedo())
+                self.assertIsNone(view._mungSuppression)
+
     def test_refused_first_preview_does_not_record_undo_or_flash(self):
         stage, view = self.stage, self.view
         attr = stage.DefinePrim('/Value').CreateAttribute('number', Sdf.ValueTypeNames.Float)
@@ -483,6 +562,31 @@ class TestReloadLifecycle(unittest.TestCase):
         self.assertFalse(history.canUndo())
         self.assertIsNone(view._mungSuppression)
         self.assertIs(view._stageSync.boundStage(), replacement)
+
+    def test_release_records_the_last_owned_preview_for_redo(self):
+        stage, view = self.stage, self.view
+        attr = stage.DefinePrim('/Value').CreateAttribute('number', Sdf.ValueTypeNames.Float)
+        self.assertTrue(attr.Set(2))
+        view.loadStage(stage)
+        history = view._undoHistory
+        hit = SimpleNamespace(
+            row=SimpleNamespace(editable=True, kind='numeric', mungable=True,
+                                components=(2,), type_name='float'),
+            comp=0, nodeId='/Value', primPath='/Value', propertyName='number',
+        )
+        view._onValueCellPressed(hit, SimpleNamespace(position=lambda: QtCore.QPointF()))
+        for dx, expected in ((100, 3), (200, 4)):
+            view._updateMung(SimpleNamespace(position=lambda: QtCore.QPointF(dx, 0),
+                                            modifiers=lambda: QtCore.Qt.NoModifier))
+            self.assertEqual(attr.Get(), expected)
+            self.assertFalse(history.canUndo())
+        view._finishMung()
+        self.assertTrue(history.canUndo())
+        history.undo(view)
+        self.assertEqual(attr.Get(), 2)
+        self.assertFalse(history.canUndo())
+        history.redo(view)
+        self.assertEqual(attr.Get(), 4)
 
     def test_cancel_preview_follows_renamed_property_spec(self):
         stage, view = self.stage, self.view
