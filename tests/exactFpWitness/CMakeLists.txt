@@ -26,7 +26,9 @@ add_custom_command(OUTPUT "${_gen_dir}/generatedProbe.cpp"
 add_library(fpIface INTERFACE)
 if (WITNESS_CONFLICT STREQUAL "interface")
     # A conflict owned by a linked interface target cannot be scrubbed or
-    # reordered, so the helper must abort configuration.
+    # reordered, so the helper must abort configuration. The link itself is
+    # conditional: a generator-expression link entry must not smuggle the
+    # interface past the check in configurations where it applies.
     target_compile_options(fpIface INTERFACE
         "$<$<CONFIG:Release>:${WITNESS_CONFLICT_FLAG}>")
 endif ()
@@ -35,15 +37,15 @@ add_executable(witnessExact
     probe.cpp
     "${_gen_dir}/generatedProbe.cpp")
 target_precompile_headers(witnessExact PRIVATE probePch.h)
-target_link_libraries(witnessExact PRIVATE fpIface)
+target_link_libraries(witnessExact PRIVATE $<$<CONFIG:Release>:fpIface>)
 
 if (WITNESS_SOURCE_CONFLICT)
-    # Enforceable source-level conflicts: a literal copy of the family and a
-    # generator expression, both of which must leave the real commands.
+    # Source-level conflicts sit after every target option on the real
+    # command line, so they cannot be ordered away and the shared source
+    # property must not be rewritten for other consumers: the helper must
+    # reject them with a specific diagnostic at configuration time.
     set_source_files_properties(probe.cpp PROPERTIES
         COMPILE_OPTIONS "${WITNESS_FAST_HEAD}")
-    set_source_files_properties("${_gen_dir}/generatedProbe.cpp" PROPERTIES
-        COMPILE_OPTIONS "$<$<CONFIG:Release>:${WITNESS_FAST_TAIL}>")
 endif ()
 
 add_executable(witnessReuse
@@ -54,6 +56,21 @@ add_executable(witnessReuse
 target_compile_options(witnessReuse PRIVATE
     "$<$<CONFIG:Release>:${WITNESS_FAST_TAIL}>")
 target_precompile_headers(witnessReuse REUSE_FROM witnessExact)
+
+# A second producer/consumer PCH pair behind a conditional interface link
+# that carries no options: creation and reuse must both keep the exact
+# mode after the walk rewrites the consumer's option list.
+add_library(fpQuiet INTERFACE)
+add_executable(witnessPch
+    probe.cpp
+    "${_gen_dir}/generatedProbe.cpp")
+target_precompile_headers(witnessPch PRIVATE probePch.h)
+target_link_libraries(witnessPch PRIVATE $<BUILD_INTERFACE:fpQuiet>)
+add_executable(witnessPchReuse
+    probe.cpp
+    reuse.cpp
+    "${_gen_dir}/generatedProbe.cpp")
+target_precompile_headers(witnessPchReuse REUSE_FROM witnessPch)
 
 add_executable(witnessVendored
     probe.cpp

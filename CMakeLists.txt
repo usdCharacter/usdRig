@@ -2548,6 +2548,10 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
         COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_baked_attribute.py"
         "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
+    add_test(NAME testRigExecSdkSmoke
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_sdk_binding_smoke.py"
+            "$<TARGET_FILE_DIR:_rigexec>")
 
     add_test(NAME testRigExecUndo
         COMMAND ${Python3_EXECUTABLE}
@@ -2705,6 +2709,7 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
                          testGizmoMarquee testRigExecImagingPublishedPython
                          testRigExecGil testRigExecBakedPsd testRigExecBakedCone
                          testRigExecBakedAttributePython
+                         testRigExecSdkSmoke
                          testRigExecBipedHandPython testRigExecBlinkClearancePython
                          testRigExecDeformerEnabledPython
                          testRigExecDeformerOrderPython testRigExecEyeSymmetryPython
@@ -2882,13 +2887,9 @@ if (MSVC AND NOT CMAKE_DISABLE_PRECOMPILE_HEADERS)
     endforeach()
 endif()
 
-# Exact-FP finalization placement invariant: this walk must be the last
-# CMake code in this scope that touches a target, so it runs after every
-# target_precompile_headers producer and REUSE_FROM consumer above is
-# declared. cmake/rigexec_flags.cmake owns the flags and the RIGEXEC_VENDORED
-# exemption; child scopes keep their rigexec_add_mover / rigexec_add_mover_plugin
-# coverage. See docs/concepts/baked-vs-dynamic.md.
-rigexec_apply_exact_fp_flags_to_directory_targets()
+# Exact-FP finalization runs after the scene and oracle links below:
+# interface compile options reach the command line after the appended
+# exact-FP flags, so the walk must follow every compile-affecting link.
 
 # Executables that compile a stage through rigExec alone name the scene
 # library, so the hooks are loaded. Imaging, bake, and the standalone
@@ -2940,6 +2941,8 @@ foreach(_rigexec_oracle_exe IN ITEMS
         target_link_libraries(${_rigexec_oracle_exe} PRIVATE rigExecOracle)
     endif()
 endforeach()
+
+rigexec_apply_exact_fp_flags_to_directory_targets()
 
 # Install
 include(CMakePackageConfigHelpers)

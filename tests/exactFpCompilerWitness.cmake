@@ -174,10 +174,23 @@ function(_witness_audit work)
                 endif ()
             endforeach ()
         endif ()
-        # PCH reuse names the compiled header in the consumer's command.
-        if (NOT _msvc AND _cmd MATCHES "witnessReuse"
+        # PCH creation and reuse: the producer compiles the header, the
+        # consumer names it on its own command line, and a consumer behind
+        # a conditional interface link keeps the exact mode after the
+        # walk rewrites its option list.
+        if (NOT _msvc AND _cmd MATCHES "witnessReuse|witnessPchReuse"
             AND NOT _cmd MATCHES "cmake_pch|autogen")
             _witness_fail("reuse command lacks the PCH include: ${_cmd}")
+        endif ()
+        if (_msvc AND _cmd MATCHES "witnessExact|witnessPch")
+            if (NOT _cmd MATCHES "/Yc")
+                _witness_fail("PCH producer lacks /Yc: ${_cmd}")
+            endif ()
+        endif ()
+        if (_msvc AND _cmd MATCHES "witnessReuse|witnessPchReuse")
+            if (NOT _cmd MATCHES "/Yu")
+                _witness_fail("PCH consumer lacks /Yu: ${_cmd}")
+            endif ()
         endif ()
         if (_file MATCHES "third_party[\\\\/]+generated[\\\\/]+generatedProbe\\.cpp")
             math(EXPR _generated "${_generated} + 1")
@@ -222,15 +235,16 @@ function(_witness_run_and_check_exact exe)
     endif ()
 endfunction()
 
-# Leg 1: enforcement through generator expressions, per-source options, PCH
-# creation and reuse, a third_party-named generated source, and a build
+# Leg 1: enforcement through generator-expression target options, PCH
+# creation and reuse (two producer/consumer pairs, one behind a conditional
+# interface link), a third_party-named generated source, and a build
 # directory named like a vendored tree.
 set(_build_config "")
 if (_multi)
     set(_build_config "--config" "Release")
 endif ()
 set(_work1 "${BUILD_ROOT}/third_party-build")
-_witness_configure("${_work1}" -DWITNESS_SOURCE_CONFLICT=ON)
+_witness_configure("${_work1}")
 if (NOT WITNESS_RC EQUAL 0)
     _witness_fail("enforcement leg failed to configure: ${WITNESS_LOG}")
 endif ()
@@ -241,33 +255,27 @@ if (NOT _rc EQUAL 0)
     _witness_fail("enforcement leg failed to build: ${_out}${_err}")
 endif ()
 _witness_audit("${_work1}")
-_witness_run_and_check_exact("${_work1}${_cfgdir}/witnessExact")
-_witness_run_and_check_exact("${_work1}${_cfgdir}/witnessReuse")
+foreach (_exact_exe witnessExact witnessReuse witnessPch witnessPchReuse)
+    _witness_run_and_check_exact("${_work1}${_cfgdir}/${_exact_exe}")
+endforeach ()
 
 # The vendored leg must discriminate: a fast-mode build of the same probes
-# prints different patterns, so the exact patterns above are not trivially
-# achievable by any compiler mode.
+# prints a different reassociation pattern, so the exact patterns above are
+# not trivially achievable by any compiler mode. Reassociation (not FMA
+# contraction) is the discriminator: it needs no FMA-capable target and
+# applies to both toolchains.
 execute_process(COMMAND "${_work1}${_cfgdir}/witnessVendored${_exe}"
     RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
 if (NOT _rc EQUAL 0)
     _witness_fail("witnessVendored exited ${_rc}: ${_err}")
 endif ()
-if (NOT _msvc)
-    if (NOT _out MATCHES "probe contract 3ebfffff")
-        _witness_fail("witnessVendored did not contract: ${_out}")
-    endif ()
-    if (NOT _out MATCHES "generated contract 3ebfffff")
-        _witness_fail("witnessVendored did not contract the generated TU: "
-            "${_out}")
-    endif ()
-    if (_out MATCHES "probe reassoc 00000000")
-        _witness_fail("witnessVendored did not reassociate: ${_out}")
-    endif ()
+if (_out MATCHES "probe reassoc 00000000")
+    _witness_fail("witnessVendored did not reassociate: ${_out}")
 endif ()
 
-# Leg 2: a conflict owned by a linked interface target cannot be scrubbed
-# or ordered away, so configuration must abort with the actionable
-# diagnostic.
+# Leg 2: a conflict owned by a conditionally linked interface target
+# ($<$<CONFIG:Release>:fpIface>) cannot be scrubbed or ordered away, so
+# configuration must abort with the actionable diagnostic naming the flag.
 set(_work2 "${BUILD_ROOT}/interface-conflict")
 _witness_configure("${_work2}" -DWITNESS_CONFLICT=interface)
 if (WITNESS_RC EQUAL 0)
@@ -275,6 +283,24 @@ if (WITNESS_RC EQUAL 0)
 endif ()
 if (NOT WITNESS_LOG MATCHES "rigexec exact-FP")
     _witness_fail("interface conflict diagnostic missing:\n${WITNESS_LOG}")
+endif ()
+if (NOT WITNESS_LOG MATCHES "${_conflict_flag}")
+    _witness_fail("interface conflict diagnostic does not name the flag:\n"
+        "${WITNESS_LOG}")
+endif ()
+
+# Leg 3: a per-source floating-point conflict sits after the target's own
+# options on the real command and its property is shared by every target of
+# the directory, so the helper must reject it, naming the source, rather
+# than rewrite the shared property.
+set(_work3 "${BUILD_ROOT}/source-conflict")
+_witness_configure("${_work3}" -DWITNESS_SOURCE_CONFLICT=ON)
+if (WITNESS_RC EQUAL 0)
+    _witness_fail("source conflict configured without a diagnostic")
+endif ()
+if (NOT WITNESS_LOG MATCHES "source .*probe\\.cpp: ${_fast_head}")
+    _witness_fail("source conflict diagnostic does not name the source and "
+        "flag:\n${WITNESS_LOG}")
 endif ()
 
 message(STATUS "exactFpCompilerWitness: command audit and numeric probes "
