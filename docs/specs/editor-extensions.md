@@ -162,7 +162,33 @@ The `rigExecUsdview` container offers two public reads for a host:
 
 Hosts reach the container with `rigExecUsdview.ContainerFor(api)` and add
 menu entries with `rigExecUsdview.AddToRigExecMenu(plugUIBuilder, submenu,
-commandPlugin, rank)`.
+commandPlugin, rank)`. That name stays public; it is the shared
+`usdRigViewMenu.AddToRigExecMenu` every viewer container
+(`rigExecUsdview`, `shapeEditor`, `touchPose`) uses, so all RigExec menu
+entries follow one ordering contract.
+
+`submenu=None` adds a direct child of the RigExec menu; otherwise the entry
+goes to `RigExec -> submenu`. Insertion moves the new `QAction` ahead of
+the first entry ranked strictly higher, so plugin load order never decides
+the layout. Equal ranks keep insertion order, and entries another plugin
+added without a rank stay where they are. The three submenus are ranked too
+(`Viewport` 10, `General Editors` 20, `Animation Editors` 30); an unlisted
+submenu name still takes ranked entries but is not itself ordered. The rank
+applies only on insertion. The call returns the `QAction`, and adding the
+same registered command to the same destination again returns that original
+action instead of a second entry. Destinations do not share entries, and the
+record lives on the menu wrapper, so it ends with the builder session.
+
+Menu setup needs only the selected container directories, each on both
+`PYTHONPATH` and `PXR_PLUGINPATH_NAME`, plus the shared module directory on
+`PYTHONPATH` only: `plugin/usdRigViewShared` from a checkout, or the
+installed `usdRigViewMenu.py` at the `rigExec_PYTHON_DIR` the CMake package
+exports. The shared module is an ordinary Python dependency, not a Plug
+plugin. A standalone host may instead redistribute the canonical
+`usdRigViewMenu.py` file alongside its chosen plugin. That independence is
+for menu setup only: the panels themselves still reach across containers
+(for example the shared imaging-library lookup), so other panel functions
+may need more than the menu paths.
 
 ## Undo stack protocol
 
