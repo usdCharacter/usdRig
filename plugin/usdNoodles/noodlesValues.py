@@ -591,7 +591,7 @@ def write_value(
             if not attr.Set(value, time):
                 return False, "USD refused the value"
             if on_authored is not None:
-                # Capture the Sdf handle before synchronous USD notice delivery.
+                # Capture the Sdf opinion before synchronous USD notice delivery.
                 on_authored()
     except Exception as e:  # a locked layer USD refuses late, a bad value
         return False, str(e)
@@ -723,18 +723,24 @@ class ValuePreviewOpinion:
         self.time = (None if time.IsDefault() else
                      target.GetMapFunction().timeOffset.GetInverse() * time.GetValue())
         self.original = read_value_opinion(self.layer, self._initial_path, self.time)
+        self.preview = None
         self._spec = None
 
     def capture(self):
         self._spec = self.layer.GetAttributeAtPath(self._initial_path)
+        self.preview = read_value_opinion(self.layer, self._initial_path, self.time)
 
     @property
     def path(self):
         return self._spec.path if self._spec else None
 
+    def matches(self, path):
+        return path is not None and read_value_opinion(self.layer, path, self.time) == self.preview
+
     def restore(self):
-        if self._spec:
-            set_value_opinion(self.layer, self._spec.path, self.time, self.original)
+        path = self.path
+        if self.matches(path):
+            set_value_opinion(self.layer, path, self.time, self.original)
 
 
 def read_value_opinion(layer, path, time):
