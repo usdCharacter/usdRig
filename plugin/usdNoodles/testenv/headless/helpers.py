@@ -31,11 +31,12 @@ class GraphTestHelper:
         return self.harness.graph_view
 
     def add_node(self, stage, parent_path, node_type_id, position):
-        """Create an ExecNode in the USD stage and register it in the GraphView.
+        """Create a node prim in the USD stage and register it in the GraphView.
 
-        Creates a ``def ExecNode`` prim with the given ``node_type_id``
-        set as the ``token id`` attribute. To create Container or Shader
-        prims, use ``PrimAuthor.create_node_prim`` directly.
+        Creates a ``def Container`` prim with the given ``node_type_id``
+        set as the ``token id`` attribute. ``ExecNode`` prims are
+        suppressed by the node factory and can never become nodes. To
+        create Shader prims, use ``PrimAuthor.create_node_prim`` directly.
 
         Args:
             stage: Usd.Stage
@@ -49,7 +50,7 @@ class GraphTestHelper:
         from UsdNoodles.primAuthoring import PrimAuthor
 
         pos = Gf.Vec2d(position[0], position[1])
-        prim_path = PrimAuthor.create_node_prim(stage, parent_path, "ExecNode", pos)
+        prim_path = PrimAuthor.create_node_prim(stage, parent_path, "Container", pos)
         if prim_path is None:
             return None
 
@@ -66,6 +67,12 @@ class GraphTestHelper:
             return None
 
         node_id = self.gv._addNewNodeFast(prim, stage)
+        if node_id is None:
+            # A registered notice handler adopts authored prims on its
+            # own; _addNewNodeFast skips prims already in the graph.
+            candidate = str(prim_path)
+            if candidate in self.gv.nodes:
+                return candidate
         return node_id
 
     def move_node(self, node_id, new_position, with_undo=True):

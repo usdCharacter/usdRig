@@ -27,13 +27,26 @@ parameter is ``view``. Names the suite patches on the legacy module
 ``warn_if_non_persistent_edit_target``) and legacy-only helpers
 (``_ProfileSection``, ``_ValueHit``) resolve at call time through
 ``legacy_symbol``; everything else is imported directly.
+
+``GraphWidgetBase`` below is the Qt base the composing view derives: it
+carries the native signals (including ``nodeGraphReplaced``), the
+``guards_qt_boundary`` wrapper the guarded overrides keep, and the Qt
+event overrides bound explicitly to the moved module functions in
+``interaction_events.py`` (never forwarding bodies). The QGLWidget GL
+lifecycle is inherited; the render-owned lifecycle bodies
+(``initializeGL``/``resizeGL``/``paintGL``) stay on the composing view
+until their own layer moves them.
 """
 
+import functools
+import traceback
+
 from pxr import Gf, Tf, Usd
-from pxr.Usdviewq.qt import QtCore
+from pxr.Usdviewq.qt import QGLWidget, QtCore
 
 from ..widgets import valueCell
 from . import editing as _editing
+from . import interaction_events as _events
 from . import intents as _intents
 from . import selection as _selection
 from .legacy import legacy_symbol
@@ -2320,3 +2333,97 @@ def release_node_drag_and_marquee(view, event):
 
     if hasSelectedNodes:
         view._syncSelectionToPrimtree()
+
+
+def guards_qt_boundary(handler):
+    """Stop a Python exception escaping into Qt's virtual dispatch.
+
+    These handlers override C++ virtuals, so an exception raised inside one has
+    to be carried back out through shiboken. That path is not robust in this
+    PySide build: a mouse release whose handler raised took the process down
+    with SIGSEGV inside PepException_GetArgs, reading 0xffffffffffffffff, with
+    no traceback -- so the Python bug that started it was invisible, which is
+    the worst part.
+
+    event()'s own `except RuntimeError` cannot cover this. It wraps
+    super().event(), and super().event() is where the boundary crash happens,
+    so it only ever sees the failures shiboken survived long enough to report.
+    Catching here, before the exception is handed back to C++, is what keeps
+    the process alive AND produces a traceback to act on.
+
+    The event is dropped, which for a mouse or key handler means one lost
+    interaction rather than a lost session.
+    """
+    @functools.wraps(handler)
+    def guarded(self, event):
+        try:
+            return handler(self, event)
+        except Exception:
+            Tf.Warn("%s.%s raised; the event was dropped. This is a bug -- "
+                    "please report the traceback:\n%s"
+                    % (type(self).__name__, handler.__name__,
+                       traceback.format_exc()))
+            return None
+
+    return guarded
+
+
+class GraphWidgetBase(QGLWidget):
+    """Qt base for the noodle graph view: signals, guards, event overrides.
+
+    The composing ``GraphView`` derives this and inherits every binding
+    below, so ``GraphView.<name>(duck_self, ...)`` unbound calls keep
+    working with their original signatures. Each right-hand side is the
+    moved module function from ``interaction_events``; overrides that
+    originally had ``_guardsQtBoundary`` keep it, and the static hotbox
+    helper keeps its descriptor. ``nodeGraphReplaced`` moved here with
+    its contract: it is emitted whenever ``nodeGraph`` is reassigned.
+    """
+
+    # Emitted whenever ``nodeGraph`` is reassigned (e.g. when a new stage
+    # or blueprint is loaded and the underlying NodeGraph instance is swapped).
+    # Listeners that subscribed to NodeGraph callbacks need this so they can
+    # re-register on the new instance.
+    nodeGraphReplaced = QtCore.Signal()
+
+    # Raw Qt event dispatch and the keyboard/mouse-wheel overrides.
+    event = _events.event
+    keyPressEvent = guards_qt_boundary(_events.keyPressEvent)
+    keyReleaseEvent = guards_qt_boundary(_events.keyReleaseEvent)
+    wheelEvent = guards_qt_boundary(_events.wheelEvent)
+    enterEvent = _events.enterEvent
+    leaveEvent = _events.leaveEvent
+    contextMenuEvent = _events.contextMenuEvent
+    closeEvent = _events.closeEvent
+    timerEvent = _events.timerEvent
+    focusNextPrevChild = _events.focusNextPrevChild
+
+    # Shortcuts: conflict migration, widget actions, live updates.
+    _shouldInterceptShortcut = _events._shouldInterceptShortcut
+    _setupShortcuts = _events._setupShortcuts
+    _resolveShortcutConflicts = _events._resolveShortcutConflicts
+    updateShortcuts = _events.updateShortcuts
+
+    # Context menu, container opening, preferences dialog.
+    _getContextMenuConf = _events._getContextMenuConf
+    _initContextMenu = _events._initContextMenu
+    _updateContextMenuState = _events._updateContextMenuState
+    _showPinSelectionMenu = _events._showPinSelectionMenu
+    _openSelectedContainer = _events._openSelectedContainer
+    _openPreferences = _events._openPreferences
+    _onPreferencesClosed = _events._onPreferencesClosed
+
+    # Node-creation hotbox content.
+    _updateNodeCreationHotbox = _events._updateNodeCreationHotbox
+    _apiSchemaHotboxItems = staticmethod(_events._apiSchemaHotboxItems)
+
+    # Hotkey, toast and warning popups.
+    _showHotkeyPopup = _events._showHotkeyPopup
+    _showPopupMessage = _events._showPopupMessage
+    _showWarningPopup = _events._showWarningPopup
+
+    # Value-cell press dispatch and the token popup it opens.
+    _onValueCellPressed = _events._onValueCellPressed
+    _openTokenPopup = _events._openTokenPopup
+    _closeTokenPopup = _events._closeTokenPopup
+    _handleTokenPopupPress = _events._handleTokenPopupPress
