@@ -185,6 +185,36 @@ function(rigexec_fp_genex_segments body out_var)
     set(${out_var} "${_rigexec_gs_segs}" PARENT_SCOPE)
 endfunction()
 
+# PRIVATE: the operator of a generator expression: the text between the
+# opening "$<" and the first colon outside nested expressions, so
+# "$<IF:...>" yields "IF", "$<TARGET_PROPERTY:tgt,P>" yields
+# "TARGET_PROPERTY", and the conditional form "$<$<CONFIG:Release>:lib>"
+# yields the predicate "$<CONFIG:Release>" (never a body segment). Empty
+# when the expression has no top-level colon.
+function(rigexec_fp_genex_operator entry out_var)
+    string(LENGTH "${entry}" _rigexec_go_len)
+    set(_rigexec_go_i 2)
+    set(_rigexec_go_depth 0)
+    set(_rigexec_go_op "")
+    while (_rigexec_go_i LESS _rigexec_go_len)
+        string(SUBSTRING "${entry}" ${_rigexec_go_i} 1 _rigexec_go_ch)
+        if (_rigexec_go_ch STREQUAL ":" AND _rigexec_go_depth EQUAL 0)
+            break ()
+        endif ()
+        if (_rigexec_go_ch STREQUAL "$")
+            string(SUBSTRING "${entry}" ${_rigexec_go_i} 2 _rigexec_go_pair)
+            if (_rigexec_go_pair STREQUAL "$<")
+                math(EXPR _rigexec_go_depth "${_rigexec_go_depth} + 1")
+            endif ()
+        elseif (_rigexec_go_ch STREQUAL ">" AND _rigexec_go_depth GREATER 0)
+            math(EXPR _rigexec_go_depth "${_rigexec_go_depth} - 1")
+        endif ()
+        string(APPEND _rigexec_go_op "${_rigexec_go_ch}")
+        math(EXPR _rigexec_go_i "${_rigexec_go_i} + 1")
+    endwhile ()
+    set(${out_var} "${_rigexec_go_op}" PARENT_SCOPE)
+endfunction()
+
 # PRIVATE: floating-point options that no ordering can outrank abort
 # configuration with the owning target, flag and source named: per-source
 # COMPILE_OPTIONS entries (last on the real command line, and shared by
@@ -192,10 +222,17 @@ endfunction()
 # of the direct requirements and their transitive link closure. A conditional
 # link entry ($<$<CONFIG:Release>:Pkg::Fast>, $<BUILD_INTERFACE:lib>) still
 # names a target whose interface applies in some configuration, so generator
-# expressions are unwrapped to their full content, namespaced names
-# included; an $<IF:cond,true,false> entry queues both result branches, and
-# an expression nested past the inspection cutoff is reported with the
-# consuming target and the expression named, never accepted.
+# expressions are unwrapped to their real dependencies: $<IF:...> queues
+# both result branches but never its predicate, $<TARGET_PROPERTY:tgt,PROP>
+# is resolved to the property's value instead of queueing the lookup's own
+# operands, and a computed result that cannot be resolved statically is
+# rejected with the consuming target and the full entry named. Nesting is
+# measured per branch: many shallow branches all get inspected, while a
+# chain deeper than the cutoff is reported with the consuming target and
+# the expression named, never accepted. Link-relevant transport operators
+# (LINK_ONLY, BUILD_INTERFACE, INSTALL_INTERFACE, $<0:...>, $<1:...>) and
+# the conditional form $<cond:...> unwrap; any other operator produces
+# text rather than a dependency name and is rejected the same way.
 function(rigexec_fp_reject_unrankable_conflicts target)
     rigexec_get_exact_fp_flags(_rigexec_fp_canonical)
     rigexec_get_exact_fp_conflict_regex(_rigexec_fp_conflict)
@@ -221,24 +258,25 @@ function(rigexec_fp_reject_unrankable_conflicts target)
         set(_rigexec_fp_queue "")
     endif ()
     set(_rigexec_fp_seen "")
+    set(_rigexec_fp_unwrap_operators
+        "LINK_ONLY;BUILD_INTERFACE;INSTALL_INTERFACE;1")
     while (_rigexec_fp_queue)
         list(POP_FRONT _rigexec_fp_queue _rigexec_fp_lib)
         if (_rigexec_fp_lib MATCHES "^\\$<")
-            # Unwrap generator expressions to their real content: a
-            # conditional link still smuggles its target's interface into
-            # the configurations where the condition holds, the target
-            # name may be namespaced or nested in another expression, and
-            # an $<IF:...> body is comma-separated so both result branches
-            # must be queued. Nesting past the cutoff is reported, not
-            # silently accepted.
-            set(_rigexec_fp_local "${_rigexec_fp_lib}")
-            set(_rigexec_fp_depth 0)
+            # Unwrap generator expressions to their real dependencies. The
+            # local queue carries (depth, expression) pairs so the cutoff
+            # bounds one branch's nesting, not the total node count across
+            # sibling branches.
+            set(_rigexec_fp_local "1;${_rigexec_fp_lib}")
             while (_rigexec_fp_local)
-                list(POP_FRONT _rigexec_fp_local _rigexec_fp_probe)
+                list(POP_FRONT _rigexec_fp_local _rigexec_fp_depth
+                    _rigexec_fp_probe)
                 if (NOT _rigexec_fp_probe MATCHES "^\\$<")
+                    if (TARGET "${_rigexec_fp_probe}")
+                        list(APPEND _rigexec_fp_queue "${_rigexec_fp_probe}")
+                    endif ()
                     continue ()
                 endif ()
-                math(EXPR _rigexec_fp_depth "${_rigexec_fp_depth} + 1")
                 if (_rigexec_fp_depth GREATER 5)
                     list(APPEND _rigexec_fp_found
                         "${target}: un-inspectable link expression ${_rigexec_fp_lib}")
@@ -246,17 +284,80 @@ function(rigexec_fp_reject_unrankable_conflicts target)
                 endif ()
                 rigexec_fp_genex_content("${_rigexec_fp_probe}"
                     _rigexec_fp_body)
-                if (NOT _rigexec_fp_body)
+                rigexec_fp_genex_operator("${_rigexec_fp_probe}"
+                    _rigexec_fp_op)
+                if (_rigexec_fp_body)
+                    rigexec_fp_genex_segments("${_rigexec_fp_body}"
+                        _rigexec_fp_segs)
+                else ()
+                    set(_rigexec_fp_segs "")
+                endif ()
+                set(_rigexec_fp_skip_first 0)
+                if (_rigexec_fp_op STREQUAL "IF")
+                    # The first segment is the predicate: it selects a
+                    # branch, it is never itself a dependency.
+                    set(_rigexec_fp_skip_first 1)
+                elseif (_rigexec_fp_op STREQUAL "0")
+                    # $<0:...> always expands to nothing.
+                    set(_rigexec_fp_segs "")
+                elseif (_rigexec_fp_op STREQUAL "TARGET_PROPERTY")
+                    # The operands name a lookup, not a dependency: the
+                    # dependency is the property's value, itself possibly
+                    # a generator-expression string. A property name that
+                    # is not a literal cannot be resolved statically, so
+                    # that form is rejected with the consumer and the
+                    # full entry named.
+                    list(LENGTH _rigexec_fp_segs _rigexec_fp_nsegs)
+                    list(GET _rigexec_fp_segs 0 _rigexec_fp_owner)
+                    list(GET _rigexec_fp_segs 1 _rigexec_fp_propname)
+                    if (_rigexec_fp_nsegs LESS 2
+                        OR "${_rigexec_fp_owner}" MATCHES "[$<>]"
+                        OR "${_rigexec_fp_propname}" MATCHES "[$<>]"
+                        OR _rigexec_fp_nsegs GREATER 2)
+                        # A computed owner or property name, or the
+                        # alternate-value form whose literal alternates
+                        # can themselves name targets, is not statically
+                        # resolvable.
+                        list(APPEND _rigexec_fp_found
+                            "${target}: unresolvable link expression ${_rigexec_fp_lib}")
+                        continue ()
+                    endif ()
+                    if (TARGET "${_rigexec_fp_owner}")
+                        get_target_property(_rigexec_fp_pval
+                            "${_rigexec_fp_owner}" "${_rigexec_fp_propname}")
+                        if (NOT _rigexec_fp_pval
+                            OR _rigexec_fp_pval MATCHES "NOTFOUND$")
+                            set(_rigexec_fp_pval "")
+                        endif ()
+                        math(EXPR _rigexec_fp_child
+                            "${_rigexec_fp_depth} + 1")
+                        foreach (_rigexec_fp_part IN LISTS _rigexec_fp_pval)
+                            list(APPEND _rigexec_fp_local
+                                "${_rigexec_fp_child};${_rigexec_fp_part}")
+                        endforeach ()
+                    endif ()
+                    continue ()
+                elseif (NOT _rigexec_fp_op MATCHES "^[$]<"
+                    AND NOT _rigexec_fp_op IN_LIST
+                        _rigexec_fp_unwrap_operators)
+                    # The operator produces text (a configuration name, a
+                    # file path, a comparison result), not a dependency
+                    # name. Accepting it un-inspected would let a
+                    # dependency hide behind the text, so reject it with
+                    # the consuming target and the full entry named.
+                    list(APPEND _rigexec_fp_found
+                        "${target}: link expression result not known to name a target: ${_rigexec_fp_lib}")
                     continue ()
                 endif ()
-                rigexec_fp_genex_segments("${_rigexec_fp_body}"
-                    _rigexec_fp_segs)
+                math(EXPR _rigexec_fp_child "${_rigexec_fp_depth} + 1")
+                set(_rigexec_fp_idx 0)
                 foreach (_rigexec_fp_part IN LISTS _rigexec_fp_segs)
-                    if (TARGET "${_rigexec_fp_part}")
-                        list(APPEND _rigexec_fp_queue "${_rigexec_fp_part}")
-                    elseif (_rigexec_fp_part MATCHES "^\\$<")
-                        list(APPEND _rigexec_fp_local "${_rigexec_fp_part}")
+                    math(EXPR _rigexec_fp_idx "${_rigexec_fp_idx} + 1")
+                    if (_rigexec_fp_skip_first AND _rigexec_fp_idx EQUAL 1)
+                        continue ()
                     endif ()
+                    list(APPEND _rigexec_fp_local
+                        "${_rigexec_fp_child};${_rigexec_fp_part}")
                 endforeach ()
             endwhile ()
             continue ()

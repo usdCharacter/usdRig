@@ -371,5 +371,64 @@ if (NOT WITNESS_LOG MATCHES "Pkg::Fast")
         "${WITNESS_LOG}")
 endif ()
 
+# Leg 6: the IF result branch is computed -
+# $<TARGET_PROPERTY:witnessIf,FP_DEP> with FP_DEP set to Pkg::Fast. The
+# operator's operands are a lookup, not a dependency, so the pass must
+# resolve the property and inspect the selected target rather than queue
+# witnessIf and the literal property name.
+set(_work6 "${BUILD_ROOT}/proplink-conflict")
+_witness_configure("${_work6}" -DWITNESS_CONFLICT=interface
+    -DWITNESS_PROP_LINK=ON)
+if (WITNESS_RC EQUAL 0)
+    _witness_fail("property-computed fast branch configured without a "
+        "diagnostic:\n${WITNESS_LOG}")
+endif ()
+if (NOT WITNESS_LOG MATCHES "witnessIf")
+    _witness_fail("property-link diagnostic does not name the consuming "
+        "target:\n${WITNESS_LOG}")
+endif ()
+if (NOT WITNESS_LOG MATCHES "Pkg::Fast: .*${_conflict_flag}")
+    _witness_fail("property-link diagnostic does not name the selected "
+        "dependency and its flag:\n${WITNESS_LOG}")
+endif ()
+
+# Leg 7: the mirror case - one IF entry with six expression nodes but no
+# branch deeper than four, all branches quiet. Per-branch nesting must
+# inspect every shallow branch and configure successfully; a cutoff that
+# counts nodes popped across sibling branches rejects this legal rig.
+set(_work7 "${BUILD_ROOT}/branch-shallow")
+_witness_configure("${_work7}" -DWITNESS_BRANCH_LINK=ON)
+if (NOT WITNESS_RC EQUAL 0)
+    _witness_fail("shallow multi-branch link rejected as too deeply "
+        "nested:\n${WITNESS_LOG}")
+endif ()
+execute_process(COMMAND "${CMAKE_COMMAND}" --build "${_work7}"
+    ${_build_config}
+    RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
+if (NOT _rc EQUAL 0)
+    _witness_fail("shallow multi-branch leg failed to build: ${_out}${_err}")
+endif ()
+_witness_run_and_check_exact("${_work7}${_cfgdir}/witnessBranching")
+
+# Leg 8: a computed result that cannot be resolved statically - the
+# property name is itself a generator expression - must abort configuration
+# naming the consumer and the full original entry, never accept the
+# un-inspected selection.
+set(_work8 "${BUILD_ROOT}/unresolvable-conflict")
+_witness_configure("${_work8}" -DWITNESS_CONFLICT=interface
+    -DWITNESS_UNSUPPORTED_LINK=ON)
+if (WITNESS_RC EQUAL 0)
+    _witness_fail("unresolvable computed link configured without a "
+        "diagnostic:\n${WITNESS_LOG}")
+endif ()
+if (NOT WITNESS_LOG MATCHES "witnessBad: unresolvable link expression")
+    _witness_fail("unresolvable diagnostic does not name the target and "
+        "class:\n${WITNESS_LOG}")
+endif ()
+if (NOT WITNESS_LOG MATCHES "TARGET_PROPERTY:witnessBad,")
+    _witness_fail("unresolvable diagnostic drops the full original "
+        "expression:\n${WITNESS_LOG}")
+endif ()
+
 message(STATUS "exactFpCompilerWitness: command audit and numeric probes "
     "agree on the exact mode")
