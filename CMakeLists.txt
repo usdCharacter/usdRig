@@ -2817,7 +2817,10 @@ rigexec_label_tests()
 
 get_property(_rigexec_tests DIRECTORY PROPERTY TESTS)
 foreach(_rigexec_test IN LISTS _rigexec_tests)
-    set_tests_properties(${_rigexec_test} PROPERTIES TIMEOUT 300)
+    get_property(_rigexec_test_timeout TEST ${_rigexec_test} PROPERTY TIMEOUT)
+    if (NOT _rigexec_test_timeout)
+        set_tests_properties(${_rigexec_test} PROPERTIES TIMEOUT 300)
+    endif ()
     if (WIN32)
         set_property(TEST ${_rigexec_test} APPEND PROPERTY
             ENVIRONMENT_MODIFICATION
@@ -3133,6 +3136,8 @@ install(FILES
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/exactFpFlags.txt"
     DESTINATION "${RIGEXEC_INSTALL_DATADIR}")
 rigexec_install_sdk_manifests(BUILD_DIR "${RIGEXEC_SDK_MANIFEST_DIR}"
+    INPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}"
+    SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}"
     DESTINATION "${RIGEXEC_INSTALL_DATADIR}")
 
 install(FILES LICENSE NOTICE THIRD_PARTY_NOTICES.md

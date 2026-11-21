@@ -45,6 +45,24 @@ foreach (_manifest runtimeSources runtimeIncludes evalCoreSources evalCoreInclud
     endif ()
 endforeach ()
 
+# The staged copies must be the relocation of the current build lists, in
+# order and byte for byte: an equal count in a different order, or a list
+# from an earlier generation, is a stale export.
+include("${SOURCE_DIR}/cmake/manifestRelocate.cmake")
+foreach (_manifest runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes)
+    if (NOT EXISTS "${BINARY_DIR}/${_manifest}.txt")
+        message(FATAL_ERROR
+            "generated ${BINARY_DIR}/${_manifest}.txt is missing; the staged copy is stale")
+    endif ()
+    file(STRINGS "${BINARY_DIR}/${_manifest}.txt" _built)
+    rigexec_relocate_manifest_text("${SOURCE_DIR}" _expected _built)
+    file(READ "${STAGED_DIR}/${_manifest}.txt" _shipped_text)
+    if (NOT _shipped_text STREQUAL _expected)
+        message(FATAL_ERROR
+            "${_manifest}.txt is not the ordered relocation of the current ${BINARY_DIR}/${_manifest}.txt (stale export)")
+    endif ()
+endforeach ()
+
 foreach (_manifest runtimeSources evalCoreSources)
     file(STRINGS "${BINARY_DIR}/${_manifest}.txt" _built)
     file(STRINGS "${STAGED_DIR}/${_manifest}.txt" _shipped)

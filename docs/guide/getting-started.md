@@ -55,6 +55,11 @@ cmake --install build --prefix /path/to/rigexec-install
 Packagers staging a system tree set `DESTDIR` as well as `--prefix`; every file
 lands under `<DESTDIR><prefix>`, including the exact-FP flags and the USD-free
 manifests under `share/rigExec`, and nothing is written to the logical prefix.
+`DESTDIR` is honored by the Makefile and Ninja generators; where a Windows
+generator ignores it, set `CMAKE_STAGING_PREFIX` at configure time instead,
+which stages the same layout. Reinstalling over a prefix or staging root
+refreshes files whose staged copies changed even when their timestamps match
+what is installed.
 
 Link the installed scene target when compiling rigs from USD stages:
 
