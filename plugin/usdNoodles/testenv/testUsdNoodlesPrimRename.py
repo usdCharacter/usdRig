@@ -823,9 +823,9 @@ class RenameFromOutsideTheEditorTest(unittest.TestCase):
     def _scopeViewTo(self, scope):
         """Serve this stub through a blueprint graph on *scope*.
 
-        Only the scope rule is exercised -- reconciliation reads the
-        scope path, never the loader -- so a plain Xform stands in for
-        the blueprint prim.
+        Reconciliation reads the scope path and the destination prim's
+        authored attributes (the loader inputs), never the prim type --
+        so a plain Xform stands in for the blueprint prim.
         """
         from UsdNoodles.nodeGraphBlueprint import NodeGraphBlueprint
 
@@ -883,22 +883,37 @@ class RenameFromOutsideTheEditorTest(unittest.TestCase):
 
     def test_a_moved_scope_is_retargeted_with_fresh_pins(self):
         """Renaming the scope prim retargets the blueprint graph onto the
-        live scope: synthetic pins exist only at the new path, as fresh
-        models, and a child created afterwards appears under it."""
+        live scope: the displayed descendant survives as a fresh model,
+        pins are generated from the destination loader inputs, and a
+        child created afterwards appears under the new scope."""
+        self.stage.GetPrimAtPath("/World/Deep").CreateAttribute(
+            "input:drive", Sdf.ValueTypeNames.Float
+        ).Set(1.0)
         self._scopeViewTo("/World/Deep")
-        self._addNode("/World/Deep/Node")
+        node = self._addNode("/World/Deep/Node")
         pin = self._addSyntheticPin("/World/Deep#input:drive")
-        pinsBefore = list(pin.outputPins)
+        self._addSyntheticPin("/World/Deep#input:stale")
         unrelated = self._addSyntheticPin("/Other#input:keep")
 
         self._renameOnTheStage("/World/Deep", "Deeper")
 
         self.assertEqual(str(self.view._currentPrimPath), "/World/Deeper")
+        self.assertNotIn("/World/Deep/Node", self.view.nodes)
+        fresh = self.view.nodes["/World/Deeper/Node"]
+        self.assertIsNot(fresh, node)
+        prim = fresh.getUsdPrim()
+        self.assertTrue(prim.IsValid())
+        self.assertEqual(str(prim.GetPath()), "/World/Deeper/Node")
+        self.assertNotIn("/World/Deeper/NodeTwo", self.view.nodes)
+        self.assertNotIn("/World/Deeper/Child", self.view.nodes)
         self.assertNotIn("/World/Deep#input:drive", self.view.nodes)
+        self.assertNotIn("/World/Deep#input:stale", self.view.nodes)
+        self.assertNotIn("/World/Deeper#input:stale", self.view.nodes)
         rebuilt = self.view.nodes["/World/Deeper#input:drive"]
         self.assertIsNot(rebuilt, pin)
-        self.assertEqual(rebuilt.outputPins, pinsBefore)
-        self.assertEqual(rebuilt.name, "input:drive")
+        self.assertEqual(rebuilt.name, "drive")
+        self.assertEqual(rebuilt.type, "BlueprintInput")
+        self.assertEqual(rebuilt.outputPins, ["drive"])
         self.assertEqual(tuple(rebuilt.position), (10.0, 20.0))
         self.assertFalse(
             [nodeId for nodeId in self.view.nodes if "#input" in nodeId
@@ -912,21 +927,39 @@ class RenameFromOutsideTheEditorTest(unittest.TestCase):
 
     def test_an_ancestor_move_retargets_the_scope(self):
         """The scope follows its prim even when the move happened above
-        it: pins hang off the new scope and the stale ids are gone."""
+        it: displayed descendants resolve through the classified ancestor
+        pair, pins are generated from the destination loader inputs, and
+        the stale ids are gone."""
+        self.stage.GetPrimAtPath("/World/Deep").CreateAttribute(
+            "input:drive", Sdf.ValueTypeNames.Float
+        ).Set(1.0)
         self._scopeViewTo("/World/Deep")
+        node = self._addNode("/World/Deep/Node")
         pin = self._addSyntheticPin("/World/Deep#input:drive")
-        pinsBefore = list(pin.outputPins)
+        self._addSyntheticPin("/World/Deep#input:stale")
 
         self._renameOnTheStage("/World", "Elsewhere")
 
         self.assertEqual(
             str(self.view._currentPrimPath), "/Elsewhere/Deep"
         )
+        self.assertNotIn("/World/Deep/Node", self.view.nodes)
+        fresh = self.view.nodes["/Elsewhere/Deep/Node"]
+        self.assertIsNot(fresh, node)
+        prim = fresh.getUsdPrim()
+        self.assertTrue(prim.IsValid())
+        self.assertEqual(str(prim.GetPath()), "/Elsewhere/Deep/Node")
+        self.assertNotIn("/Elsewhere/Deep/NodeTwo", self.view.nodes)
+        self.assertNotIn("/Elsewhere/Deep/Child", self.view.nodes)
         self.assertNotIn("/World/Deep#input:drive", self.view.nodes)
+        self.assertNotIn("/World/Deep#input:stale", self.view.nodes)
+        self.assertNotIn("/Elsewhere/Deep#input:stale", self.view.nodes)
         rebuilt = self.view.nodes["/Elsewhere/Deep#input:drive"]
         self.assertIsNot(rebuilt, pin)
-        self.assertEqual(rebuilt.outputPins, pinsBefore)
-        self.assertEqual(rebuilt.name, "input:drive")
+        self.assertEqual(rebuilt.name, "drive")
+        self.assertEqual(rebuilt.type, "BlueprintInput")
+        self.assertEqual(rebuilt.outputPins, ["drive"])
+        self.assertEqual(tuple(rebuilt.position), (10.0, 20.0))
 
     def test_an_unrelated_delete_still_drops_its_node(self):
         """The rename handling must not blunt ordinary reconciliation."""

@@ -156,6 +156,46 @@ def adoptPrimsNewToScope(view, resyncedPaths):
     return added
 
 
+def _movedDestinationForPath(pathStr, movedPaths):
+    """The destination of *pathStr* through USD-classified move pairs.
+
+    USD reports only the prim that actually moved; a displayed descendant
+    resolves by path-component prefix replacement against the most
+    specific source. No stage walk: callers pass displayed ids only, so
+    an undisplayed sibling is never admitted by the move alone.
+    """
+    if not movedPaths:
+        return None
+    try:
+        candidate = Sdf.Path(pathStr)
+    except Exception:
+        return None
+    bestOld = None
+    bestNew = None
+    bestLen = -1
+    for oldPath, newPath in movedPaths.items():
+        try:
+            old = Sdf.Path(oldPath)
+            new = Sdf.Path(newPath)
+        except Exception:
+            continue
+        try:
+            if not candidate.HasPrefix(old):
+                continue
+        except Exception:
+            continue
+        if len(oldPath) > bestLen:
+            bestLen = len(oldPath)
+            bestOld = old
+            bestNew = new
+    if bestOld is None:
+        return None
+    try:
+        return str(candidate.ReplacePrefix(bestOld, bestNew))
+    except Exception:
+        return None
+
+
 def retargetMovedScope(view, movedPaths):
     """Follow the blueprint/container scope across a namespace move.
 
@@ -180,77 +220,135 @@ def retargetMovedScope(view, movedPaths):
     if current is None:
         return None
     currentStr = str(current)
-    for oldPath, newPath in movedPaths.items():
-        if _isPathRelated(currentStr, oldPath) and len(currentStr) >= len(
-            oldPath
-        ):
-            newScope = newPath + currentStr[len(oldPath):]
-            view._currentPrimPath = Sdf.Path(newScope)
-            return (currentStr, newScope)
-    return None
+    newScope = _movedDestinationForPath(currentStr, movedPaths)
+    if newScope is None or newScope == currentStr:
+        return None
+    view._currentPrimPath = Sdf.Path(newScope)
+    return (currentStr, newScope)
 
 
 def rebuiltScopePins(view, oldScope, newScope):
-    """Fresh I/O models for a moved scope, built before invalidation.
+    """Fresh I/O models for a moved scope, generated from the destination.
 
     Blueprint and container I/O nodes are synthesized, not prim-backed:
     their ids borrow the scope path (``/Bp#input:x``) and their pins are
-    the scope prim's attributes. A namespace move carries those
-    attributes to the new scope, so the loader, run against the moved
-    stage, would emit the same pins under the new ids -- and these
-    fresh models are that emission, never a re-keyed object.
+    the scope prim's authored attributes. A namespace move carries those
+    attributes to the new scope, so the fresh models are what the loader
+    run against the moved stage would emit -- never a copy of the cached
+    pin lists, which may hold view-only pins the stage never authored.
 
-    Runs BEFORE the resync-invalidation pass, while the old models
-    still hold their content: invalidating a prim-less node wipes the
-    pin caches it cannot re-read from USD. The fresh models stay out
-    of the graph until ``installScopePins`` drops the stale ids and
-    inserts them after the pass.
-
-    Only the raw pin lists round-trip (the model's captured originals
-    when it has them): the pin setters expand namespaced pins into
-    their display form, so assigning the expanded lists back would
-    expand them a second time.
+    Only display placement carries over, for pins the destination still
+    has under the same suffix: the setters below never author USD.
 
     Returns:
         dict[str, tuple]: ``{oldId: (newId, freshModel)}``.
     """
     from ..models import NodeModel
+    from ..nodeGraphBlueprint import NodeGraphBlueprint
+    from ..nodeGraphBpContainer import NodeGraphBpContainer
+    from ..pinUtils import split_direction_hint
+
+    if isinstance(view.nodeGraph, NodeGraphBpContainer):
+        inputType, outputType = "ContainerInput", "ContainerOutput"
+    elif isinstance(view.nodeGraph, NodeGraphBlueprint):
+        inputType, outputType = "BlueprintInput", "BlueprintOutput"
+    else:
+        return {}
+
+    stage = view.nodeGraph.getStage()
+    if stage is None:
+        return {}
+    try:
+        scopePrim = stage.GetPrimAtPath(newScope)
+    except Exception:
+        return {}
+    if not scopePrim or not scopePrim.IsValid():
+        return {}
+
+    try:
+        attributes = list(scopePrim.GetAttributes())
+    except Exception:
+        attributes = []
+    inputs = []
+    outputs = []
+    for attr in attributes:
+        try:
+            if not attr.IsAuthored():
+                continue
+            attrName = attr.GetName()
+        except Exception:
+            continue
+        side, pinName = split_direction_hint(attrName)
+        if side == "input":
+            inputs.append(pinName)
+        elif side == "output":
+            outputs.append(pinName)
+        elif ":" not in attrName:
+            if attrName not in inputs:
+                inputs.append(attrName)
+            if attrName not in outputs:
+                outputs.append(attrName)
 
     rebuilt = {}
-    for nodeId in [nodeId for nodeId in list(view.nodes) if "#" in nodeId]:
-        primHalf = _nodeIdPrimPath(nodeId)
-        if not (
-            _isPathRelated(primHalf, oldScope) and len(primHalf) >= len(oldScope)
-        ):
-            continue
-        newId = newScope + nodeId[len(oldScope):]
-        old = view.nodes[nodeId]
+    for pinName in inputs:
+        suffix = "#input:" + pinName
+        newId = newScope + suffix
+        oldId = oldScope + suffix
         node = NodeModel()
         node.id = newId
-        for field in ("name", "type", "zOrder", "size"):
-            value = getattr(old, field, None)
-            if value is not None:
-                setattr(node, field, value)
-        for field, original in (
-            ("inputPins", "_original_input_pins"),
-            ("outputPins", "_original_output_pins"),
-        ):
-            value = getattr(old, original, None)
-            if value is None:
-                value = getattr(old, field, None)
-            if value is not None:
-                setattr(node, field, list(value))
-        # Display-only placement, never the authoring setter: the fresh
-        # model is prim-less, and reconciliation authors nothing.
-        position = getattr(old, "position", None)
-        if position is not None:
-            node.setDisplayPosition(position)
-        rebuilt[nodeId] = (newId, node)
+        node.name = pinName
+        node.type = inputType
+        node.outputPins = [pinName]
+        old = view.nodes.get(oldId)
+        if old is not None:
+            position = getattr(old, "position", None)
+            if position is not None:
+                try:
+                    node.setDisplayPosition(position)
+                except Exception:
+                    pass
+            zOrder = getattr(old, "zOrder", None)
+            if zOrder is not None:
+                try:
+                    node.zOrder = zOrder
+                except Exception:
+                    pass
+        rebuilt[oldId] = (newId, node)
+    for pinName in outputs:
+        suffix = "#output:" + pinName
+        newId = newScope + suffix
+        oldId = oldScope + suffix
+        node = NodeModel()
+        node.id = newId
+        node.name = pinName
+        node.type = outputType
+        node.inputPins = [pinName]
+        old = view.nodes.get(oldId)
+        if old is not None:
+            position = getattr(old, "position", None)
+            if position is not None:
+                try:
+                    node.setDisplayPosition(position)
+                except Exception:
+                    pass
+            zOrder = getattr(old, "zOrder", None)
+            if zOrder is not None:
+                try:
+                    node.zOrder = zOrder
+                except Exception:
+                    pass
+        rebuilt[oldId] = (newId, node)
     return rebuilt
 
 
-def installScopePins(view, rebuilt):
+def installScopePins(view, rebuilt, oldScope=None):
     """Drop the stale synthetic ids and insert the prebuilt models.
+
+    Args:
+        rebuilt: ``{oldId: (newId, freshModel)}`` from ``rebuiltScopePins``.
+        oldScope: the scope the view moved away from. Any synthetic id
+            still hanging off it afterwards is a stale view-only pin the
+            destination loader did not emit, and is dropped.
 
     Returns:
         list[str]: the fresh synthetic node ids.
@@ -263,23 +361,44 @@ def installScopePins(view, rebuilt):
             continue
         view.nodes[newId] = node
         fresh.append(newId)
+    if oldScope is not None:
+        try:
+            oldPrefix = Sdf.Path(oldScope)
+        except Exception:
+            oldPrefix = None
+        for nodeId in list(view.nodes):
+            if "#" not in nodeId:
+                continue
+            primHalf = _nodeIdPrimPath(nodeId)
+            stale = False
+            if oldPrefix is not None:
+                try:
+                    stale = Sdf.Path(primHalf).HasPrefix(oldPrefix)
+                except Exception:
+                    stale = False
+            else:
+                stale = _isPathRelated(primHalf, oldScope) and len(
+                    primHalf
+                ) >= len(oldScope)
+            if stale:
+                _dropNodeId(view, nodeId)
     return fresh
 
 
 def capturedDisplayedMoves(view, movedPaths):
     """The displayed nodes a namespace move must rebuild, and their state.
 
-    A node id IS a prim path, so a move source that is on the canvas
-    names a node whose prim now lives at the destination -- inside or
-    outside the loader's scope. The destination model is built from the
-    live prim after validation drops the source id, but the display-only
-    placement has to be read BEFORE that, while the source node is
-    still there.
+    A node id IS a prim path, so a displayed id at or under a classified
+    move source names a node whose prim now lives at the prefix-replaced
+    destination -- inside or outside the loader's scope. The destination
+    model is built from the live prim after validation drops the source
+    id, but the display-only placement has to be read BEFORE that, while
+    the source node is still there.
 
-    Only exact move sources shown on the canvas are captured: a pair
-    whose source was never displayed is an unrelated prim the graph
-    must not admit, and descendants of a moved prim drop like any
-    other stale node, the same as the inline rename.
+    Only displayed ids resolve: a pair whose source was never displayed
+    is an unrelated prim the graph must not admit, and no stage walk
+    enumerates undisplayed siblings. Synthetic ids hang off the scope
+    and are rebuilt by ``rebuiltScopePins`` instead.
 
     Returns:
         dict[str, tuple]: ``{sourceId: (destination, position, zOrder)}``.
@@ -288,11 +407,14 @@ def capturedDisplayedMoves(view, movedPaths):
         return {}
     nodes = view.nodes
     captured = {}
-    for oldPath, newPath in movedPaths.items():
-        if oldPath not in nodes:
+    for nodeId in list(nodes):
+        if "#" in nodeId:
             continue
-        position, zOrder, _ = savedRenamePlacement(nodes, oldPath)
-        captured[oldPath] = (newPath, position, zOrder)
+        destination = _movedDestinationForPath(nodeId, movedPaths)
+        if destination is None or destination == nodeId:
+            continue
+        position, zOrder, _ = savedRenamePlacement(nodes, nodeId)
+        captured[nodeId] = (destination, position, zOrder)
     return captured
 
 
@@ -543,11 +665,11 @@ def applyUsdChanges(view, resyncedPaths, infoChangedPaths, trace=None, movedPath
         view._invalidateBackReferenceLinkDataCache()
 
     moved = movedPaths or {}
-    # A moving scope is retargeted -- and its synthetic pins rebuilt --
-    # BEFORE the invalidation pass below: invalidating a prim-less node
-    # wipes the pin caches it cannot re-read from USD, so the fresh
-    # models have to be built while the old ones still hold them. They
-    # stay out of the graph until the pass is over (see installScopePins).
+    # A moving scope is retargeted -- and its synthetic pins generated
+    # from the destination loader inputs -- BEFORE the invalidation pass
+    # below: invalidating a prim-less node wipes the pin caches it cannot
+    # re-read from USD. The fresh models stay out of the graph until the
+    # pass is over (see installScopePins).
     scopeMove = retargetMovedScope(view, moved if resyncedPaths else {})
     freshPins = rebuiltScopePins(view, *scopeMove) if scopeMove else {}
 
@@ -590,7 +712,7 @@ def applyUsdChanges(view, resyncedPaths, infoChangedPaths, trace=None, movedPath
     # that are already nodes, so neither of them can notice that a prim was
     # deleted, deactivated or renamed out from under one.
     if resyncedPaths:
-        installScopePins(view, freshPins)
+        installScopePins(view, freshPins, scopeMove[0] if scopeMove else None)
         # Capture BEFORE validation drops the source ids: the adoption
         # below rebuilds them from their live destinations.
         displayMoves = capturedDisplayedMoves(view, moved)

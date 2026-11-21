@@ -838,10 +838,11 @@ class ScopeMoveTest(unittest.TestCase):
     The blueprint/container scope is the prim the graph was opened on:
     when it -- or one of its ancestors -- moves, reconciliation follows
     the live scope before adopting children, and the synthetic I/O nodes
-    hanging off the old scope are rebuilt fresh under the new one.
-    Displayed move sources outside the loader's scope are rebuilt from
-    their live destinations; a prim the canvas never showed is never
-    admitted, and a delete plus an unrelated create never retargets.
+    are generated from the destination loader inputs -- stale view-only
+    pins are dropped. Displayed ids at or under a classified source are
+    rebuilt fresh from their live destinations; a prim the canvas never
+    showed is never admitted, and a delete plus an unrelated create
+    never retargets.
     """
 
     def setUp(self) -> None:
@@ -865,6 +866,7 @@ class ScopeMoveTest(unittest.TestCase):
     @unittest.skipUnless(_has_blueprint, "nodeGraphBlueprint not importable")
     def test_a_moved_scope_is_retargeted_before_child_adoption(self) -> None:
         view = self._scopedView(["/World/Bp/A"])
+        oldNode = view.nodes["/World/Bp/A"]
         self._move("/World/Bp", "/World/Bp2")
         before = _layer_text(self.stage)
 
@@ -877,6 +879,8 @@ class ScopeMoveTest(unittest.TestCase):
 
         self.assertEqual(str(view._currentPrimPath), "/World/Bp2")
         self.assertEqual(_layer_text(self.stage), before)
+        self.assertNotIn("/World/Bp/A", view.nodes)
+        self.assertIsNot(view.nodes["/World/Bp2/A"], oldNode)
         # A child created afterwards appears under the new scope.
         UsdGeom.Sphere.Define(self.stage, "/World/Bp2/B")
         stage_adapter.applyUsdChanges(view, {"/World/Bp2/B"}, set())
@@ -884,9 +888,15 @@ class ScopeMoveTest(unittest.TestCase):
 
     @unittest.skipUnless(_has_blueprint, "nodeGraphBlueprint not importable")
     def test_scope_pins_exist_only_at_the_new_path(self) -> None:
+        self.stage.GetPrimAtPath("/World/Bp").CreateAttribute(
+            "input:x", Sdf.ValueTypeNames.Float
+        ).Set(1.0)
         view = self._scopedView([])
         pin = _synthetic_node("/World/Bp#input:x")
         view.nodes[pin.id] = pin
+        view.nodes["/World/Bp#input:stale"] = _synthetic_node(
+            "/World/Bp#input:stale"
+        )
         keep = _synthetic_node("/Other#input:y")
         view.nodes[keep.id] = keep
         self._move("/World/Bp", "/World/Bp2")
@@ -899,14 +909,26 @@ class ScopeMoveTest(unittest.TestCase):
         )
 
         self.assertNotIn("/World/Bp#input:x", view.nodes)
-        self.assertIsNot(view.nodes["/World/Bp2#input:x"], pin)
+        self.assertNotIn("/World/Bp#input:stale", view.nodes)
+        self.assertNotIn("/World/Bp2#input:stale", view.nodes)
+        rebuilt = view.nodes["/World/Bp2#input:x"]
+        self.assertIsNot(rebuilt, pin)
+        self.assertEqual(rebuilt.name, "x")
+        self.assertEqual(rebuilt.outputPins, ["x"])
         self.assertIs(view.nodes["/Other#input:y"], keep)
 
     @unittest.skipUnless(_has_blueprint, "nodeGraphBlueprint not importable")
     def test_an_ancestor_move_retargets_the_scope(self) -> None:
+        self.stage.GetPrimAtPath("/World/Bp").CreateAttribute(
+            "input:x", Sdf.ValueTypeNames.Float
+        ).Set(1.0)
+        UsdGeom.Sphere.Define(self.stage, "/World/Bp/Sibling")
         view = self._scopedView(["/World/Bp/A"])
-        view.nodes["/World/Bp#input:x"] = _synthetic_node(
-            "/World/Bp#input:x"
+        oldNode = view.nodes["/World/Bp/A"]
+        pin = _synthetic_node("/World/Bp#input:x")
+        view.nodes[pin.id] = pin
+        view.nodes["/World/Bp#input:stale"] = _synthetic_node(
+            "/World/Bp#input:stale"
         )
         self._move("/World", "/Elsewhere")
 
@@ -921,11 +943,14 @@ class ScopeMoveTest(unittest.TestCase):
             str(view._currentPrimPath), "/Elsewhere/Bp"
         )
         self.assertNotIn("/World/Bp#input:x", view.nodes)
-        self.assertIn("/Elsewhere/Bp#input:x", view.nodes)
-        # Descendants of a moved prim drop like any other stale node --
-        # the same contract the inline rename keeps.
+        self.assertNotIn("/Elsewhere/Bp#input:stale", view.nodes)
+        rebuilt = view.nodes["/Elsewhere/Bp#input:x"]
+        self.assertIsNot(rebuilt, pin)
+        self.assertEqual(rebuilt.name, "x")
+        self.assertEqual(rebuilt.outputPins, ["x"])
         self.assertNotIn("/World/Bp/A", view.nodes)
-        self.assertNotIn("/Elsewhere/Bp/A", view.nodes)
+        self.assertIsNot(view.nodes["/Elsewhere/Bp/A"], oldNode)
+        self.assertNotIn("/Elsewhere/Bp/Sibling", view.nodes)
 
     @unittest.skipUnless(_has_blueprint, "nodeGraphBlueprint not importable")
     def test_a_delete_plus_create_never_retargets_the_scope(self) -> None:
