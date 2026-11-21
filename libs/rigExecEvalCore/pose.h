@@ -4224,6 +4224,10 @@ ResolveConstraintHead(Host &host, size_t object,
     }
     double weight = 1.0;
     if (facts.hasWeightObject && !facts.pointsTarget) {
+        // Both legacy bodies copied the resolved field into the
+        // constraint's own scratch (baked program record, runtime store
+        // slot) before checking it; the front ends keep that record.
+        host.state().recordConstraintEnvelope(object);
         if (!facts.fieldOk || facts.fieldCount != 1) {
             host.state().diagnose(facts.pathText + ": " + facts.fieldError +
                                   "; constraint passed through");

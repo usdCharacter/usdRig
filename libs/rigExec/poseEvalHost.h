@@ -1476,6 +1476,21 @@ public:
         return _program->windowCaptures[size_t(window)];
     }
 
+    void recordConstraintEnvelope(size_t object)
+    {
+        RigExecBakedProgramImpl::Constraint &c =
+            _program->constraints[size_t(_program->walkSteps[object].index)];
+        c.weightScratch.clear();
+        c.weightError.clear();
+        if (c.weightField >= 0 &&
+            size_t(c.weightField) < _program->weightFields.size()) {
+            const RigExecBakedProgramImpl::WeightField &field =
+                _program->weightFields[size_t(c.weightField)];
+            c.weightScratch = field.values;
+            c.weightError = field.error;
+        }
+    }
+
     void writeCommitFrame(size_t object, size_t pos,
                           const std::array<GfVec3d, 4> &points, unsigned flags)
     {

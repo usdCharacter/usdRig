@@ -1393,6 +1393,24 @@ public:
         return _program->store.windowCaptures[size_t(window)];
     }
 
+    void recordConstraintEnvelope(size_t object)
+    {
+        const size_t ci = size_t(_program->poses->walkSteps[object].index);
+        RrPoseScratch *scratch = runtimePoseDetail::_RrScratch(_program);
+        std::vector<float> &envelope = scratch->weightScratch[ci];
+        std::string &envelopeError = scratch->weightError[ci];
+        envelope.clear();
+        envelopeError.clear();
+        const RigExecWireConstraint &c = _program->poses->constraints[ci];
+        if (c.weightField >= 0 &&
+            size_t(c.weightField) < _program->store.weightFieldResults.size()) {
+            const RrWeightFieldResult &field =
+                _program->store.weightFieldResults[size_t(c.weightField)];
+            envelope = field.values;
+            envelopeError = field.error;
+        }
+    }
+
     void writeCommitFrame(size_t object, size_t pos,
                           const std::array<RrVec3d, 4> &points, unsigned flags)
     {
