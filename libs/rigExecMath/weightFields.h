@@ -14,6 +14,7 @@
 #include "rigExecSchema/schemaNames.h"
 #include "pointFrame.h"
 #include "rangeRunner.h"
+#include "weightFieldKernel.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec3f.h"
@@ -199,98 +200,8 @@ void RigExecCurveWeightField(RigExecWeightPointView points,
 
 // Composition (weight objects compose).
 
-/// How one weight field folds into the accumulated result.
-///
-/// Multiply, Add, Max, Min, and Average are order independent. Subtract
-/// and Overlay are NOT: they consume the authored relationship target
-/// order, which is the one place the volumetric extension departs from
-/// the rule that target-list permutation cannot change a
-/// result. Authors who need a permutation-proof composition use the
-/// commutative modes or nest single-input combines.
-enum class RigExecWeightCombine {
-    Multiply, ///< identity 1
-    Add,      ///< identity 0
-    Subtract, ///< first input minus each subsequent one
-    Max,      ///< identity 0
-    Min,      ///< identity 1
-    Average,  ///< arithmetic mean over the inputs
-    Overlay,  ///< a < 0.5 ? 2ab : 1 - 2(1-a)(1-b), per element
-};
-
-/// The seed value a fold of zero inputs produces under \p mode.
-float RigExecWeightCombineIdentity(RigExecWeightCombine mode);
-
-/// Folds one value into an accumulator. Average is NOT expressible
-/// pairwise and is handled only by the combine-field folds below.
-float RigExecFoldWeight(RigExecWeightCombine mode, float acc, float value);
-
-/// Ordered fold of \p inputs (each the same length) into \p out.
-///
-/// Inputs of differing lengths are a structural error: \p out is cleared
-/// and false is returned rather than folding a truncated field, because a
-/// short input would silently mean "identity" for the missing tail.
-/// Zero inputs fills \p out with the mode's identity at length
-/// \p elementCount.
-/// Streaming fold behind RigExecCombineWeightFields: each input is
-/// published on demand through \p resolve instead of retained, so
-/// temporary storage is O(points) however many inputs a combine
-/// lists. \p resolve(k, data, size) returns false on failure; on
-/// success it sets *data/*size to input k's dense read-only view,
-/// which must stay alive until the next resolve call. A view whose
-/// size differs from \p elementCount is the same structural error as
-/// before: \p out is cleared and false is returned. Seeding
-/// (subtract/overlay from the first input), authored fold order,
-/// and average normalization match RigExecCombineWeightFields
-/// exactly, so the two answer bitwise identically input for input.
-template <typename Resolve>
-bool
-RigExecCombineWeightFieldsStreamed(RigExecWeightCombine mode, size_t inputCount,
-                                   size_t elementCount, Resolve &&resolve,
-                                   std::vector<float> *out)
-{
-    const bool seedFromFirst = mode == RigExecWeightCombine::Subtract ||
-                               mode == RigExecWeightCombine::Overlay;
-    if (inputCount == 0) {
-        out->assign(elementCount, RigExecWeightCombineIdentity(mode));
-        return true;
-    }
-    const float *data = nullptr;
-    size_t size = 0;
-    size_t first = 0;
-    if (seedFromFirst) {
-        if (!resolve(0, &data, &size) || size != elementCount) {
-            out->clear();
-            return false;
-        }
-        // The empty seed clears rather than assigning a possibly
-        // null range: data() on an empty input is not a range.
-        if (elementCount == 0) {
-            out->clear();
-        } else {
-            out->assign(data, data + elementCount);
-        }
-        first = 1;
-    } else {
-        out->assign(elementCount, RigExecWeightCombineIdentity(mode));
-    }
-    for (size_t k = first; k < inputCount; ++k) {
-        if (!resolve(k, &data, &size) || size != elementCount) {
-            out->clear();
-            return false;
-        }
-        for (size_t i = 0; i < elementCount; ++i) {
-            (*out)[i] = RigExecFoldWeight(mode, (*out)[i], data[i]);
-        }
-    }
-    if (mode == RigExecWeightCombine::Average) {
-        const float inv = 1.0f / float(inputCount);
-        for (float &w : *out) {
-            w *= inv;
-        }
-    }
-    return true;
-}
-
+/// Ordered fold of \p inputs (each \p elementCount long) into \p out; see
+/// RigExecCombineWeightFieldsStreamed (weightFieldKernel.h).
 bool RigExecCombineWeightFields(RigExecWeightCombine mode,
                                 const std::vector<std::vector<float>> &inputs,
                                 size_t elementCount, std::vector<float> *out);

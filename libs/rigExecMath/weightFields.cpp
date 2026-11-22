@@ -8,16 +8,6 @@
 
 namespace rigExec {
 
-namespace {
-
-inline float
-_Clamp01(float x)
-{
-    return std::min(1.0f, std::max(0.0f, x));
-}
-
-}  // namespace
-
 std::vector<float>
 RigExecBuildFalloffLut(RigExecFalloffProfile profile, size_t count)
 {
@@ -57,39 +47,30 @@ RigExecSampleFalloffLut(const std::vector<float> &curve, float r)
 float
 RigExecSampleFalloffLut(const float *curve, size_t count, float r)
 {
-    if (count < 2) {
-        return r;  // empty or degenerate table is the identity
-    }
-    const float x = _Clamp01(r) * float(count - 1);
-    // floor, not truncation: x is already non-negative here, but keeping
-    // the two spellings distinct is what stops a later signed input from
-    // silently indexing backwards.
-    const size_t i = std::min(count - 2,
-                              size_t(std::floor(x)));
-    const float t = x - float(i);
-    return curve[i] + (curve[i + 1] - curve[i]) * t;
+    return RigExecSampleFalloffLutKernel(curve, count, r);
 }
+
+namespace {
+
+RigExecFalloffKernelParams
+_KernelParams(const RigExecFalloffParams &p)
+{
+    RigExecFalloffKernelParams k;
+    k.falloffMin = p.falloffMin;
+    k.falloffMax = p.falloffMax;
+    k.invert = p.invert;
+    k.strength = p.strength;
+    k.curve = p.curveData ? p.curveData : p.curve.data();
+    k.curveCount = p.curveData ? p.curveCount : p.curve.size();
+    return k;
+}
+
+} // namespace
 
 float
 RigExecEvaluateFalloff(float distance, const RigExecFalloffParams &p)
 {
-    const float span = p.falloffMax - p.falloffMin;
-    float u;
-    if (std::abs(span) <= std::numeric_limits<float>::min()) {
-        // Degenerate band: a hard step at the shared distance. Anything
-        // strictly inside is fully on, anything at or beyond fully off.
-        u = distance < p.falloffMin ? 0.0f : 1.0f;
-    } else {
-        u = _Clamp01((distance - p.falloffMin) / span);
-    }
-    // invert exchanges the ends continuously rather than by a branch, so
-    // an animated invert sweeps rather than popping.
-    u = u + (1.0f - 2.0f * u) * p.invert;
-    const float w = (p.curveData ? RigExecSampleFalloffLut(p.curveData, p.curveCount, 1.0f - u)
-                                    : RigExecSampleFalloffLut(p.curve, 1.0f - u));
-    // Deliberately unclamped after the strength multiply: rangePolicy is
-    // the authority on out-of-range weights (see the header).
-    return w * p.strength;
+    return RigExecEvaluateFalloffKernel(distance, _KernelParams(p));
 }
 
 float
@@ -108,157 +89,119 @@ RigExecPlaneDistance(const GfVec3f &p, int axis)
 }
 
 bool
-RigExecPlaneWithinBounds(
-    const GfVec3f &p, int axis, const RigExecPlaneBounds &bounds)
+RigExecPlaneWithinBounds(const GfVec3f &p, int axis,
+                         const RigExecPlaneBounds &bounds)
 {
-    if (axis < 0 || axis > 2) {
-        return false;
-    }
-    // The same (axis+1, axis+2) pair the guide draws its rectangle over,
-    // so "inside the field" and "inside the drawn square" are the same
-    // test written twice rather than two conventions that can drift.
-    const float u = p[(axis + 1) % 3];
-    const float v = p[(axis + 2) % 3];
-    return std::abs(u) <= bounds.extentU && std::abs(v) <= bounds.extentV;
+    return RigExecPlaneWithinBoundsKernel(p, axis, bounds.extentU,
+                                          bounds.extentV);
 }
 
 float
 RigExecSegmentDistance(const GfVec3f &p, const GfVec3f &a, const GfVec3f &b)
 {
-    const GfVec3f ab = b - a;
-    const float lengthSq = ab.GetLengthSq();
-    if (lengthSq <= 1e-20f) {
-        return (p - a).GetLength();  // degenerate segment is its endpoint
-    }
-    const float t = _Clamp01(GfDot(p - a, ab) / lengthSq);
-    return (p - (a + ab * t)).GetLength();
+    return RigExecSegmentDistanceKernel(p, a, b);
 }
 
 float
-RigExecCurveDistance(
-    const GfVec3f &p, const GfVec3f *curvePoints, size_t count)
+RigExecCurveDistance(const GfVec3f &p, const GfVec3f *curvePoints, size_t count)
 {
-    if (count == 0 || !curvePoints) {
-        return std::numeric_limits<float>::infinity();
-    }
-    if (count == 1) {
-        return (p - curvePoints[0]).GetLength();
-    }
-    float best = std::numeric_limits<float>::infinity();
-    for (size_t i = 0; i + 1 < count; ++i) {
-        best = std::min(
-            best, RigExecSegmentDistance(p, curvePoints[i], curvePoints[i + 1]));
-    }
-    return best;
+    return RigExecCurveDistanceKernel(p, curvePoints, count);
 }
 
 namespace {
 
-// One transform of a point into the volume's local space. GfMatrix4d is
-// row-vector here (see the ribbon transport kernel), so TransformAffine
-// is the correct spelling rather than a hand-rolled multiply.
 inline GfVec3f
 _ToLocal(const GfMatrix4d &worldToLocal, const GfVec3f &p)
 {
-    return GfVec3f(worldToLocal.TransformAffine(GfVec3d(p)));
+    return RigExecWeightToLocal<GfVec3f, GfVec3d>(worldToLocal, p);
 }
 
 // Points per slice when a host splits a field's point loop.
 constexpr size_t kRigExecFieldGrain = 1024;
 
-}  // namespace
+} // namespace
 
 void
 RigExecSphereWeightField(const std::vector<GfVec3f> &points,
-    const GfMatrix4d &matrix, const RigExecFalloffParams &params,
-    std::vector<float> *weights, const GfVec3f &positive, const GfVec3f &negative)
+                         const GfMatrix4d &matrix,
+                         const RigExecFalloffParams &params,
+                         std::vector<float> *weights, const GfVec3f &positive,
+                         const GfVec3f &negative)
 {
-    RigExecSphereWeightField({points.data(),points.size()},matrix,params,weights,positive,negative);
+    RigExecSphereWeightField({points.data(), points.size()}, matrix, params,
+                             weights, positive, negative);
 }
 void
 RigExecPlaneWeightField(const std::vector<GfVec3f> &points,
-    const GfMatrix4d &matrix, int axis, const RigExecFalloffParams &params,
-    std::vector<float> *weights, const RigExecPlaneBounds *bounds)
+                        const GfMatrix4d &matrix, int axis,
+                        const RigExecFalloffParams &params,
+                        std::vector<float> *weights,
+                        const RigExecPlaneBounds *bounds)
 {
-    RigExecPlaneWeightField({points.data(),points.size()},matrix,axis,params,weights,bounds);
+    RigExecPlaneWeightField({points.data(), points.size()}, matrix, axis,
+                            params, weights, bounds);
 }
 void
 RigExecCurveWeightField(const std::vector<GfVec3f> &points,
-    const std::vector<GfVec3f> &curve, const GfMatrix4d &matrix,
-    const RigExecFalloffParams &params, std::vector<float> *weights)
+                        const std::vector<GfVec3f> &curve,
+                        const GfMatrix4d &matrix,
+                        const RigExecFalloffParams &params,
+                        std::vector<float> *weights)
 {
     std::vector<GfVec3f> localCurve;
-    RigExecCurveWeightField({points.data(),points.size()},{curve.data(),curve.size()},
-        matrix,params,weights,&localCurve);
+    RigExecCurveWeightField({points.data(), points.size()},
+                            {curve.data(), curve.size()}, matrix, params,
+                            weights, &localCurve);
 }
 
 void
-RigExecSphereWeightField(
-    RigExecWeightPointView points,
-    const GfMatrix4d &worldToLocal,
-    const RigExecFalloffParams &params,
-    std::vector<float> *weights,
-    const GfVec3f &positiveScales, const GfVec3f &negativeScales,
-    const RigExecRangeRunner *ranges)
+RigExecSphereWeightField(RigExecWeightPointView points,
+                         const GfMatrix4d &worldToLocal,
+                         const RigExecFalloffParams &params,
+                         std::vector<float> *weights,
+                         const GfVec3f &positiveScales,
+                         const GfVec3f &negativeScales,
+                         const RigExecRangeRunner *ranges)
 {
     weights->resize(points.count);
     float *const out = weights->data();
+    const RigExecFalloffKernelParams k = _KernelParams(params);
     RigExecRunRanges(ranges, points.count, kRigExecFieldGrain,
                      [&](size_t begin, size_t end) {
-        for (size_t i = begin; i < end; ++i) {
-            GfVec3f local = _ToLocal(worldToLocal, points.data[i]);
-            for (int axis = 0; axis < 3; ++axis) {
-                local[axis] /= local[axis] < 0.0f
-                    ? negativeScales[axis] : positiveScales[axis];
-            }
-            const float d = RigExecSphereDistance(local);
-            out[i] = RigExecEvaluateFalloff(d, params);
-        }
-    });
+                         RigExecSphereWeightFieldKernel<GfVec3f, GfVec3d>(
+                             points.data, begin, end, worldToLocal, k,
+                             positiveScales, negativeScales, out);
+                     });
 }
 
 void
-RigExecPlaneWeightField(
-    RigExecWeightPointView points,
-    const GfMatrix4d &worldToLocal,
-    int axis,
-    const RigExecFalloffParams &params,
-    std::vector<float> *weights,
-    const RigExecPlaneBounds *bounds,
-    const RigExecRangeRunner *ranges)
+RigExecPlaneWeightField(RigExecWeightPointView points,
+                        const GfMatrix4d &worldToLocal, int axis,
+                        const RigExecFalloffParams &params,
+                        std::vector<float> *weights,
+                        const RigExecPlaneBounds *bounds,
+                        const RigExecRangeRunner *ranges)
 {
     weights->resize(points.count);
     float *const out = weights->data();
+    const RigExecFalloffKernelParams k = _KernelParams(params);
     RigExecRunRanges(ranges, points.count, kRigExecFieldGrain,
                      [&](size_t begin, size_t end) {
-        for (size_t i = begin; i < end; ++i) {
-            const GfVec3f local = _ToLocal(worldToLocal, points.data[i]);
-            if (bounds && !RigExecPlaneWithinBounds(local, axis, *bounds)) {
-                // Outside the rectangle the field is ZERO, not the ramp's
-                // value at that distance: a bounded plane is a patch, and a
-                // patch grabs nothing beyond its own edge. Hard by design --
-                // see RigExecPlaneWithinBounds for why, and for what to
-                // compose with when a soft border is wanted.
-                out[i] = 0.0f;
-                continue;
-            }
-            // Inside, the signed axis distance is exactly what an unbounded
-            // plane would measure: the bound clips the field, it does not
-            // reshape it, so switching bounds on cannot move an iso-surface.
-            const float d = RigExecPlaneDistance(local, axis);
-            out[i] = RigExecEvaluateFalloff(d, params);
-        }
-    });
+                         RigExecPlaneWeightFieldKernel<GfVec3f, GfVec3d>(
+                             points.data, begin, end, worldToLocal, axis, k,
+                             bounds != nullptr, bounds ? bounds->extentU : 0.0f,
+                             bounds ? bounds->extentV : 0.0f, out);
+                     });
 }
 
 void
-RigExecCurveWeightField(
-    RigExecWeightPointView points,
-    RigExecWeightPointView curvePoints,
-    const GfMatrix4d &worldToLocal,
-    const RigExecFalloffParams &params,
-    std::vector<float> *weights, std::vector<GfVec3f> *curveScratch,
-    const RigExecRangeRunner *ranges)
+RigExecCurveWeightField(RigExecWeightPointView points,
+                        RigExecWeightPointView curvePoints,
+                        const GfMatrix4d &worldToLocal,
+                        const RigExecFalloffParams &params,
+                        std::vector<float> *weights,
+                        std::vector<GfVec3f> *curveScratch,
+                        const RigExecRangeRunner *ranges)
 {
     weights->resize(points.count);
     if (curvePoints.count == 0) {
@@ -281,78 +224,42 @@ RigExecCurveWeightField(
             // QueryNearest is const and keeps its stack local, so the
             // queries may run concurrently.
             float *const out = weights->data();
-            RigExecRunRanges(ranges, points.count, kRigExecFieldGrain,
-                             [&](size_t begin, size_t end) {
-                for (size_t i = begin; i < end; ++i) {
-                    const float d = bvh.QueryNearest(
-                        _ToLocal(worldToLocal, points.data[i]),
-                        localCurve.data(), RigExecSegmentDistance);
-                    out[i] = RigExecEvaluateFalloff(d, params);
-                }
-            });
+            const RigExecFalloffKernelParams k = _KernelParams(params);
+            RigExecRunRanges(
+                ranges, points.count, kRigExecFieldGrain,
+                [&](size_t begin, size_t end) {
+                    RigExecCurveWeightFieldKernel<GfVec3f, GfVec3d>(
+                        points.data, begin, end, worldToLocal, k,
+                        [&](const GfVec3f &local) {
+                            return bvh.QueryNearest(local, localCurve.data(),
+                                                    RigExecSegmentDistance);
+                        },
+                        out);
+                });
             return;
         }
         // Build failed (non-finite curve points): fall through to the
         // verbatim loop below.
     }
     float *const out = weights->data();
+    const RigExecFalloffKernelParams k = _KernelParams(params);
     RigExecRunRanges(ranges, points.count, kRigExecFieldGrain,
                      [&](size_t begin, size_t end) {
-        for (size_t i = begin; i < end; ++i) {
-            const float d = RigExecCurveDistance(
-                _ToLocal(worldToLocal, points.data[i]), localCurve.data(),
-                localCurve.size());
-            out[i] = RigExecEvaluateFalloff(d, params);
-        }
-    });
-}
-
-float
-RigExecWeightCombineIdentity(RigExecWeightCombine mode)
-{
-    switch (mode) {
-    case RigExecWeightCombine::Multiply:
-    case RigExecWeightCombine::Min:
-        return 1.0f;
-    case RigExecWeightCombine::Add:
-    case RigExecWeightCombine::Subtract:
-    case RigExecWeightCombine::Max:
-    case RigExecWeightCombine::Average:
-    case RigExecWeightCombine::Overlay:
-        return 0.0f;
-    }
-    return 0.0f;
-}
-
-float
-RigExecFoldWeight(RigExecWeightCombine mode, float acc, float value)
-{
-    switch (mode) {
-    case RigExecWeightCombine::Multiply:
-        return acc * value;
-    case RigExecWeightCombine::Add:
-        return acc + value;
-    case RigExecWeightCombine::Subtract:
-        return acc - value;
-    case RigExecWeightCombine::Max:
-        return std::max(acc, value);
-    case RigExecWeightCombine::Min:
-        return std::min(acc, value);
-    case RigExecWeightCombine::Average:
-        return acc + value;  // divided by the count by the caller
-    case RigExecWeightCombine::Overlay:
-        return acc < 0.5f ? 2.0f * acc * value
-                          : 1.0f - 2.0f * (1.0f - acc) * (1.0f - value);
-    }
-    return acc;
+                         RigExecCurveWeightFieldKernel<GfVec3f, GfVec3d>(
+                             points.data, begin, end, worldToLocal, k,
+                             [&](const GfVec3f &local) {
+                                 return RigExecCurveDistanceKernel(
+                                     local, localCurve.data(),
+                                     localCurve.size());
+                             },
+                             out);
+                     });
 }
 
 bool
-RigExecCombineWeightFields(
-    RigExecWeightCombine mode,
-    const std::vector<std::vector<float>> &inputs,
-    size_t elementCount,
-    std::vector<float> *out)
+RigExecCombineWeightFields(RigExecWeightCombine mode,
+                           const std::vector<std::vector<float>> &inputs,
+                           size_t elementCount, std::vector<float> *out)
 {
     // Single definition: the streaming core owns the seeding, order, and
     // average rules, so this entry point cannot drift from it. The
@@ -368,4 +275,4 @@ RigExecCombineWeightFields(
         out);
 }
 
-}  // namespace rigExec
+} // namespace rigExec

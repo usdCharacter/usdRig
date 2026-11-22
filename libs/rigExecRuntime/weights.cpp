@@ -32,6 +32,7 @@
 #include "rigExecRuntime/store.h"
 #include "rigExecRuntime/spaces.h"
 #include "rigExecMath/volumeFieldCheck.h"
+#include "rigExecMath/weightFieldKernel.h"
 
 #include <algorithm>
 #include <cmath>
@@ -483,89 +484,20 @@ _RrApplyRangePolicy(bool clamp, float *w)
     return true;
 }
 
-// Volumetric field kernels (rigExecMath/weightFields.cpp).
+// Volumetric field kernels (rigExecMath/weightFieldKernel.h).
 
-float
-_RrClamp01(float x)
+RigExecFalloffKernelParams
+_RrFalloff(float falloffMin, float falloffMax, float invert, float strength,
+           const std::vector<float> &curve)
 {
-    return std::min(1.0f, std::max(0.0f, x));
-}
-
-float
-_RrSampleFalloffLut(const std::vector<float> &curve, float r)
-{
-    if (curve.size() < 2) {
-        return r;
-    }
-    const float x = _RrClamp01(r) * float(curve.size() - 1);
-    const size_t i = std::min(curve.size() - 2, size_t(std::floor(x)));
-    const float t = x - float(i);
-    return curve[i] + (curve[i + 1] - curve[i]) * t;
-}
-
-float
-_RrEvaluateFalloff(float distance, float falloffMin, float falloffMax,
-                   float invert, float strength,
-                   const std::vector<float> &curve)
-{
-    const float span = falloffMax - falloffMin;
-    float u;
-    if (std::abs(span) <= std::numeric_limits<float>::min()) {
-        u = distance < falloffMin ? 0.0f : 1.0f;
-    } else {
-        u = _RrClamp01((distance - falloffMin) / span);
-    }
-    u = u + (1.0f - 2.0f * u) * invert;
-    const float w = _RrSampleFalloffLut(curve, 1.0f - u);
-    return w * strength;
-}
-
-RrVec3f
-_RrToLocal(const RrMat4d &worldToLocal, const RrVec3f &p)
-{
-    const RrVec3d wide{double(p[0]), double(p[1]), double(p[2])};
-    const RrVec3d local = worldToLocal.TransformAffine(wide);
-    return RrVec3f(float(local[0]), float(local[1]), float(local[2]));
-}
-
-float
-_RrSegmentDistance(const RrVec3f &p, const RrVec3f &a, const RrVec3f &b)
-{
-    const RrVec3f ab = b - a;
-    const float lengthSq = ab.GetLengthSq();
-    if (lengthSq <= 1e-20f) {
-        return (p - a).GetLength();
-    }
-    const float t = _RrClamp01(RrDot(p - a, ab) / lengthSq);
-    return (p - (a + ab * t)).GetLength();
-}
-
-float
-_RrCurveDistance(const RrVec3f &p, const RrVec3f *curvePoints, size_t count)
-{
-    if (count == 0 || !curvePoints) {
-        return std::numeric_limits<float>::infinity();
-    }
-    if (count == 1) {
-        return (p - curvePoints[0]).GetLength();
-    }
-    float best = std::numeric_limits<float>::infinity();
-    for (size_t i = 0; i + 1 < count; ++i) {
-        best = std::min(
-            best, _RrSegmentDistance(p, curvePoints[i], curvePoints[i + 1]));
-    }
-    return best;
-}
-
-bool
-_RrPlaneWithinBounds(const RrVec3f &p, int axis, float extentU, float extentV)
-{
-    if (axis < 0 || axis > 2) {
-        return false;
-    }
-    const float u = p[size_t((axis + 1) % 3)];
-    const float v = p[size_t((axis + 2) % 3)];
-    return std::abs(u) <= extentU && std::abs(v) <= extentV;
+    RigExecFalloffKernelParams p;
+    p.falloffMin = falloffMin;
+    p.falloffMax = falloffMax;
+    p.invert = invert;
+    p.strength = strength;
+    p.curve = curve.data();
+    p.curveCount = curve.size();
+    return p;
 }
 
 void
@@ -577,16 +509,10 @@ _RrSphereWeightField(const std::vector<RrVec3f> &points,
                      const RrVec3f &negativeScales)
 {
     weights->resize(points.size());
-    for (size_t i = 0; i < points.size(); ++i) {
-        RrVec3f local = _RrToLocal(worldToLocal, points[i]);
-        for (int axis = 0; axis < 3; ++axis) {
-            local[axis] /= local[axis] < 0.0f ? negativeScales[axis]
-                                              : positiveScales[axis];
-        }
-        const float d = local.GetLength();
-        (*weights)[i] = _RrEvaluateFalloff(d, falloffMin, falloffMax, invert,
-                                           strength, curve);
-    }
+    RigExecSphereWeightFieldKernel<RrVec3f, RrVec3d>(
+        points.data(), 0, points.size(), worldToLocal,
+        _RrFalloff(falloffMin, falloffMax, invert, strength, curve),
+        positiveScales, negativeScales, weights->data());
 }
 
 void
@@ -598,19 +524,10 @@ _RrPlaneWeightField(const std::vector<RrVec3f> &points,
                     float extentV)
 {
     weights->resize(points.size());
-    for (size_t i = 0; i < points.size(); ++i) {
-        const RrVec3f local = _RrToLocal(worldToLocal, points[i]);
-        if (bounded && !_RrPlaneWithinBounds(local, axis, extentU, extentV)) {
-            (*weights)[i] = 0.0f;
-            continue;
-        }
-        float d = 0.0f;
-        if (axis >= 0 && axis <= 2) {
-            d = local[size_t(axis)];
-        }
-        (*weights)[i] = _RrEvaluateFalloff(d, falloffMin, falloffMax, invert,
-                                           strength, curve);
-    }
+    RigExecPlaneWeightFieldKernel<RrVec3f, RrVec3d>(
+        points.data(), 0, points.size(), worldToLocal, axis,
+        _RrFalloff(falloffMin, falloffMax, invert, strength, curve), bounded,
+        extentU, extentV, weights->data());
 }
 
 void
@@ -628,108 +545,28 @@ _RrCurveWeightField(const std::vector<RrVec3f> &points,
     }
     std::vector<RrVec3f> localCurve(curvePoints.size());
     for (size_t k = 0; k < curvePoints.size(); ++k) {
-        localCurve[k] = _RrToLocal(worldToLocal, curvePoints[k]);
+        localCurve[k] = RigExecWeightToLocal<RrVec3f, RrVec3d>(worldToLocal,
+                                                               curvePoints[k]);
     }
-    for (size_t i = 0; i < points.size(); ++i) {
-        const float d = _RrCurveDistance(_RrToLocal(worldToLocal, points[i]),
-                                         localCurve.data(), localCurve.size());
-        (*weights)[i] = _RrEvaluateFalloff(d, falloffMin, falloffMax, invert,
-                                           strength, curve);
-    }
+    RigExecCurveWeightFieldKernel<RrVec3f, RrVec3d>(
+        points.data(), 0, points.size(), worldToLocal,
+        _RrFalloff(falloffMin, falloffMax, invert, strength, curve),
+        [&](const RrVec3f &local) {
+            return RigExecCurveDistanceKernel(local, localCurve.data(),
+                                              localCurve.size());
+        },
+        weights->data());
 }
 
-// How one weight field folds into the accumulated result, in
-// RigExecWeightCombine order.
-enum _RrCombineMode {
-    _RrCombineMultiply,
-    _RrCombineAdd,
-    _RrCombineSubtract,
-    _RrCombineMax,
-    _RrCombineMin,
-    _RrCombineAverage,
-    _RrCombineOverlay,
-};
-
-float
-_RrCombineIdentity(_RrCombineMode mode)
-{
-    switch (mode) {
-    case _RrCombineMultiply:
-    case _RrCombineMin:
-        return 1.0f;
-    case _RrCombineAdd:
-    case _RrCombineSubtract:
-    case _RrCombineMax:
-    case _RrCombineAverage:
-    case _RrCombineOverlay:
-        break;
-    }
-    return 0.0f;
-}
-
-float
-_RrFoldWeight(_RrCombineMode mode, float acc, float value)
-{
-    switch (mode) {
-    case _RrCombineMultiply:
-        return acc * value;
-    case _RrCombineAdd:
-        return acc + value;
-    case _RrCombineSubtract:
-        return acc - value;
-    case _RrCombineMax:
-        return std::max(acc, value);
-    case _RrCombineMin:
-        return std::min(acc, value);
-    case _RrCombineAverage:
-        return acc + value;
-    case _RrCombineOverlay:
-        return acc < 0.5f ? 2.0f * acc * value
-                          : 1.0f - 2.0f * (1.0f - acc) * (1.0f - value);
-    }
-    return acc;
-}
-
-template <class Resolve>
-bool
-_RrCombineWeightFieldsStreamed(_RrCombineMode mode, size_t inputCount,
-                               size_t elementCount, Resolve &&resolve,
-                               std::vector<float> *out)
-{
-    if (!inputCount) {
-        out->assign(elementCount, _RrCombineIdentity(mode));
-        return true;
-    }
-    const bool seed = mode == _RrCombineSubtract || mode == _RrCombineOverlay;
-    size_t first = 0, size = 0;
-    const float *data = nullptr;
-    if (seed) {
-        if (!resolve(0, &data, &size) || size != elementCount) {
-            out->clear();
-            return false;
-        }
-        if (elementCount)
-            out->assign(data, data + elementCount);
-        else
-            out->clear();
-        first = 1;
-    } else
-        out->assign(elementCount, _RrCombineIdentity(mode));
-    for (size_t k = first; k < inputCount; ++k) {
-        if (!resolve(k, &data, &size) || size != elementCount) {
-            out->clear();
-            return false;
-        }
-        for (size_t i = 0; i < elementCount; ++i)
-            (*out)[i] = _RrFoldWeight(mode, (*out)[i], data[i]);
-    }
-    if (mode == _RrCombineAverage) {
-        const float inv = 1.0f / float(inputCount);
-        for (float &w : *out)
-            w *= inv;
-    }
-    return true;
-}
+// RigExecWeightCombine under the names the packet code reads.
+using _RrCombineMode = RigExecWeightCombine;
+constexpr _RrCombineMode _RrCombineMultiply = RigExecWeightCombine::Multiply;
+constexpr _RrCombineMode _RrCombineAdd = RigExecWeightCombine::Add;
+constexpr _RrCombineMode _RrCombineSubtract = RigExecWeightCombine::Subtract;
+constexpr _RrCombineMode _RrCombineMax = RigExecWeightCombine::Max;
+constexpr _RrCombineMode _RrCombineMin = RigExecWeightCombine::Min;
+constexpr _RrCombineMode _RrCombineAverage = RigExecWeightCombine::Average;
+constexpr _RrCombineMode _RrCombineOverlay = RigExecWeightCombine::Overlay;
 
 bool
 _RrResolveCombineInput(_RrRepresentation representation,
@@ -1327,7 +1164,7 @@ _RrBuildCombinePacket(const RrProgram *program,
     }
 
     std::vector<float> folded;
-    if (!_RrCombineWeightFieldsStreamed(
+    if (!RigExecCombineWeightFieldsStreamed(
             mode, wire.inputs.size(), elementCount,
             [&](size_t k, const float **data, size_t *size) {
                 return _RrResolveCombineInput(
@@ -1794,7 +1631,7 @@ _RrOracleVolume(const RrProgram *program, const RrWeightScratch &scratch,
         }
         // Authored order: subtract and overlay depend on it.
         auto &child = work.children[depth];
-        if (!_RrCombineWeightFieldsStreamed(
+        if (!RigExecCombineWeightFieldsStreamed(
                 _RrCombineMode(kind.combineMode), wire.inputs.size(), count,
                 [&](size_t k, const float **data, size_t *size) {
                     if (!_RrOracle(program, scratch, size_t(wire.inputs[k]),
