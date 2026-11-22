@@ -28,7 +28,7 @@ struct ResolvedTap {
 /// Slots for \p taps on \p program; false with \p error if one names a
 /// node or output the program lacks.
 bool
-ResolveTaps(const RigExecProgram &program, const RigExecTapSet &taps,
+ResolveTaps(const RigExecProgram &program, const RigExecTapList &taps,
             std::vector<ResolvedTap> *resolved, std::string *error)
 {
     std::vector<ResolvedTap> out;
@@ -72,7 +72,7 @@ struct RigExecEvaluatorState {
     std::vector<std::string> errors;
     /// Pure batches of the level being run.
     std::vector<uint32_t> parallel;
-    RigExecTapSet tapSet;
+    RigExecTapList tapSet;
     std::vector<ResolvedTap> taps;
     RigExecTapCallback tapCallback = nullptr;
     void *tapContext = nullptr;
@@ -293,7 +293,7 @@ RigExecEvaluator::SwapProgram(std::shared_ptr<const RigExecProgram> program,
 }
 
 bool
-RigExecEvaluator::SetTaps(const RigExecTapSet &taps,
+RigExecEvaluator::SetTaps(const RigExecTapList &taps,
                           RigExecTapCallback callback, void *context,
                           std::string *error)
 {

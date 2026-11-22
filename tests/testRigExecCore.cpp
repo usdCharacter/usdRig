@@ -129,7 +129,7 @@ TestChain()
     CHECK(evaluator);
 
     TapLog log;
-    RigExecTapSet taps;
+    RigExecTapList taps;
     taps.taps.push_back({scale, &fakeOps::ScaleOut()});
     CHECK(evaluator->SetTaps(taps, &RecordTap, &log));
 
@@ -145,7 +145,7 @@ TestChain()
 
     // A tap on an input, or on a node the program lacks, is refused and the
     // previous taps stay.
-    RigExecTapSet bad;
+    RigExecTapList bad;
     bad.taps.push_back({scale, &fakeOps::ScaleIn()});
     CHECK(!evaluator->SetTaps(bad, &RecordTap, &log, &error));
     bad.taps[0] = {7, &fakeOps::ScaleOut()};
@@ -160,7 +160,7 @@ TestChain()
     single.BindInput(lone, fakeOps::OffsetIn());
     auto other = Compile(single);
     CHECK(other);
-    RigExecTapSet loneTaps;
+    RigExecTapList loneTaps;
     loneTaps.taps.push_back({1, &fakeOps::OffsetOut()});
     CHECK(evaluator->SetTaps(loneTaps, &RecordTap, &log));
     CHECK(!evaluator->SwapProgram(other, &error));

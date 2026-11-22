@@ -51,7 +51,7 @@ public:
                      std::string *error = nullptr);
     /// Fails, keeping the previous taps, when a tap names a node or output
     /// the program lacks.
-    bool SetTaps(const RigExecTapSet &taps, RigExecTapCallback callback,
+    bool SetTaps(const RigExecTapList &taps, RigExecTapCallback callback,
                  void *context, std::string *error = nullptr);
 
 private:

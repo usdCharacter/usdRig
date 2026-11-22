@@ -17,7 +17,7 @@ struct RigExecTap {
     const RigExecPortHandle *output = nullptr;
 };
 
-struct RigExecTapSet {
+struct RigExecTapList {
     std::vector<RigExecTap> taps;
 };
 
