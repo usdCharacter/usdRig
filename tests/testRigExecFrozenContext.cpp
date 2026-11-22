@@ -5433,8 +5433,10 @@ TestAHeldFactsViewAndJobSurviveAValueEdit()
     CHECK(revision.op == RigExecRevisionOp::Matrix);
 
     _DetachedFrozenJob preEdit;
-    CHECK(_BindDetachedFrozenJob(evaluator, rig, UsdTimeCode(2.0), preEdit));
-    if (!preEdit.frozen) {
+    const bool preBound =
+        _BindDetachedFrozenJob(evaluator, rig, UsdTimeCode(2.0), preEdit);
+    CHECK(preBound);
+    if (!preBound) {
         return;
     }
     const VtValue *preDriver = preEdit.inputs.Find(driver);
@@ -5476,7 +5478,12 @@ TestAHeldFactsViewAndJobSurviveAValueEdit()
 
     RigExecBackgroundScheduler scheduler;
     _DetachedFrozenJob postEdit;
-    CHECK(_BindDetachedFrozenJob(evaluator, rig, UsdTimeCode(2.0), postEdit));
+    const bool postBound =
+        _BindDetachedFrozenJob(evaluator, rig, UsdTimeCode(2.0), postEdit);
+    CHECK(postBound);
+    if (!postBound) {
+        return;
+    }
     CHECK(postEdit.inputs.values.size() == preEdit.inputs.values.size());
     const VtValue *postDriver = postEdit.inputs.Find(driver);
     CHECK(postDriver != nullptr && postDriver->IsHolding<double>());
@@ -5543,8 +5550,10 @@ TestAHeldFactsViewAndJobSurviveAStructuralRebuild()
           revision.op == RigExecRevisionOp::Matrix);
 
     _DetachedFrozenJob preEdit;
-    CHECK(_BindDetachedFrozenJob(evaluator, rig, UsdTimeCode(2.0), preEdit));
-    if (!preEdit.frozen) {
+    const bool preBound =
+        _BindDetachedFrozenJob(evaluator, rig, UsdTimeCode(2.0), preEdit);
+    CHECK(preBound);
+    if (!preBound) {
         return;
     }
     const RigExecRigPose liveBefore = evaluator.Evaluate(UsdTimeCode(2.0));
@@ -5636,8 +5645,10 @@ TestAHeldFactsViewAndJobSurviveAStructuralRebuild()
 
     RigExecBackgroundScheduler scheduler;
     _DetachedFrozenJob postEdit;
-    CHECK(_BindDetachedFrozenJob(evaluator, rig, UsdTimeCode(2.0), postEdit));
-    if (!postEdit.frozen) {
+    const bool postBound =
+        _BindDetachedFrozenJob(evaluator, rig, UsdTimeCode(2.0), postEdit);
+    CHECK(postBound);
+    if (!postBound) {
         return;
     }
     const RigExecRigPose warmed = _RunDetachedFrozenJob(postEdit, &scheduler);

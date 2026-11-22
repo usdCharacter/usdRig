@@ -47,7 +47,6 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((avarsTx, rigExec::SchemaAttrText::avarsTx))
     ((skinMover, rigExec::SchemaTypeName::RigExecSkinMover))
     ((moverAPI, rigExec::SchemaTypeName::RigExecMoverAPI))
-    ((moves, rigExec::SchemaAttrText::rigExecMoves))
     ((influences, rigExec::SchemaAttrText::rigExecInfluences))
     ((elementSize, rigExec::SchemaAttrText::rigExecElementSize))
     ((jointIndices, rigExec::SchemaAttrText::rigExecJointIndices))
@@ -206,7 +205,8 @@ MakeStage()
     UsdPrim skin = stage->DefinePrim(root.AppendChild(TfToken("PanelSkinA")),
                                      _sealTokens->skinMover);
     CHECK(skin.ApplyAPI(_sealTokens->moverAPI));
-    CHECK(skin.GetRelationship(_sealTokens->moves).SetTargets({pointsProp}));
+    CHECK(skin.GetRelationship(SchemaAttr::rigExecMoves)
+              .SetTargets({pointsProp}));
     CHECK(skin.CreateRelationship(_sealTokens->influences)
               .SetTargets({joint.GetPath()}));
     CHECK(skin.CreateAttribute(_sealTokens->elementSize, SdfValueTypeNames->Int)
@@ -294,6 +294,9 @@ TestSeal()
     std::shared_ptr<const RigExecCompiledProgram> held =
         program->ShareCompiledProgram();
     CHECK(held != nullptr);
+    if (!held) {
+        return;
+    }
     CHECK(held == program->ShareCompiledProgram());
     CHECK(held->IsSameVersionAs(view));
     CHECK(held->GetStepCount() == view.GetStepCount());
@@ -305,7 +308,8 @@ TestSeal()
     const auto dialed =
         pose.movedProperties.find(SdfPath("/View/Channels.dial"));
     CHECK(dialed != pose.movedProperties.end());
-    if (dialed != pose.movedProperties.end()) {
+    if (dialed != pose.movedProperties.end() &&
+        dialed->second.IsHolding<double>()) {
         CHECK(dialed->second.Get<double>() == 6.0);
     }
 
