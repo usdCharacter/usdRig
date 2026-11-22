@@ -78,18 +78,36 @@ struct RrVec2f {
         _data[1] = y;
     }
 
-    const float *data() const { return _data; }
-    float *data() { return _data; }
-    float operator[](size_t i) const { return _data[i]; }
-    float &operator[](size_t i) { return _data[i]; }
+    const float *data() const
+    {
+        return _data;
+    }
+    float *data()
+    {
+        return _data;
+    }
+    float operator[](size_t i) const
+    {
+        return _data[i];
+    }
+    float &operator[](size_t i)
+    {
+        return _data[i];
+    }
 
     bool operator==(const RrVec2f &v) const
     {
         return _data[0] == v._data[0] && _data[1] == v._data[1];
     }
-    bool operator!=(const RrVec2f &v) const { return !(*this == v); }
+    bool operator!=(const RrVec2f &v) const
+    {
+        return !(*this == v);
+    }
 
-    RrVec2f operator-() const { return RrVec2f(-_data[0], -_data[1]); }
+    RrVec2f operator-() const
+    {
+        return RrVec2f(-_data[0], -_data[1]);
+    }
 
     RrVec2f &operator+=(const RrVec2f &v)
     {
@@ -109,7 +127,10 @@ struct RrVec2f {
         _data[1] *= s;
         return *this;
     }
-    RrVec2f &operator/=(double s) { return *this *= (1.0 / s); }
+    RrVec2f &operator/=(double s)
+    {
+        return *this *= (1.0 / s);
+    }
 
     RrVec2f operator+(const RrVec2f &v) const
     {
@@ -119,17 +140,32 @@ struct RrVec2f {
     {
         return RrVec2f(*this) -= v;
     }
-    RrVec2f operator*(double s) const { return RrVec2f(*this) *= s; }
-    RrVec2f operator/(double s) const { return *this * (1.0 / s); }
-    friend RrVec2f operator*(double s, const RrVec2f &v) { return v * s; }
+    RrVec2f operator*(double s) const
+    {
+        return RrVec2f(*this) *= s;
+    }
+    RrVec2f operator/(double s) const
+    {
+        return *this * (1.0 / s);
+    }
+    friend RrVec2f operator*(double s, const RrVec2f &v)
+    {
+        return v * s;
+    }
 
     float operator*(const RrVec2f &v) const
     {
         return _data[0] * v[0] + _data[1] * v[1];
     }
 
-    float GetLengthSq() const { return *this * *this; }
-    float GetLength() const { return RrSqrt(GetLengthSq()); }
+    float GetLengthSq() const
+    {
+        return *this * *this;
+    }
+    float GetLength() const
+    {
+        return RrSqrt(GetLengthSq());
+    }
     float Normalize(float eps = float(kRrMinVectorLength))
     {
         float length = GetLength();
@@ -159,18 +195,36 @@ struct RrVec2d {
         _data[1] = y;
     }
 
-    const double *data() const { return _data; }
-    double *data() { return _data; }
-    double operator[](size_t i) const { return _data[i]; }
-    double &operator[](size_t i) { return _data[i]; }
+    const double *data() const
+    {
+        return _data;
+    }
+    double *data()
+    {
+        return _data;
+    }
+    double operator[](size_t i) const
+    {
+        return _data[i];
+    }
+    double &operator[](size_t i)
+    {
+        return _data[i];
+    }
 
     bool operator==(const RrVec2d &v) const
     {
         return _data[0] == v._data[0] && _data[1] == v._data[1];
     }
-    bool operator!=(const RrVec2d &v) const { return !(*this == v); }
+    bool operator!=(const RrVec2d &v) const
+    {
+        return !(*this == v);
+    }
 
-    RrVec2d operator-() const { return RrVec2d(-_data[0], -_data[1]); }
+    RrVec2d operator-() const
+    {
+        return RrVec2d(-_data[0], -_data[1]);
+    }
 
     RrVec2d &operator+=(const RrVec2d &v)
     {
@@ -190,7 +244,10 @@ struct RrVec2d {
         _data[1] *= s;
         return *this;
     }
-    RrVec2d &operator/=(double s) { return *this *= (1.0 / s); }
+    RrVec2d &operator/=(double s)
+    {
+        return *this *= (1.0 / s);
+    }
 
     RrVec2d operator+(const RrVec2d &v) const
     {
@@ -200,17 +257,32 @@ struct RrVec2d {
     {
         return RrVec2d(*this) -= v;
     }
-    RrVec2d operator*(double s) const { return RrVec2d(*this) *= s; }
-    RrVec2d operator/(double s) const { return *this * (1.0 / s); }
-    friend RrVec2d operator*(double s, const RrVec2d &v) { return v * s; }
+    RrVec2d operator*(double s) const
+    {
+        return RrVec2d(*this) *= s;
+    }
+    RrVec2d operator/(double s) const
+    {
+        return *this * (1.0 / s);
+    }
+    friend RrVec2d operator*(double s, const RrVec2d &v)
+    {
+        return v * s;
+    }
 
     double operator*(const RrVec2d &v) const
     {
         return _data[0] * v[0] + _data[1] * v[1];
     }
 
-    double GetLengthSq() const { return *this * *this; }
-    double GetLength() const { return RrSqrt(GetLengthSq()); }
+    double GetLengthSq() const
+    {
+        return *this * *this;
+    }
+    double GetLength() const
+    {
+        return RrSqrt(GetLengthSq());
+    }
     double Normalize(double eps = kRrMinVectorLength)
     {
         double length = GetLength();
@@ -242,17 +314,32 @@ struct RrVec3f {
         _data[2] = z;
     }
 
-    const float *data() const { return _data; }
-    float *data() { return _data; }
-    float operator[](size_t i) const { return _data[i]; }
-    float &operator[](size_t i) { return _data[i]; }
+    const float *data() const
+    {
+        return _data;
+    }
+    float *data()
+    {
+        return _data;
+    }
+    float operator[](size_t i) const
+    {
+        return _data[i];
+    }
+    float &operator[](size_t i)
+    {
+        return _data[i];
+    }
 
     bool operator==(const RrVec3f &v) const
     {
         return _data[0] == v._data[0] && _data[1] == v._data[1] &&
                _data[2] == v._data[2];
     }
-    bool operator!=(const RrVec3f &v) const { return !(*this == v); }
+    bool operator!=(const RrVec3f &v) const
+    {
+        return !(*this == v);
+    }
 
     RrVec3f operator-() const
     {
@@ -280,7 +367,10 @@ struct RrVec3f {
         _data[2] *= s;
         return *this;
     }
-    RrVec3f &operator/=(double s) { return *this *= (1.0 / s); }
+    RrVec3f &operator/=(double s)
+    {
+        return *this *= (1.0 / s);
+    }
 
     RrVec3f operator+(const RrVec3f &v) const
     {
@@ -290,17 +380,32 @@ struct RrVec3f {
     {
         return RrVec3f(*this) -= v;
     }
-    RrVec3f operator*(double s) const { return RrVec3f(*this) *= s; }
-    RrVec3f operator/(double s) const { return *this * (1.0 / s); }
-    friend RrVec3f operator*(double s, const RrVec3f &v) { return v * s; }
+    RrVec3f operator*(double s) const
+    {
+        return RrVec3f(*this) *= s;
+    }
+    RrVec3f operator/(double s) const
+    {
+        return *this * (1.0 / s);
+    }
+    friend RrVec3f operator*(double s, const RrVec3f &v)
+    {
+        return v * s;
+    }
 
     float operator*(const RrVec3f &v) const
     {
         return _data[0] * v[0] + _data[1] * v[1] + _data[2] * v[2];
     }
 
-    float GetLengthSq() const { return *this * *this; }
-    float GetLength() const { return RrSqrt(GetLengthSq()); }
+    float GetLengthSq() const
+    {
+        return *this * *this;
+    }
+    float GetLength() const
+    {
+        return RrSqrt(GetLengthSq());
+    }
     float Normalize(float eps = float(kRrMinVectorLength))
     {
         float length = GetLength();
@@ -332,9 +437,18 @@ struct RrVec3d {
         _data[2] = z;
     }
 
-    static RrVec3d XAxis() { return RrVec3d(1.0, 0.0, 0.0); }
-    static RrVec3d YAxis() { return RrVec3d(0.0, 1.0, 0.0); }
-    static RrVec3d ZAxis() { return RrVec3d(0.0, 0.0, 1.0); }
+    static RrVec3d XAxis()
+    {
+        return RrVec3d(1.0, 0.0, 0.0);
+    }
+    static RrVec3d YAxis()
+    {
+        return RrVec3d(0.0, 1.0, 0.0);
+    }
+    static RrVec3d ZAxis()
+    {
+        return RrVec3d(0.0, 0.0, 1.0);
+    }
 
     RrVec3d &Set(double x, double y, double z)
     {
@@ -344,17 +458,32 @@ struct RrVec3d {
         return *this;
     }
 
-    const double *data() const { return _data; }
-    double *data() { return _data; }
-    double operator[](size_t i) const { return _data[i]; }
-    double &operator[](size_t i) { return _data[i]; }
+    const double *data() const
+    {
+        return _data;
+    }
+    double *data()
+    {
+        return _data;
+    }
+    double operator[](size_t i) const
+    {
+        return _data[i];
+    }
+    double &operator[](size_t i)
+    {
+        return _data[i];
+    }
 
     bool operator==(const RrVec3d &v) const
     {
         return _data[0] == v._data[0] && _data[1] == v._data[1] &&
                _data[2] == v._data[2];
     }
-    bool operator!=(const RrVec3d &v) const { return !(*this == v); }
+    bool operator!=(const RrVec3d &v) const
+    {
+        return !(*this == v);
+    }
 
     RrVec3d operator-() const
     {
@@ -382,7 +511,10 @@ struct RrVec3d {
         _data[2] *= s;
         return *this;
     }
-    RrVec3d &operator/=(double s) { return *this *= (1.0 / s); }
+    RrVec3d &operator/=(double s)
+    {
+        return *this *= (1.0 / s);
+    }
 
     RrVec3d operator+(const RrVec3d &v) const
     {
@@ -392,17 +524,32 @@ struct RrVec3d {
     {
         return RrVec3d(*this) -= v;
     }
-    RrVec3d operator*(double s) const { return RrVec3d(*this) *= s; }
-    RrVec3d operator/(double s) const { return *this * (1.0 / s); }
-    friend RrVec3d operator*(double s, const RrVec3d &v) { return v * s; }
+    RrVec3d operator*(double s) const
+    {
+        return RrVec3d(*this) *= s;
+    }
+    RrVec3d operator/(double s) const
+    {
+        return *this * (1.0 / s);
+    }
+    friend RrVec3d operator*(double s, const RrVec3d &v)
+    {
+        return v * s;
+    }
 
     double operator*(const RrVec3d &v) const
     {
         return _data[0] * v[0] + _data[1] * v[1] + _data[2] * v[2];
     }
 
-    double GetLengthSq() const { return *this * *this; }
-    double GetLength() const { return RrSqrt(GetLengthSq()); }
+    double GetLengthSq() const
+    {
+        return *this * *this;
+    }
+    double GetLength() const
+    {
+        return RrSqrt(GetLengthSq());
+    }
     double Normalize(double eps = kRrMinVectorLength)
     {
         double length = GetLength();
@@ -436,17 +583,32 @@ struct RrVec4d {
         _data[3] = w;
     }
 
-    const double *data() const { return _data; }
-    double *data() { return _data; }
-    double operator[](size_t i) const { return _data[i]; }
-    double &operator[](size_t i) { return _data[i]; }
+    const double *data() const
+    {
+        return _data;
+    }
+    double *data()
+    {
+        return _data;
+    }
+    double operator[](size_t i) const
+    {
+        return _data[i];
+    }
+    double &operator[](size_t i)
+    {
+        return _data[i];
+    }
 
     bool operator==(const RrVec4d &v) const
     {
         return _data[0] == v._data[0] && _data[1] == v._data[1] &&
                _data[2] == v._data[2] && _data[3] == v._data[3];
     }
-    bool operator!=(const RrVec4d &v) const { return !(*this == v); }
+    bool operator!=(const RrVec4d &v) const
+    {
+        return !(*this == v);
+    }
 
     RrVec4d operator-() const
     {
@@ -477,7 +639,10 @@ struct RrVec4d {
         _data[3] *= s;
         return *this;
     }
-    RrVec4d &operator/=(double s) { return *this *= (1.0 / s); }
+    RrVec4d &operator/=(double s)
+    {
+        return *this *= (1.0 / s);
+    }
 
     RrVec4d operator+(const RrVec4d &v) const
     {
@@ -487,9 +652,18 @@ struct RrVec4d {
     {
         return RrVec4d(*this) -= v;
     }
-    RrVec4d operator*(double s) const { return RrVec4d(*this) *= s; }
-    RrVec4d operator/(double s) const { return *this * (1.0 / s); }
-    friend RrVec4d operator*(double s, const RrVec4d &v) { return v * s; }
+    RrVec4d operator*(double s) const
+    {
+        return RrVec4d(*this) *= s;
+    }
+    RrVec4d operator/(double s) const
+    {
+        return *this * (1.0 / s);
+    }
+    friend RrVec4d operator*(double s, const RrVec4d &v)
+    {
+        return v * s;
+    }
 
     double operator*(const RrVec4d &v) const
     {
@@ -497,8 +671,14 @@ struct RrVec4d {
                _data[3] * v[3];
     }
 
-    double GetLengthSq() const { return *this * *this; }
-    double GetLength() const { return RrSqrt(GetLengthSq()); }
+    double GetLengthSq() const
+    {
+        return *this * *this;
+    }
+    double GetLength() const
+    {
+        return RrSqrt(GetLengthSq());
+    }
     double Normalize(double eps = kRrMinVectorLength)
     {
         double length = GetLength();
@@ -530,15 +710,24 @@ struct RrVec3i {
         _data[2] = z;
     }
 
-    int32_t operator[](size_t i) const { return _data[i]; }
-    int32_t &operator[](size_t i) { return _data[i]; }
+    int32_t operator[](size_t i) const
+    {
+        return _data[i];
+    }
+    int32_t &operator[](size_t i)
+    {
+        return _data[i];
+    }
 
     bool operator==(const RrVec3i &v) const
     {
         return _data[0] == v._data[0] && _data[1] == v._data[1] &&
                _data[2] == v._data[2];
     }
-    bool operator!=(const RrVec3i &v) const { return !(*this == v); }
+    bool operator!=(const RrVec3i &v) const
+    {
+        return !(*this == v);
+    }
 };
 
 inline float
@@ -579,12 +768,14 @@ RrCross(const RrVec3d &a, const RrVec3d &b)
                    a[0] * b[1] - a[1] * b[0]);
 }
 
-inline RrVec3f operator^(const RrVec3f &a, const RrVec3f &b)
+inline RrVec3f
+operator^(const RrVec3f &a, const RrVec3f &b)
 {
     return RrCross(a, b);
 }
 
-inline RrVec3d operator^(const RrVec3d &a, const RrVec3d &b)
+inline RrVec3d
+operator^(const RrVec3d &a, const RrVec3d &b)
 {
     return RrCross(a, b);
 }
@@ -613,11 +804,13 @@ struct RrMat3d {
     {
         Set(m00, m01, m02, m10, m11, m12, m20, m21, m22);
     }
-    explicit RrMat3d(double s) { SetDiagonal(s); }
+    explicit RrMat3d(double s)
+    {
+        SetDiagonal(s);
+    }
 
-    RrMat3d &Set(double m00, double m01, double m02, double m10,
-                 double m11, double m12, double m20, double m21,
-                 double m22)
+    RrMat3d &Set(double m00, double m01, double m02, double m10, double m11,
+                 double m12, double m20, double m21, double m22)
     {
         _mtx[0][0] = m00;
         _mtx[0][1] = m01;
@@ -645,9 +838,15 @@ struct RrMat3d {
         return *this;
     }
 
-    RrMat3d &SetIdentity() { return SetDiagonal(1.0); }
+    RrMat3d &SetIdentity()
+    {
+        return SetDiagonal(1.0);
+    }
 
-    RrMat3d &SetScale(double s) { return SetDiagonal(s); }
+    RrMat3d &SetScale(double s)
+    {
+        return SetDiagonal(s);
+    }
 
     void SetRow(int i, const RrVec3d &v)
     {
@@ -670,22 +869,27 @@ struct RrMat3d {
         return RrVec3d(_mtx[0][i], _mtx[1][i], _mtx[2][i]);
     }
 
-    double *operator[](size_t i) { return _mtx[i]; }
-    const double *operator[](size_t i) const { return _mtx[i]; }
+    double *operator[](size_t i)
+    {
+        return _mtx[i];
+    }
+    const double *operator[](size_t i) const
+    {
+        return _mtx[i];
+    }
 
     bool operator==(const RrMat3d &m) const
     {
-        return (_mtx[0][0] == m._mtx[0][0] &&
-                _mtx[0][1] == m._mtx[0][1] &&
-                _mtx[0][2] == m._mtx[0][2] &&
-                _mtx[1][0] == m._mtx[1][0] &&
-                _mtx[1][1] == m._mtx[1][1] &&
-                _mtx[1][2] == m._mtx[1][2] &&
-                _mtx[2][0] == m._mtx[2][0] &&
-                _mtx[2][1] == m._mtx[2][1] &&
+        return (_mtx[0][0] == m._mtx[0][0] && _mtx[0][1] == m._mtx[0][1] &&
+                _mtx[0][2] == m._mtx[0][2] && _mtx[1][0] == m._mtx[1][0] &&
+                _mtx[1][1] == m._mtx[1][1] && _mtx[1][2] == m._mtx[1][2] &&
+                _mtx[2][0] == m._mtx[2][0] && _mtx[2][1] == m._mtx[2][1] &&
                 _mtx[2][2] == m._mtx[2][2]);
     }
-    bool operator!=(const RrMat3d &m) const { return !(*this == m); }
+    bool operator!=(const RrMat3d &m) const
+    {
+        return !(*this == m);
+    }
 
     RrMat3d &operator*=(const RrMat3d &m)
     {
@@ -783,7 +987,10 @@ struct RrMat3d {
         RrMat3d m = m1;
         return m *= d;
     }
-    friend RrMat3d operator*(double d, const RrMat3d &m) { return m * d; }
+    friend RrMat3d operator*(double d, const RrMat3d &m)
+    {
+        return m * d;
+    }
     friend RrMat3d operator+(const RrMat3d &m1, const RrMat3d &m2)
     {
         RrMat3d tmp(m1);
@@ -805,24 +1012,22 @@ struct RrMat3d {
 
     friend RrVec3d operator*(const RrVec3d &vec, const RrMat3d &m)
     {
-        return RrVec3d(
-            vec[0] * m._mtx[0][0] + vec[1] * m._mtx[1][0] +
-                vec[2] * m._mtx[2][0],
-            vec[0] * m._mtx[0][1] + vec[1] * m._mtx[1][1] +
-                vec[2] * m._mtx[2][1],
-            vec[0] * m._mtx[0][2] + vec[1] * m._mtx[1][2] +
-                vec[2] * m._mtx[2][2]);
+        return RrVec3d(vec[0] * m._mtx[0][0] + vec[1] * m._mtx[1][0] +
+                           vec[2] * m._mtx[2][0],
+                       vec[0] * m._mtx[0][1] + vec[1] * m._mtx[1][1] +
+                           vec[2] * m._mtx[2][1],
+                       vec[0] * m._mtx[0][2] + vec[1] * m._mtx[1][2] +
+                           vec[2] * m._mtx[2][2]);
     }
 
     friend RrVec3d operator*(const RrMat3d &m, const RrVec3d &vec)
     {
-        return RrVec3d(
-            vec[0] * m._mtx[0][0] + vec[1] * m._mtx[0][1] +
-                vec[2] * m._mtx[0][2],
-            vec[0] * m._mtx[1][0] + vec[1] * m._mtx[1][1] +
-                vec[2] * m._mtx[1][2],
-            vec[0] * m._mtx[2][0] + vec[1] * m._mtx[2][1] +
-                vec[2] * m._mtx[2][2]);
+        return RrVec3d(vec[0] * m._mtx[0][0] + vec[1] * m._mtx[0][1] +
+                           vec[2] * m._mtx[0][2],
+                       vec[0] * m._mtx[1][0] + vec[1] * m._mtx[1][1] +
+                           vec[2] * m._mtx[1][2],
+                       vec[0] * m._mtx[2][0] + vec[1] * m._mtx[2][1] +
+                           vec[2] * m._mtx[2][2]);
     }
 
     RrMat3d GetTranspose() const
@@ -901,20 +1106,23 @@ struct RrMat4d {
             double m22, double m23, double m30, double m31, double m32,
             double m33)
     {
-        Set(m00, m01, m02, m03, m10, m11, m12, m13, m20, m21, m22, m23,
-            m30, m31, m32, m33);
+        Set(m00, m01, m02, m03, m10, m11, m12, m13, m20, m21, m22, m23, m30,
+            m31, m32, m33);
     }
-    explicit RrMat4d(double s) { SetDiagonal(s); }
+    explicit RrMat4d(double s)
+    {
+        SetDiagonal(s);
+    }
     RrMat4d(const RrRotation &rotate, const RrVec3d &translate);
     RrMat4d(const RrMat3d &rotmx, const RrVec3d &translate)
     {
         SetTransform(rotmx, translate);
     }
 
-    RrMat4d &Set(double m00, double m01, double m02, double m03,
-                 double m10, double m11, double m12, double m13,
-                 double m20, double m21, double m22, double m23,
-                 double m30, double m31, double m32, double m33)
+    RrMat4d &Set(double m00, double m01, double m02, double m03, double m10,
+                 double m11, double m12, double m13, double m20, double m21,
+                 double m22, double m23, double m30, double m31, double m32,
+                 double m33)
     {
         _mtx[0][0] = m00;
         _mtx[0][1] = m01;
@@ -956,14 +1164,29 @@ struct RrMat4d {
         return *this;
     }
 
-    RrMat4d &SetIdentity() { return SetDiagonal(1.0); }
+    RrMat4d &SetIdentity()
+    {
+        return SetDiagonal(1.0);
+    }
 
     RrMat4d &SetScale(double s)
     {
-        _mtx[0][0] = s;   _mtx[0][1] = 0.0; _mtx[0][2] = 0.0; _mtx[0][3] = 0.0;
-        _mtx[1][0] = 0.0; _mtx[1][1] = s;   _mtx[1][2] = 0.0; _mtx[1][3] = 0.0;
-        _mtx[2][0] = 0.0; _mtx[2][1] = 0.0; _mtx[2][2] = s;   _mtx[2][3] = 0.0;
-        _mtx[3][0] = 0.0; _mtx[3][1] = 0.0; _mtx[3][2] = 0.0; _mtx[3][3] = 1.0;
+        _mtx[0][0] = s;
+        _mtx[0][1] = 0.0;
+        _mtx[0][2] = 0.0;
+        _mtx[0][3] = 0.0;
+        _mtx[1][0] = 0.0;
+        _mtx[1][1] = s;
+        _mtx[1][2] = 0.0;
+        _mtx[1][3] = 0.0;
+        _mtx[2][0] = 0.0;
+        _mtx[2][1] = 0.0;
+        _mtx[2][2] = s;
+        _mtx[2][3] = 0.0;
+        _mtx[3][0] = 0.0;
+        _mtx[3][1] = 0.0;
+        _mtx[3][2] = 0.0;
+        _mtx[3][3] = 1.0;
 
         return *this;
     }
@@ -991,113 +1214,98 @@ struct RrMat4d {
         return RrVec4d(_mtx[0][i], _mtx[1][i], _mtx[2][i], _mtx[3][i]);
     }
 
-    double *operator[](size_t i) { return _mtx[i]; }
-    const double *operator[](size_t i) const { return _mtx[i]; }
+    double *operator[](size_t i)
+    {
+        return _mtx[i];
+    }
+    const double *operator[](size_t i) const
+    {
+        return _mtx[i];
+    }
 
     bool operator==(const RrMat4d &m) const
     {
-        return (_mtx[0][0] == m._mtx[0][0] &&
-                _mtx[0][1] == m._mtx[0][1] &&
-                _mtx[0][2] == m._mtx[0][2] &&
-                _mtx[0][3] == m._mtx[0][3] &&
-                _mtx[1][0] == m._mtx[1][0] &&
-                _mtx[1][1] == m._mtx[1][1] &&
-                _mtx[1][2] == m._mtx[1][2] &&
-                _mtx[1][3] == m._mtx[1][3] &&
-                _mtx[2][0] == m._mtx[2][0] &&
-                _mtx[2][1] == m._mtx[2][1] &&
-                _mtx[2][2] == m._mtx[2][2] &&
-                _mtx[2][3] == m._mtx[2][3] &&
-                _mtx[3][0] == m._mtx[3][0] &&
-                _mtx[3][1] == m._mtx[3][1] &&
-                _mtx[3][2] == m._mtx[3][2] &&
-                _mtx[3][3] == m._mtx[3][3]);
+        return (_mtx[0][0] == m._mtx[0][0] && _mtx[0][1] == m._mtx[0][1] &&
+                _mtx[0][2] == m._mtx[0][2] && _mtx[0][3] == m._mtx[0][3] &&
+                _mtx[1][0] == m._mtx[1][0] && _mtx[1][1] == m._mtx[1][1] &&
+                _mtx[1][2] == m._mtx[1][2] && _mtx[1][3] == m._mtx[1][3] &&
+                _mtx[2][0] == m._mtx[2][0] && _mtx[2][1] == m._mtx[2][1] &&
+                _mtx[2][2] == m._mtx[2][2] && _mtx[2][3] == m._mtx[2][3] &&
+                _mtx[3][0] == m._mtx[3][0] && _mtx[3][1] == m._mtx[3][1] &&
+                _mtx[3][2] == m._mtx[3][2] && _mtx[3][3] == m._mtx[3][3]);
     }
-    bool operator!=(const RrMat4d &m) const { return !(*this == m); }
+    bool operator!=(const RrMat4d &m) const
+    {
+        return !(*this == m);
+    }
 
     RrMat4d &operator*=(const RrMat4d &m)
     {
         RrMat4d tmp = *this;
 
-        _mtx[0][0] = tmp._mtx[0][0] * m._mtx[0][0] +
-                     tmp._mtx[0][1] * m._mtx[1][0] +
-                     tmp._mtx[0][2] * m._mtx[2][0] +
-                     tmp._mtx[0][3] * m._mtx[3][0];
+        _mtx[0][0] =
+            tmp._mtx[0][0] * m._mtx[0][0] + tmp._mtx[0][1] * m._mtx[1][0] +
+            tmp._mtx[0][2] * m._mtx[2][0] + tmp._mtx[0][3] * m._mtx[3][0];
 
-        _mtx[0][1] = tmp._mtx[0][0] * m._mtx[0][1] +
-                     tmp._mtx[0][1] * m._mtx[1][1] +
-                     tmp._mtx[0][2] * m._mtx[2][1] +
-                     tmp._mtx[0][3] * m._mtx[3][1];
+        _mtx[0][1] =
+            tmp._mtx[0][0] * m._mtx[0][1] + tmp._mtx[0][1] * m._mtx[1][1] +
+            tmp._mtx[0][2] * m._mtx[2][1] + tmp._mtx[0][3] * m._mtx[3][1];
 
-        _mtx[0][2] = tmp._mtx[0][0] * m._mtx[0][2] +
-                     tmp._mtx[0][1] * m._mtx[1][2] +
-                     tmp._mtx[0][2] * m._mtx[2][2] +
-                     tmp._mtx[0][3] * m._mtx[3][2];
+        _mtx[0][2] =
+            tmp._mtx[0][0] * m._mtx[0][2] + tmp._mtx[0][1] * m._mtx[1][2] +
+            tmp._mtx[0][2] * m._mtx[2][2] + tmp._mtx[0][3] * m._mtx[3][2];
 
-        _mtx[0][3] = tmp._mtx[0][0] * m._mtx[0][3] +
-                     tmp._mtx[0][1] * m._mtx[1][3] +
-                     tmp._mtx[0][2] * m._mtx[2][3] +
-                     tmp._mtx[0][3] * m._mtx[3][3];
+        _mtx[0][3] =
+            tmp._mtx[0][0] * m._mtx[0][3] + tmp._mtx[0][1] * m._mtx[1][3] +
+            tmp._mtx[0][2] * m._mtx[2][3] + tmp._mtx[0][3] * m._mtx[3][3];
 
-        _mtx[1][0] = tmp._mtx[1][0] * m._mtx[0][0] +
-                     tmp._mtx[1][1] * m._mtx[1][0] +
-                     tmp._mtx[1][2] * m._mtx[2][0] +
-                     tmp._mtx[1][3] * m._mtx[3][0];
+        _mtx[1][0] =
+            tmp._mtx[1][0] * m._mtx[0][0] + tmp._mtx[1][1] * m._mtx[1][0] +
+            tmp._mtx[1][2] * m._mtx[2][0] + tmp._mtx[1][3] * m._mtx[3][0];
 
-        _mtx[1][1] = tmp._mtx[1][0] * m._mtx[0][1] +
-                     tmp._mtx[1][1] * m._mtx[1][1] +
-                     tmp._mtx[1][2] * m._mtx[2][1] +
-                     tmp._mtx[1][3] * m._mtx[3][1];
+        _mtx[1][1] =
+            tmp._mtx[1][0] * m._mtx[0][1] + tmp._mtx[1][1] * m._mtx[1][1] +
+            tmp._mtx[1][2] * m._mtx[2][1] + tmp._mtx[1][3] * m._mtx[3][1];
 
-        _mtx[1][2] = tmp._mtx[1][0] * m._mtx[0][2] +
-                     tmp._mtx[1][1] * m._mtx[1][2] +
-                     tmp._mtx[1][2] * m._mtx[2][2] +
-                     tmp._mtx[1][3] * m._mtx[3][2];
+        _mtx[1][2] =
+            tmp._mtx[1][0] * m._mtx[0][2] + tmp._mtx[1][1] * m._mtx[1][2] +
+            tmp._mtx[1][2] * m._mtx[2][2] + tmp._mtx[1][3] * m._mtx[3][2];
 
-        _mtx[1][3] = tmp._mtx[1][0] * m._mtx[0][3] +
-                     tmp._mtx[1][1] * m._mtx[1][3] +
-                     tmp._mtx[1][2] * m._mtx[2][3] +
-                     tmp._mtx[1][3] * m._mtx[3][3];
+        _mtx[1][3] =
+            tmp._mtx[1][0] * m._mtx[0][3] + tmp._mtx[1][1] * m._mtx[1][3] +
+            tmp._mtx[1][2] * m._mtx[2][3] + tmp._mtx[1][3] * m._mtx[3][3];
 
-        _mtx[2][0] = tmp._mtx[2][0] * m._mtx[0][0] +
-                     tmp._mtx[2][1] * m._mtx[1][0] +
-                     tmp._mtx[2][2] * m._mtx[2][0] +
-                     tmp._mtx[2][3] * m._mtx[3][0];
+        _mtx[2][0] =
+            tmp._mtx[2][0] * m._mtx[0][0] + tmp._mtx[2][1] * m._mtx[1][0] +
+            tmp._mtx[2][2] * m._mtx[2][0] + tmp._mtx[2][3] * m._mtx[3][0];
 
-        _mtx[2][1] = tmp._mtx[2][0] * m._mtx[0][1] +
-                     tmp._mtx[2][1] * m._mtx[1][1] +
-                     tmp._mtx[2][2] * m._mtx[2][1] +
-                     tmp._mtx[2][3] * m._mtx[3][1];
+        _mtx[2][1] =
+            tmp._mtx[2][0] * m._mtx[0][1] + tmp._mtx[2][1] * m._mtx[1][1] +
+            tmp._mtx[2][2] * m._mtx[2][1] + tmp._mtx[2][3] * m._mtx[3][1];
 
-        _mtx[2][2] = tmp._mtx[2][0] * m._mtx[0][2] +
-                     tmp._mtx[2][1] * m._mtx[1][2] +
-                     tmp._mtx[2][2] * m._mtx[2][2] +
-                     tmp._mtx[2][3] * m._mtx[3][2];
+        _mtx[2][2] =
+            tmp._mtx[2][0] * m._mtx[0][2] + tmp._mtx[2][1] * m._mtx[1][2] +
+            tmp._mtx[2][2] * m._mtx[2][2] + tmp._mtx[2][3] * m._mtx[3][2];
 
-        _mtx[2][3] = tmp._mtx[2][0] * m._mtx[0][3] +
-                     tmp._mtx[2][1] * m._mtx[1][3] +
-                     tmp._mtx[2][2] * m._mtx[2][3] +
-                     tmp._mtx[2][3] * m._mtx[3][3];
+        _mtx[2][3] =
+            tmp._mtx[2][0] * m._mtx[0][3] + tmp._mtx[2][1] * m._mtx[1][3] +
+            tmp._mtx[2][2] * m._mtx[2][3] + tmp._mtx[2][3] * m._mtx[3][3];
 
-        _mtx[3][0] = tmp._mtx[3][0] * m._mtx[0][0] +
-                     tmp._mtx[3][1] * m._mtx[1][0] +
-                     tmp._mtx[3][2] * m._mtx[2][0] +
-                     tmp._mtx[3][3] * m._mtx[3][0];
+        _mtx[3][0] =
+            tmp._mtx[3][0] * m._mtx[0][0] + tmp._mtx[3][1] * m._mtx[1][0] +
+            tmp._mtx[3][2] * m._mtx[2][0] + tmp._mtx[3][3] * m._mtx[3][0];
 
-        _mtx[3][1] = tmp._mtx[3][0] * m._mtx[0][1] +
-                     tmp._mtx[3][1] * m._mtx[1][1] +
-                     tmp._mtx[3][2] * m._mtx[2][1] +
-                     tmp._mtx[3][3] * m._mtx[3][1];
+        _mtx[3][1] =
+            tmp._mtx[3][0] * m._mtx[0][1] + tmp._mtx[3][1] * m._mtx[1][1] +
+            tmp._mtx[3][2] * m._mtx[2][1] + tmp._mtx[3][3] * m._mtx[3][1];
 
-        _mtx[3][2] = tmp._mtx[3][0] * m._mtx[0][2] +
-                     tmp._mtx[3][1] * m._mtx[1][2] +
-                     tmp._mtx[3][2] * m._mtx[2][2] +
-                     tmp._mtx[3][3] * m._mtx[3][2];
+        _mtx[3][2] =
+            tmp._mtx[3][0] * m._mtx[0][2] + tmp._mtx[3][1] * m._mtx[1][2] +
+            tmp._mtx[3][2] * m._mtx[2][2] + tmp._mtx[3][3] * m._mtx[3][2];
 
-        _mtx[3][3] = tmp._mtx[3][0] * m._mtx[0][3] +
-                     tmp._mtx[3][1] * m._mtx[1][3] +
-                     tmp._mtx[3][2] * m._mtx[2][3] +
-                     tmp._mtx[3][3] * m._mtx[3][3];
+        _mtx[3][3] =
+            tmp._mtx[3][0] * m._mtx[0][3] + tmp._mtx[3][1] * m._mtx[1][3] +
+            tmp._mtx[3][2] * m._mtx[2][3] + tmp._mtx[3][3] * m._mtx[3][3];
 
         return *this;
     }
@@ -1176,7 +1384,10 @@ struct RrMat4d {
         RrMat4d m = m1;
         return m *= d;
     }
-    friend RrMat4d operator*(double d, const RrMat4d &m) { return m * d; }
+    friend RrMat4d operator*(double d, const RrMat4d &m)
+    {
+        return m * d;
+    }
     friend RrMat4d operator+(const RrMat4d &m1, const RrMat4d &m2)
     {
         RrMat4d tmp(m1);
@@ -1200,28 +1411,26 @@ struct RrMat4d {
 
     friend RrVec4d operator*(const RrMat4d &m, const RrVec4d &vec)
     {
-        return RrVec4d(
-            vec[0] * m._mtx[0][0] + vec[1] * m._mtx[0][1] +
-                vec[2] * m._mtx[0][2] + vec[3] * m._mtx[0][3],
-            vec[0] * m._mtx[1][0] + vec[1] * m._mtx[1][1] +
-                vec[2] * m._mtx[1][2] + vec[3] * m._mtx[1][3],
-            vec[0] * m._mtx[2][0] + vec[1] * m._mtx[2][1] +
-                vec[2] * m._mtx[2][2] + vec[3] * m._mtx[2][3],
-            vec[0] * m._mtx[3][0] + vec[1] * m._mtx[3][1] +
-                vec[2] * m._mtx[3][2] + vec[3] * m._mtx[3][3]);
+        return RrVec4d(vec[0] * m._mtx[0][0] + vec[1] * m._mtx[0][1] +
+                           vec[2] * m._mtx[0][2] + vec[3] * m._mtx[0][3],
+                       vec[0] * m._mtx[1][0] + vec[1] * m._mtx[1][1] +
+                           vec[2] * m._mtx[1][2] + vec[3] * m._mtx[1][3],
+                       vec[0] * m._mtx[2][0] + vec[1] * m._mtx[2][1] +
+                           vec[2] * m._mtx[2][2] + vec[3] * m._mtx[2][3],
+                       vec[0] * m._mtx[3][0] + vec[1] * m._mtx[3][1] +
+                           vec[2] * m._mtx[3][2] + vec[3] * m._mtx[3][3]);
     }
 
     friend RrVec4d operator*(const RrVec4d &vec, const RrMat4d &m)
     {
-        return RrVec4d(
-            vec[0] * m._mtx[0][0] + vec[1] * m._mtx[1][0] +
-                vec[2] * m._mtx[2][0] + vec[3] * m._mtx[3][0],
-            vec[0] * m._mtx[0][1] + vec[1] * m._mtx[1][1] +
-                vec[2] * m._mtx[2][1] + vec[3] * m._mtx[3][1],
-            vec[0] * m._mtx[0][2] + vec[1] * m._mtx[1][2] +
-                vec[2] * m._mtx[2][2] + vec[3] * m._mtx[3][2],
-            vec[0] * m._mtx[0][3] + vec[1] * m._mtx[1][3] +
-                vec[2] * m._mtx[2][3] + vec[3] * m._mtx[3][3]);
+        return RrVec4d(vec[0] * m._mtx[0][0] + vec[1] * m._mtx[1][0] +
+                           vec[2] * m._mtx[2][0] + vec[3] * m._mtx[3][0],
+                       vec[0] * m._mtx[0][1] + vec[1] * m._mtx[1][1] +
+                           vec[2] * m._mtx[2][1] + vec[3] * m._mtx[3][1],
+                       vec[0] * m._mtx[0][2] + vec[1] * m._mtx[1][2] +
+                           vec[2] * m._mtx[2][2] + vec[3] * m._mtx[3][2],
+                       vec[0] * m._mtx[0][3] + vec[1] * m._mtx[1][3] +
+                           vec[2] * m._mtx[2][3] + vec[3] * m._mtx[3][3]);
     }
 
     RrMat4d GetTranspose() const
@@ -1259,8 +1468,8 @@ struct RrMat4d {
         return _GetDeterminant3(0, 1, 2, 0, 1, 2);
     }
 
-    double _GetDeterminant3(size_t row1, size_t row2, size_t row3,
-                            size_t col1, size_t col2, size_t col3) const
+    double _GetDeterminant3(size_t row1, size_t row2, size_t row3, size_t col1,
+                            size_t col2, size_t col3) const
     {
         return (_mtx[row1][col1] * _mtx[row2][col2] * _mtx[row3][col3] +
                 _mtx[row1][col2] * _mtx[row2][col3] * _mtx[row3][col1] +
@@ -1289,7 +1498,8 @@ struct RrMat4d {
                 for (int q = p + 1; q < 3; q++)
                     sm += std::abs(a._mtx[p][q]);
 
-            if (sm == 0.0) return;
+            if (sm == 0.0)
+                return;
 
             const double thresh = (i < 3 ? (.2 * sm / (3 * 3)) : 0.0);
 
@@ -1313,7 +1523,8 @@ struct RrMat4d {
                             const double theta = 0.5 * h / a._mtx[p][q];
                             t = 1.0 / (std::abs(theta) +
                                        std::sqrt(1.0 + theta * theta));
-                            if (theta < 0.0) t = -t;
+                            if (theta < 0.0)
+                                t = -t;
                         }
 
                         const double c = 1.0 / std::sqrt(1.0 + t * t);
@@ -1370,7 +1581,8 @@ struct RrMat4d {
 
         RrMat4d a;
         for (int i = 0; i < 3; i++) {
-            for (int j = 0; j < 3; j++) a._mtx[i][j] = _mtx[i][j];
+            for (int j = 0; j < 3; j++)
+                a._mtx[i][j] = _mtx[i][j];
             a._mtx[3][i] = a._mtx[i][3] = 0.0;
             (*t)[i] = _mtx[3][i];
         }
@@ -1384,11 +1596,10 @@ struct RrMat4d {
         RrVec3d eigenvalues;
         RrVec3d eigenvectors[3];
         b._Jacobi3(&eigenvalues, eigenvectors);
-        r->Set(eigenvectors[0][0], eigenvectors[0][1], eigenvectors[0][2],
-               0.0, eigenvectors[1][0], eigenvectors[1][1],
-               eigenvectors[1][2], 0.0, eigenvectors[2][0],
-               eigenvectors[2][1], eigenvectors[2][2], 0.0, 0.0, 0.0, 0.0,
-               1.0);
+        r->Set(eigenvectors[0][0], eigenvectors[0][1], eigenvectors[0][2], 0.0,
+               eigenvectors[1][0], eigenvectors[1][1], eigenvectors[1][2], 0.0,
+               eigenvectors[2][0], eigenvectors[2][1], eigenvectors[2][2], 0.0,
+               0.0, 0.0, 0.0, 1.0);
 
         RrMat4d sInv;
         sInv.SetIdentity();
@@ -1525,12 +1736,10 @@ struct RrMat4d {
 
     RrVec3d TransformDir(const RrVec3d &vec) const
     {
-        return RrVec3d(vec[0] * _mtx[0][0] + vec[1] * _mtx[1][0] +
-                           vec[2] * _mtx[2][0],
-                       vec[0] * _mtx[0][1] + vec[1] * _mtx[1][1] +
-                           vec[2] * _mtx[2][1],
-                       vec[0] * _mtx[0][2] + vec[1] * _mtx[1][2] +
-                           vec[2] * _mtx[2][2]);
+        return RrVec3d(
+            vec[0] * _mtx[0][0] + vec[1] * _mtx[1][0] + vec[2] * _mtx[2][0],
+            vec[0] * _mtx[0][1] + vec[1] * _mtx[1][1] + vec[2] * _mtx[2][1],
+            vec[0] * _mtx[0][2] + vec[1] * _mtx[1][2] + vec[2] * _mtx[2][2]);
     }
 
     RrVec3d TransformAffine(const RrVec3d &vec) const
@@ -1542,7 +1751,6 @@ struct RrMat4d {
                        vec[0] * _mtx[0][2] + vec[1] * _mtx[1][2] +
                            vec[2] * _mtx[2][2] + _mtx[3][2]);
     }
-
 
     RrVec3d ExtractTranslation() const
     {
@@ -1651,8 +1859,7 @@ struct RrMat4d {
         SetRotate(rotate);
         return SetTranslateOnly(translate);
     }
-    RrMat4d &SetTransform(const RrRotation &rotate,
-                          const RrVec3d &translate);
+    RrMat4d &SetTransform(const RrRotation &rotate, const RrVec3d &translate);
 
     bool Orthonormalize(bool issueWarning = true);
 
@@ -1661,6 +1868,21 @@ struct RrMat4d {
         RrMat4d result = *this;
         result.Orthonormalize(issueWarning);
         return result;
+    }
+
+    /// GfMatrix4d::RemoveScaleShear: the orthonormalized rotation and the
+    /// translation; the matrix itself when it does not factor.
+    RrMat4d RemoveScaleShear() const
+    {
+        RrMat4d scaleOrient, rotation, perspective;
+        RrVec3d scale, translation;
+        if (!Factor(&scaleOrient, &scale, &rotation, &translation,
+                    &perspective))
+            return *this;
+        rotation.Orthonormalize();
+        RrMat4d translate(1.0);
+        translate.SetTranslateOnly(translation);
+        return rotation * translate;
     }
 };
 
@@ -1710,30 +1932,44 @@ RrSqr(double x)
     return x * x;
 }
 
-inline bool
-RrOrthogonalizeBasis(RrVec3d *tx, RrVec3d *ty, RrVec3d *tz,
-                     bool normalize, double eps = kRrMinOrthoTolerance);
+inline bool RrOrthogonalizeBasis(RrVec3d *tx, RrVec3d *ty, RrVec3d *tz,
+                                 bool normalize,
+                                 double eps = kRrMinOrthoTolerance);
 
 struct RrQuatd {
     RrVec3d _imaginary;
     double _real;
 
     RrQuatd() = default;
-    explicit RrQuatd(double real) : _imaginary(0), _real(real) {}
+    explicit RrQuatd(double real) : _imaginary(0), _real(real)
+    {
+    }
     RrQuatd(double real, const RrVec3d &imaginary)
         : _imaginary(imaginary), _real(real)
     {
     }
 
-    void SetReal(double real) { _real = real; }
-    void SetImaginary(const RrVec3d &imaginary) { _imaginary = imaginary; }
+    void SetReal(double real)
+    {
+        _real = real;
+    }
+    void SetImaginary(const RrVec3d &imaginary)
+    {
+        _imaginary = imaginary;
+    }
     void SetImaginary(double i, double j, double k)
     {
         _imaginary = RrVec3d(i, j, k);
     }
 
-    double GetReal() const { return _real; }
-    const RrVec3d &GetImaginary() const { return _imaginary; }
+    double GetReal() const
+    {
+        return _real;
+    }
+    const RrVec3d &GetImaginary() const
+    {
+        return _imaginary;
+    }
 
     static RrQuatd GetZero()
     {
@@ -1744,7 +1980,10 @@ struct RrQuatd {
         return RrQuatd(1.0, RrVec3d(0.0, 0.0, 0.0));
     }
 
-    double GetLength() const { return RrSqrt(_GetLengthSquared()); }
+    double GetLength() const
+    {
+        return RrSqrt(_GetLengthSquared());
+    }
 
     RrQuatd GetNormalized(double eps = kRrMinVectorLength) const
     {
@@ -1791,10 +2030,12 @@ struct RrQuatd {
 
     bool operator==(const RrQuatd &q) const
     {
-        return (GetReal() == q.GetReal() &&
-                GetImaginary() == q.GetImaginary());
+        return (GetReal() == q.GetReal() && GetImaginary() == q.GetImaginary());
     }
-    bool operator!=(const RrQuatd &q) const { return !(*this == q); }
+    bool operator!=(const RrQuatd &q) const
+    {
+        return !(*this == q);
+    }
 
     RrQuatd &operator*=(const RrQuatd &q)
     {
@@ -1805,12 +2046,9 @@ struct RrQuatd {
 
         double r = r1 * r2 - RrDot(i1, i2);
 
-        RrVec3d i(r1 * i2[0] + r2 * i1[0] +
-                      (i1[1] * i2[2] - i1[2] * i2[1]),
-                  r1 * i2[1] + r2 * i1[1] +
-                      (i1[2] * i2[0] - i1[0] * i2[2]),
-                  r1 * i2[2] + r2 * i1[2] +
-                      (i1[0] * i2[1] - i1[1] * i2[0]));
+        RrVec3d i(r1 * i2[0] + r2 * i1[0] + (i1[1] * i2[2] - i1[2] * i2[1]),
+                  r1 * i2[1] + r2 * i1[1] + (i1[2] * i2[0] - i1[0] * i2[2]),
+                  r1 * i2[2] + r2 * i1[2] + (i1[0] * i2[1] - i1[1] * i2[0]));
 
         SetReal(r);
         SetImaginary(i);
@@ -1880,8 +2118,8 @@ struct RrQuatd {
 inline RrQuatd
 RrSlerp(double alpha, const RrQuatd &q0, const RrQuatd &q1)
 {
-    double cosTheta = q0.GetImaginary() * q1.GetImaginary() +
-                      q0.GetReal() * q1.GetReal();
+    double cosTheta =
+        q0.GetImaginary() * q1.GetImaginary() + q0.GetReal() * q1.GetReal();
     bool flip1 = false;
 
     if (cosTheta < 0.0) {
@@ -1918,12 +2156,17 @@ struct RrRotation {
     RrVec3d _axis;
     double _angle;
 
-    RrRotation() {}
+    RrRotation()
+    {
+    }
     RrRotation(const RrVec3d &axis, double angle)
     {
         SetAxisAngle(axis, angle);
     }
-    RrRotation(const RrQuatd &quat) { SetQuat(quat); }
+    RrRotation(const RrQuatd &quat)
+    {
+        SetQuat(quat);
+    }
     RrRotation(const RrVec3d &rotateFrom, const RrVec3d &rotateTo)
     {
         SetRotateInto(rotateFrom, rotateTo);
@@ -1983,8 +2226,14 @@ struct RrRotation {
         return *this;
     }
 
-    const RrVec3d &GetAxis() const { return _axis; }
-    double GetAngle() const { return _angle; }
+    const RrVec3d &GetAxis() const
+    {
+        return _axis;
+    }
+    double GetAngle() const
+    {
+        return _angle;
+    }
 
     RrQuatd GetQuat() const
     {
@@ -2010,9 +2259,9 @@ struct RrRotation {
         RrVec3d nAxis1 = axis1.GetNormalized();
         RrVec3d nAxis2 = axis2.GetNormalized();
 
-        RrMat4d axes(nAxis0[0], nAxis1[0], nAxis2[0], 0, nAxis0[1],
-                     nAxis1[1], nAxis2[1], 0, nAxis0[2], nAxis1[2],
-                     nAxis2[2], 0, 0, 0, 0, 1);
+        RrMat4d axes(nAxis0[0], nAxis1[0], nAxis2[0], 0, nAxis0[1], nAxis1[1],
+                     nAxis2[1], 0, nAxis0[2], nAxis1[2], nAxis2[2], 0, 0, 0, 0,
+                     1);
 
         RrMat4d m = axes.GetTranspose() * mat * axes;
 
@@ -2067,16 +2316,15 @@ RrMat4d::ExtractRotationQuat() const
     double r;
 
     if (_mtx[0][0] + _mtx[1][1] + _mtx[2][2] > _mtx[i][i]) {
-        r = 0.5 * std::sqrt(_mtx[0][0] + _mtx[1][1] + _mtx[2][2] +
-                            _mtx[3][3]);
+        r = 0.5 * std::sqrt(_mtx[0][0] + _mtx[1][1] + _mtx[2][2] + _mtx[3][3]);
         im = RrVec3d((_mtx[1][2] - _mtx[2][1]) / (4.0 * r),
                      (_mtx[2][0] - _mtx[0][2]) / (4.0 * r),
                      (_mtx[0][1] - _mtx[1][0]) / (4.0 * r));
     } else {
         int j = (i + 1) % 3;
         int k = (i + 2) % 3;
-        double q = 0.5 * std::sqrt(_mtx[i][i] - _mtx[j][j] -
-                                   _mtx[k][k] + _mtx[3][3]);
+        double q =
+            0.5 * std::sqrt(_mtx[i][i] - _mtx[j][j] - _mtx[k][k] + _mtx[3][3]);
 
         im[i] = q;
         im[j] = (_mtx[i][j] + _mtx[j][i]) / (4 * q);
@@ -2150,8 +2398,8 @@ RrMat4d::SetTransform(const RrRotation &rotate, const RrVec3d &translate)
 }
 
 inline bool
-RrOrthogonalizeBasis(RrVec3d *tx, RrVec3d *ty, RrVec3d *tz,
-                     bool normalize, double eps)
+RrOrthogonalizeBasis(RrVec3d *tx, RrVec3d *ty, RrVec3d *tz, bool normalize,
+                     double eps)
 {
     RrVec3d ax, bx, cx, ay, by, cy, az, bz, cz;
 
@@ -2206,8 +2454,8 @@ RrOrthogonalizeBasis(RrVec3d *tx, RrVec3d *ty, RrVec3d *tz,
         RrVec3d yDiff = *ty - cy;
         RrVec3d zDiff = *tz - cz;
 
-        double error = RrDot(xDiff, xDiff) + RrDot(yDiff, yDiff) +
-                       RrDot(zDiff, zDiff);
+        double error =
+            RrDot(xDiff, xDiff) + RrDot(yDiff, yDiff) + RrDot(zDiff, zDiff);
 
         if (error < RrSqr(eps)) {
             break;
@@ -2252,8 +2500,7 @@ RrMat4d::Orthonormalize(bool issueWarning)
     _mtx[2][2] = r2[2];
 
     // Divide out any homogeneous coordinate - unless it's zero.
-    if (_mtx[3][3] != 1.0 &&
-        !RrIsClose(_mtx[3][3], 0.0, kRrMinVectorLength)) {
+    if (_mtx[3][3] != 1.0 && !RrIsClose(_mtx[3][3], 0.0, kRrMinVectorLength)) {
         _mtx[3][0] /= _mtx[3][3];
         _mtx[3][1] /= _mtx[3][3];
         _mtx[3][2] /= _mtx[3][3];
@@ -2285,40 +2532,33 @@ struct RrCamera {
 };
 
 inline void
-RrCameraFrustumWindow(const RrCamera &cam, double aspect,
-                      RrVec2d *topLeft, RrVec2d *bottomRight)
+RrCameraFrustumWindow(const RrCamera &cam, double aspect, RrVec2d *topLeft,
+                      RrVec2d *bottomRight)
 {
     RrVec2d top(0.0), bottom(0.0);
     if (cam.fitMode == RrCameraFitVertical) {
         top = RrVec2d(cam.horizontalApertureOffset +
                           aspect * 0.5 * cam.verticalAperture,
-                      cam.verticalApertureOffset +
-                          0.5 * cam.verticalAperture);
-        bottom = RrVec2d(cam.horizontalApertureOffset -
-                             aspect * 0.5 * cam.verticalAperture,
-                         cam.verticalApertureOffset -
-                             0.5 * cam.verticalAperture);
+                      cam.verticalApertureOffset + 0.5 * cam.verticalAperture);
+        bottom = RrVec2d(
+            cam.horizontalApertureOffset - aspect * 0.5 * cam.verticalAperture,
+            cam.verticalApertureOffset - 0.5 * cam.verticalAperture);
     } else if (cam.fitMode == RrCameraFitHorizontal) {
-        top = RrVec2d(cam.horizontalApertureOffset +
-                          0.5 * cam.horizontalAperture,
-                      cam.verticalApertureOffset +
-                          0.5 * cam.verticalAperture / aspect);
-        bottom = RrVec2d(cam.horizontalApertureOffset -
-                             0.5 * cam.horizontalAperture,
-                         cam.verticalApertureOffset -
-                             0.5 * cam.verticalAperture / aspect);
+        top = RrVec2d(
+            cam.horizontalApertureOffset + 0.5 * cam.horizontalAperture,
+            cam.verticalApertureOffset + 0.5 * cam.verticalAperture / aspect);
+        bottom = RrVec2d(
+            cam.horizontalApertureOffset - 0.5 * cam.horizontalAperture,
+            cam.verticalApertureOffset - 0.5 * cam.verticalAperture / aspect);
     } else {
-        top = RrVec2d(cam.horizontalApertureOffset +
-                          0.5 * cam.horizontalAperture,
-                      cam.verticalApertureOffset +
-                          0.5 * cam.verticalAperture);
-        bottom = RrVec2d(cam.horizontalApertureOffset -
-                             0.5 * cam.horizontalAperture,
-                         cam.verticalApertureOffset -
-                             0.5 * cam.verticalAperture);
+        top =
+            RrVec2d(cam.horizontalApertureOffset + 0.5 * cam.horizontalAperture,
+                    cam.verticalApertureOffset + 0.5 * cam.verticalAperture);
+        bottom =
+            RrVec2d(cam.horizontalApertureOffset - 0.5 * cam.horizontalAperture,
+                    cam.verticalApertureOffset - 0.5 * cam.verticalAperture);
     }
-    const double mult =
-        -cam.nearDistance / (cam.focalLength * 0.1);
+    const double mult = -cam.nearDistance / (cam.focalLength * 0.1);
     *topLeft = mult * top;
     *bottomRight = mult * bottom;
 }
@@ -2333,8 +2573,8 @@ RrCameraForward(const RrVec3d &position, const RrVec3d &target)
 }
 
 inline void
-RrCameraBasis(const RrVec3d &forward, const RrVec3d &up,
-              RrVec3d *side, RrVec3d *trueUp)
+RrCameraBasis(const RrVec3d &forward, const RrVec3d &up, RrVec3d *side,
+              RrVec3d *trueUp)
 {
     *side = RrCross(forward, up);
     side->Normalize();
@@ -2373,7 +2613,6 @@ RrLookAtRotation(const RrVec3d &forward, const RrVec3d &up)
     return basis.ExtractRotation();
 }
 
-
 // A fraction of the transform's ROTATION about the pivot it turns about,
 // not a fraction of the resulting position. The USD twin is
 // RigExecPartialTransform in rigExecMath/geometryKernels.cpp; the two must
@@ -2382,8 +2621,8 @@ RrLookAtRotation(const RrVec3d &forward, const RrVec3d &up)
 // the screw axis rather than taken from the translation.
 struct RrPartialDecomposition {
     RrMat4d original;
-    RrVec3d scale,axis,translation;
-    double angle=0;
+    RrVec3d scale, axis, translation;
+    double angle = 0;
 };
 inline RrPartialDecomposition
 RrDecomposePartialTransform(const RrMat4d &transform)
@@ -2408,19 +2647,24 @@ RrDecomposePartialTransform(const RrMat4d &transform)
     const RrVec3d axis = rotation.GetAxis().GetNormalized();
     double angle = rotation.GetAngle();
     // Match the native partial transform's quaternion-sign-independent arc.
-    if (angle > 180.0) angle -= 360.0;
+    if (angle > 180.0)
+        angle -= 360.0;
     const RrVec3d translation = transform.ExtractTranslation();
 
-    return {transform,scale,axis,translation,angle};
+    return {transform, scale, axis, translation, angle};
 }
 inline RrMat4d
-RrApplyPartialDecomposition(const RrPartialDecomposition &d,double weight)
+RrApplyPartialDecomposition(const RrPartialDecomposition &d, double weight)
 {
-    const double w=RrClamp(weight,0.0,1.0);
-    if(w<=0.0)return RrMat4d(1.0);
-    if(w>=1.0)return d.original;
-    const auto &scale=d.scale;const auto &axis=d.axis;const auto &translation=d.translation;
-    const double angle=d.angle;
+    const double w = RrClamp(weight, 0.0, 1.0);
+    if (w <= 0.0)
+        return RrMat4d(1.0);
+    if (w >= 1.0)
+        return d.original;
+    const auto &scale = d.scale;
+    const auto &axis = d.axis;
+    const auto &translation = d.translation;
+    const double angle = d.angle;
     RrMat4d scaled(1.0);
     scaled.SetScale(RrVec3d(1.0 + (scale[0] - 1.0) * w,
                             1.0 + (scale[1] - 1.0) * w,
@@ -2452,12 +2696,15 @@ RrApplyPartialDecomposition(const RrPartialDecomposition &d,double weight)
     return out;
 }
 inline RrMat4d
-RrPartialTransform(const RrMat4d &transform,double weight)
+RrPartialTransform(const RrMat4d &transform, double weight)
 {
-    const double w=RrClamp(weight,0.0,1.0);
-    if(w<=0.0)return RrMat4d(1.0);
-    if(w>=1.0)return transform;
-    return RrApplyPartialDecomposition(RrDecomposePartialTransform(transform),w);
+    const double w = RrClamp(weight, 0.0, 1.0);
+    if (w <= 0.0)
+        return RrMat4d(1.0);
+    if (w >= 1.0)
+        return transform;
+    return RrApplyPartialDecomposition(RrDecomposePartialTransform(transform),
+                                       w);
 }
 
 // M(transform) * inverse(M(space)) with the projective column set exactly.
@@ -2472,7 +2719,6 @@ RrMeasureInSpace(const RrMat4d &transform, const RrMat4d &space)
     m[3][3] = 1.0;
     return m;
 }
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_RUNTIME_MATH_H
-
+#endif // RIGEXEC_RUNTIME_MATH_H

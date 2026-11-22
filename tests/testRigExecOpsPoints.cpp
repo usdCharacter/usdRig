@@ -10,6 +10,7 @@
 #include "rigExecMath/simdKernels.h"
 #include "rigExecMath/solvers.h"
 #include "rigExecMath/surfaceProjectorKernel.h"
+#include "rigExecMath/weightFields.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecOps/constraint/constraintOps.h"
 #include "rigExecOps/deform/blendShapeOp.h"
@@ -24,6 +25,7 @@
 #include "rigExecOps/deform/surfaceProjectOp.h"
 #include "rigExecOps/deform/wireOp.h"
 #include "rigExecOps/deform/wrinkleOp.h"
+#include "rigExecOps/weight/weightOps.h"
 
 #include "pxr/base/gf/rotation.h"
 
@@ -32,6 +34,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <random>
 #include <string>
@@ -1820,6 +1823,197 @@ TestConstraints()
     CHECK(error.find("one per source") != std::string::npos);
 }
 
+/// The native field for \p points under \p placement, divided by \p scale,
+/// with the range policy applied; false when the policy refuses.
+bool
+NativeWeights(
+    const std::vector<GfVec3f> &points, const GfMatrix4d &placement,
+    const GfVec3f *scale, bool clamp,
+    const std::function<void(const GfMatrix4d &, std::vector<float> *)> &field,
+    std::vector<float> *out)
+{
+    GfMatrix4d worldToLocal = placement.RemoveScaleShear().GetInverse();
+    if (scale) {
+        GfMatrix4d divide(1.0);
+        divide.SetScale(GfVec3d(1.0 / double((*scale)[0]),
+                                1.0 / double((*scale)[1]),
+                                1.0 / double((*scale)[2])));
+        worldToLocal = worldToLocal * divide;
+    }
+    field(worldToLocal, out);
+    for (float &w : *out)
+        if (!RigExecApplyWeightRangeKernel(clamp, &w))
+            return false;
+    return true;
+}
+
+bool
+SameBits(const std::vector<float> &expected, const RigExecArray<float> &actual)
+{
+    return expected.size() == actual.Size() &&
+           (expected.empty() ||
+            std::memcmp(expected.data(), actual.Data(),
+                        expected.size() * sizeof(float)) == 0);
+}
+
+void
+TestWeightFields()
+{
+    using namespace rigExecOps;
+    const Grid grid(9, 41);
+    std::vector<GfVec3f> gfPoints = grid.points;
+    for (GfVec3f &p : gfPoints)
+        p -= GfVec3f(4.0f, 4.0f, 0.0f);
+    const Points points = ToStd(gfPoints);
+    GfMatrix4d placement(1.0);
+    placement.SetScale(GfVec3d(1.7, 0.6, 2.2));
+    GfMatrix4d turn(1.0);
+    turn.SetRotate(GfRotation(GfVec3d(0.4, 1.0, -0.3), 52.0));
+    turn.SetTranslateOnly(GfVec3d(0.5, -0.75, 0.3));
+    placement = placement * turn;
+    const rigExecStd::Mat4d placementStd = ToRig(placement);
+    const std::vector<float> lut = {0.0f, 0.1f, 0.45f, 0.9f, 1.0f};
+    RigExecFalloffParams params;
+    params.falloffMin = 0.5f;
+    params.falloffMax = 3.25f;
+    params.invert = 0.25f;
+    params.strength = 0.9f;
+    params.curve = lut;
+    const float fMin = params.falloffMin, fMax = params.falloffMax,
+                invert = params.invert, strength = params.strength;
+    RigExecArray<float> actual;
+    std::vector<float> expected;
+    std::string error;
+
+    // Sphere: scaled, signed scales, payload falloff curve, clamped.
+    WeightFieldPayload clamped;
+    clamped.falloffCurve = lut;
+    clamped.clamp = true;
+    const GfVec3f scale(1.5f, 0.8f, 2.0f), positive(1.0f, 2.0f, 0.5f),
+        negative(0.75f, 1.0f, 3.0f);
+    const Vec3f scaleStd(1.5f, 0.8f, 2.0f), positiveStd(1.0f, 2.0f, 0.5f),
+        negativeStd(0.75f, 1.0f, 3.0f);
+    Node sphere(SphereWeight(),
+                {&SphereWeightPoints(), &SphereWeightPlacement(),
+                 &SphereWeightStrength(), &SphereWeightInvert(),
+                 &SphereWeightFalloffMin(), &SphereWeightFalloffMax(),
+                 &SphereWeightScale(), &SphereWeightPositiveScale(),
+                 &SphereWeightNegativeScale()},
+                SphereWeightOut(), &clamped);
+    const auto sphereField = [&](const GfMatrix4d &m, std::vector<float> *w) {
+        RigExecSphereWeightField(gfPoints, m, params, w, positive, negative);
+    };
+    CHECK(NativeWeights(gfPoints, placement, &scale, true, sphereField,
+                        &expected));
+    CHECK(sphere.Run({&points, &placementStd, &strength, &invert, &fMin, &fMax,
+                      &scaleStd, &positiveStd, &negativeStd},
+                     &actual));
+    CHECK(SameBits(expected, actual));
+
+    // Strict: a strength past 1 refuses; a bad scale refuses.
+    WeightFieldPayload strict = clamped;
+    strict.clamp = false;
+    Node strictSphere(SphereWeight(),
+                      {&SphereWeightPoints(), &SphereWeightPlacement(),
+                       &SphereWeightStrength(), &SphereWeightFalloffMax(),
+                       &SphereWeightScale()},
+                      SphereWeightOut(), &strict);
+    const float loud = 2.0f, unit = 1.0f, wide = 10.0f;
+    const Vec3f badScale(1.0f, 0.0f, 1.0f);
+    CHECK(!strictSphere.Run({&points, &placementStd, &loud, &wide, &scaleStd},
+                            &actual, &error));
+    CHECK(strictSphere.Run({&points, &placementStd, &unit, &wide, &scaleStd},
+                           &actual, &error));
+    CHECK(!strictSphere.Run({&points, &placementStd, &unit, &wide, &badScale},
+                            &actual, &error));
+    const rigExecStd::Mat4d flat = ToRig(GfMatrix4d(0.0));
+    CHECK(!strictSphere.Run({&points, &flat, &unit, &wide, &scaleStd}, &actual,
+                            &error));
+
+    // Plane: bounded along Y, and unbounded along X with fed samples.
+    WeightFieldPayload bounded = clamped;
+    bounded.planeAxis = WeightFieldAxis::Y;
+    bounded.planeBounded = true;
+    Node plane(PlaneWeight(),
+               {&PlaneWeightPoints(), &PlaneWeightPlacement(),
+                &PlaneWeightStrength(), &PlaneWeightInvert(),
+                &PlaneWeightFalloffMin(), &PlaneWeightFalloffMax(),
+                &PlaneWeightExtentU(), &PlaneWeightExtentV()},
+               PlaneWeightOut(), &bounded);
+    const float extentU = 2.5f, extentV = 1.75f;
+    const RigExecPlaneBounds bounds{extentU, extentV};
+    CHECK(NativeWeights(
+        gfPoints, placement, nullptr, true,
+        [&](const GfMatrix4d &m, std::vector<float> *w) {
+            RigExecPlaneWeightField(gfPoints, m, 1, params, w, &bounds);
+        },
+        &expected));
+    CHECK(plane.Run({&points, &placementStd, &strength, &invert, &fMin, &fMax,
+                     &extentU, &extentV},
+                    &actual));
+    CHECK(SameBits(expected, actual));
+    const float zero = 0.0f;
+    CHECK(!plane.Run({&points, &placementStd, &strength, &invert, &fMin, &fMax,
+                      &zero, &extentV},
+                     &actual, &error));
+
+    WeightFieldPayload open;
+    open.clamp = true;
+    open.planeAxis = WeightFieldAxis::X;
+    Node openPlane(PlaneWeight(),
+                   {&PlaneWeightPoints(), &PlaneWeightPlacement(),
+                    &PlaneWeightFalloffMin(), &PlaneWeightFalloffMax(),
+                    &PlaneWeightFalloffSamples()},
+                   PlaneWeightOut(), &open);
+    const std::vector<float> fed = {1.0f, 0.2f, 0.0f};
+    const auto fedArray = ToArray(fed);
+    RigExecFalloffParams fedParams;
+    fedParams.falloffMin = -1.0f;
+    fedParams.falloffMax = 1.0f;
+    fedParams.curve = fed;
+    const float lo = -1.0f, hi = 1.0f;
+    CHECK(NativeWeights(
+        gfPoints, placement, nullptr, true,
+        [&](const GfMatrix4d &m, std::vector<float> *w) {
+            RigExecPlaneWeightField(gfPoints, m, 0, fedParams, w);
+        },
+        &expected));
+    CHECK(
+        openPlane.Run({&points, &placementStd, &lo, &hi, &fedArray}, &actual));
+    CHECK(SameBits(expected, actual));
+
+    // Curve: a short polyline (scan) and a long one (the BVH path).
+    Node curve(CurveWeight(),
+               {&CurveWeightPoints(), &CurveWeightPlacement(),
+                &CurveWeightStrength(), &CurveWeightInvert(),
+                &CurveWeightFalloffMin(), &CurveWeightFalloffMax(),
+                &CurveWeightScale(), &CurveWeightCurve()},
+               CurveWeightOut(), &clamped);
+    for (size_t count : {size_t(5), size_t(48)}) {
+        std::vector<GfVec3f> gfCurve;
+        for (size_t k = 0; k < count; ++k) {
+            const float t = float(k) / float(count - 1);
+            gfCurve.emplace_back(-4.0f + 8.0f * t, std::sin(6.0f * t) * 2.0f,
+                                 0.5f * std::cos(3.0f * t));
+        }
+        const Points curvePoints = ToStd(gfCurve);
+        CHECK(NativeWeights(
+            gfPoints, placement, &scale, true,
+            [&](const GfMatrix4d &m, std::vector<float> *w) {
+                RigExecCurveWeightField(gfPoints, gfCurve, m, params, w);
+            },
+            &expected));
+        CHECK(curve.Run({&points, &placementStd, &strength, &invert, &fMin,
+                         &fMax, &scaleStd, &curvePoints},
+                        &actual));
+        CHECK(SameBits(expected, actual));
+    }
+    const Points noCurve;
+    CHECK(!curve.Run({&points, &placementStd, &strength, &invert, &fMin, &fMax,
+                      &scaleStd, &noCurve},
+                     &actual, &error));
+}
+
 int
 main()
 {
@@ -1845,6 +2039,7 @@ main()
     TestSurfaceProjector();
     TestShaderDials();
     TestConstraints();
+    TestWeightFields();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

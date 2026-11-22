@@ -122,6 +122,21 @@ RigExecPlaneWithinBoundsKernel(const V &p, int axis, float extentU,
     return std::abs(u) <= extentU && std::abs(v) <= extentV;
 }
 
+/// A weight under the range policy: false for a non-finite one or, unless
+/// \p clamp, one outside [0, 1]; clamped otherwise.
+inline bool
+RigExecApplyWeightRangeKernel(bool clamp, float *w)
+{
+    if (!std::isfinite(*w))
+        return false;
+    if (*w < 0.0f || *w > 1.0f) {
+        if (!clamp)
+            return false;
+        *w = std::min(std::max(*w, 0.0f), 1.0f);
+    }
+    return true;
+}
+
 /// \p p carried into the volume's local space in double.
 template <class V, class D, class M>
 V

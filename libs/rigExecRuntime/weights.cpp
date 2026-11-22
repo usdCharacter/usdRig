@@ -471,17 +471,7 @@ _RrResolvePacket(_RrRepresentation representation, const RrWeightPacket &packet,
 bool
 _RrApplyRangePolicy(bool clamp, float *w)
 {
-    if (!std::isfinite(*w)) {
-        return false;
-    }
-    if (*w < 0.0f || *w > 1.0f) {
-        if (clamp) {
-            *w = std::min(std::max(*w, 0.0f), 1.0f);
-            return true;
-        }
-        return false;
-    }
-    return true;
+    return RigExecApplyWeightRangeKernel(clamp, w);
 }
 
 // Volumetric field kernels (rigExecMath/weightFieldKernel.h).
@@ -617,178 +607,7 @@ _RrResolveCombineInput(_RrRepresentation representation,
     return true;
 }
 
-// Rigid placement (RigExecRigidWorldToLocal, weightPackets.cpp, over
-// GfMatrix4d::RemoveScaleShear from pxr/base/gf/matrix4d.cpp).
-
-// Jacobi eigen decomposition of the symmetric 3x3 in _Jacobi3's upper
-// triangle, in place. A line port of GfMatrix4d::_Jacobi3.
-void
-_RrJacobi3(RrMat4d *self, RrVec3d *eigenvalues, RrVec3d eigenvectors[3])
-{
-    (*eigenvalues)[0] = (*self)[0][0];
-    (*eigenvalues)[1] = (*self)[1][1];
-    (*eigenvalues)[2] = (*self)[2][2];
-    eigenvectors[0] = RrVec3d::XAxis();
-    eigenvectors[1] = RrVec3d::YAxis();
-    eigenvectors[2] = RrVec3d::ZAxis();
-
-    RrMat4d a = *self;
-    RrVec3d b = *eigenvalues;
-    RrVec3d z(0.0);
-
-    for (int i = 0; i < 50; i++) {
-        double sm = 0.0;
-        for (int p = 0; p < 2; p++) {
-            for (int q = p + 1; q < 3; q++) {
-                sm += std::abs(a[p][q]);
-            }
-        }
-
-        if (sm == 0.0) {
-            return;
-        }
-
-        const double thresh = (i < 3 ? (.2 * sm / (3 * 3)) : 0.0);
-
-        for (int p = 0; p < 3; p++) {
-            for (int q = p + 1; q < 3; q++) {
-                double g = 100.0 * std::abs(a[p][q]);
-
-                if (i > 3 &&
-                    (std::abs((*eigenvalues)[p]) + g ==
-                     std::abs((*eigenvalues)[p])) &&
-                    (std::abs((*eigenvalues)[q]) + g ==
-                     std::abs((*eigenvalues)[q]))) {
-                    a[p][q] = 0.0;
-                } else if (std::abs(a[p][q]) > thresh) {
-                    double h = (*eigenvalues)[q] - (*eigenvalues)[p];
-                    double t;
-
-                    if (std::abs(h) + g == std::abs(h)) {
-                        t = a[p][q] / h;
-                    } else {
-                        const double theta = 0.5 * h / a[p][q];
-                        t = 1.0 /
-                            (std::abs(theta) + std::sqrt(1.0 + theta * theta));
-                        if (theta < 0.0) {
-                            t = -t;
-                        }
-                    }
-
-                    const double c = 1.0 / std::sqrt(1.0 + t * t);
-                    const double s = t * c;
-                    const double tau = s / (1.0 + c);
-                    h = t * a[p][q];
-                    z[p] -= h;
-                    z[q] += h;
-                    (*eigenvalues)[p] -= h;
-                    (*eigenvalues)[q] += h;
-                    a[p][q] = 0.0;
-
-                    for (int j = 0; j < p; j++) {
-                        g = a[j][p];
-                        h = a[j][q];
-                        a[j][p] = g - s * (h + g * tau);
-                        a[j][q] = h + s * (g - h * tau);
-                    }
-
-                    for (int j = p + 1; j < q; j++) {
-                        g = a[p][j];
-                        h = a[j][q];
-                        a[p][j] = g - s * (h + g * tau);
-                        a[j][q] = h + s * (g - h * tau);
-                    }
-
-                    for (int j = q + 1; j < 3; j++) {
-                        g = a[p][j];
-                        h = a[q][j];
-                        a[p][j] = g - s * (h + g * tau);
-                        a[q][j] = h + s * (g - h * tau);
-                    }
-
-                    for (int j = 0; j < 3; j++) {
-                        g = eigenvectors[j][p];
-                        h = eigenvectors[j][q];
-                        eigenvectors[j][p] = g - s * (h + g * tau);
-                        eigenvectors[j][q] = h + s * (g - h * tau);
-                    }
-                }
-            }
-        }
-        for (int p = 0; p < 3; p++) {
-            (*eigenvalues)[p] = b[p] += z[p];
-            z[p] = 0;
-        }
-    }
-}
-
-// Factors the matrix into rotation, scale, rotation, translation and
-// perspective (M = r * s * -r * u * t). A line port of
-// GfMatrix4d::Factor with its default eps.
-bool
-_RrFactorMatrix(const RrMat4d &self, RrMat4d *r, RrVec3d *s, RrMat4d *u,
-                RrVec3d *t, RrMat4d *p)
-{
-    const double eps = 1e-10;
-
-    p->SetDiagonal(1);
-
-    RrMat4d a;
-    for (int i = 0; i < 3; i++) {
-        for (int j = 0; j < 3; j++) {
-            a[i][j] = self[i][j];
-        }
-        a[3][i] = a[i][3] = 0.0;
-        (*t)[i] = self[3][i];
-    }
-    a[3][3] = 1.0;
-
-    const double det = a.GetDeterminant3();
-    const double detSign = (det < 0.0 ? -1.0 : 1.0);
-    const bool isSingular = det * detSign < eps;
-
-    const RrMat4d b = a * a.GetTranspose();
-    RrVec3d eigenvalues;
-    RrVec3d eigenvectors[3];
-    RrMat4d mutableB = b;
-    _RrJacobi3(&mutableB, &eigenvalues, eigenvectors);
-    r->Set(eigenvectors[0][0], eigenvectors[0][1], eigenvectors[0][2], 0.0,
-           eigenvectors[1][0], eigenvectors[1][1], eigenvectors[1][2], 0.0,
-           eigenvectors[2][0], eigenvectors[2][1], eigenvectors[2][2], 0.0, 0.0,
-           0.0, 0.0, 1.0);
-
-    RrMat4d sInv;
-    sInv.SetIdentity();
-    for (int i = 0; i < 3; i++) {
-        if (eigenvalues[i] < eps) {
-            (*s)[i] = detSign * eps;
-        } else {
-            (*s)[i] = detSign * std::sqrt(eigenvalues[i]);
-        }
-        sInv[i][i] = 1.0 / (*s)[i];
-    }
-
-    *u = *r * sInv * r->GetTranspose() * a;
-
-    return !isSingular;
-}
-
-RrMat4d
-_RrRemoveScaleShear(const RrMat4d &self)
-{
-    RrMat4d scaleOrientMat, factoredRotMat, perspMat;
-    RrVec3d scale, translation;
-    if (!_RrFactorMatrix(self, &scaleOrientMat, &scale, &factoredRotMat,
-                         &translation, &perspMat)) {
-        return self;
-    }
-
-    factoredRotMat.Orthonormalize();
-    RrMat4d translate(1.0);
-    translate.SetTranslateOnly(translation);
-    return factoredRotMat * translate;
-}
-
+// Rigid placement (RigExecRigidWorldToLocal, weightPackets.cpp).
 bool
 _RrRigidWorldToLocal(const RrPointFrame &posed, RrMat4d *result)
 {
@@ -806,7 +625,7 @@ _RrRigidWorldToLocal(const RrPointFrame &posed, RrMat4d *result)
             }
         }
     }
-    const RrMat4d rigid = _RrRemoveScaleShear(placement);
+    const RrMat4d rigid = placement.RemoveScaleShear();
     const double det = rigid.GetDeterminant();
     if (!std::isfinite(det) || std::abs(det) < 1e-12) {
         return false;
@@ -1666,8 +1485,9 @@ _RrOracleVolume(const RrProgram *program, const RrWeightScratch &scratch,
         *error = who() + ": no resolved placement for this volume weight";
         return false;
     }
-    const RrMat4d rigid = _RrRemoveScaleShear(
-        (context ? *context->placements : store.volumePlacement)[size_t(slot)]);
+    const RrMat4d rigid =
+        (context ? *context->placements : store.volumePlacement)[size_t(slot)]
+            .RemoveScaleShear();
     const double det = rigid.GetDeterminant();
     if (!std::isfinite(det) || std::abs(det) < 1e-12) {
         *error = who() + ": degenerate volume placement";
