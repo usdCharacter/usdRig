@@ -111,7 +111,7 @@ _BuildSurfaceMoverParameters(const VdfContext &ctx)
     if (!rigExec::RigExecMoverSetCommonEnvelope(ctx, &params)) {
         return params;
     }
-    params.strength = 1.0f; // v0.1 attach/project maps fully
+    params.strength = 1.0f; // attach/project maps fully
     params.auxPoints = rigExec::RigExecMoverCollect<GfVec3f>(
         ctx, RigExecMoverExecTokens->surfacePoints);
     params.topologyCounts = rigExec::RigExecMoverCollect<int>(

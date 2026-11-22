@@ -18,7 +18,7 @@ namespace rigExec {
 
 const TfToken &RigExecFinalPhase();
 
-/// Backend-neutral value address (v0.1 subset).
+/// Backend-neutral value address.
 ///
 /// A prim target with publicComputation names a rig value provider
 /// (e.g. computePointFrame). A property target with an empty
@@ -51,7 +51,7 @@ using RigExecTapId = int;
 
 /// A computed value the engine supplies rather than lets exec derive.
 ///
-/// The one v0.1 use is the solver->joint pose. OpenExec can only reach a
+/// Used for the solver->joint pose. OpenExec can only reach a
 /// provider through a relationship authored on the consuming prim, and the
 /// authored direction here is the wrong way round: a solver names its joints,
 /// not the reverse (there is no reverse-relationship accessor -- see the

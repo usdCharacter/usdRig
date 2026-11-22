@@ -179,9 +179,7 @@ RigExecStatusForParameters(const RigExecMoverParameters &parameters,
 /// its descendants (world = local * parent), so a frame under a scaled
 /// master factors as rigid * scale -- and for an orthonormal L,
 /// (L S)^T (L S) = S L^T L S = S^2, whose diagonal is exactly those column
-/// lengths. A frame nothing has scaled returns (1, 1, 1), so dividing by it
-/// is the identity: a rig with no scaled master measures what it always did,
-/// to the last bit.
+/// lengths. Unscaled frame returns (1,1,1).
 ///
 /// A zero-length column is a degenerate frame that cannot be divided by, so
 /// it reports 1 and leaves that axis alone rather than producing infinities.
@@ -271,10 +269,7 @@ RigExecMeasureInPosedSpace(const GfMatrix4d &transform, const GfMatrix4d &space)
 /// residual is what every OTHER mover contributes, which this function
 /// cannot see.
 ///
-/// WITHOUT a carry the correction falls back to conjugating by the SPACE's
-/// own scale: it fixes a scaled master and does nothing whatever for a
-/// translated or rotated one. It stays bit-identical, so a rig that names
-/// no space keeps the scale correction.
+/// No carry: conjugate by the space's scale only.
 ///
 /// The two never compose: a named carry already contains the master's
 /// scale, so applying the scale conjugation as well would apply it twice.
@@ -339,12 +334,11 @@ RigExecClusterInPointFrame(const GfMatrix4d &m, const GfMatrix4d &space,
 /// carry, wires under a turned master leave a non-rigid residual; with it,
 /// the rig is rigid to the floor every other mover leaves.
 ///
-/// Same guard rule as the cluster: called when a carry was NAMED, never
-/// because it is identity, so a rig naming nothing is bit for bit what it
-/// was. A named carry already holds the master's scale, so the scale-only
-/// correction an uncarried posed wire gets (its displacement multiplied by
-/// the measuring space's scale) is NOT applied beside it; the two never
-/// compose.
+/// Same guard rule as the cluster: called when a carry was NAMED, never because
+/// it is identity. A named carry already holds the master's scale, so the
+/// scale-only correction an uncarried posed wire gets (its displacement
+/// multiplied by the measuring space's scale) is NOT applied beside it; the two
+/// never compose.
 inline void
 RigExecCarryWireCurves(std::vector<GfVec3f> *rest, std::vector<GfVec3f> *posed,
                        const GfMatrix4d &carry)

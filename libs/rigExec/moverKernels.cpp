@@ -225,8 +225,7 @@ _BuildStaticWeightPacket(const VdfContext &ctx)
     inputs.defaultWeight = def ? *def : 0.0f;
     inputs.values = _CollectScalars<float>(ctx, _tokens->values);
     // rigExec:indices pairs with the values in the sparse representation
-    // and means nothing in the other two, which is why the callback this
-    // replaced never dereferenced its iterator outside that arm either.
+    // and means nothing in the other two.
     if (inputs.representation == rigExec::SchemaValueText::sparse) {
         inputs.indices = _CollectScalars<int>(ctx, _tokens->indices);
     }
@@ -286,8 +285,7 @@ _ReadAxisScales(const VdfContext &ctx, GfVec3f *scales)
 // The inputs every volumetric shape reads, LESS the point arrays.
 // The points are a whole mesh, so they are gathered separately, after
 // RigExecVolumeWeightCanBuild has said the volume can produce a field at
-// all -- the callbacks this replaced checked the placement before
-// touching a single point for the same reason.
+// all.
 rigExec::RigExecVolumeWeightInputs
 _ReadVolumeWeightInputs(const VdfContext &ctx)
 {
@@ -491,7 +489,7 @@ _EvaluateMatrixPointArrayExpression(const VdfContext &ctx)
         passThrough();
         return;
     }
-    // CPU SIMD over the contiguous elements (spec 6.5): parity-gated
+    // CPU SIMD over the contiguous elements: parity-gated
     // against the scalar reference; RIGEXEC_ENABLE_SIMD=false forces the
     // scalar path for debugging.
     auto out = VdfReadWriteIterator<GfVec3f>::Allocate(ctx, count);
@@ -639,7 +637,7 @@ _ComputeRibbonFrames(const VdfContext &ctx)
     // The joints' rest references, in rigExec:joints order, and which of
     // them a pose step BELOW the ribbon wrote (RigExecPointFrameLiveRest).
     // A live one re-bases its sample so the step's frame is carried through
-    // the ribbon instead of replaced (spec 4.2); every other sample keeps the
+    // the ribbon instead of replaced; every other sample keeps the
     // rest curve, which is what leaves an unstacked ribbon untouched.
     std::vector<std::array<GfVec3d, 4>> jointRests;
     std::vector<bool> jointRestLive;
@@ -869,7 +867,7 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecRibbon)
                 .InputName(_tokens->driverPoints));
 }
 
-// Operation/type-specific Phase 3 property applications:
+// Per-operation property applications:
 // each host's frozen signature consumes the preceding exact-typed vector,
 // the realizing mover's computeMoverParameters, and computeMoverStatus.
 

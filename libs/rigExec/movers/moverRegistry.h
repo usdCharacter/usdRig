@@ -178,12 +178,10 @@ struct RigExecMoverHandler {
     std::optional<RigExecRevisionOp> (*resolveOp)(const TfToken &curveMode);
     /// Which value domain the mover revises (see RigExecMoverDomain).
     RigExecMoverDomain domain;
-    /// v0.1: exactly one canonical target. A fan-out would alias the
-    /// mover-level parameters across targets.
+    /// Exactly one target: a fan-out would alias mover params.
     bool singleTarget = false;
     /// The handler's validate() owns the target rules outright (matrix
-    /// and skin, whose diagnostics predate the generic check); the
-    /// generic target validation is skipped for it.
+    /// and skin); the generic target validation is skipped for it.
     bool customTargetValidation = false;
     /// Relationships naming frame providers, for the pose-cycle check.
     /// Empty for movers that read no frames.
@@ -195,11 +193,8 @@ struct RigExecMoverHandler {
     /// the same check. Null for movers with none (only the matrix mover
     /// measures against a space).
     const char *spaceRelationship = nullptr;
-    /// The concrete envelope property this mover's schema used before
-    /// MoverAPI inputs:defaultWeight replaced it. An authored value is a
-    /// strict-migration compile error (an old layer opinion would
-    /// otherwise compose as a custom attribute and be ignored
-    /// silently). Null for movers with no such predecessor.
+    /// Pre-MoverAPI envelope attr; authoring it is a compile error. Null for
+    /// movers with none.
     const char *legacyEnvelopeAttribute = nullptr;
     /// Mover attributes the compiled rig layout is assembled from (skin only):
     /// override tracking re-reads exactly these on a notice.
@@ -297,22 +292,7 @@ struct RigExecMoverHandler {
 /// External libraries identify this contract with
 /// Info.RigExecMoverPlugin in their OpenUSD plugInfo.json. Plugins must also
 /// use the same compiler, USD build, and RigExec SDK as the host.
-/// Version 2 added encodeExternal and runtimeKernel to the handler.
-/// Version 4 declares sampled external inputs, detached compileScene facts,
-/// and explicit phased oracle lookups.
-/// Version 3 passes the oracle context to RigExecReadPhasedPoints and adds
-/// RigExecMoverOracleContext::entering.
-/// Version 5 adds RigExecExternalKernel::applyWithProviders, which hands a
-/// playback kernel the provider values its binding reads.
-/// Version 6 adds windowed movers: the handler's windowFrames, captureWindow,
-/// applyWindow and applyWindowDevice, and RigExecExternalKernel::
-/// captureWindow and applyWindow. Both structs grew, so a plugin built for 5
-/// is rebuilt.
-/// Version 7 adds windowFramesScene, required of a windowed mover.
-/// Version 8 stores the handler's schema type as std::string_view instead of
-/// const char *, so the first field's size and layout change: a plugin built
-/// for 7 must be rebuilt, and the loader refuses it before loading the
-/// library.
+/// Bump on any handler/kernel ABI change; loader refuses mismatch.
 inline constexpr int RigExecMoverPluginApiVersion = 8;
 
 /// Registers one mover, retaining an immutable copy and its schema name.

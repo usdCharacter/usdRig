@@ -6,9 +6,8 @@
 #include "rigExec/gpuCloth.h"
 // The baked program's geometry half: the chain/revision bake and the frame
 // path that runs those revisions and the derived maintenance behind them.
-// Split out of bakedProgram.cpp for the reason bakedPose.cpp was: a domain's
-// bake and its frame path have to agree about what was captured and what is
-// re-read. The evaluator is not visible here -- the compiled chains arrive
+// Geometry-domain bake and frame path; must agree on captured vs re-read
+// state. The evaluator is not visible here -- the compiled chains arrive
 // restated as RigExecBakedChainSpec, and the caches the frame path shares
 // with the dynamic walk were captured into RigExecBakedProgramImpl at Build.
 #include "bakedOpValues.h"
@@ -223,17 +222,16 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
                 B.windowedOps.push_back(std::move(window));
             }
         }
-        // The packet is assembled live from this prim every frame through
-        // the generation's resolved inputs: nothing of it is captured, so a
-        // value edit needs no rebuild and an override places itself. The
-        // layout arrays are still NAMED, because bakeability judged them --
-        // connecting one is a resync, and the judgement was that none is
-        // connected. The weights do not belong in `rebuild`: the SkinTopology
-        // op holds the layout, and its layout leaves are filed under these
-        // paths, so a weight-paint edit reaches the next generation through
-        // the re-read rather than through a rebuild of this program. The
-        // indices and element size are topology, and go to `rebuild` with
-        // the other topology reads below.
+        // The packet is assembled live from this prim every frame through the
+        // generation's resolved inputs: nothing of it is captured, so a value
+        // edit needs no rebuild and an override places itself. The layout
+        // arrays are still NAMED: IsBakeable requires unconnected layout
+        // arrays; connecting one resyncs. The weights do not belong in
+        // `rebuild`: the SkinTopology op holds the layout, and its layout
+        // leaves are filed under these paths, so a weight-paint edit reaches
+        // the next generation through the re-read rather than through a rebuild
+        // of this program. The indices and element size are topology, and go to
+        // `rebuild` with the other topology reads below.
         B.prims.insert(r.moverPath);
         for (const SdfPath &structural : r.binding.externalStructure) {
             if (structural.IsPropertyPath())
@@ -383,9 +381,8 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
                        r.binding.transformSpace);
             }
         }
-        // rigExec:space: the rig's carry. Refused on a miss for the same
-        // reason the measuring space is -- a carry that quietly resolved to
-        // nothing looks exactly like the bug it was named to fix.
+        // rigExec:space: the rig's carry. Refused on miss: an unresolved
+        // carry must not become identity.
         if (!r.binding.carrySpace.IsEmpty()) {
             out.carrySpaceSlot = slotOf(r.binding.carrySpace);
             if (out.carrySpaceSlot < 0) {
@@ -3443,8 +3440,8 @@ AssembleRevisionFromStage(RigExecBakedProgramImpl &B,
         RigExecBakedOverlayPointReads(&B, revision, R, diagnostics);
         values.resolved = &revision->revisionInputs;
     }
-    // Independent host-side reference keeps the original stage Get route;
-    // it must not reuse the production leaf-built layout handle.
+    // Independent host-side reference reads via stage Get; must not reuse the
+    // production layout handle.
     for (auto &channel : revision->blendChannels)
         for (auto &sample : channel.samples) {
             if (sample.blendShape.IsEmpty())
@@ -6453,8 +6450,8 @@ RigExecBakedResolvePathLeaf(const RigExecBakedProgramImpl &B,
         return VtValue();
     VtValue value = k < leaves.values.size() ? leaves.values[k] : VtValue();
     const auto &key = leaves.decl.keys[k];
-    // The compiled typed walk owns overlay selection and the original
-    // tail-first authored fallback. A direct version shortcut must not
+    // The compiled typed walk owns overlay selection and the tail-first
+    // authored fallback. A direct version shortcut must not
     // discard that fallback when a produced opinion is absent or mistyped.
     if (key.flavour != RigExecRevisionLeafFlavour::Present &&
         k < leaves.walks.size() && leaves.walks[k] >= 0)

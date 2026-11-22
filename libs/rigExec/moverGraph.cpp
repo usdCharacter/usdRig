@@ -1209,8 +1209,7 @@ RigExecApplyDerivedKernel(RigExecRevisionOp op, const RigExecMoverParameters &p,
            RigExecApplyDerivedKernel(op, p, pts->data(), pts->size(), pts);
 }
 
-// Every revision operation, over the same kernels the revision node ran when
-// they were lambdas inside its VdfContext callback.
+// Revision ops shared by the mover-graph node and the baked program.
 // ONE definition, called by the mover-graph revision node and by the baked
 // program: a second copy of a deformation agrees on the fixtures that exist
 // and drifts on the ones that do not.
@@ -2440,8 +2439,7 @@ _RecordedInput(const UsdPrim &prim, const TfToken &name, T fallback,
     return _Read<T>(prim, name, fallback, time, resolved);
 }
 
-// Forward declaration: the matrix assembler below predates the hook
-// helpers and consumes the same enabled contract through them.
+// Forward declaration: defined below.
 bool _Enabled(const UsdPrim &prim, UsdTimeCode time,
               const RigExecResolvedInputs *resolved);
 
@@ -2656,8 +2654,8 @@ RigExecStatusForParameters(const RigExecMoverParameters &parameters,
         status.state = _valueTokens->ok;
     } else {
         status.state = _valueTokens->moverFailed;
-        // First bad canonical public address: v0.1 reports the
-        // failed mover's own path.
+        // First bad canonical public address: reports the failed mover's
+        // own path.
         status.firstBadAddress = moverText;
     }
     return status;
@@ -2747,7 +2745,7 @@ _Enabled(const UsdPrim &prim, UsdTimeCode time,
 // leaf assemblers so the two cannot disagree. Each answers false where its
 // arm leaves the packet invalid. \p influences is the table of the frame
 // providers binding.influences names, or null. Matrices are row-vector
-// affine maps; the identity defaults reproduce the legacy deformation.
+// affine maps; the identity defaults reproduce the plain deformation.
 
 // deltaMush: the smoothing settings and the computation-to-target map,
 // carried by the frame provider when one is bound. A computation space
@@ -3244,17 +3242,13 @@ RigExecSumBlendChannels(const std::vector<RigExecBlendChannel> &channels,
         const RigExecBlendSampleData &hiSample = channel.samples[hi];
 
         if (!hiSample.layout && (!loSample || !loSample->layout)) {
-            // The all-dense case, kept letter for letter as it was. The
-            // sparse branch below is algebraically the same lerp but not
-            // BIT-identical -- `dLo*(1-t) + dHi*t` and `dLo + (dHi-dLo)*t`
-            // round differently in the last place -- and examples/
-            // 04_BlendShapeFace.usda plus testRigExecArm's blend tests are
-            // gates on this path's exact output. Nothing that only ever
-            // authored targetPoints should move by even an ulp.
+            // The all-dense case. Must stay bit-identical; gated by
+            // 04_BlendShapeFace and arm blend tests. The sparse branch below
+            // is the same lerp but rounds differently in the last place.
             const GfVec3f *lo = loSample ? loSample->PointData() : nullptr;
             const GfVec3f *hiPts = hiSample.PointData();
             // Each point is independent and every point's contribution keeps
-            // the original channel-order accumulation, so spreading the point
+            // channel-order accumulation, so spreading the point
             // range across workers is bit-identical to the serial loop. The
             // per-channel setup above (weights, hi/lo sample pick, t) is cheap
             // and stays sequential; only the O(points) inner loop parallelises.
@@ -3453,7 +3447,7 @@ RigExecAssembleParameters(const UsdPrim &moverPrim, RigExecRevisionOp op,
             moverPrim,
             moverPrim.GetPath().AppendProperty(_attrTokens->restPoints),
             UsdTimeCode::Default(), values.resolved);
-        // The extended settings; their defaults are the legacy deformation.
+        // The extended settings; their defaults are the plain deformation.
         if (!_DeltaMushSettings(
                 _RecordedInput<TfToken>(
                     moverPrim, _attrTokens->smoothing, _valueTokens->rest,
@@ -3572,8 +3566,8 @@ RigExecAssembleParameters(const UsdPrim &moverPrim, RigExecRevisionOp op,
     }
 
     case RigExecRevisionOp::Lattice: {
-        // rigExec:evaluation picks the legacy Bernstein cage or the regular
-        // grid; only the grid reads the settings after it.
+        // rigExec:evaluation picks the Bernstein cage ("legacy") or the
+        // regular grid; only the grid reads the settings after it.
         const TfToken evaluation = _RecordedInput<TfToken>(
             moverPrim, _attrTokens->evaluation, _valueTokens->legacy, time,
             values.resolved);
@@ -3643,10 +3637,9 @@ RigExecAssembleParameters(const UsdPrim &moverPrim, RigExecRevisionOp op,
     }
 
     case RigExecRevisionOp::SurfaceProject: {
-        // Fixed at full, matching _BuildSurfaceMoverParameters: v0.1
+        // Fixed at full, matching _BuildSurfaceMoverParameters:
         // attach/project maps fully. RigExecSurfaceMover declares no
-        // inputs:strength, so reading one here silently applied a 0.5
-        // default and projected half way.
+        // inputs:strength.
         params.strength = 1.0f;
         params.auxPoints = _Array<GfVec3f>(moverPrim, binding.surfacePoints,
                                            time, values.resolved);
@@ -4116,7 +4109,8 @@ RigExecDeclareRevisionLeaves(RigExecRevisionOp op, const SdfPath &moverPath,
             Time::AtTime, Flavour::Raw,
             VtValue(RigExecMoverParameters().divisions));
         // The evaluation and the regular grid's settings, each read through
-        // the resolved inputs. A legacy lattice reads only the evaluation.
+        // the resolved inputs. A Bernstein lattice (evaluation "legacy") reads
+        // only the evaluation.
         add(Role::LatticeEvaluation, mover(_attrTokens->evaluation),
             Type::Token, Time::AtTime, Flavour::Resolved,
             VtValue(_valueTokens->legacy));

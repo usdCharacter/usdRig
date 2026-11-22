@@ -1442,11 +1442,7 @@ RigExecComparePoses(const RigExecRigPose &reference,
                 return a.size() == b.size() &&
                        std::equal(a.begin(), a.end(), b.begin(), sameFrame);
             });
-    // The weight domains. They were compared here before anything could
-    // fill them, which is why a weight object's very first baked generation
-    // was measured against the dynamic path instead of against a comparator
-    // that had never been taught to look -- and they are both filled now: a
-    // mover's resolved field, and where every volume weight ended the walk.
+    // Weight domains: per-mover resolved field and per-volume placement.
     // A field is equal iff it weights the same property with the same
     // floats, bit for bit -- a resolved field is what a mover actually
     // consumed, and an element one path clamped and the other did not is
@@ -3071,8 +3067,7 @@ RigExecBakedProgram::_BuildWithSceneCapture(
                 keys.end())
                 keys.push_back(step.descriptorKey);
         }
-        // The shared compiler keeps the original aligned SCC report. No
-        // historical slot number or generated scheduling edge is retained.
+        // SCC report stays aligned to authored slots; no generated edges kept.
         exclusionProof.cycles = B.opGraph.cycles;
         exclusionProof.cycleMembers = B.opGraph.cycleMembers;
     }
@@ -3247,9 +3242,6 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     }
     const UsdTimeCode capture = ctx.capture;
     const std::set<SdfPath> &chainTargets = ctx.chainTargets;
-    // The bodies below were written against these as lambdas of this
-    // function, and the bake functions in the other two files were split out
-    // of the same bodies; naming them keeps both sides reading alike.
     auto refuse = [&](const std::string &what, const SdfPath &where) {
         ctx.Refuse(what, where);
     };
@@ -3356,24 +3348,21 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     B.ladders.resize(size_t(N));
     for (auto &ladder : B.ladders)
         ladder.interveningSpace.constant = GfMatrix4d(1.0);
-    // Fifteen composed-stage resolutions per provider slot, and on a
-    // character this loop is the other of the two places Build spends most
-    // of its time -- see the input binding table below, which is the same
-    // shape of problem at eleven channels instead of fifteen and was split
-    // the same way. ResolveBind only READS the stage and `chainTargets`, so
-    // the fifteen calls for one slot don't depend on any other slot's, and
-    // the resolve half moves to a parallel pass. The three space bindings
-    // are matrices, the rotation order a token and the twelve avars
-    // doubles, so ResolveBind's typed result is kept typed rather than
+    // Fifteen composed-stage resolutions per provider slot, and on a character
+    // this loop is the other of the two places Build spends most of its time --
+    // see the input binding table below, which is the same shape of problem at
+    // eleven channels instead of fifteen. ResolveBind only READS the stage and
+    // `chainTargets`, so the fifteen calls for one slot don't depend on any
+    // other slot's, and the resolve half moves to a parallel pass. The three
+    // space bindings are matrices, the rotation order a token and the twelve
+    // avars doubles, so ResolveBind's typed result is kept typed rather than
     // forced into one array -- each paired with its walk, same as
-    // _AvarResolution.
-    // The commit's order-free half runs in the same pass: each chunk of
-    // slots records its folds and bindings into a shard of its own (see
-    // RigExecBakedRecordBind), in the slot-then-channel order the serial
-    // commit used, and the shards are merged in chunk order after the
-    // bakeability join. Recording before the join is safe because a shard
-    // is scratch -- nothing reaches the program until the merge, and a
-    // refused rig never merges.
+    // _AvarResolution. The commit's order-free half runs in the same pass: each
+    // chunk of slots records its folds and bindings into a shard of its own
+    // (see RigExecBakedRecordBind), in slot-then-channel order, and the shards
+    // are merged in chunk order after the bakeability join. Recording before
+    // the join is safe because a shard is scratch -- nothing reaches the
+    // program until the merge, and a refused rig never merges.
     RigExecProfilePhases bindPhases(&E._profiler, "compile");
     bindPhases.Next("Bake.ladder.resolve");
     struct _LadderResolution {
@@ -3537,7 +3526,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
             // An xform-derived slot has no rest chain and no default-space
             // ladder: the dynamic path gives it the identity rest frame
             // outright and reads its pose off the stage.
-            // SI-6, invalidation-index coverage: the prim and every ancestor
+            // Invalidation-index coverage: the prim and every ancestor
             // whose transform the prologue composes go into B.prims, so a
             // RESYNC that retypes or reparents one rebuilds the program. Only
             // in B.prims: value notices must not rebuild (the prologue
@@ -4388,7 +4377,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     // The property revisions as head-tier ops, ordered by what they read and
     // refused when that order cannot be trusted.
     // Envelope objects retain their own oracle consumers and do not produce
-    // mover packets. Register their bindings after all original bindings.
+    // mover packets. Register their bindings after the bindings registered
+    // above.
     const size_t packetObjects = B.weightObjects.size();
     for (const auto &constraint : B.constraints)
         if (!constraint.weightObject.IsEmpty() &&
@@ -4576,7 +4566,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
                 B, B.providerRoutedReads[size_t(step.object)], &step.reads);
     // Keep authored revision identity stable when an earlier optional
     // revision was withdrawn. Runtime array indices remain dense and local;
-    // only the compiler descriptor key uses the original authored position.
+    // only the compiler descriptor key uses the authored position.
     const auto authoredRevision = [&](const SdfPath &chain,
                                       const SdfPath &owner,
                                       const SdfPath &target, bool derived) {
@@ -4935,7 +4925,7 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
     // denominator stood still.
     double prologueUs = 0, regionUs = 0;
 
-    // Capture required target sources in original order. A failed read is
+    // Capture required target sources in authored order. A failed read is
     // request-wide typed admission refusal, not a degenerate numerical frame.
     const auto stageFrames = [&B, &E, time]() {
         B.requiredStageFramesAdmission = RigExecRequiredStageFramesAdmission();

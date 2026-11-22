@@ -54,9 +54,8 @@ RigExecControlIdForOverride(const RigExecValueOverride &o)
            o.attribute.GetString();
 }
 
-/// `dirty ∩ affecting(requested)`: the brief's lazy dirty set (p. 10) as bit
-/// arrays over clusters. Either side may be shorter than the other; missing
-/// words read as zero.
+/// `dirty ∩ affecting(requested)` as bit arrays over clusters. Either side may
+/// be shorter than the other; missing words read as zero.
 RigExecBakedClusterSet
 RigExecIntersectClusterSets(const RigExecBakedClusterSet &dirty,
                             const RigExecBakedClusterSet &affecting);

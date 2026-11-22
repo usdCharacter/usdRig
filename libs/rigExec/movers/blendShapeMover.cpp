@@ -343,16 +343,8 @@ _OracleBlendShapeMover(const rigExec::RigExecMoverOracleContext &ctx)
             break;
         }
         float channel = 0;
-        // Through the resolver, NOT straight off the stage.
-        // An authored `inputs:weight` and a DRIVEN one are the same
-        // attribute; a plain Get() sees only the first. The moment
-        // anything connects a weight -- which is the entire point of
-        // a pose-space rig, where an interpolator drives every
-        // corrective -- this oracle read 0 while the real path read
-        // the driven value, and then reported the disagreement as a
-        // parity mismatch in the blend kernel. The packet assembly
-        // has always used _resolvedInputs here; this is the oracle
-        // catching up to it.
+        // Through the resolver so driven weights are seen: a plain Get()
+        // sees only an authored `inputs:weight`.
         resolved.GetAttribute(input.GetAttribute(_oracleToken1), time,
                               &channel);
         if (!std::isfinite(channel)) {
@@ -461,9 +453,7 @@ _OracleBlendShapeMover(const rigExec::RigExecMoverOracleContext &ctx)
                 stage->GetAttributeAtPath(shapeTargets[0]);
             bool gotShape = shapeAttr && shapeAttr.Get(&s.shape, time);
             // A phased sample read answers from the recorded
-            // snapshot, resolved through the compiled chain exactly
-            // as the in-evaluator oracle did before this branch
-            // moved here.
+            // snapshot, resolved through the compiled chain.
             if (const VtValue *value =
                     ctx.sampleSnapshot(inputPath, samplePath)) {
                 if (value->IsHolding<VtVec3fArray>()) {

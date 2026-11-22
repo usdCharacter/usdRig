@@ -53,7 +53,6 @@ using namespace evaluatorDetail;
 
 namespace {
 
-// Bodies sit next to the dispatch they replaced.
 RigExecPointFrame _SolvePositionConstraint(const _ConstraintSolveContext &);
 
 RigExecPointFrame _SolveRotationConstraint(const _ConstraintSolveContext &);

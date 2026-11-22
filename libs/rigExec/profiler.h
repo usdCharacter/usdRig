@@ -137,9 +137,7 @@ public:
     /// replay would put every step on the epilogue's row and the trace would
     /// claim a parallel frame ran on one thread.
     ///
-    /// A default-constructed \p runner means "no thread said", and lands on
-    /// the calling thread's row, so a caller with nothing to pass gets the
-    /// old behaviour rather than a bogus row of its own.
+    /// Default runner: the calling thread's row.
     void RecordOn(std::thread::id runner, std::string name,
                   std::string category, uint64_t startUs, uint64_t endUs,
                   std::map<std::string, std::string> args = {}) const

@@ -2,10 +2,8 @@
 // The baked program's pose half: the interleaved solver/constraint walk, at
 // bake and at run, plus the rest->pose matrices and the frame publication it
 // feeds.
-// Split out of bakedProgram.cpp so that a domain's bake and its frame path
-// are read side by side -- the two have to agree about what was captured and
-// what is re-read, and that agreement is the whole correctness argument. The
-// evaluator is not visible here: everything this file needs of it was
+// Pose-domain bake and frame path; must agree on captured vs re-read state.
+// The evaluator is not visible here: everything this file needs of it was
 // captured into RigExecBakedProgramImpl at Build (see bakedProgramImpl.h),
 // and the compiled walk arrives restated as RigExecBakedWalkEntry.
 #include "bakedProgramImpl.h"
@@ -173,9 +171,6 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
 {
     RigExecBakedProgramImpl &B = *ctx->program;
     const int N = int(B.paths.size());
-    // The bake bodies below were lambdas of Build and closed over its
-    // helpers; naming them here keeps each body the one that was reviewed
-    // against the dynamic walk it mirrors.
     auto refuse = [&](const std::string &what, const SdfPath &where) {
         ctx->Refuse(what, where);
     };
@@ -301,7 +296,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                                       useRemap ? elements[k] : int(k));
             }
             s.restRefs = restRefs;
-            // The LIVE half (spec 4.2): a rest ref whose joint a pose step
+            // The LIVE half: a rest ref whose joint a pose step
             // BELOW this solver already wrote is measured from the frame that
             // step left, not from the authored rest. This is the baked mirror
             // of the dynamic path computeRestFrame override, and it is bound
@@ -1315,7 +1310,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 prim.GetAttribute(_tokens->inputsAimVector);
             // Whether it is authored, not what it holds: the value stays a
             // per-frame read (and so an override can stand on it), but the
-            // choice between aimVector and the legacy aimAxis is baked.
+            // choice between aimVector and aimAxis is baked.
             foldShape(prim, _tokens->inputsAimVector);
             c.aimVectorAuthored = aimAttr && aimAttr.HasAuthoredValueOpinion();
             // aimAxis applies when aimVector is unauthored.
@@ -1335,7 +1330,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             c.sceneUp = (up == "Z" || up == SchemaValueText::z)
                             ? GfVec3d(0, 0, 1)
                             : GfVec3d(0, 1, 0);
-            // The legacy aimTarget/aimAxis contract preserves input up; FBX
+            // The aimTarget/aimAxis contract preserves input up; FBX
             // WorldUpType=None is the distinct minimum-swing mode.
             c.preserveInputUp = targets(prim, _tokens->rigExecSources).empty();
             c.worldUpObjectNamed = !fc.worldUpObject.IsEmpty();
@@ -2480,7 +2475,7 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
                 // The LIVE joint rests: a solver whose rest reference is the
                 // frame a pose step below it left READS that slot's PoseFin,
                 // and a read a step does not declare is a read the scheduler
-                // is free to run before the write (spec 4.2, live rests).
+                // is free to run before the write.
                 // Empty on every solver with no step below it.
                 if (solver.hasLiveRest) {
                     for (size_t k = 0; k < solver.restRefs.size(); ++k) {
@@ -4988,7 +4983,7 @@ RefreshSolverRests(const RigExecBakedProgramImpl &B,
     RigExecBakedProgramImpl::Solver &s = *solver;
     // Where a rest ref is LIVE, the rest is the frame the pose step below this
     // solver left -- read off the ladder by the version bindSolverReads bound
-    // -- and not the authored rest of the slot (spec 4.2). Every arithmetic
+    // -- and not the authored rest of the slot. Every arithmetic
     // line below is written against these two accessors and needs no other
     // change.
     const auto liveRest = [&s, &B](size_t k) {
@@ -5604,8 +5599,7 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
         // leaves every reader bound to it -- the matrices and the
         // publication among them -- reading whatever the last run left
         // there. Reachable only from a batch whose every solver published an
-        // empty aggregate, which until RigExecTwistDistribution baked no rig
-        // in the tree could produce.
+        // empty aggregate.
         if (!commit.abandoned) {
             ComputeCommitDeltas(B, &commit);
             StageCommitPairs(B, &commit, 0, commit.propagate.size());
@@ -5721,27 +5715,22 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
             return;
         }
         // The envelope, in the dynamic path's THREE exclusive arms. A
-        // constraint copies the ORACLE -- the dynamic constraint path does
-        // not go through exec at all, it calls _ResolveWeights and takes its
-        // error string -- so this calls the same function with the same
-        // arguments and the answer is identical by construction.
-        // The finite-[0, 1] check belongs to the OTHER arm and must not be
-        // applied to a resolved envelope: the dynamic path does not check
-        // there, so checking would emit a diagnostic it never emits.
-        // The third arm is a GEOMETRY-domain constraint that binds a weight
-        // object, and it is the one this block did not have while the two
-        // features lived on different branches: weight objects on
-        // constraints were this group's, geometry-domain constraints were
-        // another's, and neither branch alone could build the rig that needs
-        // it. Such a constraint resolves NO envelope here. Its weight is per
-        // POINT and resolves after the solve, on the revision this delta
-        // feeds -- and because a constraint and its revision are the same
-        // mover prim, that revision's own weight packet IS this constraint's
-        // weight object. Leaving `weight` at 1.0 is what hands the revision
-        // a full-strength delta for the per-point lerp to scale; resolving
-        // one element here instead would apply a one-point answer to the
-        // whole mesh AND square the envelope on the point the packet also
-        // covers.
+        // constraint copies the ORACLE -- the dynamic constraint path does not
+        // go through exec at all, it calls _ResolveWeights and takes its error
+        // string -- so this calls the same function with the same arguments and
+        // the answer is identical by construction. The finite-[0, 1] check
+        // belongs to the OTHER arm and must not be applied to a resolved
+        // envelope: the dynamic path does not check there, so checking would
+        // emit a diagnostic it never emits. The third arm is a GEOMETRY-domain
+        // constraint that binds a weight object. Such a constraint resolves NO
+        // envelope here. Its weight is per POINT and resolves after the solve,
+        // on the revision this delta feeds -- and because a constraint and its
+        // revision are the same mover prim, that revision's own weight packet
+        // IS this constraint's weight object. Leaving `weight` at 1.0 is what
+        // hands the revision a full-strength delta for the per-point lerp to
+        // scale; resolving one element here instead would apply a one-point
+        // answer to the whole mesh AND square the envelope on the point the
+        // packet also covers.
         double weight = 1.0;
         if (!c.weightObject.IsEmpty() && c.pointsTarget.IsEmpty()) {
             const auto &field = B.weightFields[size_t(c.weightField)];
@@ -6310,7 +6299,7 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
                 RigExecBakedUsable(B.restFrames[slot]) &&
                 RigExecBakedUsable(frame) &&
                 RigExecPointsToMatrix(B.restPts[slot], frame.points, &matrix);
-            // Unavailable final frames retain ORIGINAL's identity provider.
+            // Unavailable finals keep the identity provider.
             // The rest/base fallback is only meaningful for a usable final;
             // PointsToMatrix validates its reference basis, not NaN pose data.
             if (!primary && RigExecBakedUsable(frame)) {
@@ -6458,8 +6447,7 @@ RigExecBakedPublishPose(RigExecBakedProgramImpl *program, RigExecRigPose *pose)
     // SCC-excluded solvers did not attempt publication this generation.
     // The canonical operation inventory is the authority, not authored bindings.
     const std::vector<char> &aliveSolver = B.epilogue.aliveSolver;
-    // ORIGINAL's property prologue reported the semantic chain/part
-    // inventory before pose diagnostics.
+    // Chain/part inventory is reported before pose diagnostics.
     RigExecBakedAppendStepLines(&B, RigExecBakedStepLines::Property,
                                 &pose->diagnostics);
     // The walk's diagnostics, in step order: commit lines, constraint lines,

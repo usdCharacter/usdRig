@@ -34,7 +34,7 @@ namespace {
 // Re-bases one aggregate element onto a joint's rest reference.
 // The element's own rest->pose map is measured from \p ownRest and applied to
 // \p jointRest instead, so the frame a pose step BELOW this solver left is
-// carried through the solve rather than replaced (spec 4.2). Used only where
+// carried through the solve rather than replaced. Used only where
 // such a step really wrote the joint, which is what keeps every other rig
 // bit-identical.
 bool

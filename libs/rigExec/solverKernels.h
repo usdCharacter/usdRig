@@ -44,7 +44,7 @@ struct RigExecPointFrameArray;
 /// \p jointRests, when non-empty and one per sample, re-bases each sample:
 /// the rest->pose map the curve gives is applied to the joint's rest
 /// reference instead of to the rest curve's own sample, so a pose step below
-/// the ribbon is carried through it (spec 4.2). \p jointRestLive selects the
+/// the ribbon is carried through it. \p jointRestLive selects the
 /// samples that were really written; the others keep the rest curve.
 RigExecPointFrameArray RigExecSampleRibbonFrames(
     const std::vector<GfVec3f> &posed,

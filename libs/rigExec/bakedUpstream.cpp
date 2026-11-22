@@ -162,8 +162,8 @@ RigExecUpstreamDropReason(const UsdStageRefPtr &stage,
     if (!array) {
         return std::string();
     }
-    // Condition 4: the element count of the stage value at this time, from
-    // the memo while the stage cannot vary it.
+    // RigExecUpstreamDropReason condition 4: the element count of the stage
+    // value at this time, from the memo while the stage cannot vary it.
     const auto known =
         memo ? memo->find(path) : RigExecUpstreamCountMemo::iterator();
     size_t count = 0;

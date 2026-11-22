@@ -1304,7 +1304,7 @@ RigExecBakedReadOracleScalar(const RigExecBakedProgramImpl &B,
         };
         for (const auto &hop : hops) {
             // Interpolator publications are Float values; a fresh Double
-            // traversal keeps its original typed policy and does not widen them.
+            // traversal keeps its typed policy and does not widen them.
             if (!asDouble && hop.poseWeight >= 0) {
                 *out = B.poseWeights[size_t(hop.poseWeight)];
                 return true;

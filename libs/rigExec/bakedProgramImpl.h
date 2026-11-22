@@ -2514,7 +2514,7 @@ struct RigExecBakedConstraintSpec {
     /// the two bindings it resolves beside its sources.
     SdfPathVector ikChain;
     /// Parallel to ikChain: 1 where a pose step BELOW this constraint wrote
-    /// that joint, so the chain measures from what that step left (spec 4.2).
+    /// that joint, so the chain measures from what that step left.
     std::vector<char> ikRestLive;
     SdfPath effector, effectorXform;
     SdfPathVector poleObjects, poleObjectXforms;
@@ -2584,7 +2584,7 @@ struct RigExecBakedWalkEntry {
     /// Per solver, the joints whose REST is LIVE: a pose step below this
     /// solver in the rig's hierarchical stack already wrote them, so the
     /// solver measures from the frame that step left rather than from the
-    /// authored rest (spec 4.2). Empty on every rig with no pose step below a
+    /// authored rest. Empty on every rig with no pose step below a
     /// solver that writes one of its joints, which is every shipped rig.
     std::vector<SdfPathVector> solverLiveRestJoints;
     /// Constraints only.
@@ -2807,27 +2807,7 @@ RigExecBakedBuildContext::ResolveBind(const UsdPrim &prim, const TfToken &name,
             input.resolvedAttr = prim.GetAttribute(name);
         }
     }
-    // And a SPLINE is read the long way for the same reason, one step
-    // further out: a UsdAttributeQuery pinned to a spline-valued attribute
-    // does not follow a later edit to that spline. A query re-reads a time
-    // sample and a default -- it holds where the value comes from, and the
-    // layer it names still has the new number -- but it resolves the spline
-    // itself once and keeps answering from the copy it took, silently and
-    // with nothing downstream able to tell.
-    // That is not a hypothetical: Animation mode authors a released gizmo
-    // drag as a spline knot (gizmoMath.SetAnimated), so the FIRST release on
-    // a control creates the property spec -- a resync, which rebakes and
-    // pins a fresh query -- and every release after it re-authors that same
-    // knot, which is changed-info only. RigExecBakedRecordBind leaves a
-    // pinned-query input out of `rebuild` precisely because the query was
-    // supposed to answer such an edit, so nothing rebaked and the rig kept
-    // publishing the first drag's pose: the control moved under the preview
-    // and sprang back the moment the artist let go, until some other
-    // control's first release resynced and rebaked the program for it.
-    // Reading through the generation's resolved inputs is what the dynamic
-    // path does for the same attribute, so the two still agree by
-    // construction, and `live` in RigExecBakedRecordBind stays honest: the
-    // value really is re-read every frame now.
+    // Splines read via resolved inputs: a pinned query misses spline edits.
     if (input.varying && input.query.IsValid() &&
         input.query.GetAttribute().HasSpline()) {
         input.query = UsdAttributeQuery();

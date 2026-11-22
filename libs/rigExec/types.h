@@ -63,8 +63,6 @@ struct RigExecPointFrameArray {
     }
 };
 
-/// Immutable resolved weight field value published by weight objects
-/// (RigExecWeightPacket, v0.1 subset).
 /// A point array carried as ONE exec value.
 ///
 /// Exec models a `point3f[]` attribute as an output holding a vector of

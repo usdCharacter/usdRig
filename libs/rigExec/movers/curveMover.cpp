@@ -618,9 +618,8 @@ _OracleCurveMover(const rigExec::RigExecMoverOracleContext &ctx)
 }
 
 // rigExec:space, the wire's carry: at most one target, and a catalogued
-// matrix provider. Refused rather than dropped, as the matrix mover does,
-// because a carry that silently resolves to nothing looks exactly like
-// the shear it was named to remove.
+// matrix provider. Refused on miss, as the matrix mover does: an unresolved
+// carry must not become identity.
 bool
 _ValidateCurveMover(const rigExec::RigExecMoverValidateContext &ctx,
                     std::string *error)

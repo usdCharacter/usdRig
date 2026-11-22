@@ -321,7 +321,7 @@ RigExecMakeProductionStepRunner()
         *pose = RigExecRigPose();
         if (!context.frozen) {
             // No program to run: the rig was not frozen (refused at freeze
-            // time, or built before the executor landed). Decline -- hand
+            // time). Decline -- hand
             // the generation back -- and the frame evaluates live when
             // asked.
             return false;

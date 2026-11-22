@@ -63,8 +63,7 @@ struct RigExecWireBasis;
 ///     Get(Default) does not see time samples at all -- so for such an
 ///     attribute a Default read and a numeric read legitimately disagree,
 ///     and an entry keyed by path alone would serve whichever came first to
-///     both. A single-keyed inputs:enabled made the pose at a frame depend
-///     on which time codes the same evaluator had evaluated before it;
+///     both;
 ///   * invalidation: the owner drops, on every stage notice, every entry the
 ///     notice could have moved -- the changed property itself, everything
 ///     at or under a resynced or changed prim, and the whole cache for a

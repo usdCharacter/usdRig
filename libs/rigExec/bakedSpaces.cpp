@@ -1070,7 +1070,7 @@ RigExecBakedBindProviderRefresh(
         const auto &rows = externalInputsBySlot[size_t(slot)];
         externalRows.insert(externalRows.end(), rows.begin(), rows.end());
     }
-    // Keep the original external-input order, including duplicate owners.
+    // Authored external-input order, duplicates kept.
     std::sort(externalRows.begin(), externalRows.end());
     externalRows.erase(std::unique(externalRows.begin(), externalRows.end()),
                        externalRows.end());

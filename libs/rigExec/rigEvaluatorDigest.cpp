@@ -319,7 +319,7 @@ std::string
 RigExecRigEvaluator::_ComputeStructureDigest(unsigned segments,
                                              _DigestFootprint *footprint) const
 {
-    // The v0.1 compiled rig identity: canonical mover paths, schema
+    // Compiled rig identity: canonical mover paths, schema
     // types, targets, mover execution ordinals, and the structural dependency
     // wiring each operation declares — relationship identities, read
     // phases, weight-descriptor shape, and blend membership/activations.
@@ -667,7 +667,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(unsigned segments,
         // binding: the target must still resolve to a point3f[] attribute.
         // Hash that resolution so removing/retyping the source, or repairing
         // it in place without changing the relationship path, re-enters
-        // Compile and applies the same validation as the original authoring.
+        // Compile validation.
         for (const SdfPath &target : curveTargets) {
             const SdfPath pointsPath =
                 target.IsPropertyPath()
@@ -738,10 +738,6 @@ RigExecRigEvaluator::_ComputeStructureDigest(unsigned segments,
         // Rig output set. Discovered rather than authored, so the digest hashes the
         // discovered paths -- adding, removing, or renaming a joint prim changes
         // the compiled rig.
-        // Derived-property maintenance is unconditional now, so
-        // there is no policy token left to hash: what the compiler synthesizes depends
-        // only on which gprims author normals/extent, and that is already compiled rig
-        // identity through the points-chain targets below.
         const TfToken &kJointType = _tokens->rigExecJoint;
         const TfToken &kControlType = _tokens->rigExecControl;
         const TfToken &kInterpolatorType = _tokens->rigExecPoseInterpolator;
@@ -989,7 +985,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(unsigned segments,
     // Solver->joint wiring is compiled rig identity (view-free extraction): each
     // solver's ORDERED rigExec:joints list decides which joint
     // self-extracts which aggregate element, so adding, removing, or
-    // reordering joints changes what compile Pass 0 synthesizes. Order is
+    // reordering joints changes what compile's
+    // DiscoverValidate.SolverJointBinding block synthesizes. Order is
     // semantic (position = element index), so this list is never sorted.
     // The block a prim contributes is a pure function of (prim, composed
     // stage) -- it reads connections and namespace-frame providers and
@@ -1038,7 +1035,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(unsigned segments,
     // GetAttributeAtPath on first use. Function-local for the same reason as
     // the caches above.
     // _DigestUnmemoizedReads turns the memo off -- every read goes back to
-    // the stage, as it did before the memo existed -- which is what
+    // the stage -- which is what
     // RIGEXEC_VERIFY_DIGEST_MEMO compares this segment's bytes against.
     struct _DigestAttribute {
         bool exists = false;
@@ -1164,8 +1161,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(unsigned segments,
         // strong as the flattened set: any change to any input, type or
         // connection anywhere in a closure changes that provider's token
         // and therefore every token that folds it in -- and it also
-        // distinguishes WHICH provider an attribute arrived through, which
-        // the flat set merged.
+        // distinguishes WHICH provider an attribute arrived through.
         // Iterative post-order, not recursion: closures run hundreds deep.
         // A cycle cannot be closed over, so the edge that closes one
         // contributes a marker naming the path instead; Compile reports the
@@ -1382,7 +1378,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(unsigned segments,
         // missing sources and cycles included -- but read through the memo,
         // which by now already holds the prim's own attributes (the walk
         // above ran hopFor on it) and most of what they connect to. The
-        // solver cache keeps the stage-reading original.
+        // solver cache reads the stage directly.
         std::string block;
         std::set<SdfPath> connectionInputs;
         const _DigestHop *ownHop =
@@ -1428,8 +1424,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(unsigned segments,
         // walking cached away -- tens of MB of std::string concatenation per
         // evaluate. The digest as a whole is already collapsed to one size_t
         // by std::hash<std::string> on the way out, so folding a fixed-size
-        // hash of the block in here is the same kind of identity it already
-        // was: different closures give different tokens, and the surrounding
+        // hash of the block in here keeps the same kind of identity:
+        // different closures give different tokens, and the surrounding
         // structure (which prim, which relationship, which ancestor) stays in
         // plain text around it. The length goes in beside the hash, so two
         // blocks have to collide in both to be confused.
@@ -1506,7 +1502,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(unsigned segments,
     // THE PREFETCH, which is how this segment is split. The walk below stays
     // one serial walk, and must: a cycle marker names the prim the walk was
     // on when it closed the cycle, so the bytes depend on its order. What it
-    // spends its time on is not ordered, though. Most of the segment was one
+    // spends its time on is not ordered, though. Most of the segment is one
     // hop's worth of reads per prim -- its attributes, their type names and
     // connection sources, its namespace frame provider -- and the text those
     // attributes are written out as, and every piece of that is a pure
@@ -1673,8 +1669,9 @@ RigExecRigEvaluator::_ComputeStructureDigest(unsigned segments,
         // Recursive over the composed rig subtree (not GetChildren):
         // solvers live wherever the author put them, so every scope's
         // wiring must contribute to compiled rig identity
-        // (consistent with mover discovery and compile Pass 0).
-        // This walk's ORDER is now evaluation semantics, not only identity:
+        // (consistent with _DiscoverMovers and compile's
+        // DiscoverValidate.SolverJointBinding block).
+        // Visit order is evaluation semantics, not only identity:
         // the solver stack ordinal is the reverse of exactly this composed
         // pre-order, so two solvers writing one joint commit in the order
         // this loop visits them, reversed. Each segment leads with the
@@ -1863,7 +1860,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(unsigned segments,
                 }
                 digest += std::to_string(sc) + "/" +
                           std::to_string(a ? a.GetNumTimeSamples() : 0) + ",";
-                // The driver curve lowers (Pass 1.5) to generated
+                // The driver curve lowers (compile's
+                // DiscoverValidate.AggregateProviders block) to generated
                 // resolvedDriverPoints + a bind-time restDriverPoints
                 // capture, so rewiring it (or a layer-mute/variant switch
                 // that retargets it) is structural.
@@ -2258,8 +2256,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(unsigned segments,
             }
             // Pose-constraint wiring. Source order is semantic because every
             // source has a parallel weight (and Parent has parallel offsets),
-            // so it must never be sorted. aimTarget remains the legacy
-            // single-source spelling and is hashed for existing assets.
+            // so it must never be sorted. aimTarget: single-source spelling;
+            // hashed.
             appendRelTargets(prim, _tokens->rigExecAimTarget, false);
             appendRelTargets(prim, _tokens->rigExecSources, false);
             appendRelTargets(prim, _tokens->rigExecWorldUpObject, false);

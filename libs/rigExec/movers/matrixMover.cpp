@@ -66,9 +66,7 @@ _BuildMatrixMoverParameters(const VdfContext &ctx)
     // radial takes a fraction of the transform's ROTATION instead of a
     // fraction of the resulting position, so a partially weighted point
     // keeps its distance from the axis rather than cutting the chord.
-    // Read here AND in RigExecAssembleMatrixParameters: the biped runs its
-    // baked program, which never touches this builder, so a flag set only
-    // here is silently ignored on exactly the rig it was turned on for.
+    // Also read by RigExecAssembleMatrixParameters (baked path).
     const TfToken *blend =
         ctx.GetInputValuePtr<TfToken>(RigExecMoverExecTokens->weightBlendAttr);
     params.radialWeight = blend && *blend == _matrixTokens->radial;
@@ -252,9 +250,8 @@ _ValidateMatrixMover(const rigExec::RigExecMoverValidateContext &ctx,
         }
     }
     // rigExec:space, the rig's carry, held to the same two rules: at most
-    // one, and a catalogued provider. Refused rather than dropped, because
-    // a carry that silently resolved to nothing is exactly the bug it was
-    // added to fix, reappearing as a typo nobody is told about.
+    // one, and a catalogued provider. Refused on miss: an unresolved carry
+    // must not become identity.
     SdfPathVector carries;
     if (UsdRelationship rel = prim.GetRelationship(_matrixTokens->space)) {
         rel.GetTargets(&carries);
@@ -271,9 +268,6 @@ _ValidateMatrixMover(const rigExec::RigExecMoverValidateContext &ctx,
             return false;
         }
     }
-    // The applied-API arm is gone with RigExecPointTransformAPI: that was the
-    // pre-alignment landmark transform model, superseded by RigExecXformable
-    // (matrix rest/posed spaces plus avars) and applied by nothing.
     const bool isProvider =
         transformPrim && isFrameProvider(transformPrim.GetTypeName());
     if (!isProvider) {

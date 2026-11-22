@@ -137,8 +137,7 @@ using namespace evaluatorDetail;
 
 namespace {
 
-// Removed attributes the compile refuses, interned once at load: interning
-// takes the token registry's lock.
+// Attribute names compile rejects; interned once at load (registry lock).
 const TfToken _removedSamplePhase(SchemaAttrText::rigExecSamplePhase);
 const TfToken _removedRibbonPhases[] = {_tokens->rigExecDriverCurveReadPhase,
                                         _tokens->rigExecSurfaceReadPhase};
@@ -337,39 +336,36 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     stampCompileRegion("Compile.DerivedStartFrames");
 
     // The structure digest is a pure read of the composed stage that boils it
-    // down to one number, and that number is not consulted until the compiled rig is
-    // committed far below: nothing in between reads it, and compile authors
-    // nothing to the stage for it to miss. So it runs beside the WHOLE of
-    // compile rather than beside only its tail: dispatched after
+    // down to one number, and that number is not consulted until the compiled
+    // rig is committed far below: nothing in between reads it, and compile
+    // authors nothing to the stage for it to miss. So it runs beside the WHOLE
+    // of compile rather than beside only its tail: dispatched after
     // DiscoverValidate it can land after the main thread reaches the join
-    // below, and compile then pays for the digest in waiting.
-    // Safe to dispatch before DiscoverValidate because that phase AUTHORS NOTHING:
-    // it reads the composed stage and reports, so there is no edit for the
-    // digest to race. And a rig malformed enough for DiscoverValidate to
-    // reject is still one _ComputeStructureDigest reads without complaint --
-    // every lookup in it goes through GetPrimAtPath/GetAttribute/Get, which
-    // hand back invalid objects that the code already tests for, rather than
-    // throwing. The single precondition it cannot survive is a null _stage,
-    // which a dispatch after DiscoverValidate never sees; hence the guard in
-    // the lambda.
-    // The 0 that guard leaves behind is never read -- Compile returns false
-    // on a null stage long before the commit below.
-    // It runs as three tasks, one per segment (_DigestSegment), each
-    // writing only its own string; the join below concatenates them in
-    // segment order and hashes the result, which is the digest one serial
-    // walk produces. The Solvers segment is most of the work, so it is
-    // dispatched first.
-    // digestParts is declared before the dispatcher so it outlives it, and
-    // WorkDispatcher's destructor waits -- which is what covers the early
-    // returns between here and the join, now the whole of compile rather
-    // than just its tail. Declared AFTER retiringBakedProgram so it is still
-    // destroyed first: the digest tasks are joined before the retired
-    // program is torn down underneath them. Anything declared after the
-    // dispatcher dies before that wait, so a task must not reference it:
-    // each task holds its own copy of computeDigestPart, which carries only
-    // `this`, &digestParts and &digestFootprints, all of which outlive the
-    // dispatcher. Each task writes its segment's text and the footprint it
-    // recorded (the prims outside the rig it read) into its own slots.
+    // below, and compile then pays for the digest in waiting. Safe to dispatch
+    // before DiscoverValidate because that phase AUTHORS NOTHING: it reads the
+    // composed stage and reports, so there is no edit for the digest to race.
+    // And a rig malformed enough for DiscoverValidate to reject is still one
+    // _ComputeStructureDigest reads without complaint -- every lookup in it
+    // goes through GetPrimAtPath/GetAttribute/Get, which hand back invalid
+    // objects that the code already tests for, rather than throwing. The single
+    // precondition it cannot survive is a null _stage, which a dispatch after
+    // DiscoverValidate never sees; hence the guard in the lambda. The 0 that
+    // guard leaves behind is never read -- Compile returns false on a null
+    // stage long before the commit below. It runs as three tasks, one per
+    // segment (_DigestSegment), each writing only its own string; the join
+    // below concatenates them in segment order and hashes the result, which is
+    // the digest one serial walk produces. The Solvers segment is most of the
+    // work, so it is dispatched first. digestParts is declared before the
+    // dispatcher so it outlives it, and WorkDispatcher's destructor waits --
+    // which is what covers the early returns between here and the join.
+    // Declared AFTER retiringBakedProgram so it is still destroyed first: the
+    // digest tasks are joined before the retired program is torn down
+    // underneath them. Anything declared after the dispatcher dies before that
+    // wait, so a task must not reference it: each task holds its own copy of
+    // computeDigestPart, which carries only `this`, &digestParts and
+    // &digestFootprints, all of which outlive the dispatcher. Each task writes
+    // its segment's text and the footprint it recorded (the prims outside the
+    // rig it read) into its own slots.
     std::string digestParts[_DigestSegmentCount];
     _DigestFootprint digestFootprints[_DigestSegmentCount];
     WorkDispatcher digestDispatcher;
@@ -526,8 +522,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 &_profiler)) {
             return fail(interpolatorError, {interpolatorOperation});
         }
-        // No interpolators means no capture. All existing translation reads
-        // still use the same fresh Default snapshot at their original site.
+        // No interpolators means no capture. Translation reads use the fresh
+        // Default snapshot.
         if (compileScene->rigRoot.IsEmpty()) {
             compileScene.reset();
         } else {
@@ -697,8 +693,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     }
 
     compileBlocks.Next("DiscoverValidate.OutputCheck");
-    // A rig has to publish SOMETHING (the check the joint requirement used
-    // to stand in for).
+    // A rig has to publish SOMETHING.
     // Controls, joints, volumes, and movers are the four ways it can: a control
     // publishes its posed frame for the synthesized viewport guide, a joint
     // publishes a frame whether or not anything moves it, a placed weight
@@ -801,12 +796,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     }
 
     compileBlocks.Next("DiscoverValidate.SolverJointBinding");
-    // View-free solver->joint binding validation. This
-    // runs in Phase A, BEFORE any compiled rig teardown, so an invalid binding
-    // rejects the compile while the previous compiled rig stays publishable (the
-    // BLOCKER fix: compile Pass 0 must never be the first place a bad
-    // binding is discovered, because by then the old layer is gone and
-    // restoration would re-hit the same invalid state). Recursive over the
+    // View-free solver->joint binding validation. Before teardown, so a bad
+    // binding keeps the previous compiled rig. Recursive over the
     // composed Solvers subtree. Authored-conflict checks read the SOURCE
     // stage (_stage).
     // joint -> (posing solver, element). The validation below already
@@ -824,9 +815,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // stack ordinal breaks every remaining tie.
     // The ordered solver walk is hoisted here because four passes need it --
     // this validation, the consumed-solver relaxation, the solver DAG and the
-    // stack ordinal -- and it is a full UsdPrimRange over the rig each time
-    // (critique: "_DiscoverAggregateSolvers is already walked three times").
-    // It is now walked once, with the providers, ahead of the exec lane's
+    // stack ordinal. Walked once, with the providers, ahead of the exec lane's
     // dispatch; compile authors nothing to the stage, so that walk is still
     // the stage's answer here.
     const std::vector<UsdPrim> &orderedSolvers = aggregateSolvers;
@@ -862,12 +851,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             // a hint; reject samples explicitly.
             for (const UsdPrim &solver : solvers) {
                 const TfToken t = solver.GetTypeName();
-                // rigExec:upperLength/rigExec:lowerLength no longer exist
-                // in the schema -- bone lengths are measured from the bound
-                // joints' rests. An asset saved against the old schema can
-                // still carry one as a custom property, where it would be
-                // silently inert. Fail loudly instead and name the knob
-                // that replaced it.
+                // rigExec:upperLength/lowerLength are not schema attrs;
+                // refuse (lengths come from joint rests).
                 if (t == SchemaTypeName::RigExecTwoBoneIk) {
                     const TfToken lengthAttrs[2] = {
                         _tokens->rigExecUpperLength,
@@ -1453,9 +1438,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                             // itself: a solver that reads a joint it also
                             // writes reads the version standing before its
                             // own commit, so it depends on the writers below
-                            // it and on nothing above. (Before stacking this
-                            // was a self-edge and died as a bogus "solver
-                            // dependency cycle".)
+                            // it and on nothing above.
                             for (const auto &[writer, writerElement] :
                                  binding->second) {
                                 if (writer == solver.GetPath()) {
@@ -1613,8 +1596,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             newFalloffLutOverrides.push_back(std::move(lutOverride));
 
             // Which points the field measures is the read phase declared
-            // on rigExec:weightTarget; the old attribute is refused rather
-            // than composing as an inert custom attribute.
+            // on rigExec:weightTarget; the per-mover attribute is refused
+            // rather than composing as an inert custom attribute.
             bool inFlight = false;
             std::string phaseError;
             const UsdAttribute old = w.GetAttribute(_removedSamplePhase);
@@ -1834,8 +1817,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 getTargets(moverPrim, _tokens->rigExecSources);
             if (sources.empty() &&
                 mover.schemaType == SchemaTypeName::RigExecAimConstraint) {
-                // Backward-compatible spelling used by every existing Aim
-                // asset. New assets use the ordered FBX-style sources list.
+                // Single-source spelling; sources list is the ordered form.
                 sources = getTargets(moverPrim, _tokens->rigExecAimTarget);
             }
             if (sources.empty()) {
@@ -2482,7 +2464,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     }
 
     compileBlocks.Next("SolverSchedule.DerivedMaintenance");
-    // Derived maintenance, mirroring Pass 3: for every
+    // Derived maintenance, mirroring SolverSchedule.PointGraph: for every
     // moved points target whose gprim authors normals or extent, synthesize
     // the recompute revision. There is no authored mover, so the gprim itself
     // stands in as the parameter source -- it supplies the stage for the
@@ -2576,7 +2558,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 }
             } else {
                 // The authoritative winning widths, when authored: they
-                // widen the extent bound (Pass 3 wires resolvedWidths).
+                // widen the extent bound (resolvedWidths, moverKernels.cpp).
                 const SdfPath widthsPath =
                     ownerPath.AppendProperty(_tokens->widths);
                 if (const UsdAttribute w =
@@ -2869,8 +2851,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         solverInputPhases;
     for (const auto &[solver, dependencies] : newSolverDependencies) {
         const UsdPrim prim = _stage->GetPrimAtPath(solver);
-        // The ribbon's read-phase attributes were replaced by metadata and
-        // would now compose as inert custom attributes.
+        // Read-phase attributes are refused; read phase is metadata.
         for (const TfToken &removed : _removedRibbonPhases) {
             const UsdAttribute old = prim.GetAttribute(removed);
             if (old && old.HasAuthoredValue()) {
@@ -3386,13 +3367,10 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // poseDependencies is complete here and nowhere earlier: the solver DAG
     // was finished above, but the constraint pass and the frame-inheritance
     // walk just added the solver <-> constraint edges.
-    // The rule is now the NAMESPACE and nothing else. Every step
-    // of the pose phase -- a solver that writes a joint, a constraint that
-    // moves one -- carries a poseStackOrdinal taken from the reverse composed
-    // pre-order of the whole rig, and that ordinal IS the order. Data flow no
-    // longer bends it: a frame read below its writer reads the earlier
-    // version (the directional edges above), and an aggregate read that
-    // contradicts it was rejected by name at compile time.
+    // Order = poseStackOrdinal (namespace pre-order); data flow does not
+    // reorder. A frame read below its writer reads the earlier version (the
+    // directional edges above); a contradicting aggregate read is rejected
+    // at compile time.
     // So this block does three things and no searching:
     //   1. put every joint's writer list into ordinal order;
     //   2. build that joint's INTERLEAVED writer chain -- its solvers and the
@@ -3408,9 +3386,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // one (a reader and a writer of what it reads). Steps -- solvers and
     // constraints alike -- that share no joint and no data flow therefore
     // share a Kahn level and may evaluate concurrently.
-    // testRigExecSolverStacking's TestUnrelatedLimbsShareALevel and
-    // TestIndependentConstraintsShareALevel pin it; the biped's 24 solvers
-    // span 6 dependency levels.
+    // Tested by testRigExecSolverStacking.
     std::map<SdfPath, std::vector<SdfPath>> jointWriterChain;
     /// solver -> (joint -> the step that wrote the joint just before it), the
     /// compile-side half of "the incoming frame is the solver's rest".
@@ -3544,7 +3520,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         }
     };
     // Preserve the already-reached connected-read keys, without seeding their
-    // namespace ancestors until the original late connected-input pass.
+    // namespace ancestors until PrepareRequests.ProviderClosure.
     std::set<SdfPath> restLatePoseInputs;
     for (const auto &entry : newPoseInputInfo)
         restLatePoseInputs.insert(entry.first);
@@ -3628,7 +3604,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                         compileScene.get(), &error))
                     return fail(error);
                 // A notice during capture makes the snapshot ineligible for
-                // later reuse; its original switch translation still runs here.
+                // later reuse; the switch translation still runs here.
                 compileSceneSerial = before;
                 compileSceneReusable = before == GetStageEditSerial();
             }
@@ -3670,7 +3646,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     for (const SdfPath &provider : seedPaths)
         for (const SdfPath &member : poseProviderClosure(provider))
             seedProvider(member, false);
-    // Close exactly the original first-frame/rest provider roots, separately
+    // Close exactly the first-frame/rest provider roots, separately
     // from native geometry-only source roots. This adds no operation or tap.
     const std::vector<SdfPath> restSeedPaths(
         newRestCompiledRigProviders.begin(), newRestCompiledRigProviders.end());
@@ -3678,13 +3654,12 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         const auto &closure = poseProviderClosure(provider);
         restLatePoseInputs.insert(closure.begin(), closure.end());
     }
-    // ORIGINAL seeds the reached connected inputs and their namespace
-    // ancestors after the explicit-root closure; it does not close those
-    // newly introduced namespace roots a second time.
+    // Seed reached connected inputs and ancestors after explicit roots;
+    // close once.
     for (const SdfPath &input : restLatePoseInputs)
         seedRestCompiledRigProvider(input);
-    // The first-frame/rest request admits only valid USD providers, as the
-    // original request preparation did. Geometry-only inputs are not roots
+    // The first-frame/rest request admits only valid USD providers.
+    // Geometry-only inputs are not roots
     // of this request and retain their independent availability policy.
     for (const SdfPath &path : newRestCompiledRigProviders) {
         const UsdPrim provider = _stage->GetPrimAtPath(path);

@@ -147,9 +147,8 @@ struct RigExecRigPose {
     ///     typed math movers, computed off the authored stage and also
     ///     supplied to exec as value overrides so consumers see them.
     ///
-    /// Movers are not joint-only and never were: this map, providerXforms,
-    /// and jointFramesFinal are three peer output domains, and a rig may
-    /// publish any combination of them.
+    /// movedProperties, providerXforms, jointFramesFinal are peer outputs; a
+    /// rig may publish any combination of them.
     std::map<SdfPath, VtValue> movedProperties;
 
     /// CPU reference-kernel results for the same chains, filled only when
@@ -621,8 +620,8 @@ public:
         return _skippedOperations;
     }
 
-    /// Structural digest of the compiled mover topology: the v0.1
-    /// compiled rig identity. Structural edits change it and trigger
+    /// Structural digest of the compiled mover topology: the compiled rig
+    /// identity. Structural edits change it and trigger
     /// recompilation on the next Evaluate.
     size_t GetCompiledRigSignature() const
     {
@@ -1131,8 +1130,7 @@ private:
     /// choice -- which solvers write this joint, in what order, and which
     /// element of each one's aggregate frame array is this joint's -- so it
     /// belongs to the compiled graph, not to the scene. Compile() derives it
-    /// from each solver's ordered rigExec:joints, which the Phase A
-    /// validation already walks; Evaluate() indexes each solver's frame
+    /// from each solver's ordered rigExec:joints; Evaluate() indexes each solver's frame
     /// array with it directly instead of going through the joint's
     /// computePointFrame.
     ///
@@ -1162,7 +1160,7 @@ private:
     /// which re-derives the order; the baked program has no exec to ask, so
     /// it orders its guide-only pass over these edges instead.
     std::map<SdfPath, std::set<SdfPath>> _solverDependencies;
-    /// Operation producers from discovery, independent of legacy walk numbering.
+    /// Operation producers from discovery.
     std::map<SdfPath, std::set<SdfPath>> _nativePoseDependencies;
     std::map<SdfPath, int> _nativePoseOrdinals;
     std::set<SdfPath> _nativeProviderPaths;
@@ -1262,7 +1260,7 @@ private:
     std::vector<SdfPath> _poseWeightProperties;
 
     /// Discovers, validates and SOLVES the rig's pose interpolators into
-    /// \p out. Phase A of Compile: nothing here touches evaluator state.
+    /// \p out. Validation pass of Compile; mutates no evaluator state.
     bool
     _CompilePoseInterpolators(const std::vector<SdfPath> &joints,
                               const std::vector<SdfPath> &controls,

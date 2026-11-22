@@ -39,8 +39,8 @@ RigExecBakedScheduleMode RigExecBakedScheduleModeFromEnvironment();
 /// Three checks. The edges: `preds` and `succs` sorted, unique, pointing
 /// backward and forward respectively, and each the inverse of the other.
 /// The producers: every slot a step reads in a domain the prologue does not
-/// fill has a writer at a strictly lower index, and no step names the retired
-/// Snapshots domain; every pose version a commit, a solve or a last-version
+/// fill has a writer at a strictly lower index, and no step names
+/// Snapshots; every pose version a commit, a solve or a last-version
 /// reader is bound to was written by an earlier step; and every reader of a
 /// chain's points declares the version it reads, whose only producer is one
 /// revision's fuse and is among the reader's preds. The clusters: a partition of the steps with

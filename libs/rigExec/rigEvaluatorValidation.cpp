@@ -622,7 +622,7 @@ RigExecRigEvaluator::_DiscoverMovers(
                                     primPath.GetString(),
                                 {prim.GetPath()});
                 }
-                // Cross-rig writes are rejected in v1.
+                // Cross-rig writes are rejected.
                 if (!primPath.HasPrefix(assetRoot)) {
                     return fail("Mover " + prim.GetPath().GetString() +
                                     " targets outside the rig asset: " +
@@ -973,11 +973,8 @@ RigExecRigEvaluator::_DiscoverMovers(
                 }
             }
 
-            // Strict migration: this mover's concrete envelope property was
-            // replaced by MoverAPI inputs:defaultWeight. Once removed from the
-            // schema, an old layer opinion composes as a custom attribute and
-            // would otherwise be ignored silently. The predecessor name comes
-            // from the mover's own row; movers without one have nothing to reject.
+            // Reject the row's predecessor envelope name; it would be inert.
+            // Movers without one have nothing to reject.
             {
                 const RigExecMoverRegistration *migration =
                     RigExecFindMoverRegistration(record.schemaType);
@@ -995,9 +992,8 @@ RigExecRigEvaluator::_DiscoverMovers(
                     }
                 }
             }
-            // The read-phase attributes were replaced by rigExecReadPhase
-            // metadata on the input relationship. An old opinion would now
-            // compose as an inert custom attribute, so it is refused.
+            // Read-phase attributes are refused; use rigExecReadPhase metadata
+            // on the input relationship.
             for (const _RemovedPhase &removed : _removedPhases) {
                 const UsdAttribute old = prim.GetAttribute(removed.name);
                 if (old && old.HasAuthoredValue()) {
@@ -1057,12 +1053,7 @@ RigExecRigEvaluator::_DiscoverMovers(
             const _ConstraintHandler *orderHandler =
                 _FindConstraintHandler(record.schemaType);
 
-            // No authored constraint property is ever silently ignored. The
-            // family's recurring defect was the opposite: rigExec:rotationOrder
-            // on a Position constraint compiled and did nothing, and
-            // inputs:affectX meant a different channel on each operator. Every
-            // channel property is now checked against what the operator
-            // actually honors.
+            // No authored constraint property is ever silently ignored.
             if (orderHandler) {
                 // Spelled only when a message needs it: this runs for every
                 // mover, and almost none of them has anything to report.
@@ -1075,10 +1066,7 @@ RigExecRigEvaluator::_DiscoverMovers(
                     return a && a.HasAuthoredValue();
                 };
 
-                // Renamed when the envelope and the per-element weight field
-                // collapsed into one concept. The old name is no longer part
-                // of the schema, so an authored opinion would compose as a
-                // custom property and be ignored.
+                // Not a schema name; refused so it is not ignored.
                 if (authored(_tokens->inputsWeight)) {
                     return fail(
                         who() + " authors inputs:weight, which a constraint no"
@@ -1087,8 +1075,7 @@ RigExecRigEvaluator::_DiscoverMovers(
                         {prim.GetPath()});
                 }
 
-                // Replaced by the group-qualified spelling, because it named
-                // a different channel on every operator that had it.
+                // Refused; use the group-qualified spelling.
                 for (const TfToken &legacyMask :
                      {_tokens->inputsAffectX, _tokens->inputsAffectY,
                       _tokens->inputsAffectZ}) {
@@ -1165,9 +1152,8 @@ RigExecRigEvaluator::_DiscoverMovers(
                         {prim.GetPath()});
                 }
 
-                // rigExec:preserve is the legacy channel mask at opposite
-                // polarity: it names the components the solve must leave
-                // alone, where inputs:affect* names the ones it writes. Its
+                // rigExec:preserve: inverse channel mask (components left
+                // alone), where inputs:affect* names the ones it writes. Its
                 // default ["origin", "scale"] says an aim writes orientation
                 // only, which is exactly what the kernel does -- it modifies
                 // the decomposed rotation and reconstructs, leaving

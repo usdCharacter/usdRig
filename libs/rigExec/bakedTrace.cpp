@@ -171,8 +171,8 @@ RigExecBakedProgram::_GetCycleSkips(
         const RigExecBakedStep *step = nullptr;
     };
     std::map<std::string, Member> members;
-    // Excluded steps are exactly the original SCC members, retained before
-    // canonicalization. A dependent that remains runnable cannot enter this map.
+    // Excluded steps are exactly the pre-canonicalization SCC members. A
+    // dependent that remains runnable cannot enter this map.
     for (const auto &step : B.excludedSteps) {
         Member member;
         member.step = &step;
@@ -266,9 +266,8 @@ RigExecBakedProgram::_GetCycleSkips(
     std::map<SdfPath, std::string> result = B.cycleSkipReasons;
     for (size_t component = 0; component < B.opGraph.cycleMembers.size();
          ++component) {
-        // Historical SCC reasons were captured against their own revision
-        // arrays before normalization; never interpret old object indices
-        // against the replacement tables.
+        // SCC reasons index pre-normalization arrays, not the replacement
+        // tables.
         if (std::find(B.cycleExclusionProof.cycleMembers.begin(),
                       B.cycleExclusionProof.cycleMembers.end(),
                       B.opGraph.cycleMembers[component]) !=

@@ -278,7 +278,7 @@ RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator,
         field.placementPhase = placement.kind == RigExecReadPhaseKind::Final
                                    ? Field::PlacementPhase::Final
                                    : Field::PlacementPhase::Base;
-        // Oracle reads observe the original generation publication boundary,
+        // Oracle reads observe the generation publication boundary,
         // not every retained final in the canonical graph. Property envelopes
         // run before their own chain finishes; only earlier semantic chains
         // have published. Rest-tier consumers observe the completed head tier.

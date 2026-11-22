@@ -94,10 +94,8 @@ _WeightPacketResolvesAll(const RigExecWeightPacket &packet, size_t count)
     // PER REPRESENTATION, not per element. The shape was settled by the
     // checks above and cannot change inside the loop, so asking Resolve()
     // which representation this is once per point re-decides a question
-    // already answered -- 26,276 times for one body mesh, every generation,
-    // and for `sparse` it was worse than redundant: Resolve() binary-searches
-    // the index array per point, making a whole-array resolve O(n log m)
-    // where a scatter is O(n + m).
+    // already answered. sparse Resolve() is O(log m) per point; scatter is
+    // O(n+m).
     const auto usable = [](float v) {
         return std::isfinite(v) && v >= 0.0f && v <= 1.0f;
     };

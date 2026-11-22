@@ -299,8 +299,8 @@ RigExecRigEvaluator::_EvaluateGeneration(UsdTimeCode time)
         _bakedProgramStale = false;
         _RebuildBakedProgram(std::move(_bakedProgram));
         if (restTransition && _bakedProgram) {
-            // ORIGINAL moves every rest channel to per-frame classification
-            // after this first successful varying compiled rig transition.
+            // Rest channels become per-frame after the first varying
+            // transition.
             _compiledRigRestsConstant = false;
             pose.diagnostics.push_back(
                 "rest channel became time-varying: compiled rig rebuilt");

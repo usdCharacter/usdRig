@@ -156,10 +156,10 @@ namespace evaluatorDetail {
 // Discovers the rig's joint output set implicitly (the rig is a
 // namespace root, not a manifest). Movers are already found this way -- a
 // reverse-sibling post-order walk where carrying rigExec:moves is what makes a
-// prim a mover -- and joints now follow the same rule: being a RigExecJoint
+// prim a mover -- and joints follow the same rule: being a RigExecJoint
 // under the rig is what makes a prim a joint output. Returned in namespace
-// pre-order, which reproduces the parent-before-child ordering the authored
-// lists used and keeps the compiled rig digest stable against unrelated edits.
+// pre-order (parent before child), which keeps the compiled rig digest stable
+// against unrelated edits.
 // Operator-declared joints are unioned in afterwards. Solver rigExec:joints
 // targets are validated to be RigExecJoint prims later in Compile, so in a
 // valid rig they are already a subset of the namespace walk; including them

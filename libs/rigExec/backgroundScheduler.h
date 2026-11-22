@@ -19,7 +19,7 @@
 // its inputs promptly; the frame it would have warmed simply evaluates live
 // when asked.
 // Switches: RIGEXEC_FRAME_CACHE={on,off,warm-off}, default on,
-// where off restores exact current behavior and warm-off keeps cache reads
+// where off means no cache reads, no warming, and warm-off keeps cache reads
 // while disabling background fill; RIGEXEC_ENABLE_PARALLEL_EVAL=0 likewise
 // disables background fill while reads are still served. When fill is off
 // every Enqueue declines and every trigger enqueues nothing, so the caller
@@ -99,7 +99,7 @@ enum class RigExecWarmPriority {
 enum class RigExecFrameCacheMode {
     /// Warming on, reads served. The default.
     On,
-    /// Exact current behavior: no warming, no reads. The scheduler's half of
+    /// No warming, no reads. The scheduler's half of
     /// off is declining every Enqueue and enqueueing nothing from triggers;
     /// reads are the publish fence's half.
     Off,
@@ -343,14 +343,13 @@ enum class RigExecWarmDeclineReason {
 
 /// Lifetime counters. Every counter only moves forward except across
 /// destruction. Jobs that enter the queue balance exactly: queued-ever ==
-/// published + declinedInvalid + declinedGeneration + droppedStale +
-/// canceled + shed + droppedAtShutdown + queuedDepth + running, where
-/// queued-ever is accepts minus merges -- coalesced and upgraded merges
-/// accept without queueing -- and declined counts every Enqueue refusal.
-/// completed ("ran", kept for compat) == published + declinedInvalid +
-/// declinedGeneration; a throwing job warns and lands declinedInvalid.
-/// declined == the six Enqueue reasons plus the three reasoned factory
-/// skips, and queuedDepth == queuedNeighbor + queuedSweep.
+/// published + declinedInvalid + declinedGeneration + droppedStale + canceled +
+/// shed + droppedAtShutdown + queuedDepth + running, where queued-ever is
+/// accepts minus merges -- coalesced and upgraded merges accept without
+/// queueing -- and declined counts every Enqueue refusal. completed ==
+/// published + declinedInvalid + declinedGeneration; a throwing job warns and
+/// lands declinedInvalid. declined == the six Enqueue reasons plus the three
+/// reasoned factory skips, and queuedDepth == queuedNeighbor + queuedSweep.
 struct RigExecBackgroundSchedulerStats {
     /// Jobs queued and waiting for a worker.
     size_t queuedDepth = 0;

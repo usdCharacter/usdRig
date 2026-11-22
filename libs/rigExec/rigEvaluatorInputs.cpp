@@ -679,10 +679,10 @@ RigExecRigEvaluator::_AdmitUpstreamInputs(UsdTimeCode time)
         _SetUpstreamAdmitted(std::move(admitted), std::move(dropLines));
         return;
     }
-    // Condition 3 against the program standing now. With none (a compiled rig
-    // that cannot bake, or a mode that runs no program) conditions 1 and 2
-    // decide: the walk reads every attribute through the same overlay, and
-    // such a compiled rig has no file to agree with.
+    // RigExecUpstreamDropReason condition 3 against the standing program. With
+    // none (a compiled rig that cannot bake, or a mode that runs no program)
+    // conditions 1 and 2 decide: the walk reads every attribute through the
+    // same overlay, and such a compiled rig has no file to agree with.
     const std::map<SdfPath, TfType> *listed =
         _bakedProgram ? &_bakedProgram->GetUpstreamAdmissible() : nullptr;
     // The array part, from the compiled rig in every mode (program or

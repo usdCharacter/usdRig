@@ -1,4 +1,4 @@
-// RigExec typed extraction API, v0.1 subset.
+// RigExec typed extraction API.
 // Backend-neutral addresses resolve through the USD implementation to
 // ExecUsdValueKey batches; snapshots copy immutable values before crossing
 // threads.

@@ -255,8 +255,6 @@ RigExecBakedScheduleReportRequested()
 //                    the chain's whole point array into its spare
 //                    buffer, so its time is the mesh's and not the
 //                    handful of MoverFailed lines it may also emit.
-//                    Sizing it by the revision count made one 26k-point
-//                    copy read as 7.8us of cost 'per revision'
 //   Derived          the CHAIN's vertices, which is what recomputeNormals
 //                    and recomputeExtent walk -- an extent is two vectors
 //                    however large the mesh behind it is
@@ -291,7 +289,7 @@ constexpr StepCostConstants kStepCosts[] = {
     {0.0324, 0.016869},  // PropagateChunk    4
     {0.0000, 0.004088},  // CommitApply       2
     {0.0000, 0.051952},  // ProviderMatrix  252
-    {0.0000, 0.077140},  // SnapshotFinals    1 -- 13_ReadPhases; retired
+    {0.0000, 0.077140},  // SnapshotFinals    1 -- 13_ReadPhases
     {0.2000, 0.020000},  // PoseInterpolator  unfitted -- see below
     {0.0000, 0.143880},  // VolumePlacements  1 -- 11_VolumeWeights
     {0.0000, 0.066481},  // WeightPacket      5 -- 11_VolumeWeights
@@ -518,11 +516,8 @@ StepSize(const RigExecBakedProgramImpl &B, LazyGeometrySizes &geometry,
     case RigExecBakedStepKind::RevisionChunk: {
         // The chunk's OWN vertex range, not the revision's: the partition
         // divides the work between the chunks, so sizing each of them by the
-        // whole mesh counts the mesh once per chunk. On the biped that made
-        // the modelled serial cost 1972us for a program that runs in 531us,
-        // and the packing binned every chunk as if it were the largest step
-        // in the frame. An unpartitioned revision is one chunk over
-        // everything, which is exactly the revision's units.
+        // whole mesh counts the mesh once per chunk. An unpartitioned revision
+        // is one chunk over everything, which is exactly the revision's units.
         const auto &[chain, revision] = B.revisionIndex[object];
         const RigExecBakedProgramImpl::GeomRevision &geom =
             B.chains[size_t(chain)].revisions[size_t(revision)];
@@ -767,11 +762,10 @@ IsDeclaredSeedOrExcluded(const RigExecBakedProgramImpl &B,
 }
 
 /// Every slot read in a domain the prologue does not fill has a writer at a
-/// strictly lower index. No step may name the retired Snapshots domain: its
-/// store is gone, so a read of it would order against nothing.
+/// strictly lower index. No step may name the Snapshots domain.
 // Solver input requirements are declared semantic edges, independent of typed
 // numerical reads. Validate their captured identities before inspecting the
-// generated dependency graph; an arbitrary historical pred is not authority.
+// generated dependency graph; a generated pred is not authority.
 void
 ValidateSemanticRequirements(const RigExecBakedProgramImpl &B,
                              GraphViolations *out)
@@ -2524,7 +2518,7 @@ RigExecBakedPublishStageFramesRefusal(RigExecBakedProgramImpl *B,
                std::make_pair(b->object, b->part);
     });
     for (const auto *step : lines) {
-        // ORIGINAL's pre-refusal property tier replays cached lines;
+        // Pre-refusal property tier replays cached lines;
         // later body diagnostics never become this refused publication.
         pose->diagnostics.insert(pose->diagnostics.end(), step->lines.begin(),
                                  step->lines.end());
@@ -2538,8 +2532,8 @@ RigExecBakedPublishStageFramesRefusal(RigExecBakedProgramImpl *B,
     pose->diagnostics.push_back("could not resolve constraint target " +
                                 B->paths[size_t(slot)].GetString() +
                                 " relative to the asset root");
-    // Caller-owned validity/maps/time remain as supplied, exactly as direct
-    // ORIGINAL Run; a fresh output is already invalid.
+    // Caller-owned validity/maps/time remain as supplied. A fresh output is
+    // already invalid.
     if (B->programStamp == B->lastProgramStamp)
         ++B->programStamp;
     return true;

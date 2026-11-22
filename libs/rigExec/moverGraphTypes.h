@@ -218,8 +218,8 @@ struct RigExecRevisionBinding {
     /// Derived from compiled topology, so outside operator==.
     std::shared_ptr<const RigExecVertexNormalsTopology> normalsTopology;
     /// Surface projector: rigExec:shaderDialSources, in order, at most
-    /// sixteen, and the static asset-to-mesh map. The historical field name
-    /// is retained on the C++/binary binding; provider frames are asset-space.
+    /// sixteen, and the static asset-to-mesh map. Field name differs from the
+    /// schema attribute (binary ABI); provider frames are asset-space.
     std::vector<SdfPath> shaderDials;
     GfMatrix4d meshWorldInverse{1.0};
     std::vector<SdfPath> blendInputs; ///< sorted blend channels

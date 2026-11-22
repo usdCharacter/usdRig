@@ -587,8 +587,8 @@ RIGEXEC_REGISTER_XFORMABLE(RigExecVolumeWeight, &_ComputeVolumeWeightPointFrame,
 #undef RIGEXEC_NO_AVAR_SCALE_INPUTS
 #undef RIGEXEC_AVAR_SCALE_INPUTS
 
-// RigExecFkChain: applies control frames to a rest hierarchy. v0.1 treats
-// the targeted control list as an ordered chain (each element's parent is
+// RigExecFkChain: applies control frames to a rest hierarchy. Treats the
+// targeted control list as an ordered chain (each element's parent is
 // the preceding element).
 // rigExec:controlSpace says what a control's frame already contains.
 // `world` (default): sibling controls, each frame carrying only its own
@@ -616,7 +616,7 @@ RIGEXEC_REGISTER_XFORMABLE(RigExecVolumeWeight, &_ComputeVolumeWeightPointFrame,
 // pose step BELOW this solver actually wrote (RigExecPointFrameLiveRest, set
 // by the evaluator on the override it pushes). Only a live one re-bases its
 // element; everything else keeps the basis the solver always had, which is
-// what makes the rule free on every rig that does not stack (spec 4.2).
+// what makes the rule free on every rig that does not stack.
 static void
 _ReadJointRests(const VdfContext &ctx,
                 std::vector<std::array<GfVec3d, 4>> *rests,
@@ -707,9 +707,8 @@ _ComputeFkChain(const VdfContext &ctx)
         elements.push_back(e);
     }
     // Where real element i lands in the solved array, and therefore what
-    // "the element before me" and "chain root" mean. With no start frame
-    // this is 0 and the indices below are exactly the historical
-    // `index - 1` / `-1`.
+    // "the element before me" and "chain root" mean. 0 without a start
+    // frame: parent = index-1, root = -1.
     const int base = hasStart ? 1 : 0;
 
     VdfReadIterator<RigExecPointFrame> poseIt(ctx, _tokens->controlFrames);
@@ -773,8 +772,8 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecFkChain)
                 .TargetedObjects<RigExecPointFrame>(_tokens->computeRestFrame)
                 .InputName(_tokens->startRest),
             // The output basis, one per joint: the unified pose stack
-            // overrides it with the frame the steps below this solver left
-            // (spec 4.2). Optional -- a guide-only chain names no joints.
+            // overrides it with the frame the steps below this solver left.
+            // Optional -- a guide-only chain names no joints.
             Relationship(_tokens->joints)
                 .TargetedObjects<RigExecPointFrame>(_tokens->computeRestFrame)
                 .InputName(_tokens->jointRests),

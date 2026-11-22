@@ -528,8 +528,8 @@ enum class RigExecBakedSlotDomain : uint8_t {
     WeightPacket,       ///< one weight object's packet for this frame
     WeightFrames,       ///< where one volume weight is placed, by provider slot
     PoseWeight,         ///< poseWeights[k]: one pose interpolator's weights
-    /// Reserved: the wire value of the retired phased-read store. Never
-    /// declared; the step-graph validator refuses a step that names it.
+    /// Reserved; never declared. The step-graph validator refuses a step
+    /// that names it.
     Snapshots,
     /// frameMatrix[k] and frameMatrixValid[k]: one RigExecBakedFrameRecord.
     /// Appended after Snapshots, so every earlier enumerator keeps its
@@ -944,7 +944,7 @@ enum class RigExecBakedStepKind {
     PropagateChunk, ///< a split commit's staged descendant frames
     CommitApply,    ///< a split commit's decision and write-back
     ProviderMatrix, ///< one provider's rest -> final or rest -> base matrix
-    /// Reserved: the wire value of a retired step. Never emitted.
+    /// Reserved; never emitted.
     SnapshotFinals,
     PoseInterpolator, ///< one pose interpolator's weights, from the final pose
     VolumePlacements, ///< one volume weight's placement, from the walk
@@ -1038,7 +1038,6 @@ struct RigExecBakedStep {
     ///   SolverCommit/Constraint/CommitDelta/
     ///     PropagateChunk/CommitApply                index into commits
     ///   ProviderMatrix                              provider slot
-    ///   SnapshotFinals                              never emitted
     ///   PoseInterpolator                            index into poseInterpolators
     ///   VolumePlacements                            provider slot (part 1)
     ///   WeightPacket                                index into weightObjects
@@ -1665,7 +1664,7 @@ struct RigExecBakedSolver : RigExecSolverRecord {
     std::vector<std::pair<int, int>> restRefs;
     /// Parallel to restRefs: true where a pose step BELOW this solver in
     /// the rig hierarchical stack wrote that joint, so the rest is the
-    /// frame that step left rather than the authored one (spec 4.2).
+    /// frame that step left rather than the authored one.
     /// Parallel to restRefs: the `fin` version each LIVE rest reads, bound
     /// by bindSolverReads to the version standing where this batch begins
     /// -- the same moment the dynamic path reads finalFrames for its
@@ -1682,7 +1681,7 @@ struct RigExecBakedSolver : RigExecSolverRecord {
     /// One per rest ref, in element order: the basis a solver APPLIES its
     /// solved map to. For RigExecFkChain that is the joint's rest
     /// reference rather than the control's own rest, so a step below the
-    /// chain is carried through the solve instead of replaced (spec 4.2).
+    /// chain is carried through the solve instead of replaced.
     /// Empty when the solver's joints do not line up one-for-one with its
     /// elements, and the solver then keeps its own basis.
     /// True when any slot's whole rest CHAIN can move with time.
@@ -2848,7 +2847,7 @@ public:
     RigExecCompiledProgram &operator=(const RigExecCompiledProgram &) = delete;
 
     /// How many of each compiled record the program holds, and the record at
-    /// \p index in today's canonical order. An out-of-range index answers
+    /// \p index in canonical order. An out-of-range index answers
     /// the empty record for its kind only where stated; the count is the
     /// guard.
     size_t GetStepCount() const noexcept;
