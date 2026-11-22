@@ -15,9 +15,9 @@ macOS (``--platform macos``): every Mach-O file under ``app/usd`` and
 ``app/rig`` (the code this repository builds) must declare a minimum macOS
 no newer than ``--macos-minimum``.
 
-Unresolved dependencies of optional Qt plug-ins (multimedia, platform
-themes, other windowing systems) are reported as warnings: those plug-ins
-are loaded only when the host has the library.
+Unresolved dependencies inside the PySide6, shiboken6 and NumPy wheels are
+reported as warnings and never collected: the wheels are manylinux builds
+whose optional parts load only when the host has the library.
 
 Stdlib only, plus readelf/ldd (binutils, glibc) on Linux and otool on macOS.
 """
@@ -49,25 +49,20 @@ SYSTEM_LIBS = [
     "libXfixes.so.3", "libXdamage.so.1", "libXcomposite.so.1",
     "libXtst.so.6", "libXau.so.6", "libXdmcp.so.6", "libICE.so.6",
     "libSM.so.6", "libxcb*.so*", "libxkbcommon*.so.0", "libxshmfence.so.1",
-    "libwayland-*.so.0", "libdecor-0.so.0",
+    "libwayland-*.so.0", "libwayland-egl.so.1", "libdecor-0.so.0",
     "libfontconfig.so.1", "libfreetype.so.6", "libdbus-1.so.3",
     "libglib-2.0.so.0", "libgobject-2.0.so.0", "libgthread-2.0.so.0",
     "libgio-2.0.so.0", "libgmodule-2.0.so.0", "libuuid.so.1",
 ]
 
-# Qt plug-ins and modules that load only when the host has their library.
+# Pip wheels the bundle ships as-is. They are already built to the manylinux
+# policy and load their optional parts (Qt platform themes, multimedia, NFC,
+# WebEngine ...) only when the host has the library, so their unresolved
+# dependencies are warnings and are never copied in: collecting them would
+# drag a desktop's GTK, NSS and PulseAudio stacks into the bundle.
 OPTIONAL_DIR_GLOBS = [
-    "*/PySide6/Qt/plugins/*", "*/PySide6/Qt/qml/*",
-    "*/PySide6/Qt/lib/libQt6Multimedia*", "*/PySide6/Qt/lib/libQt6WebEngine*",
-    "*/PySide6/Qt/lib/libQt6Pdf*", "*/PySide6/Qt/lib/libQt6Bluetooth*",
-    "*/PySide6/Qt/lib/libQt6Positioning*", "*/PySide6/Qt/lib/libQt6Sensors*",
-    "*/PySide6/Qt/lib/libQt6SerialPort*", "*/PySide6/Qt/lib/libQt6Spatial*",
-    "*/PySide6/Qt/lib/libQt6TextToSpeech*", "*/PySide6/Qt/lib/libQt6Wayland*",
-    "*/PySide6/Qt/lib/libQt6Quick3D*", "*/PySide6/Qt/libexec/*",
-    "*/PySide6/QtMultimedia*", "*/PySide6/QtWebEngine*",
-    "*/PySide6/QtBluetooth*", "*/PySide6/QtPositioning*",
-    "*/PySide6/QtTextToSpeech*", "*/PySide6/QtSerialPort*",
-    "*/PySide6/QtSpatialAudio*", "*/PySide6/QtSensors*",
+    "*/site-packages/PySide6/*", "*/site-packages/shiboken6/*",
+    "*/site-packages/numpy/*", "*/site-packages/numpy.libs/*",
     "*/python*/lib-dynload/*",
 ]
 
@@ -159,10 +154,17 @@ def check_linux(root: Path, glibc_max: str, glibcxx_max: str,
         in_bundle = {path.name for path in files}
         in_bundle |= {p.name for p in root.rglob("*.so*") if p.is_symlink()}
         for path in files:
+            optional = is_optional(path, root)
             for name in needed(path):
-                if name in in_bundle or is_system(name):
+                if "/" in name:  # a path, usually $ORIGIN-relative
+                    target = Path(name.replace("$ORIGIN", str(path.parent))
+                                  .replace("${ORIGIN}", str(path.parent)))
+                    if target.exists():
+                        continue
+                elif name in in_bundle or is_system(name):
                     continue
-                source = resolve_system(name, host_dirs)
+                source = (None if optional or "/" in name
+                          else resolve_system(name, host_dirs))
                 if collect and source is not None:
                     collect_dir.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(source.resolve(), collect_dir / name)
@@ -172,7 +174,7 @@ def check_linux(root: Path, glibc_max: str, glibcxx_max: str,
                     continue
                 message = (f"{path.relative_to(root)} needs {name}, which is "
                            "neither in the bundle nor a system library")
-                if is_optional(path, root):
+                if optional:
                     warnings.append(message)
                 else:
                     errors.append(message)
