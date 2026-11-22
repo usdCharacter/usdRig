@@ -9,6 +9,7 @@
 #include "rigExecOps/deform/deltaMushOp.h"
 #include "rigExecOps/deform/latticeOp.h"
 #include "rigExecOps/deform/pointOps.h"
+#include "rigExecOps/deform/surfaceProjectOp.h"
 #include "rigExecOps/deform/wrinkleOp.h"
 
 #include "pxr/base/gf/rotation.h"
@@ -546,6 +547,127 @@ TestWrinkle()
     }
 }
 
+void
+TestSurfaceProject()
+{
+    using namespace rigExecOps;
+    // A small surface (brute force) and one past the native BVH's bar.
+    for (const int n : {5, 11}) {
+        const Grid surface(n, 21 + n);
+        Grid target(n + 2, 4 + n);
+        for (GfVec3f &p : target.points)
+            p = GfVec3f(p[0] * 0.9f - 0.5f, p[1] * 0.9f - 0.5f,
+                        p[2] * 0.5f + 0.7f);
+        const Points in = ToStd(target.points);
+        const Points surfaceArray = ToStd(surface.points);
+        const auto counts = ToArray(surface.counts);
+        const auto indices = ToArray(surface.indices);
+        std::vector<float> envelope(target.points.size());
+        for (size_t i = 0; i < envelope.size(); ++i)
+            envelope[i] = 0.06f * (i % 17);
+        const auto envelopeArray = ToArray(envelope);
+
+        // Legacy: default settings and unfed spaces.
+        SurfaceProjectPayload legacy;
+        Node plain(SurfaceProject(),
+                   {&SurfaceProjectPoints(), &SurfaceProjectSurface(),
+                    &SurfaceProjectCounts(), &SurfaceProjectIndices(),
+                    &SurfaceProjectStrength()},
+                   SurfaceProjectOut(), &legacy);
+        Node enveloped(SurfaceProject(),
+                       {&SurfaceProjectPoints(), &SurfaceProjectSurface(),
+                        &SurfaceProjectCounts(), &SurfaceProjectIndices(),
+                        &SurfaceProjectStrength(), &SurfaceProjectEnvelope()},
+                       SurfaceProjectOut(), &legacy);
+        for (const float strength : {1.0f, 0.4f, 0.0f}) {
+            std::vector<GfVec3f> expected = target.points;
+            RigExecApplySurfaceProject(&expected, surface.points,
+                                       surface.counts, surface.indices,
+                                       strength);
+            CHECK(strength == 0.0f || expected != target.points);
+            Points actual;
+            CHECK(plain.Run({&in, &surfaceArray, &counts, &indices, &strength},
+                            &actual));
+            const bool same = SameBits(expected, actual);
+            Blend(target.points, envelope, &expected);
+            CHECK(enveloped.Run({&in, &surfaceArray, &counts, &indices,
+                                 &strength, &envelopeArray},
+                                &actual));
+            if (!same || !SameBits(expected, actual)) {
+                std::printf("surface project %d strength %g differs\n", n,
+                            strength);
+                CHECK(false);
+            }
+        }
+
+        // Snap: modes, offsets, a mask, explicit triangles and spaces.
+        GfMatrix4d toSurface(1.0);
+        toSurface.SetRotate(GfRotation(GfVec3d(1, 0.4, 0.2), 15.0));
+        toSurface.SetTranslateOnly(GfVec3d(0.2, -0.1, 0.3));
+        const GfMatrix4d toTarget = RigExecSurfaceSnapAffineInverse(toSurface);
+        GfMatrix4d toMetric(1.0);
+        toMetric.SetScale(GfVec3d(1.0, 1.2, 0.8));
+        const auto toSurfaceStd = ToStd(toSurface),
+                   toTargetStd = ToStd(toTarget), toMetricStd = ToStd(toMetric);
+        using Mode = RigExecSurfaceSnapMode;
+        for (const Mode mode : {Mode::OnSurface, Mode::Inside, Mode::Outside,
+                                Mode::OutsideSurface})
+            for (int variant = 0; variant < 3; ++variant) {
+                SurfaceProjectPayload payload;
+                RigExecSurfaceSnapSettings &s = payload.settings;
+                s.mode = mode;
+                s.offset = variant == 0 ? 0.0f : 0.15f;
+                if (variant == 1)
+                    s.mask = envelope;
+                if (variant == 2)
+                    for (size_t q = 0; q < surface.counts.size(); ++q) {
+                        const int *f = &surface.indices[q * 4];
+                        s.triangles.insert(
+                            s.triangles.end(),
+                            {f[0], f[1], f[3], f[1], f[2], f[3]});
+                    }
+                std::vector<GfVec3f> expected = target.points;
+                const bool ok = RigExecApplySurfaceSnapKernel<GfVec3f, GfVec3d>(
+                    &expected, surface.points, surface.counts, surface.indices,
+                    s, toSurface, toTarget, toMetric);
+                CHECK(ok);
+                Blend(target.points, envelope, &expected);
+                Node snap(SurfaceProject(),
+                          {&SurfaceProjectPoints(), &SurfaceProjectSurface(),
+                           &SurfaceProjectCounts(), &SurfaceProjectIndices(),
+                           &SurfaceProjectTargetToSurface(),
+                           &SurfaceProjectSurfaceToTarget(),
+                           &SurfaceProjectSurfaceToMetric(),
+                           &SurfaceProjectEnvelope()},
+                          SurfaceProjectOut(), &payload);
+                Points actual;
+                CHECK(snap.Run({&in, &surfaceArray, &counts, &indices,
+                                &toSurfaceStd, &toTargetStd, &toMetricStd,
+                                &envelopeArray},
+                               &actual));
+                if (!SameBits(expected, actual)) {
+                    std::printf("surface snap %d mode %d variant %d differs\n",
+                                n, int(mode), variant);
+                    CHECK(false);
+                }
+            }
+
+        // A mask of the wrong length is refused by both.
+        SurfaceProjectPayload bad;
+        bad.settings.mask.assign(3, 1.0f);
+        std::vector<GfVec3f> refused = target.points;
+        CHECK((!RigExecApplySurfaceSnapKernel<GfVec3f, GfVec3d>(
+            &refused, surface.points, surface.counts, surface.indices,
+            bad.settings, GfMatrix4d(1.0), GfMatrix4d(1.0), GfMatrix4d(1.0))));
+        Node refusing(SurfaceProject(),
+                      {&SurfaceProjectPoints(), &SurfaceProjectSurface(),
+                       &SurfaceProjectCounts(), &SurfaceProjectIndices()},
+                      SurfaceProjectOut(), &bad);
+        Points actual;
+        CHECK(!refusing.Run({&in, &surfaceArray, &counts, &indices}, &actual));
+    }
+}
+
 } // namespace
 
 int
@@ -562,6 +684,7 @@ main()
     TestDeltaMush();
     TestLattice();
     TestWrinkle();
+    TestSurfaceProject();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

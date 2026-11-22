@@ -11,6 +11,7 @@ Register(rigExec::RigExecOpRegistrar &registrar)
     RegisterDeltaMushOps(registrar);
     RegisterLatticeOps(registrar);
     RegisterWrinkleOps(registrar);
+    RegisterSurfaceProjectOps(registrar);
 }
 
 const rigExec::RigExecOpLibraryDesc kLibrary = [] {
