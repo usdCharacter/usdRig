@@ -7,12 +7,17 @@ _COMMAND = "usdRigCommandPlugin"
 
 
 def _Rank(action):
-    submenu = action.menu()
-    if submenu is not None and submenu.title() in _SUBMENU_RANKS:
-        rank = _SUBMENU_RANKS[submenu.title()]
-        action.setProperty(_MENU_RANK, rank)
-        return rank
     return action.property(_MENU_RANK)
+
+
+def _RankSubmenus(top):
+    # Read each submenu through its own menuAction(): before 6.9, PySide6's
+    # QAction.menu() takes ownership of the submenu it returns, and Qt
+    # deletes the submenu once that wrapper is collected.
+    for name, submenu in top._submenus.items():
+        if name in _SUBMENU_RANKS:
+            submenu._qMenu.menuAction().setProperty(
+                _MENU_RANK, _SUBMENU_RANKS[name])
 
 
 def _OrderTopLevel(qMenu):
@@ -42,6 +47,7 @@ def AddToRigExecMenu(plugUIBuilder, submenu, commandPlugin, rank):
     """
     top = plugUIBuilder.findOrCreateMenu("RigExec")
     menu = top if submenu is None else top.findOrCreateSubmenu(submenu)
+    _RankSubmenus(top)
     qMenu = menu._qMenu
     for action in qMenu.actions():
         if action.property(_COMMAND) is commandPlugin:
