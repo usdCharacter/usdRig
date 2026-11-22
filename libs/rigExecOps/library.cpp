@@ -21,6 +21,7 @@ Register(rigExec::RigExecOpRegistrar &registrar)
     RegisterProjectorOps(registrar);
     RegisterConstraintOps(registrar);
     RegisterWeightOps(registrar);
+    RegisterChainSolverOps(registrar);
 }
 
 const rigExec::RigExecOpLibraryDesc kLibrary = [] {

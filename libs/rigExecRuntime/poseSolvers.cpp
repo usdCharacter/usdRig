@@ -2,6 +2,8 @@
 
 #include "rigExecSchema/schemaNames.h"
 #include "poseInternal.h"
+#include "dualQuatMath.h"
+#include "rigExecMath/chainSolverKernel.h"
 #include <algorithm>
 #include <limits>
 #include <utility>
@@ -15,101 +17,25 @@ namespace {
 // Solver kernels (rigExecMath/solvers.cpp, splineIk.cpp): Gf -> Rr, the
 // arithmetic untouched.
 
-// Rotates v about unit axis by angle (Rodrigues).
-RrVec3d
-_RrRotate(const RrVec3d &v, const RrVec3d &axis, double angle)
-{
-    const double c = std::cos(angle);
-    const double s = std::sin(angle);
-    return v * c + RrCross(axis, v) * s + axis * RrDot(axis, v) * (1 - c);
-}
-
-// RigExecSolveFkChain: each control's own rest->pose map composes with
-// its parent's accumulated map, applied to the output basis.
+// RigExecSolveFkChain (rigExecMath/chainSolverKernel.h).
 std::vector<RrPointFrame>
 _RrSolveFkChain(const std::vector<RrPoseFkElement> &elements)
 {
-    std::vector<RrPointFrame> result;
-    result.reserve(elements.size());
-    std::vector<RrMat4d> accumulated;
-    accumulated.reserve(elements.size());
-    for (size_t i = 0; i < elements.size(); ++i) {
-        const RrPoseFkElement &e = elements[i];
-        RrMat4d own = _RrIdentity();
-        RrPointsToMatrix(e.restPoints, e.posePoints, &own);
-        RrMat4d w = own;
-        if (e.parentIndex >= 0 && size_t(e.parentIndex) < accumulated.size()) {
-            w = own * accumulated[size_t(e.parentIndex)];
-        }
-        accumulated.push_back(w);
-        result.push_back(
-            RrMatrixToPoints(e.hasOutRest ? e.outRestPoints : e.restPoints, w));
-    }
-    return result;
+    return RigExecSolveFkChainKernel<RrVec3f, RrVec3d, RrPointFrame>(elements);
 }
 
-// A posed frame from an origin plus orthonormal aim/up directions,
-// preserving the rest landmark handle lengths.
-RrPointFrame
-_RrFrameFromAxes(const std::array<RrVec3d, 4> &restPoints,
-                 const RrVec3d &origin, const RrVec3d &ex,
-                 const RrVec3d &eyCandidate)
-{
-    RrVec3d ey = eyCandidate - ex * RrDot(ex, eyCandidate);
-    const double eyLen = ey.GetLength();
-    if (eyLen < 1e-12) {
-        const RrVec3d axes[3] = {RrVec3d(0, 1, 0), RrVec3d(0, 0, 1),
-                                 RrVec3d(1, 0, 0)};
-        for (const RrVec3d &axis : axes) {
-            ey = axis - ex * RrDot(ex, axis);
-            if (ey.GetLength() >= 1e-12) {
-                break;
-            }
-        }
-    }
-    ey.Normalize();
-    RrVec3d ez = RrCross(ex, ey);
-    ez.Normalize();
-
-    const double lx = (restPoints[1] - restPoints[0]).GetLength();
-    const double ly = (restPoints[2] - restPoints[0]).GetLength();
-    const double lz = (restPoints[3] - restPoints[0]).GetLength();
-
-    RrPointFrame f;
-    f.points[0] = origin;
-    f.points[1] = origin + ex * lx;
-    f.points[2] = origin + ey * ly;
-    f.points[3] = origin + ez * lz;
-    f.flags = RrPointFrameValid;
-    return f;
-}
-
-// RigExecTwoBoneIkLengths: the chain's bone lengths measured in \p space,
-// each authored offset riding its own bone's factor.
+// RigExecTwoBoneIkLengths.
 void
 _RrTwoBoneIkLengths(const std::array<std::array<RrVec3d, 4>, 3> &restPoints,
                     const RrMat4d &space, double upperOffset,
                     double lowerOffset, double *upperLength,
                     double *lowerLength)
 {
-    const double rawUpper = (restPoints[1][0] - restPoints[0][0]).GetLength();
-    const double rawLower = (restPoints[2][0] - restPoints[1][0]).GetLength();
-    const RrVec3d s0 = space.Transform(restPoints[0][0]);
-    const RrVec3d s1 = space.Transform(restPoints[1][0]);
-    const RrVec3d s2 = space.Transform(restPoints[2][0]);
-    const double spacedUpper = (s1 - s0).GetLength();
-    const double spacedLower = (s2 - s1).GetLength();
-    if (upperLength) {
-        const double f = rawUpper > 1e-12 ? spacedUpper / rawUpper : 1.0;
-        *upperLength = spacedUpper + upperOffset * f;
-    }
-    if (lowerLength) {
-        const double f = rawLower > 1e-12 ? spacedLower / rawLower : 1.0;
-        *lowerLength = spacedLower + lowerOffset * f;
-    }
+    RigExecTwoBoneIkLengthsKernel(restPoints, space, upperOffset, lowerOffset,
+                                  upperLength, lowerLength);
 }
 
-// RigExecSolveTwoBoneIk: analytic two-bone IK with pole vector.
+// RigExecSolveTwoBoneIk.
 std::array<RrPointFrame, 3>
 _RrSolveTwoBoneIk(const RrPointFrame &rootFrame,
                   const RrPointFrame &effectorFrame,
@@ -117,138 +43,8 @@ _RrSolveTwoBoneIk(const RrPointFrame &rootFrame,
                   const std::array<std::array<RrVec3d, 4>, 3> &restPoints,
                   const RrPoseTwoBoneIkParams &params)
 {
-    const RrVec3d root = rootFrame.points[0];
-    const RrVec3d goal = effectorFrame.points[0];
-    const RrVec3d pole = poleFrame.points[0];
-
-    const double l1 = std::max(params.upperLength, 1e-9);
-    const double l2 = std::max(params.lowerLength, 1e-9);
-    const double chain = l1 + l2;
-
-    RrVec3d toGoal = goal - root;
-    double dist = toGoal.GetLength();
-    RrVec3d aim;
-    if (dist > 1e-12) {
-        aim = toGoal / dist;
-    } else {
-        const RrVec3d rootAim = rootFrame.points[1] - root;
-        if (rootAim.GetLength() < 1e-12) {
-            std::array<RrPointFrame, 3> failed = {rootFrame, rootFrame,
-                                                  effectorFrame};
-            for (auto &f : failed) {
-                f.flags |= RrPointFrameDegenerate;
-            }
-            return failed;
-        }
-        aim = rootAim.GetNormalized();
-    }
-
-    double reach = dist;
-    double s1 = l1, s2 = l2;
-    if (params.softDistancePolicy) {
-        // RigExecSolveTwoBoneIk's limb model, through the shared kernel.
-        rigExec::RigExecLimbSegmentLengths(
-            l1, l2, dist, (pole - root).GetLength(), (goal - pole).GetLength(),
-            params.limb, &s1, &s2);
-        s1 = std::max(s1, 1e-9);
-        s2 = std::max(s2, 1e-9);
-        reach = std::min(dist, s1 + s2);
-    } else {
-        const double soft = std::max(params.softness, 0.0) * chain;
-        if (soft > 1e-12 && dist > chain - soft) {
-            reach = chain - soft * std::exp(-(dist - (chain - soft)) / soft);
-        } else if (dist > chain) {
-            reach = chain;
-        }
-
-        if (dist > reach && params.stretch > 0.0) {
-            const double factor =
-                1.0 + (dist / chain - 1.0) *
-                          std::min(std::max(params.stretch, 0.0), 1.0);
-            if (factor > 1.0) {
-                s1 = l1 * factor;
-                s2 = l2 * factor;
-                reach = std::min(dist, s1 + s2);
-            }
-        }
-    }
-    reach = std::min(reach, s1 + s2);
-    reach = std::max(reach, std::abs(s1 - s2) + 1e-12);
-
-    RrVec3d poleDir = pole - root;
-    poleDir -= aim * RrDot(aim, poleDir);
-    RrVec3d bendUp;
-    if (poleDir.GetLength() > 1e-12) {
-        bendUp = poleDir.GetNormalized();
-    } else {
-        RrVec3d candidate = restPoints[0][2] - restPoints[0][0];
-        candidate -= aim * RrDot(aim, candidate);
-        if (candidate.GetLength() < 1e-12) {
-            const RrVec3d axes[3] = {RrVec3d(1, 0, 0), RrVec3d(0, 1, 0),
-                                     RrVec3d(0, 0, 1)};
-            double best = 2.0;
-            for (const RrVec3d &axis : axes) {
-                const double align = std::abs(RrDot(axis, aim));
-                if (align < best) {
-                    best = align;
-                    candidate = axis - aim * RrDot(aim, axis);
-                }
-            }
-        }
-        bendUp = _RrRotate(candidate.GetNormalized(), aim,
-                           params.preferredBendRadians);
-    }
-    if (params.twistRadians != 0.0 && std::isfinite(params.twistRadians)) {
-        bendUp = _RrRotate(bendUp, aim, params.twistRadians);
-    }
-    RrVec3d bendAxis = RrCross(aim, bendUp);
-    if (bendAxis.GetLength() < 1e-12) {
-        bendAxis = RrCross(aim, _RrRotate(bendUp, aim, 0.5 * _RrPi));
-    }
-    bendAxis.Normalize();
-
-    const double cosAlpha =
-        (s1 * s1 + reach * reach - s2 * s2) / (2 * s1 * reach);
-    const double alpha = std::acos(std::min(std::max(cosAlpha, -1.0), 1.0));
-
-    const RrVec3d upperDir = _RrRotate(aim, bendAxis, alpha);
-    const RrVec3d mid = root + upperDir * s1;
-    const RrVec3d endPos = root + aim * reach;
-    const RrVec3d lowerDir = (endPos - mid).GetNormalized();
-
-    std::array<RrPointFrame, 3> out;
-    out[0] = _RrFrameFromAxes(restPoints[0], root, upperDir, bendUp);
-    out[1] = _RrFrameFromAxes(restPoints[1], mid, lowerDir, bendUp);
-    if (params.scaleSegments) {
-        rigExec::RigExecScaleFrameAlong(out[0].points.data(), upperDir,
-                                        s1 / l1);
-        rigExec::RigExecScaleFrameAlong(out[1].points.data(), lowerDir,
-                                        (endPos - mid).GetLength() / l2);
-    }
-
-    if (params.space != RrMat4d(1.0)) {
-        for (size_t f = 0; f < 2; ++f) {
-            const RrVec3d origin = out[f].points[0];
-            for (size_t a = 1; a < 4; ++a) {
-                const RrVec3d handle = out[f].points[a] - origin;
-                const double length = handle.GetLength();
-                if (length < 1e-12)
-                    continue;
-                const RrVec3d direction = handle / length;
-                const double factor =
-                    params.space.TransformDir(direction).GetLength();
-                out[f].points[a] = origin + direction * (length * factor);
-            }
-        }
-    }
-
-    RrPointFrame end = effectorFrame;
-    const RrVec3d offset = endPos - effectorFrame.points[0];
-    for (auto &p : end.points) {
-        p += offset;
-    }
-    out[2] = end;
-    return out;
+    return RigExecSolveTwoBoneIkKernel<RrVec3f, RrVec3d>(
+        rootFrame, effectorFrame, poleFrame, restPoints, params);
 }
 
 // The open degree-2, four-CV B-spline with its arc-length table
@@ -1501,24 +1297,9 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
                 ws.parentRelative ? int(base) - 1 : int(k) + int(base) - 1;
         }
         aggregate.frames = _RrSolveFkChain(s.elements);
-        if (ws.scaleSegments) {
-            for (size_t k = 0;
-                 k + 1 < s.elements.size() && k + 1 < aggregate.frames.size();
-                 ++k) {
-                const auto &a = s.elements[k];
-                const auto &b = s.elements[k + 1];
-                const auto &ra = a.hasOutRest ? a.outRestPoints : a.restPoints;
-                const auto &rb = b.hasOutRest ? b.outRestPoints : b.restPoints;
-                const double rest = RigExecBoneLengthUnderFrame(
-                    ra.data(), aggregate.frames[k].points.data(),
-                    RrVec3d(rb[0] - ra[0]));
-                const auto bone = aggregate.frames[k + 1].points[0] -
-                                  aggregate.frames[k].points[0];
-                if (rest > 1e-12 && bone.GetLength() > 1e-12)
-                    RigExecScaleFrameAlong(aggregate.frames[k].points.data(),
-                                           bone, bone.GetLength() / rest);
-            }
-        }
+        if (ws.scaleSegments)
+            RigExecScaleFkSegmentsKernel<RrVec3d>(s.elements,
+                                                  &aggregate.frames);
         if (base && !aggregate.frames.empty()) {
             aggregate.frames.erase(aggregate.frames.begin());
         }
@@ -1601,13 +1382,8 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
             ws.lowerScale ? program->ReadSolver(solver, RrSolverLowerScale).f64
                           : 1;
         params.limb.scaleCalibration = ws.scaleCalibration;
-        double rawUpper = 0, rawLower = 0, upper = 0, lower = 0;
-        _RrTwoBoneIkLengths(s.ikRests, RrMat4d(1.0), 0, 0, &rawUpper,
-                            &rawLower);
-        _RrTwoBoneIkLengths(s.ikRests, ikSpace, 0, 0, &upper, &lower);
-        const double rawLength = rawUpper + rawLower;
         const double spaceFactor =
-            rawLength > 1e-12 ? (upper + lower) / rawLength : 1;
+            RigExecTwoBoneIkSpaceFactorKernel(s.ikRests, ikSpace);
         params.limb.softDistance =
             ws.softDistance
                 ? program->ReadSolver(solver, RrSolverSoftDistance).f32 *

@@ -1,5 +1,6 @@
 // RigExec solver kernels.
 #include "solvers.h"
+#include "chainSolverKernel.h"
 #include "constraintKernel.h"
 #include "dualQuat.h"
 #include "matrixKernel.h"
@@ -18,120 +19,22 @@ namespace rigExec {
 std::vector<RigExecPointFrame>
 RigExecSolveFkChain(const std::vector<RigExecFkChainElement> &elements)
 {
-    std::vector<RigExecPointFrame> result;
-    result.reserve(elements.size());
-
-    // Accumulated rest->pose maps, row-vector convention. W_i (column
-    // convention) = W_parent ∘ A_i maps to row storage W_row = A_row * Wp_row.
-    std::vector<GfMatrix4d> accumulated;
-    accumulated.reserve(elements.size());
-
-    for (size_t i = 0; i < elements.size(); ++i) {
-        const RigExecFkChainElement &e = elements[i];
-        GfMatrix4d own;
-        RigExecPointsToMatrix(e.restPoints, e.posePoints, &own);
-
-        GfMatrix4d w = own;
-        if (e.parentIndex >= 0 &&
-            static_cast<size_t>(e.parentIndex) < accumulated.size()) {
-            w = own * accumulated[e.parentIndex];
-        }
-        accumulated.push_back(w);
-        // The map is MEASURED from the control's rest and APPLIED to the
-        // element's output basis: the joint's rest reference when one
-        // reached the solver, the control's own rest otherwise.
-        result.push_back(RigExecMatrixToPoints(
-            e.hasOutRest ? e.outRestPoints : e.restPoints, w));
-    }
-    return result;
+    return RigExecSolveFkChainKernel<GfVec3f, GfVec3d, RigExecPointFrame>(
+        elements);
 }
 
 void
 RigExecScaleFkSegments(const std::vector<RigExecFkChainElement> &elements,
                        std::vector<RigExecPointFrame> *frames)
 {
-    if (!frames || frames->size() != elements.size()) {
-        return;
-    }
-    // Directions and factors from the unscaled frames first: scaling one
-    // joint moves none of the origins, so the order would not matter, but
-    // measuring before writing keeps that from being something to check.
-    std::vector<GfVec3d> dirs(elements.size());
-    std::vector<double> factors(elements.size(), 1.0);
-    // Consecutive elements are a bone: the chain is ordered root to tip,
-    // whether its controls compose in world or parent-relative space.
-    for (size_t i = 0; i + 1 < elements.size(); ++i) {
-        const auto &ri = elements[i].hasOutRest ? elements[i].outRestPoints
-                                                : elements[i].restPoints;
-        const auto &rc = elements[i + 1].hasOutRest
-                             ? elements[i + 1].outRestPoints
-                             : elements[i + 1].restPoints;
-        // The bone as the joint's own frame carries it: a scale the frame
-        // already has (a master's) is not the joint's stretch.
-        const double rest = RigExecBoneLengthUnderFrame(
-            ri.data(), (*frames)[i].points.data(), GfVec3d(rc[0] - ri[0]));
-        const GfVec3d bone =
-            (*frames)[i + 1].points[0] - (*frames)[i].points[0];
-        const double posed = bone.GetLength();
-        if (rest > 1e-12 && posed > 1e-12) {
-            dirs[i] = bone;
-            factors[i] = posed / rest;
-        }
-    }
-    for (size_t i = 0; i < elements.size(); ++i) {
-        RigExecScaleFrameAlong((*frames)[i].points.data(), dirs[i], factors[i]);
-    }
+    if (frames && frames->size() == elements.size())
+        RigExecScaleFkSegmentsKernel<GfVec3d>(elements, frames);
 }
 
 namespace {
 
-// std::acos(-1) rather than M_PI: the latter is not a standard C++ macro
-// (it needs _USE_MATH_DEFINES on MSVC and a non-strict mode on glibc).
+// std::acos(-1) rather than M_PI, which MSVC and strict modes lack.
 const double kPi = std::acos(-1);
-
-// Rotates v about unit axis by angle (Rodrigues).
-GfVec3d
-_Rotate(const GfVec3d &v, const GfVec3d &axis, double angle)
-{
-    const double c = std::cos(angle);
-    const double s = std::sin(angle);
-    return v * c + GfCross(axis, v) * s + axis * GfDot(axis, v) * (1 - c);
-}
-
-// Builds a posed frame from an origin plus orthonormal aim/up directions,
-// preserving the rest landmark handle lengths (rigid frame).
-RigExecPointFrame
-_FrameFromAxes(const std::array<GfVec3d, 4> &restPoints, const GfVec3d &origin,
-               const GfVec3d &ex, const GfVec3d &eyCandidate)
-{
-    GfVec3d ey = eyCandidate - ex * GfDot(ex, eyCandidate);
-    const double eyLen = ey.GetLength();
-    if (eyLen < 1e-12) {
-        // Deterministic world-axis completion.
-        const GfVec3d axes[3] = {GfVec3d(0, 1, 0), GfVec3d(0, 0, 1),
-                                 GfVec3d(1, 0, 0)};
-        for (const GfVec3d &axis : axes) {
-            ey = axis - ex * GfDot(ex, axis);
-            if (ey.GetLength() >= 1e-12)
-                break;
-        }
-    }
-    ey.Normalize();
-    GfVec3d ez = GfCross(ex, ey);
-    ez.Normalize();
-
-    const double lx = (restPoints[1] - restPoints[0]).GetLength();
-    const double ly = (restPoints[2] - restPoints[0]).GetLength();
-    const double lz = (restPoints[3] - restPoints[0]).GetLength();
-
-    RigExecPointFrame f;
-    f.points[0] = origin;
-    f.points[1] = origin + ex * lx;
-    f.points[2] = origin + ey * ly;
-    f.points[3] = origin + ez * lz;
-    f.flags = RigExecPointFrameValid;
-    return f;
-}
 
 } // namespace
 
@@ -141,21 +44,8 @@ RigExecTwoBoneIkLengths(const std::array<std::array<GfVec3d, 4>, 3> &restPoints,
                         double lowerOffset, double *upperLength,
                         double *lowerLength)
 {
-    const double rawUpper = (restPoints[1][0] - restPoints[0][0]).GetLength();
-    const double rawLower = (restPoints[2][0] - restPoints[1][0]).GetLength();
-    const GfVec3d s0 = space.Transform(restPoints[0][0]);
-    const GfVec3d s1 = space.Transform(restPoints[1][0]);
-    const GfVec3d s2 = space.Transform(restPoints[2][0]);
-    const double spacedUpper = (s1 - s0).GetLength();
-    const double spacedLower = (s2 - s1).GetLength();
-    if (upperLength) {
-        const double f = rawUpper > 1e-12 ? spacedUpper / rawUpper : 1.0;
-        *upperLength = spacedUpper + upperOffset * f;
-    }
-    if (lowerLength) {
-        const double f = rawLower > 1e-12 ? spacedLower / rawLower : 1.0;
-        *lowerLength = spacedLower + lowerOffset * f;
-    }
+    RigExecTwoBoneIkLengthsKernel(restPoints, space, upperOffset, lowerOffset,
+                                  upperLength, lowerLength);
 }
 
 double
@@ -163,12 +53,7 @@ RigExecTwoBoneIkSpaceFactor(
     const std::array<std::array<GfVec3d, 4>, 3> &restPoints,
     const GfMatrix4d &space)
 {
-    double rawUpper = 0.0, rawLower = 0.0, upper = 0.0, lower = 0.0;
-    RigExecTwoBoneIkLengths(restPoints, GfMatrix4d(1.0), 0.0, 0.0, &rawUpper,
-                            &rawLower);
-    RigExecTwoBoneIkLengths(restPoints, space, 0.0, 0.0, &upper, &lower);
-    const double raw = rawUpper + rawLower;
-    return raw > 1e-12 ? (upper + lower) / raw : 1.0;
+    return RigExecTwoBoneIkSpaceFactorKernel(restPoints, space);
 }
 
 void
@@ -197,163 +82,8 @@ RigExecSolveTwoBoneIk(const RigExecPointFrame &rootFrame,
                       const std::array<std::array<GfVec3d, 4>, 3> &restPoints,
                       const RigExecTwoBoneIkParams &params)
 {
-    const GfVec3d root = rootFrame.Origin();
-    const GfVec3d goal = effectorFrame.Origin();
-    const GfVec3d pole = poleFrame.Origin();
-
-    const double l1 = std::max(params.upperLength, 1e-9);
-    const double l2 = std::max(params.lowerLength, 1e-9);
-    const double chain = l1 + l2;
-
-    GfVec3d toGoal = goal - root;
-    double dist = toGoal.GetLength();
-    GfVec3d aim;
-    if (dist > 1e-12) {
-        aim = toGoal / dist;
-    } else {
-        // Coincident goal: fall back to the root aim handle; if that is
-        // also degenerate, fail atomically — return the input frames
-        // flagged degenerate rather than normalizing a zero vector
-        // (no silent identity, no NaNs).
-        const GfVec3d rootAim = rootFrame.X() - root;
-        if (rootAim.GetLength() < 1e-12) {
-            std::array<RigExecPointFrame, 3> failed = {rootFrame, rootFrame,
-                                                       effectorFrame};
-            for (auto &f : failed) {
-                f.flags |= RigExecPointFrameDegenerate;
-            }
-            return failed;
-        }
-        aim = rootAim.GetNormalized();
-    }
-
-    double reach = dist;
-    double s1 = l1, s2 = l2;
-    if (params.softDistancePolicy) {
-        // The limb model: lengths from the soft ease, the stretch blend,
-        // the per-bone scales and the pin, then a plain two-bone solve
-        // that reaches as far as those lengths allow.
-        RigExecLimbSegmentLengths(l1, l2, dist, (pole - root).GetLength(),
-                                  (goal - pole).GetLength(), params.limb, &s1,
-                                  &s2);
-        s1 = std::max(s1, 1e-9);
-        s2 = std::max(s2, 1e-9);
-        reach = std::min(dist, s1 + s2);
-    } else {
-        // Soft clamp near full reach ("clampWithSoftness"): beyond
-        // (chain - softness) the effective distance eases exponentially toward
-        // the chain length instead of hard-clamping.
-        const double soft = std::max(params.softness, 0.0) * chain;
-        if (soft > 1e-12 && dist > chain - soft) {
-            reach = chain - soft * std::exp(-(dist - (chain - soft)) / soft);
-        } else if (dist > chain) {
-            reach = chain;
-        }
-
-        // Uniform-segment stretch: blend segment scaling toward the amount
-        // needed to reach the raw goal distance.
-        if (dist > reach && params.stretch > 0.0) {
-            const double factor =
-                1.0 + (dist / chain - 1.0) *
-                          std::min(std::max(params.stretch, 0.0), 1.0);
-            if (factor > 1.0) {
-                s1 = l1 * factor;
-                s2 = l2 * factor;
-                reach = std::min(dist, s1 + s2);
-            }
-        }
-    }
-    reach = std::min(reach, s1 + s2);
-    reach = std::max(reach, std::abs(s1 - s2) + 1e-12);
-
-    // Bend plane normal from the pole; deterministic preferred-bend
-    // completion when the pole is on the aim line (ladder: pole, rest up, then the world axis least parallel to the aim).
-    GfVec3d poleDir = pole - root;
-    poleDir -= aim * GfDot(aim, poleDir);
-    GfVec3d bendUp;
-    if (poleDir.GetLength() > 1e-12) {
-        bendUp = poleDir.GetNormalized();
-    } else {
-        GfVec3d candidate = restPoints[0][2] - restPoints[0][0];
-        candidate -= aim * GfDot(aim, candidate);
-        if (candidate.GetLength() < 1e-12) {
-            // World axis least parallel to the aim always has a nonzero
-            // projection: |dot| < 1 for a unit axis, so this terminates.
-            const GfVec3d axes[3] = {GfVec3d(1, 0, 0), GfVec3d(0, 1, 0),
-                                     GfVec3d(0, 0, 1)};
-            double best = 2.0;
-            for (const GfVec3d &axis : axes) {
-                const double align = std::abs(GfDot(axis, aim));
-                if (align < best) {
-                    best = align;
-                    candidate = axis - aim * GfDot(aim, axis);
-                }
-            }
-        }
-        bendUp = _Rotate(candidate.GetNormalized(), aim,
-                         params.preferredBendRadians);
-    }
-    if (params.twistRadians != 0.0 && std::isfinite(params.twistRadians)) {
-        bendUp = _Rotate(bendUp, aim, params.twistRadians);
-    }
-    GfVec3d bendAxis = GfCross(aim, bendUp);
-    if (bendAxis.GetLength() < 1e-12) {
-        // bendUp is guaranteed off-aim by construction; guard anyway.
-        bendAxis = GfCross(aim, _Rotate(bendUp, aim, 0.5 * kPi));
-    }
-    bendAxis.Normalize();
-
-    // Law of cosines for the shoulder interior angle.
-    const double cosAlpha =
-        (s1 * s1 + reach * reach - s2 * s2) / (2 * s1 * reach);
-    const double alpha = std::acos(std::min(std::max(cosAlpha, -1.0), 1.0));
-
-    const GfVec3d upperDir = _Rotate(aim, bendAxis, alpha);
-    const GfVec3d mid = root + upperDir * s1;
-    const GfVec3d endPos = root + aim * reach;
-    const GfVec3d lowerDir = (endPos - mid).GetNormalized();
-
-    std::array<RigExecPointFrame, 3> out;
-    out[0] = _FrameFromAxes(restPoints[0], root, upperDir, bendUp);
-    out[1] = _FrameFromAxes(restPoints[1], mid, lowerDir, bendUp);
-    if (params.scaleSegments) {
-        // Each bone stretched to its solved length: the joint scales along
-        // it, so the skin follows the length (RigExecScaleFrameAlong).
-        RigExecScaleFrameAlong(out[0].points.data(), upperDir, s1 / l1);
-        RigExecScaleFrameAlong(out[1].points.data(), lowerDir,
-                               (endPos - mid).GetLength() / l2);
-    }
-
-    // CARRY THE SPACE INTO THE PUBLISHED HANDLES. _FrameFromAxes keeps
-    // the rest handle lengths, so the posed/rest ratio the pose ladder
-    // reads as scale comes out 1 and every child that is not itself
-    // solver-posed sits at its unscaled offset. The effector
-    // frame out[2] copies a control, which already carries its scale.
-    if (params.space != GfMatrix4d(1.0)) {
-        for (size_t f = 0; f < 2; ++f) {
-            const GfVec3d origin = out[f].points[0];
-            for (size_t a = 1; a < 4; ++a) {
-                const GfVec3d handle = out[f].points[a] - origin;
-                const double len = handle.GetLength();
-                if (len < 1e-12) {
-                    continue;
-                }
-                const GfVec3d dir = handle / len;
-                const double factor =
-                    params.space.TransformDir(dir).GetLength();
-                out[f].points[a] = origin + dir * (len * factor);
-            }
-        }
-    }
-
-    // End frame copies the effector orientation at the solved end position.
-    RigExecPointFrame end = effectorFrame;
-    const GfVec3d offset = endPos - effectorFrame.Origin();
-    for (auto &p : end.points) {
-        p += offset;
-    }
-    out[2] = end;
-    return out;
+    return RigExecSolveTwoBoneIkKernel<GfVec3f, GfVec3d>(
+        rootFrame, effectorFrame, poleFrame, restPoints, params);
 }
 
 RigExecPointFrame

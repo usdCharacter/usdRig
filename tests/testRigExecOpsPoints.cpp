@@ -13,6 +13,7 @@
 #include "rigExecMath/weightFields.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecOps/constraint/constraintOps.h"
+#include "rigExecOps/solver/chainSolverOps.h"
 #include "rigExecOps/deform/blendShapeOp.h"
 #include "rigExecOps/deform/deltaMushOp.h"
 #include "rigExecOps/deform/derivedOps.h"
@@ -2014,6 +2015,165 @@ TestWeightFields()
                      &actual, &error));
 }
 
+rigExecRig::PointLandmarks
+ToRigLandmarks(const std::array<GfVec3d, 4> &p)
+{
+    rigExecRig::PointLandmarks out;
+    for (int i = 0; i < 4; ++i)
+        out[i] = rigExecStd::Vec3d(p[i][0], p[i][1], p[i][2]);
+    return out;
+}
+
+void
+TestChainSolvers()
+{
+    using namespace rigExecOps;
+    // A three-control chain, the second a child of the first and the third
+    // of the second, posed and rested apart.
+    std::vector<RigExecFkChainElement> elements(3);
+    rigExecRig::PointFrameArray controls;
+    controls.frames = RigExecArray<rigExecRig::PointFrame>(3);
+    controls.rests = RigExecArray<rigExecRig::PointLandmarks>(3);
+    RigExecArray<rigExecRig::PointLandmarks> outRests(3);
+    for (size_t i = 0; i < 3; ++i) {
+        const double x = 2.0 * double(i);
+        const RigExecPointFrame rest =
+            MakeFrame(GfVec3d(x, 0.1 * x, 0), GfVec3d(0, 0, 1),
+                      10.0 * double(i), GfVec3d(1.0));
+        const RigExecPointFrame pose =
+            MakeFrame(GfVec3d(x + 0.3, 0.5, -0.2 * x), GfVec3d(0.3, 1, 0.2),
+                      25.0 + 15.0 * double(i), GfVec3d(1.0, 1.1, 0.9));
+        const RigExecPointFrame outRest = MakeFrame(
+            GfVec3d(x, 0.0, 0.05), GfVec3d(0, 1, 0), 5.0, GfVec3d(1.0));
+        elements[i].restPoints = rest.points;
+        elements[i].posePoints = pose.points;
+        elements[i].outRestPoints = outRest.points;
+        elements[i].parentIndex = int(i) - 1;
+        controls.frames[i] = ToRig(pose);
+        controls.rests[i] = ToRigLandmarks(rest.points);
+        outRests[i] = ToRigLandmarks(outRest.points);
+    }
+    FkChainPayload fk;
+    fk.parentIndices = {-1, 0, 1};
+    rigExecRig::PointFrameArray actual;
+    for (const bool scale : {false, true}) {
+        fk.scaleSegments = scale;
+        Node bare(FkChain(), {&FkChainControls()}, FkChainOut(), &fk);
+        std::vector<RigExecPointFrame> expected = RigExecSolveFkChain(elements);
+        if (scale)
+            RigExecScaleFkSegments(elements, &expected);
+        CHECK(bare.Run({&controls}, &actual));
+        CHECK(actual.frames.Size() == 3);
+        for (size_t i = 0; i < 3 && i < actual.frames.Size(); ++i)
+            CHECK(SameBits(expected[i], actual.frames[i]));
+
+        auto withOut = elements;
+        for (auto &e : withOut)
+            e.hasOutRest = true;
+        expected = RigExecSolveFkChain(withOut);
+        if (scale)
+            RigExecScaleFkSegments(withOut, &expected);
+        Node rebased(FkChain(), {&FkChainControls(), &FkChainOutRests()},
+                     FkChainOut(), &fk);
+        CHECK(rebased.Run({&controls, &outRests}, &actual));
+        for (size_t i = 0; i < 3 && i < actual.frames.Size(); ++i)
+            CHECK(SameBits(expected[i], actual.frames[i]));
+    }
+    FkChainPayload loop;
+    loop.parentIndices = {-1, 2, 1};
+    Node badParents(FkChain(), {&FkChainControls()}, FkChainOut(), &loop);
+    std::string error;
+    CHECK(!badParents.Run({&controls}, &actual, &error));
+
+    // Two-bone IK: both stretch policies, scaled segments and a space.
+    std::array<std::array<GfVec3d, 4>, 3> gfRests;
+    RigExecArray<rigExecRig::PointLandmarks> rests(3);
+    for (size_t i = 0; i < 3; ++i) {
+        gfRests[i] = MakeFrame(GfVec3d(0, -2.0 * double(i), 0.1 * double(i)),
+                               GfVec3d(0, 0, 1), -90.0, GfVec3d(1.0))
+                         .points;
+        rests[i] = ToRigLandmarks(gfRests[i]);
+    }
+    const RigExecPointFrame root = MakeFrame(
+        GfVec3d(0.2, 0.0, 0.1), GfVec3d(0, 0, 1), -80.0, GfVec3d(1.0));
+    const RigExecPointFrame pole =
+        MakeFrame(GfVec3d(0.5, -2.0, 3.0), GfVec3d(1, 0, 0), 0.0, GfVec3d(1.0));
+    GfMatrix4d gfSpace(1.0);
+    gfSpace.SetScale(GfVec3d(1.3));
+    const rigExecStd::Mat4d space = ToRig(gfSpace);
+    const double bend = 0.4, upperOffset = 0.1, lowerOffset = -0.05,
+                 upperScale = 1.1, lowerScale = 0.95;
+    const float stretch = 0.7f, softness = 0.15f, pin = 0.2f,
+                softDistance = 0.3f, twist = 12.0f;
+    for (const double reach : {2.5, 6.5}) {
+        const RigExecPointFrame effector = MakeFrame(
+            GfVec3d(0.4, -reach, 0.8), GfVec3d(1, 0, 0), 30.0, GfVec3d(1.0));
+        for (const bool softPolicy : {false, true}) {
+            TwoBoneIkPayload ik;
+            ik.softDistancePolicy = softPolicy;
+            ik.scaleSegments = softPolicy;
+            ik.scaleCalibration = softPolicy ? 0.05 : 0.0;
+            RigExecTwoBoneIkParams params;
+            params.preferredBendRadians = bend;
+            params.stretch = stretch;
+            params.softness = softness;
+            params.space = gfSpace;
+            params.softDistancePolicy = softPolicy;
+            params.scaleSegments = softPolicy;
+            params.limb.scaleCalibration = ik.scaleCalibration;
+            RigExecTwoBoneIkLengths(gfRests, gfSpace, upperOffset, lowerOffset,
+                                    &params.upperLength, &params.lowerLength);
+            RigExecSetTwoBoneLimbParams(gfRests, gfSpace, stretch, pin,
+                                        upperScale, lowerScale, softDistance,
+                                        twist, &params);
+            const auto expected =
+                RigExecSolveTwoBoneIk(root, effector, pole, gfRests, params);
+            Node node(TwoBoneIk(),
+                      {&TwoBoneIkRoot(), &TwoBoneIkEffector(), &TwoBoneIkPole(),
+                       &TwoBoneIkRests(), &TwoBoneIkSpace(), &TwoBoneIkBend(),
+                       &TwoBoneIkUpperOffset(), &TwoBoneIkLowerOffset(),
+                       &TwoBoneIkStretch(), &TwoBoneIkSoftness(),
+                       &TwoBoneIkPin(), &TwoBoneIkUpperScale(),
+                       &TwoBoneIkLowerScale(), &TwoBoneIkSoftDistance(),
+                       &TwoBoneIkTwist()},
+                      TwoBoneIkOut(), &ik);
+            const rigExecRig::PointFrame r = ToRig(root), e = ToRig(effector),
+                                         p = ToRig(pole);
+            CHECK(node.Run({&r, &e, &p, &rests, &space, &bend, &upperOffset,
+                            &lowerOffset, &stretch, &softness, &pin,
+                            &upperScale, &lowerScale, &softDistance, &twist},
+                           &actual));
+            CHECK(actual.frames.Size() == 3);
+            for (size_t i = 0; i < 3 && i < actual.frames.Size(); ++i)
+                CHECK(SameBits(expected[i], actual.frames[i]));
+        }
+    }
+    // Defaults match the native defaults; two rests refuse.
+    {
+        const RigExecPointFrame effector = MakeFrame(
+            GfVec3d(0.4, -3.0, 0.8), GfVec3d(1, 0, 0), 30.0, GfVec3d(1.0));
+        RigExecTwoBoneIkParams params;
+        RigExecTwoBoneIkLengths(gfRests, GfMatrix4d(1.0), 0.0, 0.0,
+                                &params.upperLength, &params.lowerLength);
+        RigExecSetTwoBoneLimbParams(gfRests, GfMatrix4d(1.0), 1.0, 0.0, 1.0,
+                                    1.0, 0.0, 0.0, &params);
+        const auto expected =
+            RigExecSolveTwoBoneIk(root, effector, pole, gfRests, params);
+        TwoBoneIkPayload ik;
+        Node node(TwoBoneIk(),
+                  {&TwoBoneIkRoot(), &TwoBoneIkEffector(), &TwoBoneIkPole(),
+                   &TwoBoneIkRests()},
+                  TwoBoneIkOut(), &ik);
+        const rigExecRig::PointFrame r = ToRig(root), e = ToRig(effector),
+                                     p = ToRig(pole);
+        CHECK(node.Run({&r, &e, &p, &rests}, &actual));
+        for (size_t i = 0; i < 3 && i < actual.frames.Size(); ++i)
+            CHECK(SameBits(expected[i], actual.frames[i]));
+        RigExecArray<rigExecRig::PointLandmarks> two(2);
+        CHECK(!node.Run({&r, &e, &p, &two}, &actual, &error));
+    }
+}
+
 int
 main()
 {
@@ -2040,6 +2200,7 @@ main()
     TestShaderDials();
     TestConstraints();
     TestWeightFields();
+    TestChainSolvers();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;
