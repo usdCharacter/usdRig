@@ -24,11 +24,17 @@ entry starting with it names a translation unit this SDK ships beside the
 manifests and resolves under the manifest directory M, every other entry
 resolves under the usdRig checkout C. Only a configured build tree may name
 an absolute path, and only inside its own checkout or binary root. Every
-source entry is a translation unit, compiled with the language its extension
-names. Object targets are
-build/obj/<suffix>/generated/<path under M/runtime-generated> for generated
-units and build/obj/<suffix>/checkout/<path under C> for checkout units, so
-debug and release never share an object target.
+source entry is a translation unit, compiled with the language its FINAL
+suffix names; the suffix list is case-sensitive. Object targets keep the
+full relative source filename: build/obj/<suffix>/generated/<path under
+M/runtime-generated> for generated units and build/obj/<suffix>/checkout/
+<path under C> for checkout units, so debug and release never share an object
+target and two units with the same stem in one directory never share one
+either. An explicitly passed sdk_root must supply the whole manifest set at
+the data directory its package file declares; it is never completed from the
+build tree. Without sdk_root, an installed SDK still wins over the build
+tree, and a default location with no manifest set at all falls through to
+in-place discovery.
 
 Usage:
     scons platform=<windows|linux|macos> target=<template_debug|template_release>
@@ -51,8 +57,9 @@ MANIFEST_NAMES = ("runtimeSources.txt", "evalCoreSources.txt",
 # The reserved first component of an installed manifest entry: the generated
 # mover payload shipped with the SDK (cmake/rigExecConfig.cmake.in).
 GENERATED_COMPONENT = "runtime-generated"
-# Extensions a source manifest may name, and the language each carries. The
-# exporter (cmake/exportManifests.cmake) accepts the same list.
+# Final suffixes a source manifest may name, and the language each carries.
+# The exporter (cmake/exportManifests.cmake) and bin/check_runtime_usd_free.sh
+# apply the same case-sensitive list.
 UNIT_SUFFIXES = (".c", ".cc", ".cxx", ".cpp", ".c++")
 
 
@@ -72,7 +79,12 @@ env = _godot_cpp_env()
 usdrig_root = os.path.abspath(ARGUMENTS.get("usdrig_root", os.path.join("..", "usdRig")))
 usdrig_libs = os.path.join(usdrig_root, "libs")
 build_root = os.path.join(usdrig_root, "build")
-sdk_root = os.path.abspath(ARGUMENTS.get("sdk_root", os.path.join("..", "usd-install")))
+sdk_root_arg = ARGUMENTS.get("sdk_root", "")
+# An explicitly named SDK is authoritative: its manifest set must exist there,
+# even when a configured usdRig build tree sits beside it. Only the default
+# probe location may fall through to in-place discovery.
+sdk_explicit = bool(sdk_root_arg)
+sdk_root = os.path.abspath(sdk_root_arg or os.path.join("..", "usd-install"))
 
 
 def _read_lines(path):
@@ -109,7 +121,8 @@ def _manifest_source():
     configured usdRig build tree. One directory supplies the whole set, so
     the mode is decided once and every entry is read under it. A directory
     holding part of the set is the SDK this build meant to use; it is
-    rejected instead of completed from another root."""
+    rejected instead of completed from another root. An explicitly passed
+    sdk_root is never replaced by the build tree."""
     manifest_dir_arg = ARGUMENTS.get("manifest_dir", "")
     if manifest_dir_arg:
         directory = os.path.abspath(manifest_dir_arg)
@@ -117,6 +130,19 @@ def _manifest_source():
         if missing:
             print("manifest_dir " + directory + " is missing " + ", ".join(missing))
             print("an SDK manifest set is the four manifests plus exactFpFlags.txt")
+            raise SystemExit(1)
+        return directory, "sdk"
+    if sdk_explicit:
+        directory = _sdk_manifest_dir()
+        missing = _missing_manifests(directory)
+        if missing:
+            print("sdk_root " + sdk_root + " names " + directory
+                  + ", which is missing " + ", ".join(missing))
+            print("an explicitly selected SDK must supply the whole set "
+                  "(" + ", ".join(MANIFEST_NAMES) + "); the usdRig build tree "
+                  "is not used when sdk_root is given")
+            print("drop sdk_root to build from a configured usdRig build tree, "
+                  "or install the SDK built from that checkout")
             raise SystemExit(1)
         return directory, "sdk"
     for directory, mode in ((_sdk_manifest_dir(), "sdk"),
@@ -207,7 +233,7 @@ def _manifest_paths(manifest_name, want_file):
         if want_file:
             if not os.path.isfile(path):
                 _entry_failure(manifest, entry, path, "is not a file")
-            extension = os.path.splitext(path)[1].lower()
+            extension = os.path.splitext(path)[1]
             if extension not in UNIT_SUFFIXES:
                 _entry_failure(manifest, entry, path,
                                "is not a translation unit (one of "
@@ -285,30 +311,34 @@ else:
 obj_root = os.path.join("build", "obj", env["suffix"].lstrip("."))
 
 
-def _object_key(source, generated):
-    stem = os.path.splitext(
-        os.path.relpath(source, generated_root if generated else usdrig_root)
-        .replace("\\", "/"))[0]
+def _object_target(source, base_root, label):
+    # The target carries the whole source filename plus the object suffix, so a
+    # mesh.cpp and a mesh.cxx beside each other, or a mesh.scalar.cxx, never
+    # collapse onto one object. Naming the suffix here keeps SCons from
+    # re-deriving the object name from the source extension.
+    stem = os.path.relpath(source, base_root).replace("\\", "/")
     first = stem.split("/")[0]
     if stem.startswith("/") or first.endswith(":") or ".." in stem.split("/"):
-        print(source + " has no object key relative to the "
-              + ("generated" if generated else "checkout") + " root")
+        print(source + " has no object key relative to the " + label + " root")
         raise SystemExit(1)
-    return os.path.join(obj_root, "generated" if generated else "checkout", stem)
+    return os.path.join(obj_root, label, stem + env["OBJSUFFIX"])
 
 
-objects = [runtime_env.SharedObject(_object_key(source, generated), source)
-           for source, generated in runtime_sources]
+objects = [
+    runtime_env.SharedObject(
+        _object_target(source, generated_root if from_generated else usdrig_root,
+                       "generated" if from_generated else "checkout"),
+        source)
+    for source, from_generated in runtime_sources
+]
 lzma_env = env.Clone()
 lzma_env.Append(CPPDEFINES=["Z7_ST", "RIGEXEC_LZMA_PORTABLE_SCALAR"])
-objects += [lzma_env.SharedObject(_object_key(s, False), s)
+objects += [lzma_env.SharedObject(_object_target(s, usdrig_root, "checkout"), s)
             for s in lzma_sources]
-objects += [
-    env.SharedObject(
-        os.path.join(obj_root, "addon",
-                     os.path.splitext(os.path.basename(s))[0]), s)
-    for s in addon_sources
-]
+# The add-on list is one flat directory, so its filename is the whole key.
+objects += [env.SharedObject(os.path.join(obj_root, "addon",
+                                          os.path.basename(s) + env["OBJSUFFIX"]), s)
+            for s in addon_sources]
 
 if env["platform"] == "macos":
     library_path = os.path.join(

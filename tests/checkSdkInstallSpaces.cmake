@@ -41,6 +41,7 @@ file(MAKE_DIRECTORY "${_source_root}/fixture include"
     "${_build_dir}/runtime-generated/TestMover")
 file(WRITE "${_source_root}/fixture.cpp" "// fixture checkout source\n")
 file(WRITE "${_source_root}/fixture.cxx" "// fixture payload unit\n")
+file(WRITE "${_source_root}/mesh.scalar.cxx" "// fixture multi-dot unit\n")
 file(WRITE "${_source_root}/fixture include/fixture.h" "// fixture checkout header\n")
 foreach (_payload moverCatalog.cpp TestMover/TestMoverKernel.cpp
     TestMover/TestMoverSchema.h TestMover/TestMoverRegistration.h)
@@ -48,8 +49,13 @@ foreach (_payload moverCatalog.cpp TestMover/TestMoverKernel.cpp
         "// fixture payload ${_payload}\n")
 endforeach()
 file(WRITE "${_build_dir}/exactFpFlags.txt" "-fno-fast-math\n-ffp-contract=off\n")
+# A build's manifests may name several units in one directory: here
+# fixture.cpp and fixture.cxx share a stem, and mesh.scalar.cxx is a
+# multi-dot unit beside them. The exported manifest keeps all three
+# spellings distinct (asserted below), which is what lets a consumer key an
+# object target by the full source filename.
 file(WRITE "${_build_dir}/runtimeSources.txt"
-    "${_build_dir}/runtime-generated/moverCatalog.cpp\n${_source_root}/fixture.cpp\n${_source_root}/fixture.cxx\n")
+    "${_build_dir}/runtime-generated/moverCatalog.cpp\n${_source_root}/fixture.cpp\n${_source_root}/fixture.cxx\n${_source_root}/mesh.scalar.cxx\n")
 file(WRITE "${_build_dir}/runtimeIncludes.txt"
     "${_source_root}/fixture include\n")
 file(WRITE "${_build_dir}/evalCoreSources.txt" "${_source_root}/fixture.cpp\n")
@@ -75,25 +81,30 @@ function(_configure_fixture build_dir data_dir)
 endfunction()
 
 # Every source-manifest entry is a translation unit the consumer compiles, so
-# an unsupported extension has to be rejected at export, not dropped.
+# an unsupported final suffix has to be rejected at export, not dropped. The
+# suffix list is case-sensitive, and only the FINAL suffix decides the
+# language: mesh.scalar.cxx is a C++ unit next to a mesh.cpp.
 file(WRITE "${_source_root}/notes.txt" "// not a translation unit\n")
+file(WRITE "${_source_root}/Notes.CPP" "// uppercase suffix is not a unit\n")
 set(_bad_build "${SCRATCH_DIR}/bad build")
 file(MAKE_DIRECTORY "${_bad_build}")
-file(WRITE "${_bad_build}/runtimeSources.txt" "notes.txt\n")
-execute_process(
-    COMMAND "${CMAKE_COMMAND}"
-        "-DSOURCE_ROOT=${_source_root}" "-DBUILD_DIR=${_bad_build}"
-        "-DPREFIX=${SCRATCH_DIR}/bad sdk" "-DDATA_DIR=share/rigExec"
-        -P "${_export}"
-    RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
-string(CONCAT _out "${_out}" "${_err}")
-if (_rc EQUAL 0)
-    _fail("unsupported entry: cmake --install exported notes.txt instead of rejecting it")
-endif()
-if (NOT _out MATCHES "translation unit")
-    _fail("unsupported entry: rejection did not name the contract: ${_out}")
-endif()
-message(STATUS "unsupported entry: pass (export rejected notes.txt)")
+foreach (_bad notes.txt Notes.CPP)
+    file(WRITE "${_bad_build}/runtimeSources.txt" "${_bad}\n")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}"
+            "-DSOURCE_ROOT=${_source_root}" "-DBUILD_DIR=${_bad_build}"
+            "-DPREFIX=${SCRATCH_DIR}/bad sdk" "-DDATA_DIR=share/rigExec"
+            -P "${_export}"
+        RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
+    string(CONCAT _out "${_out}" "${_err}")
+    if (_rc EQUAL 0)
+        _fail("unsupported entry: the exporter exported ${_bad} instead of rejecting it")
+    endif()
+    if (NOT _out MATCHES "translation unit")
+        _fail("unsupported entry: rejection of ${_bad} did not name the contract: ${_out}")
+    endif()
+    message(STATUS "unsupported entry: pass (export rejected ${_bad})")
+endforeach()
 
 _configure_fixture("${_fixture_build}" "${INSTALL_DATADIR}")
 
@@ -141,7 +152,7 @@ endfunction()
 
 _assert_sdk("${_install_prefix}" "${INSTALL_DATADIR}")
 _assert_manifest("${_install_prefix}" runtimeSources
-    "runtime-generated/moverCatalog.cpp\nfixture.cpp\nfixture.cxx\n")
+    "runtime-generated/moverCatalog.cpp\nfixture.cpp\nfixture.cxx\nmesh.scalar.cxx\n")
 _assert_manifest("${_install_prefix}" runtimeIncludes "fixture include\n")
 _assert_manifest("${_install_prefix}" evalCoreSources "fixture.cpp\n")
 _assert_manifest("${_install_prefix}" evalCoreIncludes "fixture include\n")
@@ -151,26 +162,33 @@ if (NOT _flags MATCHES "fno-fast-math")
 endif()
 message(STATUS "spaced install: pass (manifests, flags and payload under ${_install_prefix}/${INSTALL_DATADIR})")
 
-# DESTDIR stages install(FILES) destinations, but an install(CODE) script has
-# to apply it itself: the staged tree must hold the payload and the manifests
-# beside it, and the unstaged prefix must stay empty. A fresh prefix keeps the
-# first install's files out of the comparison.
-set(_staged_prefix "${SCRATCH_DIR}/staged prefix")
-set(ENV{DESTDIR} "${_stage_root}")
-execute_process(
-    COMMAND "${CMAKE_COMMAND}" --install "${_fixture_build}"
-        --prefix "${_staged_prefix}"
-    RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
-set(ENV{DESTDIR} "")
-string(CONCAT _out "${_out}" "${_err}")
-if (NOT _rc EQUAL 0)
-    _fail("staged install: cmake --install exited ${_rc}: ${_out}")
+# DESTDIR staging is the supported POSIX packaging flow: install(FILES)
+# destinations and the install(CODE) exporter both honour it, so the staged
+# tree must hold the payload and the manifests beside it while the unstaged
+# prefix stays empty. A fresh prefix keeps the first install's files out of
+# the comparison. DESTDIR plus an absolute --prefix concatenates two absolute
+# paths, which is not a supported layout on Windows, so the ordinary
+# spaced-prefix install above is what runs there.
+if (NOT WIN32)
+    set(_staged_prefix "${SCRATCH_DIR}/staged prefix")
+    set(ENV{DESTDIR} "${_stage_root}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" --install "${_fixture_build}"
+            --prefix "${_staged_prefix}"
+        RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
+    set(ENV{DESTDIR} "")
+    string(CONCAT _out "${_out}" "${_err}")
+    if (NOT _rc EQUAL 0)
+        _fail("staged install: cmake --install exited ${_rc}: ${_out}")
+    endif()
+    _assert_sdk("${_stage_root}${_staged_prefix}" "${INSTALL_DATADIR}")
+    if (EXISTS "${_staged_prefix}/${INSTALL_DATADIR}/runtimeSources.txt")
+        _fail("staged install: DESTDIR staged the payload but wrote the manifests to the unstaged prefix")
+    endif()
+    message(STATUS "staged install: pass (everything under ${_stage_root}${_staged_prefix}/${INSTALL_DATADIR})")
+else()
+    message(STATUS "staged install: skipped (DESTDIR staging is POSIX-only)")
 endif()
-_assert_sdk("${_stage_root}${_staged_prefix}" "${INSTALL_DATADIR}")
-if (EXISTS "${_staged_prefix}/${INSTALL_DATADIR}/runtimeSources.txt")
-    _fail("staged install: DESTDIR staged the payload but wrote the manifests to the unstaged prefix")
-endif()
-message(STATUS "staged install: pass (everything under ${_stage_root}${_staged_prefix}/${INSTALL_DATADIR})")
 
 # The same payload under a non-default, spaced data directory: the consumer
 # reads one directory, so flags and payload must travel with the manifests.

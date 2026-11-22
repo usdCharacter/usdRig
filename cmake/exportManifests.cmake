@@ -94,13 +94,17 @@ function (export_manifest _manifest)
             message(FATAL_ERROR "${_manifest}: source ${_entry} is a directory, not a file")
         endif ()
         if (NOT _directory)
-            get_filename_component(_extension "${_resolved}" EXT)
-            string(TOLOWER "${_extension}" _extension)
+            # One translation-unit policy covers the exporters and both
+            # consumers (bin/check_runtime_usd_free.sh and the Godot example's
+            # SConstruct): the FINAL suffix names the language, so a multi-dot
+            # name such as mesh.scalar.cxx is a C++ unit, and the spelling is
+            # case-sensitive.
+            get_filename_component(_extension "${_resolved}" LAST_EXT)
             list(FIND _unit_extensions "${_extension}" _unit_index)
             if (_unit_index EQUAL -1)
                 message(FATAL_ERROR
                     "${_manifest}: source ${_entry} is not a translation unit "
-                    "(supported extensions: ${_unit_extensions})")
+                    "(supported final suffixes: ${_unit_extensions})")
             endif ()
         endif ()
         list(APPEND _relocated "${_out}")

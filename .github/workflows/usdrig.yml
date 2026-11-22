@@ -921,28 +921,69 @@ jobs:
       - name: Compile relocated manifests with no pxr include path
         run: |
           ./consumer-src/bin/check_runtime_usd_free.sh \
-            --sdk "$GITHUB_WORKSPACE/sdk-relocated/share/rigExec" \
+            --sdk "$GITHUB_WORKSPACE/sdk-relocated/share/rigExec" --list-objects \
             | tee "$GITHUB_WORKSPACE/sdk-objects.txt"
 
-      # The exporter keeps every compiled translation-unit extension (cmake and
-      # the SConstruct share the list), so an installed manifest may name a
-      # .cxx unit. It must resolve under the manifest directory, compile, and
-      # add exactly one object.
-      - name: Compile an installed manifest that names a .cxx unit
+      # The exporter keeps every compiled translation-unit final suffix (CMake,
+      # this check and the SConstruct share one case-sensitive list), so an
+      # installed manifest may name .cxx units: a multi-dot mesh.scalar.cxx and
+      # a mesh.cpp / mesh.cxx pair in one directory. Each must resolve under the
+      # manifest directory, compile, and add exactly one distinct object.
+      - name: Compile an installed manifest that names multi-dot and same-stem .cxx units
         run: |
           cp -r sdk-relocated/share/rigExec cxx-sdk
-          printf '#include "rigExecGraph/opGraph.h"\nint RigExecManifestCxxProbe(){ return 0; }\n' \
-            > cxx-sdk/runtime-generated/manifest_probe.cxx
-          sed -i '1i runtime-generated/manifest_probe.cxx' cxx-sdk/runtimeSources.txt
+          probe='#include "rigExecGraph/opGraph.h"\nstatic int RigExecManifestCxxProbe(){ return 0; }\n'
+          mkdir -p consumer-src/runtime-probe
+          for unit in manifest_probe.cxx mesh.cpp mesh.cxx mesh.scalar.cxx; do
+            printf "$probe" > "cxx-sdk/runtime-generated/$unit"
+            sed -i "1i runtime-generated/$unit" cxx-sdk/runtimeSources.txt
+          done
+          for unit in mesh.cpp mesh.cxx mesh.scalar.cxx; do
+            printf "$probe" > "consumer-src/runtime-probe/$unit"
+            sed -i "1i runtime-probe/$unit" cxx-sdk/runtimeSources.txt
+          done
           ./consumer-src/bin/check_runtime_usd_free.sh --sdk "$GITHUB_WORKSPACE/cxx-sdk" \
-            | tee "$GITHUB_WORKSPACE/sdk-cxx-objects.txt"
-          base="$(grep -o '([0-9]* objects)' "$GITHUB_WORKSPACE/sdk-objects.txt" | grep -o '[0-9]*')"
-          with_cxx="$(grep -o '([0-9]* objects)' "$GITHUB_WORKSPACE/sdk-cxx-objects.txt" | grep -o '[0-9]*')"
-          test -n "$base" && test -n "$with_cxx" \
-            || { echo "the USD-free check reported no object count"; exit 1; }
-          test "$with_cxx" -eq "$((base + 1))" \
-            || { echo "the .cxx entry changed the object count $base -> $with_cxx"; exit 1; }
-          echo "the .cxx entry added one object: $base -> $with_cxx"
+            --list-objects | tee "$GITHUB_WORKSPACE/sdk-cxx-objects.txt"
+          python3 - "$GITHUB_WORKSPACE/sdk-objects.txt" \
+            "$GITHUB_WORKSPACE/sdk-cxx-objects.txt" <<'PY'
+          import sys
+
+          base_path, cxx_path = sys.argv[1:3]
+
+
+          def targets(path):
+              with open(path, encoding="utf-8") as handle:
+                  return [line.split(": ", 1)[1].strip()
+                          for line in handle if line.startswith("object: ")]
+
+
+          base, with_cxx = targets(base_path), targets(cxx_path)
+          expected = [
+              "runtime-generated@mesh.cpp.o", "runtime-generated@mesh.cxx.o",
+              "runtime-generated@mesh.scalar.cxx.o",
+              "runtime-generated@manifest_probe.cxx.o",
+              "runtime-probe@mesh.cpp.o", "runtime-probe@mesh.cxx.o",
+              "runtime-probe@mesh.scalar.cxx.o",
+          ]
+          failures = []
+          for name in expected:
+              hits = [obj for obj in with_cxx if obj == name]
+              print(("ok:   " if len(hits) == 1 else "FAIL:  ") + name)
+              if len(hits) != 1:
+                  failures.append(name)
+          if len(with_cxx) != len(set(with_cxx)):
+              failures.append("two manifest sources share one object target")
+          if len(with_cxx) != len(base) + len(expected):
+              failures.append("expected %d more objects than the %d the SDK set "
+                              "builds, got %d" % (len(expected), len(base),
+                                                  len(with_cxx) - len(base)))
+          for failure in failures:
+              print("FAIL:  " + failure)
+          if failures:
+              sys.exit(1)
+          print("\nthe multi-dot and same-stem units added %d distinct object "
+                "targets (%d total)" % (len(expected), len(with_cxx)))
+          PY
 
       # The strict installed-manifest rule stays strict: one producer-absolute
       # entry in an otherwise valid copied SDK manifest must fail, and the
@@ -1108,6 +1149,15 @@ jobs:
           check(recorded > 0, "debug hash list recorded %d objects" % recorded)
           check(persisted, "debug objects still present and unchanged after the release build")
 
+          def object_stem(path):
+              # SCons appends the object suffix (.os on Linux, .o elsewhere) to
+              # the key, which keeps the full source filename.
+              for suffix in (".os", ".o"):
+                  if path.endswith(suffix):
+                      return path[: -len(suffix)]
+              return path
+
+
           # Named evidence: both generated TUs, under the generated/ key, in both builds.
           # Expected keys come from the C3 contract in docs/godot_example/SConstruct and
           # are asserted here against the actual files SCons produced.
@@ -1125,16 +1175,17 @@ jobs:
           for name in ("runtimeSources.txt", "evalCoreSources.txt"):
               with open(os.path.join(manifest_dir, name), encoding="utf-8") as handle:
                   sources.extend(line.strip() for line in handle if line.strip())
-          sources = [e for e in sources if e.endswith((".cpp", ".c"))]
+          sources = [e for e in sources
+                     if e.endswith((".c", ".cc", ".cxx", ".cpp", ".c++"))]
           missing = []
           for entry in sources:
               first, _, rest = entry.partition("/")
               if first == "runtime-generated":
-                  key = "generated/" + no_ext(rest)
+                  key = "generated/" + rest
               else:
-                  key = "checkout/" + no_ext(entry)
+                  key = "checkout/" + entry
               for label, actual in (("debug", debug), ("release", release)):
-                  if not any(no_ext(p) == key for p in actual):
+                  if not any(object_stem(p) == key for p in actual):
                       missing.append("%s: %s (%s)" % (label, entry, key))
           check(bool(sources), "%d manifest TUs to cover" % len(sources))
           check(not missing, "every manifest TU has an object in both configs%s"
@@ -1164,21 +1215,25 @@ jobs:
             -DRIGEXEC_BUILD_TESTS=OFF
           cmake --build consumer-src/build --target rigExecRuntime --parallel "$(nproc)"
 
+      # Automatic in-place discovery: no sdk_root is passed, so the default
+      # probe location holds no manifest set and the configured build tree wins.
       # --tree=all asks SCons itself for the target DAG it computed, with
       # --dry-run so nothing is compiled; the listing below is checked for
       # the targets SCons named.
       - name: Enumerate in-place SCons targets for both configurations
         run: |
-          mkdir -p empty-sdk
+          test ! -e tutorial-inplace/usd-install \
+            || { echo "the default SDK location holds an SDK; in-place discovery is not being tested"; exit 1; }
           cd tutorial-inplace/godot_rigExec
           scons -Q --tree=all --dry-run platform=linux target=template_debug api_version=4.7 \
-            "sdk_root=$GITHUB_WORKSPACE/empty-sdk" \
             "usdrig_root=$GITHUB_WORKSPACE/consumer-src" \
             > "$GITHUB_WORKSPACE/inplace-debug-targets.txt" 2>&1
           scons -Q --tree=all --dry-run platform=linux target=template_release api_version=4.7 \
-            "sdk_root=$GITHUB_WORKSPACE/empty-sdk" \
             "usdrig_root=$GITHUB_WORKSPACE/consumer-src" \
             > "$GITHUB_WORKSPACE/inplace-release-targets.txt" 2>&1
+          grep -F "(build mode)" "$GITHUB_WORKSPACE/inplace-debug-targets.txt" >/dev/null \
+            || { echo "in-place discovery did not take the build tree"
+                 head -n 20 "$GITHUB_WORKSPACE/inplace-debug-targets.txt"; exit 1; }
 
       - name: Verify the in-place enumeration shares no target
         run: |
@@ -1293,24 +1348,90 @@ jobs:
             || { echo "the non-default set enumerated no generated object"
                  exit 1; }
 
-      # The extension gate names the languages the exporter compiles. A .cxx
-      # unit in a build-tree manifest must reach the target list keyed under
-      # the generated payload root, like any other unit.
-      - name: Enumerate a build-tree manifest that names a .cxx unit
+      # One case-sensitive final-suffix policy covers the exporter, this
+      # consumer and the shell check. A multi-dot unit (mesh.scalar.cxx) and a
+      # mesh.cpp / mesh.cxx pair in ONE directory must each reach the target
+      # list, keyed under its own grammar root with its full source filename,
+      # so no two units ever share an object target. No sdk_root is passed: the
+      # configured build tree supplies the manifests here.
+      - name: Enumerate a build-tree manifest that names multi-dot and same-stem units
         run: |
-          printf '#include "rigExecGraph/opGraph.h"\nint RigExecManifestCxxProbe(){ return 0; }\n' \
-            > consumer-src/build/runtime-generated/manifest_probe.cxx
-          sed -i '1i runtime-generated/manifest_probe.cxx' \
-            consumer-src/build/runtimeSources.txt
-          mkdir -p empty-sdk
+          probe='#include "rigExecGraph/opGraph.h"\nstatic int RigExecManifestProbe(){ return 0; }\n'
+          mkdir -p consumer-src/runtime-probe
+          for unit in manifest_probe.cxx mesh.cpp mesh.cxx mesh.scalar.cxx; do
+            printf "$probe" > "consumer-src/build/runtime-generated/$unit"
+            sed -i "1i runtime-generated/$unit" consumer-src/build/runtimeSources.txt
+          done
+          for unit in mesh.cpp mesh.cxx mesh.scalar.cxx; do
+            printf "$probe" > "consumer-src/runtime-probe/$unit"
+            sed -i "1i runtime-probe/$unit" consumer-src/build/runtimeSources.txt
+          done
           cd tutorial-inplace/godot_rigExec
           scons -Q --tree=all --dry-run platform=linux target=template_release \
-            api_version=4.7 "sdk_root=$GITHUB_WORKSPACE/empty-sdk" \
-            "usdrig_root=$GITHUB_WORKSPACE/consumer-src" \
+            api_version=4.7 "usdrig_root=$GITHUB_WORKSPACE/consumer-src" \
             > "$GITHUB_WORKSPACE/cxx-probe-targets.txt" 2>&1
-          grep -F "generated/manifest_probe" "$GITHUB_WORKSPACE/cxx-probe-targets.txt" >/dev/null \
-            || { echo "the .cxx manifest unit reached no object target"
-                 cat "$GITHUB_WORKSPACE/cxx-probe-targets.txt"; exit 1; }
+          python3 - "$GITHUB_WORKSPACE/cxx-probe-targets.txt" <<'PY'
+          import re, sys
+
+          keys = [
+              "generated/manifest_probe.cxx", "generated/mesh.cpp", "generated/mesh.cxx",
+              "generated/mesh.scalar.cxx", "checkout/runtime-probe/mesh.cpp",
+              "checkout/runtime-probe/mesh.cxx", "checkout/runtime-probe/mesh.scalar.cxx",
+          ]
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              listing = handle.read()
+          targets = {token.lstrip("./").rstrip("',\";)")
+                     for token in re.findall(r"(?:\./)?build/obj/\S+", listing)}
+          failures = []
+          for key in keys:
+              hits = sorted(t for t in targets if key in t and t.endswith((".o", ".os")))
+              print(("ok:   " if len(hits) == 1 else "FAIL:  ") + key + " -> " + str(hits))
+              if len(hits) != 1:
+                  failures.append(key)
+          mesh_all = sorted(t for t in targets if "mesh" in t)
+          print("mesh object targets: " + ", ".join(mesh_all))
+          if len(set(mesh_all)) != 6:
+              failures.append("six distinct mesh object targets, got %d" % len(set(mesh_all)))
+          if failures:
+              print("\n%d failure(s)" % len(failures))
+              sys.exit(1)
+          print("\nmulti-dot and same-stem units reached %d distinct object targets" % len(set(mesh_all)))
+          PY
+
+      # An explicitly selected SDK is authoritative. Its package descriptor may
+      # name a data directory that is not there; with a fully configured build
+      # tree beside it, the build must still stop rather than swap roots.
+      - name: Reject an explicit SDK whose descriptor names an absent data directory
+        run: |
+          cp -r sdk-relocated sdk-ghost
+          sed -i 's|rigExec_DATA_DIR "${PACKAGE_PREFIX_DIR}/share/rigExec")|rigExec_DATA_DIR "${PACKAGE_PREFIX_DIR}/share/absent-layout")|' \
+            sdk-ghost/lib/cmake/rigExec/rigExecConfig.cmake
+          grep -F 'rigExec_DATA_DIR "${PACKAGE_PREFIX_DIR}/share/absent-layout")' \
+            sdk-ghost/lib/cmake/rigExec/rigExecConfig.cmake >/dev/null \
+            || { echo "the SDK package file was not rewritten"; exit 1; }
+          test -f sdk-ghost/share/rigExec/runtimeSources.txt \
+            || { echo "the ghost SDK lost its real data directory"; exit 1; }
+          for name in runtimeSources evalCoreSources runtimeIncludes evalCoreIncludes; do
+            test -f "consumer-src/build/$name.txt" \
+              || { echo "the build tree holds no $name.txt"; exit 1; }
+          done
+          cd tutorial-inplace/godot_rigExec
+          if scons -Q --tree=all --dry-run platform=linux target=template_debug \
+              api_version=4.7 "sdk_root=$GITHUB_WORKSPACE/sdk-ghost" \
+              "usdrig_root=$GITHUB_WORKSPACE/consumer-src" \
+              > "$GITHUB_WORKSPACE/ghost-sdk.log" 2>&1
+          then
+            echo "an SDK whose descriptor names an absent data directory built from the build tree"
+            exit 1
+          fi
+          grep -F "share/absent-layout" "$GITHUB_WORKSPACE/ghost-sdk.log" >/dev/null \
+            || { echo "the failure did not name the data directory the descriptor declares"
+                 cat "$GITHUB_WORKSPACE/ghost-sdk.log"; exit 1; }
+          if grep -F "build/obj" "$GITHUB_WORKSPACE/ghost-sdk.log" >/dev/null; then
+            echo "the rejected SDK still enumerated build-tree objects"
+            exit 1
+          fi
+          echo "explicit SDK with an absent data directory refused the build tree"
 
       - name: Upload consumer logs
         if: failure()

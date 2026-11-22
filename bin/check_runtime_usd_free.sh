@@ -4,6 +4,7 @@
 # needs a pxr header, or if an undefined symbol is an OpenUSD type.
 #
 # Usage: bin/check_runtime_usd_free.sh [BUILD_DIR | --sdk MANIFEST_DIR]
+#        [--list-objects prints one line per distinct object target]
 # With a build directory (default: this checkout's build/) the manifests and
 # exact-FP flags come from that configured build tree, exactly as CMake
 # generates them, and entries keep the spellings CMake wrote. With --sdk,
@@ -16,11 +17,21 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 usage() {
-    echo "usage: ${0##*/} [BUILD_DIR | --sdk MANIFEST_DIR]" >&2
+    echo "usage: ${0##*/} [--list-objects] [BUILD_DIR | --sdk MANIFEST_DIR]" >&2
     exit 2
 }
 BUILD=""
 SDK=""
+list_objects=0
+_rest=()
+for _arg in "$@"; do
+    if [[ "$_arg" == "--list-objects" ]]; then
+        list_objects=1
+    else
+        _rest+=("$_arg")
+    fi
+done
+set -- "${_rest[@]+"${_rest[@]}"}"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --sdk)
@@ -30,7 +41,7 @@ while [[ $# -gt 0 ]]; do
             [[ $# -eq 2 && -n "$2" && -z "$BUILD" && -z "$SDK" ]] || usage
             BUILD="$2"; shift 2 ;;
         -h|--help)
-            echo "usage: ${0##*/} [BUILD_DIR | --sdk MANIFEST_DIR]" >&2
+            echo "usage: ${0##*/} [--list-objects] [BUILD_DIR | --sdk MANIFEST_DIR]" >&2
             exit 0 ;;
         *)
             [[ $# -eq 1 && -n "$1" && -z "$BUILD" && -z "$SDK" ]] || usage
@@ -136,13 +147,31 @@ for manifest in runtimeIncludes.txt evalCoreIncludes.txt; do
 done
 
 objs=()
-# Each manifest entry is a translation unit: C for .c, C++ for the other
-# extensions cmake/exportManifests.cmake accepts. Anything else is a producer
-# bug and stops the check rather than being skipped.
+declare -A object_of=()  # object key -> the source that claimed it
+# Each manifest entry is a translation unit: C for .c, C++ for the other final
+# suffixes cmake/exportManifests.cmake accepts. The list is case-sensitive here,
+# in the exporter, and in the Godot example's SConstruct. Anything else is a
+# producer bug and stops the check rather than being skipped.
 compile_one() {
-    local src="$1" obj extension
+    local src="$1" key obj extension
     extension="${src##*.}"
-    obj="$WORK/${#objs[@]}_$(basename "${src%.*}").o"
+    # The object key carries the whole manifest spelling with '/' folded, so
+    # mesh.cpp, a mesh.cxx beside it and a mesh.scalar.cxx each get their own
+    # object, and one unit named by two manifests compiles once.
+    key="${src#"$ROOT"/}"
+    if [[ -n "$SDK" ]]; then
+        key="${key#"$SDK"/}"
+    fi
+    key="${key//\//@}"
+    obj="$WORK/$key.o"
+    if [[ -n "${object_of[$key]+set}" ]]; then
+        if [[ "${object_of[$key]}" != "$src" ]]; then
+            echo "${object_of[$key]} and $src would share object $obj: manifest sources must stay distinct" >&2
+            exit 1
+        fi
+        return 0
+    fi
+    object_of["$key"]="$src"
     case "$extension" in
         c)
             gcc "${CFLAGS[@]}" -c "$src" -o "$obj" ;;
@@ -192,6 +221,12 @@ done
 if nm -uC "${objs[@]}" | grep -E 'pxr::|[^A-Za-z0-9_](Gf|Usd|Sdf|Vt|Tf|Hd|Exec)[A-Za-z0-9_]*' ; then
     echo "runtime link line names an OpenUSD symbol" >&2
     exit 1
+fi
+
+if [[ $list_objects -eq 1 ]]; then
+    for key in "${!object_of[@]}"; do
+        printf 'object: %s.o\n' "$key"
+    done | sort
 fi
 
 echo "runtime compiled with no pxr include path (${#objs[@]} objects)"
