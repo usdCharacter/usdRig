@@ -54,6 +54,11 @@ set(_usdnoodles_definitions
 add_library(usdNoodlesLib SHARED
     usd/UsdPrimRegistry.cpp
     moduleDeps.cpp)
+# Vendored editor: these targets keep their own floating-point codegen. They
+# carry the root contraction-family directory policy like every scope, and
+# the exact-FP finalization walk exempts them through this marker; see
+# cmake/rigexec_flags.cmake.
+set_target_properties(usdNoodlesLib PROPERTIES RIGEXEC_VENDORED TRUE)
 set_target_properties(usdNoodlesLib PROPERTIES OUTPUT_NAME usdNoodles)
 target_include_directories(usdNoodlesLib PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
@@ -78,6 +83,7 @@ add_library(_usdNoodles MODULE
     bindings/wrapVertexCache.cpp)
 target_link_libraries(_usdNoodles PRIVATE usdNoodlesLib)
 target_compile_definitions(_usdNoodles PRIVATE ${_usdnoodles_definitions})
+set_target_properties(_usdNoodles PROPERTIES RIGEXEC_VENDORED TRUE)
 set_target_properties(_usdNoodles PROPERTIES
     PREFIX ""
     LIBRARY_OUTPUT_DIRECTORY "${_usdnoodles_package_dir}")
