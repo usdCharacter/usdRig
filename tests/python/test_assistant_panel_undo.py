@@ -155,11 +155,15 @@ def _Panel(stage, container):
 
 def _ReplyToolbox(assistant):
     """The one Toolbox a reply runs on, as send() builds it."""
+    stage, generation = assistant.stage, assistant._document_generation
     return tools.Toolbox(assistant.session, can_edit=assistant.can_edit,
                          can_run=assistant.can_run, parent=assistant,
                          memory=assistant.memory,
                          chat_folders=assistant.chat_folders,
-                         ask_access=assistant.ask_access)
+                         ask_access=assistant.ask_access,
+                         document_current=lambda: (
+                             assistant._document_generation == generation
+                             and assistant.stage is stage))
 
 
 def _Reply(assistant, reply, toolbox):
@@ -700,6 +704,147 @@ def TestCloseDuringWrite():
            'the close step is not usable')
 
 
+def TestDocumentGenerationRejectsLateWrites():
+    """A reply belongs to the document it was submitted against: opening
+    another stage, then the same stage with another history, is a new
+    document, and the reply keeps no authority over it."""
+    a, b = _Stage(), _Stage()
+    a.GetAttributeAtPath('/Char/Ctl.x').Set(10.0)
+    started, other, reloaded = _CountingContainer(), _CountingContainer(), \
+        _CountingContainer()
+    assistant = _Panel(a, started)
+    box = _ReplyToolbox(assistant)
+    _Reply(assistant, _Fence('[{"action":"set_attr","path":"/Char/Ctl",'
+                             '"name":"y","type":"double","value":7.0}]'), box)
+    text, failed = box.call('change_stage', {'changes': [
+        {'action': 'set_attr', 'path': '/Char/Ctl', 'name': 'x',
+         'value': 2.0}]})
+    _Check(not failed, 'the reply authored on its own document: %s' % text)
+    assistant.set_session(assistant_session.Session(_Api(b), other))
+    assistant.set_session(assistant_session.Session(_Api(a), reloaded))
+    for name, args in (('change_stage', {'changes': [
+            {'action': 'set_attr', 'path': '/Char/Ctl', 'name': 'x',
+             'value': 20.0}]}),
+                       ('run_python', {'code': 'stage.GetAttributeAtPath('
+                                     '"/Char/Ctl.x").Set(20)'})):
+        text, failed = box.call(name, args)
+        _Check(failed and 'stage changed' in text,
+               'late %s was accepted on a new document: %s' % (name, text))
+    assistant.on_finished()
+    _Check(not a.GetAttributeAtPath('/Char/Ctl.y').IsValid(),
+           'the fence authored on the reloaded document')
+    _Check(a.GetAttributeAtPath('/Char/Ctl.x').Get() == 2.0,
+           'the reply wrote after its document changed')
+    _Check(len(started.stack.pushed) == 1,
+           'the reply did not settle on the history it started on: %s' %
+           (started.stack.pushed,))
+    _Check(not other.stack.pushed and not reloaded.stack.pushed,
+           'the reply pushed a step on another document\'s history')
+    started.stack.Undo()
+    _Check(a.GetAttributeAtPath('/Char/Ctl.x').Get() == 10.0 and
+           b.GetAttributeAtPath('/Char/Ctl.x').Get() == 1.0,
+           'the reply step is not undoable, or reached another stage')
+
+
+def TestPythonFieldUndoKeepsForeignValue():
+    """A Python edit records the field it wrote, not the whole spec, so an
+    undo leaves a value another editor put on the same attribute alone."""
+    shared = _Layer('shared_field.usda', _CAPTURE_USDA)
+    a, b = Usd.Stage.Open(shared), Usd.Stage.Open(shared)
+    container = _CountingContainer()
+    box = tools.Toolbox(assistant_session.Session(_Api(a), container),
+                        can_run=True)
+    text, failed = box.call('run_python', {'code':
+        'stage.GetRootLayer().GetAttributeAtPath("/Char/Ctl.x")'
+        '.SetInfo("documentation", "posed by the assistant")'})
+    _Check(not failed, 'the metadata write failed: %s' % text)
+    box.close()
+    _Check(len(container.stack.pushed) == 1,
+           'a metadata-only Python edit made no undo step: %s' %
+           (container.stack.pushed,))
+    b.GetAttributeAtPath('/Char/Ctl.x').Set(9.0)
+    container.stack.Undo()
+    _Check(shared.GetAttributeAtPath('/Char/Ctl.x').default == 9.0 and
+           not shared.GetAttributeAtPath('/Char/Ctl.x').HasInfo(
+               'documentation'),
+           'undoing the documentation took the other write with it')
+    container.stack.Redo()
+    _Check(shared.GetAttributeAtPath('/Char/Ctl.x').default == 9.0 and
+           shared.GetAttributeAtPath('/Char/Ctl.x').GetInfo(
+               'documentation') == 'posed by the assistant',
+           'redoing the documentation took the other write with it')
+
+
+def TestPythonLayerFieldUndo():
+    """A layer field a Python edit sets on the pseudo root is recorded and
+    taken back, without touching the prims below it."""
+    root = _Layer('pseudo_field.usda', _CAPTURE_USDA)
+    stage = Usd.Stage.Open(root)
+    container = _CountingContainer()
+    box = tools.Toolbox(assistant_session.Session(_Api(stage), container),
+                        can_run=True)
+    text, failed = box.call('run_python', {'code': 'stage.SetStartTimeCode(5)\n'
+                                               'stage.SetEndTimeCode(12)'})
+    _Check(not failed, 'the layer field write failed: %s' % text)
+    box.close()
+    _Check(len(container.stack.pushed) == 1,
+           'a pseudo root edit made no undo step: %s' %
+           (container.stack.pushed,))
+    _Check(root.pseudoRoot.GetInfo('startTimeCode') == 5.0 and
+           root.pseudoRoot.GetInfo('endTimeCode') == 12.0,
+           'the reply did not set the layer fields')
+    container.stack.Undo()
+    _Check(not root.pseudoRoot.HasInfo('startTimeCode') and
+           not root.pseudoRoot.HasInfo('endTimeCode'),
+           'undo left the layer fields set')
+    _Check(root.GetAttributeAtPath('/Char/Ctl.x').default == 1.0,
+           'undoing the layer fields changed a prim')
+    container.stack.Redo()
+    _Check(root.pseudoRoot.GetInfo('startTimeCode') == 5.0 and
+           root.pseudoRoot.GetInfo('endTimeCode') == 12.0,
+           'redo did not set the layer fields back')
+
+
+def TestCloseDuringFence():
+    """A close that happens while a reply's fences are running stops the
+    actions that have not run yet: the reply is still the active writer."""
+    stage = _Stage()
+    container = _CountingContainer()
+    assistant = _Panel(stage, container)
+    box = _ReplyToolbox(assistant)
+    _Reply(assistant, _Fence('[{"action": "set_attr", "path": "/Char/Ctl", '
+                             '"name": "x", "value": 2.0},\n'
+                             '{"action": "set_attr", "path": "/Char/Ctl", '
+                             '"name": "y", "type": "double", "value": 7.0}]'),
+           box)
+    closed = [False]
+
+    def on_change(_notice, _sender):
+        if not closed[0] and stage.GetAttributeAtPath('/Char/Ctl.x').Get() == 2:
+            closed[0] = True
+            assistant.close()
+
+    key = Tf.Notice.Register(Usd.Notice.ObjectsChanged, on_change, stage)
+    try:
+        assistant.on_finished()
+    finally:
+        key.Revoke()
+    _Check(closed[0], 'the close notice never fired')
+    _Check(stage.GetAttributeAtPath('/Char/Ctl.x').Get() == 2.0 and
+           not stage.GetAttributeAtPath('/Char/Ctl.y').IsValid(),
+           'the fence kept authoring after the panel closed')
+    _Check(len(container.stack.pushed) == 1,
+           'the close did not settle one step: %s' % (container.stack.pushed,))
+    _Check(any('closed' in problem.lower()
+               for message in assistant.messages
+               for problem in message.get('failed', [])),
+           'the stopped fence is not reported: %s' %
+           ([m.get('failed') for m in assistant.messages],))
+    container.stack.Undo()
+    _Check(stage.GetAttributeAtPath('/Char/Ctl.x').Get() == 1.0,
+           'the step the close settled is not usable')
+
+
 def main():
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     _ = app
@@ -712,11 +857,15 @@ def main():
                  TestSaveOnlyReplyHasEffectsAndNoStep,
                  TestChangeBlocksAreTitledApart,
                  TestStageReplacementRejectsLateWrites,
+                 TestDocumentGenerationRejectsLateWrites,
                  TestGroupFailsAtomically,
                  TestSharedLayerPythonLeavesIndependentField,
+                 TestPythonFieldUndoKeepsForeignValue,
+                 TestPythonLayerFieldUndo,
                  TestReferencedMoves,
                  TestInterleavedEditorHistory,
-                 TestCloseDuringWrite):
+                 TestCloseDuringWrite,
+                 TestCloseDuringFence):
         try:
             test()
         except Exception as err:
