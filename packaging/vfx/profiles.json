@@ -1,0 +1,108 @@
+{
+  "_comment": "VFX Reference Platform years usdRig ships for (vfxplatform.com, read 2026-11-22). 'platform' records the year's published pins; 'build' records what the release workflow uses to meet them. OpenUSD is not pinned by the platform: every year builds the same OpenUSD release, at OpenUSD's own C++17.",
+  "openusd": "v26.08",
+  "years": {
+    "2025": {
+      "platform": {
+        "gcc": "11.2.1",
+        "glibc": "2.28",
+        "macos_minimum": "12.0",
+        "msvc": "VS 2022 v17.6 or later",
+        "windows_sdk": "10.0.20348 or later",
+        "cxx": "C++17",
+        "python": "3.11",
+        "qt": "6.5",
+        "pyside": "6.5",
+        "numpy": "1.26",
+        "onetbb": "2021",
+        "opensubdiv": "3.6",
+        "openexr": "3.3",
+        "imath": "3.1",
+        "boost": "1.85"
+      },
+      "build": {
+        "cxx_standard": "17",
+        "python": "3.11",
+        "pyside6": "6.5.3",
+        "numpy": "1.26.4",
+        "onetbb_tag": "v2021.13.0",
+        "opensubdiv_tag": "v3_6_1",
+        "macos_deployment_target": "12.0",
+        "linux_image": "aswf/ci-base:2025",
+        "linux_glibc_max": "2.28",
+        "linux_glibcxx_max": "3.4.25",
+        "linux_baseline": "EL8",
+        "msvc_toolset_min": "14.36",
+        "windows_sdk_min": "10.0.20348"
+      }
+    },
+    "2026": {
+      "platform": {
+        "gcc": "14.2",
+        "glibc": "2.28",
+        "macos_minimum": "14.0",
+        "msvc": "VS 2022 v17.6 or later",
+        "windows_sdk": "10.0.22621 or later",
+        "cxx": "C++20",
+        "python": "3.13",
+        "qt": "6.8",
+        "pyside": "6.8",
+        "numpy": "2.3",
+        "onetbb": "2022",
+        "opensubdiv": "3.7",
+        "openexr": "3.4",
+        "imath": "3.2",
+        "boost": "1.88"
+      },
+      "build": {
+        "cxx_standard": "20",
+        "python": "3.13",
+        "pyside6": "6.8.3",
+        "numpy": "2.3.5",
+        "onetbb_tag": "v2022.3.0",
+        "opensubdiv_tag": "v3_7_0",
+        "macos_deployment_target": "14.0",
+        "linux_image": "aswf/ci-base:2026",
+        "linux_glibc_max": "2.28",
+        "linux_glibcxx_max": "3.4.25",
+        "linux_baseline": "EL8",
+        "msvc_toolset_min": "14.36",
+        "windows_sdk_min": "10.0.22621"
+      }
+    },
+    "2027": {
+      "platform": {
+        "gcc": "14.2",
+        "glibc": "2.34",
+        "macos_minimum": "14.0",
+        "msvc": "VS Build Tools v14.44 or later",
+        "windows_sdk": "10.0.22621 or later",
+        "cxx": "C++20",
+        "python": "3.13",
+        "qt": "6.8",
+        "pyside": "6.8",
+        "numpy": "2.4",
+        "onetbb": "2023",
+        "opensubdiv": "3.8",
+        "openexr": "3.5",
+        "imath": "3.2",
+        "boost": "1.91"
+      },
+      "build": {
+        "cxx_standard": "20",
+        "python": "3.13",
+        "pyside6": "6.8.3",
+        "numpy": "2.4.6",
+        "onetbb_tag": "v2023.2.0",
+        "opensubdiv_tag": "v3_8_0",
+        "macos_deployment_target": "14.0",
+        "linux_image": "aswf/ci-base:2027",
+        "linux_glibc_max": "2.34",
+        "linux_glibcxx_max": "3.4.29",
+        "linux_baseline": "EL9",
+        "msvc_toolset_min": "14.44",
+        "windows_sdk_min": "10.0.22621"
+      }
+    }
+  }
+}
