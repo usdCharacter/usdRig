@@ -194,6 +194,49 @@ template <> struct RigExecDualQuatMath<RrVec3f, RrVec3d> {
     }
 };
 
+/// GfRotation::RotateOntoProjected: the twist about \p axisParam taking
+/// v1's projection onto v2's.
+inline RrRotation
+RrRotateOntoProjected(const RrVec3d &v1, const RrVec3d &v2,
+                      const RrVec3d &axisParam)
+{
+    RrVec3d axis = axisParam.GetNormalized();
+
+    RrVec3d v1Proj = v1 - RrDot(v1, axis) * axis;
+    RrVec3d v2Proj = v2 - RrDot(v2, axis) * axis;
+    v1Proj.Normalize();
+    v2Proj.Normalize();
+    RrVec3d crossAxis = RrCross(v1Proj, v2Proj);
+    double sinTheta = RrDot(crossAxis, axis);
+    double cosTheta = RrDot(v1Proj, v2Proj);
+    double theta = 0;
+    if (!(std::fabs(sinTheta) < 1e-6 && std::fabs(cosTheta) < 1e-6)) {
+        theta = std::atan2(sinTheta, cosTheta);
+    }
+
+    const double toDeg = (180.0) / std::acos(-1.0);
+    return RrRotation(axis, theta * toDeg);
+}
+
+template <class Point, class Double> struct RigExecConstraintMath;
+
+/// The mirror's instantiation of the shared constraint kernel
+/// (constraintKernel.h).
+template <> struct RigExecConstraintMath<RrVec3f, RrVec3d> {
+    using Rotation = RrRotation;
+
+    static RrRotation RotateOntoProjected(const RrVec3d &v1, const RrVec3d &v2,
+                                          const RrVec3d &axis)
+    {
+        return RrRotateOntoProjected(v1, v2, axis);
+    }
+
+    static void SetRotate(RrMat4d *m, const RrQuatd &q)
+    {
+        m->SetRotateOnly(q);
+    }
+};
+
 } // namespace rigExec
 
 #endif

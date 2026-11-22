@@ -101,6 +101,25 @@ template <> struct RigExecDualQuatMath<GfVec3f, GfVec3d> {
     }
 };
 
+template <class Point, class Double> struct RigExecConstraintMath;
+
+/// The Gf instantiation of the shared constraint kernel
+/// (constraintKernel.h).
+template <> struct RigExecConstraintMath<GfVec3f, GfVec3d> {
+    using Rotation = GfRotation;
+
+    static GfRotation RotateOntoProjected(const GfVec3d &v1, const GfVec3d &v2,
+                                          const GfVec3d &axis)
+    {
+        return GfRotation::RotateOntoProjected(v1, v2, axis);
+    }
+
+    static void SetRotate(GfMatrix4d *m, const GfQuatd &q)
+    {
+        m->SetRotate(q);
+    }
+};
+
 /// A dual quaternion real + eps*dual. Default-constructed as the identity
 /// motion. Every function below that says "unit" assumes |real| == 1 and
 /// dot(real, dual) == 0; RigExecDualQuatFromMatrix, the blends, and
