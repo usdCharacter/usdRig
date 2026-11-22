@@ -22,6 +22,7 @@ void RegisterDerivedOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterWireOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterRibbonOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterProjectorOps(rigExec::RigExecOpRegistrar &registrar);
+void RegisterConstraintOps(rigExec::RigExecOpRegistrar &registrar);
 
 } // namespace rigExecOps
 

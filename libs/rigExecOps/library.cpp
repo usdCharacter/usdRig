@@ -19,6 +19,7 @@ Register(rigExec::RigExecOpRegistrar &registrar)
     RegisterWireOps(registrar);
     RegisterRibbonOps(registrar);
     RegisterProjectorOps(registrar);
+    RegisterConstraintOps(registrar);
 }
 
 const rigExec::RigExecOpLibraryDesc kLibrary = [] {
