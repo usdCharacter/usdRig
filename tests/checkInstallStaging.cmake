@@ -1,8 +1,5 @@
-# Runs real `cmake --install` over the shipped manifest rule: plain prefix,
-# DESTDIR and CMAKE_STAGING_PREFIX staging, incomplete, stale and vanished
-# staged exports, a same-timestamp staged change, and a reconfigure without
-# rebuild. The fixture carries the production install rule so the check
-# cannot drift from the product.
+# Runs real `cmake --install` over the shipped manifest rule. The fixture
+# includes the production install rule, so the check cannot drift from it.
 
 if (NOT SOURCE_DIR OR NOT BINARY_DIR OR NOT SCRATCH_DIR)
     message(FATAL_ERROR
@@ -217,8 +214,6 @@ set(_destdir_root "")
 set(_staging_root "")
 set(_staging_keeps_prefix FALSE)
 
-# The probe installs the fixture itself, so its destination layout is the
-# one the manifest rule will really get.
 set(_probe_dir "${SCRATCH_DIR}/probeDestdir")
 _probe("${_probe_dir}" "${_probe_dir}/build" ""
     "--prefix;${_probe_dir}/logical" "${_probe_dir}/stage")
@@ -287,7 +282,7 @@ endif()
 _check_manifests("${SCRATCH_DIR}/prefixInstall" "prefix install")
 message(STATUS "prefix install: pass (four manifests in ${SCRATCH_DIR}/prefixInstall/${INSTALL_DATADIR})")
 
-# (b) DESTDIR staging: everything lands under <stage><prefix>, nothing in the prefix.
+# (b) DESTDIR staging: nothing may reach the logical prefix.
 set(_broot "")
 if (_destdir_root)
     set(_logical "${SCRATCH_DIR}/destdirLogical")
@@ -315,7 +310,8 @@ else()
     "${CMAKE_VERSION}); the Windows staging route below covers this platform")
 endif()
 
-# (c) CMAKE_STAGING_PREFIX staging: same shape, the logical prefix comes from configure.
+# (c) CMAKE_STAGING_PREFIX staging: the logical prefix comes from configure,
+# not --prefix.
 if (_staging_root)
     set(_logical "${SCRATCH_DIR}/stagingLogical")
     set(_stage "${SCRATCH_DIR}/stagingStage")
@@ -342,7 +338,7 @@ else()
     _clean_and_fail("staged install (CMAKE_STAGING_PREFIX): unsupported by ${GENERATOR} (CMake ${CMAKE_VERSION})")
 endif()
 
-# (d) incomplete export: the install step must fail and name the missing file.
+# (d) incomplete export must fail by name, not install the rest.
 set(_missing "evalCoreIncludes")
 set(_partial "${SCRATCH_DIR}/incomplete")
 foreach (_manifest IN LISTS _manifests)
@@ -361,8 +357,7 @@ if (NOT "${_out}" MATCHES "${_missing}")
 endif()
 message(STATUS "incomplete export: pass (cmake --install exited ${_rc} naming ${_missing}.txt)")
 
-# (e) stale staged export: staged bytes that no longer match the current
-# generated inputs must fail the install and name the manifest.
+# (e) staged bytes that no longer match their inputs must fail by name.
 set(_staleDir "${SCRATCH_DIR}/stale")
 foreach (_manifest IN LISTS _manifests)
     file(COPY "${_staged}/${_manifest}.txt" DESTINATION "${_staleDir}")
@@ -383,8 +378,8 @@ if (EXISTS "${SCRATCH_DIR}/staleInstall/${INSTALL_DATADIR}/runtimeSources.txt")
 endif()
 message(STATUS "stale export: pass (cmake --install exited ${_rc} naming runtimeSources.txt)")
 
-# (f) vanished input: a generated list that disappeared must fail the
-# install by name even while the previous staged copy survives.
+# (f) a generated input that disappeared must fail by name even when the
+# staged copy survives.
 set(_vanished "evalCoreIncludes")
 set(_lostInputs "${SCRATCH_DIR}/lostInputs")
 set(_keptStaged "${SCRATCH_DIR}/keptStaged")

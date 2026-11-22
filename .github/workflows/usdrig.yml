@@ -680,8 +680,6 @@ jobs:
           test -e "$P/lib/librigExecMath.a" || test -e "$P/lib/librigExecMath.so" \
             || { echo "missing: $P/lib/librigExecMath.{a,so}"; exit 1; }
 
-      # Packagers install into a DESTDIR staging tree: every manifest must land
-      # under <stage><prefix>, and the logical prefix must stay empty.
       - name: Install into a DESTDIR staging tree
         run: |
           DESTDIR="$GITHUB_WORKSPACE/stage" cmake --install build --prefix "$GITHUB_WORKSPACE/unstaged-prefix"
@@ -770,12 +768,8 @@ jobs:
           source bin/_env.sh
           ctest --test-dir installed-scene-build --output-on-failure
 
-      # CMakeLists.txt keeps cmake_minimum_required at 3.26; this last step is
-      # the deliberate check of that declared minimum, isolated in a throwaway
-      # venv so the steps above still use the runner's own cmake. The floor
-      # tool configures and generates the real root, builds the manifest
-      # producer, and runs both manifest checks from that tree — the same
-      # configure/generate that newer cmake performed above.
+      # The declared cmake_minimum_required floor, checked in a throwaway venv
+      # so the steps above keep the runner's cmake.
       - name: Staging test at the declared minimum CMake
         run: |
           python3 -m venv /tmp/cm326

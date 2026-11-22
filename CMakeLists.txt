@@ -502,8 +502,6 @@ file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/evalCoreIncludes.txt"
     CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecEvalCore,INCLUDE_DIRECTORIES>,\n>\n")
 rigexec_apply_exact_fp_flags(rigExecRuntime)
 
-# The shipped copies are staged install inputs, so DESTDIR and
-# CMAKE_STAGING_PREFIX apply to them like every other installed file.
 set(RIGEXEC_SDK_MANIFEST_DIR "${CMAKE_CURRENT_BINARY_DIR}/sdkManifests")
 rigexec_add_sdk_manifest_export(
     SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -2986,11 +2984,8 @@ install(TARGETS ${RIGEXEC_INSTALL_TARGETS}
     LIBRARY DESTINATION "${RIGEXEC_INSTALL_LIBDIR}"
     ARCHIVE DESTINATION "${RIGEXEC_INSTALL_LIBDIR}")
 
-# A named-target build (the packaging guide, bin/test_changed.sh --run) never
-# reaches the ALL hook, yet the install rules consume the staged manifests.
-# Depend on the producer from every installed artifact and host-facing
-# executable; every test executable links one of these targets, so the
-# manifests are staged before any documented build-then-install path runs.
+# A named-target build never reaches the ALL hook, and the install rules
+# consume the staged manifests.
 foreach (_target ${RIGEXEC_INSTALL_TARGETS} _rigexec rigExecPose rigExecBakeTool
                  rigExecReplayInputs usdRigView)
     if (TARGET ${_target})

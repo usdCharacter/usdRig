@@ -1,6 +1,5 @@
-# The SDK manifests ship as ordinary staged install inputs: the build writes
-# the relocated copies into a build-tree directory, and install(FILES) places
-# them like any other file, so DESTDIR and CMAKE_STAGING_PREFIX apply.
+# SDK manifests are staged install inputs, so DESTDIR and CMAKE_STAGING_PREFIX
+# apply to them like every other installed file.
 
 function(rigexec_add_sdk_manifest_export)
     cmake_parse_arguments(RIGEXEC_MANIFEST_EXPORT ""
