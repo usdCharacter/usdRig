@@ -57,4 +57,7 @@ const rigExec::RigExecTypeHandle &QuatdArray();
 
 } // namespace rigExecStd
 
+/// The library, for type libraries that compose standard types.
+RIGEXEC_TYPE_LIBRARY_ENTRY(rigExecStdTypes);
+
 #endif

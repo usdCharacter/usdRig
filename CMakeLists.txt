@@ -1232,6 +1232,18 @@ rigexec_link_registrations(testRigExecStdTypes
     TYPE_LIBRARIES rigExecStdTypes)
 add_test(NAME testRigExecStdTypes COMMAND testRigExecStdTypes)
 
+rigexec_add_type_library(rigExecRigTypes
+    SOURCES libs/rigExecRigTypes/rigTypes.cpp
+    REQUIRES rigExecStdTypes)
+add_executable(testRigExecRigTypes tests/testRigExecRigTypes.cpp
+    $<TARGET_OBJECTS:rigExecRegistry> $<TARGET_OBJECTS:rigExecCore>)
+target_include_directories(testRigExecRigTypes PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/libs")
+target_link_libraries(testRigExecRigTypes PRIVATE Threads::Threads)
+rigexec_link_registrations(testRigExecRigTypes
+    TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes)
+add_test(NAME testRigExecRigTypes COMMAND testRigExecRigTypes)
+
 add_executable(testRigExecOpGraph tests/testRigExecOpGraph.cpp)
 target_link_libraries(testRigExecOpGraph PRIVATE rigExecGraph work Threads::Threads)
 add_test(NAME testRigExecOpGraph COMMAND testRigExecOpGraph)
