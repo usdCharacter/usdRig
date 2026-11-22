@@ -253,12 +253,12 @@ RigExecRigEvaluator::GetWindowRings(UsdTimeCode time,
             bool complete = true;
             for (const uint32_t y : ops[w].inner)
                 complete = complete && y < windowCount && innerComplete[y];
-            // A declined tick holds nothing, and holds it completely: the
-            // stage answers the same way every time it is asked.
+            // A declined tick stays incomplete so the next call retries it
+            // and reports the failure again.
             tick.captures[w] = ran && w < captures.size()
                                    ? captures[w]
                                    : RigExecWindowPacketPtr();
-            tick.complete[w] = complete ? 1 : 0;
+            tick.complete[w] = ran && complete ? 1 : 0;
         }
     }
     for (size_t w = 0; w < windowCount; ++w) {
