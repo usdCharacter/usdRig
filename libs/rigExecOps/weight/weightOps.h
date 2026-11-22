@@ -2,9 +2,10 @@
 #define RIGEXEC_OPS_WEIGHT_WEIGHT_OPS_H
 
 /// The volume weight producers: sphere, plane and curve fields over a
-/// target's points, in the volume's rigid local space. The kernel is
-/// rigExecMath/weightFieldKernel.h, shared with the native and zero-USD
-/// runtimes. USD-free.
+/// target's points, in the volume's rigid local space, and the ordered
+/// combine of weights. The field kernel is rigExecMath/weightFieldKernel.h
+/// and the combine rigExecEvalCore/weights.h, both shared with the native
+/// and zero-USD runtimes. USD-free.
 
 #include "rigExecOps/library.h"
 
@@ -26,6 +27,28 @@ struct WeightFieldPayload {
     /// field is zero outside the ExtentU by ExtentV rectangle.
     WeightFieldAxis planeAxis = WeightFieldAxis::Z;
     bool planeBounded = false;
+};
+
+/// Codes as rigExecEvalCore's WeightCombineCode.
+enum class WeightCombineMode : uint8_t {
+    Multiply,
+    Add,
+    Subtract,
+    Max,
+    Min,
+    Average,
+    Overlay
+};
+
+/// What a combine folds: weight packets, or fields a resolver already
+/// produced over TargetCount points.
+enum class WeightCombineInputs : uint8_t { Packets, Fields };
+
+struct CombineWeightsPayload {
+    WeightCombineMode mode = WeightCombineMode::Multiply;
+    WeightCombineInputs inputs = WeightCombineInputs::Packets;
+    /// Packets: out-of-range results clamp (true) or fail the op (false).
+    bool clamp = false;
 };
 
 const rigExec::RigExecOpHandle &SphereWeight();
@@ -67,6 +90,24 @@ const rigExec::RigExecPortHandle &CurveWeightScale();
 const rigExec::RigExecPortHandle &CurveWeightCurve();
 
 #undef RIGEXEC_WEIGHT_FIELD_PORTS
+
+/// Folds Inputs (PointWeights list, optional) in feed order, then applies
+/// optional Invert (Float, 0) and Strength (Float, 1) to Out (PointWeights,
+/// dense). Subtract and Overlay seed from the first input; Average divides
+/// by the input count; no inputs is the mode's identity.
+///
+/// Packets: the packet combine. An invalid input, dense inputs of different
+/// lengths, a negative resolved weight or no element count (a dense input's
+/// length, else TargetCount (UInt, 0)) give an invalid Out; a result
+/// outside the range policy fails the op.
+/// Fields: every input is a dense field of TargetCount weights, folded as
+/// it is; one of another length fails the op. No range policy applies.
+const rigExec::RigExecOpHandle &CombineWeights();
+const rigExec::RigExecPortHandle &CombineWeightsInputs();
+const rigExec::RigExecPortHandle &CombineWeightsTargetCount();
+const rigExec::RigExecPortHandle &CombineWeightsStrength();
+const rigExec::RigExecPortHandle &CombineWeightsInvert();
+const rigExec::RigExecPortHandle &CombineWeightsOut();
 
 } // namespace rigExecOps
 

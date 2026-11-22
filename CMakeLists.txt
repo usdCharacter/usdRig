@@ -279,6 +279,7 @@ rigexec_add_op_library(rigExecOps
         libs/rigExecOps/solver/singleChainIkOps.cpp
         libs/rigExecOps/solver/splineIkOps.cpp
     USES_TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes)
+target_link_libraries(rigExecOps PRIVATE rigExecEvalCore)
 
 # The built-in type and op libraries in one shared module, so every library
 # and executable sees one set of handles. Their sources compile here as its
@@ -290,7 +291,8 @@ add_library(rigExecBuiltins SHARED libs/rigExecBuiltins/builtins.cpp
 target_compile_features(rigExecBuiltins PUBLIC cxx_std_17)
 target_include_directories(rigExecBuiltins PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>")
-target_link_libraries(rigExecBuiltins PUBLIC rigExec PRIVATE rigExecMath)
+target_link_libraries(rigExecBuiltins PUBLIC rigExec PRIVATE rigExecMath
+    rigExecEvalCore)
 
 add_library(rigExecStandalone SHARED
     libs/rigExecStandalone/sceneDb.cpp

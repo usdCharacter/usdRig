@@ -7,7 +7,11 @@
 #include "rigExecBuiltins/builtins.h"
 #include "rigExecScene/geometryOps.h"
 #include "rigExecScene/geometryProgram.h"
+#include "rigExec/internal/weightPackets.h"
 #include "rigExecMath/geometryKernels.h"
+#include "rigExecMath/weightFieldKernel.h"
+#include "rigExecOps/weight/weightOps.h"
+#include "rigExecRigTypes/rigTypes.h"
 #include "rigExecStdTypes/stdTypes.h"
 
 #include "pxr/base/gf/rotation.h"
@@ -875,6 +879,259 @@ TestRefusals(const Grid &grid)
     CHECK(error.find("settings") != std::string::npos);
 }
 
+rigExecRig::PointWeights
+ToPointWeights(const RigExecWeightPacket &w)
+{
+    using rigExecRig::WeightRepresentation;
+    rigExecRig::PointWeights out;
+    out.values = RigExecArray<float>(w.values.data(), w.values.size());
+    out.indices = RigExecArray<int32_t>(w.indices.data(), w.indices.size());
+    out.defaultWeight = w.defaultWeight;
+    out.representation = uint32_t(w.representation == TfToken("dense")
+                                      ? WeightRepresentation::Dense
+                                  : w.representation == TfToken("sparse")
+                                      ? WeightRepresentation::Sparse
+                                      : WeightRepresentation::Constant);
+    out.valid = w.valid ? 1 : 0;
+    return out;
+}
+
+/// One CombineWeights node with a host-written list of \p count inputs, or
+/// a second node whose list takes the first node's output between two host
+/// inputs.
+struct Combine {
+    std::unique_ptr<RigExecEvaluator> evaluator;
+    std::vector<RigExecInputId> items;
+    RigExecInputId target, strength, invert;
+    RigExecOutputId out;
+
+    Combine(const rigExecOps::CombineWeightsPayload &payload, size_t count)
+    {
+        using namespace rigExecOps;
+        RigExecRigDescBuilder b;
+        const RigExecNodeId node = b.AddOp(CombineWeights(), &payload);
+        for (size_t k = 0; k < count; ++k)
+            items.push_back(b.BindInput(node, CombineWeightsInputs()));
+        Finish(b, node);
+    }
+    Combine(const rigExecOps::CombineWeightsPayload &inner,
+            const rigExecOps::CombineWeightsPayload &outer)
+    {
+        using namespace rigExecOps;
+        RigExecRigDescBuilder b;
+        const RigExecNodeId first = b.AddOp(CombineWeights(), &inner);
+        const RigExecNodeId second = b.AddOp(CombineWeights(), &outer);
+        items.push_back(b.BindInput(first, CombineWeightsInputs()));
+        items.push_back(b.BindInput(first, CombineWeightsInputs()));
+        items.push_back(b.BindInput(second, CombineWeightsInputs()));
+        b.Connect(first, CombineWeightsOut(), second, CombineWeightsInputs());
+        items.push_back(b.BindInput(second, CombineWeightsInputs()));
+        Finish(b, second);
+    }
+    void Finish(RigExecRigDescBuilder &b, RigExecNodeId node)
+    {
+        using namespace rigExecOps;
+        target = b.BindInput(node, CombineWeightsTargetCount());
+        strength = b.BindInput(node, CombineWeightsStrength());
+        invert = b.BindInput(node, CombineWeightsInvert());
+        out = b.BindOutput(node, CombineWeightsOut());
+        std::string error;
+        const auto desc = b.Build(&error);
+        const auto program = desc ? RigExecCompile(*desc, {}, &error) : nullptr;
+        evaluator =
+            program ? RigExecEvaluator::Create(program, {}, &error) : nullptr;
+        if (!evaluator)
+            std::printf("combine: %s\n", error.c_str());
+        CHECK(evaluator);
+    }
+    /// False where the op refused.
+    bool Run(const std::vector<rigExecRig::PointWeights> &inputs,
+             uint32_t targetCount, float s, float i,
+             rigExecRig::PointWeights *result, std::string *error = nullptr)
+    {
+        if (!evaluator)
+            return false;
+        for (size_t k = 0; k < inputs.size(); ++k)
+            CHECK(evaluator->SetInput(items[k], &inputs[k]));
+        CHECK(evaluator->SetInput(target, &targetCount));
+        CHECK(evaluator->SetInput(strength, &s));
+        CHECK(evaluator->SetInput(invert, &i));
+        if (!evaluator->Evaluate(error))
+            return false;
+        *result = *static_cast<const rigExecRig::PointWeights *>(
+            evaluator->GetOutput(out));
+        return true;
+    }
+};
+
+bool
+SameWeights(const std::vector<float> &a, const RigExecArray<float> &b)
+{
+    return a.size() == b.Size() &&
+           (a.empty() || !std::memcmp(a.data(), b.Data(), a.size() * 4));
+}
+
+/// The op's outcome is the native packet: valid with the same bits, invalid,
+/// or (for the bare packet a range failure gives) a refusal.
+bool
+MatchesNative(const RigExecWeightPacket &native, bool ran,
+              const rigExecRig::PointWeights &op)
+{
+    if (native.representation.IsEmpty())
+        return !ran;
+    if (!ran || bool(op.valid) != native.valid)
+        return false;
+    return !native.valid || SameWeights(native.values, op.values);
+}
+
+void
+TestCombineWeights()
+{
+    using namespace rigExecOps;
+    const size_t n = 23;
+    const TfToken dense("dense"), sparse("sparse"), constant("constant"),
+        strict("strict"), clamp("clamp");
+    const auto make = [&](const TfToken &representation,
+                          std::vector<float> values, std::vector<int> indices,
+                          float defaultWeight, bool valid = true) {
+        RigExecWeightPacket w;
+        w.representation = representation;
+        w.rangePolicy = strict;
+        w.values = std::move(values);
+        w.indices = std::move(indices);
+        w.defaultWeight = defaultWeight;
+        w.valid = valid;
+        return w;
+    };
+    std::vector<float> a(n), b(n), negative(n, 0.5f);
+    for (size_t i = 0; i < n; ++i) {
+        a[i] = 0.07f * float(i % 13);
+        b[i] = 1.0f - 0.043f * float((i * 7) % 19);
+    }
+    negative[4] = -0.25f;
+    const RigExecWeightPacket A = make(dense, a, {}, 0.0f);
+    const RigExecWeightPacket B = make(dense, b, {}, 0.0f);
+    const RigExecWeightPacket S =
+        make(sparse, {0.9f, 0.3f, 0.65f, 0.1f}, {1, 4, 9, 22}, 0.35f);
+    const RigExecWeightPacket U =
+        make(sparse, {0.2f, 0.8f, 0.5f}, {17, 2, 30}, 0.6f);
+    const RigExecWeightPacket C = make(constant, {}, {}, 0.45f);
+    const RigExecWeightPacket I = make(dense, a, {}, 0.0f, false);
+    const RigExecWeightPacket M =
+        make(dense, std::vector<float>(n + 1, 0.5f), {}, 0.0f);
+    const RigExecWeightPacket N = make(dense, negative, {}, 0.0f);
+    const std::vector<std::vector<const RigExecWeightPacket *>> cases = {
+        {&A, &B},
+        {&B, &A},
+        {&A, &S, &C},
+        {&S, &C},
+        {&C, &S, &U},
+        {&A},
+        {&C},
+        {},
+        {&A, &I},
+        {&A, &M},
+        {&N, &A},
+        {&U, &A, &S},
+        {&S, &B, &A, &C, &U}};
+    const std::pair<const char *, WeightCombineMode> modes[] = {
+        {"multiply", WeightCombineMode::Multiply},
+        {"add", WeightCombineMode::Add},
+        {"subtract", WeightCombineMode::Subtract},
+        {"max", WeightCombineMode::Max},
+        {"min", WeightCombineMode::Min},
+        {"average", WeightCombineMode::Average},
+        {"overlay", WeightCombineMode::Overlay}};
+    const std::pair<float, float> scales[] = {{1.0f, 0.0f}, {0.8f, 0.25f}};
+    rigExecRig::PointWeights result;
+    for (const auto &[token, mode] : modes)
+        for (const bool clamped : {false, true}) {
+            CombineWeightsPayload payload;
+            payload.mode = mode;
+            payload.clamp = clamped;
+            for (const auto &inputs : cases)
+                for (const uint32_t target : {uint32_t(0), uint32_t(n)})
+                    for (const auto &[s, i] : scales) {
+                        const RigExecWeightPacket native =
+                            RigExecBuildCombineWeightPacket(
+                                dense, clamped ? clamp : strict, TfToken(token),
+                                inputs, target, s, i);
+                        std::vector<rigExecRig::PointWeights> packed;
+                        for (const RigExecWeightPacket *w : inputs)
+                            packed.push_back(ToPointWeights(*w));
+                        Combine node(payload, inputs.size());
+                        const bool ran =
+                            node.Run(packed, target, s, i, &result);
+                        CHECK(MatchesNative(native, ran, result));
+                        if (!MatchesNative(native, ran, result))
+                            std::printf("combine %s %zu inputs differs\n",
+                                        token, inputs.size());
+                    }
+        }
+
+    // Order matters: subtract of (A, B) is not of (B, A).
+    CombineWeightsPayload subtract;
+    subtract.mode = WeightCombineMode::Subtract;
+    subtract.clamp = true;
+    Combine pair(subtract, 2);
+    rigExecRig::PointWeights ab, ba;
+    CHECK(pair.Run({ToPointWeights(A), ToPointWeights(B)}, 0, 1.0f, 0.0f, &ab));
+    CHECK(pair.Run({ToPointWeights(B), ToPointWeights(A)}, 0, 1.0f, 0.0f, &ba));
+    CHECK(ab.valid && ba.valid &&
+          std::memcmp(ab.values.Data(), ba.values.Data(), n * 4) != 0);
+
+    // An upstream combine feeds the middle of a list.
+    CombineWeightsPayload overlay;
+    overlay.mode = WeightCombineMode::Overlay;
+    overlay.clamp = true;
+    Combine chained(subtract, overlay);
+    const RigExecWeightPacket inner = RigExecBuildCombineWeightPacket(
+        dense, clamp, TfToken("subtract"),
+        std::vector<const RigExecWeightPacket *>{&B, &S}, n, 1.0f, 0.0f);
+    const RigExecWeightPacket outer = RigExecBuildCombineWeightPacket(
+        dense, clamp, TfToken("overlay"),
+        std::vector<const RigExecWeightPacket *>{&C, &inner, &A}, n, 0.9f,
+        0.1f);
+    CHECK(inner.valid && outer.valid);
+    CHECK(chained.Run({ToPointWeights(B), ToPointWeights(S), ToPointWeights(C),
+                       ToPointWeights(A)},
+                      uint32_t(n), 0.9f, 0.1f, &result));
+    CHECK(MatchesNative(outer, true, result));
+
+    // Fields: folded as they are over the target count, as the field
+    // resolver folds them, with no range policy.
+    CombineWeightsPayload fields;
+    fields.inputs = WeightCombineInputs::Fields;
+    for (const auto &[token, mode] : modes) {
+        fields.mode = mode;
+        Combine node(fields, 3);
+        const std::vector<float> *sources[] = {&b, &a, &negative};
+        std::vector<float> expected;
+        CHECK(RigExecCombineWeightFieldsStreamed(
+            RigExecWeightCombine(int(mode)), 3, n,
+            [&](size_t k, const float **data, size_t *size) {
+                *data = sources[k]->data();
+                *size = sources[k]->size();
+                return true;
+            },
+            &expected));
+        for (float &w : expected)
+            w = (w + (1.0f - 2.0f * w) * 0.3f) * 1.7f;
+        CHECK(
+            node.Run({ToPointWeights(B), ToPointWeights(A), ToPointWeights(N)},
+                     uint32_t(n), 1.7f, 0.3f, &result));
+        CHECK(result.valid && SameWeights(expected, result.values));
+        std::string error;
+        CHECK(
+            !node.Run({ToPointWeights(B), ToPointWeights(A), ToPointWeights(M)},
+                      uint32_t(n), 1.0f, 0.0f, &result, &error));
+        CHECK(error.find("disagree on element count") != std::string::npos);
+    }
+    Combine none(fields, 0);
+    CHECK(none.Run({}, uint32_t(n), 1.0f, 0.0f, &result));
+    CHECK(result.valid && result.values.Size() == n);
+}
+
 } // namespace
 
 int
@@ -899,6 +1156,7 @@ main()
     TestBlendShape(grid);
     TestChain(grid);
     TestRefusals(grid);
+    TestCombineWeights();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;
