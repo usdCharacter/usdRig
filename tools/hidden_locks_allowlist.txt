@@ -3,6 +3,26 @@
 # a token or table built once at load, or a cold diagnostic path.
 # Regenerate with --write-allowlist and review the diff like code.
 
+libs/rigExec/api/backgroundScheduler.h | lock | std::mutex &FenceMutex() const
+libs/rigExec/api/backgroundScheduler.h | lock | mutable std::mutex _mutex;
+libs/rigExec/api/backgroundScheduler.h | lock | mutable std::mutex _fenceMutex;
+libs/rigExec/api/backgroundScheduler.h | lock | std::condition_variable _cv;
+
+libs/rigExec/api/frameCache.h | lock | mutable std::mutex mutex;
+libs/rigExec/api/frameCache.h | lock | mutable std::mutex _callbackMutex;
+
+libs/rigExec/api/profiler.h | lock | std::lock_guard<std::mutex> lock(_mutex);
+libs/rigExec/api/profiler.h | lock | std::lock_guard<std::mutex> lock(_mutex);
+libs/rigExec/api/profiler.h | lock | std::lock_guard<std::mutex> lock(_mutex);
+libs/rigExec/api/profiler.h | lock | std::lock_guard<std::mutex> lock(_mutex);
+libs/rigExec/api/profiler.h | lock | std::lock_guard<std::mutex> lock(_mutex);
+libs/rigExec/api/profiler.h | lock | std::lock_guard<std::mutex> lock(_mutex);
+libs/rigExec/api/profiler.h | lock | std::lock_guard<std::mutex> lock(_mutex);
+libs/rigExec/api/profiler.h | lock | std::lock_guard<std::mutex> lock(_mutex);
+libs/rigExec/api/profiler.h | lock | std::lock_guard<std::mutex> lock(_mutex);
+libs/rigExec/api/profiler.h | lock | std::lock_guard<std::mutex> lock(_mutex);
+libs/rigExec/api/profiler.h | lock | mutable std::mutex _mutex;
+
 libs/rigExec/internal/backgroundScheduler.cpp | env | const std::string value = TfGetenv("RIGEXEC_FRAME_CACHE", "on");
 libs/rigExec/internal/backgroundScheduler.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);
 libs/rigExec/internal/backgroundScheduler.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);
@@ -31,11 +51,6 @@ libs/rigExec/internal/backgroundScheduler.cpp | lock | std::lock_guard<std::mute
 libs/rigExec/internal/backgroundScheduler.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);
 libs/rigExec/internal/backgroundScheduler.cpp | lock | std::unique_lock<std::mutex> lock(_mutex);
 
-libs/rigExec/api/backgroundScheduler.h | lock | std::mutex &FenceMutex() const
-libs/rigExec/api/backgroundScheduler.h | lock | mutable std::mutex _mutex;
-libs/rigExec/api/backgroundScheduler.h | lock | mutable std::mutex _fenceMutex;
-libs/rigExec/api/backgroundScheduler.h | lock | std::condition_variable _cv;
-
 libs/rigExec/internal/bakedGeometry.cpp | env | return TfGetenvInt("RIGEXEC_BAKED_CHUNK_ALWAYS", 0) != 0;
 libs/rigExec/internal/bakedGeometry.cpp | env | const int authored = TfGetenvInt("RIGEXEC_BAKED_CHUNK_VERTS",
 libs/rigExec/internal/bakedGeometry.cpp | env | const int authored = TfGetenvInt("RIGEXEC_BAKED_MAX_CHUNKS", 32);
@@ -44,16 +59,16 @@ libs/rigExec/internal/bakedGeometry.cpp | env | const int authored = TfGetenvInt
 libs/rigExec/internal/bakedGeometry.cpp | env | const int authored = TfGetenvInt("RIGEXEC_BAKED_GROUP_CAP",
 libs/rigExec/internal/bakedGeometry.cpp | env | return TfGetenvBool("RIGEXEC_BAKED_GROUP_GATES", true);
 
-libs/rigExec/internal/bakedOpGraph.cpp | env | index->verify=TfGetenvBool("RIGEXEC_VERIFY_SPARSE_LEAVES",false);
-libs/rigExec/internal/bakedOpGraph.cpp | env | B.sourceWatch.sparseVisit=TfGetenvBool("RIGEXEC_SPARSE_SOURCE_WATCH",true);
-libs/rigExec/internal/bakedOpGraph.cpp | env | state.verifyConstantSources=TfGetenvBool("RIGEXEC_VERIFY_CONSTANT_KEYS",false);
-libs/rigExec/internal/bakedOpGraph.cpp | env | state.verifyLeafVersions=TfGetenvBool("RIGEXEC_VERIFY_LEAF_VERSIONS",false);
-libs/rigExec/internal/bakedOpGraph.cpp | env | B->verifySourceKeys=TfGetenvBool("RIGEXEC_VERIFY_SOURCE_KEYS",false);
-libs/rigExec/internal/bakedOpGraph.cpp | env | B->verifyChainVersions=TfGetenvBool("RIGEXEC_VERIFY_CHAIN_VERSIONS",false);
-libs/rigExec/internal/bakedOpGraph.cpp | env | B->verifyPacketVersions=TfGetenvBool("RIGEXEC_VERIFY_PACKET_VERSIONS",false);
-libs/rigExec/internal/bakedOpGraph.cpp | env | B->verifyRangeChains=TfGetenvBool("RIGEXEC_VERIFY_RANGE_CHAINS",false);
-libs/rigExec/internal/bakedOpGraph.cpp | env | B->epilogue.verify=TfGetenvBool("RIGEXEC_VERIFY_EPILOGUE_LISTS",false);
-libs/rigExec/internal/bakedOpGraph.cpp | env | B->opWorkspace.verifyReset=TfGetenvBool("RIGEXEC_VERIFY_EXECUTION_RESET",false);
+libs/rigExec/internal/bakedOpGraph.cpp | env | index->verify = TfGetenvBool("RIGEXEC_VERIFY_SPARSE_LEAVES", false);
+libs/rigExec/internal/bakedOpGraph.cpp | env | TfGetenvBool("RIGEXEC_SPARSE_SOURCE_WATCH", true);
+libs/rigExec/internal/bakedOpGraph.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_CONSTANT_KEYS", false);
+libs/rigExec/internal/bakedOpGraph.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_LEAF_VERSIONS", false);
+libs/rigExec/internal/bakedOpGraph.cpp | env | B->verifySourceKeys = TfGetenvBool("RIGEXEC_VERIFY_SOURCE_KEYS", false);
+libs/rigExec/internal/bakedOpGraph.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_CHAIN_VERSIONS", false);
+libs/rigExec/internal/bakedOpGraph.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_PACKET_VERSIONS", false);
+libs/rigExec/internal/bakedOpGraph.cpp | env | B->verifyRangeChains = TfGetenvBool("RIGEXEC_VERIFY_RANGE_CHAINS", false);
+libs/rigExec/internal/bakedOpGraph.cpp | env | B->epilogue.verify = TfGetenvBool("RIGEXEC_VERIFY_EPILOGUE_LISTS", false);
+libs/rigExec/internal/bakedOpGraph.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_EXECUTION_RESET", false);
 
 libs/rigExec/internal/bakedPose.cpp | token-text | TfToken value(fallback);
 libs/rigExec/internal/bakedPose.cpp | token-text | return TfToken(port);
@@ -84,8 +99,17 @@ libs/rigExec/internal/bakedSpaces.cpp | env | const bool verify = TfGetenvBool("
 
 libs/rigExec/internal/bakedVerify.cpp | env | TfGetenvBool("RIGEXEC_BAKED_VERIFY_CONES", false);
 
-libs/rigExec/internal/compileGolden.h | env | const char *mode=std::getenv("RIGEXEC_COMPILE_GOLDEN");
-libs/rigExec/internal/compileGolden.h | env | const char *unit=std::getenv("RIGEXEC_GOLDEN_SUITE_NAME");
+libs/rigExec/internal/compileGolden.h | env | const char *mode = std::getenv("RIGEXEC_COMPILE_GOLDEN");
+libs/rigExec/internal/compileGolden.h | env | const char *unit = std::getenv("RIGEXEC_GOLDEN_SUITE_NAME");
+
+libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);
+libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);
+libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::unique_lock<std::mutex> lock(_mutex);
+libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::unique_lock<std::mutex> lock(_mutex);
+libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);
+libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::mutex _mutex;
+libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::condition_variable _wake;
+libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::condition_variable _done;
 
 libs/rigExec/internal/frameCache.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_FROZEN_STATIC", false);
 libs/rigExec/internal/frameCache.cpp | lock | std::lock_guard<std::mutex> lock(_callbackMutex);
@@ -99,9 +123,6 @@ libs/rigExec/internal/frameCache.cpp | lock | std::lock_guard<std::mutex> lock(s
 libs/rigExec/internal/frameCache.cpp | lock | std::lock_guard<std::mutex> lock(shard.mutex);
 libs/rigExec/internal/frameCache.cpp | lock | std::lock_guard<std::mutex> lock(shard.mutex);
 libs/rigExec/internal/frameCache.cpp | lock | std::lock_guard<std::mutex> lock(shard.mutex);
-
-libs/rigExec/api/frameCache.h | lock | mutable std::mutex mutex;
-libs/rigExec/api/frameCache.h | lock | mutable std::mutex _callbackMutex;
 
 libs/rigExec/internal/frameCacheSparsity.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);
 libs/rigExec/internal/frameCacheSparsity.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);
@@ -139,16 +160,7 @@ libs/rigExec/internal/inputReplay.cpp | env | const char *mode = std::getenv("RI
 libs/rigExec/internal/inputReplay.cpp | env | const char *native = std::getenv("RIGEXEC_INPUT_REPLAY_NATIVE_HISTORIES");
 libs/rigExec/internal/inputReplay.cpp | env | if (const auto *capture = std::getenv("RIGEXEC_INPUT_REPLAY"))
 
-libs/rigExec/internal/inputReplayValues.cpp | token-text | void Item(TfToken& v) {std::string x=v.GetString();Text(x);if(reading)v=TfToken(x);}
-
-libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);
-libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);
-libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::unique_lock<std::mutex> lock(_mutex);
-libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::unique_lock<std::mutex> lock(_mutex);
-libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);
-libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::mutex _mutex;
-libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::condition_variable _wake;
-libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::condition_variable _done;
+libs/rigExec/internal/inputReplayValues.cpp | token-text | v = TfToken(x);
 
 libs/rigExec/internal/moverGraph.cpp | env | const bool _simdEnabled = TfGetenvBool("RIGEXEC_ENABLE_SIMD", true);
 libs/rigExec/internal/moverGraph.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);
@@ -179,18 +191,6 @@ libs/rigExec/internal/observerHostExit.cpp | env | const char *inputs = std::get
 libs/rigExec/internal/oracleDispatch.cpp | env | const char *value = std::getenv("RIGEXEC_GOLDEN_SUITE");
 
 libs/rigExec/internal/parallel.cpp | env | return TfGetEnvSetting(RIGEXEC_ENABLE_PARALLEL_EVAL);
-
-libs/rigExec/api/profiler.h | lock | std::lock_guard<std::mutex> lock(_mutex);
-libs/rigExec/api/profiler.h | lock | std::lock_guard<std::mutex> lock(_mutex);
-libs/rigExec/api/profiler.h | lock | std::lock_guard<std::mutex> lock(_mutex);
-libs/rigExec/api/profiler.h | lock | std::lock_guard<std::mutex> lock(_mutex);
-libs/rigExec/api/profiler.h | lock | std::lock_guard<std::mutex> lock(_mutex);
-libs/rigExec/api/profiler.h | lock | std::lock_guard<std::mutex> lock(_mutex);
-libs/rigExec/api/profiler.h | lock | std::lock_guard<std::mutex> lock(_mutex);
-libs/rigExec/api/profiler.h | lock | std::lock_guard<std::mutex> lock(_mutex);
-libs/rigExec/api/profiler.h | lock | std::lock_guard<std::mutex> lock(_mutex);
-libs/rigExec/api/profiler.h | lock | std::lock_guard<std::mutex> lock(_mutex);
-libs/rigExec/api/profiler.h | lock | mutable std::mutex _mutex;
 
 libs/rigExec/internal/rigEvaluator.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_SCOPED_CLEARS", false);
 
