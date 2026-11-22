@@ -9,6 +9,7 @@
 #include "rigExecOps/deform/deltaMushOp.h"
 #include "rigExecOps/deform/latticeOp.h"
 #include "rigExecOps/deform/pointOps.h"
+#include "rigExecOps/deform/wrinkleOp.h"
 
 #include "pxr/base/gf/rotation.h"
 
@@ -478,6 +479,73 @@ TestLattice()
             }
 }
 
+void
+TestWrinkle()
+{
+    using namespace rigExecOps;
+    const Grid rest(8, 9, true);
+    // Compressed along x, so the constraints buckle the sheet.
+    std::vector<GfVec3f> posed = rest.points;
+    for (GfVec3f &p : posed)
+        p = GfVec3f(p[0] * 0.7f, p[1], p[2] + 0.01f * p[1]);
+    std::vector<float> envelope(posed.size());
+    for (size_t i = 0; i < envelope.size(); ++i)
+        envelope[i] = 0.08f * (i % 13);
+    const Points in = ToStd(posed), restArray = ToStd(rest.points);
+    const auto counts = ToArray(rest.counts);
+    const auto indices = ToArray(rest.indices);
+    const auto envelopeArray = ToArray(envelope);
+
+    std::vector<RigExecWrinkleSettings> settings(5);
+    settings[0].iterations = 12;
+    settings[1].iterations = 6;
+    settings[1].topology = RigExecWrinkleTopology::SurfaceStruts;
+    settings[1].neighborDistance = 3;
+    settings[2].iterations = 8;
+    settings[2].pinBorders = false;
+    settings[2].tangentPlaneCollisions = false;
+    settings[2].smoothingIterations = 2;
+    settings[2].pinPoints = {0, 5, 17};
+    settings[3].iterations = 10;
+    settings[3].restLengthScale = 1.2f;
+    settings[3].wrinkleScale = 0.5f;
+    settings[3].tangentPlaneInset = 0.05f;
+    settings[4].neighborDistance = 0; // Refused by both.
+
+    for (size_t i = 0; i < settings.size(); ++i) {
+        WrinklePayload payload;
+        payload.settings = settings[i];
+        std::vector<GfVec3f> expected = posed;
+        const bool ok = RigExecApplyWrinkle(&expected, rest.points, rest.counts,
+                                            rest.indices, settings[i]);
+        CHECK(ok == (i != 4));
+        CHECK(!ok || expected != posed);
+        Node plain(Wrinkle(),
+                   {&WrinklePoints(), &WrinkleRest(), &WrinkleCounts(),
+                    &WrinkleIndices()},
+                   WrinkleOut(), &payload);
+        Points actual;
+        std::string error;
+        CHECK(plain.Run({&in, &restArray, &counts, &indices}, &actual,
+                        &error) == ok);
+        CHECK(!ok || SameBits(expected, actual));
+        if (!ok)
+            continue;
+        Node enveloped(Wrinkle(),
+                       {&WrinklePoints(), &WrinkleRest(), &WrinkleCounts(),
+                        &WrinkleIndices(), &WrinkleEnvelope()},
+                       WrinkleOut(), &payload);
+        Blend(posed, envelope, &expected);
+        CHECK(
+            enveloped.Run({&in, &restArray, &counts, &indices, &envelopeArray},
+                          &actual, &error));
+        if (!SameBits(expected, actual)) {
+            std::printf("wrinkle settings %zu differs\n", i);
+            CHECK(false);
+        }
+    }
+}
+
 } // namespace
 
 int
@@ -493,6 +561,7 @@ main()
     TestVolumeCorrect();
     TestDeltaMush();
     TestLattice();
+    TestWrinkle();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;
