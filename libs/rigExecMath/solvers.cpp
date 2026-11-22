@@ -1,5 +1,6 @@
 // RigExec solver kernels.
 #include "solvers.h"
+#include "matrixKernel.h"
 #include "skinAcceptance.h"
 #include "envelope.h"
 
@@ -525,14 +526,7 @@ GfVec3d
 RigExecApplyWeightedMatrix(const GfVec3d &point, const GfMatrix4d &transform,
                            double weight)
 {
-    if (weight <= 0.0) {
-        return point;
-    }
-    const GfVec3d moved = transform.TransformAffine(point);
-    if (weight >= 1.0) {
-        return moved;
-    }
-    return point + (moved - point) * weight;
+    return RigExecWeightedMatrixPoint(point, transform, weight);
 }
 
 bool

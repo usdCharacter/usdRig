@@ -249,72 +249,9 @@ RigExecApplyMatrixKernelRange(const RigExecMoverParameters &p,
                               const float *envelope, size_t begin, size_t end,
                               GfVec3f *pts, bool useSimd)
 {
-    if (p.radialWeight) {
-        // A fraction of the ROTATION, not of the position: the linear form
-        // below follows the chord of the arc, and a chord falls inside its
-        // arc, toward the axis. Factored per WEIGHT rather than per point,
-        // so a falloff that is mostly 0 and 1 -- which is most of them --
-        // costs two factorizations and not one per point.
-        double cachedWeight = -1.0;
-        RigExecPartialDecomposition decomposition;
-        bool haveDecomposition = false;
-        GfMatrix4d partial(1.0);
-        bool identity = true;
-        // The shortcut below writes down what the identity's arithmetic
-        // returns under round-to-nearest without flush-to-zero or
-        // denormals-are-zero; any other environment takes the transform.
-        const bool shortcut = RigExecFloatEnvironmentIsDefault();
-        for (size_t i = begin; i < end; ++i) {
-            const double w = envelope[i];
-            if (w != cachedWeight) {
-                const double clamped = GfClamp(w, 0.0, 1.0);
-                identity = clamped <= 0.0;
-                if (identity)
-                    partial = GfMatrix4d(1.0);
-                else if (clamped >= 1.0)
-                    partial = p.transform;
-                else {
-                    if (!haveDecomposition) {
-                        decomposition =
-                            RigExecDecomposePartialTransform(p.transform);
-                        haveDecomposition = true;
-                    }
-                    partial = RigExecApplyPartialDecomposition(decomposition,
-                                                               clamped);
-                }
-                cachedWeight = w;
-            }
-            if (identity && shortcut) {
-                // What the identity's TransformAffine returns for a finite
-                // point, without the double round trip: each coordinate
-                // unchanged, except that the "+ 0" of the translation row
-                // turns -0 into +0. A dense eyelid falloff is zero over most
-                // of the head, so this is most points. Non-finite points
-                // take the transform (an infinity times 0 is NaN).
-                const GfVec3f &q = pts[i];
-                if (std::isfinite(q[0]) && std::isfinite(q[1]) &&
-                    std::isfinite(q[2])) {
-                    pts[i] = GfVec3f(q[0] == 0.0f ? 0.0f : q[0],
-                                     q[1] == 0.0f ? 0.0f : q[1],
-                                     q[2] == 0.0f ? 0.0f : q[2]);
-                    continue;
-                }
-            }
-            pts[i] = GfVec3f(partial.TransformAffine(GfVec3d(pts[i])));
-        }
-        return;
-    }
-    if (useSimd) {
-        RigExecApplyWeightedMatrixSimd(pts + begin, pts + begin,
-                                       envelope + begin, end - begin,
-                                       p.transform);
-    } else {
-        // Element i is written only after it is read, so in-place is safe.
-        for (size_t i = begin; i < end; ++i) {
-            pts[i] = GfVec3f(RigExecApplyWeightedMatrix(
-                GfVec3d(pts[i]), p.transform, envelope[i]));
-        }
-    }
+    RigExecApplyMatrixRangeKernel<GfVec3f, GfVec3d>(
+        p.transform, p.radialWeight, envelope, begin, end, pts, pts, useSimd,
+        RigExecFloatEnvironmentIsDefault());
 }
 
 namespace {
@@ -422,16 +359,8 @@ void
 ApplyMatrixFullStrength(const RigExecMoverParameters &p, const GfVec3f *in,
                         GfVec3f *out, size_t count, bool useSimd)
 {
-    if (p.radialWeight) {
-        for (size_t i = 0; i < count; ++i)
-            out[i] = GfVec3f(p.transform.TransformAffine(GfVec3d(in[i])));
-    } else if (useSimd) {
-        RigExecApplyWeightedMatrixSimd(in, out, 1.0f, count, p.transform);
-    } else {
-        for (size_t i = 0; i < count; ++i)
-            out[i] = GfVec3f(
-                RigExecApplyWeightedMatrix(GfVec3d(in[i]), p.transform, 1.0));
-    }
+    RigExecApplyMatrixFullStrengthKernel<GfVec3f, GfVec3d>(
+        p.transform, p.radialWeight, in, out, count, useSimd);
 }
 } // namespace
 

@@ -12,6 +12,7 @@
 #include "wrinkleSettings.h"
 #include "meshConnectivity.h"
 #include "deltaMushSettings.h"
+#include "matrixKernel.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec2f.h"
@@ -181,15 +182,7 @@ GfMatrix4d RigExecPartialTransform(const GfMatrix4d &transform, double weight);
 /// pivot. Decomposing once and applying per weight keeps an
 /// alternating fractional falloff from paying a decomposition per
 /// distinct weight; endpoints need no decomposition at all.
-struct RigExecPartialDecomposition {
-    GfVec3d scale{1.0};
-    GfVec3d axis{1.0, 0.0, 0.0};
-    double angle = 0.0;
-    GfVec3d translation{0.0};
-    double along = 0.0;
-    GfVec3d pivot{0.0};
-    bool smallAngle = true;
-};
+using RigExecPartialDecomposition = RigExecPartialDecompositionOf<GfVec3d>;
 
 /// The decomposition behind RigExecPartialTransform, for callers
 /// that apply several weights to one transform.

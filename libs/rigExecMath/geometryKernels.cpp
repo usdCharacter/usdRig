@@ -92,83 +92,13 @@ RigExecRaycastSurfaceFrame(const std::vector<GfVec3f> &points,
 RigExecPartialDecomposition
 RigExecDecomposePartialTransform(const GfMatrix4d &transform)
 {
-    RigExecPartialDecomposition d;
-    // Row lengths are the scale; dividing them out leaves the rotation.
-    GfMatrix4d basis = transform;
-    basis.SetTranslateOnly(GfVec3d(0));
-    for (int axis = 0; axis < 3; ++axis) {
-        const GfVec3d row(basis.GetRow3(axis));
-        const double length = row.GetLength();
-        if (length > 1e-12) {
-            d.scale[axis] = length;
-            basis.SetRow3(axis, row / length);
-        }
-    }
-
-    // The same axis, a fraction of the angle, ABOUT THE SAME PIVOT. The
-    // last part is what makes this radial rather than a rotation with a
-    // separately-faded slide bolted on.
-    //
-    // A cluster's transform rotates about a pivot that is nowhere near
-    // the origin -- a lid turning about an eyeball sits 165 units up --
-    // and a rotation about a distant pivot carries an enormous
-    // translation, P - R P. Scaling THAT by w while turning by w*theta
-    // does not put the point on the arc at all: it lands inside, so a
-    // half-weighted lid pulls back into the eye instead of sweeping
-    // round it.
-    //
-    // So recover the pivot the transform actually turns about -- its
-    // screw axis -- and turn a fraction about that.
-    const GfRotation rotation = basis.ExtractRotation();
-    d.axis = rotation.GetAxis().GetNormalized();
-    d.angle = rotation.GetAngle();
-    // Matrix extraction may choose either quaternion sign. Fractional
-    // weights must follow the same shortest arc for both representations.
-    if (d.angle > 180.0)
-        d.angle -= 360.0;
-    d.translation = transform.ExtractTranslation();
-
-    // Below about a tenth of a degree there is no meaningful axis to
-    // turn about and the chord and the arc agree to within float noise,
-    // so the straight blend is both correct and better conditioned.
-    const double radians = GfDegreesToRadians(d.angle);
-    d.smallAngle = std::abs(std::sin(0.5 * radians)) < 1e-4;
-    if (d.smallAngle) {
-        return d;
-    }
-
-    // Split the translation into the part along the axis (a screw's own
-    // travel, which stays linear in w) and the part across it, which is
-    // (I - R) applied to the pivot and so names where the pivot is.
-    d.along = GfDot(d.translation, d.axis);
-    const GfVec3d across = d.translation - d.axis * d.along;
-    const double half = 0.5 / std::tan(0.5 * radians);
-    d.pivot = across * 0.5 + GfCross(d.axis, across) * half;
-    return d;
+    return RigExecDecomposePartialTransformKernel<GfVec3d>(transform);
 }
 
 GfMatrix4d
 RigExecApplyPartialDecomposition(const RigExecPartialDecomposition &d, double w)
 {
-    GfMatrix4d scaled(1.0);
-    scaled.SetScale(GfVec3d(1.0 + (d.scale[0] - 1.0) * w,
-                            1.0 + (d.scale[1] - 1.0) * w,
-                            1.0 + (d.scale[2] - 1.0) * w));
-
-    GfMatrix4d out(1.0);
-    out.SetRotate(GfRotation(d.axis, d.angle * w));
-    out = scaled * out;
-
-    if (d.smallAngle) {
-        out.SetTranslateOnly(d.translation * w);
-        return out;
-    }
-
-    // p' = R_w (p - pivot) + pivot + w * along * axis.
-    const GfMatrix4d partial = out;
-    out.SetTranslateOnly(d.pivot - partial.TransformDir(d.pivot) +
-                         d.axis * (d.along * w));
-    return out;
+    return RigExecApplyPartialDecompositionKernel<GfMatrix4d>(d, w);
 }
 
 GfMatrix4d

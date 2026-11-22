@@ -21,6 +21,7 @@
 #include "rigExecMath/deltaMushKernel.h"
 #include "rigExecMath/deltaMushSettings.h"
 #include "rigExecMath/latticeKernel.h"
+#include "rigExecMath/matrixKernel.h"
 #include "rigExecMath/normalsLayoutKernel.h"
 #include "rigExecMath/pointBlocks.h"
 #include "rigExecMath/skinAcceptance.h"
@@ -755,14 +756,7 @@ RrVec3d
 RrGeoApplyWeightedMatrix(const RrVec3d &point, const RrMat4d &transform,
                          double weight)
 {
-    if (weight <= 0.0) {
-        return point;
-    }
-    const RrVec3d moved = transform.TransformAffine(point);
-    if (weight >= 1.0) {
-        return moved;
-    }
-    return point + (moved - point) * weight;
+    return RigExecWeightedMatrixPoint(point, transform, weight);
 }
 
 // RrPartialTransform in runtimeMath.h, shared with the pose constraint
@@ -902,18 +896,16 @@ RrGeoApplyLinearBlendSkin(const RrVec3f *in, RrVec3f *out,
     }
 }
 
-#if !RIGEXEC_RUNTIME_HAS_SSE2
-
 void
 RrGeoApplyWeightedMatrixSimd(const RrVec3f *in, RrVec3f *out,
                              const float *weights, size_t count,
                              const RrMat4d &transform)
 {
-    for (size_t i = 0; i < count; ++i) {
-        out[i] = RrGeoToVec3f(RrGeoApplyWeightedMatrix(
-            RrGeoToVec3d(in[i]), transform, (weights ? weights[i] : 1.0f)));
-    }
+    RigExecApplyWeightedMatrixSimdKernel<RrVec3f, RrVec3d>(in, out, weights,
+                                                           count, transform);
 }
+
+#if !RIGEXEC_RUNTIME_HAS_SSE2
 
 void
 RrGeoApplyLinearBlendSkinSimd(const RrVec3f *in, RrVec3f *out,
@@ -924,50 +916,6 @@ RrGeoApplyLinearBlendSkinSimd(const RrVec3f *in, RrVec3f *out,
 }
 
 #else
-
-void
-RrGeoApplyWeightedMatrixSimd(const RrVec3f *in, RrVec3f *out,
-                             const float *weights, size_t count,
-                             const RrMat4d &transform)
-{
-    // Row-vector convention: p' = x*row0 + y*row1 + z*row2 + row3.
-    const __m128 row0 =
-        _mm_setr_ps(float(transform[0][0]), float(transform[0][1]),
-                    float(transform[0][2]), 0.0f);
-    const __m128 row1 =
-        _mm_setr_ps(float(transform[1][0]), float(transform[1][1]),
-                    float(transform[1][2]), 0.0f);
-    const __m128 row2 =
-        _mm_setr_ps(float(transform[2][0]), float(transform[2][1]),
-                    float(transform[2][2]), 0.0f);
-    const __m128 row3 =
-        _mm_setr_ps(float(transform[3][0]), float(transform[3][1]),
-                    float(transform[3][2]), 0.0f);
-
-    for (size_t i = 0; i < count; ++i) {
-        const __m128 q = _mm_setr_ps(in[i][0], in[i][1], in[i][2], 0.0f);
-        __m128 moved = _mm_add_ps(
-            _mm_add_ps(
-                _mm_mul_ps(_mm_shuffle_ps(q, q, _MM_SHUFFLE(0, 0, 0, 0)), row0),
-                _mm_mul_ps(_mm_shuffle_ps(q, q, _MM_SHUFFLE(1, 1, 1, 1)),
-                           row1)),
-            _mm_add_ps(
-                _mm_mul_ps(_mm_shuffle_ps(q, q, _MM_SHUFFLE(2, 2, 2, 2)), row2),
-                row3));
-        __m128 blended;
-        if ((weights ? weights[i] : 1.0f) <= 0.0f) {
-            blended = q;
-        } else if ((weights ? weights[i] : 1.0f) >= 1.0f) {
-            blended = moved;
-        } else {
-            const __m128 w = _mm_set1_ps((weights ? weights[i] : 1.0f));
-            blended = _mm_add_ps(q, _mm_mul_ps(w, _mm_sub_ps(moved, q)));
-        }
-        alignas(16) float result[4];
-        _mm_store_ps(result, blended);
-        out[i] = RrVec3f(result[0], result[1], result[2]);
-    }
-}
 
 void
 RrGeoApplyLinearBlendSkinSimd(const RrVec3f *in, RrVec3f *out,
@@ -1026,49 +974,10 @@ RrGeoApplyMatrixKernelRange(const RrGeoMoverParameters &p,
                             const float *envelope, size_t begin, size_t end,
                             const RrVec3f *in, RrVec3f *pts, bool useSimd)
 {
-    if (p.radialWeight) {
-        // Factored per WEIGHT rather than per point: a painted falloff is
-        // mostly a handful of distinct values. Mirrors
-        // RigExecApplyMatrixKernelRange exactly.
-        double cachedWeight = -1.0;
-        RrPartialDecomposition decomposition;
-        bool haveDecomposition = false;
-        RrMat4d partial(1.0);
-        for (size_t i = begin; i < end; ++i) {
-            const double w = envelope ? envelope[i] : 1.0;
-            if (w != cachedWeight) {
-                const double clamped = RrClamp(w, 0.0, 1.0);
-                if (clamped <= 0.0)
-                    partial = RrMat4d(1.0);
-                else if (clamped >= 1.0)
-                    partial = p.transform;
-                else {
-                    if (!haveDecomposition) {
-                        decomposition =
-                            RrDecomposePartialTransform(p.transform);
-                        haveDecomposition = true;
-                    }
-                    partial =
-                        RrApplyPartialDecomposition(decomposition, clamped);
-                }
-                cachedWeight = w;
-            }
-            pts[i] = RrGeoToVec3f(partial.TransformAffine(RrGeoToVec3d(in[i])));
-        }
-        return;
-    }
-    if (useSimd) {
-        RrGeoApplyWeightedMatrixSimd(in + begin, pts + begin,
-                                     envelope ? envelope + begin : nullptr,
-                                     end - begin, p.transform);
-    } else {
-        // Element i is written only after it is read, so in-place is safe.
-        for (size_t i = begin; i < end; ++i) {
-            pts[i] = RrGeoToVec3f(
-                RrGeoApplyWeightedMatrix(RrGeoToVec3d(in[i]), p.transform,
-                                         envelope ? envelope[i] : 1.0f));
-        }
-    }
+    // The native caller's identity shortcut writes the same bits.
+    RigExecApplyMatrixRangeKernel<RrVec3f, RrVec3d>(p.transform, p.radialWeight,
+                                                    envelope, begin, end, in,
+                                                    pts, useSimd, false);
 }
 
 // The matrix kernel's validation, the one definition it runs first and
@@ -1149,7 +1058,7 @@ RrGeoApplyMatrixSparseWalk(const RrGeoMoverParameters &p, size_t kBegin,
         // painted cluster falloff is almost always sparse, so this is
         // the branch every radial cluster on a real rig reaches.
         double cachedWeight = -1.0;
-        RrPartialDecomposition decomposition;
+        RigExecPartialDecompositionOf<RrVec3d> decomposition;
         bool haveDecomposition = false;
         RrMat4d partial(1.0);
         for (size_t k = kBegin; k < kEnd; ++k) {
@@ -1167,11 +1076,12 @@ RrGeoApplyMatrixSparseWalk(const RrGeoMoverParameters &p, size_t kBegin,
                 else {
                     if (!haveDecomposition) {
                         decomposition =
-                            RrDecomposePartialTransform(p.transform);
+                            RigExecDecomposePartialTransformKernel<RrVec3d>(
+                                p.transform);
                         haveDecomposition = true;
                     }
-                    partial =
-                        RrApplyPartialDecomposition(decomposition, clamped);
+                    partial = RigExecApplyPartialDecompositionKernel<RrMat4d>(
+                        decomposition, clamped);
                 }
                 cachedWeight = value;
             }
