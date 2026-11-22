@@ -1,7 +1,8 @@
 @echo off
-rem Headless Qt-free tests for the usdview plugin modules (undo stack, gizmo
+rem Headless tests for the usdview plugin modules (undo stack, gizmo
 rem math, gizmo screen helpers, the layer-opinion and composition-arc
-rem authoring models). The Windows twin of run_python_tests.sh.
+rem authoring models, and the Assistant panel, which imports Qt on the
+rem offscreen platform). The Windows twin of run_python_tests.sh.
 rem
 rem These need no build and no display; ctest runs the same files, so this is
 rem the quick loop while editing a plugin module.

@@ -1,7 +1,8 @@
 #!/bin/bash
-# bin/test/run_python_tests.sh -- headless Qt-free tests for the usdview plugin
+# bin/test/run_python_tests.sh -- headless tests for the usdview plugin
 # modules (undo stack, gizmo math, gizmo screen helpers, the layer-opinion
-# and composition-arc authoring models).
+# and composition-arc authoring models, and the Assistant panel, which
+# imports Qt on the offscreen platform).
 #
 # Usage: bin/test/run_python_tests.sh [test_name ...]   (default: all)
 set -euo pipefail
