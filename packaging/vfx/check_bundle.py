@@ -155,11 +155,12 @@ def check_linux(root: Path, glibc_max: str, glibcxx_max: str,
     app = root / "app"
     collect_dir = app / "usd" / "lib"
     # Where the relocated bundle's loader looks: the launcher's
-    # LD_LIBRARY_PATH, plus the interpreter's own lib (libpython is already
-    # loaded). A library that only sits elsewhere in the bundle, or is found
-    # through an absolute RUNPATH into the build tree, does not count.
+    # LD_LIBRARY_PATH. A library that only sits elsewhere in the bundle, or
+    # is found through an absolute RUNPATH into the build tree, does not
+    # count (a statically linked interpreter never loads libpython for the
+    # modules that need it).
     loader_dirs = [app / "rig" / "lib", app / "rig" / "bin",
-                   app / "usd" / "lib", app / "python" / "lib"]
+                   app / "usd" / "lib"]
     host_dirs = [Path(p) for p in os.environ.get(
         "LD_LIBRARY_PATH", "").split(":") if p]
     host_dirs += [Path("/usr/local/lib64"), Path("/usr/local/lib")]

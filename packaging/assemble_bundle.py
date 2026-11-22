@@ -280,6 +280,27 @@ def merge_lib64(tree: Path) -> list[str]:
     return moved
 
 
+def link_libpython(app_dir: Path) -> list[str]:
+    """Put libpython on the launcher's loader path (Linux).
+
+    python-build-standalone's interpreter links CPython statically, so
+    nothing loads libpython3.X.so.1.0 for the extension modules and
+    libraries (OpenUSD's, usdRig's) that were linked against it; inside
+    the build tree their RUNPATH found it. A relative link in usd/lib
+    resolves it once the bundle moves.
+    """
+    lib = app_dir / "usd" / "lib"
+    linked = []
+    for path in sorted((app_dir / "python" / "lib").glob("libpython3*.so*")):
+        target = lib / path.name
+        if path.is_dir() or os.path.lexists(target):
+            continue
+        lib.mkdir(parents=True, exist_ok=True)
+        os.symlink(os.path.relpath(path, lib), target)
+        linked.append(path.name)
+    return linked
+
+
 def make_executable(path: Path) -> None:
     if os.name != "nt":
         target = path.resolve() if path.is_symlink() else path
@@ -577,6 +598,9 @@ def assemble(args) -> Path:
     copy_tree(python_src, app_dir / "python", args.trim_dev,
               preserve_symlinks=keep_links)
     make_executable(python_executable(app_dir / "python", platform))
+    if platform == "linux":
+        for name in link_libpython(app_dir):
+            print(f"assemble_bundle: usd/lib/{name} -> python/lib/{name}")
     runtime_dir = getattr(args, "msvc_runtime_dir", "")
     if platform == "windows" and not copy_msvc_runtime(
             app_dir, Path(args.python_home), Path(args.usd_install),

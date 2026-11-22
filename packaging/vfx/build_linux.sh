@@ -96,13 +96,13 @@ echo "::endgroup::"
 echo "::group::smoke test in the build image"
 # Hide the install trees so absolute build-tree RUNPATHs cannot mask a
 # library the relocated bundle is missing.
-mv usd-install usd-install.hidden
-mv usdrig-install usdrig-install.hidden
-trap 'mv usd-install.hidden usd-install 2>/dev/null || true
-      mv usdrig-install.hidden usdrig-install 2>/dev/null || true' EXIT
+hidden=(usd-install usdrig-install pyroot)
+restore() { for d in "${hidden[@]}"; do
+  [ -e "$d.hidden" ] && mv "$d.hidden" "$d"; done; return 0; }
+for d in "${hidden[@]}"; do mv "$d" "$d.hidden"; done
+trap restore EXIT
 bash packaging/vfx/smoke_linux.sh "$bundle"
-mv usd-install.hidden usd-install
-mv usdrig-install.hidden usdrig-install
+restore
 trap - EXIT
 echo "::endgroup::"
 
