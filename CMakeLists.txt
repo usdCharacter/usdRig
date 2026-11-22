@@ -171,6 +171,7 @@ target_sources(rigExecScene INTERFACE
 # shipped libraries. Each file declares its own target, sources, include
 # directories and links, and the four compose into librigExec below. None
 # of them is installed, exported, aliased or linked.
+include(cmake/rigExecRegistrySources.cmake)
 include(cmake/rigExecCompileSources.cmake)
 include(cmake/rigExecEvalSources.cmake)
 include(cmake/rigExecScheduleSources.cmake)
@@ -182,6 +183,7 @@ include(cmake/rigExecVerifySources.cmake)
 # layer objects compose in DAG order; only the facade's lifecycle and
 # source-notice sources compile here.
 add_library(rigExec SHARED
+    $<TARGET_OBJECTS:rigExecRegistry>
     $<TARGET_OBJECTS:rigExecCompile>
     $<TARGET_OBJECTS:rigExecEval>
     $<TARGET_OBJECTS:rigExecSchedule>
@@ -245,6 +247,7 @@ target_sources(rigExec INTERFACE
 add_library(rigExec::rigExec ALIAS rigExec)
 include(cmake/rigExecMoverPlugin.cmake)
 include(cmake/rigExecMover.cmake)
+include(cmake/rigExecRegistration.cmake)
 
 add_library(rigExecStandalone SHARED
     libs/rigExecStandalone/sceneDb.cpp
@@ -1193,6 +1196,19 @@ foreach(_schedule serial parallel)
         "RIGEXEC_BAKED_SCHEDULE=${_schedule}"
         "RIGEXEC_BAKED_GRAIN_US=0")
 endforeach()
+
+rigexec_add_type_library(rigExecTestFakeTypes
+    SOURCES tests/registryFixture/fakeTypes.cpp)
+rigexec_add_op_library(rigExecTestFakeOps
+    SOURCES tests/registryFixture/fakeOps.cpp
+    USES_TYPE_LIBRARIES rigExecTestFakeTypes)
+add_executable(testRigExecRegistry tests/testRigExecRegistry.cpp
+    $<TARGET_OBJECTS:rigExecRegistry>)
+target_include_directories(testRigExecRegistry PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/libs" "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+rigexec_link_registrations(testRigExecRegistry
+    TYPE_LIBRARIES rigExecTestFakeTypes OP_LIBRARIES rigExecTestFakeOps)
+add_test(NAME testRigExecRegistry COMMAND testRigExecRegistry)
 
 add_executable(testRigExecOpGraph tests/testRigExecOpGraph.cpp)
 target_link_libraries(testRigExecOpGraph PRIVATE rigExecGraph work Threads::Threads)
