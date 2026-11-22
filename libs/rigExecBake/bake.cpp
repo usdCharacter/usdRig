@@ -90,7 +90,8 @@ public:
                          " could not encode its immutable compiled rig";
                 return false;
             }
-            if (!parameters.valid || parameters.externalData.IsEmpty()) {
+            const VtValue &data = revision.external.data;
+            if (!parameters.valid || data.IsEmpty()) {
                 continue;
             }
             char number[32];
@@ -98,9 +99,8 @@ public:
             auto *compiledRig = entry.handler->encodeExternalCompiledData
                                     ? &sampledCompiledRig
                                     : &entry.compiledRig;
-            if (!entry.handler->encodeExternal(parameters.externalData,
-                                               revision.binding, compiledRig,
-                                               &entry.frame)) {
+            if (!entry.handler->encodeExternal(data, revision.binding,
+                                               compiledRig, &entry.frame)) {
                 *error = "external mover " + revision.moverPath.GetString() +
                          " could not encode its payload at time " +
                          _FormatDouble(time, number, sizeof(number));

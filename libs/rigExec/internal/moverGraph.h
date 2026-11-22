@@ -704,7 +704,8 @@ void RigExecAttachNormalsTopology(RigExecRevisionBinding *binding,
 bool RigExecApplyRevisionKernel(
     RigExecRevisionOp op, const RigExecMoverParameters &p,
     std::vector<GfVec3f> *pts, bool useSimd, RigExecWireBasisCache *wireBasis,
-    RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache = nullptr);
+    RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache = nullptr,
+    const RigExecExternalRevision *external = nullptr);
 
 /// Runs one revision of \p op over \p pts in place, envelope included: the
 /// packet check, the full-strength fast path, RigExecApplyRevisionKernel and
@@ -719,28 +720,29 @@ bool RigExecApplyRevisionKernel(
 bool RigExecRunRevisionKernel(
     RigExecRevisionOp op, const RigExecMoverParameters &p,
     std::vector<GfVec3f> *pts, bool useSimd, RigExecWireBasisCache *wireBasis,
-    RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache = nullptr);
+    RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache = nullptr,
+    const RigExecExternalRevision *external = nullptr);
 
 namespace geometryDetail {
 /// Internal owned staging only: failure may modify output; the caller must
 /// discard it and retain the preceding published version. Never borrowed points.
 /// \p envelope, when given, is the separate-blend envelope its caller already
 /// resolved from the packet over the points' count; null resolves it here.
-bool RunDiscardableRevisionKernel(RigExecRevisionOp,
-                                  const RigExecMoverParameters &,
-                                  std::vector<GfVec3f> *, bool,
-                                  RigExecWireBasisCache *,
-                                  RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *,
-                                  const std::vector<float> *envelope = nullptr);
+bool
+RunDiscardableRevisionKernel(RigExecRevisionOp, const RigExecMoverParameters &,
+                             std::vector<GfVec3f> *, bool,
+                             RigExecWireBasisCache *,
+                             RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *,
+                             const std::vector<float> *envelope = nullptr,
+                             const RigExecExternalRevision *external = nullptr);
 /// The same revision out of place: reads the \p count entering points at
 /// \p in, which must not alias \p out, and writes the result to \p out.
-bool RunDiscardableRevisionKernel(RigExecRevisionOp,
-                                  const RigExecMoverParameters &,
-                                  const GfVec3f *in, size_t count,
-                                  std::vector<GfVec3f> *out, bool,
-                                  RigExecWireBasisCache *,
-                                  RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *,
-                                  const std::vector<float> *envelope = nullptr);
+bool RunDiscardableRevisionKernel(
+    RigExecRevisionOp, const RigExecMoverParameters &, const GfVec3f *in,
+    size_t count, std::vector<GfVec3f> *out, bool, RigExecWireBasisCache *,
+    RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *,
+    const std::vector<float> *envelope = nullptr,
+    const RigExecExternalRevision *external = nullptr);
 } // namespace geometryDetail
 
 /// Whether \p envelope makes the "apply once" blend the identity, so the
@@ -995,12 +997,14 @@ bool RigExecSumBlendChannels(const std::vector<RigExecBlendChannel> &channels,
 /// \p time is the evaluation time for every static scene read the packet
 /// needs (cage, surface, topology, bind coords, strength, enable). The kernels
 /// read the same inputs through exec at the current time, so passing anything
-/// else silently diverges on animated input.
+/// else silently diverges on animated input. An External revision's payload
+/// goes to \p external; null drops it.
 RigExecMoverParameters
 RigExecAssembleParameters(const UsdPrim &moverPrim, RigExecRevisionOp op,
                           const RigExecRevisionBinding &binding,
                           const RigExecProviderValues &values,
-                          UsdTimeCode time = UsdTimeCode::Default());
+                          UsdTimeCode time = UsdTimeCode::Default(),
+                          RigExecExternalRevision *external = nullptr);
 
 /// The External arm's plugin call, shared by RigExecAssembleParameters and
 /// the sampled boundary: reads declared leaves and calls the immutable
@@ -1072,7 +1076,8 @@ void RigExecRevisionLeafHops(const RigExecRevisionLeafKey &key,
 /// `resolved` and `skinTopologyCache` are not read.
 RigExecMoverParameters RigExecAssembleFromLeaves(
     RigExecRevisionOp op, const RigExecRevisionBinding &binding,
-    const RigExecRevisionLeafView &leaves, const RigExecProviderValues &values);
+    const RigExecRevisionLeafView &leaves, const RigExecProviderValues &values,
+    RigExecExternalRevision *external = nullptr);
 
 /// Whether RigExecAssembleFromLeaves reaches an External revision's payload
 /// over \p leaves and \p values: the enable and the envelope, which the

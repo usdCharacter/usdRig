@@ -3417,7 +3417,8 @@ AssembleRevisionFromStage(RigExecBakedProgramImpl &B,
                           RigExecBakedProgramImpl::GeomRevision *revision,
                           const GfVec3f *basePoints, size_t basePointCount,
                           UsdTimeCode time,
-                          std::vector<std::string> *diagnostics, bool record)
+                          std::vector<std::string> *diagnostics, bool record,
+                          RigExecExternalRevision *external)
 {
     RigExecProviderValues values =
         RevisionValues(B, revision, basePoints, basePointCount);
@@ -3450,7 +3451,7 @@ AssembleRevisionFromStage(RigExecBakedProgramImpl &B,
     GatherBlendChannels(B, revision, _StageBlendReads{R, time}, record,
                         &values);
     return RigExecAssembleParameters(revision->moverPrim, revision->op,
-                                     revision->binding, values, time);
+                                     revision->binding, values, time, external);
 }
 
 } // namespace
@@ -3461,7 +3462,8 @@ RigExecBakedAssembleFromLeaves(RigExecBakedProgramImpl *program,
                                const GfVec3f *basePoints, size_t basePointCount,
                                std::vector<std::string> *diagnostics,
                                std::vector<std::string> *missing,
-                               size_t layoutPointCount)
+                               size_t layoutPointCount,
+                               RigExecExternalRevision *external)
 {
     RigExecBakedProgramImpl &B = *program;
     if (layoutPointCount == size_t(-1))
@@ -3577,8 +3579,8 @@ RigExecBakedAssembleFromLeaves(RigExecBakedProgramImpl *program,
     GatherBlendChannels(B, revision, _LeafBlendReads{*view.values},
                         /*record=*/true, &values);
     return RigExecAssembleGeometry(revision->kernelRecord.op,
-                                   revision->kernelRecord.binding, view,
-                                   values);
+                                   revision->kernelRecord.binding, view, values,
+                                   external);
 }
 
 namespace {
@@ -3590,12 +3592,13 @@ AssembleRevision(RigExecBakedProgramImpl &B,
                  RigExecBakedProgramImpl::GeomRevision *revision,
                  const GfVec3f *basePoints, size_t basePointCount,
                  UsdTimeCode time, RigExecBakedStep *step,
-                 size_t layoutPointCount)
+                 size_t layoutPointCount,
+                 RigExecExternalRevision *external = nullptr)
 {
     if (revision->leaves.decl.assembles) {
         return RigExecBakedAssembleFromLeaves(
             &B, revision, basePoints, basePointCount, &step->diagnostics,
-            nullptr, layoutPointCount);
+            nullptr, layoutPointCount, external);
     }
     RigExecMoverParameters invalid;
     invalid.valid = false;
@@ -4259,9 +4262,10 @@ struct BakedChainState {
             (!rangeLattice || rev.restBaseVersion != c.baseVersion)) {
             rev.restBaseHeld = false;
         }
+        RigExecExternalRevision external;
         RigExecMoverParameters assembled =
             AssembleRevision(*B, &rev, c.lastBase.cdata(), c.lastBase.size(),
-                             time, step, c.lastBase.size());
+                             time, step, c.lastBase.size(), &external);
         if (rangeChain && !rev.blendChunked &&
             rev.op == RigExecRevisionOp::BlendShape &&
             !RigExecBakedSamePoints(assembled.blendDeltas.data(),
@@ -4274,6 +4278,7 @@ struct BakedChainState {
             rev.deltasSpare = std::move(rev.parameters.blendDeltas);
         }
         rev.parameters = std::move(assembled);
+        rev.external = std::move(external);
         if (rangeLattice) {
             rev.restBaseHeld =
                 !rev.parameters.restPoints.empty() &&
@@ -5138,12 +5143,13 @@ BakedChainState::runSingleChunk(size_t chain, size_t revision, int32_t part)
                 if (rev.windowRun.deferred) {
                     rev.deviceTicks.clear();
                 }
-                rev.parameters.window = &rev.windowRun;
+                rev.external.window = &rev.windowRun;
             }
             chunk.ok = geometryDetail::RunDiscardableGeometry(
                 rev.op, rev.parameters, points, count, &rev.stagingOutput,
                 B->useSimd, &rev.wireBasis, &rev.surfaceCache,
-                !rev.fullStrength && rev.envelopeOk ? &rev.envelope : nullptr);
+                !rev.fullStrength && rev.envelopeOk ? &rev.envelope : nullptr,
+                &rev.external);
             if (rev.windowRun.deferred) {
                 rev.devicePending = chunk.ok && !rev.deviceTicks.empty();
                 if (!chunk.ok) {
@@ -5151,7 +5157,7 @@ BakedChainState::runSingleChunk(size_t chain, size_t revision, int32_t part)
                 }
                 rev.windowRun.deferred = nullptr;
             }
-            rev.parameters.window = nullptr;
+            rev.external.window = nullptr;
             return true;
         }
         if (!SkinPacketIsUsable(rev) || !rev.influencesValid || !sized) {
@@ -5364,7 +5370,8 @@ RunGpuChainOnCpu(RigExecBakedProgramImpl &B,
         }
         before = *points;
         if (!RigExecRunGeometry(revision.op, p, points, B.useSimd,
-                                &revision.wireBasis, &revision.surfaceCache)) {
+                                &revision.wireBasis, &revision.surfaceCache,
+                                &revision.external)) {
             points->swap(before);
             if (revision.status.AllowsApply()) {
                 revision.resultStatus = _tokens->moverFailed;
@@ -5766,14 +5773,15 @@ ResolveWindowDevices(RigExecBakedProgramImpl &B, UsdTimeCode time)
         run.cache = &revision.windowCache;
         run.solveTicks = &revision.deviceTicks;
         run.device = count >= B.windowDeviceMinPoints;
-        revision.parameters.window = &run;
+        revision.external.window = &run;
         solved.clear();
         const bool ok = geometryDetail::RunDiscardableGeometry(
             revision.op, revision.parameters, points, count, &solved, B.useSimd,
             &revision.wireBasis, &revision.surfaceCache,
             !revision.fullStrength && revision.envelopeOk ? &revision.envelope
-                                                          : nullptr);
-        revision.parameters.window = nullptr;
+                                                          : nullptr,
+            &revision.external);
+        revision.external.window = nullptr;
         // A failed solve keeps the points entering it, as the fuse does.
         if (!ok || solved.size() != count)
             solved.assign(points, points + count);
@@ -7036,16 +7044,18 @@ RigExecBakedProgramTesting::ShadowAssembly(
             edit(live.moverPath, &fromLeaves.leaves.decl);
         }
         std::vector<std::string> missing, leafLines, stageLines;
+        RigExecExternalRevision externalA, externalB;
         const RigExecMoverParameters a = RigExecBakedAssembleFromLeaves(
-            &B, &fromLeaves, base, baseCount, &leafLines, &missing);
+            &B, &fromLeaves, base, baseCount, &leafLines, &missing, size_t(-1),
+            &externalA);
         const RigExecMoverParameters b = AssembleRevisionFromStage(
             B, local, &fromStage, base, baseCount, time, &stageLines,
-            /*record=*/false);
+            /*record=*/false, &externalB);
         const std::string &where = live.moverPathText;
         for (const std::string &name : missing) {
             report.push_back(where + ": undeclared read " + name);
         }
-        if (!(a == b)) {
+        if (!(a == b && externalA == externalB)) {
             report.push_back(where + ": packets differ (" +
                              PacketDifference(a, b) + ")");
         }
@@ -7194,10 +7204,10 @@ RigExecBakedVerifyRangeChains(RigExecBakedProgramImpl *program)
                     RigExecGeometryBlendDeltas(channels, entering, count,
                                                &parameters.blendDeltas);
                 }
-                applied =
-                    parameters.valid && revision.status.AllowsApply() &&
-                    RigExecRunRevisionKernel(revision.op, parameters, &whole,
-                                             B.useSimd, nullptr, nullptr);
+                applied = parameters.valid && revision.status.AllowsApply() &&
+                          RigExecRunRevisionKernel(revision.op, parameters,
+                                                   &whole, B.useSimd, nullptr,
+                                                   nullptr, &revision.external);
             }
             if (!applied) {
                 whole.assign(entering, entering + count);

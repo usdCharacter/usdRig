@@ -1186,17 +1186,17 @@ TestTheExternalPayloadIsTheAssemblersAnswer()
                                            revision->binding, values,
                                            UsdTimeCode(time), &fresh);
             const RigExecMoverParameters &packet = revision->parameters;
+            const RigExecExternalRevision &external = revision->external;
             if (!(fresh.valid && packet.valid &&
-                  packet.externalSchema == fresh.schema &&
-                  packet.externalData == fresh.data)) {
+                  external.schema == fresh.schema &&
+                  external.data == fresh.data)) {
                 throw std::runtime_error(label + " " + what +
                                          ": the packet's payload is not the "
                                          "assembler's answer");
             }
             std::vector<uint8_t> compiledRigA, frameA, compiledRigB, frameB;
-            CHECK(handler->encodeExternal(packet.externalData,
-                                          revision->binding, &compiledRigA,
-                                          &frameA));
+            CHECK(handler->encodeExternal(external.data, revision->binding,
+                                          &compiledRigA, &frameA));
             CHECK(handler->encodeExternal(fresh.data, revision->binding,
                                           &compiledRigB, &frameB));
             CHECK(compiledRigA == compiledRigB && frameA == frameB);
@@ -1252,20 +1252,21 @@ TestExternalFailureAtomicAndStagingRecovery()
     parameters.kind = TfToken("external");
     parameters.enabled = true;
     parameters.valid = true;
-    parameters.externalHandler = &handler;
+    RigExecExternalRevision external;
+    external.handler = &handler;
     const std::vector<GfVec3f> entering(kBase.begin(), kBase.end());
     for (float strength : {1.0f, .5f})
         for (int mode = 0; mode < 3; ++mode) {
             parameters.weights = RigExecWeightPacket::Constant(strength);
-            parameters.externalData = VtValue(mode);
+            external.data = VtValue(mode);
             auto points = entering;
             CHECK(!RigExecApplyRevisionKernel(RigExecRevisionOp::External,
                                               parameters, &points, false,
-                                              nullptr));
+                                              nullptr, nullptr, &external));
             CHECK(points == entering);
             CHECK(!RigExecRunRevisionKernel(RigExecRevisionOp::External,
-                                            parameters, &points, false,
-                                            nullptr));
+                                            parameters, &points, false, nullptr,
+                                            nullptr, &external));
             CHECK(points == entering);
         }
     RigExecBakedProgramImpl program;
@@ -1295,8 +1296,9 @@ TestExternalFailureAtomicAndStagingRecovery()
     for (float strength : {1.0f, .5f})
         for (int mode : {0, 3, 1, 3, 2, 3}) {
             parameters.weights = RigExecWeightPacket::Constant(strength);
-            parameters.externalData = VtValue(mode);
+            external.data = VtValue(mode);
             revision.parameters = parameters;
+            revision.external = external;
             revision.status =
                 RigExecStatusForParameters(parameters, revision.moverPath);
             // RevisionStatic's decision, which the fuse selects by.

@@ -534,10 +534,15 @@ Put(std::string *out, const RigExecMoverParameters &v)
     Put(out, bool(v.skinTopology));
     if (v.skinTopology)
         Put(out, *v.skinTopology);
-    // mushRest and externalHandler are derived immutable handles. Opaque
-    // externalData has no text/hash approximation.
-    Put(out, v.externalSchema);
-    Put(out, v.externalData.IsEmpty());
+    // mushRest is a derived immutable handle.
+}
+void
+Put(std::string *out, const RigExecExternalRevision &v)
+{
+    // The handler is a derived immutable handle. Opaque data has no
+    // text/hash approximation.
+    Put(out, v.schema);
+    Put(out, v.data.IsEmpty());
 }
 const RigExecBakedProgramImpl::GeomRevision *
 Revision(const RigExecBakedProgramImpl &B, uint32_t slot)
@@ -733,8 +738,7 @@ PutPacket(std::string *out, const RigExecBakedProgramImpl::GeomRevision &r)
             Put(out, *v.skinTopology);
         }
     }
-    Put(out, v.externalSchema);
-    Put(out, v.externalData.IsEmpty());
+    Put(out, r.external);
 }
 } // namespace
 
@@ -765,7 +769,7 @@ RigExecBakedOpValueKeyIsExact(const RigExecBakedProgramImpl &B,
 {
     if (domain == RigExecBakedSlotDomain::RevisionPacket) {
         const auto *revision = Revision(B, slot);
-        return revision && revision->parameters.externalData.IsEmpty();
+        return revision && revision->external.data.IsEmpty();
     }
     if (domain == RigExecBakedSlotDomain::RequiredStageFramesAdmission)
         return slot == 0;
@@ -1455,6 +1459,7 @@ RigExecBakedPacketContentKey(const RigExecBakedProgramImpl &B, uint32_t slot,
     Put(out, uint8_t(1));
     Put(out, RigExecBakedSlotDomain::RevisionPacket);
     Put(out, v->parameters);
+    Put(out, v->external);
     Put(out, v->status);
     Put(out, v->layoutUsable);
     if (v->blendChunked) {

@@ -2901,7 +2901,8 @@ RigExecBakedAssembleFromLeaves(RigExecBakedProgramImpl *program,
                                const GfVec3f *basePoints, size_t basePointCount,
                                std::vector<std::string> *diagnostics,
                                std::vector<std::string> *missing = nullptr,
-                               size_t layoutPointCount = size_t(-1));
+                               size_t layoutPointCount = size_t(-1),
+                               RigExecExternalRevision *external = nullptr);
 
 /// Appends one VolumePlacements step per volume provider slot (object =
 /// slot, part 1), then one WeightPacket step per weight object in the
@@ -3555,6 +3556,7 @@ struct RigExecBakedRunShadow {
         std::vector<RigExecScaledDualQuat> palette;
         std::vector<ChunkState> chunks;
         RigExecMoverParameters parameters, lastParameters;
+        RigExecExternalRevision external;
         VtVec3fArray lastAuxPoints;
         RigExecMoverStatus status, lastStatus;
         TfToken resultStatus;

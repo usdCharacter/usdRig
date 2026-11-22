@@ -2341,6 +2341,8 @@ struct RigExecBakedGeomRevision {
     /// and publishes `moverFailed` where the dynamic path publishes it;
     /// read `influencesValid` beside this one, never this one alone.
     RigExecMoverParameters parameters;
+    /// An External revision's payload, assembled with `parameters`.
+    RigExecExternalRevision external;
     RigExecMoverStatus status;
     /// Whether this revision has to run at all: chain dirty so far, or
     /// it never ran, or its packet or status moved. A VALUE comparison,

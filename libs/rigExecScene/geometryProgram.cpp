@@ -6,7 +6,8 @@
 namespace rigExec {
 RigExecMoverParameters
 RigExecAssembleGeometry(const RigExecGeometryRecord &record,
-                        const RigExecGeometryInputs &inputs)
+                        const RigExecGeometryInputs &inputs,
+                        RigExecExternalRevision *external)
 {
     RigExecRevisionLeafView leaves;
     leaves.decl = &record.leaves;
@@ -22,15 +23,16 @@ RigExecAssembleGeometry(const RigExecGeometryRecord &record,
     providers.basePoints = inputs.basePoints;
     providers.blendDeltas = inputs.blendDeltas;
     return RigExecAssembleFromLeaves(record.op, record.binding, leaves,
-                                     providers);
+                                     providers, external);
 }
 RigExecMoverParameters
 RigExecAssembleGeometry(RigExecRevisionOp op,
                         const RigExecRevisionBinding &binding,
                         const RigExecRevisionLeafView &leaves,
-                        const RigExecProviderValues &values)
+                        const RigExecProviderValues &values,
+                        RigExecExternalRevision *external)
 {
-    return RigExecAssembleFromLeaves(op, binding, leaves, values);
+    return RigExecAssembleFromLeaves(op, binding, leaves, values, external);
 }
 GfMatrix4d
 RigExecGeometryMatrixInPointFrame(const GfMatrix4d &transform,
@@ -88,10 +90,11 @@ RigExecRunGeometry(RigExecRevisionOp op,
                    const RigExecMoverParameters &parameters,
                    std::vector<GfVec3f> *points, bool useSimd,
                    RigExecWireBasisCache *wire,
-                   RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *surface)
+                   RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *surface,
+                   const RigExecExternalRevision *external)
 {
     return points && RigExecRunRevisionKernel(op, parameters, points, useSimd,
-                                              wire, surface);
+                                              wire, surface, external);
 }
 namespace geometryDetail {
 bool
@@ -100,11 +103,12 @@ RunDiscardableGeometry(RigExecRevisionOp op,
                        std::vector<GfVec3f> *points, bool useSimd,
                        RigExecWireBasisCache *wire,
                        RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *surface,
-                       const std::vector<float> *envelope)
+                       const std::vector<float> *envelope,
+                       const RigExecExternalRevision *external)
 {
     return points &&
            RunDiscardableRevisionKernel(op, parameters, points, useSimd, wire,
-                                        surface, envelope);
+                                        surface, envelope, external);
 }
 bool
 RunDiscardableGeometry(RigExecRevisionOp op,
@@ -113,11 +117,12 @@ RunDiscardableGeometry(RigExecRevisionOp op,
                        std::vector<GfVec3f> *out, bool useSimd,
                        RigExecWireBasisCache *wire,
                        RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *surface,
-                       const std::vector<float> *envelope)
+                       const std::vector<float> *envelope,
+                       const RigExecExternalRevision *external)
 {
     return out &&
            RunDiscardableRevisionKernel(op, parameters, in, count, out, useSimd,
-                                        wire, surface, envelope);
+                                        wire, surface, envelope, external);
 }
 } // namespace geometryDetail
 bool
@@ -158,12 +163,13 @@ bool
 RigExecRunGeometry(const RigExecGeometryRecord &record,
                    const RigExecMoverParameters &parameters,
                    RigExecGeometryWorkspace *workspace,
-                   std::vector<GfVec3f> *points, bool useSimd)
+                   std::vector<GfVec3f> *points, bool useSimd,
+                   const RigExecExternalRevision *external)
 {
     if (!workspace)
         return false;
     return RigExecRunGeometry(record.op, parameters, points, useSimd,
-                              &workspace->wire, &workspace->surface);
+                              &workspace->wire, &workspace->surface, external);
 }
 bool
 RigExecGeometryPacketMatches(RigExecRevisionOp op,

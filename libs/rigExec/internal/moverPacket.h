@@ -139,15 +139,6 @@ struct RigExecMoverParameters {
     /// for the reason mushRest is.
     std::shared_ptr<const RigExecVertexNormalsTopology> normalsTopology;
 
-    /// Plugin-owned payload. The registered schema identifies its callbacks.
-    const RigExecMoverHandler *externalHandler = nullptr;
-    TfToken externalSchema;
-    VtValue externalData;
-    /// A windowed external revision's run (rigExecGraph/windowHistory.h),
-    /// pointed at by the step body for the length of the kernel run and
-    /// null otherwise. Not part of the packet's value: excluded from ==.
-    struct RigExecWindowRun *window = nullptr;
-
     bool operator==(const RigExecMoverParameters &o) const
     {
         return kind == o.kind && enabled == o.enabled && valid == o.valid &&
@@ -185,11 +176,30 @@ struct RigExecMoverParameters {
                skinElementSize == o.skinElementSize &&
                skinningMethod == o.skinningMethod &&
                normalsPerCorner == o.normalsPerCorner &&
-               normalsLeftHanded == o.normalsLeftHanded &&
-               externalSchema == o.externalSchema &&
-               externalData == o.externalData;
+               normalsLeftHanded == o.normalsLeftHanded;
     }
     bool operator!=(const RigExecMoverParameters &o) const
+    {
+        return !(*this == o);
+    }
+};
+
+/// An External revision's plugin payload, carried beside its packet. The
+/// registered schema identifies the handler's callbacks.
+struct RigExecExternalRevision {
+    const RigExecMoverHandler *handler = nullptr;
+    TfToken schema;
+    VtValue data;
+    /// A windowed revision's run (rigExecGraph/windowHistory.h), pointed at
+    /// by the step body for the length of the kernel run and null otherwise.
+    /// Not part of the value: excluded from ==.
+    struct RigExecWindowRun *window = nullptr;
+
+    bool operator==(const RigExecExternalRevision &o) const
+    {
+        return schema == o.schema && data == o.data;
+    }
+    bool operator!=(const RigExecExternalRevision &o) const
     {
         return !(*this == o);
     }

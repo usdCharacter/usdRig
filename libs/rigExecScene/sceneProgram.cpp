@@ -502,8 +502,9 @@ RigExecSceneProgramRuntime::Run(const RigExecSceneProgram &program,
                 // run does once its deltas are non-empty.
                 if (opCore && blend)
                     inputs.blendDeltas.assign(1, GfVec3f(0.0f));
-                auto params =
-                    RigExecAssembleGeometry(descriptor.record, inputs);
+                RigExecExternalRevision external;
+                auto params = RigExecAssembleGeometry(descriptor.record, inputs,
+                                                      &external);
                 if (opCore) {
                     if (!RigExecGeometryPacketMatches(kind, params) ||
                         !RigExecRunGeometryOp(
@@ -528,13 +529,13 @@ RigExecSceneProgramRuntime::Run(const RigExecSceneProgram &program,
                                                         &inputs.blendDeltas))
                             return failed("blend shape input/cardinality "
                                           "validation failed");
-                        params =
-                            RigExecAssembleGeometry(descriptor.record, inputs);
+                        params = RigExecAssembleGeometry(descriptor.record,
+                                                         inputs, &external);
                     }
-                    params.window = window;
-                    if (!RigExecRunGeometry(descriptor.record, params,
-                                            &workspace.geometry,
-                                            &workspace.points, op.useSimd))
+                    external.window = window;
+                    if (!RigExecRunGeometry(
+                            descriptor.record, params, &workspace.geometry,
+                            &workspace.points, op.useSimd, &external))
                         return failed(
                             "geometry input/cardinality validation failed");
                 }

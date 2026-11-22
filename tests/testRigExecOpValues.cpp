@@ -447,8 +447,7 @@ TestPacketStatusAndOpaqueBoundary()
     CHECK(Key(B, RigExecBakedSlotDomain::RevisionPacket) != initial);
     CHECK(RigExecBakedOpValueKeyIsExact(
         B, RigExecBakedSlotDomain::RevisionPacket, 0));
-    revision.parameters.externalData =
-        VtValue(std::string("plugin-owned payload"));
+    revision.external.data = VtValue(std::string("plugin-owned payload"));
     CHECK(!RigExecBakedOpValueKeyIsExact(
         B, RigExecBakedSlotDomain::RevisionPacket, 0));
 }

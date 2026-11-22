@@ -238,9 +238,7 @@ Same(const RigExecMoverParameters &a, const RigExecMoverParameters &b)
            Same(a.skinWeights, b.skinWeights) &&
            SameSkinTopology(a.skinTopology, b.skinTopology) &&
            a.skinElementSize == b.skinElementSize &&
-           a.skinningMethod == b.skinningMethod &&
-           a.externalSchema == b.externalSchema &&
-           a.externalData == b.externalData;
+           a.skinningMethod == b.skinningMethod;
 }
 
 inline bool
@@ -416,6 +414,7 @@ CaptureRevision(const RigExecBakedProgramImpl::GeomRevision &revision,
     state->envelope = revision.envelope;
     state->palette = revision.palette;
     state->parameters = revision.parameters;
+    state->external = revision.external;
     state->lastParameters = revision.lastParameters;
     state->lastAuxPoints = revision.lastAuxPoints;
     state->status = revision.status;
@@ -512,6 +511,7 @@ RestoreRevision(const RigExecBakedRunShadow::RevisionState &state,
     revision->envelope = state.envelope;
     revision->palette = state.palette;
     revision->parameters = state.parameters;
+    revision->external = state.external;
     revision->lastParameters = state.lastParameters;
     revision->lastAuxPoints = state.lastAuxPoints;
     revision->status = state.status;
@@ -669,6 +669,8 @@ CompareRevision(std::vector<std::string> *differences, size_t *count,
                  shadow.weightValuesVersion, revision.weightValuesVersion);
     CompareValue(differences, count, where + " parameters", shadow.parameters,
                  revision.parameters);
+    CompareValue(differences, count, where + " external", shadow.external,
+                 revision.external);
     CompareValue(differences, count, where + " status", shadow.status,
                  revision.status);
     CompareValue(differences, count, where + " lastParameters",

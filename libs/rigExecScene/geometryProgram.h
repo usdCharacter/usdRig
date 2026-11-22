@@ -32,12 +32,16 @@ struct RigExecGeometryWorkspace {
     RigExecSurfaceKernelCache<GfVec3f, GfVec3d> surface;
 };
 /// Same pure packet assembler used by native and detached scene consumers.
-RigExecMoverParameters RigExecAssembleGeometry(const RigExecGeometryRecord &,
-                                               const RigExecGeometryInputs &);
-RigExecMoverParameters RigExecAssembleGeometry(RigExecRevisionOp,
-                                               const RigExecRevisionBinding &,
-                                               const RigExecRevisionLeafView &,
-                                               const RigExecProviderValues &);
+/// An External revision's payload goes to \p external; null drops it.
+RigExecMoverParameters
+RigExecAssembleGeometry(const RigExecGeometryRecord &,
+                        const RigExecGeometryInputs &,
+                        RigExecExternalRevision *external = nullptr);
+RigExecMoverParameters
+RigExecAssembleGeometry(RigExecRevisionOp, const RigExecRevisionBinding &,
+                        const RigExecRevisionLeafView &,
+                        const RigExecProviderValues &,
+                        RigExecExternalRevision *external = nullptr);
 /// Fold measured neutral references and point-frame carry in production order.
 GfMatrix4d RigExecGeometryMatrixInPointFrame(const GfMatrix4d &,
                                              const GfMatrix4d *space,
@@ -57,10 +61,12 @@ bool RigExecGeometryBlendDeltas(const std::vector<RigExecBlendChannel> &,
                                 std::vector<GfVec3f> *deltas);
 /// Exact existing operation and apply-once arithmetic, including derived arrays.
 /// The caller owns status guards and preserves preceding values on failure.
+/// \p external: an External revision's payload, which it fails without.
 bool RigExecRunGeometry(RigExecRevisionOp, const RigExecMoverParameters &,
                         std::vector<GfVec3f> *, bool useSimd,
                         RigExecWireBasisCache *,
-                        RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *);
+                        RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *,
+                        const RigExecExternalRevision *external = nullptr);
 namespace geometryDetail {
 /// Owned staging only; false leaves disposable output unspecified.
 /// \p envelope: the separate-blend envelope already resolved, or null.
@@ -68,7 +74,8 @@ bool RunDiscardableGeometry(RigExecRevisionOp, const RigExecMoverParameters &,
                             std::vector<GfVec3f> *, bool,
                             RigExecWireBasisCache *,
                             RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *,
-                            const std::vector<float> *envelope = nullptr);
+                            const std::vector<float> *envelope = nullptr,
+                            const RigExecExternalRevision *external = nullptr);
 /// Out of place: reads \p count entering points at \p in (never \p out's
 /// storage) and writes the result to \p out; untouched points are copied
 /// bit for bit.
@@ -77,7 +84,8 @@ bool RunDiscardableGeometry(RigExecRevisionOp, const RigExecMoverParameters &,
                             std::vector<GfVec3f> *out, bool,
                             RigExecWireBasisCache *,
                             RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *,
-                            const std::vector<float> *envelope = nullptr);
+                            const std::vector<float> *envelope = nullptr,
+                            const RigExecExternalRevision *external = nullptr);
 } // namespace geometryDetail
 bool RigExecRunGeometryDerived(RigExecRevisionOp,
                                const RigExecMoverParameters &,
@@ -102,7 +110,8 @@ bool RigExecRunGeometryMatrix(const RigExecGeometryRecord &,
 bool RigExecRunGeometry(const RigExecGeometryRecord &,
                         const RigExecMoverParameters &,
                         RigExecGeometryWorkspace *, std::vector<GfVec3f> *,
-                        bool useSimd);
+                        bool useSimd,
+                        const RigExecExternalRevision *external = nullptr);
 /// RigExecRunGeometry's packet check: valid and of the op's kind.
 bool RigExecGeometryPacketMatches(RigExecRevisionOp,
                                   const RigExecMoverParameters &);

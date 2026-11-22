@@ -1032,7 +1032,7 @@ ApplyRevisionKernel(RigExecRevisionOp op, const RigExecMoverParameters &p,
                     std::vector<GfVec3f> *pts, bool useSimd,
                     RigExecWireBasisCache *wireBasis,
                     RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache,
-                    bool discardable)
+                    bool discardable, const RigExecExternalRevision *external)
 {
     switch (op) {
     case RigExecRevisionOp::Matrix:
@@ -1198,12 +1198,13 @@ ApplyRevisionKernel(RigExecRevisionOp op, const RigExecMoverParameters &p,
         return ok;
     }
     case RigExecRevisionOp::External: {
-        const RigExecMoverHandler *handler = p.externalHandler;
-        if (handler && p.window) {
+        const RigExecMoverHandler *handler =
+            external ? external->handler : nullptr;
+        if (handler && external->window) {
             // A windowed revision (windowHistory.h): capture this tick, then
             // solve over the earlier ticks and it -- unless the run only
             // captures, when the points stand as they entered.
-            RigExecWindowRun &run = *p.window;
+            RigExecWindowRun &run = *external->window;
             if (!handler->captureWindow || !handler->applyWindow)
                 return false;
             std::vector<const RigExecWindowPacket *> ticks;
@@ -1219,7 +1220,7 @@ ApplyRevisionKernel(RigExecRevisionOp op, const RigExecMoverParameters &p,
                     return false;
             } else {
                 auto packet = std::make_shared<RigExecWindowPacket>();
-                if (handler->captureWindow(p.externalData, *pts, packet.get()))
+                if (handler->captureWindow(external->data, *pts, packet.get()))
                     captured = std::move(packet);
                 if (run.capture &&
                     !RigExecWindowPacketsEqual(*run.capture, captured))
@@ -1252,9 +1253,9 @@ ApplyRevisionKernel(RigExecRevisionOp op, const RigExecMoverParameters &p,
             }
             const bool solved =
                 (run.device && handler->applyWindowDevice &&
-                 handler->applyWindowDevice(p.externalData, ticks.data(),
+                 handler->applyWindowDevice(external->data, ticks.data(),
                                             ticks.size(), output, run.cache)) ||
-                handler->applyWindow(p.externalData, ticks.data(), ticks.size(),
+                handler->applyWindow(external->data, ticks.data(), ticks.size(),
                                      output, run.cache);
             if (!solved || output->size() != enteringCount)
                 return false;
@@ -1276,7 +1277,7 @@ ApplyRevisionKernel(RigExecRevisionOp op, const RigExecMoverParameters &p,
             candidate = *pts;
             output = &candidate;
         }
-        if (!handler->applyExternal(p.externalData, output) ||
+        if (!handler->applyExternal(external->data, output) ||
             output->size() != enteringCount)
             return false;
         for (const GfVec3f &point : *output) {
@@ -1309,9 +1310,11 @@ RigExecApplyRevisionKernel(RigExecRevisionOp op,
                            const RigExecMoverParameters &p,
                            std::vector<GfVec3f> *pts, bool useSimd,
                            RigExecWireBasisCache *wireBasis,
-                           RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache)
+                           RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache,
+                           const RigExecExternalRevision *external)
 {
-    return ApplyRevisionKernel(op, p, pts, useSimd, wireBasis, cache, false);
+    return ApplyRevisionKernel(op, p, pts, useSimd, wireBasis, cache, false,
+                               external);
 }
 
 bool
@@ -1817,6 +1820,7 @@ RunRevisionKernel(RigExecRevisionOp op, const RigExecMoverParameters &p,
                   RigExecWireBasisCache *wireBasis,
                   RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache,
                   bool discardable, const std::vector<float> *envelope,
+                  const RigExecExternalRevision *external,
                   const GfVec3f *source = nullptr, size_t sourceCount = 0)
 {
     if (!_PacketMatches(op, p)) {
@@ -1834,7 +1838,7 @@ RunRevisionKernel(RigExecRevisionOp op, const RigExecMoverParameters &p,
     }
     if (!RigExecRevisionTakesSeparateBlend(op, p.weights)) {
         return ApplyRevisionKernel(op, p, pts, useSimd, wireBasis, cache,
-                                   discardable);
+                                   discardable, external);
     }
 
     // A delta mush whose envelope covers a small part of the mesh only needs
@@ -1909,8 +1913,8 @@ RunRevisionKernel(RigExecRevisionOp op, const RigExecMoverParameters &p,
     if (!fullStrengthEnvelope && !source) {
         preceding = *pts;
     }
-    if (!ApplyRevisionKernel(op, p, pts, useSimd, wireBasis, cache,
-                             discardable)) {
+    if (!ApplyRevisionKernel(op, p, pts, useSimd, wireBasis, cache, discardable,
+                             external)) {
         return false;
     }
     if (pts->size() != precedingSize) {
@@ -1942,10 +1946,11 @@ bool
 RigExecRunRevisionKernel(RigExecRevisionOp op, const RigExecMoverParameters &p,
                          std::vector<GfVec3f> *pts, bool useSimd,
                          RigExecWireBasisCache *wireBasis,
-                         RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache)
+                         RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache,
+                         const RigExecExternalRevision *external)
 {
     return RunRevisionKernel(op, p, pts, useSimd, wireBasis, cache, false,
-                             nullptr);
+                             nullptr, external);
 }
 
 namespace geometryDetail {
@@ -1955,10 +1960,11 @@ RunDiscardableRevisionKernel(RigExecRevisionOp op,
                              std::vector<GfVec3f> *pts, bool useSimd,
                              RigExecWireBasisCache *wireBasis,
                              RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache,
-                             const std::vector<float> *envelope)
+                             const std::vector<float> *envelope,
+                             const RigExecExternalRevision *external)
 {
     return RunRevisionKernel(op, p, pts, useSimd, wireBasis, cache, true,
-                             envelope);
+                             envelope, external);
 }
 bool
 RunDiscardableRevisionKernel(RigExecRevisionOp op,
@@ -1966,16 +1972,17 @@ RunDiscardableRevisionKernel(RigExecRevisionOp op,
                              size_t count, std::vector<GfVec3f> *out,
                              bool useSimd, RigExecWireBasisCache *wireBasis,
                              RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache,
-                             const std::vector<float> *envelope)
+                             const std::vector<float> *envelope,
+                             const RigExecExternalRevision *external)
 {
     // An empty entering array may come with no storage at all.
     if (!in) {
         out->clear();
         return RunRevisionKernel(op, p, out, useSimd, wireBasis, cache, true,
-                                 envelope);
+                                 envelope, external);
     }
     return RunRevisionKernel(op, p, out, useSimd, wireBasis, cache, true,
-                             envelope, in, count);
+                             envelope, external, in, count);
 }
 } // namespace geometryDetail
 
@@ -2940,7 +2947,8 @@ RigExecSumBlendChannels(const std::vector<RigExecBlendChannel> &channels,
 RigExecMoverParameters
 RigExecAssembleParameters(const UsdPrim &moverPrim, RigExecRevisionOp op,
                           const RigExecRevisionBinding &binding,
-                          const RigExecProviderValues &values, UsdTimeCode time)
+                          const RigExecProviderValues &values, UsdTimeCode time,
+                          RigExecExternalRevision *external)
 {
     RIGEXEC_PURITY_CHECK();
     if (op == RigExecRevisionOp::Matrix) {
@@ -3191,10 +3199,12 @@ RigExecAssembleParameters(const UsdPrim &moverPrim, RigExecRevisionOp op,
         RigExecExternalPayload payload;
         RigExecAssembleExternalPayload(moverPrim, binding, values, time,
                                        &payload);
-        params.externalHandler = payload.handler;
-        params.externalSchema = payload.schema;
         params.valid = payload.valid;
-        params.externalData = std::move(payload.data);
+        if (external) {
+            external->handler = payload.handler;
+            external->schema = payload.schema;
+            external->data = std::move(payload.data);
+        }
         break;
     }
 
@@ -4297,7 +4307,8 @@ RigExecMoverParameters
 RigExecAssembleFromLeaves(RigExecRevisionOp op,
                           const RigExecRevisionBinding &binding,
                           const RigExecRevisionLeafView &leaves,
-                          const RigExecProviderValues &values)
+                          const RigExecProviderValues &values,
+                          RigExecExternalRevision *external)
 {
     using Role = RigExecRevisionLeafRole;
     const _Leaves L{leaves};
@@ -4631,14 +4642,16 @@ RigExecAssembleFromLeaves(RigExecRevisionOp op,
         break;
     }
     case RigExecRevisionOp::External: {
-        params.externalHandler = binding.handler;
+        if (external)
+            external->handler = binding.handler;
         if (!binding.handler || !binding.handler->assembleExternal ||
             !leaves.decl || !leaves.values || leaves.decl->externalBegin < 0) {
             if (leaves.missing)
                 leaves.missing->push_back("external inputs");
             break;
         }
-        params.externalSchema = binding.externalSchema;
+        if (external)
+            external->schema = binding.externalSchema;
         std::vector<VtValue> inputs;
         inputs.reserve(binding.externalInputs.size());
         for (size_t i = 0; i < binding.externalInputs.size(); ++i) {
@@ -4661,9 +4674,11 @@ RigExecAssembleFromLeaves(RigExecRevisionOp op,
         }
         const RigExecExternalProviderValues pureValues(values);
         const RigExecExternalInputContext ctx{binding, pureValues, inputs};
-        params.valid =
-            inputs.size() == binding.externalInputs.size() &&
-            binding.handler->assembleExternal(ctx, &params.externalData);
+        VtValue data;
+        params.valid = inputs.size() == binding.externalInputs.size() &&
+                       binding.handler->assembleExternal(ctx, &data);
+        if (external)
+            external->data = std::move(data);
         break;
     }
     case RigExecRevisionOp::SurfaceProjector:
