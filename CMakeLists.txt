@@ -626,6 +626,12 @@ option(RIGEXEC_BUILD_TESTS "Build the RigExec test and probe executables"
 set(RIGEXEC_TEST_USD_DIR "${USD_INSTALL_DIR}"
     CACHE PATH "USD install whose binaries the tests run against")
 
+# rigExecRuntime starts std::threads. Before glibc 2.34 (EL8, the VFX
+# Reference Platform's CY2025 and CY2026 Linux baseline) pthread_* live in a
+# separate libpthread that the linker does not add by itself.
+find_package(Threads REQUIRED)
+target_link_libraries(rigExecRuntime PUBLIC Threads::Threads)
+
 
 if (RIGEXEC_BUILD_TESTS)
 enable_testing()

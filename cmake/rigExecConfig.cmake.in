@@ -49,6 +49,9 @@ else()
     unset(_rigExec_saved_prefix_path)
 endif()
 
+# rigExecRuntime links Threads::Threads (libpthread before glibc 2.34).
+find_dependency(Threads)
+
 include("${CMAKE_CURRENT_LIST_DIR}/rigExecTargets.cmake")
 
 include("${CMAKE_CURRENT_LIST_DIR}/rigExecMoverPlugin.cmake")
