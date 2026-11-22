@@ -1,0 +1,36 @@
+# usdRig for Arch Linux and Arch-based systems such as Omarchy.
+# Repackages the CY2027 (glibc 2.34) Linux bundle from the GitHub Release.
+# Not published to the AUR yet; packaging/aur/test_pkgbuild.sh builds and
+# installs it from a local bundle in CI.
+pkgname=usdrig-bin
+pkgver=0.2.0
+pkgrel=1
+pkgdesc="usdview bundled with the usdRig character rig evaluator (RigExec)"
+arch=('x86_64')
+url="https://github.com/usdCharacter/usdRig"
+license=('custom')
+depends=('glibc' 'gcc-libs' 'libglvnd' 'mesa' 'fontconfig' 'freetype2'
+         'dbus' 'libxkbcommon' 'libxkbcommon-x11' 'xcb-util-cursor'
+         'xcb-util-wm' 'xcb-util-image' 'xcb-util-keysyms'
+         'xcb-util-renderutil')
+optdepends=('wayland: native Wayland sessions such as Hyprland')
+provides=('usdrig')
+conflicts=('usdrig')
+options=('!strip' '!debug')
+_bundle="usdRig-${pkgver}-vfx2027-linux-x86_64"
+source=("${_bundle}.tar.gz::${url}/releases/download/v${pkgver}/${_bundle}.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+  install -d "${pkgdir}/opt/usdrig" "${pkgdir}/usr/bin"
+  cp -a "${srcdir}/${_bundle}/." "${pkgdir}/opt/usdrig/"
+  cat > "${pkgdir}/usr/bin/usdRigView" <<'SH'
+#!/bin/sh
+exec /opt/usdrig/usdRigView "$@"
+SH
+  chmod 755 "${pkgdir}/usr/bin/usdRigView"
+  if [ -f "${srcdir}/${_bundle}/LICENSE" ]; then
+    install -Dm644 "${srcdir}/${_bundle}/LICENSE" \
+      "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  fi
+}
