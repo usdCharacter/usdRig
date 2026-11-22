@@ -424,7 +424,7 @@ def find_unrelocated_macos_deps(app_dir: Path) -> list[str]:
     return problems
 
 
-def info_plist(version: str) -> str:
+def info_plist(version: str, minimum_system: str = "13.0") -> str:
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" \
 "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -437,7 +437,7 @@ def info_plist(version: str) -> str:
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>{version}</string>
   <key>CFBundleVersion</key><string>{version}</string>
-  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>LSMinimumSystemVersion</key><string>{minimum_system}</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>
@@ -514,8 +514,9 @@ def assemble(args) -> Path:
     shutil.copy2(args.launcher, launcher_dst)
     make_executable(launcher_dst)
     if platform == "macos":
-        (contents / "Info.plist").write_text(info_plist(version),
-                                             encoding="utf-8")
+        (contents / "Info.plist").write_text(
+            info_plist(version, getattr(args, "macos_minimum", "13.0")),
+            encoding="utf-8")
         (contents / "PkgInfo").write_text("APPL????", encoding="utf-8")
 
     keep_links = platform == "macos"
@@ -652,6 +653,10 @@ def main(argv=None) -> int:
     parser.add_argument("--usdnoodles-dir", default="",
                         help="staged UsdNoodles package, when the RigExec "
                              "install does not already carry it")
+    parser.add_argument("--macos-minimum", default="13.0",
+                        help="LSMinimumSystemVersion written to the macOS "
+                             "app's Info.plist (the build's deployment "
+                             "target)")
     parser.add_argument("--git-sha", default="")
     parser.add_argument("--archive", default="",
                         help="also write this .zip / .tar.gz of the bundle")
