@@ -6,6 +6,7 @@
 #include "rigExec/api/registry.h"
 #include "rigExecScene/geometryOps.h"
 #include "rigExecScene/geometryProgram.h"
+#include "rigExecMath/geometryKernels.h"
 #include "rigExecStdTypes/stdTypes.h"
 
 #include "pxr/base/gf/rotation.h"
@@ -14,6 +15,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -254,6 +256,172 @@ TestPointOps(const Grid &grid)
     Compare("deltaMush", RigExecRevisionOp::DeltaMush, mush, grid.points);
 }
 
+std::vector<GfVec3f>
+Cage(const GfVec3i &d, const GfVec3f &lo, const GfVec3f &hi, float jitter,
+     unsigned seed)
+{
+    std::mt19937 rng(seed);
+    std::uniform_real_distribution<float> j(-jitter, jitter);
+    std::vector<GfVec3f> cage;
+    for (int z = 0; z < d[2]; ++z)
+        for (int y = 0; y < d[1]; ++y)
+            for (int x = 0; x < d[0]; ++x) {
+                const GfVec3f t(d[0] > 1 ? float(x) / (d[0] - 1) : 0.5f,
+                                d[1] > 1 ? float(y) / (d[1] - 1) : 0.5f,
+                                d[2] > 1 ? float(z) / (d[2] - 1) : 0.5f);
+                cage.emplace_back(lo[0] + t[0] * (hi[0] - lo[0]) + j(rng),
+                                  lo[1] + t[1] * (hi[1] - lo[1]) + j(rng),
+                                  lo[2] + t[2] * (hi[2] - lo[2]) + j(rng));
+            }
+    return cage;
+}
+
+void
+TestWrinkle(const Grid &grid)
+{
+    RigExecMoverParameters p = Packet("wrinkle");
+    p.restPoints = grid.rest;
+    p.topologyCounts = grid.counts;
+    p.topologyIndices = grid.indices;
+    p.wrinkleSettings.iterations = 6;
+    // Compressed in x, so the edges buckle.
+    std::vector<GfVec3f> posed = grid.points;
+    for (GfVec3f &v : posed)
+        v[0] *= 0.8f;
+    Compare("wrinkle", RigExecRevisionOp::Wrinkle, p, posed);
+}
+
+void
+TestLattice(const Grid &grid)
+{
+    const GfVec3i d(3, 4, 2);
+    RigExecMoverParameters bound = Packet("lattice");
+    bound.divisions = d;
+    bound.restPoints = grid.points;
+    bound.auxPoints =
+        Cage(d, GfVec3f(-0.5f, -0.5f, -2), GfVec3f(8.5f, 6.5f, 2), 0, 1);
+    bound.auxPointsB =
+        Cage(d, GfVec3f(-1, -0.2f, -2.5f), GfVec3f(9, 7.5f, 1.5f), 0.4f, 7);
+    Compare("lattice bound", RigExecRevisionOp::Lattice, bound, grid.points);
+
+    const GfVec3i g(4, 4, 3);
+    RigExecMoverParameters regular = Packet("lattice");
+    regular.divisions = g;
+    RigExecLatticeSettings &s = regular.latticeSettings;
+    s.regularGrid = true;
+    s.origin = {-1, -1, -2};
+    s.spacing = {10.0f / 3, 8.0f / 3, 2.0f};
+    regular.auxPointsB =
+        Cage(g, GfVec3f(-1, -1, -2), GfVec3f(9, 7, 2), 0.6f, 11);
+    regular.targetToLattice.SetTranslate(GfVec3d(0.25, -0.5, 0.1));
+    regular.latticeToTarget.SetTranslate(GfVec3d(-0.25, 0.5, -0.1));
+    Compare("lattice grid", RigExecRevisionOp::Lattice, regular, grid.points);
+}
+
+void
+TestSurfaceProject(const Grid &grid)
+{
+    const Grid surface(6, 5);
+    RigExecMoverParameters p = Packet("surfaceProject");
+    for (const GfVec3f &v : surface.rest)
+        p.auxPoints.push_back(GfVec3f(v[0] * 1.5f - 0.5f, v[1] * 1.4f, 0.3f));
+    p.topologyCounts = surface.counts;
+    p.topologyIndices = surface.indices;
+    p.strength = 0.75f;
+    std::vector<GfVec3f> above = grid.points;
+    for (GfVec3f &v : above)
+        v[2] += 0.8f;
+    Compare("surfaceProject legacy", RigExecRevisionOp::SurfaceProject, p,
+            above);
+    p.targetToSurface.SetTranslate(GfVec3d(0, 0, -0.1));
+    p.surfaceToTarget.SetTranslate(GfVec3d(0, 0, 0.1));
+    Compare("surfaceProject snap", RigExecRevisionOp::SurfaceProject, p, above);
+}
+
+/// A rest and a posed curve's RMF samples as a frame array.
+RigExecPointFrameArray
+RibbonFrames()
+{
+    std::vector<GfVec3f> restCurve, posedCurve;
+    for (int i = 0; i < 6; ++i) {
+        restCurve.emplace_back(1.4f * i, 0.5f * i, 0.3f * (i % 2));
+        posedCurve.emplace_back(1.3f * i, 0.5f * i + 0.2f * i * i,
+                                0.4f * i - 0.3f * (i % 2));
+    }
+    const RigExecCurveFrameSamples rest = RigExecSampleCurveRMF(restCurve, 9);
+    const RigExecCurveFrameSamples posed = RigExecSampleCurveRMF(posedCurve, 9);
+    const auto landmarks = [](const RigExecCurveFrameSamples &f, size_t k) {
+        const GfVec3f o = f.positions[k];
+        return std::array<GfVec3d, 4>{GfVec3d(o), GfVec3d(o + f.tangents[k]),
+                                      GfVec3d(o + f.normals[k]),
+                                      GfVec3d(o + f.binormals[k])};
+    };
+    RigExecPointFrameArray frames;
+    frames.frames.resize(rest.GetSize());
+    for (size_t k = 0; k < rest.GetSize(); ++k) {
+        frames.rests.push_back(landmarks(rest, k));
+        frames.frames[k].points = landmarks(posed, k);
+    }
+    return frames;
+}
+
+void
+TestFrameDriven(const Grid &grid)
+{
+    RigExecMoverParameters ribbon = Packet("ribbon");
+    ribbon.frames = RibbonFrames();
+    for (size_t i = 0; i < grid.points.size(); ++i)
+        ribbon.bindCoords.emplace_back(
+            -0.1f + 1.2f * float(i) / float(grid.points.size()), 0.0f);
+    Compare("ribbon", RigExecRevisionOp::Ribbon, ribbon, grid.points);
+
+    RigExecMoverParameters guides = Packet("emitGuidePoints");
+    guides.frames = ribbon.frames;
+    Compare("guidePoints", RigExecRevisionOp::EmitGuidePoints, guides,
+            std::vector<GfVec3f>(guides.frames.frames.size(),
+                                 GfVec3f(0.5f, -1.0f, 2.0f)));
+}
+
+void
+TestWire(const Grid &grid)
+{
+    RigExecMoverParameters p = Packet("wire");
+    for (int i = 0; i < 6; ++i) {
+        p.restPoints.emplace_back(1.6f * i, 1.2f * i, 0.4f * (i % 2));
+        p.auxPoints.push_back(p.restPoints.back() +
+                              GfVec3f(0.3f * i, -0.2f * (i % 3), 0.5f));
+    }
+    p.curveOrder = 4;
+    p.curveKnots = {0, 0, 0, 0, 1, 2, 3, 3, 3, 3};
+    p.dropoffDistance = 2.5;
+    const RigExecNurbsCurve rest{&p.restPoints, p.curveOrder, &p.curveKnots};
+    const std::vector<GfVec2f> bind = RigExecBindWire(grid.points, rest);
+    p.wireBindCoords = VtArray<GfVec2f>(bind.begin(), bind.end());
+    Compare("wire", RigExecRevisionOp::Wire, p, grid.points);
+
+    // A sparse zero-default field: the op folds it in, as the native wire.
+    p.weights = RigExecWeightPacket();
+    p.weights.representation = TfToken("sparse");
+    p.weights.rangePolicy = TfToken("strict");
+    p.weights.valid = true;
+    for (int i = 2; i < int(grid.points.size()); i += 3) {
+        p.weights.indices.push_back(i);
+        p.weights.values.push_back(0.1f * float(i % 10));
+    }
+    std::vector<GfVec3f> expected = grid.points;
+    CHECK(Native(RigExecRevisionOp::Wire, p, &expected));
+    Chain chain({{RigExecRevisionOp::Wire, &p}});
+    CHECK(chain.nodes.size() == 1 &&
+          chain.nodes[0].envelope.index == kRigExecInvalidIndex);
+    RigExecArray<Vec3f> actual;
+    std::string error;
+    CHECK(chain.Run({&p}, grid.points, &actual, &error));
+    CHECK(SameBits(expected, actual));
+    // The field's shape is fixed at build.
+    p.weights = RigExecWeightPacket::Constant(0.5f);
+    CHECK(!chain.Run({&p}, grid.points, &actual, &error));
+}
+
 /// Smooth, then a matrix, as two connected nodes.
 void
 TestChain(const Grid &grid)
@@ -329,6 +497,11 @@ main()
     TestMatrix(grid);
     TestSkin(grid);
     TestPointOps(grid);
+    TestWrinkle(grid);
+    TestLattice(grid);
+    TestSurfaceProject(grid);
+    TestFrameDriven(grid);
+    TestWire(grid);
     TestChain(grid);
     TestRefusals(grid);
     if (failures) {

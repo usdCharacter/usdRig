@@ -26,6 +26,13 @@ struct RigExecGeometryOpNode {
     RigExecInputId transform, strength, reference;
     RigExecInputId counts, indices, rest;
     RigExecInputId transforms, skinIndices, skinWeights;
+    /// Lattice cages, a projection's surface, curve and frame drivers.
+    RigExecInputId restCage, posedCage, surface, curve;
+    RigExecInputId bindCoords, frames;
+    /// A space pair and a metric: lattice or surface, from and to the target.
+    RigExecInputId toSpace, fromSpace, metric;
+    /// A wire's sparse field, in place of the envelope.
+    RigExecInputId weightIndices, weightValues;
     RigExecOutputId out;
     /// The op's output port, for a downstream node to connect to.
     const RigExecPortHandle *outPort = nullptr;
