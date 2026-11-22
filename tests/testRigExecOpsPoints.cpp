@@ -6,10 +6,12 @@
 #include "rigExec/api/rigDesc.h"
 #include "rigExecMath/envelope.h"
 #include "rigExecMath/geometryKernels.h"
+#include "rigExecMath/normalsLayoutKernel.h"
 #include "rigExecMath/simdKernels.h"
 #include "rigExecMath/solvers.h"
 #include "rigExecOps/deform/blendShapeOp.h"
 #include "rigExecOps/deform/deltaMushOp.h"
+#include "rigExecOps/deform/derivedOps.h"
 #include "rigExecOps/deform/latticeOp.h"
 #include "rigExecOps/deform/matrixDeformOp.h"
 #include "rigExecOps/deform/pointOps.h"
@@ -1088,6 +1090,126 @@ TestBlendShape()
 
 } // namespace
 
+void
+TestRecomputeNormals()
+{
+    using namespace rigExecOps;
+    Grid grid(8, 21);
+    // A triangle, a sliver and a face naming a missing point join the quads.
+    const int n = int(grid.points.size());
+    grid.counts.insert(grid.counts.end(), {3, 3, 4});
+    grid.indices.insert(grid.indices.end(), {0, 9, 1, 2, 2, 3, 4, 5, n + 3, 6});
+    const Points in = ToStd(grid.points);
+    const auto counts = ToArray(grid.counts);
+    const auto indices = ToArray(grid.indices);
+    for (const bool perCorner : {false, true})
+        for (const bool leftHanded : {false, true}) {
+            NormalsPayload payload;
+            payload.perCorner = perCorner;
+            payload.leftHanded = leftHanded;
+            Node bare(RecomputeNormals(),
+                      {&RecomputeNormalsPoints(), &RecomputeNormalsCounts(),
+                       &RecomputeNormalsIndices()},
+                      RecomputeNormalsOut(), &payload);
+            Node node(RecomputeNormals(),
+                      {&RecomputeNormalsPoints(), &RecomputeNormalsCounts(),
+                       &RecomputeNormalsIndices(), &RecomputeNormalsAuthored(),
+                       &RecomputeNormalsEnvelope()},
+                      RecomputeNormalsOut(), &payload);
+            std::vector<GfVec3f> expected = RigExecComputeVertexNormals(
+                grid.points, grid.counts, grid.indices);
+            // A corner naming a missing point has no per-corner layout.
+            const bool laidOut = RigExecLayoutNormals(
+                &expected, grid.indices.data(), grid.indices.size(), perCorner,
+                leftHanded);
+            CHECK(laidOut != perCorner);
+            Points actual;
+            std::string error;
+            if (!laidOut) {
+                CHECK(!bare.Run({&in, &counts, &indices}, &actual, &error));
+                CHECK(error.find("corner") != std::string::npos);
+                continue;
+            }
+            CHECK(bare.Run({&in, &counts, &indices}, &actual));
+            CHECK(SameBits(expected, actual));
+            std::vector<GfVec3f> authored(expected.size());
+            std::vector<float> envelope(expected.size());
+            for (size_t i = 0; i < authored.size(); ++i) {
+                authored[i] = GfVec3f(0.1f * (i % 7), 1.0f, -0.3f);
+                envelope[i] = i % 4 == 0 ? 0.0f : 0.11f * (i % 11);
+            }
+            std::vector<GfVec3f> blended = expected;
+            Blend(authored, envelope, &blended);
+            const Points authoredArray = ToStd(authored);
+            const auto envelopeArray = ToArray(envelope);
+            CHECK(node.Run(
+                {&in, &counts, &indices, &authoredArray, &envelopeArray},
+                &actual));
+            CHECK(SameBits(blended, actual));
+            const Points shortAuthored(3);
+            CHECK(!node.Run(
+                {&in, &counts, &indices, &shortAuthored, &envelopeArray},
+                &actual, &error));
+            CHECK(error.find("authored") != std::string::npos);
+        }
+    // An envelope needs the authored value.
+    const NormalsPayload defaults;
+    Node noAuthored(RecomputeNormals(),
+                    {&RecomputeNormalsPoints(), &RecomputeNormalsCounts(),
+                     &RecomputeNormalsIndices(), &RecomputeNormalsEnvelope()},
+                    RecomputeNormalsOut(), &defaults);
+    const RigExecArray<float> envelope(in.Size());
+    Points actual;
+    std::string error;
+    CHECK(
+        !noAuthored.Run({&in, &counts, &indices, &envelope}, &actual, &error));
+    CHECK(error.find("authored") != std::string::npos);
+}
+
+void
+TestRecomputeExtent()
+{
+    using namespace rigExecOps;
+    Grid grid(6, 5);
+    const Points in = ToStd(grid.points);
+    Node bare(RecomputeExtent(),
+              {&RecomputeExtentPoints(), &RecomputeExtentWidths()},
+              RecomputeExtentOut());
+    Node node(RecomputeExtent(),
+              {&RecomputeExtentPoints(), &RecomputeExtentWidths(),
+               &RecomputeExtentAuthored(), &RecomputeExtentEnvelope()},
+              RecomputeExtentOut());
+    std::vector<float> perPoint(grid.points.size());
+    for (size_t i = 0; i < perPoint.size(); ++i)
+        perPoint[i] = 0.05f * (i % 9);
+    for (const std::vector<float> &widths :
+         {std::vector<float>(), std::vector<float>{0.7f}, perPoint,
+          std::vector<float>{0.2f, 0.4f}}) {
+        const std::vector<GfVec3f> expected =
+            RigExecComputeExtent(grid.points, widths);
+        CHECK(expected.size() == 2);
+        const auto widthArray = ToArray(widths);
+        Points actual;
+        CHECK(bare.Run({&in, &widthArray}, &actual));
+        CHECK(SameBits(expected, actual));
+        const std::vector<GfVec3f> authored = {GfVec3f(-9.0f), GfVec3f(9.0f)};
+        const std::vector<float> envelope = {0.25f, 1.0f};
+        std::vector<GfVec3f> blended = expected;
+        Blend(authored, envelope, &blended);
+        const Points authoredArray = ToStd(authored);
+        const auto envelopeArray = ToArray(envelope);
+        CHECK(node.Run({&in, &widthArray, &authoredArray, &envelopeArray},
+                       &actual));
+        CHECK(SameBits(blended, actual));
+    }
+    const Points none;
+    const RigExecArray<float> noWidths;
+    Points actual;
+    std::string error;
+    CHECK(!bare.Run({&none, &noWidths}, &actual, &error));
+    CHECK(error.find("no points") != std::string::npos);
+}
+
 int
 main()
 {
@@ -1106,6 +1228,8 @@ main()
     TestMatrixDeform();
     TestSkin();
     TestBlendShape();
+    TestRecomputeNormals();
+    TestRecomputeExtent();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

@@ -15,6 +15,7 @@ Register(rigExec::RigExecOpRegistrar &registrar)
     RegisterMatrixDeformOps(registrar);
     RegisterSkinOps(registrar);
     RegisterBlendShapeOps(registrar);
+    RegisterDerivedOps(registrar);
 }
 
 const rigExec::RigExecOpLibraryDesc kLibrary = [] {
