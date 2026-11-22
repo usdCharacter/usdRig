@@ -198,19 +198,19 @@ public:
     {
         if (!_data)
             _data = std::make_shared<std::vector<T>>();
-        else if (!_data.unique())
+        else if (_data.use_count() != 1)
             _data = std::make_shared<std::vector<T>>(*_data);
         return *_data;
     }
     void swap(std::vector<T> &spare)
     {
-        if (_data && _data.unique()) {
+        if (_data && _data.use_count() == 1) {
             _data->swap(spare);
             return;
         }
         auto next = std::make_shared<std::vector<T>>();
         next->swap(spare);
-        if (_data && _data.unique())
+        if (_data && _data.use_count() == 1)
             spare.swap(*_data);
         _data = std::move(next);
     }
