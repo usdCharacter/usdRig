@@ -17,6 +17,7 @@ Register(rigExec::RigExecOpRegistrar &registrar)
     RegisterBlendShapeOps(registrar);
     RegisterDerivedOps(registrar);
     RegisterWireOps(registrar);
+    RegisterRibbonOps(registrar);
 }
 
 const rigExec::RigExecOpLibraryDesc kLibrary = [] {

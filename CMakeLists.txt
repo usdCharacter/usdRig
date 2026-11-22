@@ -1264,7 +1264,8 @@ rigexec_add_op_library(rigExecOps
         libs/rigExecOps/deform/blendShapeOp.cpp
         libs/rigExecOps/deform/derivedOps.cpp
         libs/rigExecOps/deform/wireOp.cpp
-    USES_TYPE_LIBRARIES rigExecStdTypes)
+        libs/rigExecOps/deform/ribbonOp.cpp
+    USES_TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes)
 rigexec_apply_exact_fp_flags(rigExecOps)
 add_executable(testRigExecOpsMath tests/testRigExecOpsMath.cpp
     $<TARGET_OBJECTS:rigExecRegistry> $<TARGET_OBJECTS:rigExecCore>)
@@ -1273,7 +1274,7 @@ target_include_directories(testRigExecOpsMath PRIVATE
 target_link_libraries(testRigExecOpsMath PRIVATE rigExecMath Threads::Threads)
 rigexec_apply_exact_fp_flags(testRigExecOpsMath)
 rigexec_link_registrations(testRigExecOpsMath
-    TYPE_LIBRARIES rigExecStdTypes OP_LIBRARIES rigExecOps)
+    TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
 add_test(NAME testRigExecOpsMath COMMAND testRigExecOpsMath)
 set_tests_properties(testRigExecOpsMath PROPERTIES LABELS "fast")
 add_executable(testRigExecOpsPoints tests/testRigExecOpsPoints.cpp
@@ -1281,7 +1282,7 @@ add_executable(testRigExecOpsPoints tests/testRigExecOpsPoints.cpp
 target_include_directories(testRigExecOpsPoints PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/libs")
 target_link_libraries(testRigExecOpsPoints PRIVATE rigExecMath Threads::Threads)
 rigexec_apply_exact_fp_flags(testRigExecOpsPoints)
-rigexec_link_registrations(testRigExecOpsPoints TYPE_LIBRARIES rigExecStdTypes OP_LIBRARIES rigExecOps)
+rigexec_link_registrations(testRigExecOpsPoints TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
 add_test(NAME testRigExecOpsPoints COMMAND testRigExecOpsPoints)
 set_tests_properties(testRigExecOpsPoints PROPERTIES LABELS "fast")
 
@@ -1297,7 +1298,7 @@ target_link_libraries(testRigExecScenePropertyOps PRIVATE rigExecSceneOps
 target_compile_definitions(testRigExecScenePropertyOps PRIVATE
     ${_rigexec_schema_resource_define})
 rigexec_link_registrations(testRigExecScenePropertyOps
-    TYPE_LIBRARIES rigExecStdTypes OP_LIBRARIES rigExecOps)
+    TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
 add_test(NAME testRigExecScenePropertyOps COMMAND testRigExecScenePropertyOps)
 
 add_executable(testRigExecOpGraph tests/testRigExecOpGraph.cpp)

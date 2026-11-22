@@ -9,12 +9,14 @@
 #include "rigExecMath/normalsLayoutKernel.h"
 #include "rigExecMath/simdKernels.h"
 #include "rigExecMath/solvers.h"
+#include "rigExecRigTypes/rigTypes.h"
 #include "rigExecOps/deform/blendShapeOp.h"
 #include "rigExecOps/deform/deltaMushOp.h"
 #include "rigExecOps/deform/derivedOps.h"
 #include "rigExecOps/deform/latticeOp.h"
 #include "rigExecOps/deform/matrixDeformOp.h"
 #include "rigExecOps/deform/pointOps.h"
+#include "rigExecOps/deform/ribbonOp.h"
 #include "rigExecOps/deform/skinOp.h"
 #include "rigExecOps/deform/surfaceProjectOp.h"
 #include "rigExecOps/deform/wireOp.h"
@@ -1321,6 +1323,97 @@ TestWire()
     CHECK(error.find("not both") != std::string::npos);
 }
 
+void
+TestRibbon()
+{
+    using namespace rigExecOps;
+    Grid grid(8, 29);
+    std::vector<GfVec3f> restCurve, posedCurve;
+    for (int i = 0; i < 6; ++i) {
+        restCurve.emplace_back(1.4f * i, 0.5f * i, 0.3f * (i % 2));
+        posedCurve.emplace_back(1.3f * i, 0.5f * i + 0.2f * i * i,
+                                0.4f * i - 0.3f * (i % 2));
+    }
+    const RigExecCurveFrameSamples rest = RigExecSampleCurveRMF(restCurve, 9);
+    const RigExecCurveFrameSamples posed = RigExecSampleCurveRMF(posedCurve, 9);
+    // The frame points as the samples give them: offsets summed in float.
+    const auto landmarks = [](const RigExecCurveFrameSamples &f, size_t k) {
+        const GfVec3f o = f.positions[k];
+        const GfVec3f p[4] = {o, o + f.tangents[k], o + f.normals[k],
+                              o + f.binormals[k]};
+        rigExecRig::PointLandmarks l;
+        for (int j = 0; j < 4; ++j)
+            l[j] = rigExecStd::Vec3d(p[j][0], p[j][1], p[j][2]);
+        return l;
+    };
+    rigExecRig::PointFrameArray frames;
+    frames.frames = RigExecArray<rigExecRig::PointFrame>(rest.GetSize());
+    frames.rests = RigExecArray<rigExecRig::PointLandmarks>(rest.GetSize());
+    for (size_t k = 0; k < rest.GetSize(); ++k) {
+        frames.rests[k] = landmarks(rest, k);
+        frames.frames[k].points = landmarks(posed, k);
+    }
+    std::vector<GfVec2f> bind(grid.points.size());
+    RigExecArray<rigExecStd::Vec2f> bindArray(bind.size());
+    for (size_t i = 0; i < bind.size(); ++i) {
+        // Past both ends too: u clamps to [0, 1].
+        bind[i] = GfVec2f(-0.1f + 1.2f * float(i) / float(bind.size()), 0.0f);
+        bindArray[i] = rigExecStd::Vec2f(bind[i][0], bind[i][1]);
+    }
+    std::vector<float> envelope(grid.points.size());
+    for (size_t i = 0; i < envelope.size(); ++i)
+        envelope[i] = i % 5 == 0 ? 1.0f : 0.07f * (i % 15);
+    const auto envelopeArray = ToArray(envelope);
+    const Points in = ToStd(grid.points);
+
+    Node node(Ribbon(),
+              {&RibbonPoints(), &RibbonBindCoords(), &RibbonFrames(),
+               &RibbonEnvelope()},
+              RibbonOut());
+    std::vector<GfVec3f> expected = grid.points;
+    RigExecApplyRibbonTransport(&expected, bind, rest, posed);
+    Blend(grid.points, envelope, &expected);
+    Points actual;
+    CHECK(node.Run({&in, &bindArray, &frames, &envelopeArray}, &actual));
+    CHECK(SameBits(expected, actual));
+
+    // One sample, or binds of another length, are refused.
+    rigExecRig::PointFrameArray one;
+    one.frames = RigExecArray<rigExecRig::PointFrame>(1);
+    one.rests = RigExecArray<rigExecRig::PointLandmarks>(1);
+    const RigExecArray<rigExecStd::Vec2f> shortBind(2);
+    std::string error;
+    CHECK(!node.Run({&in, &bindArray, &one, &envelopeArray}, &actual, &error));
+    CHECK(error.find("two frame samples") != std::string::npos);
+    CHECK(
+        !node.Run({&in, &shortBind, &frames, &envelopeArray}, &actual, &error));
+    CHECK(error.find("bind") != std::string::npos);
+
+    // Guide points are the posed frame origins, narrowed as the native path
+    // narrows them.
+    Node guides(
+        GuidePoints(),
+        {&GuidePointsPoints(), &GuidePointsFrames(), &GuidePointsEnvelope()},
+        GuidePointsOut());
+    const Points guideIn =
+        ToStd(std::vector<GfVec3f>(rest.GetSize(), GfVec3f(0.5f, -1.0f, 2.0f)));
+    std::vector<float> guideEnvelope(rest.GetSize());
+    for (size_t k = 0; k < guideEnvelope.size(); ++k)
+        guideEnvelope[k] = 0.125f * float(k);
+    std::vector<GfVec3f> guideExpected(rest.GetSize());
+    std::vector<GfVec3f> guideStart(rest.GetSize(), GfVec3f(0.5f, -1.0f, 2.0f));
+    for (size_t k = 0; k < guideExpected.size(); ++k) {
+        const rigExecStd::Vec3d &o = frames.frames[k].points[0];
+        guideExpected[k] = GfVec3f(GfVec3d(o[0], o[1], o[2]));
+    }
+    Blend(guideStart, guideEnvelope, &guideExpected);
+    const auto guideEnvelopeArray = ToArray(guideEnvelope);
+    CHECK(guides.Run({&guideIn, &frames, &guideEnvelopeArray}, &actual));
+    CHECK(SameBits(guideExpected, actual));
+    CHECK(!guides.Run({&in, &frames, &envelopeArray}, &actual, &error));
+    CHECK(error.find("one frame per point") != std::string::npos);
+}
+
 int
 main()
 {
@@ -1342,6 +1435,7 @@ main()
     TestRecomputeNormals();
     TestRecomputeExtent();
     TestWire();
+    TestRibbon();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;
