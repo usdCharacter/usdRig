@@ -61,3 +61,11 @@ source bin/_env.sh
 RIGEXEC_RENDER_UPDATE_BASELINES=1 build/testRigExecImagingRender \
   examples tests/fixtures/render
 ```
+
+## Baked programs
+
+`minimal.rigexec` is the smallest valid program at the current format
+version; `testRigExecRuntimeFixture` rebuilds it and compares bytes.
+`minimal_format32.rigexec` and `registeredMover.rigexec` were baked at format
+32, before the manifest. Keep them at 32: they are what proves older files
+still open, through the format-32 manifest, and play.

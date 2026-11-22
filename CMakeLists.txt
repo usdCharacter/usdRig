@@ -454,7 +454,7 @@ set_target_properties(rigExecLzma PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(rigExec::rigExecLzma ALIAS rigExecLzma)
 
 add_library(rigExecBinary STATIC libs/rigExecBinary/format.cpp
-    libs/rigExecBinary/transport.cpp)
+    libs/rigExecBinary/manifest.cpp libs/rigExecBinary/transport.cpp)
 add_library(rigExec::rigExecBinary ALIAS rigExecBinary)
 target_include_directories(rigExecBinary PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
@@ -757,7 +757,14 @@ add_test(NAME testRigExecSkinSplit COMMAND testRigExecSkinSplit)
 add_executable(testRigExecRuntimeFixture tests/testRigExecRuntimeFixture.cpp)
 target_link_libraries(testRigExecRuntimeFixture PRIVATE rigExecRuntime)
 add_test(NAME testRigExecRuntimeFixture COMMAND testRigExecRuntimeFixture
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/minimal.rigexec"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/minimal_format32.rigexec")
+add_executable(testRigExecManifest tests/testRigExecManifest.cpp)
+target_link_libraries(testRigExecManifest PRIVATE rigExecBinary)
+add_test(NAME testRigExecManifest COMMAND testRigExecManifest
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/minimal_format32.rigexec"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/minimal.rigexec")
+set_tests_properties(testRigExecManifest PROPERTIES LABELS "usd-free;fast")
 add_executable(testRigExecSharedBuffers tests/testRigExecSharedBuffers.cpp)
 target_link_libraries(testRigExecSharedBuffers PRIVATE rigExecRuntime)
 add_test(NAME testRigExecSharedBuffers COMMAND testRigExecSharedBuffers)

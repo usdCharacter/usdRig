@@ -4,6 +4,7 @@
 // compares it to the fixture, opens and executes the fixture, and checks
 // that malformed buffers are refused.
 #include "rigExecBinary/format.h"
+#include "rigExecBinary/manifest.h"
 #include "rigExecRuntime/runtime.h"
 
 #include <cstdint>
@@ -34,6 +35,7 @@ MinimalFile()
     using namespace rigExec::fb;
     RigExecWireFile file;
     file.formatVersion = RigExecFormatVersion;
+    file.manifest = RigExecManifestBuild(RigExecManifestCurrent());
     file.names = {"", "Rig"};
     file.paths = {PathNode(0, 0, PathKind::None),
                   PathNode(0, 1, PathKind::Prim)};
@@ -67,8 +69,9 @@ MinimalFile()
 int
 main(int argc, char **argv)
 {
-    if (argc != 2) {
-        std::cerr << "expected the minimal.rigexec fixture\n";
+    if (argc != 3) {
+        std::cerr << "expected the minimal.rigexec and "
+                     "minimal_format32.rigexec fixtures\n";
         return 2;
     }
     std::ifstream file(argv[1], std::ios::binary);
@@ -94,6 +97,18 @@ main(int argc, char **argv)
     if (!reader->GetPoints().empty() || !reader->GetJointMatrices().empty()) {
         std::cerr << "minimal program published outputs\n";
         return 1;
+    }
+    // The same program baked before the manifest (format 32) still plays.
+    {
+        std::ifstream older(argv[2], std::ios::binary);
+        const std::vector<uint8_t> bytes{std::istreambuf_iterator<char>(older),
+                                         {}};
+        auto upgraded = rigExec::RigExecRuntimeReader::Open(
+            bytes.data(), bytes.size(), &error);
+        if (!upgraded || !upgraded->Execute(&error)) {
+            std::cerr << "format-32 fixture: " << error << "\n";
+            return 1;
+        }
     }
     const std::vector<uint8_t> foreign{'R', 'I', 'G', 'X', 'n', 'o', 't', ' ',
                                        'a', ' ', 'r', 'i', 'g', 'e', 'x', 'e',

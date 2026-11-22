@@ -412,6 +412,14 @@ struct WindowedOp;
 struct WindowedOpBuilder;
 struct RigExecWireWindowedOp;
 
+struct ManifestEntry;
+struct ManifestEntryBuilder;
+struct RigExecWireManifestEntry;
+
+struct Manifest;
+struct ManifestBuilder;
+struct RigExecWireManifest;
+
 struct File;
 struct FileBuilder;
 struct RigExecWireFile;
@@ -635,6 +643,10 @@ inline const ::flatbuffers::TypeTable *ProviderRoutedInputTypeTable();
 inline const ::flatbuffers::TypeTable *ProviderProgramTypeTable();
 
 inline const ::flatbuffers::TypeTable *WindowedOpTypeTable();
+
+inline const ::flatbuffers::TypeTable *ManifestEntryTypeTable();
+
+inline const ::flatbuffers::TypeTable *ManifestTypeTable();
 
 inline const ::flatbuffers::TypeTable *FileTypeTable();
 
@@ -21568,6 +21580,243 @@ struct WindowedOp::Traits {
 
 ::flatbuffers::Offset<WindowedOp> CreateWindowedOp(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireWindowedOp *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct RigExecWireManifestEntry : public ::flatbuffers::NativeTable {
+  typedef ManifestEntry TableType;
+  std::string nameSpace{};
+  std::string name{};
+  uint32_t version = 1;
+};
+
+/// Format 33: a stable id, (name_space, name, version).
+struct ManifestEntry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef RigExecWireManifestEntry NativeTableType;
+  typedef ManifestEntryBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return ManifestEntryTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_NAMESPACE = 4,
+    VT_NAME = 6,
+    VT_VERSION = 8
+  };
+  const ::flatbuffers::String *nameSpace() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_NAMESPACE);
+  }
+  const ::flatbuffers::String *name() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_NAME);
+  }
+  uint32_t version() const {
+    return GetField<uint32_t>(VT_VERSION, 1);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_NAMESPACE) &&
+           verifier.VerifyString(nameSpace()) &&
+           VerifyOffsetRequired(verifier, VT_NAME) &&
+           verifier.VerifyString(name()) &&
+           VerifyField<uint32_t>(verifier, VT_VERSION, 4) &&
+           verifier.EndTable();
+  }
+  RigExecWireManifestEntry *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(RigExecWireManifestEntry *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<ManifestEntry> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireManifestEntry* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct ManifestEntryBuilder {
+  typedef ManifestEntry Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_nameSpace(::flatbuffers::Offset<::flatbuffers::String> nameSpace) {
+    fbb_.AddOffset(ManifestEntry::VT_NAMESPACE, nameSpace);
+  }
+  void add_name(::flatbuffers::Offset<::flatbuffers::String> name) {
+    fbb_.AddOffset(ManifestEntry::VT_NAME, name);
+  }
+  void add_version(uint32_t version) {
+    fbb_.AddElement<uint32_t>(ManifestEntry::VT_VERSION, version, 1);
+  }
+  explicit ManifestEntryBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<ManifestEntry> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<ManifestEntry>(end);
+    fbb_.Required(o, ManifestEntry::VT_NAMESPACE);
+    fbb_.Required(o, ManifestEntry::VT_NAME);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<ManifestEntry> CreateManifestEntry(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::String> nameSpace = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> name = 0,
+    uint32_t version = 1) {
+  ManifestEntryBuilder builder_(_fbb);
+  builder_.add_version(version);
+  builder_.add_name(name);
+  builder_.add_nameSpace(nameSpace);
+  return builder_.Finish();
+}
+
+struct ManifestEntry::Traits {
+  using type = ManifestEntry;
+  static auto constexpr Create = CreateManifestEntry;
+};
+
+inline ::flatbuffers::Offset<ManifestEntry> CreateManifestEntryDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const char *nameSpace = nullptr,
+    const char *name = nullptr,
+    uint32_t version = 1) {
+  auto nameSpace__ = nameSpace ? _fbb.CreateString(nameSpace) : 0;
+  auto name__ = name ? _fbb.CreateString(name) : 0;
+  return rigExec::fb::CreateManifestEntry(
+      _fbb,
+      nameSpace__,
+      name__,
+      version);
+}
+
+::flatbuffers::Offset<ManifestEntry> CreateManifestEntry(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireManifestEntry *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct RigExecWireManifest : public ::flatbuffers::NativeTable {
+  typedef Manifest TableType;
+  std::vector<std::unique_ptr<rigExec::fb::RigExecWireManifestEntry>> revisionOps{};
+  std::vector<std::unique_ptr<rigExec::fb::RigExecWireManifestEntry>> propertyOps{};
+  std::vector<std::unique_ptr<rigExec::fb::RigExecWireManifestEntry>> providerOps{};
+  std::vector<std::unique_ptr<rigExec::fb::RigExecWireManifestEntry>> valueTypes{};
+  RigExecWireManifest() = default;
+  RigExecWireManifest(const RigExecWireManifest &o);
+  RigExecWireManifest(RigExecWireManifest&&) FLATBUFFERS_NOEXCEPT = default;
+  RigExecWireManifest &operator=(RigExecWireManifest o) FLATBUFFERS_NOEXCEPT;
+};
+
+/// Format 33: what the file's op and value-type ordinals stand for. Entry i
+/// of each list is the stable id of wire ordinal i in this file. Open maps
+/// each id to the reader's own ordinal (rigExecBinary/manifest.h), rewrites
+/// the op fields through that map and refuses an id it does not know.
+/// Older files get the format-32 table.
+struct Manifest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef RigExecWireManifest NativeTableType;
+  typedef ManifestBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return ManifestTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_REVISIONOPS = 4,
+    VT_PROPERTYOPS = 6,
+    VT_PROVIDEROPS = 8,
+    VT_VALUETYPES = 10
+  };
+  /// Revision.op.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *revisionOps() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *>(VT_REVISIONOPS);
+  }
+  /// PropertyRevision.op.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *propertyOps() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *>(VT_PROPERTYOPS);
+  }
+  /// ProviderOp.kind.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *providerOps() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *>(VT_PROVIDEROPS);
+  }
+  /// InputTag. Must match the reader's in order.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *valueTypes() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *>(VT_VALUETYPES);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffset(verifier, VT_REVISIONOPS) &&
+           verifier.VerifyVector(revisionOps()) &&
+           verifier.VerifyVectorOfTables(revisionOps()) &&
+           VerifyOffset(verifier, VT_PROPERTYOPS) &&
+           verifier.VerifyVector(propertyOps()) &&
+           verifier.VerifyVectorOfTables(propertyOps()) &&
+           VerifyOffset(verifier, VT_PROVIDEROPS) &&
+           verifier.VerifyVector(providerOps()) &&
+           verifier.VerifyVectorOfTables(providerOps()) &&
+           VerifyOffset(verifier, VT_VALUETYPES) &&
+           verifier.VerifyVector(valueTypes()) &&
+           verifier.VerifyVectorOfTables(valueTypes()) &&
+           verifier.EndTable();
+  }
+  RigExecWireManifest *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(RigExecWireManifest *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<Manifest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireManifest* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct ManifestBuilder {
+  typedef Manifest Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_revisionOps(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>> revisionOps) {
+    fbb_.AddOffset(Manifest::VT_REVISIONOPS, revisionOps);
+  }
+  void add_propertyOps(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>> propertyOps) {
+    fbb_.AddOffset(Manifest::VT_PROPERTYOPS, propertyOps);
+  }
+  void add_providerOps(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>> providerOps) {
+    fbb_.AddOffset(Manifest::VT_PROVIDEROPS, providerOps);
+  }
+  void add_valueTypes(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>> valueTypes) {
+    fbb_.AddOffset(Manifest::VT_VALUETYPES, valueTypes);
+  }
+  explicit ManifestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<Manifest> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<Manifest>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<Manifest> CreateManifest(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>> revisionOps = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>> propertyOps = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>> providerOps = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>> valueTypes = 0) {
+  ManifestBuilder builder_(_fbb);
+  builder_.add_valueTypes(valueTypes);
+  builder_.add_providerOps(providerOps);
+  builder_.add_propertyOps(propertyOps);
+  builder_.add_revisionOps(revisionOps);
+  return builder_.Finish();
+}
+
+struct Manifest::Traits {
+  using type = Manifest;
+  static auto constexpr Create = CreateManifest;
+};
+
+inline ::flatbuffers::Offset<Manifest> CreateManifestDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *revisionOps = nullptr,
+    const std::vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *propertyOps = nullptr,
+    const std::vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *providerOps = nullptr,
+    const std::vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *valueTypes = nullptr) {
+  auto revisionOps__ = revisionOps ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>(*revisionOps) : 0;
+  auto propertyOps__ = propertyOps ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>(*propertyOps) : 0;
+  auto providerOps__ = providerOps ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>(*providerOps) : 0;
+  auto valueTypes__ = valueTypes ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>(*valueTypes) : 0;
+  return rigExec::fb::CreateManifest(
+      _fbb,
+      revisionOps__,
+      propertyOps__,
+      providerOps__,
+      valueTypes__);
+}
+
+::flatbuffers::Offset<Manifest> CreateManifest(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireManifest *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct RigExecWireFile : public ::flatbuffers::NativeTable {
   typedef File TableType;
   uint32_t formatVersion = 0;
@@ -21604,6 +21853,7 @@ struct RigExecWireFile : public ::flatbuffers::NativeTable {
   std::vector<rigExec::fb::RigExecWireBoolArray> boolArrays{};
   std::vector<rigExec::fb::RigExecWireWindowedOp> windowedOps{};
   std::vector<uint32_t> scalarPrimvarChains{};
+  std::unique_ptr<rigExec::fb::RigExecWireManifest> manifest{};
   RigExecWireFile() = default;
   RigExecWireFile(const RigExecWireFile &o);
   RigExecWireFile(RigExecWireFile&&) FLATBUFFERS_NOEXCEPT = default;
@@ -21651,7 +21901,8 @@ struct File FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_TOKENARRAYS = 64,
     VT_BOOLARRAYS = 66,
     VT_WINDOWEDOPS = 68,
-    VT_SCALARPRIMVARCHAINS = 70
+    VT_SCALARPRIMVARCHAINS = 70,
+    VT_MANIFEST = 72
   };
   /// RigExecFormatVersion.
   uint32_t formatVersion() const {
@@ -21772,6 +22023,10 @@ struct File FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<uint32_t> *scalarPrimvarChains() const {
     return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_SCALARPRIMVARCHAINS);
   }
+  /// Format 33: the stable ids of the file's ordinals. Required from 33.
+  const rigExec::fb::Manifest *manifest() const {
+    return GetPointer<const rigExec::fb::Manifest *>(VT_MANIFEST);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -21858,6 +22113,8 @@ struct File FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyVectorOfTables(windowedOps()) &&
            VerifyOffset(verifier, VT_SCALARPRIMVARCHAINS) &&
            verifier.VerifyVector(scalarPrimvarChains()) &&
+           VerifyOffset(verifier, VT_MANIFEST) &&
+           verifier.VerifyTable(manifest()) &&
            verifier.EndTable();
   }
   RigExecWireFile *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -21971,6 +22228,9 @@ struct FileBuilder {
   void add_scalarPrimvarChains(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> scalarPrimvarChains) {
     fbb_.AddOffset(File::VT_SCALARPRIMVARCHAINS, scalarPrimvarChains);
   }
+  void add_manifest(::flatbuffers::Offset<rigExec::fb::Manifest> manifest) {
+    fbb_.AddOffset(File::VT_MANIFEST, manifest);
+  }
   explicit FileBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -22025,8 +22285,10 @@ inline ::flatbuffers::Offset<File> CreateFile(
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::TokenArray>>> tokenArrays = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::BoolArray>>> boolArrays = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::WindowedOp>>> windowedOps = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> scalarPrimvarChains = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> scalarPrimvarChains = 0,
+    ::flatbuffers::Offset<rigExec::fb::Manifest> manifest = 0) {
   FileBuilder builder_(_fbb);
+  builder_.add_manifest(manifest);
   builder_.add_scalarPrimvarChains(scalarPrimvarChains);
   builder_.add_windowedOps(windowedOps);
   builder_.add_boolArrays(boolArrays);
@@ -22104,7 +22366,8 @@ inline ::flatbuffers::Offset<File> CreateFileDirect(
     const std::vector<::flatbuffers::Offset<rigExec::fb::TokenArray>> *tokenArrays = nullptr,
     const std::vector<::flatbuffers::Offset<rigExec::fb::BoolArray>> *boolArrays = nullptr,
     const std::vector<::flatbuffers::Offset<rigExec::fb::WindowedOp>> *windowedOps = nullptr,
-    const std::vector<uint32_t> *scalarPrimvarChains = nullptr) {
+    const std::vector<uint32_t> *scalarPrimvarChains = nullptr,
+    ::flatbuffers::Offset<rigExec::fb::Manifest> manifest = 0) {
   auto names__ = names ? _fbb.CreateVector<::flatbuffers::Offset<::flatbuffers::String>>(*names) : 0;
   auto paths__ = paths ? _fbb.CreateVectorOfStructs<rigExec::fb::PathNode>(*paths) : 0;
   auto values__ = values ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::Value>>(*values) : 0;
@@ -22163,7 +22426,8 @@ inline ::flatbuffers::Offset<File> CreateFileDirect(
       tokenArrays__,
       boolArrays__,
       windowedOps__,
-      scalarPrimvarChains__);
+      scalarPrimvarChains__,
+      manifest);
 }
 
 ::flatbuffers::Offset<File> CreateFile(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireFile *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -27991,6 +28255,92 @@ inline ::flatbuffers::Offset<WindowedOp> WindowedOp::Pack(::flatbuffers::FlatBuf
       _frames);
 }
 
+inline RigExecWireManifestEntry *ManifestEntry::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<RigExecWireManifestEntry>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void ManifestEntry::UnPackTo(RigExecWireManifestEntry *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = nameSpace(); if (_e) _o->nameSpace = _e->str(); }
+  { auto _e = name(); if (_e) _o->name = _e->str(); }
+  { auto _e = version(); _o->version = _e; }
+}
+
+inline ::flatbuffers::Offset<ManifestEntry> CreateManifestEntry(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireManifestEntry *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return ManifestEntry::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<ManifestEntry> ManifestEntry::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireManifestEntry* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RigExecWireManifestEntry* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _nameSpace = _fbb.CreateString(_o->nameSpace);
+  auto _name = _fbb.CreateString(_o->name);
+  auto _version = _o->version;
+  return rigExec::fb::CreateManifestEntry(
+      _fbb,
+      _nameSpace,
+      _name,
+      _version);
+}
+
+inline RigExecWireManifest::RigExecWireManifest(const RigExecWireManifest &o) {
+  revisionOps.reserve(o.revisionOps.size());
+  for (const auto &revisionOps_ : o.revisionOps) { revisionOps.emplace_back((revisionOps_) ? new rigExec::fb::RigExecWireManifestEntry(*revisionOps_) : nullptr); }
+  propertyOps.reserve(o.propertyOps.size());
+  for (const auto &propertyOps_ : o.propertyOps) { propertyOps.emplace_back((propertyOps_) ? new rigExec::fb::RigExecWireManifestEntry(*propertyOps_) : nullptr); }
+  providerOps.reserve(o.providerOps.size());
+  for (const auto &providerOps_ : o.providerOps) { providerOps.emplace_back((providerOps_) ? new rigExec::fb::RigExecWireManifestEntry(*providerOps_) : nullptr); }
+  valueTypes.reserve(o.valueTypes.size());
+  for (const auto &valueTypes_ : o.valueTypes) { valueTypes.emplace_back((valueTypes_) ? new rigExec::fb::RigExecWireManifestEntry(*valueTypes_) : nullptr); }
+}
+
+inline RigExecWireManifest &RigExecWireManifest::operator=(RigExecWireManifest o) FLATBUFFERS_NOEXCEPT {
+  std::swap(revisionOps, o.revisionOps);
+  std::swap(propertyOps, o.propertyOps);
+  std::swap(providerOps, o.providerOps);
+  std::swap(valueTypes, o.valueTypes);
+  return *this;
+}
+
+inline RigExecWireManifest *Manifest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<RigExecWireManifest>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void Manifest::UnPackTo(RigExecWireManifest *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = revisionOps(); if (_e) { _o->revisionOps.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->revisionOps[_i]) { _e->Get(_i)->UnPackTo(_o->revisionOps[_i].get(), _resolver); } else { _o->revisionOps[_i] = std::unique_ptr<rigExec::fb::RigExecWireManifestEntry>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->revisionOps.resize(0); } }
+  { auto _e = propertyOps(); if (_e) { _o->propertyOps.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->propertyOps[_i]) { _e->Get(_i)->UnPackTo(_o->propertyOps[_i].get(), _resolver); } else { _o->propertyOps[_i] = std::unique_ptr<rigExec::fb::RigExecWireManifestEntry>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->propertyOps.resize(0); } }
+  { auto _e = providerOps(); if (_e) { _o->providerOps.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->providerOps[_i]) { _e->Get(_i)->UnPackTo(_o->providerOps[_i].get(), _resolver); } else { _o->providerOps[_i] = std::unique_ptr<rigExec::fb::RigExecWireManifestEntry>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->providerOps.resize(0); } }
+  { auto _e = valueTypes(); if (_e) { _o->valueTypes.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->valueTypes[_i]) { _e->Get(_i)->UnPackTo(_o->valueTypes[_i].get(), _resolver); } else { _o->valueTypes[_i] = std::unique_ptr<rigExec::fb::RigExecWireManifestEntry>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->valueTypes.resize(0); } }
+}
+
+inline ::flatbuffers::Offset<Manifest> CreateManifest(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireManifest *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return Manifest::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<Manifest> Manifest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireManifest* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RigExecWireManifest* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _revisionOps = _o->revisionOps.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> (_o->revisionOps.size(), [](size_t i, _VectorArgs *__va) { return CreateManifestEntry(*__va->__fbb, __va->__o->revisionOps[i].get(), __va->__rehasher); }, &_va ) : 0;
+  auto _propertyOps = _o->propertyOps.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> (_o->propertyOps.size(), [](size_t i, _VectorArgs *__va) { return CreateManifestEntry(*__va->__fbb, __va->__o->propertyOps[i].get(), __va->__rehasher); }, &_va ) : 0;
+  auto _providerOps = _o->providerOps.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> (_o->providerOps.size(), [](size_t i, _VectorArgs *__va) { return CreateManifestEntry(*__va->__fbb, __va->__o->providerOps[i].get(), __va->__rehasher); }, &_va ) : 0;
+  auto _valueTypes = _o->valueTypes.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> (_o->valueTypes.size(), [](size_t i, _VectorArgs *__va) { return CreateManifestEntry(*__va->__fbb, __va->__o->valueTypes[i].get(), __va->__rehasher); }, &_va ) : 0;
+  return rigExec::fb::CreateManifest(
+      _fbb,
+      _revisionOps,
+      _propertyOps,
+      _providerOps,
+      _valueTypes);
+}
+
 inline RigExecWireFile::RigExecWireFile(const RigExecWireFile &o)
       : formatVersion(o.formatVersion),
         rig(o.rig),
@@ -28025,7 +28375,8 @@ inline RigExecWireFile::RigExecWireFile(const RigExecWireFile &o)
         tokenArrays(o.tokenArrays),
         boolArrays(o.boolArrays),
         windowedOps(o.windowedOps),
-        scalarPrimvarChains(o.scalarPrimvarChains) {
+        scalarPrimvarChains(o.scalarPrimvarChains),
+        manifest((o.manifest) ? new rigExec::fb::RigExecWireManifest(*o.manifest) : nullptr) {
 }
 
 inline RigExecWireFile &RigExecWireFile::operator=(RigExecWireFile o) FLATBUFFERS_NOEXCEPT {
@@ -28063,6 +28414,7 @@ inline RigExecWireFile &RigExecWireFile::operator=(RigExecWireFile o) FLATBUFFER
   std::swap(boolArrays, o.boolArrays);
   std::swap(windowedOps, o.windowedOps);
   std::swap(scalarPrimvarChains, o.scalarPrimvarChains);
+  std::swap(manifest, o.manifest);
   return *this;
 }
 
@@ -28109,6 +28461,7 @@ inline void File::UnPackTo(RigExecWireFile *_o, const ::flatbuffers::resolver_fu
   { auto _e = boolArrays(); if (_e) { _o->boolArrays.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->boolArrays[_i] = *std::unique_ptr<rigExec::fb::RigExecWireBoolArray>(_e->Get(_i)->UnPack(_resolver)); } } else { _o->boolArrays.resize(0); } }
   { auto _e = windowedOps(); if (_e) { _o->windowedOps.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->windowedOps[_i] = *std::unique_ptr<rigExec::fb::RigExecWireWindowedOp>(_e->Get(_i)->UnPack(_resolver)); } } else { _o->windowedOps.resize(0); } }
   { auto _e = scalarPrimvarChains(); if (_e) { _o->scalarPrimvarChains.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->scalarPrimvarChains[_i] = _e->Get(_i); } } else { _o->scalarPrimvarChains.resize(0); } }
+  { auto _e = manifest(); if (_e) { if(_o->manifest) { _e->UnPackTo(_o->manifest.get(), _resolver); } else { _o->manifest = std::unique_ptr<rigExec::fb::RigExecWireManifest>(_e->UnPack(_resolver)); } } else if (_o->manifest) { _o->manifest.reset(); } }
 }
 
 inline ::flatbuffers::Offset<File> CreateFile(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireFile *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -28154,6 +28507,7 @@ inline ::flatbuffers::Offset<File> File::Pack(::flatbuffers::FlatBufferBuilder &
   auto _boolArrays = _o->boolArrays.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::BoolArray>> (_o->boolArrays.size(), [](size_t i, _VectorArgs *__va) { return CreateBoolArray(*__va->__fbb, &(__va->__o->boolArrays[i]), __va->__rehasher); }, &_va ) : 0;
   auto _windowedOps = _o->windowedOps.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::WindowedOp>> (_o->windowedOps.size(), [](size_t i, _VectorArgs *__va) { return CreateWindowedOp(*__va->__fbb, &(__va->__o->windowedOps[i]), __va->__rehasher); }, &_va ) : 0;
   auto _scalarPrimvarChains = _o->scalarPrimvarChains.size() ? _fbb.CreateVector(_o->scalarPrimvarChains) : 0;
+  auto _manifest = _o->manifest ? CreateManifest(_fbb, _o->manifest.get(), _rehasher) : 0;
   return rigExec::fb::CreateFile(
       _fbb,
       _formatVersion,
@@ -28189,7 +28543,8 @@ inline ::flatbuffers::Offset<File> File::Pack(::flatbuffers::FlatBufferBuilder &
       _tokenArrays,
       _boolArrays,
       _windowedOps,
-      _scalarPrimvarChains);
+      _scalarPrimvarChains,
+      _manifest);
 }
 
 inline const ::flatbuffers::TypeTable *InputTagTypeTable() {
@@ -31210,6 +31565,34 @@ inline const ::flatbuffers::TypeTable *WindowedOpTypeTable() {
   return &tt;
 }
 
+inline const ::flatbuffers::TypeTable *ManifestEntryTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 }
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, nullptr, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *ManifestTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    rigExec::fb::ManifestEntryTypeTable
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 4, type_codes, type_refs, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
 inline const ::flatbuffers::TypeTable *FileTypeTable() {
   static const ::flatbuffers::TypeCode type_codes[] = {
     { ::flatbuffers::ET_UINT, 0, -1 },
@@ -31245,7 +31628,8 @@ inline const ::flatbuffers::TypeTable *FileTypeTable() {
     { ::flatbuffers::ET_SEQUENCE, 1, 24 },
     { ::flatbuffers::ET_SEQUENCE, 1, 25 },
     { ::flatbuffers::ET_SEQUENCE, 1, 26 },
-    { ::flatbuffers::ET_UINT, 1, -1 }
+    { ::flatbuffers::ET_UINT, 1, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 27 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::F64TypeTable,
@@ -31274,10 +31658,11 @@ inline const ::flatbuffers::TypeTable *FileTypeTable() {
     rigExec::fb::Matrix4dArrayTypeTable,
     rigExec::fb::TokenArrayTypeTable,
     rigExec::fb::BoolArrayTypeTable,
-    rigExec::fb::WindowedOpTypeTable
+    rigExec::fb::WindowedOpTypeTable,
+    rigExec::fb::ManifestTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 34, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 35, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }

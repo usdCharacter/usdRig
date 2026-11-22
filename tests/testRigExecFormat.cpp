@@ -25,6 +25,7 @@
 // and each rule of theirs refuses its violation with its exact message.
 // USD-free, like the format.
 #include "rigExecBinary/format.h"
+#include "rigExecBinary/manifest.h"
 #include "rigExecBinary/stepGraph.h"
 #include "rigExecBinary/transport.h"
 #include "rigExecGraph/providerRecords.h"
@@ -306,6 +307,7 @@ _MinimalFile()
 {
     RigExecWireFile f;
     f.formatVersion = RigExecFormatVersion;
+    f.manifest = RigExecManifestBuild(RigExecManifestCurrent());
     f.names = {"", "Rig"};
     f.paths = {fb::PathNode(0, 0, PathKind::None),
                fb::PathNode(0, 1, PathKind::Prim)};
@@ -1563,7 +1565,7 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 32 &&
+    static_assert(RigExecFormatVersion == 33 &&
                       RigExecFormatOldestReadable == 20,
                   "format 22 adds the IK/FK match, format 23 the property "
                   "movers' quantize and path operations, format 24 "
@@ -1573,7 +1575,8 @@ TestOpenRefusals()
                   "Smooth revisions, format 29 sparse blend channel keys, "
                   "format 30 Range DQ and independent summaries and format 31 "
                   "the 2D skeleton, unclamped animated map and scalar primvar "
-                  "records, format 32 the recomputed normals layout; per-group "
+                  "records, format 32 the recomputed normals layout, format 33 "
+                  "the manifest; per-group "
                   "range chains pin the oldest readable "
                   "format at 20");
     // Every format before 20, 19 among them, requires re-export: a chain
@@ -5836,6 +5839,7 @@ _PackMinimalWith(
     const auto tokenArrays = b.CreateVector(&tokens, 1);
     const auto bools = fb::CreateBoolArray(b, &f.boolArrays[0]);
     const auto boolArrays = b.CreateVector(&bools, 1);
+    const auto manifest = fb::CreateManifest(b, f.manifest.get());
     fb::FileBuilder file(b);
     file.add_commonGraph(commonGraph);
     file.add_vec3dArrays(vec3dArrays);
@@ -5858,6 +5862,7 @@ _PackMinimalWith(
     file.add_cones(cones);
     file.add_pose(pose);
     file.add_geometry(geometry);
+    file.add_manifest(manifest);
     fb::FinishFileBuffer(b, file.Finish());
     return std::vector<uint8_t>(b.GetBufferPointer(),
                                 b.GetBufferPointer() + b.GetSize());

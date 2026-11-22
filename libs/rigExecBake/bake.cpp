@@ -9,6 +9,7 @@
 #include "rigExec/api/moverRegistry.h"
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExecBinary/format.h"
+#include "rigExecBinary/manifest.h"
 #include "rigExecBinary/generated/presentation_generated.h"
 
 #include "pxr/base/vt/array.h"
@@ -398,6 +399,7 @@ RigExecBakeToBinary(RigExecRigEvaluator &evaluator, const RigExecBakeOpts &opts,
     external.Fill(program, bakeTime, inputs.GetInputs(), &paths, &pools,
                   &file.externalMovers);
     file.formatVersion = RigExecFormatVersion;
+    file.manifest = RigExecManifestBuild(RigExecManifestCurrent());
     file.rig = paths.Path(evaluator.GetRigPath());
     file.bakeTime = bakeTime;
     file.compileDiagnostics = compileErrors;

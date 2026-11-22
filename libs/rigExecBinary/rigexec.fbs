@@ -1812,6 +1812,30 @@ table ProviderProgram {
 /// common_graph (RigExecSettleWindowLayout).
 table WindowedOp { step: int = -1; frames: uint; }
 
+// ---------------------------------------------------------------- manifest
+
+/// Format 33: a stable id, (name_space, name, version).
+table ManifestEntry {
+  name_space: string (required);
+  name: string (required);
+  version: uint = 1;
+}
+/// Format 33: what the file's op and value-type ordinals stand for. Entry i
+/// of each list is the stable id of wire ordinal i in this file. Open maps
+/// each id to the reader's own ordinal (rigExecBinary/manifest.h), rewrites
+/// the op fields through that map and refuses an id it does not know.
+/// Older files get the format-32 table.
+table Manifest {
+  /// Revision.op.
+  revision_ops: [ManifestEntry];
+  /// PropertyRevision.op.
+  property_ops: [ManifestEntry];
+  /// ProviderOp.kind.
+  provider_ops: [ManifestEntry];
+  /// InputTag. Must match the reader's in order.
+  value_types: [ManifestEntry];
+}
+
 // -------------------------------------------------------------------- root
 
 table File {
@@ -1861,6 +1885,8 @@ table File {
   /// float or double primvars:* result is published as a constant primvar,
   /// sorted by target path.
   scalar_primvar_chains: [uint];
+  /// Format 33: the stable ids of the file's ordinals. Required from 33.
+  manifest: Manifest;
 }
 
 root_type File;

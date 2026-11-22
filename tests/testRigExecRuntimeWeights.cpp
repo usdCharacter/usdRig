@@ -16,6 +16,7 @@
 #include "rigExec/api/types.h"
 #include "rigExec/internal/weightPackets.h"
 #include "rigExecBinary/format.h"
+#include "rigExecBinary/manifest.h"
 #include "rigExecGraph/opValues.h"
 #include "rigExecMath/pointFrame.h"
 #include "rigExecMath/weightFields.h"
@@ -819,6 +820,7 @@ _TestSyntheticBuilders()
     _Synth synth(&file);
     _Synth *const writer = &synth;
     file.formatVersion = RigExecFormatVersion;
+    file.manifest = RigExecManifestBuild(RigExecManifestCurrent());
     file.bakeTime = 1.0;
     file.slotMeta = std::make_unique<fb::RigExecWireSlotMeta>();
     file.constants = std::make_unique<fb::RigExecWireConstants>();

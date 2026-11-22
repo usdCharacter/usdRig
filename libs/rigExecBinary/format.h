@@ -595,7 +595,12 @@ inline constexpr uint8_t RigExecWireConstraintRadialBlend =
 /// Format 32 adds RevisionBinding.normals_per_corner and
 /// normals_left_handed: a RecomputeNormals target's faceVarying layout and
 /// leftHanded orientation. Older files hold neither.
-inline constexpr uint32_t RigExecFormatVersion = 32;
+///
+/// Format 33 adds File.manifest: the stable id of every revision op,
+/// property op, provider op and value type ordinal (rigExecBinary/manifest.h).
+/// Open maps a file's ordinals to this build's through it, and gives older
+/// files the format-32 table.
+inline constexpr uint32_t RigExecFormatVersion = 33;
 
 /// The first format version whose RecomputeNormals binding may carry the
 /// normals layout.

@@ -3,6 +3,7 @@
 // validates; Write validates and packs; the validator holds every rule a
 // file must satisfy that the file alone can decide.
 #include "rigExecBinary/format.h"
+#include "rigExecBinary/manifest.h"
 
 #include "rigExecBinary/stepGraph.h"
 #include "rigExecGraph/providerRecords.h"
@@ -9009,6 +9010,8 @@ private:
 bool
 RigExecFormatValidate(const fb::RigExecWireFile &file, std::string *error)
 {
+    if (!RigExecManifestValidate(file, error))
+        return false;
     return _Validator(file).Run(error);
 }
 
@@ -9201,6 +9204,9 @@ _OpenAligned(const uint8_t *bytes, size_t size,
     }
     std::unique_ptr<fb::RigExecWireFile> unpacked(root->UnPack());
     std::string why;
+    if (!RigExecManifestResolve(unpacked.get(), &why)) {
+        return _Fail(error, "invalid .rigexec: " + why);
+    }
     if (!RigExecFormatValidate(*unpacked, &why)) {
         return _Fail(error, "invalid .rigexec: " + why);
     }
