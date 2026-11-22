@@ -1,7 +1,9 @@
 // RigExec geometry mover kernels implementation.
 #include "geometryKernels.h"
 #include "deltaMushKernel.h"
+#include "dualQuat.h"
 #include "latticeKernel.h"
+#include "ribbonKernel.h"
 #include "spatialAccel.h"
 #include "surfaceProjectKernel.h"
 #include "volumeCorrectKernel.h"
@@ -622,41 +624,26 @@ RigExecApplyRibbonTransport(std::vector<GfVec3f> *points,
                             const RigExecCurveFrameSamples &posedSamples)
 {
     const size_t sampleCount = restSamples.GetSize();
-    if (points->empty() || bindCoordsSize != points->size() ||
-        sampleCount < 2 || posedSamples.GetSize() != sampleCount) {
+    if (points->empty() || posedSamples.GetSize() != sampleCount) {
         return; // invalid binding: pass through
     }
-    if (!bindCoords) {
-        return; // a null range with a nonzero size: pass through
-    }
-
-    // Per-sample rigid maps from the rest frame to the posed frame.
-    std::vector<GfMatrix4d> maps(sampleCount);
-    for (size_t k = 0; k < sampleCount; ++k) {
-        const std::array<GfVec3d, 4> rest = {
-            GfVec3d(restSamples.positions[k]),
-            GfVec3d(restSamples.positions[k] + restSamples.tangents[k]),
-            GfVec3d(restSamples.positions[k] + restSamples.normals[k]),
-            GfVec3d(restSamples.positions[k] + restSamples.binormals[k])};
-        const std::array<GfVec3d, 4> posed = {
-            GfVec3d(posedSamples.positions[k]),
-            GfVec3d(posedSamples.positions[k] + posedSamples.tangents[k]),
-            GfVec3d(posedSamples.positions[k] + posedSamples.normals[k]),
-            GfVec3d(posedSamples.positions[k] + posedSamples.binormals[k])};
-        if (!RigExecPointsToMatrix(rest, posed, &maps[k])) {
-            maps[k].SetIdentity();
+    const auto framePoints = [](const RigExecCurveFrameSamples &samples) {
+        std::vector<std::array<GfVec3d, 4>> frames(samples.GetSize());
+        for (size_t k = 0; k < frames.size(); ++k) {
+            const GfVec3f &o = samples.positions[k];
+            frames[k] = {GfVec3d(o), GfVec3d(o + samples.tangents[k]),
+                         GfVec3d(o + samples.normals[k]),
+                         GfVec3d(o + samples.binormals[k])};
         }
-    }
-
-    for (size_t i = 0; i < points->size(); ++i) {
-        const float u = std::min(1.0f, std::max(0.0f, bindCoords[i][0]));
-        const float s = u * float(sampleCount - 1);
-        const size_t k = std::min(sampleCount - 2, size_t(s));
-        const float t = s - float(k);
-        const GfVec3d a = maps[k].TransformAffine(GfVec3d((*points)[i]));
-        const GfVec3d b = maps[k + 1].TransformAffine(GfVec3d((*points)[i]));
-        (*points)[i] = GfVec3f(a + (b - a) * double(t));
-    }
+        return frames;
+    };
+    const std::vector<std::array<GfVec3d, 4>> rest = framePoints(restSamples);
+    const std::vector<std::array<GfVec3d, 4>> posed = framePoints(posedSamples);
+    // An invalid binding passes the points through.
+    RigExecApplyRibbonKernel<RigExecDualQuatMath<GfVec3f, GfVec3d>>(
+        points->data(), points->size(), bindCoords, bindCoordsSize, sampleCount,
+        [&](size_t k) -> const auto & { return rest[k]; },
+        [&](size_t k) -> const auto & { return posed[k]; });
 }
 
 void

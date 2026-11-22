@@ -28,6 +28,7 @@
 #include "rigExecMath/pointBlocks.h"
 #include "rigExecMath/skinAcceptance.h"
 #include "rigExecMath/skinKernel.h"
+#include "rigExecMath/ribbonKernel.h"
 #include "rigExecMath/wireKernel.h"
 #include "rigExecMath/pointRanges.h"
 #include "rigExecMath/surfaceKernelCache.h"
@@ -2437,33 +2438,14 @@ RrGeoApplyRevisionKernel(
             (*pts)[i] = RrGeoToVec3f(p.frames.frames[i].points[0]);
         }
         return true;
-    case RrGeoOpRibbon: {
-        if (p.bindCoords.size() != pts->size()) {
-            return false;
-        }
-        const size_t n = p.frames.frames.size();
-        if (n < 2) {
-            return false;
-        }
-        std::vector<RrMat4d> maps(n);
-        for (size_t k = 0; k < n; ++k) {
-            if (!RrPointsToMatrix(p.frames.rests[k], p.frames.frames[k].points,
-                                  &maps[k])) {
-                maps[k].SetIdentity();
-            }
-        }
-        for (size_t i = 0; i < pts->size(); ++i) {
-            const float u = std::min(1.0f, std::max(0.0f, p.bindCoords[i][0]));
-            const float s = u * float(n - 1);
-            const size_t k = std::min(n - 2, size_t(s));
-            const float t = s - float(k);
-            const RrVec3d a = maps[k].TransformAffine(RrGeoToVec3d((*pts)[i]));
-            const RrVec3d b =
-                maps[k + 1].TransformAffine(RrGeoToVec3d((*pts)[i]));
-            (*pts)[i] = RrGeoToVec3f(a + (b - a) * double(t));
-        }
-        return true;
-    }
+    case RrGeoOpRibbon:
+        return RigExecApplyRibbonKernel<RigExecDualQuatMath<RrVec3f, RrVec3d>>(
+            pts->data(), pts->size(), p.bindCoords.data(), p.bindCoords.size(),
+            p.frames.frames.size(),
+            [&](size_t k) -> const auto & { return p.frames.rests[k]; },
+            [&](size_t k) -> const auto & {
+                return p.frames.frames[k].points;
+            });
     case RrGeoOpWire: {
         // The checks before anything is built or applied; the basis build
         // and RrGeoApplyWire below make the rest of the decision's.

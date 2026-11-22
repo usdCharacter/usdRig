@@ -13,6 +13,7 @@
 #include "rigExecMath/envelope.h"
 #include "rigExecMath/latticeKernel.h"
 #include "rigExecMath/normalsLayoutKernel.h"
+#include "rigExecMath/ribbonKernel.h"
 #include "rigExecMath/pointBlocks.h"
 #include "rigExecMath/pointFrame.h"
 #include "rigExecMath/simdKernels.h"
@@ -1244,34 +1245,16 @@ ApplyRevisionKernel(RigExecRevisionOp op, const RigExecMoverParameters &p,
             (*pts)[i] = GfVec3f(p.frames.frames[i].Origin());
         }
         return true;
-    case RigExecRevisionOp::Ribbon: {
-        if (p.bindCoords.size() != pts->size()) {
-            return false;
-        }
+    case RigExecRevisionOp::Ribbon:
         // Rest-relative rigid transport: per-sample maps from the
         // aggregate's rest frames to its posed frames.
-        const size_t n = p.frames.GetSize();
-        if (n < 2) {
-            return false;
-        }
-        std::vector<GfMatrix4d> maps(n);
-        for (size_t k = 0; k < n; ++k) {
-            if (!RigExecPointsToMatrix(p.frames.rests[k],
-                                       p.frames.frames[k].points, &maps[k])) {
-                maps[k].SetIdentity();
-            }
-        }
-        for (size_t i = 0; i < pts->size(); ++i) {
-            const float u = std::min(1.0f, std::max(0.0f, p.bindCoords[i][0]));
-            const float s = u * float(n - 1);
-            const size_t k = std::min(n - 2, size_t(s));
-            const float t = s - float(k);
-            const GfVec3d a = maps[k].TransformAffine(GfVec3d((*pts)[i]));
-            const GfVec3d b = maps[k + 1].TransformAffine(GfVec3d((*pts)[i]));
-            (*pts)[i] = GfVec3f(a + (b - a) * double(t));
-        }
-        return true;
-    }
+        return RigExecApplyRibbonKernel<RigExecDualQuatMath<GfVec3f, GfVec3d>>(
+            pts->data(), pts->size(), p.bindCoords.data(), p.bindCoords.size(),
+            p.frames.GetSize(),
+            [&](size_t k) -> const auto & { return p.frames.rests[k]; },
+            [&](size_t k) -> const auto & {
+                return p.frames.frames[k].points;
+            });
     case RigExecRevisionOp::Wire: {
         // The checks before anything is built or applied; the basis build
         // and RigExecApplyWire below make the rest of the decision's.
