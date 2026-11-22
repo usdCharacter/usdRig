@@ -3,6 +3,7 @@
 #include "spaces.h"
 #include "poseInternal.h"
 #include "rigExecRuntime/affineMath.h"
+#include "rigExecEvalCore/spaces.h"
 #include <algorithm>
 #include "rigExecGraph/providerArithmetic.h"
 #include "rigExecMath/providerRefreshKernel.h"
@@ -10,15 +11,30 @@
 #include <type_traits>
 namespace rigExec {
 namespace {
-struct Math {
+// SpaceExpression part 0 and ProviderRefresh run through EvalCore's single
+// space body; the bridge parts below stay here as input binding.
+struct SpaceMath {
     using Matrix = RrMat4d;
     using Vector = RrVec3d;
     using Rotation = RrRotation;
     using Frame = RrPointFrame;
+    using AffineMath = RrAffineMath;
     static bool PointsToMatrix(const std::array<Vector, 4> &a,
                                const std::array<Vector, 4> &b, Matrix *out)
     {
         return RrPointsToMatrix(a, b, out);
+    }
+    static bool PointsToMatrix(const Frame &a, const Frame &b, Matrix *out)
+    {
+        return RrPointsToMatrix(a.points, b, out);
+    }
+    static bool Usable(const Frame &frame)
+    {
+        return RrFrameUsable(frame);
+    }
+    static Frame Transform(const Frame &frame, const Matrix &matrix)
+    {
+        return RrMatrixToPoints(frame.points, matrix);
     }
 };
 struct Store {
@@ -169,7 +185,278 @@ struct Store {
         out.count = 1;
         out.error.clear();
     }
+    const RigExecProviderPlainState *AffineState(uint64_t id) const
+    {
+        if (id >= values.size())
+            return nullptr;
+        const auto &state = values[size_t(id)];
+        return state.initialized && !state.blocked ? &state : nullptr;
+    }
+    bool ReadAffineDouble(uint64_t id, double *out) const
+    {
+        const auto *state = AffineState(id);
+        if (!state)
+            return false;
+        if (const auto *v = std::get_if<double>(&state->value)) {
+            *out = *v;
+            return true;
+        }
+        if (const auto *narrow = std::get_if<float>(&state->value)) {
+            *out = *narrow;
+            return true;
+        }
+        return false;
+    }
+    bool ReadAffineVec3i(uint64_t id, RrVec3i *out) const
+    {
+        const auto *state = AffineState(id);
+        if (!state)
+            return false;
+        if (const auto *v =
+                std::get_if<std::array<int32_t, 3>>(&state->value)) {
+            *out = RrVec3i((*v)[0], (*v)[1], (*v)[2]);
+            return true;
+        }
+        return false;
+    }
+    bool ReadAffineBool(uint64_t id, bool *out) const
+    {
+        const auto *state = AffineState(id);
+        if (!state)
+            return false;
+        if (const auto *v = std::get_if<bool>(&state->value)) {
+            *out = *v;
+            return true;
+        }
+        return false;
+    }
+    bool ReadAffineInt(uint64_t id, int *out) const
+    {
+        const auto *state = AffineState(id);
+        if (!state)
+            return false;
+        if (const auto *v = std::get_if<int32_t>(&state->value)) {
+            *out = int(*v);
+            return true;
+        }
+        return false;
+    }
+    bool ReadAffineString(uint64_t id, std::string *out) const
+    {
+        const auto *state = AffineState(id);
+        if (!state)
+            return false;
+        if (const auto *v = std::get_if<std::string>(&state->value)) {
+            *out = *v;
+            return true;
+        }
+        return false;
+    }
+    bool ReadAffineIntArray(uint64_t id, std::vector<int> *out) const
+    {
+        const auto *state = AffineState(id);
+        if (!state)
+            return false;
+        const auto *v = std::get_if<std::vector<int32_t>>(&state->value);
+        if (v && !v->empty()) {
+            out->assign(v->begin(), v->end());
+            return true;
+        }
+        return false;
+    }
+    bool ReadAffineDoubleArray(uint64_t id, std::vector<double> *out) const
+    {
+        const auto *state = AffineState(id);
+        if (!state)
+            return false;
+        const auto *v = std::get_if<std::vector<double>>(&state->value);
+        if (v && !v->empty()) {
+            *out = *v;
+            return true;
+        }
+        return false;
+    }
+    bool ReadAffineMatrixArray(uint64_t id, std::vector<RrMat4d> *out) const
+    {
+        const auto *state = AffineState(id);
+        if (!state)
+            return false;
+        const auto *v =
+            std::get_if<std::vector<std::array<double, 16>>>(&state->value);
+        if (v && !v->empty()) {
+            out->resize(v->size());
+            for (size_t k = 0; k < v->size(); ++k)
+                std::memcpy((*out)[k]._mtx, (*v)[k].data(),
+                            sizeof(double) * 16);
+            return true;
+        }
+        return false;
+    }
+    void PublishAffineFailure(uint64_t id, const std::string &message)
+    {
+        auto &out = values[size_t(id)];
+        out.value = std::monostate{};
+        out.initialized = true;
+        out.blocked = false;
+        out.authoritative = false;
+        out.count = 0;
+        out.error = message;
+    }
+    bool CommitAbandoned(uint32_t index) const
+    {
+        return (*commits)[index].abandoned;
+    }
+    bool CommitPresent(uint32_t index, uint32_t pos) const
+    {
+        const auto &commit = (*commits)[index];
+        return pos < commit.present.size() && commit.present[pos];
+    }
+    const RrPointFrame &BaseFrame(uint32_t version) const
+    {
+        return (*base)[version];
+    }
+    const RrPointFrame &FinFrame(uint32_t version) const
+    {
+        return (*fin)[version];
+    }
+    RrPointFrame *MutableBaseFrame(uint32_t version)
+    {
+        return &(*base)[version];
+    }
+    RrPointFrame *MutableFinFrame(uint32_t version)
+    {
+        return &(*fin)[version];
+    }
+    RrPointFrame *RefreshBaseInputs(size_t index)
+    {
+        return (*refreshScratch)[index].baseInputs.data();
+    }
+    RrPointFrame *RefreshFinInputs(size_t index)
+    {
+        return (*refreshScratch)[index].finInputs.data();
+    }
+    RrPointFrame *RefreshBaseOutputs(size_t index)
+    {
+        return (*refreshScratch)[index].baseOutputs.data();
+    }
+    RrPointFrame *RefreshFinOutputs(size_t index)
+    {
+        return (*refreshScratch)[index].finOutputs.data();
+    }
+    uint8_t *RefreshBlocked(size_t index)
+    {
+        return (*refreshScratch)[index].blocked.data();
+    }
+    RrMat4d ParentRawMatrix(int slot) const
+    {
+        return RrValueFromWire(RrReadProviderRefreshBlocker(program, slot))
+            .matrix;
+    }
+    const RrPointFrame *ReadRefreshFrame(uint64_t id, RrPointFrame *scratch)
+    {
+        if (id >= values.size())
+            return nullptr;
+        const auto &state = values[size_t(id)];
+        if (!state.initialized || state.blocked)
+            return nullptr;
+        const auto *value =
+            std::get_if<RigExecProviderPlainFrame>(&state.value);
+        if (!value)
+            return nullptr;
+        for (size_t p = 0; p < 4; ++p)
+            for (size_t a = 0; a < 3; ++a)
+                scratch->points[p][a] = value->points[p][a];
+        scratch->flags = value->flags;
+        return scratch;
+    }
+    void PushDiagnostic(const std::string &text)
+    {
+        diagnostics->push_back(text);
+    }
+    const RrProgram *program = nullptr;
+    const std::vector<RrCommitScratch> *commits = nullptr;
+    std::vector<RrPointFrame> *base = nullptr, *fin = nullptr;
+    std::vector<RrProviderRefreshScratch> *refreshScratch = nullptr;
+    std::vector<std::string> *diagnostics = nullptr;
 };
+struct SpaceInputs {
+    const RrProgram *program = nullptr;
+    size_t opCount() const
+    {
+        return program->providerProgram.ops.size();
+    }
+    const RigExecProviderPlainOp &op(size_t index) const
+    {
+        return program->providerProgram.ops[index];
+    }
+    size_t valueCount() const
+    {
+        return program->store.providerValues.size();
+    }
+    size_t refreshCount() const
+    {
+        return program->poses->providerRefreshes.size();
+    }
+    const RigExecWireProviderRefresh &refresh(size_t index) const
+    {
+        return program->poses->providerRefreshes[index];
+    }
+    std::string refreshPath(size_t index) const
+    {
+        const auto &record = program->poses->providerRefreshes[index];
+        return program->TextOrEmpty(
+            program->slotMeta->paths[size_t(record.slot)]);
+    }
+    std::string refreshCarryPath(size_t index, size_t carry) const
+    {
+        const auto &record = program->poses->providerRefreshes[index];
+        return program->TextOrEmpty(
+            program->slotMeta->paths[size_t(record.carries[carry].slot)]);
+    }
+};
+struct SpaceHost {
+    using Math = SpaceMath;
+    using Inputs = SpaceInputs;
+    using State = Store;
+    SpaceHost(const SpaceInputs &inputs, const Store &state)
+        : _inputs(inputs), _state(state)
+    {
+    }
+    const Inputs &inputs() const
+    {
+        return _inputs;
+    }
+    State &state()
+    {
+        return _state;
+    }
+    const RigExecRangeRunner *ranges() const
+    {
+        return nullptr;
+    }
+
+private:
+    Inputs _inputs;
+    State _state;
+};
+const char *
+SpaceFailureMessage(eval::spaces::SpaceDetail detail)
+{
+    switch (detail) {
+    case eval::spaces::SpaceDetail::NoOp:
+        return "SpaceExpression names no portable op";
+    case eval::spaces::SpaceDetail::OutputRange:
+        return "provider output is outside its typed layout";
+    case eval::spaces::SpaceDetail::AffineLayout:
+        return "affine frame inputs do not match their expression";
+    case eval::spaces::SpaceDetail::AffineKind:
+        return "unknown affine frame expression";
+    case eval::spaces::SpaceDetail::NoRefresh:
+    case eval::spaces::SpaceDetail::None:
+        return "SpaceExpression names no portable op";
+    }
+    return "SpaceExpression names no portable op";
+}
 } // namespace
 bool
 RrReadCrossDomain(const RrProgram *program, int32_t index, RrWireValue *out)
@@ -652,139 +939,6 @@ RrProviderEffectiveInputMemo(const RrProgram *program,
     (void)covered;
     return true;
 }
-namespace {
-// One affine input's value into its member, as the native op reads it
-// (providerProgram.cpp AffineRead): a present, unblocked value of the
-// member's type, a float widened for a double; an empty array or any other
-// value keeps the member's default.
-template <class T>
-void
-RrAffineRead(const RigExecProviderPlainState *state, T *out)
-{
-    if (!state || !state->initialized || state->blocked)
-        return;
-    const auto &value = state->value;
-    if constexpr (std::is_same_v<T, RrMat4d>) {
-        if (const auto *v = std::get_if<std::array<double, 16>>(&value))
-            std::memcpy(out->_mtx, v->data(), sizeof(double) * 16);
-    } else if constexpr (std::is_same_v<T, RrVec3d>) {
-        if (const auto *v = std::get_if<std::array<double, 3>>(&value))
-            *out = RrVec3d((*v)[0], (*v)[1], (*v)[2]);
-    } else if constexpr (std::is_same_v<T, RrVec3i>) {
-        if (const auto *v = std::get_if<std::array<int32_t, 3>>(&value))
-            *out = RrVec3i((*v)[0], (*v)[1], (*v)[2]);
-    } else if constexpr (std::is_same_v<T, double>) {
-        if (const auto *v = std::get_if<double>(&value))
-            *out = *v;
-        else if (const auto *narrow = std::get_if<float>(&value))
-            *out = *narrow;
-    } else if constexpr (std::is_same_v<T, bool>) {
-        if (const auto *v = std::get_if<bool>(&value))
-            *out = *v;
-    } else if constexpr (std::is_same_v<T, int>) {
-        if (const auto *v = std::get_if<int32_t>(&value))
-            *out = int(*v);
-    } else if constexpr (std::is_same_v<T, std::string>) {
-        if (const auto *v = std::get_if<std::string>(&value))
-            *out = *v;
-    } else if constexpr (std::is_same_v<T, std::vector<int>>) {
-        const auto *v = std::get_if<std::vector<int32_t>>(&value);
-        if (v && !v->empty())
-            out->assign(v->begin(), v->end());
-    } else if constexpr (std::is_same_v<T, std::vector<double>>) {
-        const auto *v = std::get_if<std::vector<double>>(&value);
-        if (v && !v->empty())
-            *out = *v;
-    } else if constexpr (std::is_same_v<T, std::vector<RrMat4d>>) {
-        const auto *v =
-            std::get_if<std::vector<std::array<double, 16>>>(&value);
-        if (v && !v->empty()) {
-            out->resize(v->size());
-            for (size_t k = 0; k < v->size(); ++k)
-                std::memcpy((*out)[k]._mtx, (*v)[k].data(),
-                            sizeof(double) * 16);
-        }
-    }
-}
-// A provider's point frame as a matrix (identity without one).
-RrMat4d
-RrAffineFrame(const RigExecProviderPlainState *state)
-{
-    const auto *frame =
-        state && state->initialized && !state->blocked
-            ? std::get_if<RigExecProviderPlainFrame>(&state->value)
-            : nullptr;
-    if (!frame)
-        return RrMat4d(1.0);
-    const auto point = [&](size_t k) {
-        return RrVec3d(frame->points[k][0], frame->points[k][1],
-                       frame->points[k][2]);
-    };
-    return RrAffineFrameKernel::FrameMatrix(point(0), point(1), point(2),
-                                            point(3));
-}
-// An affine frame expression: the native op's inputs in its layout's order,
-// through the same kernel over the runtime mirror (affineMath.h).
-bool
-RrRunAffineFrame(const RigExecProviderPlainOp &op,
-                 std::vector<RigExecProviderPlainState> *values,
-                 std::string *error)
-{
-    if (op.output >= values->size() ||
-        !RigExecAffineFrameInputsMatch(op.affineKind, op.inputs.size(),
-                                       op.affineTargets)) {
-        if (error)
-            *error = "affine frame inputs do not match their expression";
-        return false;
-    }
-    const auto input = [&](size_t at) -> const RigExecProviderPlainState * {
-        const uint64_t id = at < op.inputs.size() ? op.inputs[at] : UINT64_MAX;
-        return id < values->size() ? &(*values)[size_t(id)] : nullptr;
-    };
-    const RigExecAffineFrameType &type = RigExecAffineFrameTypes[op.affineKind];
-    RrAffineFrameInputs in;
-    size_t at = 0;
-    for (uint32_t k = 0; k < type.attributeCount; ++k) {
-        const auto *state = input(at++);
-        RigExecVisitAffineField(in, type.attributes[k].field,
-                                [&](auto &out) { RrAffineRead(state, &out); });
-    }
-    for (uint32_t k = 0; k < type.relationCount; ++k) {
-        const RrMat4d frame = RrAffineFrame(input(at++));
-        RigExecVisitAffineField(in, type.relations[k].field, [&](auto &out) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(out)>, RrMat4d>)
-                out = frame;
-        });
-    }
-    if (type.targets) {
-        for (uint32_t k = 0; k < op.affineTargets; ++k)
-            in.targets.push_back(RrAffineFrame(input(at++)));
-        while (at < op.inputs.size())
-            in.targetObjects.push_back(RrAffineFrame(input(at++)));
-    }
-    RrMat4d result(1.0);
-    const char *failure = nullptr;
-    auto &out = (*values)[size_t(op.output)];
-    if (!RrAffineFrameKernel::Compute(op.affineKind, in, &result, &failure)) {
-        out.value = std::monostate{};
-        out.initialized = true;
-        out.blocked = false;
-        out.authoritative = false;
-        out.count = 0;
-        out.error = std::string("affine frame expression failed: ") + failure;
-        return true;
-    }
-    std::array<double, 16> matrix;
-    std::memcpy(matrix.data(), result._mtx, sizeof(double) * 16);
-    out.value = matrix;
-    out.initialized = true;
-    out.blocked = false;
-    out.authoritative = false;
-    out.count = 1;
-    out.error.clear();
-    return true;
-}
-} // namespace
 bool
 RrRunSpaceExpression(RrProgram *program, const RigExecWireStep &step,
                      std::string *error)
@@ -1051,38 +1205,29 @@ RrRunSpaceExpression(RrProgram *program, const RigExecWireStep &step,
         return false;
     }
     const auto &op = program->providerProgram.ops[size_t(step.object)];
-    if (op.kind == RigExecProviderOpKind::AffineFrame)
-        return RrRunAffineFrame(op, &program->store.providerValues, error);
-    Store store(program->store.providerValues, op.inputs,
+    const SpaceInputs inputs{program};
+    Store state(program->store.providerValues, op.inputs,
                 program->store.providerConversionScratch[size_t(step.object)]);
-    if (!RigExecRunProviderArithmetic<Math>(op, store)) {
+    SpaceHost host(inputs, state);
+    const eval::StepResult result =
+        eval::RunValueStep(host, eval::StepRef{uint32_t(step.kind), step.object,
+                                               step.part, size_t(step.object)});
+    if (result.outcome == eval::Outcome::Applied)
+        return true;
+    if (result.outcome == eval::Outcome::Rejected) {
         auto &out = program->store.providerValues[size_t(op.output)];
         out.initialized = false;
         out.blocked = true;
         out.value = std::monostate();
         out.count = 0;
         out.error = "provider input unavailable";
+        return true;
     }
-    return true;
+    if (error)
+        *error = SpaceFailureMessage(
+            static_cast<eval::spaces::SpaceDetail>(result.detail));
+    return false;
 }
-namespace {
-struct RefreshMath {
-    using Frame = RrPointFrame;
-    using Matrix = RrMat4d;
-    static bool Usable(const Frame &frame)
-    {
-        return RrFrameUsable(frame);
-    }
-    static bool PointsToMatrix(const Frame &a, const Frame &b, Matrix *out)
-    {
-        return RrPointsToMatrix(a.points, b, out);
-    }
-    static Frame Transform(const Frame &frame, const Matrix &matrix)
-    {
-        return RrMatrixToPoints(frame.points, matrix);
-    }
-};
-} // namespace
 bool
 RrRunProviderRefresh(RrProgram *program, const RigExecWireStep &step,
                      std::string *error)
@@ -1093,89 +1238,24 @@ RrRunProviderRefresh(RrProgram *program, const RigExecWireStep &step,
             *error = "ProviderRefresh names no compiled context";
         return false;
     }
-    const auto &record = program->poses->providerRefreshes[size_t(step.object)];
-    auto &store = program->store;
-    auto &scratch = store.providerRefreshScratch[size_t(step.object)];
-    bool constrained = false;
-    for (const auto &prior : record.priorConstraints) {
-        const auto &commit = store.commits[prior.first];
-        constrained = constrained || (!commit.abandoned &&
-                                      prior.second < commit.present.size() &&
-                                      commit.present[prior.second]);
-    }
-    for (size_t k = 0; k < record.carries.size(); ++k) {
-        const auto &carry = record.carries[k];
-        scratch.baseInputs[k] = store.base[carry.baseRead];
-        scratch.finInputs[k] = store.fin[carry.finRead];
-        scratch.blocked[k] = 0;
-        for (int slot : carry.blockingSlots) {
-            const auto raw =
-                RrValueFromWire(RrReadProviderRefreshBlocker(program, slot));
-            if (raw.matrix != RrMat4d(1.0))
-                scratch.blocked[k] = 1;
-        }
-    }
-    const auto frame = [&](uint64_t id,
-                           RrPointFrame *out) -> const RrPointFrame * {
-        if (id >= store.providerValues.size())
-            return nullptr;
-        const auto &state = store.providerValues[size_t(id)];
-        if (!state.initialized || state.blocked)
-            return nullptr;
-        const auto *value =
-            std::get_if<RigExecProviderPlainFrame>(&state.value);
-        if (!value)
-            return nullptr;
-        for (size_t p = 0; p < 4; ++p)
-            for (size_t a = 0; a < 3; ++a)
-                out->points[p][a] = value->points[p][a];
-        out->flags = value->flags;
-        return out;
-    };
-    RrPointFrame raw, current, baseOutput, finOutput;
-    size_t failed = 0;
-    const auto outcome = RigExecRefreshProviderFrames<RefreshMath>(
-        store.base[record.baseRead], store.fin[record.finRead],
-        frame(record.baseValue, &raw), frame(record.currentValue, &current),
-        constrained, scratch.baseInputs.data(), scratch.finInputs.data(),
-        scratch.blocked.data(), record.carries.size(), &baseOutput, &finOutput,
-        scratch.baseOutputs.data(), scratch.finOutputs.data(), &failed);
-    store.base[record.baseWrite] = baseOutput;
-    store.fin[record.finWrite] = finOutput;
-    for (size_t k = 0; k < record.carries.size(); ++k) {
-        store.base[record.carries[k].baseWrite] = scratch.baseOutputs[k];
-        store.fin[record.carries[k].finWrite] = scratch.finOutputs[k];
-    }
     const size_t physical = size_t(&step - program->steps->data());
-    auto &diagnostics = store.stepOutputs[physical].diagnostics;
-    const std::string &path =
-        program->TextOrEmpty(program->slotMeta->paths[size_t(record.slot)]);
-    if (outcome == RigExecProviderRefreshOutcome::MissingBase)
-        diagnostics.push_back("connected base pose input incomplete: " + path);
-    else if (outcome == RigExecProviderRefreshOutcome::MissingCurrent)
-        diagnostics.push_back("connected final pose input incomplete: " + path);
-    else if (outcome == RigExecProviderRefreshOutcome::InvalidCurrent)
-        diagnostics.push_back(path +
-                              " produced an invalid or degenerate frame for " +
-                              path + "; constraint passed through");
-    else if (outcome == RigExecProviderRefreshOutcome::SingularCurrent)
-        diagnostics.push_back(
-            path +
-            " produced a singular hierarchy delta; constraint passed through");
-    else if (outcome == RigExecProviderRefreshOutcome::InvalidDescendant)
-        diagnostics.push_back(
-            path + " could not propagate its pose revision through " +
-            program->TextOrEmpty(
-                program->slotMeta->paths[size_t(record.carries[failed].slot)]) +
-            "; constraint passed through");
-    else if (outcome ==
-             RigExecProviderRefreshOutcome::InvalidTransformedDescendant)
-        diagnostics.push_back(
-            path + " produced an invalid descendant frame for " +
-            program->TextOrEmpty(
-                program->slotMeta->paths[size_t(record.carries[failed].slot)]) +
-            "; constraint passed through");
-    return true;
+    const SpaceInputs inputs{program};
+    Store state(program->store.providerValues);
+    state.program = program;
+    state.commits = &program->store.commits;
+    state.base = &program->store.base;
+    state.fin = &program->store.fin;
+    state.refreshScratch = &program->store.providerRefreshScratch;
+    state.diagnostics = &program->store.stepOutputs[physical].diagnostics;
+    SpaceHost host(inputs, state);
+    const eval::StepResult result =
+        eval::RunValueStep(host, eval::StepRef{uint32_t(step.kind), step.object,
+                                               step.part, size_t(step.object)});
+    if (result.outcome == eval::Outcome::Applied)
+        return true;
+    if (error)
+        *error = "ProviderRefresh names no compiled context";
+    return false;
 }
 
 } // namespace rigExec

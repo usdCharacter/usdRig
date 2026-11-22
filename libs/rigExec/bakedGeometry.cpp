@@ -23,6 +23,10 @@
 #include "pathText.h"
 #include "rigEvaluator.h"
 #include "types.h"
+#include "rigExecEvalCore/chain.h"
+#include "rigExecEvalCore/envelope.h"
+#include "rigExecEvalCore/gate.h"
+#include "rigExecEvalCore/skin.h"
 
 #include "rigExecMath/dualQuat.h"
 #include "rigExecMath/skinAcceptance.h"
@@ -829,26 +833,24 @@ RigExecBakedPartitionRevision(const RigExecBakedProgramImpl &program,
 void
 RigExecBakedAdoptPartition(RigExecBakedProgramImpl::GeomRevision *revision)
 {
-    // A null handle is a refusal: the packet reads the arrays per frame and
-    // RevisionStatic runs the revision whole. Recording it here would make
-    // the handles agree by both being null.
-    if (!revision->chunked || !revision->topology ||
-        revision->topology == revision->partitionTopology) {
-        return;
-    }
-    // The keys stay Build's whatever the layout says, because each chunk
-    // step's reads were declared from its key: a re-cut would let a chunk
-    // read a joint it never declared, and a cone that skips it would leave
-    // its range stale. So a handle is adopted only when it has the arrays
-    // the keys were cut from; a weight-only edit keeps the chunks running.
-    const RigExecSkinTopology &topology = *revision->topology;
-    const VtIntArray &indices = revision->partitionIndices;
-    if (topology.elementSize == revision->partitionElementSize &&
-        topology.indices.size() == indices.size() &&
-        std::equal(topology.indices.begin(), topology.indices.end(),
-                   indices.cdata())) {
-        revision->partitionTopology = revision->topology;
-    }
+    // EvalCore's one adoption decision (rigExecEvalCore/chain.h) over
+    // this adapter's Build inputs: a null handle is a refusal (the
+    // packet reads the arrays per frame and RevisionStatic runs the
+    // revision whole), and a handle is adopted only when it has the
+    // arrays the keys were cut from; a weight-only edit keeps the
+    // chunks running.
+    eval::AdoptPartitionBody(
+        revision->chunked, revision->topology != nullptr,
+        revision->topology == revision->partitionTopology,
+        [revision] {
+            const RigExecSkinTopology &topology = *revision->topology;
+            const VtIntArray &indices = revision->partitionIndices;
+            return topology.elementSize == revision->partitionElementSize &&
+                   topology.indices.size() == indices.size() &&
+                   std::equal(topology.indices.begin(), topology.indices.end(),
+                              indices.cdata());
+        },
+        [revision] { revision->partitionTopology = revision->topology; });
 }
 
 // Build: the geometry half of the program, in program order.
@@ -2438,13 +2440,46 @@ const RigExecPointsRef<GfVec3f> &
 RigExecBakedGroupAt(const RigExecBakedProgramImpl::GeomChain &chain,
                     size_t version, size_t g)
 {
-    const int writer = GroupWriter(chain, version, g);
-    if (writer < 0) {
-        return g < chain.baseGroups.size() ? chain.baseGroups[g].published
-                                           : kNoGroup;
-    }
-    const auto &groups = chain.revisions[size_t(writer)].groups;
-    return g < groups.size() ? groups[g].published : kNoGroup;
+    // EvalCore's one writer resolution (rigExecEvalCore/chain.h); the
+    // group refs themselves stay in this adapter's chain.
+    return eval::ChainGroupAt<GfVec3f>(
+        chain.revisions.size(), version, g,
+        [&chain](size_t revision, size_t group) {
+            return revision < chain.revisions.size() &&
+                   group < chain.revisions[revision].groupWritten.size() &&
+                   chain.revisions[revision].groupWritten[group] != 0;
+        },
+        [&chain](size_t revision) {
+            return chain.revisions[revision].rangeSetAside;
+        },
+        [&chain](size_t group, const RigExecPointsRef<GfVec3f> &none)
+            -> const RigExecPointsRef<GfVec3f> & {
+            return group < chain.baseGroups.size()
+                       ? chain.baseGroups[group].published
+                       : none;
+        },
+        [&chain](size_t writer, size_t group,
+                 const RigExecPointsRef<GfVec3f> &none)
+            -> const RigExecPointsRef<GfVec3f> & {
+            const auto &groups = chain.revisions[writer].groups;
+            return group < groups.size() ? groups[group].published : none;
+        },
+        [&chain](size_t group) {
+            RigExecGroupSource source;
+            source.slot = -1 - int64_t(group);
+            source.version = group < chain.baseGroups.size()
+                                 ? chain.baseGroups[group].version
+                                 : 0;
+            return source;
+        },
+        [&chain](size_t writer, size_t group) {
+            RigExecGroupSource source;
+            source.version = group < chain.revisions[writer].groups.size()
+                                 ? chain.revisions[writer].groups[group].version
+                                 : 0;
+            return source;
+        },
+        nullptr, kNoGroup);
 }
 
 RigExecGroupSource
@@ -2614,40 +2649,13 @@ PointsAt(const RigExecBakedProgramImpl::GeomChain &chain, size_t version,
 bool
 SamePoints(const std::vector<GfVec3f> &a, const std::vector<GfVec3f> &b)
 {
-    return RigExecBakedSamePoints(a.data(), a.size(), b.data(), b.size());
+    return eval::PointsBitsEqualBody(a.data(), a.size(), b.data(), b.size());
 }
 
 bool
 SamePoints(const VtVec3fArray &a, const VtVec3fArray &b)
 {
-    return RigExecBakedSamePoints(a.cdata(), a.size(), b.cdata(), b.size());
-}
-
-/// Makes \p output hold \p staging's points, copying only the blocks whose
-/// bytes differ, and returns whether any did (a size change included). A
-/// chunked skin's ranges stay in staging, where a chunk that sat a run out
-/// keeps its range, so its fuse cannot swap the buffers.
-bool
-CopyMovedPoints(const std::vector<GfVec3f> &staging,
-                std::vector<GfVec3f> *output)
-{
-    if (output->size() != staging.size()) {
-        output->assign(staging.begin(), staging.end());
-        return true;
-    }
-    constexpr size_t kBlock = 1024;
-    bool moved = false;
-    for (size_t begin = 0; begin < staging.size(); begin += kBlock) {
-        const size_t count = std::min(kBlock, staging.size() - begin);
-        if (std::memcmp(staging.data() + begin, output->data() + begin,
-                        count * sizeof(GfVec3f)) != 0) {
-            std::copy(staging.begin() + long(begin),
-                      staging.begin() + long(begin + count),
-                      output->begin() + long(begin));
-            moved = true;
-        }
-    }
-    return moved;
+    return eval::PointsBitsEqualBody(a.cdata(), a.size(), b.cdata(), b.size());
 }
 
 /// The influence matrices of \p revision, out of the tables the pose half's
@@ -2776,6 +2784,71 @@ FoldInfluences(const RigExecBakedProgramImpl &B,
     return changed;
 }
 
+/// EvalCore's skin bodies (rigExecEvalCore/skin.h) over the core's Gf
+/// numbers: the SIMD blend and narrowed rows are the rigExecMath kernels,
+/// the split is the Gf dual-quaternion palette.
+struct BakedSkinMath {
+    using Vec3f = GfVec3f;
+    using Vec3d = GfVec3d;
+    using Mat4 = GfMatrix4d;
+    using ScaledDualQuat = RigExecScaledDualQuat;
+    static Vec3f ToFloat(const Vec3d &v)
+    {
+        return Vec3f(v);
+    }
+    static Vec3d ToDouble(const Vec3f &v)
+    {
+        return Vec3d(v);
+    }
+    static void NarrowSkinRows(const Mat4 &t, float *rows)
+    {
+        RigExecNarrowSkinRows(t, rows);
+    }
+    static void
+    ApplyLinearBlendSkinSimd(const Vec3f *in, Vec3f *out,
+                             const eval::SkinLayoutViewT<BakedSkinMath> &part,
+                             const float *rows)
+    {
+        RigExecSkinLayout layout;
+        layout.transforms = part.transforms;
+        layout.transformCount = part.transformCount;
+        layout.indices = part.indices;
+        layout.weights = part.weights;
+        layout.indexCount = part.indexCount;
+        layout.elementSize = part.elementSize;
+        layout.pointCount = part.pointCount;
+        RigExecApplyLinearBlendSkinSimd(in, out, layout, rows);
+    }
+};
+
+/// The packet as EvalCore's SkinPacketView: the method classified from
+/// its token, the layout arrays borrowed from the handle or the packet.
+eval::SkinPacketView
+BakedSkinPacket(const RigExecMoverParameters &p)
+{
+    eval::SkinPacketView v;
+    v.method = p.skinningMethod == _tokens->classicLinear
+                   ? eval::kSkinMethodClassicLinear
+                   : (p.skinningMethod == _tokens->dualQuaternion
+                          ? eval::kSkinMethodDualQuaternion
+                          : eval::kSkinMethodUnknown);
+    if (const RigExecSkinTopology *const topology = p.skinTopology.get()) {
+        v.hasTopology = true;
+        v.topologyValidated = topology->validated;
+        v.topologyInfluenceCount = topology->influenceCount;
+        v.topologyIndices = topology->indices.data();
+        v.topologyWeights = topology->weights.data();
+        v.topologyIndexCount = topology->indices.size();
+        v.topologyElementSize = topology->elementSize;
+    }
+    v.indices = p.skinIndices.data();
+    v.weights = p.skinWeights.data();
+    v.indexCount = p.skinIndices.size();
+    v.weightCount = p.skinWeights.size();
+    v.elementSize = p.skinElementSize;
+    return v;
+}
+
 /// The revision's own folded table, in the forms the kernels want it in.
 ///
 /// What a chunk of a revision cut into ONE chunk skins against, and what the
@@ -2783,20 +2856,13 @@ FoldInfluences(const RigExecBakedProgramImpl &B,
 /// chunked revision's chunks keep their own tables beside these and never
 /// read them; the fold writes them anyway, because they are part of the
 /// RevisionTransforms slot and the fuse may only READ that slot.
-RigExecSkinTransformsView
+eval::SkinTransformsViewT<BakedSkinMath>
 WholeTransformsView(RigExecBakedProgramImpl::GeomRevision *revision)
 {
-    RigExecSkinTransformsView view;
-    view.transforms = revision->influences.data();
-    view.transformCount = revision->influences.size();
-    if (!revision->rows.empty()) {
-        view.rows = revision->rows.data();
-    }
-    if (!revision->palette.empty()) {
-        view.palette = revision->palette.data();
-        view.paletteSize = revision->palette.size();
-    }
-    return view;
+    return eval::SkinWholeTransforms<BakedSkinMath>(
+        revision->influences.data(), revision->influences.size(),
+        revision->rows.data(), !revision->rows.empty(),
+        revision->palette.data(), revision->palette.size());
 }
 
 /// Narrows and splits \p revision's folded table for the method its packet
@@ -2809,29 +2875,10 @@ void
 FoldTransformForms(RigExecBakedProgramImpl::GeomRevision *revision,
                    bool useSimd)
 {
-    const size_t count = revision->influences.size();
-    if (revision->parameters.skinningMethod == _tokens->dualQuaternion) {
-        revision->rows.clear();
-        revision->palette.resize(count + 1);
-        for (size_t t = 0; t < count; ++t) {
-            revision->palette[t] =
-                RigExecScaledDualQuatFromMatrix(revision->influences[t]);
-        }
-        // The trailing entry is the weight complement's identity influence,
-        // exactly as RigExecSkinDualQuatPalette appends it.
-        revision->palette[count] = RigExecScaledDualQuat();
-        return;
-    }
-    revision->palette.clear();
-    if (!useSimd) {
-        revision->rows.clear();
-        return;
-    }
-    revision->rows.resize(count * RigExecSkinRowStride);
-    for (size_t t = 0; t < count; ++t) {
-        RigExecNarrowSkinRows(revision->influences[t],
-                              &revision->rows[t * RigExecSkinRowStride]);
-    }
+    eval::FoldSkinTransformForms<BakedSkinMath>(
+        BakedSkinPacket(revision->parameters).method,
+        revision->influences.data(), revision->influences.size(), useSimd,
+        &revision->rows, &revision->palette);
 }
 
 /// Copies \p chunk's OWN influences out of the matrix slots, keeping the
@@ -2847,59 +2894,32 @@ GatherChunkTransforms(const RigExecBakedProgramImpl &B,
                       const RigExecBakedProgramImpl::GeomRevision &revision,
                       RigExecBakedProgramImpl::GeomChunk *chunk)
 {
-    const bool dualQuat =
-        revision.parameters.skinningMethod == _tokens->dualQuaternion;
-    const size_t count = chunk->transforms.size();
-    const bool splitAlready = chunk->palette.size() == count + 1;
-    for (const int position : chunk->key) {
+    const auto matrixAt = [&](int position) -> const GfMatrix4d * {
+        if (position < 0 ||
+            size_t(position) >= revision.influenceSlots.size()) {
+            return nullptr;
+        }
         const int slot = revision.influenceSlots[size_t(position)];
         if (slot < 0) {
-            continue;
+            return nullptr;
         }
-        const GfMatrix4d &matrix = revision.finalPhase
-                                       ? B.finalMatrix[size_t(slot)]
-                                       : B.baseMatrix[size_t(slot)];
-        if (chunk->transforms[size_t(position)] == matrix) {
-            continue;
-        }
-        chunk->transforms[size_t(position)] = matrix;
-        chunk->keyChanged = true;
-        RigExecNarrowSkinRows(
-            matrix, &chunk->rows[size_t(position) * RigExecSkinRowStride]);
-        if (splitAlready) {
-            chunk->palette[size_t(position)] =
-                RigExecScaledDualQuatFromMatrix(matrix);
-        }
-    }
-    if (dualQuat && !splitAlready) {
-        // First run of a dual-quaternion revision: the whole table at once,
-        // which is also what keeps the entries outside the key -- identity,
-        // and never read -- in step with the matrices beside them.
-        chunk->palette.resize(count + 1);
-        for (size_t t = 0; t < count; ++t) {
-            chunk->palette[t] =
-                RigExecScaledDualQuatFromMatrix(chunk->transforms[t]);
-        }
-        chunk->palette[count] = RigExecScaledDualQuat();
-    }
+        return revision.finalPhase ? &B.finalMatrix[size_t(slot)]
+                                   : &B.baseMatrix[size_t(slot)];
+    };
+    eval::GatherSkinChunkTransforms<BakedSkinMath>(
+        BakedSkinPacket(revision.parameters).method, chunk->key, matrixAt,
+        &chunk->transforms, &chunk->rows, &chunk->palette, &chunk->keyChanged);
 }
 
 /// The view onto \p chunk's own tables.
-RigExecSkinTransformsView
+eval::SkinTransformsViewT<BakedSkinMath>
 ChunkTransformsView(const RigExecBakedProgramImpl::GeomChunk &chunk,
                     bool useSimd)
 {
-    RigExecSkinTransformsView view;
-    view.transforms = chunk.transforms.data();
-    view.transformCount = chunk.transforms.size();
-    if (useSimd && !chunk.rows.empty()) {
-        view.rows = chunk.rows.data();
-    }
-    if (!chunk.palette.empty()) {
-        view.palette = chunk.palette.data();
-        view.paletteSize = chunk.palette.size();
-    }
-    return view;
+    return eval::SkinChunkTransforms<BakedSkinMath>(
+        chunk.transforms.data(), chunk.transforms.size(), chunk.rows.data(),
+        !chunk.rows.empty(), useSimd, chunk.palette.data(),
+        chunk.palette.size());
 }
 
 /// The skin kernel's validation over the half RevisionStatic holds: the
@@ -2910,8 +2930,9 @@ ChunkTransformsView(const RigExecBakedProgramImpl::GeomChunk &chunk,
 bool
 SkinPacketIsUsable(const RigExecBakedProgramImpl::GeomRevision &revision)
 {
-    return revision.parameters.valid && revision.parameters.kind == "skin" &&
-           revision.layoutUsable && revision.envelopeOk;
+    return eval::SkinPacketIsUsable(revision.parameters.valid,
+                                    revision.parameters.kind == "skin",
+                                    revision.layoutUsable, revision.envelopeOk);
 }
 
 /// A skin revision's apply-or-fail answer from that half: past it a linear
@@ -2920,20 +2941,10 @@ SkinPacketIsUsable(const RigExecBakedProgramImpl::GeomRevision &revision)
 RigExecRevisionAcceptance
 SkinAcceptance(const RigExecBakedProgramImpl::GeomRevision &revision)
 {
-    if (!SkinPacketIsUsable(revision)) {
-        return RigExecRevisionAcceptance::Refuses;
-    }
-    switch (RigExecSkinMethodOf(revision.parameters)) {
-    case RigExecSkinMethod::ClassicLinear:
-        return RigExecRevisionAcceptance::Applies;
-    case RigExecSkinMethod::DualQuaternion:
-        return revision.role == RigExecBakedRevisionRole::Range
-                   ? RigExecRevisionAcceptance::Applies
-                   : RigExecRevisionAcceptance::Deferred;
-    case RigExecSkinMethod::Unknown:
-        break;
-    }
-    return RigExecRevisionAcceptance::Refuses;
+    return static_cast<RigExecRevisionAcceptance>(
+        eval::SkinAcceptance(SkinPacketIsUsable(revision),
+                             BakedSkinPacket(revision.parameters).method,
+                             revision.role == RigExecBakedRevisionRole::Range));
 }
 
 /// One vertex range of a skin revision: seed the revision's own output buffer
@@ -2950,38 +2961,17 @@ SkinAcceptance(const RigExecBakedProgramImpl::GeomRevision &revision)
 /// \p target is the buffer written, at the full count: staging for a chunk.
 bool
 SkinRange(RigExecBakedProgramImpl::GeomRevision *revision,
-          const GfVec3f *preceding, const RigExecSkinTransformsView &view,
-          size_t begin, size_t end, bool whole, bool useSimd,
-          std::vector<GfVec3f> *target)
+          const GfVec3f *preceding,
+          const eval::SkinTransformsViewT<BakedSkinMath> &view, size_t begin,
+          size_t end, bool whole, bool useSimd, std::vector<GfVec3f> *target)
 {
-    std::vector<GfVec3f> &out = *target;
-    std::copy(preceding + begin, preceding + end, out.begin() + long(begin));
-    if (whole) {
-        if (!RigExecApplySkinKernelWithTransforms(revision->parameters, view,
-                                                  &out, useSimd)) {
-            return false;
-        }
-    } else if (!RigExecApplySkinKernelRange(revision->parameters, view, begin,
-                                            end, &out, useSimd)) {
-        return false;
-    }
     // "Apply once", over the same range: the envelope was resolved at the
     // full count by RevisionStatic, because resolving it is atomic over the
-    // whole array, and every array here is indexed absolutely. The whole
-    // array goes through the kernel's own split for the reason the skinning
-    // above does: an unpartitioned mesh keeps the same threading.
-    if (!revision->fullStrength) {
-        if (whole) {
-            // `whole` means the whole array -- the full-range kernel above
-            // ignores the bounds -- so begin is 0 and the count is `end`.
-            RigExecBlendEnvelopeAll(preceding, revision->envelope.data(), end,
-                                    out.data());
-        } else {
-            RigExecBlendEnvelopeRange(preceding, revision->envelope.data(),
-                                      begin, end, out.data());
-        }
-    }
-    return true;
+    // whole array, and every array here is indexed absolutely.
+    return eval::SkinRange<BakedSkinMath>(
+        BakedSkinPacket(revision->parameters), revision->fullStrength,
+        revision->envelope.data(), preceding, view, begin, end, whole, useSimd,
+        !revision->parameters.skinTopology, RigExecGeometryRanges(), target);
 }
 
 /// The test capture (RigExecBakedProgramTesting::CapturePointReads): the
@@ -3064,25 +3054,40 @@ RigExecBakedResolvePoints(const RigExecBakedProgramImpl &B,
                           const RigExecBakedPointsBinding &binding,
                           const GfVec3f **points, size_t *count)
 {
-    for (const RigExecBakedPointVersion &candidate : binding.candidates) {
-        const RigExecBakedProgramImpl::GeomChain &chain =
-            B.chains[size_t(candidate.chain)];
-        if (binding.finalRead) {
-            if (!chain.haveResult)
-                continue;
-            *points = chain.result.cdata();
-            *count = chain.result.size();
-        } else {
-            if (!chain.haveBase)
-                continue;
-            // A version cut into groups gathers into the binding's own
-            // buffer, which only its one reading step uses.
-            RigExecBakedVersionPoints(chain, size_t(candidate.version),
-                                      &binding.gather, points, count);
-        }
-        return true;
-    }
-    return false;
+    // EvalCore's one candidate walk (rigExecEvalCore/chain.h); the
+    // version gather into the binding's own buffer stays adapter-local.
+    const void *raw = nullptr;
+    const bool answered = eval::ResolvePointsBody(
+        binding.candidates, binding.finalRead,
+        [](const RigExecBakedPointVersion &candidate) {
+            return int64_t(candidate.chain);
+        },
+        [](const RigExecBakedPointVersion &candidate) {
+            return int64_t(candidate.version);
+        },
+        [&B](size_t chain, bool finalRead) {
+            return chain < B.chains.size() &&
+                   (finalRead ? B.chains[chain].haveResult
+                              : B.chains[chain].haveBase);
+        },
+        [&B](size_t chain, const void **out, size_t *outCount) {
+            *out = B.chains[chain].result.cdata();
+            *outCount = B.chains[chain].result.size();
+            return true;
+        },
+        [&B, &binding](size_t chain, size_t version, const void **out,
+                       size_t *outCount) {
+            const GfVec3f *versionPoints = nullptr;
+            size_t versionCount = 0;
+            RigExecBakedVersionPoints(B.chains[chain], version, &binding.gather,
+                                      &versionPoints, &versionCount);
+            *out = versionPoints;
+            *outCount = versionCount;
+            return true;
+        },
+        &raw, count);
+    *points = static_cast<const GfVec3f *>(raw);
+    return answered;
 }
 
 void
@@ -3626,49 +3631,47 @@ AssembleRevision(RigExecBakedProgramImpl &B,
     return invalid;
 }
 
+/// The packet as EvalCore's EnvelopePacketView: representation and range
+/// policy classified to its integer codes, the arrays borrowed.
+eval::EnvelopePacketView
+BakedEnvelopeView(const RigExecWeightPacket &w)
+{
+    eval::EnvelopePacketView v;
+    v.valid = w.valid;
+    v.defaultWeight = w.defaultWeight;
+    v.values = w.values.data();
+    v.valueCount = w.values.size();
+    v.indices = w.indices.data();
+    v.indexCount = w.indices.size();
+    v.rangePolicyEmpty = w.rangePolicy.IsEmpty();
+    v.representation =
+        w.representation == rigExec::SchemaValueText::constant
+            ? eval::kWeightConstant
+            : (w.representation == rigExec::SchemaValueText::sparse
+                   ? eval::kWeightSparse
+                   : (w.representation == rigExec::SchemaValueText::dense
+                          ? eval::kWeightDense
+                          : eval::kWeightRepresentationUnknown));
+    v.rangePolicy = w.rangePolicy == rigExec::SchemaValueText::strict
+                        ? eval::kWeightPolicyStrict
+                        : (w.rangePolicy == rigExec::SchemaValueText::clamp
+                               ? eval::kWeightPolicyClamp
+                               : eval::kWeightPolicyUnknown);
+    return v;
+}
+
 /// The packet's envelope resolved at the full \p count, as ResolveAll into
 /// `envelope` would leave it (unchanged when it fails), with
 /// `envelopeVersion` moved exactly when the bytes did.
 void
 ResolveEnvelope(RigExecBakedProgramImpl::GeomRevision *revision, size_t count)
 {
-    revision->envelopeOk = revision->parameters.weights.ResolveAll(
-        count, &revision->resolveScratch);
-    if (revision->envelopeOk) {
-        RigExecBakedNoteFloats(&revision->envelope, &revision->resolveScratch,
-                               &revision->envelopeVersion);
-    }
-}
-
-/// The skin revision over its whole array, out of the fuse.
-///
-/// The path where the partition no longer describes the layout the packet
-/// carries -- a weight-paint edit the compiled rig let through, an interactive
-/// override on the indices, a cache that refused the mover after all. The
-/// keys cannot be trusted, so the chunks stand down and the one step that
-/// holds both the folded table and the preceding points runs the revision
-/// whole. Serial, cold, and exactly the arithmetic an unchunked revision
-/// would have performed.
-///
-/// Into \p fused, never staging or a group buffer: they hold what the
-/// chunks' published RevisionOut keys describe, and a retained or cloned key
-/// must keep matching it. \p points are the \p count points entering the
-/// revision.
-bool
-FuseWholeRevision(RigExecBakedProgramImpl::GeomRevision *revision,
-                  const GfVec3f *points, size_t count, bool useSimd,
-                  std::vector<GfVec3f> *fused)
-{
-    if (!revision->layoutUsable || !revision->envelopeOk ||
-        count != revision->precedingCount) {
-        return false;
-    }
-    // Against the forms the FOLD wrote -- this step reads RevisionTransforms
-    // and writes none of it, so the table it skins against is the one that
-    // slot already holds.
-    fused->resize(count);
-    return SkinRange(revision, points, WholeTransformsView(revision), 0, count,
-                     /*whole=*/true, useSimd, fused);
+    revision->envelopeOk = eval::ResolveEnvelopeInto(
+        revision->parameters.weights, count, &revision->envelope,
+        &revision->resolveScratch,
+        [revision](std::vector<float> *field, std::vector<float> *scratch) {
+            RigExecBakedNoteFloats(field, scratch, &revision->envelopeVersion);
+        });
 }
 
 /// The fuse's one diagnostic, about an enabled revision whose packet is
@@ -3797,179 +3800,99 @@ PassBaseGroups(const RigExecBakedProgramImpl::GeomChain &chain,
     }
 }
 
-/// Group step \p g of the Range \p revision (chain index \p revisionIndex of
-/// chain \p chainIndex): publishes group g of version
-/// revisionIndex + 1 -- the group kernel's points where the revision applies,
-/// the entering group shared by reference where it does not or where the
-/// kernel leaves the group untouched -- with a content version that moves
-/// exactly when the published bytes do (pointBlocks.h). Reads only group g of
-/// the entering version (and, for a skin, the matrix slots of its key);
-/// writes only `groups[g]` and its own chunk table, so the groups of one
-/// revision run concurrently. The decision is RevisionStatic's and the
-/// fold's (RigExecBakedRevisionApplies); a kernel refusal after an Applies
-/// acceptance passes the group through and the join counts it.
-void
-RunGroupStep(RigExecBakedProgramImpl &B,
-             const RigExecBakedProgramImpl::GeomChain &chain, int chainIndex,
-             RigExecBakedProgramImpl::GeomRevision *revision,
-             size_t revisionIndex, size_t g)
+/// The halo table of group \p g of the Range \p revision: a smooth or
+/// a delta mush reads its halo groups of the entering version beside
+/// its own, which its step declares (the scheduler ran their writers
+/// first). Fills `haloPoints[g]`; false refuses the group.
+bool
+BakedChainGroupHalo(RigExecBakedProgramImpl &B,
+                    const RigExecBakedProgramImpl::GeomChain &chain,
+                    RigExecBakedProgramImpl::GeomRevision *revision,
+                    size_t revisionIndex, size_t g,
+                    const RigExecPointsRef<GfVec3f> &entering)
 {
-    if (g >= revision->groups.size() || g + 1 >= chain.groupBounds.size() ||
-        g >= chain.baseGroups.size()) {
-        return;
-    }
-    RigExecGroupState<GfVec3f> &state = revision->groups[g];
-    // This run's walk counts: zero unless the sparse walk below runs.
-    state.walk.computed = 0;
-    state.walk.reused = 0;
-    if (revision->rangeSetAside) {
-        // A cycle set the revision aside: it passes the base through, as an
-        // excluded fuse does, and computes nothing.
-        state.ok = false;
-        RigExecPublishPassedGroup(&state, chain.baseGroups[g].published,
-                                  BaseGroupSource(chain, g));
-        return;
-    }
-    const RigExecPointsRef<GfVec3f> &entering =
-        RigExecBakedGroupAt(chain, revisionIndex, g);
-    const RigExecGroupSource from =
-        RigExecBakedGroupSourceAt(B, chainIndex, revisionIndex, g);
-    const size_t begin = size_t(chain.groupBounds[g]);
-    const size_t end = size_t(chain.groupBounds[g + 1]);
-    const size_t count = revision->precedingCount;
-    // The count is a pin (RigExecBakedRolesStand), so the group always has
-    // its Build size; a run that met another refuses rather than reading
-    // past a group.
-    if (count != chain.groupPointCount || end < begin ||
-        entering.count != end - begin) {
-        state.ok = false;
-        RigExecPublishPassedGroup(&state, entering, from);
-        NoteGateViolation(B);
-        return;
-    }
-    if (!RigExecBakedRevisionApplies(*revision)) {
-        state.ok = true;
-        RigExecPublishPassedGroup(&state, entering, from);
-        return;
-    }
-    const bool skin = revision->op == RigExecRevisionOp::Skin;
-    RigExecSkinTransformsView view;
-    if (skin) {
-        // Range skins rest on a compiled rig layout (a NoLayoutOverride pin),
-        // so the keys describe the vertices; a stale partition is a pin hole
-        // and refuses rather than skinning against identities.
-        if (revision->partitionStale || g >= revision->chunks.size()) {
-            state.ok = false;
-            RigExecPublishPassedGroup(&state, entering, from);
-            NoteGateViolation(B);
-            return;
-        }
-        RigExecBakedProgramImpl::GeomChunk &chunk = revision->chunks[g];
-        chunk.keyChanged = false;
-        GatherChunkTransforms(B, *revision, &chunk);
-        view = ChunkTransformsView(chunk, B.useSimd);
-    }
-    // A smooth or a delta mush reads its halo groups of the entering version
-    // beside its own, which its step declares (the scheduler ran their
-    // writers first).
-    RigExecGroupPoints<GfVec3f> halo;
     const bool mush = revision->op == RigExecRevisionOp::DeltaMush;
-    if (revision->op == RigExecRevisionOp::Smooth || mush) {
-        const size_t groups = chain.groupBounds.size() - 1;
-        if (g >= revision->haloGroups.size() ||
-            g >= revision->haloPoints.size() ||
-            revision->haloPoints[g].size() != groups ||
-            (mush && g >= revision->mushGroups.size())) {
-            state.ok = false;
-            RigExecPublishPassedGroup(&state, entering, from);
-            NoteGateViolation(B);
-            return;
-        }
-        std::vector<const GfVec3f *> &table = revision->haloPoints[g];
-        std::fill(table.begin(), table.end(), nullptr);
-        table[g] = entering.data;
-        for (const int h : revision->haloGroups[g]) {
-            const RigExecPointsRef<GfVec3f> &group =
-                RigExecBakedGroupAt(chain, revisionIndex, size_t(h));
-            if (group.count != size_t(chain.groupBounds[size_t(h) + 1] -
-                                      chain.groupBounds[size_t(h)])) {
-                state.ok = false;
-                RigExecPublishPassedGroup(&state, entering, from);
-                NoteGateViolation(B);
-                return;
-            }
-            table[size_t(h)] = group.data;
-        }
-        halo.bounds = chain.groupBounds.data();
-        halo.groups = groups;
-        halo.points = table.data();
+    if (revision->op != RigExecRevisionOp::Smooth && !mush) {
+        return true;
     }
-    const int k = RigExecGroupScratch(&state, end - begin);
-    if (revision->blendChunked) {
-        auto &chunk = revision->chunks[g];
-        auto &deltas = chunk.blendDeltas;
-        deltas.assign(end - begin, GfVec3f(0));
-        for (int c : chunk.key) {
-            const auto &channel = revision->blendChannels[size_t(c)];
-            const auto held = RigExecBakedResolvePathLeaf(
-                B, revision->leaves, size_t(channel.weightHeldLeaf));
-            float weight = 0.0f;
-            if (channel.poseWeight >= 0 &&
-                !(held.IsHolding<bool>() && held.UncheckedGet<bool>())) {
-                weight = B.poseWeights[size_t(channel.poseWeight)];
-            } else {
-                const auto value = RigExecBakedResolvePathLeaf(
-                    B, revision->leaves, size_t(channel.weightLeaf));
-                if (value.IsHolding<float>())
-                    weight = value.UncheckedGet<float>();
-            }
-            RigExecAccumulateBlendRange(
-                revision->blendSamples[size_t(c)].samples, weight, begin, end,
-                deltas.data());
+    const size_t groups = chain.groupBounds.size() - 1;
+    if (g >= revision->haloGroups.size() || g >= revision->haloPoints.size() ||
+        revision->haloPoints[g].size() != groups ||
+        (mush && g >= revision->mushGroups.size())) {
+        return false;
+    }
+    std::vector<const GfVec3f *> &table = revision->haloPoints[g];
+    std::fill(table.begin(), table.end(), nullptr);
+    table[g] = entering.data;
+    for (const int h : revision->haloGroups[g]) {
+        const RigExecPointsRef<GfVec3f> &group =
+            RigExecBakedGroupAt(chain, revisionIndex, size_t(h));
+        if (group.count != size_t(chain.groupBounds[size_t(h) + 1] -
+                                  chain.groupBounds[size_t(h)])) {
+            return false;
         }
-        const bool full =
-            RigExecEnvelopeIsFullStrength(revision->parameters.weights);
-        auto &out = *state.own[size_t(k)];
-        for (size_t i = 0; i < end - begin; ++i)
-            out[i] = RigExecBlendEnvelope(
-                entering.data[i], entering.data[i] + deltas[i],
-                full ? 1.0f : revision->rangeInputs.blendWeights[begin + i]);
-        state.ok = true;
-        RigExecPublishOwnGroup(&state, k);
-        return;
+        table[size_t(h)] = group.data;
     }
-    bool untouched = false;
-    // A sparse walk reuses what it last computed for this group's entries
-    // whose inputs held their bits (`state.walk`).
-    const bool ok = RigExecRunRevisionGroup(
-        revision->op, revision->parameters, revision->rangeInputs,
-        skin ? &view : nullptr, entering.data, state.own[size_t(k)]->data(),
-        count, begin, end, GroupEnvelope(*revision), B.useSimd, &untouched,
-        &state.walk, halo.points ? &halo : nullptr,
-        mush ? &revision->mushGroups[g] : nullptr);
-    state.ok = ok;
-    if (!ok || untouched) {
-        RigExecPublishPassedGroup(&state, entering, from);
-        return;
-    }
-    RigExecPublishOwnGroup(&state, k);
+    return true;
 }
 
-/// Speculative chunk \p g of the Whole keyed skin \p revision: group g of
-/// the entering version skinned against the chunk's own key-filled table
-/// into a buffer of the group's state, kept as its computed result
-/// (RigExecNoteComputedGroup) for the fuse to publish or discard. Like a
-/// Legacy keyed chunk it does not wait for the fold, and its `ok` is sticky
-/// across runs it sits out.
+/// The chunked blend arm of a group step: the group's deltas summed
+/// from its key's channels (blendRangeKernel.h), blended back over the
+/// entering points through the envelope RevisionStatic resolved.
 void
-RunWholeSkinChunk(const RigExecBakedProgramImpl &B,
-                  const RigExecBakedProgramImpl::GeomChain &chain,
-                  RigExecBakedProgramImpl::GeomRevision *revision,
-                  size_t revisionIndex, size_t g)
+BakedChainBlendGroup(RigExecBakedProgramImpl &B,
+                     RigExecBakedProgramImpl::GeomRevision *revision, size_t g,
+                     size_t begin, size_t end,
+                     const RigExecPointsRef<GfVec3f> &entering,
+                     RigExecGroupState<GfVec3f> *state)
+{
+    const int k = RigExecGroupScratch(state, end - begin);
+    auto &chunk = revision->chunks[g];
+    auto &deltas = chunk.blendDeltas;
+    deltas.assign(end - begin, GfVec3f(0));
+    for (int c : chunk.key) {
+        const auto &channel = revision->blendChannels[size_t(c)];
+        const auto held = RigExecBakedResolvePathLeaf(
+            B, revision->leaves, size_t(channel.weightHeldLeaf));
+        float weight = 0.0f;
+        if (channel.poseWeight >= 0 &&
+            !(held.IsHolding<bool>() && held.UncheckedGet<bool>())) {
+            weight = B.poseWeights[size_t(channel.poseWeight)];
+        } else {
+            const auto value = RigExecBakedResolvePathLeaf(
+                B, revision->leaves, size_t(channel.weightLeaf));
+            if (value.IsHolding<float>())
+                weight = value.UncheckedGet<float>();
+        }
+        RigExecAccumulateBlendRange(revision->blendSamples[size_t(c)].samples,
+                                    weight, begin, end, deltas.data());
+    }
+    const bool full = eval::EnvelopeIsFullStrength(
+        BakedEnvelopeView(revision->parameters.weights));
+    auto &out = *state->own[size_t(k)];
+    for (size_t i = 0; i < end - begin; ++i)
+        out[i] = RigExecBlendEnvelope(
+            entering.data[i], entering.data[i] + deltas[i],
+            full ? 1.0f : revision->rangeInputs.blendWeights[begin + i]);
+    state->ok = true;
+    RigExecPublishOwnGroup(state, k);
+}
+
+/// Speculative chunk \p g of the Whole keyed skin \p revision: group g
+/// of the entering version skinned against the chunk's own key-filled
+/// table into a buffer of the group's state, kept as its computed
+/// result (RigExecNoteComputedGroup) for the fuse to publish or
+/// discard. Like a Legacy keyed chunk it does not wait for the fold,
+/// and its `ok` is sticky across runs it sits out.
+bool
+BakedChainWholeSkinChunk(const RigExecBakedProgramImpl &B,
+                         const RigExecBakedProgramImpl::GeomChain &chain,
+                         RigExecBakedProgramImpl::GeomRevision *revision,
+                         size_t revisionIndex, size_t g)
 {
     if (g >= revision->chunks.size() || g >= revision->groups.size() ||
         g + 1 >= chain.groupBounds.size()) {
-        return;
+        return true;
     }
     RigExecBakedProgramImpl::GeomChunk &chunk = revision->chunks[g];
     RigExecGroupState<GfVec3f> &state = revision->groups[g];
@@ -3984,21 +3907,21 @@ RunWholeSkinChunk(const RigExecBakedProgramImpl &B,
         entering.count != end - begin) {
         state.ok = false;
         chunk.ok = false;
-        return;
+        return true;
     }
     GatherChunkTransforms(B, *revision, &chunk);
-    const RigExecSkinTransformsView view =
-        ChunkTransformsView(chunk, B.useSimd);
     const int k = RigExecGroupScratch(&state, end - begin);
-    const bool ok = RigExecRunRevisionGroup(
-        revision->op, revision->parameters, revision->rangeInputs, &view,
-        entering.data, state.own[size_t(k)]->data(), revision->precedingCount,
-        begin, end, GroupEnvelope(*revision), B.useSimd);
+    const bool ok = eval::ApplySkinGroupRange<BakedSkinMath>(
+        BakedSkinPacket(revision->parameters), revision->fullStrength,
+        revision->envelope.data(), ChunkTransformsView(chunk, B.useSimd),
+        entering.data, revision->precedingCount, begin, end, B.useSimd,
+        state.own[size_t(k)]->data());
     if (ok) {
         RigExecNoteComputedGroup(&state, k);
     }
     state.ok = ok;
     chunk.ok = ok;
+    return true;
 }
 
 /// Whether chunk \p k of a Whole or Legacy revision holds an answer: a keyed
@@ -4013,163 +3936,6 @@ ChunkHoldsAnswer(const RigExecBakedProgramImpl::GeomRevision &revision,
                revision.groups[k].ownComputed >= 0;
     }
     return revision.chunks[k].ok;
-}
-
-/// The fuse of the Whole \p revision (revision id \p id, chain index
-/// \p revisionIndex of chain \p chainIndex): the decision a Legacy fuse makes
-/// -- packet and fold, acceptance or the AND of the speculative chunks, the
-/// whole-array skin where the partition went stale -- and then every group
-/// of version revisionIndex + 1 published with its own exact version: the
-/// chunk's computed result (a keyed skin), the group's slice of the result
-/// copied into a buffer of the group (one whole chunk, or the whole-array
-/// skin), or the entering group shared where the revision did not apply.
-/// `groupIds` and `doneVersion` follow: a downstream group reruns only
-/// if its group moved.
-void
-RunWholeFuse(RigExecBakedProgramImpl &B,
-             const RigExecBakedProgramImpl::GeomChain &chain, int chainIndex,
-             RigExecBakedProgramImpl::GeomRevision *revision, int id,
-             size_t revisionIndex, RigExecBakedStep *step)
-{
-    if (revision->rangeSetAside) {
-        PassBaseGroups(chain, revision);
-        return;
-    }
-    const bool skin = revision->op == RigExecRevisionOp::Skin;
-    const bool packetValid =
-        revision->parameters.valid && (!skin || revision->influencesValid);
-    EmitInvalidPacketLine(B, *revision, packetValid, &step->diagnostics);
-    revision->executed = true;
-    step->counters.revisionsExecuted = 1;
-    revision->resultStatus = revision->status.state;
-    const size_t groupCount = revision->groups.size();
-    const bool keyed = revision->chunked;
-    const size_t count = revision->precedingCount;
-    // The count is a pin; a run at another one refuses.
-    const bool sized = count == chain.groupPointCount &&
-                       chain.groupBounds.size() == groupCount + 1 &&
-                       (keyed || revision->stagingOutput.size() == count);
-    bool applied = packetValid && revision->status.AllowsApply() && sized;
-    const bool whole = applied && skin && revision->partitionStale;
-    std::vector<GfVec3f> fused;
-    if (whole) {
-        // The whole-array skin; a stale partition is rare.
-        const GfVec3f *points = nullptr;
-        size_t enteringCount = 0;
-        RigExecBakedVersionPoints(chain, revisionIndex,
-                                  &revision->wholeEntering, &points,
-                                  &enteringCount);
-        applied = FuseWholeRevision(revision, points, enteringCount, B.useSimd,
-                                    &fused);
-    } else if (applied &&
-               revision->acceptance != RigExecRevisionAcceptance::Deferred) {
-        applied = revision->acceptance == RigExecRevisionAcceptance::Applies;
-    } else if (applied) {
-        for (size_t k = 0; k < revision->chunks.size(); ++k) {
-            if (!ChunkHoldsAnswer(*revision, k)) {
-                applied = false;
-                break;
-            }
-        }
-    }
-    // A keyed skin publishes its chunks' results: each must hold one.
-    if (applied && keyed && !whole) {
-        for (size_t g = 0; g < groupCount; ++g) {
-            if (!ChunkHoldsAnswer(*revision, g)) {
-                applied = false;
-                break;
-            }
-        }
-    }
-    if (!applied && revision->status.AllowsApply()) {
-        revision->resultStatus = _tokens->moverFailed;
-    }
-    const std::vector<GfVec3f> *slices =
-        whole ? &fused : (keyed ? nullptr : &revision->stagingOutput);
-    bool moved = SizeGroupIds(revision);
-    for (size_t g = 0; g < groupCount; ++g) {
-        RigExecGroupState<GfVec3f> &state = revision->groups[g];
-        if (applied && !slices) {
-            RigExecPublishOwnGroup(&state, state.ownComputed);
-        } else if (applied) {
-            const size_t begin = size_t(chain.groupBounds[g]);
-            const size_t end = size_t(chain.groupBounds[g + 1]);
-            const int k = RigExecGroupScratch(&state, end - begin);
-            std::copy(slices->begin() + long(begin),
-                      slices->begin() + long(end),
-                      state.own[size_t(k)]->begin());
-            RigExecPublishOwnGroup(&state, k);
-        } else {
-            RigExecPublishPassedGroup(
-                &state, RigExecBakedGroupAt(chain, revisionIndex, g),
-                RigExecBakedGroupSourceAt(B, chainIndex, revisionIndex, g));
-        }
-        RigExecGroupSource source;
-        source.slot = int64_t(RigExecBakedGroupSlot(B, id, g));
-        source.version = state.version;
-        moved = NoteGroupId(revision, g, source) || moved;
-    }
-    if (moved) {
-        ++revision->doneVersion;
-    }
-    revision->lastStatus = revision->status;
-    revision->ran = true;
-}
-
-/// The join of the Range \p revision (revision id \p id, chain index
-/// \p revisionIndex of chain \p chainIndex): the fuse's line and status from
-/// the decision its group steps shared, the refusal count over its written
-/// groups, and the content ids of version revisionIndex + 1 -- its own for
-/// the groups it writes, the entering version's for the groups it aliases
-/// (RigExecBakedGroupSourceAt, which resolves past a revision a cycle set
-/// aside to the base groups as ChainInputs left them). Reads no points. `doneVersion` moves
-/// exactly when those ids do, so a version whose groups all kept their bytes
-/// keeps its version. A cycle that set the revision aside makes it publish
-/// the base passed through.
-void
-RunJoin(const RigExecBakedProgramImpl &B,
-        const RigExecBakedProgramImpl::GeomChain &chain, int chainIndex,
-        RigExecBakedProgramImpl::GeomRevision *revision, int id,
-        size_t revisionIndex, RigExecBakedStep *step)
-{
-    if (revision->rangeSetAside) {
-        PassBaseGroups(chain, revision);
-        return;
-    }
-    // The fuse's own predicate, which for a skin ANDs in the fold.
-    const bool packetValid =
-        revision->parameters.valid &&
-        (revision->op != RigExecRevisionOp::Skin || revision->influencesValid);
-    EmitInvalidPacketLine(B, *revision, packetValid, &step->diagnostics);
-    revision->executed = true;
-    step->counters.revisionsExecuted = 1;
-    const bool applied = RigExecBakedRevisionApplies(*revision);
-    revision->resultStatus = revision->status.state;
-    if (!applied && revision->status.AllowsApply()) {
-        revision->resultStatus = _tokens->moverFailed;
-    }
-    bool moved = SizeGroupIds(revision);
-    uint32_t refusals = 0;
-    for (size_t g = 0; g < revision->groupIds.size(); ++g) {
-        RigExecGroupSource source;
-        if (g < revision->groupWritten.size() && revision->groupWritten[g] &&
-            g < revision->groups.size()) {
-            if (applied && !revision->groups[g].ok) {
-                ++refusals;
-            }
-            source.slot = int64_t(RigExecBakedGroupSlot(B, id, g));
-            source.version = revision->groups[g].version;
-        } else {
-            source = RigExecBakedGroupSourceAt(B, chainIndex, revisionIndex, g);
-        }
-        moved = NoteGroupId(revision, g, source) || moved;
-    }
-    revision->rangeRefusals = refusals;
-    if (moved) {
-        ++revision->doneVersion;
-    }
-    revision->lastStatus = revision->status;
-    revision->ran = true;
 }
 
 } // namespace
@@ -4217,35 +3983,19 @@ namespace {
 void
 PublishBaseGroups(RigExecBakedProgramImpl::GeomChain *chain, bool moved)
 {
-    if (chain->groupBounds.size() < 2) {
-        return;
-    }
-    const size_t groups = chain->groupBounds.size() - 1;
-    if (!moved && chain->baseOwner && chain->baseGroups.size() == groups) {
-        return;
-    }
-    chain->baseGroups.resize(groups);
-    auto owner = std::make_shared<const VtVec3fArray>(chain->lastBase);
-    const size_t count = owner->size();
-    for (size_t g = 0; g < groups; ++g) {
-        size_t begin = 0, end = 0;
-        RigExecPointRangeAt(chain->groupBounds[g], chain->groupBounds[g + 1],
-                            g + 1 == groups, count, &begin, &end);
-        RigExecPointsRef<GfVec3f> ref;
-        ref.owner = owner;
-        ref.data = owner->cdata() + begin;
-        ref.count = end - begin;
-        RigExecGroupState<GfVec3f> &state = chain->baseGroups[g];
-        if (!state.ran ||
-            !RigExecPointsBitsEqual(ref.data, ref.count, state.published.data,
-                                    state.published.count)) {
-            ++state.version;
-        }
-        state.published = std::move(ref);
-        state.ran = true;
-        state.ok = true;
-    }
-    chain->baseOwner = std::move(owner);
+    // EvalCore's one publication body (rigExecEvalCore/chain.h); the
+    // owner copy and its reads stay in this adapter's types.
+    eval::PublishBaseGroupsBody<GfVec3f>(
+        chain->groupBounds, moved, chain->baseGroups, chain->baseOwner,
+        [chain] {
+            return std::make_shared<const VtVec3fArray>(chain->lastBase);
+        },
+        [](const std::shared_ptr<const VtVec3fArray> &owner) {
+            return owner->cdata();
+        },
+        [](const std::shared_ptr<const VtVec3fArray> &owner) {
+            return owner->size();
+        });
 }
 
 /// Group \p g of the base as a set-aside writer passes it through: \p state
@@ -4294,56 +4044,1175 @@ PassSetAsideBaseGroups(const RigExecBakedProgramImpl::GeomChain &chain,
     }
 }
 } // namespace
+// EvalCore chain host (rigExecEvalCore/chain.h) over the baked
+// program's Gf storage: the chain bodies own the decisions, this
+// adapter binds its chains, revisions and counters.
+struct BakedChainInputs {
+    RigExecBakedProgramImpl *B = nullptr;
+    bool chainIndexForObject(int32_t object, size_t *chain) const
+    {
+        if (object < 0 || size_t(object) >= B->chains.size()) {
+            return false;
+        }
+        *chain = size_t(object);
+        return true;
+    }
+    bool revisionIndexForObject(int32_t object, size_t *chain,
+                                size_t *revision) const
+    {
+        if (object < 0 || size_t(object) >= B->revisionIndex.size()) {
+            return false;
+        }
+        const auto &index = B->revisionIndex[size_t(object)];
+        *chain = size_t(index.first);
+        *revision = size_t(index.second);
+        return *chain < B->chains.size() &&
+               *revision < B->chains[*chain].revisions.size();
+    }
+    bool derivedIndexForObject(int32_t object, size_t *chain,
+                               size_t *derived) const
+    {
+        if (object < 0 || size_t(object) >= B->derivedIndex.size()) {
+            return false;
+        }
+        const auto &index = B->derivedIndex[size_t(object)];
+        *chain = size_t(index.first);
+        *derived = size_t(index.second);
+        return *chain < B->chains.size() &&
+               *derived < B->chains[*chain].derived.size();
+    }
+    bool chainHasBase(size_t chain) const
+    {
+        return B->chains[chain].haveBase;
+    }
+    int opCode(size_t chain, size_t revision) const
+    {
+        return int(B->chains[chain].revisions[revision].op);
+    }
+    bool useSimd() const
+    {
+        return B->useSimd;
+    }
+};
+
+struct BakedChainState {
+    RigExecBakedProgramImpl *B = nullptr;
+    RigExecBakedStep *step = nullptr;
+    UsdTimeCode time;
+    VtVec3fArray derivedPublished;
+    RigExecMoverParameters derivedParameters;
+    RigExecMoverStatus derivedStatus;
+    std::vector<GfVec3f> versionScratch;
+    using Chain = RigExecBakedProgramImpl::GeomChain;
+    using Revision = RigExecBakedProgramImpl::GeomRevision;
+    Chain &chainAt(size_t chain)
+    {
+        return B->chains[chain];
+    }
+    Revision &revisionAt(size_t chain, size_t revision)
+    {
+        return B->chains[chain].revisions[revision];
+    }
+    eval::ChainInputsAccessT<GfVec3f, VtVec3fArray, VtVec3fArray>
+    chainInputs(size_t chain)
+    {
+        Chain &c = chainAt(chain);
+        eval::ChainInputsAccessT<GfVec3f, VtVec3fArray, VtVec3fArray> access;
+        access.sampledHave = c.sampledHaveBase;
+        access.sampled = &c.sampledBase;
+        access.last = &c.lastBase;
+        access.haveBase = &c.haveBase;
+        access.haveResult = &c.haveResult;
+        access.result = &c.result;
+        access.resultVersion = &c.resultVersion;
+        access.baseVersion = &c.baseVersion;
+        access.scheduleDirty = &c.scheduleDirty;
+        access.revisionCount = c.revisions.size();
+        return access;
+    }
+    void resetChainRevision(size_t chain, size_t revision)
+    {
+        ResetGeometryRevision(&revisionAt(chain, revision));
+    }
+    bool revisionRangeNotAside(size_t chain, size_t revision)
+    {
+        const Revision &rev = revisionAt(chain, revision);
+        return rev.rangeRole && !rev.rangeSetAside;
+    }
+    void setRevisionSource(size_t chain, size_t revision, int source)
+    {
+        revisionAt(chain, revision).currentSource = source;
+    }
+    void resetBaseGroups(size_t chain)
+    {
+        Chain &c = chainAt(chain);
+        for (auto &group : c.baseGroups) {
+            RigExecResetGroup(&group);
+        }
+        c.baseOwner.reset();
+    }
+    void clearChainResultIds(size_t chain)
+    {
+        chainAt(chain).resultIds.clear();
+        chainAt(chain).spareIds.clear();
+    }
+    void countChainCreated(size_t chain)
+    {
+        for (auto &revision : chainAt(chain).revisions) {
+            if (revision.created) {
+                ++step->counters.revisionsCreated;
+                revision.created = false;
+            }
+        }
+    }
+    void noteChainSchedules(size_t)
+    {
+        ++step->counters.schedulesBuilt;
+    }
+    void noteChainBaseDirty(size_t chain, bool dirty)
+    {
+        chainAt(chain).baseDirty = dirty;
+    }
+    void publishChainBaseGroups(size_t chain, bool moved)
+    {
+        PublishBaseGroups(&chainAt(chain), moved);
+    }
+    bool chainPointsEqual(size_t, const VtVec3fArray &a, const VtVec3fArray &b)
+    {
+        return SamePoints(a, b);
+    }
+    bool chainBaseValueEqual(size_t, const VtVec3fArray &a,
+                             const VtVec3fArray &b)
+    {
+        return RigExecBakedHeadValueSame(VtValue(a), VtValue(b));
+    }
+    bool foldInfluences(size_t chain, size_t revision, bool *changed)
+    {
+        *changed = FoldInfluences(*B, &revisionAt(chain, revision));
+        return true;
+    }
+    void setInfluencesChanged(size_t chain, size_t revision, bool changed)
+    {
+        revisionAt(chain, revision).influencesChanged = changed;
+    }
+    void setInfluencesValid(size_t chain, size_t revision, bool valid)
+    {
+        revisionAt(chain, revision).influencesValid = valid;
+    }
+    bool skinTransformsUsable(size_t chain, size_t revision)
+    {
+        const Revision &rev = revisionAt(chain, revision);
+        return eval::SkinTransformsAreUsable<BakedSkinMath>(
+            rev.influences.data(), rev.influences.size());
+    }
+    void foldTransformForms(size_t chain, size_t revision)
+    {
+        FoldTransformForms(&revisionAt(chain, revision), B->useSimd);
+    }
+    bool skinPacketUsable(size_t chain, size_t revision)
+    {
+        return SkinPacketIsUsable(revisionAt(chain, revision));
+    }
+    bool dualQuatPaletteSafe(size_t chain, size_t revision)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        const auto &palette = rev.palette;
+        const auto layout = eval::SkinLayoutForPacket<BakedSkinMath>(
+            BakedSkinPacket(rev.parameters), WholeTransformsView(&rev),
+            rev.precedingCount);
+        return (rev.dqWeightsSafe &&
+                RigExecDualQuatPaletteSafe(palette.data(), palette.size())) ||
+               RigExecDualQuatBlendsAccept(layout, [&](const int *indices,
+                                                       const double *weights,
+                                                       size_t count) {
+                   RigExecScaledDualQuat blend;
+                   return RigExecBlendScaledDualQuats(palette.data(),
+                                                      palette.size(), indices,
+                                                      weights, count, &blend);
+               });
+    }
+    bool revisionIsRange(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).role ==
+               RigExecBakedRevisionRole::Range;
+    }
+    bool revisionIsDualQuat(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).parameters.skinningMethod ==
+               _tokens->dualQuaternion;
+    }
+    bool revisionGpuOwned(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).gpuOwned;
+    }
+    void noteRevisionGpuTouched(size_t chain, size_t revision)
+    {
+        revisionAt(chain, revision).gpuTouched = true;
+    }
+    void adoptRevisionLayout(size_t chain, size_t revision)
+    {
+        RigExecBakedAdoptRevisionLayout(&revisionAt(chain, revision));
+    }
+    bool applyCurrentPhasePacket(size_t chain, size_t revision)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        if (rev.weightCurrentPhase && rev.weightObject >= 0) {
+            rev.currentPhasePacket = B->weightPackets[size_t(rev.weightObject)];
+            const auto &weightField = B->weightFields[size_t(rev.weightField)];
+            if (weightField.ok) {
+                rev.currentPhasePacket.representation =
+                    _tokens->denseRepresentation;
+                rev.currentPhasePacket.values = weightField.values;
+                rev.currentPhasePacket.indices.clear();
+                rev.currentPhasePacket.defaultWeight = 0.0f;
+                rev.currentPhasePacket.valid = true;
+            } else {
+                rev.currentPhasePacket = RigExecWeightPacket();
+                step->diagnostics.push_back("current-phase weight failed: " +
+                                            weightField.error);
+            }
+        }
+        return true;
+    }
+    void assembleRevision(size_t chain, size_t revision)
+    {
+        Chain &c = chainAt(chain);
+        Revision &rev = revisionAt(chain, revision);
+        const bool rangeChain = rev.role != RigExecBakedRevisionRole::Legacy;
+        const bool rangeLattice = rev.role == RigExecBakedRevisionRole::Range &&
+                                  rev.op == RigExecRevisionOp::Lattice;
+        if (rev.restBaseHeld &&
+            (!rangeLattice || rev.restBaseVersion != c.baseVersion)) {
+            rev.restBaseHeld = false;
+        }
+        RigExecMoverParameters assembled =
+            AssembleRevision(*B, &rev, c.lastBase.cdata(), c.lastBase.size(),
+                             time, step, c.lastBase.size());
+        if (rangeChain && !rev.blendChunked &&
+            rev.op == RigExecRevisionOp::BlendShape &&
+            !RigExecBakedSamePoints(assembled.blendDeltas.data(),
+                                    assembled.blendDeltas.size(),
+                                    rev.parameters.blendDeltas.data(),
+                                    rev.parameters.blendDeltas.size())) {
+            ++rev.deltasVersion;
+        }
+        if (rev.op == RigExecRevisionOp::BlendShape) {
+            rev.deltasSpare = std::move(rev.parameters.blendDeltas);
+        }
+        rev.parameters = std::move(assembled);
+        if (rangeLattice) {
+            rev.restBaseHeld =
+                !rev.parameters.restPoints.empty() &&
+                rev.parameters.restPoints.size() == c.lastBase.size();
+            rev.restBaseVersion = c.baseVersion;
+        }
+    }
+    void publishAssembledStatus(size_t chain, size_t revision)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        rev.status =
+            RigExecStatusForParameters(rev.parameters, rev.moverPathText);
+        step->counters.revisionsBuilt = 1;
+        const VtValue diagnosticWeight = RigExecBakedResolvePathLeaf(
+            *B, rev.leaves, size_t(rev.defaultWeightLeaf));
+        rev.defaultWeight = diagnosticWeight.IsHolding<float>()
+                                ? diagnosticWeight.UncheckedGet<float>()
+                                : 1.0f;
+        rev.staticDirty = true;
+        rev.lastDefaultWeight = rev.defaultWeight;
+        rev.weightFieldPublished = false;
+        Chain &c = chainAt(chain);
+        if (rev.weightObject >= 0 && B->publishWeightFields) {
+            const RigExecWeightPacket &packet =
+                rev.weightCurrentPhase
+                    ? rev.currentPhasePacket
+                    : B->weightPackets[size_t(rev.weightObject)];
+            if (packet.valid) {
+                const size_t logicalCount =
+                    rev.weightOperationDomain ? size_t(1) : c.lastBase.size();
+                const bool shared =
+                    !rev.weightCurrentPhase && rev.weightPacketValue >= 0 &&
+                    size_t(rev.weightPacketValue) < B->opAdapter.values.size();
+                const uint64_t packetRevision =
+                    shared ? B->opAdapter.values[size_t(rev.weightPacketValue)]
+                                 .revision
+                           : 0;
+                if (!shared || !rev.weightValuesHeld ||
+                    rev.weightValuesPacketRevision != packetRevision ||
+                    rev.weightValuesCount != logicalCount) {
+                    std::vector<float> &resolved = rev.resolveScratch;
+                    if (!packet.ResolveAll(logicalCount, &resolved)) {
+                        resolved.assign(logicalCount, 0.0f);
+                        for (size_t i = 0; i < logicalCount; ++i) {
+                            const float w = packet.Resolve(i, logicalCount);
+                            resolved[i] = w < 0.0f ? 0.0f : w;
+                        }
+                    }
+                    RigExecBakedNoteFloats(&rev.publishedWeightValues,
+                                           &resolved, &rev.weightValuesVersion);
+                    rev.weightValuesHeld = shared;
+                    rev.weightValuesPacketRevision = packetRevision;
+                    rev.weightValuesCount = logicalCount;
+                }
+                rev.weightFieldPublished = true;
+            }
+        }
+    }
+    void finishRevisionStaticHead(size_t, size_t)
+    {
+    }
+    void gpuRevisionStatic(size_t chain, size_t revision)
+    {
+        Chain &c = chainAt(chain);
+        Revision &rev = revisionAt(chain, revision);
+        const bool skin = rev.op == RigExecRevisionOp::Skin;
+        const size_t count = c.lastBase.size();
+        rev.precedingCount = count;
+        rev.envelopeOk = true;
+        rev.fullStrength = true;
+        if (skin) {
+            rev.layoutUsable =
+                eval::SkinLayoutIsUsable(BakedSkinPacket(rev.parameters), count,
+                                         rev.parameters.skinTransforms.size());
+            rev.dqWeightsSafe =
+                rev.layoutUsable &&
+                rev.parameters.skinningMethod == _tokens->dualQuaternion &&
+                RigExecDualQuatWeightsSafe(
+                    eval::SkinLayoutForPacket<BakedSkinMath>(
+                        BakedSkinPacket(rev.parameters),
+                        eval::SkinTransformsOf<BakedSkinMath>(
+                            rev.parameters.skinTransforms.data(),
+                            rev.parameters.skinTransforms.size()),
+                        count));
+            rev.fullStrength = eval::EnvelopeIsFullStrength(
+                BakedEnvelopeView(rev.parameters.weights));
+            if (!rev.fullStrength) {
+                ResolveEnvelope(&rev, count);
+            }
+            rev.acceptance = SkinAcceptance(rev);
+        } else {
+            rev.acceptance = RigExecRevisionKernelAcceptance(
+                rev.op, rev.parameters, count, &rev.envelopeOk);
+        }
+    }
+    void sizeRevisionStaging(size_t chain, size_t revision, size_t count)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        const bool staged =
+            rev.role == RigExecBakedRevisionRole::Legacy ||
+            (rev.role == RigExecBakedRevisionRole::Whole && !rev.chunked);
+        if (staged && rev.stagingOutput.size() != count) {
+            rev.stagingOutput.resize(count);
+            rev.staticDirty = true;
+        }
+        rev.layoutUsable = false;
+        rev.envelopeOk = true;
+        rev.fullStrength = true;
+        rev.partitionStale = false;
+    }
+    void setPrecedingCount(size_t chain, size_t revision, size_t count)
+    {
+        revisionAt(chain, revision).precedingCount = count;
+    }
+    size_t chainBaseCount(size_t chain)
+    {
+        return chainAt(chain).lastBase.size();
+    }
+    eval::EnvelopePacketView envelopeView(size_t chain, size_t revision)
+    {
+        return BakedEnvelopeView(
+            revisionAt(chain, revision).parameters.weights);
+    }
+    void setFullStrength(size_t chain, size_t revision, bool full)
+    {
+        revisionAt(chain, revision).fullStrength = full;
+    }
+    void resolveRevisionEnvelope(size_t chain, size_t revision, size_t count)
+    {
+        ResolveEnvelope(&revisionAt(chain, revision), count);
+    }
+    void setAcceptance(size_t chain, size_t revision, int acceptance)
+    {
+        revisionAt(chain, revision).acceptance =
+            RigExecRevisionAcceptance(acceptance);
+    }
+    int prepareRevisionRanges(size_t chain, size_t revision)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        return int(RigExecPrepareRevisionRanges(
+            rev.op, rev.parameters, chainAt(chain).lastBase.size(),
+            &rev.wireBasis, &rev.surfaceCache, &rev.rangeInputs,
+            rev.restBaseHeld ? rev.restBaseVersion : 0));
+    }
+    int revisionKernelAcceptance(size_t chain, size_t revision)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        return int(RigExecRevisionKernelAcceptance(
+            rev.op, rev.parameters, chainAt(chain).lastBase.size(),
+            &rev.envelopeOk));
+    }
+    int skinRevisionAcceptance(size_t chain, size_t revision)
+    {
+        return int(SkinAcceptance(revisionAt(chain, revision)));
+    }
+    bool skinLayoutUsable(size_t chain, size_t revision, size_t count)
+    {
+        const Revision &rev = revisionAt(chain, revision);
+        return eval::SkinLayoutIsUsable(BakedSkinPacket(rev.parameters), count,
+                                        rev.parameters.skinTransforms.size());
+    }
+    void setLayoutUsable(size_t chain, size_t revision, bool usable)
+    {
+        revisionAt(chain, revision).layoutUsable = usable;
+    }
+    bool dualQuatWeightsSafe(size_t chain, size_t revision)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        return rev.layoutUsable &&
+               rev.parameters.skinningMethod == _tokens->dualQuaternion &&
+               RigExecDualQuatWeightsSafe(
+                   eval::SkinLayoutForPacket<BakedSkinMath>(
+                       BakedSkinPacket(rev.parameters),
+                       eval::SkinTransformsOf<BakedSkinMath>(
+                           rev.parameters.skinTransforms.data(),
+                           rev.parameters.skinTransforms.size()),
+                       chainAt(chain).lastBase.size()));
+    }
+    void setDualQuatWeightsSafe(size_t chain, size_t revision, bool safe)
+    {
+        revisionAt(chain, revision).dqWeightsSafe = safe;
+    }
+    bool revisionPartitionStale(size_t chain, size_t revision, size_t count)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        if (!rev.chunked) {
+            return rev.partitionStale;
+        }
+        const RigExecSkinTopology *const topology =
+            rev.parameters.skinTopology.get();
+        const size_t indexCount = topology ? topology->indices.size()
+                                           : rev.parameters.skinIndices.size();
+        const int elementSize =
+            topology ? topology->elementSize : rev.parameters.skinElementSize;
+        return !rev.parameters.skinTopology ||
+               rev.parameters.skinTopology != rev.partitionTopology ||
+               indexCount != rev.partitionIndexCount ||
+               elementSize != rev.partitionElementSize ||
+               count != rev.partitionPointCount;
+    }
+    void setPartitionStale(size_t chain, size_t revision, bool stale)
+    {
+        revisionAt(chain, revision).partitionStale = stale;
+    }
+    bool gateCheckApplies(size_t chain, size_t revision)
+    {
+        const Revision &rev = revisionAt(chain, revision);
+        if (rev.role != RigExecBakedRevisionRole::Range ||
+            std::find(rev.groupWritten.begin(), rev.groupWritten.end(),
+                      char(0)) == rev.groupWritten.end()) {
+            return false;
+        }
+        return rev.parameters.valid && rev.status.AllowsApply() &&
+               rev.acceptance == RigExecRevisionAcceptance::Applies;
+    }
+    bool groupGateHolds(size_t chain, size_t revision, size_t count)
+    {
+        const Revision &rev = revisionAt(chain, revision);
+        const auto &owner = chainAt(chain);
+        eval::GroupGateFacts facts;
+        facts.enabled = true;
+        facts.op = int(rev.op);
+        facts.envelope = BakedEnvelopeView(rev.parameters.weights);
+        facts.skinMethod = BakedSkinPacket(rev.parameters).method;
+        facts.blendSurfaceFrame = rev.parameters.blendSurfaceFrame;
+        facts.regularGrid = rev.parameters.latticeSettings.regularGrid;
+        facts.hasWrittenProof = true;
+        facts.groupBounds = owner.groupBounds.data();
+        facts.groupBoundCount = owner.groupBounds.size();
+        facts.groupWritten = rev.groupWritten.data();
+        facts.groupWrittenCount = rev.groupWritten.size();
+        facts.pointCount = count;
+        return eval::GroupGateHolds(facts);
+    }
+    void noteGateViolation(size_t, size_t)
+    {
+        NoteGateViolation(*B);
+    }
+    bool revisionIsSkin(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).op == RigExecRevisionOp::Skin;
+    }
+    bool revisionWholeChunked(size_t chain, size_t revision)
+    {
+        const Revision &rev = revisionAt(chain, revision);
+        return rev.role == RigExecBakedRevisionRole::Whole && rev.chunked;
+    }
+    bool runSingleChunk(size_t chain, size_t revision, int32_t part);
+    eval::GroupStepAccessT<GfVec3f> groupStep(size_t chain, size_t revision,
+                                              size_t g)
+    {
+        Chain &c = chainAt(chain);
+        Revision &rev = revisionAt(chain, revision);
+        eval::GroupStepAccessT<GfVec3f> access;
+        access.state = g < rev.groups.size() ? &rev.groups[g] : nullptr;
+        access.rangeSetAside = rev.rangeSetAside;
+        access.applies = RigExecBakedRevisionApplies(rev);
+        access.skin = rev.op == RigExecRevisionOp::Skin;
+        access.blendChunked = rev.blendChunked;
+        access.partitionStale = rev.partitionStale;
+        access.fullStrength = rev.fullStrength;
+        access.precedingCount = rev.precedingCount;
+        access.chainPointCount = c.groupPointCount;
+        access.chunksSize = rev.chunks.size();
+        return access;
+    }
+    void groupRange(size_t chain, size_t, size_t g, size_t, size_t *begin,
+                    size_t *end)
+    {
+        Chain &c = chainAt(chain);
+        *begin = g < c.groupBounds.size() ? size_t(c.groupBounds[g]) : 0;
+        *end = g + 1 < c.groupBounds.size() ? size_t(c.groupBounds[g + 1]) : 0;
+    }
+    const RigExecPointsRef<GfVec3f> &enteringGroup(size_t chain,
+                                                   size_t revision, size_t g,
+                                                   RigExecGroupSource *from)
+    {
+        Chain &c = chainAt(chain);
+        *from = RigExecBakedGroupSourceAt(*B, int(chain), revision, g);
+        return RigExecBakedGroupAt(c, revision, g);
+    }
+    void passBaseGroup(size_t chain, size_t, size_t g,
+                       RigExecGroupState<GfVec3f> *state)
+    {
+        Chain &c = chainAt(chain);
+        if (g < c.baseGroups.size()) {
+            RigExecPublishPassedGroup(state, c.baseGroups[g].published,
+                                      BaseGroupSource(c, g));
+        } else {
+            RigExecPublishPassedGroup(state, kNoGroup, BaseGroupSource(c, g));
+        }
+    }
+    bool gatherChunkTransforms(size_t chain, size_t revision, size_t g)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        if (g >= rev.chunks.size()) {
+            return false;
+        }
+        rev.chunks[g].keyChanged = false;
+        GatherChunkTransforms(*B, rev, &rev.chunks[g]);
+        return true;
+    }
+    bool runSkinGroup(size_t chain, size_t revision, size_t g,
+                      const GfVec3f *in, GfVec3f *out, size_t count,
+                      size_t begin, size_t end, bool *untouched)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        auto &chunk = rev.chunks[g];
+        RigExecSkinTransformsView view;
+        view.transforms = chunk.transforms.data();
+        view.transformCount = chunk.transforms.size();
+        if (B->useSimd && !chunk.rows.empty()) {
+            view.rows = chunk.rows.data();
+        }
+        if (!chunk.palette.empty()) {
+            view.palette = chunk.palette.data();
+            view.paletteSize = chunk.palette.size();
+        }
+        return RigExecRunRevisionGroup(
+            rev.op, rev.parameters, rev.rangeInputs, &view, in, out, count,
+            begin, end, GroupEnvelope(rev), B->useSimd, untouched,
+            &rev.groups[g].walk, nullptr, nullptr);
+    }
+    void runBlendGroup(size_t chain, size_t revision, size_t g, size_t begin,
+                       size_t end, const RigExecPointsRef<GfVec3f> &entering,
+                       RigExecGroupState<GfVec3f> *state)
+    {
+        BakedChainBlendGroup(*B, &revisionAt(chain, revision), g, begin, end,
+                             entering, state);
+    }
+    const float *groupEnvelope(size_t chain, size_t revision)
+    {
+        return GroupEnvelope(revisionAt(chain, revision));
+    }
+    bool prepareGroupHalo(size_t chain, size_t revision, size_t g,
+                          const RigExecPointsRef<GfVec3f> &entering)
+    {
+        return BakedChainGroupHalo(*B, chainAt(chain),
+                                   &revisionAt(chain, revision), revision, g,
+                                   entering);
+    }
+    bool runRevisionGroup(size_t chain, size_t revision, size_t g,
+                          const GfVec3f *in, GfVec3f *out, size_t count,
+                          size_t begin, size_t end, const float *envelope,
+                          bool *untouched)
+    {
+        Chain &c = chainAt(chain);
+        Revision &rev = revisionAt(chain, revision);
+        const bool mush = rev.op == RigExecRevisionOp::DeltaMush;
+        const bool smooth = rev.op == RigExecRevisionOp::Smooth || mush;
+        RigExecGroupPoints<GfVec3f> halo;
+        if (smooth) {
+            halo.bounds = c.groupBounds.data();
+            halo.groups = c.groupBounds.size() - 1;
+            halo.points = rev.haloPoints[g].data();
+        }
+        return RigExecRunRevisionGroup(
+            rev.op, rev.parameters, rev.rangeInputs, nullptr, in, out, count,
+            begin, end, envelope, B->useSimd, untouched, &rev.groups[g].walk,
+            smooth ? &halo : nullptr, mush ? &rev.mushGroups[g] : nullptr);
+    }
+    bool runWholeSkinChunk(size_t chain, size_t revision, size_t g)
+    {
+        return BakedChainWholeSkinChunk(
+            *B, chainAt(chain), &revisionAt(chain, revision), revision, g);
+    }
+    eval::FuseRevisionAccessT<GfVec3f> fuseRevision(size_t chain,
+                                                    size_t revision)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        eval::FuseRevisionAccessT<GfVec3f> access;
+        access.ran = &rev.ran;
+        access.currentSource = &rev.currentSource;
+        access.output = &rev.output;
+        access.stagingOutput = &rev.stagingOutput;
+        access.stagingFresh = &rev.stagingFresh;
+        access.passedPoints = &rev.passedPoints;
+        access.doneVersion = &rev.doneVersion;
+        access.groups = &rev.groups;
+        access.groupIds = &rev.groupIds;
+        access.groupWritten = &rev.groupWritten;
+        access.rangeRefusals = &rev.rangeRefusals;
+        access.precedingCount = rev.precedingCount;
+        return access;
+    }
+    bool revisionRangeSetAside(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).rangeSetAside;
+    }
+    void passSetAsideFuse(size_t chain, size_t revision)
+    {
+        PassBaseGroups(chainAt(chain), &revisionAt(chain, revision));
+    }
+    bool revisionIsRangeRole(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).role ==
+               RigExecBakedRevisionRole::Range;
+    }
+    bool revisionIsWholeRole(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).role ==
+               RigExecBakedRevisionRole::Whole;
+    }
+    bool fusePacketValid(size_t chain, size_t revision)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        return rev.parameters.valid &&
+               (rev.op != RigExecRevisionOp::Skin || rev.influencesValid);
+    }
+    void emitFuseDiagnostic(size_t chain, size_t revision, bool packetValid)
+    {
+        EmitInvalidPacketLine(*B, revisionAt(chain, revision), packetValid,
+                              &step->diagnostics);
+    }
+    bool revisionStatusAllows(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).status.AllowsApply();
+    }
+    int revisionAcceptanceValue(size_t chain, size_t revision)
+    {
+        return int(revisionAt(chain, revision).acceptance);
+    }
+    bool revisionChunkedValue(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).chunked;
+    }
+    bool revisionPartitionStaleValue(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).partitionStale;
+    }
+    size_t revisionChunkCount(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).chunks.size();
+    }
+    bool chunkOk(size_t chain, size_t revision, size_t k)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        return k < rev.chunks.size() && rev.chunks[k].ok;
+    }
+    bool chunkHoldsAnswer(size_t chain, size_t revision, size_t k)
+    {
+        return ChunkHoldsAnswer(revisionAt(chain, revision), k);
+    }
+    void setRevisionExecuted(size_t chain, size_t revision, bool value)
+    {
+        revisionAt(chain, revision).executed = value;
+    }
+    void noteFuseExecuted(size_t, size_t)
+    {
+        step->counters.revisionsExecuted = 1;
+    }
+    void setFuseResultFromStatus(size_t chain, size_t revision)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        rev.resultStatus = rev.status.state;
+    }
+    void setFuseResultFailed(size_t chain, size_t revision)
+    {
+        revisionAt(chain, revision).resultStatus = _tokens->moverFailed;
+    }
+    void saveFuseLastStatus(size_t chain, size_t revision)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        rev.lastStatus = rev.status;
+    }
+    void publishFuseState(size_t, size_t, int32_t)
+    {
+    }
+    void noteWholeFuseSource(size_t, size_t, int)
+    {
+    }
+    int precedingCurrentSource(size_t chain, size_t revision)
+    {
+        if (revision == 0) {
+            return -1;
+        }
+        return chainAt(chain).revisions[revision - 1].currentSource;
+    }
+    bool wholeFuseSized(size_t chain, size_t revision)
+    {
+        Chain &c = chainAt(chain);
+        Revision &rev = revisionAt(chain, revision);
+        const size_t count = rev.precedingCount;
+        return count == c.groupPointCount &&
+               c.groupBounds.size() == rev.groups.size() + 1 &&
+               (rev.chunked || rev.stagingOutput.size() == count);
+    }
+    bool legacyWholeStagingOk(size_t chain, size_t revision, size_t count)
+    {
+        return revisionAt(chain, revision).stagingOutput.size() == count;
+    }
+    int64_t fuseGroupSlot(size_t, size_t, size_t g)
+    {
+        return int64_t(RigExecBakedGroupSlot(*B, step->object, g));
+    }
+    RigExecGroupSource fuseVersionSource(size_t chain, size_t version, size_t g)
+    {
+        return RigExecBakedGroupSourceAt(*B, int(chain), version, g);
+    }
+    void enteringVersionPoints(size_t chain, size_t version,
+                               const GfVec3f **points, size_t *count)
+    {
+        Chain &c = chainAt(chain);
+        if (version == 0 || c.groupBounds.size() < 2) {
+            PointsAt(c, version, points, count);
+            return;
+        }
+        std::vector<GfVec3f> *scratch = &versionScratch;
+        if (version - 1 < c.revisions.size()) {
+            scratch = &c.revisions[version - 1].wholeEntering;
+            if (version <= c.revisions.size() && version - 1 != version &&
+                version < c.revisions.size() + 1) {
+                // The fusing revision's own scratch, as the fuse held it.
+                const size_t fuseRevision =
+                    step->object >= 0 &&
+                            size_t(step->object) < B->revisionIndex.size()
+                        ? size_t(B->revisionIndex[size_t(step->object)].second)
+                        : version - 1;
+                if (fuseRevision < c.revisions.size()) {
+                    scratch = &c.revisions[fuseRevision].wholeEntering;
+                }
+            }
+        }
+        RigExecBakedVersionPoints(c, version, scratch, points, count);
+    }
+    bool revisionLayoutUsableValue(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).layoutUsable;
+    }
+    bool revisionEnvelopeOkValue(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).envelopeOk;
+    }
+    size_t fusePrecedingCount(size_t chain, size_t revision)
+    {
+        return revisionAt(chain, revision).precedingCount;
+    }
+    bool skinWholeRange(size_t chain, size_t revision, const GfVec3f *points,
+                        size_t count, std::vector<GfVec3f> *fused)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        return SkinRange(&rev, points, WholeTransformsView(&rev), 0, count,
+                         true, B->useSimd, fused);
+    }
+    eval::ChainStatusAccessT<GfVec3f> chainStatus(size_t chain)
+    {
+        Chain &c = chainAt(chain);
+        eval::ChainStatusAccessT<GfVec3f> access;
+        access.haveResult = &c.haveResult;
+        access.resultVersion = &c.resultVersion;
+        access.resultIds = &c.resultIds;
+        return access;
+    }
+    void clearChainStatusPublish(size_t)
+    {
+    }
+    void emitChainStatusDiagnostics(size_t chain)
+    {
+        for (const Revision &rev : chainAt(chain).revisions) {
+            if (rev.resultStatus == "moverFailed") {
+                step->diagnostics.push_back(
+                    "MoverFailed " + rev.moverPathText +
+                    ": execution rejected its inputs; revision passed "
+                    "through");
+            }
+        }
+    }
+    void noteChainBuilt(size_t)
+    {
+        step->counters.chainsBuilt = 1;
+    }
+    bool chainIsGpu(size_t chain)
+    {
+        return chainAt(chain).gpu;
+    }
+    void noteChainGpuPending(size_t chain)
+    {
+        chainAt(chain).gpuPending = true;
+    }
+    bool chainHasGroups(size_t chain)
+    {
+        return chainAt(chain).groupBounds.size() >= 2;
+    }
+    size_t chainRevisionCount(size_t chain)
+    {
+        return chainAt(chain).revisions.size();
+    }
+    size_t chainGroupCount(size_t chain)
+    {
+        Chain &c = chainAt(chain);
+        return c.groupBounds.size() >= 1 ? c.groupBounds.size() - 1 : 0;
+    }
+    RigExecGroupSource chainStatusSource(size_t chain, size_t version, size_t g)
+    {
+        return RigExecBakedGroupSourceAt(*B, int(chain), version, g);
+    }
+    const RigExecPointsRef<GfVec3f> &chainStatusGroup(size_t chain,
+                                                      size_t version, size_t g)
+    {
+        return RigExecBakedGroupAt(chainAt(chain), version, g);
+    }
+    void publishChainGroups(size_t chain, const std::vector<GfVec3f> &gathered,
+                            const std::vector<RigExecGroupSource> &ids)
+    {
+        Chain &c = chainAt(chain);
+        c.spare.clear();
+        c.spare.resize(gathered.size(), [&gathered](GfVec3f *out, GfVec3f *) {
+            std::copy(gathered.begin(), gathered.end(), out);
+        });
+        if (!SamePoints(c.spare, c.result)) {
+            ++c.resultVersion;
+        }
+        c.result.swap(c.spare);
+        c.spareIds.swap(c.resultIds);
+        c.resultIds = ids;
+        c.haveResult = true;
+    }
+    void chainFinalPoints(size_t chain, size_t version, const GfVec3f **points,
+                          size_t *count)
+    {
+        PointsAt(chainAt(chain), version, points, count);
+    }
+    void publishChainFinal(size_t chain, const std::vector<GfVec3f> &gathered)
+    {
+        Chain &c = chainAt(chain);
+        if (!eval::PointsBitsEqualBody(gathered.data(), gathered.size(),
+                                       c.result.cdata(), c.result.size())) {
+            ++c.resultVersion;
+        }
+        c.spare.clear();
+        c.spare.resize(gathered.size(), [&gathered](GfVec3f *out, GfVec3f *) {
+            std::copy(gathered.begin(), gathered.end(), out);
+        });
+        c.result.swap(c.spare);
+        c.haveResult = true;
+    }
+    void captureDerivedPublished(size_t chain, size_t derived)
+    {
+        derivedPublished = chainAt(chain).derived[derived].result;
+    }
+    void prepareDerivedBase(size_t chain, size_t derived)
+    {
+        RigExecBakedPrepareDerivedBase(&chainAt(chain).derived[derived], step);
+    }
+    bool derivedHasBase(size_t chain, size_t derived)
+    {
+        return chainAt(chain).derived[derived].haveBase;
+    }
+    void adoptDerivedLayout(size_t chain, size_t derived)
+    {
+        RigExecBakedAdoptRevisionLayout(
+            &chainAt(chain).derived[derived].revision);
+    }
+    bool derivedIsMatrix(size_t chain, size_t derived)
+    {
+        return chainAt(chain).derived[derived].matrixTarget;
+    }
+    bool runDerivedMatrix(size_t chain, size_t derived)
+    {
+        Chain &c = chainAt(chain);
+        auto &d = c.derived[derived];
+        step->counters.revisionsBuilt = 1;
+        d.haveMatrix = RigExecBakedRunProjectorTarget(
+            *B, c, d.revision, &d.matrix, &step->diagnostics);
+        d.haveResult = true;
+        step->counters.chainsBuilt = 1;
+        return true;
+    }
+    bool foldDerivedInfluences(size_t chain, size_t derived)
+    {
+        FoldInfluences(*B, &chainAt(chain).derived[derived].revision);
+        return true;
+    }
+    void assembleDerived(size_t chain, size_t derived)
+    {
+        Chain &c = chainAt(chain);
+        Revision &rev = c.derived[derived].revision;
+        derivedParameters =
+            AssembleRevision(*B, &rev, c.result.cdata(), c.result.size(), time,
+                             step, c.lastBase.size());
+        derivedStatus =
+            RigExecStatusForParameters(derivedParameters, rev.moverPathText);
+    }
+    void noteDerivedBuilt(size_t, size_t)
+    {
+        step->counters.revisionsBuilt = 1;
+    }
+    void noteDerivedExecuted(size_t, size_t)
+    {
+        step->counters.revisionsExecuted = 1;
+    }
+    bool derivedStatusAllows(size_t, size_t)
+    {
+        return derivedStatus.AllowsApply();
+    }
+    bool runDerivedKernel(size_t chain, size_t derived,
+                          std::vector<GfVec3f> *values)
+    {
+        Chain &c = chainAt(chain);
+        auto &d = c.derived[derived];
+        return RigExecRunGeometryDerived(d.revision.op, derivedParameters,
+                                         d.lastBase.cdata(), d.lastBase.size(),
+                                         values);
+    }
+    void derivedLastBasePoints(size_t chain, size_t derived,
+                               std::vector<GfVec3f> *values)
+    {
+        const auto &base = chainAt(chain).derived[derived].lastBase;
+        values->assign(base.cbegin(), base.cend());
+    }
+    void setDerivedResultFromStatus(size_t chain, size_t derived)
+    {
+        chainAt(chain).derived[derived].revision.resultStatus =
+            derivedStatus.state;
+    }
+    void setDerivedResultFailed(size_t chain, size_t derived)
+    {
+        chainAt(chain).derived[derived].revision.resultStatus =
+            _tokens->moverFailed;
+    }
+    void saveDerivedRevision(size_t chain, size_t derived,
+                             std::vector<GfVec3f> &&values)
+    {
+        Chain &c = chainAt(chain);
+        Revision &rev = c.derived[derived].revision;
+        rev.output = std::move(values);
+        derivedParameters.auxPoints.clear();
+        derivedParameters.auxPoints.shrink_to_fit();
+        rev.lastParameters = std::move(derivedParameters);
+        rev.lastAuxPoints = c.result;
+        rev.lastStatus = derivedStatus;
+        rev.ran = true;
+    }
+    bool derivedResultIsFailed(size_t chain, size_t derived)
+    {
+        return chainAt(chain).derived[derived].revision.resultStatus ==
+               "moverFailed";
+    }
+    void emitDerivedDiagnostic(size_t chain, size_t derived)
+    {
+        step->diagnostics.push_back(
+            "MoverFailed " + chainAt(chain).derived[derived].targetText +
+            ": derived geometry input/cardinality validation failed");
+    }
+    void noteDerivedEarlyVersion(size_t chain, size_t derived)
+    {
+        auto &d = chainAt(chain).derived[derived];
+        if (!SamePoints(derivedPublished, d.result)) {
+            ++d.resultVersion;
+        }
+    }
+    void publishDerivedResult(size_t chain, size_t derived)
+    {
+        Chain &c = chainAt(chain);
+        auto &d = c.derived[derived];
+        Revision &rev = d.revision;
+        d.spare.resize(rev.output.size());
+        std::copy(rev.output.begin(), rev.output.end(), d.spare.data());
+        d.result.swap(d.spare);
+        if (!SamePoints(derivedPublished, d.result)) {
+            ++d.resultVersion;
+        }
+        d.haveResult = true;
+        step->counters.chainsBuilt = 1;
+    }
+    void skipChainInputs(size_t chain)
+    {
+        chainAt(chain).baseDirty = false;
+    }
+    void skipDerived(size_t chain, size_t derived)
+    {
+        chainAt(chain).derived[derived].revision.influencesChanged = false;
+    }
+    void skipInfluenceFold(size_t chain, size_t revision)
+    {
+        revisionAt(chain, revision).influencesChanged = false;
+    }
+    void skipRevisionStatic(size_t chain, size_t revision, int32_t)
+    {
+        revisionAt(chain, revision).staticDirty = false;
+    }
+    void skipRevisionChunk(size_t chain, size_t revision, int32_t part)
+    {
+        Revision &rev = revisionAt(chain, revision);
+        if (part >= 0 && size_t(part) < rev.chunks.size()) {
+            rev.chunks[size_t(part)].keyChanged = false;
+        }
+    }
+    void skipRevisionFuse(size_t chain, size_t revision)
+    {
+        revisionAt(chain, revision).executed = false;
+    }
+};
+
+struct BakedChainHost {
+    using Math = BakedSkinMath;
+    using Inputs = BakedChainInputs;
+    using State = BakedChainState;
+    using ChainPoints = VtVec3fArray;
+    BakedChainHost(Inputs inputs, State state) : _inputs(inputs), _state(state)
+    {
+    }
+    const Inputs &inputs() const
+    {
+        return _inputs;
+    }
+    State &state()
+    {
+        return _state;
+    }
+    const RigExecRangeRunner *ranges() const
+    {
+        return RigExecGeometryRanges();
+    }
+    Inputs _inputs;
+    State _state;
+};
+
+bool
+BakedChainState::runSingleChunk(size_t chain, size_t revision, int32_t part)
+{
+    Chain &c = chainAt(chain);
+    Revision &rev = revisionAt(chain, revision);
+    const bool skin = rev.op == RigExecRevisionOp::Skin;
+    auto &chunk = rev.chunks[size_t(part)];
+    const GfVec3f *points = nullptr;
+    size_t count = 0;
+    if (rev.role == RigExecBakedRevisionRole::Whole) {
+        RigExecBakedVersionPoints(c, revision, &rev.wholeEntering, &points,
+                                  &count);
+    } else {
+        PointsAt(c, revision, &points, &count);
+    }
+    const bool sized =
+        count == rev.precedingCount && rev.stagingOutput.size() == count;
+    if (!rev.chunked) {
+        chunk.ok = false;
+        rev.devicePending = false;
+        if (!rev.status.AllowsApply()) {
+            rev.deviceTicks.clear();
+            if (rev.window >= 0 &&
+                size_t(rev.window) < B->windowCaptures.size()) {
+                B->windowCaptures[size_t(rev.window)].reset();
+            }
+            return true;
+        }
+        if (!skin) {
+            rev.stagingOutput.resize(count);
+            rev.stagingFresh = true;
+            if (rev.window >= 0 && size_t(rev.window) < B->windowedOps.size()) {
+                const size_t w = size_t(rev.window);
+                rev.windowRun.ring = &B->windowRings[w];
+                rev.windowRun.capture = &B->windowCaptures[w];
+                rev.windowRun.captureOnly =
+                    B->historyTick && !B->windowedOps[w].feedsWindow;
+                rev.windowRun.cache = &rev.windowCache;
+                rev.windowRun.deferred = rev.windowDevice && !B->historyTick
+                                             ? &rev.deviceTicks
+                                             : nullptr;
+                rev.windowRun.solveTicks = nullptr;
+                rev.windowRun.device = false;
+                if (rev.windowRun.deferred) {
+                    rev.deviceTicks.clear();
+                }
+                rev.parameters.window = &rev.windowRun;
+            }
+            chunk.ok = geometryDetail::RunDiscardableGeometry(
+                rev.op, rev.parameters, points, count, &rev.stagingOutput,
+                B->useSimd, &rev.wireBasis, &rev.surfaceCache,
+                !rev.fullStrength && rev.envelopeOk ? &rev.envelope : nullptr);
+            if (rev.windowRun.deferred) {
+                rev.devicePending = chunk.ok && !rev.deviceTicks.empty();
+                if (!chunk.ok) {
+                    rev.deviceTicks.clear();
+                }
+                rev.windowRun.deferred = nullptr;
+            }
+            rev.parameters.window = nullptr;
+            return true;
+        }
+        if (!SkinPacketIsUsable(rev) || !rev.influencesValid || !sized) {
+            return true;
+        }
+        rev.stagingFresh = true;
+        chunk.ok = SkinRange(&rev, points, WholeTransformsView(&rev), 0, count,
+                             true, B->useSimd, &rev.stagingOutput);
+        return true;
+    }
+    chunk.keyChanged = false;
+    if (!rev.status.AllowsApply() || !SkinPacketIsUsable(rev) ||
+        rev.partitionStale || !sized) {
+        chunk.ok = false;
+        return true;
+    }
+    GatherChunkTransforms(*B, rev, &chunk);
+    chunk.ok = SkinRange(&rev, points, ChunkTransformsView(chunk, B->useSimd),
+                         size_t(chunk.begin), size_t(chunk.end), false,
+                         B->useSimd, &rev.stagingOutput);
+    return true;
+}
+
 void
 RigExecBakedRunChainInputs(RigExecBakedProgramImpl *program,
                            RigExecBakedStep *step)
 {
-    auto &chain = program->chains[size_t(step->object)];
-    chain.haveBase = chain.sampledHaveBase;
-    if (!chain.haveBase) {
-        chain.baseDirty = false;
-        return;
-    }
-    if (chain.haveResult && chain.sampledBase.size() != chain.lastBase.size()) {
-        // ChainStatus republishes in this run at the new count, so bumping
-        // here and there cannot return to the bytes last published.
-        if (!chain.result.empty())
-            ++chain.resultVersion;
-        chain.haveResult = false;
-        chain.result = VtVec3fArray();
-        chain.scheduleDirty = true;
-        for (size_t r = 0; r < chain.revisions.size(); ++r) {
-            auto &revision = chain.revisions[r];
-            ResetGeometryRevision(&revision);
-            // A range-pipelined revision's own buffer holds its version,
-            // unless a cycle set it aside and it passes the base through.
-            if (revision.rangeRole && !revision.rangeSetAside)
-                revision.currentSource = int(r);
-        }
-        // The base groups too: each republishes with a bumped version, and
-        // ChainStatus gathers whatever ids it then reads.
-        for (auto &group : chain.baseGroups)
-            RigExecResetGroup(&group);
-        chain.baseOwner.reset();
-        chain.resultIds.clear();
-        chain.spareIds.clear();
-    }
-    for (auto &revision : chain.revisions)
-        if (revision.created) {
-            ++step->counters.revisionsCreated;
-            revision.created = false;
-        }
-    if (chain.scheduleDirty && !chain.revisions.empty())
-        ++step->counters.schedulesBuilt;
-    chain.scheduleDirty = false;
-    chain.baseDirty = !chain.haveResult ||
-                      !RigExecBakedHeadValueSame(VtValue(chain.sampledBase),
-                                                 VtValue(chain.lastBase));
-    const bool moved = !SamePoints(chain.sampledBase, chain.lastBase);
-    if (moved)
-        ++chain.baseVersion;
-    chain.lastBase = chain.sampledBase;
-    PublishBaseGroups(&chain, moved);
+    // EvalCore's one ChainInputs body (rigExecEvalCore/chain.h) over
+    // this adapter's host.
+    RigExecBakedProgramImpl &B = *program;
+    BakedChainHost host(BakedChainInputs{&B},
+                        BakedChainState{&B, step, UsdTimeCode::Default()});
+    eval::RunChainInputsStep(host,
+                             eval::StepRef{uint32_t(step->kind), step->object,
+                                           step->part, size_t(step->object)});
 }
 void
 RigExecBakedPrepareDerivedBase(
@@ -4449,52 +5318,13 @@ RigExecBakedSkipGeometryStep(RigExecBakedProgramImpl *program,
         // Field IDs are not revision IDs; a clean skip preserves the field.
         return;
     }
-    if (step->kind == RigExecBakedStepKind::ChainInputs) {
-        B.chains[size_t(step->object)].baseDirty = false;
-        return;
-    }
-    if (step->kind == RigExecBakedStepKind::Derived) {
-        RigExecBakedProgramImpl::GeomRevision &revision =
-            B.chains[size_t(B.derivedIndex[size_t(step->object)].first)]
-                .derived[size_t(B.derivedIndex[size_t(step->object)].second)]
-                .revision;
-        revision.influencesChanged = false;
-        return;
-    }
-    if (step->kind == RigExecBakedStepKind::ChainStatus) {
-        return; // it writes no delta: the sweep is over persisted status
-    }
-    const auto &[chainIndex, revisionIndex] =
-        B.revisionIndex[size_t(step->object)];
-    RigExecBakedProgramImpl::GeomRevision &revision =
-        B.chains[size_t(chainIndex)].revisions[size_t(revisionIndex)];
-    switch (step->kind) {
-    case RigExecBakedStepKind::InfluenceFold:
-        // The table is where the fold left it, so nothing moved into it.
-        revision.influencesChanged = false;
-        return;
-    case RigExecBakedStepKind::RevisionStatic:
-        revision.staticDirty = false;
-        return;
-    case RigExecBakedStepKind::RevisionChunk:
-        // A chunk step's part is a chunk (a Range revision's group g is its
-        // chunk g); its group state keeps the published or computed result.
-        if (step->part >= 0 && size_t(step->part) < revision.chunks.size()) {
-            revision.chunks[size_t(step->part)].keyChanged = false;
-        }
-        // A skipped body retains its published output validity and bytes.
-        // Current-generation execution is reported by portable ran metadata.
-        return;
-    case RigExecBakedStepKind::RevisionFuse:
-        // The chain's sticky dirty bit as the NEXT revision reads it: this
-        // revision did not execute this run, whatever it did during the last
-        // one. `currentSource`, `resultStatus` and the points stay where the
-        // fuse left them -- those are the values, not the comparison.
-        revision.executed = false;
-        return;
-    default:
-        return;
-    }
+    // EvalCore's one skip switch (rigExecEvalCore/chain.h) over this
+    // adapter's host; the WeightField arm above stays in this half.
+    BakedChainHost host(BakedChainInputs{&B},
+                        BakedChainState{&B, step, UsdTimeCode::Default()});
+    eval::RunSkipGeometryStep(host,
+                              eval::StepRef{uint32_t(step->kind), step->object,
+                                            step->part, size_t(step->object)});
 }
 
 namespace {
@@ -5191,721 +6021,28 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                             RigExecBakedStep *step, UsdTimeCode time)
 {
     RigExecBakedProgramImpl &B = *program;
-    if (step->kind == RigExecBakedStepKind::ChainInputs) {
-        RigExecBakedRunChainInputs(&B, step);
-        return;
-    }
-    const RigExecResolvedInputs &R = *B.resolvedInputs;
-    if (step->kind == RigExecBakedStepKind::Derived) {
+    // A GPU chain's Derived points arrive at the publication boundary,
+    // which runs this step then (RigExecBakedResolveGpuChains); the
+    // deferral stays with this adapter around the shared body.
+    if (step->kind == RigExecBakedStepKind::Derived && step->object >= 0 &&
+        size_t(step->object) < B.derivedIndex.size()) {
         const auto &[chainIndex, derivedIndex] =
             B.derivedIndex[size_t(step->object)];
-        RigExecBakedProgramImpl::GeomChain &chain =
-            B.chains[size_t(chainIndex)];
-        RigExecBakedProgramImpl::GeomChain::Derived &derived =
-            chain.derived[size_t(derivedIndex)];
-        // A GPU chain's points arrive at the publication boundary, which
-        // runs this step then (RigExecBakedResolveGpuChains).
-        if (chain.gpu && !B.gpuBoundary) {
+        if (size_t(chainIndex) < B.chains.size() &&
+            B.chains[size_t(chainIndex)].gpu && !B.gpuBoundary) {
             return;
         }
-        // DerivedOut's content version moves exactly when this step leaves
-        // `result` holding other bytes than it published last, a size reset
-        // included. Held by handle, so the compare costs no copy.
-        const VtVec3fArray published = derived.result;
-        const auto noteResult = [&] {
-            if (!SamePoints(published, derived.result))
-                ++derived.resultVersion;
-        };
-        RigExecBakedPrepareDerivedBase(&derived, step);
-        if (!chain.haveBase || !derived.haveBase) {
-            noteResult();
-            return;
-        }
-        RigExecBakedProgramImpl::GeomRevision &revision = derived.revision;
-        RigExecBakedAdoptRevisionLayout(&revision);
-        if (derived.matrixTarget) {
-            step->counters.revisionsBuilt = 1;
-            derived.haveMatrix = RigExecBakedRunProjectorTarget(
-                B, chain, revision, &derived.matrix, &step->diagnostics);
-            derived.haveResult = true;
-            step->counters.chainsBuilt = 1;
-            return;
-        }
-        FoldInfluences(B, &revision);
-        RigExecMoverParameters parameters = AssembleRevision(
-            B, &revision, chain.result.cdata(), chain.result.size(), time, step,
-            chain.lastBase.size());
-        const RigExecMoverStatus status =
-            RigExecStatusForParameters(parameters, revision.moverPathText);
-        step->counters.revisionsBuilt = 1;
-        // A selected derived operation computes its declared typed result.
-        {
-            step->counters.revisionsExecuted = 1;
-            // The derived target's own authored array, which is what the
-            // recomputation writes over: two vectors for an extent, the
-            // whole mesh for normals. Built once and re-assigned on the
-            // failure arm rather than copied into a `preceding` that exists
-            // only to be copied again.
-            std::vector<GfVec3f> values;
-            // The same function the revision node calls, and not a second
-            // arrangement of the same rules: the kind check, the empty and
-            // size-2 guards, the derived property keeping its authored
-            // cardinality (an in-place write cannot resize it) and the
-            // envelope folded into the recomputation's own arithmetic all
-            // live in RigExecApplyDerivedKernel. The status is the one half
-            // the kernel does not own, because the packet is what it is told
-            // about and the status is what the graph decided.
-            const bool applied =
-                status.AllowsApply() &&
-                RigExecRunGeometryDerived(revision.op, parameters,
-                                          derived.lastBase.cdata(),
-                                          derived.lastBase.size(), &values);
-            revision.resultStatus = status.state;
-            if (!applied) {
-                values.assign(derived.lastBase.cbegin(),
-                              derived.lastBase.cend());
-                if (status.AllowsApply()) {
-                    revision.resultStatus = _tokens->moverFailed;
-                }
-            }
-            revision.output = std::move(values);
-            // The packet WITHOUT its points, and the points beside it. Both
-            // are the run's, and both are replaced only where the revision
-            // executed -- the comparison above is against the last packet
-            // that produced an answer, not against last frame's inputs.
-            parameters.auxPoints.clear();
-            parameters.auxPoints.shrink_to_fit();
-            revision.lastParameters = std::move(parameters);
-            revision.lastAuxPoints = chain.result;
-            revision.lastStatus = status;
-            revision.ran = true;
-        }
-        if (revision.resultStatus == "moverFailed") {
-            step->diagnostics.push_back(
-                "MoverFailed " + derived.targetText +
-                ": derived geometry input/cardinality validation failed");
-        }
-        derived.spare.resize(revision.output.size());
-        std::copy(revision.output.begin(), revision.output.end(),
-                  derived.spare.data());
-        derived.result.swap(derived.spare);
-        noteResult();
-        derived.haveResult = true;
-        step->counters.chainsBuilt = 1;
-        return;
     }
-
-    // A ChainStatus step is about a CHAIN and every other one about a
-    // revision, so the two payloads index different tables.
-    if (step->kind == RigExecBakedStepKind::ChainStatus) {
-        RigExecBakedProgramImpl::GeomChain &chain =
-            B.chains[size_t(step->object)];
-        if (!chain.haveBase) {
-            // ChainPoints owns current availability. Retain cached numerical
-            // storage, but no Final read may consume a previous valid frame.
-            chain.haveResult = false;
-            return;
-        }
-        // The per-chain status sweep, over the status each revision LAST
-        // published -- which outlives an evaluation it did not take part in,
-        // and so does its diagnostic.
-        for (const RigExecBakedProgramImpl::GeomRevision &revision :
-             chain.revisions) {
-            if (revision.resultStatus == "moverFailed") {
-                step->diagnostics.push_back(
-                    "MoverFailed " + revision.moverPathText +
-                    ": execution rejected its inputs; revision passed "
-                    "through");
-            }
-        }
-        step->counters.chainsBuilt = 1;
-        if (chain.gpu) {
-            chain.gpuPending = true; // translated at the boundary
-            return;
-        }
-        const size_t last = chain.revisions.size();
-        if (chain.groupBounds.size() >= 2 && last > 0) {
-            // A chain cut into groups: the content ids of version n's groups
-            // name its content exactly. They are resolved here, not read
-            // from the last join's `groupIds`: a join a cycle set aside
-            // published its ids before ChainInputs moved the base, and
-            // RigExecBakedGroupSourceAt resolves past it to the base groups
-            // as they stand now. Ids `result` was gathered from that still
-            // stand leave it in place, identity and all.
-            const size_t groups = chain.groupBounds.size() - 1;
-            const int chainIndex = step->object;
-            bool same = chain.haveResult && chain.resultIds.size() == groups;
-            for (size_t g = 0; same && g < groups; ++g) {
-                same = chain.resultIds[g] ==
-                       RigExecBakedGroupSourceAt(B, chainIndex, last, g);
-            }
-            if (same) {
-                return;
-            }
-            size_t total = 0;
-            for (size_t g = 0; g < groups; ++g) {
-                total += RigExecBakedGroupAt(chain, last, g).count;
-            }
-            // Gathered into the other half of the double buffer: cleared
-            // first, so a buffer a consumer still holds is let go rather
-            // than copied, and filled once.
-            chain.spare.clear();
-            chain.spare.resize(total,
-                               [&chain, last, groups](GfVec3f *out, GfVec3f *) {
-                                   for (size_t g = 0; g < groups; ++g) {
-                                       const RigExecPointsRef<GfVec3f> &ref =
-                                           RigExecBakedGroupAt(chain, last, g);
-                                       out = std::uninitialized_copy(
-                                           ref.data, ref.data + ref.count, out);
-                                   }
-                               });
-            // ChainPoints' content version moves exactly when the bytes do.
-            if (!SamePoints(chain.spare, chain.result)) {
-                ++chain.resultVersion;
-            }
-            chain.result.swap(chain.spare);
-            chain.spareIds.swap(chain.resultIds);
-            // Sized at Build, so steady state reuses the swapped storage.
-            chain.resultIds.resize(groups);
-            for (size_t g = 0; g < groups; ++g) {
-                chain.resultIds[g] =
-                    RigExecBakedGroupSourceAt(B, chainIndex, last, g);
-            }
-            chain.haveResult = true;
-            return;
-        }
-        // Version n, the chain's final points; a chain of no revisions
-        // publishes its base.
-        const GfVec3f *points = nullptr;
-        size_t count = 0;
-        PointsAt(chain, last, &points, &count);
-        // ChainPoints' content version moves exactly when the bytes do.
-        if (!RigExecBakedSamePoints(points, count, chain.result.cdata(),
-                                    chain.result.size())) {
-            ++chain.resultVersion;
-        }
-        // Double-buffered: publication is a refcount bump for the consumer
-        // and the array one may still hold from last frame is never the one
-        // being written. Cleared first, so a held buffer is let go, never
-        // copied.
-        chain.spare.clear();
-        chain.spare.resize(count, [points](GfVec3f *out, GfVec3f *end) {
-            std::uninitialized_copy(points, points + (end - out), out);
-        });
-        chain.result.swap(chain.spare);
-        chain.haveResult = true;
-        return;
-    }
-
-    const auto &[chainIndex, revisionIndex] =
-        B.revisionIndex[size_t(step->object)];
-    RigExecBakedProgramImpl::GeomChain &chain = B.chains[size_t(chainIndex)];
-    if (!chain.haveBase) {
-        return;
-    }
-    RigExecBakedProgramImpl::GeomRevision &revision =
-        chain.revisions[size_t(revisionIndex)];
-    const bool skin = revision.op == RigExecRevisionOp::Skin;
-    switch (step->kind) {
-    case RigExecBakedStepKind::InfluenceFold: {
-        revision.influencesChanged = FoldInfluences(B, &revision);
-        if (revision.gpuOwned)
-            revision.gpuTouched = true;
-        // The finite/affine check the dynamic path's assembler makes over the
-        // same matrices. The fuse ANDs it in where the assembler's answer
-        // would have landed: a revision with one bad influence passes its
-        // preceding value through and reports MoverFailed.
-        revision.influencesValid =
-            !skin || RigExecSkinTransformsAreUsable(revision.influences.data(),
-                                                    revision.influences.size());
-        const bool rangeDq =
-            skin && revision.role == RigExecBakedRevisionRole::Range &&
-            revision.parameters.skinningMethod == _tokens->dualQuaternion;
-        if (skin && revision.influencesValid &&
-            (rangeDq || revision.role != RigExecBakedRevisionRole::Range)) {
-            FoldTransformForms(&revision, B.useSimd);
-        }
-        if (rangeDq && revision.influencesValid &&
-            SkinPacketIsUsable(revision)) {
-            const auto &palette = revision.palette;
-            const auto layout = RigExecSkinLayoutForPacket(
-                revision.parameters, WholeTransformsView(&revision),
-                revision.precedingCount);
-            // DQ refusal depends on weights and poses, never entering points.
-            revision.influencesValid =
-                (revision.dqWeightsSafe &&
-                 RigExecDualQuatPaletteSafe(palette.data(), palette.size())) ||
-                RigExecDualQuatBlendsAccept(layout, [&](const int *indices,
-                                                        const double *weights,
-                                                        size_t count) {
-                    RigExecScaledDualQuat blend;
-                    return RigExecBlendScaledDualQuats(palette.data(),
-                                                       palette.size(), indices,
-                                                       weights, count, &blend);
-                });
-        }
-        return;
-    }
-
-    case RigExecBakedStepKind::RevisionStatic: {
-        RigExecBakedAdoptRevisionLayout(&revision);
-        // The field consumes the declared preceding point version. Preserve
-        // the source packet's range policy when adopting its dense values.
-        if (revision.weightCurrentPhase && revision.weightObject >= 0) {
-            revision.currentPhasePacket =
-                B.weightPackets[size_t(revision.weightObject)];
-            const auto &weightField =
-                B.weightFields[size_t(revision.weightField)];
-            const auto &field = weightField.values;
-            const auto &error = weightField.error;
-            const bool resolved = weightField.ok;
-            if (resolved) {
-                revision.currentPhasePacket.representation =
-                    _tokens->denseRepresentation;
-                revision.currentPhasePacket.values = field;
-                revision.currentPhasePacket.indices.clear();
-                revision.currentPhasePacket.defaultWeight = 0.0f;
-                revision.currentPhasePacket.valid = true;
-            } else {
-                // An invalid packet is the kernel's atomic MoverFailed
-                // pass-through, which is the right answer here: publishing
-                // the reference-phase field instead would silently be a
-                // different deformation.
-                revision.currentPhasePacket = RigExecWeightPacket();
-                step->diagnostics.push_back("current-phase weight failed: " +
-                                            error);
-            }
-        }
-        const bool rangeChain =
-            revision.role != RigExecBakedRevisionRole::Legacy;
-        const bool rangeLattice =
-            revision.role == RigExecBakedRevisionRole::Range &&
-            revision.op == RigExecRevisionOp::Lattice;
-        // A Range lattice's packet holds the chain base as its rest points
-        // (`restBaseHeld`, a copy taken at base version `restBaseVersion`);
-        // the assembly takes that copy back instead of copying the base
-        // again while the version stands (RigExecBakedAssembleFromLeaves).
-        if (revision.restBaseHeld &&
-            (!rangeLattice || revision.restBaseVersion != chain.baseVersion)) {
-            revision.restBaseHeld = false;
-        }
-        RigExecMoverParameters assembled = AssembleRevision(
-            B, &revision, chain.lastBase.cdata(), chain.lastBase.size(), time,
-            step, chain.lastBase.size());
-        // A range-chain blend keys its deltas by a content version moved
-        // exactly when their bytes do, not by the bytes.
-        if (rangeChain && !revision.blendChunked &&
-            revision.op == RigExecRevisionOp::BlendShape &&
-            !RigExecBakedSamePoints(assembled.blendDeltas.data(),
-                                    assembled.blendDeltas.size(),
-                                    revision.parameters.blendDeltas.data(),
-                                    revision.parameters.blendDeltas.size())) {
-            ++revision.deltasVersion;
-        }
-        // The replaced packet's delta buffer becomes the next assembly's
-        // (RigExecBakedAssembleFromLeaves); nothing reads it before then.
-        if (revision.op == RigExecRevisionOp::BlendShape) {
-            revision.deltasSpare = std::move(revision.parameters.blendDeltas);
-        }
-        revision.parameters = std::move(assembled);
-        if (rangeLattice) {
-            // The lattice arm copies the base (or takes the held copy back)
-            // into a valid packet's rest points and leaves them empty
-            // otherwise, so a non-empty rest of the base's count is the base
-            // at this version.
-            revision.restBaseHeld =
-                !revision.parameters.restPoints.empty() &&
-                revision.parameters.restPoints.size() == chain.lastBase.size();
-            revision.restBaseVersion = chain.baseVersion;
-        }
-        // The status of the PACKET. For a skin revision that is half of the
-        // answer -- the packet carries identities where the matrices would
-        // be -- and the fold's `influencesValid` is the other half; the fuse
-        // is where the two meet and where `moverFailed` is published.
-        revision.status = RigExecStatusForParameters(revision.parameters,
-                                                     revision.moverPathText);
-        step->counters.revisionsBuilt = 1;
-        // Whether the revision has to run at all, by VALUE and never by
-        // dirtiness: a control dragged back to where it started leaves an
-        // identical packet, and the VdfNetwork does not re-execute for one.
-        // This is the half of the decision the packet and the status carry;
-        // the chain's sticky bit and the influence table's own comparison are
-        // ORed in by the fuse, which is the first step that has all three.
-        // The scalar the fuse's one diagnostic is about, taken here (its
-        // leaf) because this step always runs and the fuse may not. Compared
-        // like every other source value: two different out-of-range weights
-        // can leave the packet identical, and the line the fuse emits is
-        // about the weight rather than about the packet.
-        // Read the same declared resolved source the effective memo compares.
-        const VtValue diagnosticWeight = RigExecBakedResolvePathLeaf(
-            B, revision.leaves, size_t(revision.defaultWeightLeaf));
-        revision.defaultWeight = diagnosticWeight.IsHolding<float>()
-                                     ? diagnosticWeight.UncheckedGet<float>()
-                                     : 1.0f;
-        // Selection already compares the exact declared packet inputs.
-        // This flag records actual current-generation assembly only; it is
-        // not a second cache authority or a deep-copy packet fingerprint.
-        revision.staticDirty = true;
-        revision.lastDefaultWeight = revision.defaultWeight;
-        // The field an authoring tool paints as an influence overlay, taken
-        // from the packet the mover is about to consume so that what a
-        // rigger sees is what deformed the geometry. Published from HERE
-        // because this is where the dynamic path publishes it -- beside the
-        // assemble, whether or not the revision then executes -- and the
-        // epilogue drains it in chain and revision order, which is what
-        // makes two revisions sharing one weight object last-writer-wins the
-        // way the dynamic walk's per-chain merge does.
-        revision.weightFieldPublished = false;
-        if (revision.weightObject >= 0 && B.publishWeightFields) {
-            const RigExecWeightPacket &packet =
-                revision.weightCurrentPhase
-                    ? revision.currentPhasePacket
-                    : B.weightPackets[size_t(revision.weightObject)];
-            if (packet.valid) {
-                const size_t logicalCount = revision.weightOperationDomain
-                                                ? size_t(1)
-                                                : chain.lastBase.size();
-                // The field is a function of the packet and the count alone.
-                // The shared packet's op value is a declared read whose
-                // producer published before this step was dispatched, so its
-                // revision is final here, and an equal revision is an equal
-                // exact key: the packet the held field was resolved from.
-                const bool shared = !revision.weightCurrentPhase &&
-                                    revision.weightPacketValue >= 0 &&
-                                    size_t(revision.weightPacketValue) <
-                                        B.opAdapter.values.size();
-                const uint64_t packetRevision =
-                    shared
-                        ? B.opAdapter.values[size_t(revision.weightPacketValue)]
-                              .revision
-                        : 0;
-                if (!shared || !revision.weightValuesHeld ||
-                    revision.weightValuesPacketRevision != packetRevision ||
-                    revision.weightValuesCount != logicalCount) {
-                    // One scatter rather than a search per point: Resolve()
-                    // binary-searches a sparse packet's indices, which for a
-                    // face cluster on a body is tens of thousands of
-                    // searches to find a few hundred weights. An
-                    // unresolvable packet publishes what the per-point loop
-                    // did: zero wherever Resolve() answered out of range.
-                    std::vector<float> &resolved = revision.resolveScratch;
-                    if (!packet.ResolveAll(logicalCount, &resolved)) {
-                        resolved.assign(logicalCount, 0.0f);
-                        for (size_t i = 0; i < logicalCount; ++i) {
-                            const float w = packet.Resolve(i, logicalCount);
-                            resolved[i] = w < 0.0f ? 0.0f : w;
-                        }
-                    }
-                    RigExecBakedNoteFloats(&revision.publishedWeightValues,
-                                           &resolved,
-                                           &revision.weightValuesVersion);
-                    revision.weightValuesHeld = shared;
-                    revision.weightValuesPacketRevision = packetRevision;
-                    revision.weightValuesCount = logicalCount;
-                }
-                revision.weightFieldPublished = true;
-            }
-        }
+    // A GPU-owned fuse makes its status decision without points here;
+    // the boundary translates the chain from it.
+    if (step->kind == RigExecBakedStepKind::RevisionFuse && step->object >= 0 &&
+        size_t(step->object) < B.revisionIndex.size()) {
+        const auto &[chainIndex, revisionIndex] =
+            B.revisionIndex[size_t(step->object)];
+        RigExecBakedProgramImpl::GeomRevision &revision =
+            B.chains[size_t(chainIndex)].revisions[size_t(revisionIndex)];
         if (revision.gpuOwned) {
-            revision.gpuTouched = true;
-            // A GPU chain's revision moves no points here: only the
-            // acceptance its fuse reads, made as the CPU path makes it.
-            const size_t count = chain.lastBase.size();
-            revision.precedingCount = count;
-            revision.envelopeOk = true;
-            revision.fullStrength = true;
-            if (skin) {
-                revision.layoutUsable =
-                    RigExecSkinLayoutIsUsable(revision.parameters, count);
-                revision.dqWeightsSafe =
-                    revision.layoutUsable &&
-                    revision.parameters.skinningMethod ==
-                        _tokens->dualQuaternion &&
-                    RigExecDualQuatWeightsSafe(RigExecSkinLayoutForPacket(
-                        revision.parameters,
-                        RigExecSkinTransformsOf(revision.parameters), count));
-                revision.fullStrength =
-                    RigExecEnvelopeIsFullStrength(revision.parameters.weights);
-                if (!revision.fullStrength)
-                    ResolveEnvelope(&revision, count);
-                revision.acceptance = SkinAcceptance(revision);
-            } else {
-                revision.acceptance = RigExecRevisionKernelAcceptance(
-                    revision.op, revision.parameters, count,
-                    &revision.envelopeOk);
-            }
-            return;
-        }
-        // Every revision of a chain is applied to the same number of points:
-        // a kernel that resized its output failed the application, so no
-        // buffer the chain ever reads holds a different count. Sizing the
-        // output here rather than in a chunk is what lets the chunks write
-        // disjoint ranges of it without one of them owning its length. A
-        // Range revision and a keyed Whole skin write group buffers Build
-        // sized instead, and keep no staging.
-        const size_t count = chain.lastBase.size();
-        const bool staged = revision.role == RigExecBakedRevisionRole::Legacy ||
-                            (revision.role == RigExecBakedRevisionRole::Whole &&
-                             !revision.chunked);
-        if (staged && revision.stagingOutput.size() != count) {
-            revision.stagingOutput.resize(count);
-            // A resized buffer holds no answers, so every chunk of it has to
-            // produce one again.
-            revision.staticDirty = true;
-        }
-        revision.precedingCount = count;
-        // The whole-array decisions that are the skin kernel's and are made
-        // here because a range may not repeat them: the layout validation
-        // against the points that arrived, and the envelope, which resolves
-        // atomically at the FULL count or not at all.
-        revision.layoutUsable = false;
-        revision.envelopeOk = true;
-        revision.fullStrength = true;
-        revision.partitionStale = false;
-        // A gated Range revision writes only the groups its weight names and
-        // aliases the rest, which is exact only while its packet keeps every
-        // unnamed point at its entering bytes; one that applies without
-        // that is a pin hole (counted, reported by the owner).
-        const auto noteGate = [&B, &revision]() {
-            if (revision.role != RigExecBakedRevisionRole::Range ||
-                std::find(revision.groupWritten.begin(),
-                          revision.groupWritten.end(),
-                          char(0)) == revision.groupWritten.end()) {
-                return;
-            }
-            if (revision.parameters.valid && revision.status.AllowsApply() &&
-                revision.acceptance == RigExecRevisionAcceptance::Applies &&
-                !RigExecRevisionGateHolds(revision.op, revision.parameters)) {
-                NoteGateViolation(B);
-            }
-        };
-        if (revision.role == RigExecBakedRevisionRole::Range && !skin) {
-            // The revision's one writer of everything its group steps read
-            // besides the packet and the entering groups: the "apply once"
-            // envelope at the full count for every op that blends
-            // separately, and the immutable kernel inputs (`rangeInputs`,
-            // which fills the revision's own caches; a blend's per-point
-            // weights). A lattice whose rest is the held base names that
-            // base's version, so its bind skips only the rest comparison.
-            if (RigExecRevisionTakesSeparateBlend(
-                    revision.op, revision.parameters.weights)) {
-                revision.fullStrength =
-                    RigExecEnvelopeIsFullStrength(revision.parameters.weights);
-                if (!revision.fullStrength) {
-                    ResolveEnvelope(&revision, count);
-                }
-            }
-            revision.acceptance = RigExecPrepareRevisionRanges(
-                revision.op, revision.parameters, count, &revision.wireBasis,
-                &revision.surfaceCache, &revision.rangeInputs,
-                revision.restBaseHeld ? revision.restBaseVersion : 0);
-            noteGate();
-            return;
-        }
-        if (!skin) {
-            // A wire's dense walk blends a separate envelope after its
-            // kernel; resolved here at the full count, as a skin's is, and
-            // its chunk blends with this array.
-            if (revision.op == RigExecRevisionOp::Wire &&
-                RigExecRevisionTakesSeparateBlend(
-                    revision.op, revision.parameters.weights)) {
-                revision.fullStrength =
-                    RigExecEnvelopeIsFullStrength(revision.parameters.weights);
-                if (!revision.fullStrength) {
-                    ResolveEnvelope(&revision, count);
-                }
-            }
-            // From the validation the chunk's kernel runs first, over the
-            // count it is applied to. A wire's envelope validation is the
-            // resolve above: wherever the acceptance asks for it, the wire
-            // branch took the same predicates and `envelopeOk` holds its
-            // answer.
-            revision.acceptance = RigExecRevisionKernelAcceptance(
-                revision.op, revision.parameters, count, &revision.envelopeOk);
-            return;
-        }
-        // Every skin, Legacy, Whole or Range: a Range skin's group steps
-        // share this decision, with DQ blend validity supplied by InfluenceFold.
-        revision.layoutUsable =
-            RigExecSkinLayoutIsUsable(revision.parameters, count);
-        revision.fullStrength =
-            RigExecEnvelopeIsFullStrength(revision.parameters.weights);
-        if (!revision.fullStrength) {
-            ResolveEnvelope(&revision, count);
-        }
-        revision.acceptance = SkinAcceptance(revision);
-        revision.dqWeightsSafe =
-            revision.layoutUsable &&
-            revision.parameters.skinningMethod == _tokens->dualQuaternion &&
-            RigExecDualQuatWeightsSafe(RigExecSkinLayoutForPacket(
-                revision.parameters,
-                RigExecSkinTransformsOf(revision.parameters), count));
-        if (revision.chunked) {
-            // Whether the keys still describe the vertices. The handle is
-            // the identity the SkinTopology op preserves for a binding that
-            // did not move, and the prologue adopted it only if it has the
-            // partition's arrays; anything else here means the packet is
-            // reading arrays the keys were not cut from, and the fuse runs
-            // the revision whole instead.
-            const RigExecSkinTopology *const topology =
-                revision.parameters.skinTopology.get();
-            const size_t indexCount =
-                topology ? topology->indices.size()
-                         : revision.parameters.skinIndices.size();
-            const int elementSize = topology
-                                        ? topology->elementSize
-                                        : revision.parameters.skinElementSize;
-            revision.partitionStale =
-                // No resolved layout at all is a layout the keys cannot be
-                // checked against: the packet is reading the mover's arrays
-                // per frame, and nothing here can say they are the arrays
-                // the cut was made from.
-                !revision.parameters.skinTopology ||
-                revision.parameters.skinTopology !=
-                    revision.partitionTopology ||
-                indexCount != revision.partitionIndexCount ||
-                elementSize != revision.partitionElementSize ||
-                count != revision.partitionPointCount;
-        }
-        noteGate();
-        return;
-    }
-
-    case RigExecBakedStepKind::RevisionChunk: {
-        if (revision.gpuOwned) {
-            return;
-        }
-        if (revision.role == RigExecBakedRevisionRole::Range) {
-            RunGroupStep(B, chain, chainIndex, &revision, size_t(revisionIndex),
-                         size_t(step->part));
-            return;
-        }
-        if (revision.role == RigExecBakedRevisionRole::Whole &&
-            revision.chunked) {
-            RunWholeSkinChunk(B, chain, &revision, size_t(revisionIndex),
-                              size_t(step->part));
-            return;
-        }
-        RigExecBakedProgramImpl::GeomChunk &chunk =
-            revision.chunks[size_t(step->part)];
-        const GfVec3f *points = nullptr;
-        size_t count = 0;
-        if (revision.role == RigExecBakedRevisionRole::Whole) {
-            // A Whole revision's one chunk reads the whole entering version:
-            // in place where its groups are one buffer, else gathered into
-            // the revision's own buffer.
-            RigExecBakedVersionPoints(chain, size_t(revisionIndex),
-                                      &revision.wholeEntering, &points, &count);
-        } else {
-            PointsAt(chain, size_t(revisionIndex), &points, &count);
-        }
-        const bool sized = count == revision.precedingCount &&
-                           revision.stagingOutput.size() == count;
-        if (!revision.chunked) {
-            // One chunk is the whole array, so there is nothing to speculate
-            // about: it knows everything the fuse knows.
-            chunk.ok = false;
-            revision.devicePending = false;
-            if (!revision.status.AllowsApply()) {
-                revision.deviceTicks.clear();
-                // A disabled windowed revision captures nothing: the history
-                // after it starts at the next frame it runs.
-                if (revision.window >= 0 &&
-                    size_t(revision.window) < B.windowCaptures.size()) {
-                    B.windowCaptures[size_t(revision.window)].reset();
-                }
-                return;
-            }
-            if (!skin) {
-                // The revision's OWN unpublished buffer, written out of
-                // place from the preceding points -- no seed copy before a
-                // kernel that rewrites every point -- and swapped in by the
-                // fuse rather than copied.
-                revision.stagingOutput.resize(count);
-                revision.stagingFresh = true;
-                // A windowed revision's run: its ring, its capture slot, and
-                // whether this tick only captures. Pointed at for the kernel
-                // run alone: a copy of the packet never carries it.
-                if (revision.window >= 0 &&
-                    size_t(revision.window) < B.windowedOps.size()) {
-                    const size_t w = size_t(revision.window);
-                    revision.windowRun.ring = &B.windowRings[w];
-                    revision.windowRun.capture = &B.windowCaptures[w];
-                    revision.windowRun.captureOnly =
-                        B.historyTick && !B.windowedOps[w].feedsWindow;
-                    revision.windowRun.cache = &revision.windowCache;
-                    // A device revision captures here and solves at the
-                    // publication boundary (RigExecBakedResolveGpuChains).
-                    revision.windowRun.deferred =
-                        revision.windowDevice && !B.historyTick
-                            ? &revision.deviceTicks
-                            : nullptr;
-                    revision.windowRun.solveTicks = nullptr;
-                    revision.windowRun.device = false;
-                    if (revision.windowRun.deferred)
-                        revision.deviceTicks.clear();
-                    revision.parameters.window = &revision.windowRun;
-                }
-                // Not a second dispatch that mirrors _RevisionNode::Compute
-                // -- the same function the node calls. The packet check, the
-                // full-strength fast path, the kernel and the "apply once"
-                // blend all live in RigExecRunRevisionKernel, so an
-                // operation cannot mean one thing here and another there.
-                // This unpublished buffer is discarded by Fuse on failure.
-                // A wire blends with the envelope RevisionStatic resolved.
-                chunk.ok = geometryDetail::RunDiscardableGeometry(
-                    revision.op, revision.parameters, points, count,
-                    &revision.stagingOutput, B.useSimd, &revision.wireBasis,
-                    &revision.surfaceCache,
-                    !revision.fullStrength && revision.envelopeOk
-                        ? &revision.envelope
-                        : nullptr);
-                if (revision.windowRun.deferred) {
-                    revision.devicePending =
-                        chunk.ok && !revision.deviceTicks.empty();
-                    if (!chunk.ok)
-                        revision.deviceTicks.clear();
-                    revision.windowRun.deferred = nullptr;
-                }
-                revision.parameters.window = nullptr;
-                return;
-            }
-            if (!SkinPacketIsUsable(revision) || !revision.influencesValid ||
-                !sized) {
-                return;
-            }
-            revision.stagingFresh = true;
-            chunk.ok = SkinRange(
-                &revision, points, WholeTransformsView(&revision), 0, count,
-                /*whole=*/true, B.useSimd, &revision.stagingOutput);
-            return;
-        }
-
-        // Chunked, and therefore SPECULATIVE: it has not waited for the
-        // fold, so it cannot know whether the revision will apply at all --
-        // only that its own vertices, its own joints and the packet say what
-        // its range of the output buffer should hold. The fuse discards the
-        // work if the revision turns out not to apply.
-        chunk.keyChanged = false;
-        if (!revision.status.AllowsApply() || !SkinPacketIsUsable(revision) ||
-            revision.partitionStale || !sized) {
-            chunk.ok = false;
-            return;
-        }
-        GatherChunkTransforms(B, revision, &chunk);
-        chunk.ok =
-            SkinRange(&revision, points, ChunkTransformsView(chunk, B.useSimd),
-                      size_t(chunk.begin), size_t(chunk.end),
-                      /*whole=*/false, B.useSimd, &revision.stagingOutput);
-        return;
-    }
-
-    case RigExecBakedStepKind::RevisionFuse: {
-        if (revision.gpuOwned) {
-            // The CPU fuse's status decision without its points: the
-            // program applies what this fuse would have applied, and a
-            // degenerate dual-quaternion blend (the one Deferred answer)
-            // sends the chain to its CPU kernels at the boundary.
+            const bool skin = revision.op == RigExecRevisionOp::Skin;
             const bool packetValid = revision.parameters.valid &&
                                      (!skin || revision.influencesValid);
             EmitInvalidPacketLine(B, revision, packetValid, &step->diagnostics);
@@ -5918,136 +6055,19 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
             if (!revision.gpuApplies && revision.status.AllowsApply()) {
                 revision.resultStatus = _tokens->moverFailed;
             }
-            // The boundary translates the chain whenever any of its fuses ran.
             ++revision.doneVersion;
             revision.gpuTouched = true;
             revision.lastStatus = revision.status;
             revision.ran = true;
             return;
         }
-        if (revision.role == RigExecBakedRevisionRole::Range) {
-            RunJoin(B, chain, chainIndex, &revision, step->object,
-                    size_t(revisionIndex), step);
-            return;
-        }
-        if (revision.role == RigExecBakedRevisionRole::Whole) {
-            RunWholeFuse(B, chain, chainIndex, &revision, step->object,
-                         size_t(revisionIndex), step);
-            return;
-        }
-        // Where the dynamic path's assembler would have failed the packet:
-        // for a skin revision the matrices are not in it, so "the packet is
-        // valid" is the packet's own answer AND the fold's.
-        const bool packetValid =
-            revision.parameters.valid && (!skin || revision.influencesValid);
-        EmitInvalidPacketLine(B, revision, packetValid, &step->diagnostics);
-        // Selection by the common graph is the sole execution authority.
-        revision.executed = true;
-        step->counters.revisionsExecuted = revision.executed ? 1 : 0;
-        if (revision.executed) {
-            // What the previous publication carried, which the content
-            // version is decided against: this revision's own output when it
-            // applied, the copy kept of its entering points when it passed
-            // through, nothing before its first.
-            const bool hadOwn =
-                revision.ran && revision.currentSource == int(revisionIndex);
-            bool moved = !revision.ran;
-            revision.resultStatus = revision.status.state;
-            bool applied = packetValid && revision.status.AllowsApply();
-            const bool whole = applied && skin && revision.partitionStale;
-            // The whole-revision skin's points; a stale partition is rare.
-            std::vector<GfVec3f> fused;
-            if (whole) {
-                const GfVec3f *points = nullptr;
-                size_t count = 0;
-                PointsAt(chain, size_t(revisionIndex), &points, &count);
-                applied = revision.stagingOutput.size() == count &&
-                          FuseWholeRevision(&revision, points, count, B.useSimd,
-                                            &fused);
-            } else if (applied && revision.acceptance !=
-                                      RigExecRevisionAcceptance::Deferred) {
-                // RevisionStatic's decision, from the validation each chunk's
-                // kernel runs first, so every chunk's `ok` is this answer.
-                applied =
-                    revision.acceptance == RigExecRevisionAcceptance::Applies;
-            } else if (applied) {
-                for (const RigExecBakedProgramImpl::GeomChunk &chunk :
-                     revision.chunks) {
-                    if (!chunk.ok) {
-                        applied = false;
-                        break;
-                    }
-                }
-            }
-            if (applied) {
-                if (revision.chunked || whole) {
-                    const std::vector<GfVec3f> &result =
-                        whole ? fused : revision.stagingOutput;
-                    if (!hadOwn) {
-                        moved =
-                            moved || !SamePoints(result, revision.passedPoints);
-                    }
-                    const bool copied =
-                        CopyMovedPoints(result, &revision.output);
-                    moved = moved || (hadOwn && copied);
-                } else if (revision.stagingFresh) {
-                    moved =
-                        moved || !SamePoints(revision.stagingOutput,
-                                             hadOwn ? revision.output
-                                                    : revision.passedPoints);
-                    // Ownership flips instead of a copy: the chunk's buffer
-                    // is published, and the one it replaces is the next
-                    // chunk's, at the size the chunk left (RevisionOut keys
-                    // the staging size).
-                    revision.output.swap(revision.stagingOutput);
-                    revision.stagingOutput.resize(revision.output.size());
-                    revision.stagingFresh = false;
-                } else if (!hadOwn) {
-                    // The chunk's latest result is already `output`.
-                    moved = moved ||
-                            !SamePoints(revision.output, revision.passedPoints);
-                }
-                revision.currentSource = int(revisionIndex);
-            } else {
-                // Nothing was applied, so the chain's running value stays
-                // where it was -- an indirection, not a copy. A chunk that
-                // ran and produced points is discarded with it, and `output`
-                // keeps the last applied points a later apply may republish.
-                const GfVec3f *points = nullptr;
-                size_t count = 0;
-                PointsAt(chain, size_t(revisionIndex), &points, &count);
-                const std::vector<GfVec3f> &previous =
-                    hadOwn ? revision.output : revision.passedPoints;
-                const bool same = RigExecBakedSamePoints(
-                    points, count, previous.data(), previous.size());
-                moved = moved || !same;
-                if (hadOwn || !same) {
-                    revision.passedPoints.assign(points, points + count);
-                }
-                revision.currentSource =
-                    revisionIndex == 0
-                        ? -1
-                        : chain.revisions[size_t(revisionIndex) - 1]
-                              .currentSource;
-                if (revision.status.AllowsApply()) {
-                    revision.resultStatus = _tokens->moverFailed;
-                }
-            }
-            if (moved) {
-                ++revision.doneVersion;
-            }
-            // Keep the published RevisionPacket intact. Ordinary revisions
-            // have no duplicate last-parameters snapshot; exact value keys
-            // retain the previous semantic opinion in the common workspace.
-            revision.lastStatus = revision.status;
-            revision.ran = true;
-        }
-        return;
     }
-
-    default:
-        return;
-    }
+    // EvalCore's one chain bodies (rigExecEvalCore/chain.h) over this
+    // adapter's host; no second CPU step switch remains here.
+    BakedChainHost host(BakedChainInputs{&B}, BakedChainState{&B, step, time});
+    eval::RunGeometryStep(host,
+                          eval::StepRef{uint32_t(step->kind), step->object,
+                                        step->part, size_t(step->object)});
 }
 
 // The report.
@@ -6950,10 +6970,15 @@ RigExecBakedRunLayoutOp(const RigExecBakedProgramImpl &B,
                                 ? sizeValue->UncheckedGet<int>()
                                 : 1;
     auto built = std::make_shared<RigExecSkinTopology>();
-    RigExecBuildSkinTopology(
-        TfSpan<const int>(indices.cdata(), indices.size()),
-        TfSpan<const float>(weights.cdata(), weights.size()), elementSize,
-        revision->influenceSlots.size(), built.get());
+    built->indices.assign(indices.cdata(), indices.cdata() + indices.size());
+    built->weights.assign(weights.cdata(), weights.cdata() + weights.size());
+    built->elementSize = elementSize;
+    built->influenceCount = revision->influenceSlots.size();
+    const eval::SkinLayoutBuild build = eval::BuildSkinLayout(
+        built->indices.data(), built->indices.size(), built->weights.data(),
+        built->weights.size(), elementSize, built->influenceCount);
+    built->pointCount = build.pointCount;
+    built->validated = build.validated;
     // The same layout keeps its object, so the packet that carries it still
     // compares equal and the kernel does not re-run.
     if (revision->layoutCandidate && *revision->layoutCandidate == *built) {
@@ -7153,18 +7178,20 @@ RigExecBakedVerifyRangeChains(RigExecBakedProgramImpl *program)
                 // blends the envelope RevisionStatic resolved; the decision
                 // is the revision's own.
                 if (decided) {
-                    RigExecSkinTransformsView view;
-                    view.transforms = revision.influences.data();
-                    view.transformCount = revision.influences.size();
-                    applied = RigExecApplySkinKernelWithTransforms(
-                        revision.parameters, view, &whole, B.useSimd);
+                    const auto view = eval::SkinTransformsOf<BakedSkinMath>(
+                        revision.influences.data(), revision.influences.size());
+                    applied =
+                        eval::ApplySkinKernelWithTransforms<BakedSkinMath>(
+                            BakedSkinPacket(revision.parameters), view, &whole,
+                            B.useSimd, !revision.parameters.skinTopology,
+                            RigExecGeometryRanges());
                     if (applied && !revision.fullStrength) {
                         applied = revision.envelopeOk &&
                                   revision.envelope.size() == count;
                         if (applied) {
-                            RigExecBlendEnvelopeAll(entering,
-                                                    revision.envelope.data(),
-                                                    count, whole.data());
+                            eval::BlendEnvelopeAll(
+                                entering, revision.envelope.data(), count,
+                                whole.data(), RigExecGeometryRanges());
                         }
                     }
                 }
@@ -7311,7 +7338,7 @@ RigExecBakedResetSetAsideGeometryValue(RigExecBakedProgramImpl *program,
                 // as an excluded whole fuse does: every reader of a version
                 // past it resolves to the base groups (RigExecBakedGroupAt),
                 // never to this slot. The slot itself holds the base group,
-                // refused; its join publishes the base ids (RunJoin) and
+                // refused; its join publishes the base ids and
                 // ChainInputs leaves the source alone.
                 if (at < revision.groups.size()) {
                     revision.groups[at].ok = false;

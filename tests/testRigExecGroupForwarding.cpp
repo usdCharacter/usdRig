@@ -13,6 +13,7 @@
 #include "rigExec/rigEvaluator.h"
 #include "rigExec/valueAddress.h"
 #include "rigExecMath/pointBlocks.h"
+#include "rigExecEvalCore/gate.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec3f.h"
@@ -63,6 +64,34 @@ namespace {
 using Program = RigExecBakedProgramImpl;
 using Chain = Program::GeomChain;
 using Revision = Program::GeomRevision;
+
+void
+CheckCompiledGroupProof()
+{
+    const int bounds[] = {0, 4, 8};
+    const char written[] = {1, 0};
+    const float values[] = {1.0f};
+    int index = 1;
+    eval::GroupGateFacts facts;
+    facts.enabled = true;
+    facts.op = int(fb::RevisionOp::Matrix);
+    facts.envelope.valid = true;
+    facts.envelope.representation = eval::kWeightSparse;
+    facts.envelope.rangePolicyEmpty = true;
+    facts.envelope.indices = &index;
+    facts.envelope.indexCount = 1;
+    facts.envelope.values = values;
+    facts.envelope.valueCount = 1;
+    facts.hasWrittenProof = true;
+    facts.groupBounds = bounds;
+    facts.groupBoundCount = 3;
+    facts.groupWritten = written;
+    facts.groupWrittenCount = 2;
+    facts.pointCount = 8;
+    CHECK(eval::GroupGateHolds(facts));
+    index = 5;
+    CHECK(!eval::GroupGateHolds(facts));
+}
 
 bool
 SameBits(const GfVec3f &a, const GfVec3f &b)
@@ -354,7 +383,7 @@ Supported(size_t i)
 /// `Moving` is the mover's transform. \p raise, \p lift and \p moving are
 /// the authored values.
 UsdStageRefPtr
-MakeGatedStage(float raise, float lift, double moving)
+MakeGatedStage(float raise, float lift, double moving, size_t count = kPoints)
 {
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
@@ -364,10 +393,10 @@ MakeGatedStage(float raise, float lift, double moving)
     control.CreateAttribute(TfToken("avars:tx"), SdfValueTypeNames->Double)
         .Set(moving);
     const SdfPath target("/Asset/Shape.points");
-    VtVec3fArray base(kPoints), raised(kPoints), lifted(kPoints);
+    VtVec3fArray base(count), raised(count), lifted(count);
     VtIntArray support;
     VtFloatArray weights;
-    for (size_t i = 0; i < kPoints; ++i) {
+    for (size_t i = 0; i < count; ++i) {
         base[i] = GfVec3f(float(i % 100), float(i / 100), 0.0f);
         raised[i] = base[i];
         lifted[i] = base[i];
@@ -377,10 +406,10 @@ MakeGatedStage(float raise, float lift, double moving)
         if (i >= 1000 && i < 1100 && Supported(i)) {
             lifted[i][1] += 2.0f;
         }
-        if (Supported(i)) {
+        if (count == 8 ? i == 1 : Supported(i)) {
             support.push_back(int(i));
             // A falloff of a few distinct values, some at the ends.
-            weights.push_back(float((i / 10) % 5) / 4.0f);
+            weights.push_back(count == 8 ? 1.0f : float((i / 10) % 5) / 4.0f);
         }
     }
     const auto points = [&](const char *path, const VtVec3fArray &values) {
@@ -465,6 +494,112 @@ struct GatedValues {
 };
 
 void
+TestTwoGroupGate()
+{
+    TfSetenv("RIGEXEC_BAKED_GROUP_VERTS", "4");
+    TfSetenv("RIGEXEC_BAKED_CHUNK_VERTS", "4");
+    const UsdStageRefPtr stage = MakeGatedStage(0.5f, 0.0f, 1.0, 8);
+    RigExecRigEvaluator evaluator(stage, SdfPath(kRig));
+    std::vector<std::string> errors;
+    const bool compiled = evaluator.Compile(&errors);
+    TfUnsetenv("RIGEXEC_BAKED_GROUP_VERTS");
+    TfUnsetenv("RIGEXEC_BAKED_CHUNK_VERTS");
+    CHECK(compiled);
+    if (!compiled) {
+        return;
+    }
+    const RigExecRigPose native = evaluator.Evaluate(UsdTimeCode(1));
+    CHECK(native.valid);
+    const Program &program = evaluator.GetBakedProgram()->GetStepGraph();
+    const int chainId = FindChain(program, SdfPath("/Asset/Shape.points"));
+    CHECK(chainId >= 0);
+    if (chainId < 0) {
+        return;
+    }
+    const Chain &chain = program.chains[size_t(chainId)];
+    const int revisionId = FindRevision(chain, "Gated");
+    CHECK(revisionId >= 0);
+    if (revisionId < 0) {
+        return;
+    }
+    const Revision &revision = chain.revisions[size_t(revisionId)];
+    CHECK(chain.groupBounds.size() == 3);
+    CHECK(revision.groupWritten == std::vector<char>({1, 0}));
+    if (chain.groupBounds.size() != 3 ||
+        revision.groupWritten != std::vector<char>({1, 0})) {
+        return;
+    }
+    std::string error;
+    CHECK(RigExecFrozenMatchesLive(&evaluator, SdfPath(kRig), UsdTimeCode(1),
+                                   &error));
+    std::vector<uint8_t> bytes;
+    RigExecTestPlayer player;
+    TfSetenv("RIGEXEC_BAKED_GROUP_VERTS", "4");
+    TfSetenv("RIGEXEC_BAKED_CHUNK_VERTS", "4");
+    RigExecRigEvaluator bakeEvaluator(stage, SdfPath(kRig));
+    const bool exported = RigExecTestBakeAt(bakeEvaluator, 1, &bytes, &error);
+    TfUnsetenv("RIGEXEC_BAKED_GROUP_VERTS");
+    TfUnsetenv("RIGEXEC_BAKED_CHUNK_VERTS");
+    const bool opened = exported && player.Open(bytes, stage, &error);
+    CHECK(opened);
+    if (!opened) {
+        return;
+    }
+    CHECK(player.Play(1, &error));
+    std::vector<std::string> diffs;
+    CHECK(RigExecCompareRuntimeOutputs(native, player.Reader(), &diffs));
+    CHECK(revision.groupWritten == std::vector<char>({1, 0}));
+
+    const auto invalid =
+        RigExecTestEdited(bytes, [&](fb::RigExecWireFile *file) {
+            const auto &wire = file->geometry->chains[size_t(chainId)]
+                                   .revisions[size_t(revisionId)];
+            const int slot =
+                file->geometry->weightObjects[size_t(wire.weightObject)]
+                    .indicesSlot;
+            CHECK(slot >= 0);
+            if (slot >= 0) {
+                const uint32_t value = file->inputs[size_t(slot)].value();
+                auto &indices = file->intArrays[file->values[value].array].v;
+                CHECK(!indices.empty());
+                if (!indices.empty()) {
+                    indices[0] = int32_t(chain.groupBounds[1]);
+                }
+            }
+        });
+    std::string refusal;
+    CHECK(
+        !RigExecRuntimeReader::Open(invalid.data(), invalid.size(), &refusal));
+    CHECK(refusal.find("which no step writes") != std::string::npos);
+    CHECK(revision.groupWritten == std::vector<char>({1, 0}));
+    // Replace only the folded packet source on the idle owner, never the
+    // partition or the published groups. Freeze copies that same binding.
+    auto &weight =
+        const_cast<Program &>(program).weightObjects.at(revision.weightObject);
+    for (int index : {1, 5}) {
+        weight.indices = {index};
+        evaluator.GetBakedProgram()->RequestFullRun();
+        const UsdTimeCode time(index + 1);
+        const auto pose = evaluator.Evaluate(time);
+        CHECK(pose.valid);
+        CHECK(&evaluator.GetBakedProgram()->GetStepGraph() == &program);
+        CHECK(revision.groupWritten == std::vector<char>({1, 0}));
+        const bool refused = std::any_of(
+            pose.diagnostics.begin(), pose.diagnostics.end(),
+            [](const std::string &line) {
+                return line.find("MoverFailed /Asset/Rig/Movers/Gated:") == 0;
+            });
+        CHECK(refused == (index == 5));
+        const auto &points =
+            pose.movedProperties.at(chain.target).Get<VtVec3fArray>();
+        CHECK(points[1] == GfVec3f(index == 1 ? 2 : 1, 0, 0));
+        CHECK(points[5] == GfVec3f(5, 0, 0));
+        CHECK(
+            RigExecFrozenMatchesLive(&evaluator, SdfPath(kRig), time, &error));
+    }
+}
+
+void
 TestAGatedChainForwards()
 {
     const UsdTimeCode time(1.0);
@@ -525,7 +660,6 @@ TestAGatedChainForwards()
                     error.c_str());
     }
     CHECK(baked);
-
     const int first = B.chainRevisionBegin[size_t(c)];
     // Each step: the values, the mover's group steps that run, and the
     // entries they compute.
@@ -1150,6 +1284,8 @@ main(int argc, char **argv)
                     RIGEXEC_SCHEMA_RESOURCE_DIR);
         return 2;
     }
+    CheckCompiledGroupProof();
+    TestTwoGroupGate();
     TestAGatedChainForwards();
     TestSparseBlendChunks();
     TestDualQuatChunks();
