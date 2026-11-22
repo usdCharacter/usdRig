@@ -853,6 +853,25 @@ TestRefusals(const Grid &grid)
     CHECK(!RigExecGeometryOpSupported(RigExecRevisionOp::External));
     CHECK(!RigExecAddGeometryOp(RigExecRevisionOp::External, Packet("external"),
                                 &builder, nullptr, &node, &error));
+
+    // A setting baked into the payload that moves after compile refuses
+    // the write; a per-frame value does not.
+    RigExecMoverParameters mush = Packet("deltaMush");
+    mush.restPoints = grid.rest;
+    mush.topologyCounts = grid.counts;
+    mush.topologyIndices = grid.indices;
+    mush.mushIterations = 4;
+    mush.mushStep = 0.5f;
+    mush.weights = RigExecWeightPacket::Constant(1.0f);
+    Chain mushChain({{RigExecRevisionOp::DeltaMush, &mush}});
+    RigExecArray<Vec3f> out;
+    CHECK(mushChain.Run({&mush}, grid.points, &out, &error));
+    RigExecMoverParameters moved = mush;
+    moved.mushComputationToTarget.SetTranslate(GfVec3d(0.0, 0.0, 1.0));
+    CHECK(mushChain.Run({&moved}, grid.points, &out, &error));
+    moved.mushIterations = 5;
+    CHECK(!mushChain.Run({&moved}, grid.points, &out, &error));
+    CHECK(error.find("settings") != std::string::npos);
 }
 
 } // namespace

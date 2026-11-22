@@ -48,6 +48,9 @@ struct RigExecGeometryOpNode {
         std::shared_ptr<const RigExecBlendSampleLayout> layout;
     };
     std::vector<std::vector<BlendSample>> blendSamples;
+    /// The packet fields baked into the payload, the rest left default, to
+    /// refuse a frame whose settings moved.
+    RigExecMoverParameters payloadFields;
     RigExecOutputId out;
     /// The op's output port, for a downstream node to connect to.
     const RigExecPortHandle *outPort = nullptr;
@@ -70,7 +73,9 @@ bool RigExecAddGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
 /// points, and \p points when \p node takes them from the host. For a
 /// derived op the points are the authored normals or extent. The
 /// envelope is \p p's weights resolved at \p pointCount. False, writing
-/// nothing more, where the packet's envelope does not resolve.
+/// nothing more, where the packet's envelope does not resolve, or where a
+/// setting baked into the payload differs from compile: the node must then
+/// be rebuilt.
 bool RigExecWriteGeometryOpInputs(const RigExecMoverParameters &p,
                                   const RigExecGeometryOpNode &node,
                                   const std::vector<GfVec3f> *points,

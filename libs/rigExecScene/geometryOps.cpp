@@ -135,6 +135,55 @@ SkinElementSize(const RigExecMoverParameters &p)
     return p.skinTopology ? p.skinTopology->elementSize : p.skinElementSize;
 }
 
+/// The fields of \p p that \p op's payload or port choice reads.
+RigExecMoverParameters
+PayloadFields(RigExecRevisionOp op, const RigExecMoverParameters &p)
+{
+    RigExecMoverParameters f;
+    switch (op) {
+    case RigExecRevisionOp::Matrix:
+        f.radialWeight = p.radialWeight;
+        break;
+    case RigExecRevisionOp::Skin:
+        f.skinningMethod = p.skinningMethod;
+        f.skinElementSize = SkinElementSize(p);
+        break;
+    case RigExecRevisionOp::DeltaMush:
+        f.mushIterations = p.mushIterations;
+        f.mushStep = p.mushStep;
+        f.mushPinBorders = p.mushPinBorders;
+        f.mushDistanceWeight = p.mushDistanceWeight;
+        f.mushDisplacement = p.mushDisplacement;
+        f.mushSettings = p.mushSettings;
+        break;
+    case RigExecRevisionOp::Wrinkle:
+        f.wrinkleSettings = p.wrinkleSettings;
+        break;
+    case RigExecRevisionOp::Lattice:
+        f.divisions = p.divisions;
+        f.latticeSettings = p.latticeSettings;
+        break;
+    case RigExecRevisionOp::SurfaceProject:
+        f.surfaceSettings = p.surfaceSettings;
+        break;
+    case RigExecRevisionOp::Wire:
+        f.curveOrder = p.curveOrder;
+        f.curveKnots = p.curveKnots;
+        f.dropoffDistance = p.dropoffDistance;
+        break;
+    case RigExecRevisionOp::RecomputeNormals:
+        f.normalsPerCorner = p.normalsPerCorner;
+        f.normalsLeftHanded = p.normalsLeftHanded;
+        break;
+    case RigExecRevisionOp::BlendShape:
+        f.blendSurfaceFrame = p.blendSurfaceFrame;
+        break;
+    default:
+        break;
+    }
+    return f;
+}
+
 } // namespace
 
 bool
@@ -391,6 +440,7 @@ RigExecAddGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
         result.envelope = builder->BindInput(result.node, *envelope);
     result.outPort = out;
     result.out = builder->BindOutput(result.node, *out);
+    result.payloadFields = PayloadFields(op, p);
     *node = result;
     return true;
 }
@@ -404,6 +454,8 @@ RigExecWriteGeometryOpInputs(const RigExecMoverParameters &p,
 {
     if (!evaluator)
         return Fail(error, "null evaluator");
+    if (!(PayloadFields(node.op, p) == node.payloadFields))
+        return Fail(error, "op settings changed");
     if (Valid(node.envelope)) {
         std::vector<float> resolved;
         if (!p.weights.ResolveAll(pointCount, &resolved))
@@ -774,6 +826,7 @@ RigExecAddGeometryBlendOp(const std::vector<RigExecBlendChannel> &channels,
     result.envelope = builder->BindInput(n, rigExecOps::BlendShapeEnvelope());
     result.outPort = &rigExecOps::BlendShapeOut();
     result.out = builder->BindOutput(n, *result.outPort);
+    result.payloadFields = PayloadFields(result.op, p);
     *node = std::move(result);
     return true;
 }
