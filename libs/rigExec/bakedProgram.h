@@ -518,7 +518,7 @@ public:
     /// the stage pointer itself and the blend-sample resolver, which
     /// captured a copy of it.
     ///
-    /// For a RETIRING program only, which runs nothing afterwards: its prims,
+    /// For a RETIRING program only: Run fails afterwards. Its prims,
     /// attributes and queries stay, and they do not own the stage. The
     /// evaluator calls this on its own thread before handing the program to
     /// a detached destroy, so the last reference to a stage can never be
@@ -599,6 +599,7 @@ private:
     /// RequestFullRun's one-shot flag, consumed by the next Run.
     mutable bool _fullRunRequested = false;
     RigExecBakedBail _lastBail = RigExecBakedBail::None;
+    bool _released = false;
 };
 
 } // namespace rigExec

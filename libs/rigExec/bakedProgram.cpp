@@ -809,6 +809,7 @@ RigExecBakedProgram::GetVaryingInputCount() const
 void
 RigExecBakedProgram::ReleaseStageReferences()
 {
+    _released = true;
     _impl->stage.Reset();
 }
 
@@ -4885,6 +4886,12 @@ RigExecBakedProgramImpl::ConstraintArrays::Names()
 bool
 RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
 {
+    if (_released) {
+        if (pose) {
+            pose->diagnostics.push_back("program released: run refused");
+        }
+        return false;
+    }
     RigExecBakedProgramImpl &B = *_impl;
     if (B.inputReplayCapture) {
         RigExecInputReplayObserver::UnsupportedAction(
