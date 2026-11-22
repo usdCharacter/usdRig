@@ -25,6 +25,7 @@ void RegisterProjectorOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterConstraintOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterWeightOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterChainSolverOps(rigExec::RigExecOpRegistrar &registrar);
+void RegisterFrameBlendOps(rigExec::RigExecOpRegistrar &registrar);
 
 } // namespace rigExecOps
 

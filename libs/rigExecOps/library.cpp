@@ -22,6 +22,7 @@ Register(rigExec::RigExecOpRegistrar &registrar)
     RegisterConstraintOps(registrar);
     RegisterWeightOps(registrar);
     RegisterChainSolverOps(registrar);
+    RegisterFrameBlendOps(registrar);
 }
 
 const rigExec::RigExecOpLibraryDesc kLibrary = [] {

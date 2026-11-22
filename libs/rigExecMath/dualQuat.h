@@ -99,6 +99,10 @@ template <> struct RigExecDualQuatMath<GfVec3f, GfVec3d> {
     {
         return m.ExtractRotation().GetQuat();
     }
+    static GfQuatd Slerp(double alpha, const GfQuatd &a, const GfQuatd &b)
+    {
+        return GfSlerp(alpha, a, b);
+    }
 };
 
 template <class Point, class Double> struct RigExecConstraintMath;

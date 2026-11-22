@@ -178,9 +178,6 @@ RrPointFrame _RrBlendFrames(const RrPointFrame &a, const RrPointFrame &b,
                             double weight, bool logScale,
                             const std::array<RrVec3d, 4> *outRestPoints);
 
-void _RrSwingTwist(const RrQuatd &q, const RrVec3d &axis, RrQuatd *swing,
-                   RrQuatd *twist);
-
 // RigExecTransformFrame: every landmark carried by \p space, nothing else.
 RrPointFrame _RrTransformFrame(const RrPointFrame &frame, const RrMat4d &space);
 

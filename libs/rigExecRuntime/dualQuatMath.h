@@ -192,6 +192,11 @@ template <> struct RigExecDualQuatMath<RrVec3f, RrVec3d> {
     {
         return RrMat3ExtractRotationQuaternion(m);
     }
+
+    static RrQuatd Slerp(double alpha, const RrQuatd &a, const RrQuatd &b)
+    {
+        return RrSlerp(alpha, a, b);
+    }
 };
 
 /// GfRotation::RotateOntoProjected: the twist about \p axisParam taking

@@ -14,6 +14,7 @@
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecOps/constraint/constraintOps.h"
 #include "rigExecOps/solver/chainSolverOps.h"
+#include "rigExecOps/solver/frameBlendOps.h"
 #include "rigExecOps/deform/blendShapeOp.h"
 #include "rigExecOps/deform/deltaMushOp.h"
 #include "rigExecOps/deform/derivedOps.h"
@@ -36,6 +37,7 @@
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <random>
 #include <string>
@@ -2174,6 +2176,135 @@ TestChainSolvers()
     }
 }
 
+bool
+SameBits(const std::array<GfVec3d, 4> &expected,
+         const rigExecRig::PointLandmarks &actual)
+{
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 3; ++j) {
+            const double e = expected[i][j], v = actual[i][j];
+            if (std::memcmp(&e, &v, sizeof(double)) != 0)
+                return false;
+        }
+    return true;
+}
+
+void
+TestFrameBlend()
+{
+    using namespace rigExecOps;
+    const RigExecPointFrame restFrame =
+        MakeFrame(GfVec3d(0.5, 0, 0), GfVec3d(0, 0, 1), 10.0, GfVec3d(1.0));
+    const RigExecPointFrame outRestFrame =
+        MakeFrame(GfVec3d(0, 1, 0), GfVec3d(1, 0, 0), 20.0, GfVec3d(1.0));
+    const RigExecPointFrame a = MakeFrame(
+        GfVec3d(1, 2, 3), GfVec3d(0.2, 1, 0.1), 40.0, GfVec3d(1.2, 0.8, 1.0));
+    const RigExecPointFrame b =
+        MakeFrame(GfVec3d(-1, 0.5, 2), GfVec3d(1, 0.3, -0.4), 200.0,
+                  GfVec3d(0.7, 1.5, 2));
+    RigExecPointFrame flat = a;
+    flat.points[3] = flat.points[0];
+    const rigExecRig::PointFrame rigA = ToRig(a), rigB = ToRig(b),
+                                 rigFlat = ToRig(flat);
+    const rigExecRig::PointLandmarks rest = ToRigLandmarks(restFrame.points),
+                                     outRest =
+                                         ToRigLandmarks(outRestFrame.points);
+    rigExecRig::PointFrame actual;
+    for (const bool logScale : {false, true}) {
+        BlendFramesPayload payload;
+        payload.logScale = logScale;
+        const RigExecScaleBlend scaleBlend =
+            logScale ? RigExecScaleBlend::Log : RigExecScaleBlend::Linear;
+        Node bare(BlendFrames(),
+                  {&BlendFramesA(), &BlendFramesB(), &BlendFramesRest(),
+                   &BlendFramesWeight()},
+                  BlendFramesOut(), &payload);
+        Node rebased(BlendFrames(),
+                     {&BlendFramesA(), &BlendFramesB(), &BlendFramesRest(),
+                      &BlendFramesWeight(), &BlendFramesOutRest()},
+                     BlendFramesOut(), &payload);
+        for (const double w : {-0.5, 0.0, 0.3, 0.75, 1.0, 2.0}) {
+            CHECK(bare.Run({&rigA, &rigB, &rest, &w}, &actual));
+            CHECK(SameBits(RigExecBlendFrames(a, b, restFrame.points, w,
+                                              RigExecRotationBlend::ShortestArc,
+                                              scaleBlend),
+                           actual));
+            CHECK(rebased.Run({&rigA, &rigB, &rest, &w, &outRest}, &actual));
+            CHECK(SameBits(RigExecBlendFrames(a, b, restFrame.points, w,
+                                              RigExecRotationBlend::ShortestArc,
+                                              scaleBlend, &outRestFrame.points),
+                           actual));
+            // A singular input holds the stronger one, flagged.
+            CHECK(bare.Run({&rigA, &rigFlat, &rest, &w}, &actual));
+            CHECK(SameBits(RigExecBlendFrames(a, flat, restFrame.points, w,
+                                              RigExecRotationBlend::ShortestArc,
+                                              scaleBlend),
+                           actual));
+        }
+        const double nan = std::nan("");
+        std::string error;
+        CHECK(!bare.Run({&rigA, &rigB, &rest, &nan}, &actual, &error));
+    }
+
+    // Twist distribution: a twist past a half turn, extra turns, an
+    // unfed turn count and a singular end.
+    const RigExecPointFrame endRestFrame =
+        MakeFrame(GfVec3d(0, 0, 4), GfVec3d(0, 1, 0), 0.0, GfVec3d(1.0));
+    const rigExecRig::PointLandmarks endRest =
+        ToRigLandmarks(endRestFrame.points);
+    const RigExecPointFrame start = MakeFrame(
+        GfVec3d(0.1, 0.2, 0.3), GfVec3d(0, 0.2, 1), 30.0, GfVec3d(1.0));
+    const RigExecPointFrame end = MakeFrame(
+        GfVec3d(0.3, 0.1, 4.2), GfVec3d(0.1, 0.1, 1), 250.0, GfVec3d(1.3));
+    const std::vector<double> weights = {-0.2, 0.0, 0.25, 0.5, 0.9, 1.0, 1.4};
+    const auto weightArray =
+        RigExecArray<double>(weights.data(), weights.size());
+    const rigExecRig::PointFrame rigStart = ToRig(start), rigEnd = ToRig(end);
+    rigExecRig::PointFrameArray frames;
+    Node bareTwist(DistributeTwist(),
+                   {&DistributeTwistStart(), &DistributeTwistEnd(),
+                    &DistributeTwistStartRest(), &DistributeTwistEndRest(),
+                    &DistributeTwistWeights()},
+                   DistributeTwistOut(), nullptr);
+    Node turnsTwist(DistributeTwist(),
+                    {&DistributeTwistStart(), &DistributeTwistEnd(),
+                     &DistributeTwistStartRest(), &DistributeTwistEndRest(),
+                     &DistributeTwistWeights(), &DistributeTwistTurns()},
+                    DistributeTwistOut(), nullptr);
+    auto check = [&](const std::vector<RigExecPointFrame> &expected) {
+        CHECK(frames.frames.Size() == expected.size());
+        CHECK(frames.rests.Size() == expected.size());
+        for (size_t k = 0; k < expected.size() && k < frames.frames.Size();
+             ++k) {
+            CHECK(SameBits(expected[k], frames.frames[k]));
+            CHECK(SameBits(restFrame.points, frames.rests[k]));
+        }
+    };
+    CHECK(bareTwist.Run({&rigStart, &rigEnd, &rest, &endRest, &weightArray},
+                        &frames));
+    check(RigExecDistributeTwist(start, end, restFrame.points,
+                                 endRestFrame.points, weights, 0.0));
+    for (const double turns : {-1.0, 2.0}) {
+        CHECK(turnsTwist.Run(
+            {&rigStart, &rigEnd, &rest, &endRest, &weightArray, &turns},
+            &frames));
+        check(RigExecDistributeTwist(start, end, restFrame.points,
+                                     endRestFrame.points, weights, turns));
+    }
+    RigExecPointFrame flatEnd = end;
+    flatEnd.points[2] = flatEnd.points[0];
+    const rigExecRig::PointFrame rigFlatEnd = ToRig(flatEnd);
+    CHECK(bareTwist.Run({&rigStart, &rigFlatEnd, &rest, &endRest, &weightArray},
+                        &frames));
+    check(RigExecDistributeTwist(start, flatEnd, restFrame.points,
+                                 endRestFrame.points, weights, 0.0));
+    const double inf = std::numeric_limits<double>::infinity();
+    std::string error;
+    CHECK(!turnsTwist.Run(
+        {&rigStart, &rigEnd, &rest, &endRest, &weightArray, &inf}, &frames,
+        &error));
+}
+
 int
 main()
 {
@@ -2201,6 +2332,7 @@ main()
     TestConstraints();
     TestWeightFields();
     TestChainSolvers();
+    TestFrameBlend();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

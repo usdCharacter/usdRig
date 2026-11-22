@@ -4,6 +4,7 @@
 #include "poseInternal.h"
 #include "dualQuatMath.h"
 #include "rigExecMath/chainSolverKernel.h"
+#include "rigExecMath/frameBlendKernel.h"
 #include <algorithm>
 #include <limits>
 #include <utility>
@@ -524,69 +525,8 @@ _RrDistributeTwist(const RrPointFrame &start, const RrPointFrame &end,
                    const std::array<RrVec3d, 4> &endRest,
                    const std::vector<double> &weights, double twistTurns)
 {
-    std::vector<RrPointFrame> result;
-    if (!std::isfinite(twistTurns)) {
-        return result;
-    }
-    result.reserve(weights.size());
-
-    _RrTransformParams ps, pe;
-    const bool okS = _RrPointsToParams(startRest, start.points, 2, &ps);
-    const bool okE = _RrPointsToParams(endRest, end.points, 2, &pe);
-    if (!okS || !okE) {
-        for (double w : weights) {
-            RrPointFrame f = (w < 0.5) ? start : end;
-            f.flags |= RrPointFrameDegenerate;
-            result.push_back(f);
-        }
-        return result;
-    }
-
-    const RrVec3d aim = (start.points[1] - start.points[0]).GetNormalized();
-    RrQuatd qs = ps.rotation, qe = pe.rotation;
-    if (RrDot(qs.GetImaginary(), qe.GetImaginary()) +
-            qs.GetReal() * qe.GetReal() <
-        0) {
-        qe = -qe;
-    }
-    const RrQuatd rel = qs.GetInverse() * qe;
-    const RrQuatd qsInv = qs.GetInverse();
-    const RrVec3d localAim = qsInv.Transform(aim);
-    RrQuatd swing, twist;
-    _RrSwingTwist(rel, localAim, &swing, &twist);
-
-    double twistAngle = 2.0 * std::atan2(RrDot(twist.GetImaginary(), localAim),
-                                         twist.GetReal());
-    twistAngle += 2.0 * std::acos(-1.0) * twistTurns;
-    if (!std::isfinite(twistAngle)) {
-        return result;
-    }
-
-    for (size_t k = 0; k < weights.size(); ++k) {
-        const double w = std::min(std::max(weights[k], 0.0), 1.0);
-
-        const RrQuatd swingK =
-            RrSlerp(w, RrQuatd::GetIdentity(), swing).GetNormalized();
-        const double angK = twistAngle * w;
-        const RrQuatd twistK(std::cos(angK / 2), localAim * std::sin(angK / 2));
-        const RrQuatd qk = (qs * swingK * twistK).GetNormalized();
-
-        _RrTransformParams pk;
-        pk.translation = ps.translation * (1 - w) + pe.translation * w;
-        pk.rotation = qk;
-        pk.scale = ps.scale * (1 - w) + pe.scale * w;
-        pk.shear = ps.shear * (1 - w) + pe.shear * w;
-
-        const RrMat4d m = _RrParamsToMatrix(pk);
-        RrPointFrame f = RrMatrixToPoints(startRest, m);
-        const RrVec3d origin = start.points[0] * (1 - w) + end.points[0] * w;
-        const RrVec3d shift = origin - f.points[0];
-        for (auto &p : f.points) {
-            p += shift;
-        }
-        result.push_back(f);
-    }
-    return result;
+    return RigExecDistributeTwistKernel<RrVec3f, RrVec3d>(
+        start, end, startRest, endRest, weights, twistTurns);
 }
 
 // Ribbon substrate (geometryKernels.cpp, solverKernels.cpp).

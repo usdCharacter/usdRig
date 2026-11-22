@@ -2,6 +2,7 @@
 #include "solvers.h"
 #include "chainSolverKernel.h"
 #include "constraintKernel.h"
+#include "frameBlendKernel.h"
 #include "dualQuat.h"
 #include "matrixKernel.h"
 #include "skinKernel.h"
@@ -93,87 +94,12 @@ RigExecBlendFrames(const RigExecPointFrame &a, const RigExecPointFrame &b,
                    RigExecScaleBlend scaleBlend,
                    const std::array<GfVec3d, 4> *outRestPoints)
 {
-    const double w = std::min(std::max(weight, 0.0), 1.0);
-    if (!outRestPoints) {
-        // At the ends the blend IS the input frame,
-        // bit for bit, with no SRT round trip.
-        if (w <= 0.0)
-            return a;
-        if (w >= 1.0)
-            return b;
-    } else if (w <= 0.0 || w >= 1.0) {
-        // Re-based, the end still has to be re-applied to the new basis, so
-        // it goes through the map rather than through the frame.
-        const RigExecPointFrame &pick = (w <= 0.0) ? a : b;
-        GfMatrix4d end;
-        if (!RigExecPointsToMatrix(restPoints, pick.points, &end)) {
-            RigExecPointFrame held = pick;
-            held.flags |= RigExecPointFrameDegenerate;
-            return held;
-        }
-        return RigExecMatrixToPoints(*outRestPoints, end);
-    }
-
-    RigExecTransformParams pa, pb;
-    if (!RigExecPointsToParams(restPoints, a.points, RigExecAxis::Z, &pa) ||
-        !RigExecPointsToParams(restPoints, b.points, RigExecAxis::Z, &pb)) {
-        // A singular input frame cannot blend through SRT; hold the
-        // stronger input and flag it (no silent identity).
-        RigExecPointFrame held = (w < 0.5) ? a : b;
-        held.flags |= RigExecPointFrameDegenerate;
-        return held;
-    }
-
-    RigExecTransformParams pr;
-    pr.translation = pa.translation * (1 - w) + pb.translation * w;
-
-    GfQuatd qa = pa.rotation, qb = pb.rotation;
-    if (rotationBlend == RigExecRotationBlend::ShortestArc &&
-        GfDot(qa.GetImaginary(), qb.GetImaginary()) +
-                qa.GetReal() * qb.GetReal() <
-            0) {
-        qb = -qb;
-    }
-    pr.rotation = GfSlerp(w, qa, qb).GetNormalized();
-
-    for (int i = 0; i < 3; ++i) {
-        if (scaleBlend == RigExecScaleBlend::Log && pa.scale[i] > 0 &&
-            pb.scale[i] > 0) {
-            pr.scale[i] = std::exp(std::log(pa.scale[i]) * (1 - w) +
-                                   std::log(pb.scale[i]) * w);
-        } else {
-            pr.scale[i] = pa.scale[i] * (1 - w) + pb.scale[i] * w;
-        }
-        pr.shear[i] = pa.shear[i] * (1 - w) + pb.shear[i] * w;
-    }
-
-    const GfMatrix4d m = RigExecParamsToMatrix(pr);
-    return RigExecMatrixToPoints(outRestPoints ? *outRestPoints : restPoints,
-                                 m);
+    // ShortestArc is the one rotation blend.
+    (void)rotationBlend;
+    return RigExecBlendFramesKernel<GfVec3f, GfVec3d>(
+        a, b, restPoints, weight, scaleBlend == RigExecScaleBlend::Log,
+        outRestPoints);
 }
-
-namespace {
-
-// Swing/twist decomposition of q about unit axis: q = swing * twist,
-// twist a rotation about the axis (Dobrowolski 2015, see docs/references.md).
-void
-_SwingTwist(const GfQuatd &q, const GfVec3d &axis, GfQuatd *swing,
-            GfQuatd *twist)
-{
-    const GfVec3d im = q.GetImaginary();
-    const double proj = GfDot(im, axis);
-    GfQuatd t(q.GetReal(), axis * proj);
-    const double len = std::sqrt(t.GetReal() * t.GetReal() +
-                                 GfDot(t.GetImaginary(), t.GetImaginary()));
-    if (len < 1e-15) {
-        *twist = GfQuatd::GetIdentity();
-    } else {
-        *twist = t * (1.0 / len);
-    }
-    *swing = q * twist->GetInverse();
-}
-
-} // namespace
 
 std::vector<RigExecPointFrame>
 RigExecDistributeTwist(const RigExecPointFrame &start,
@@ -182,76 +108,8 @@ RigExecDistributeTwist(const RigExecPointFrame &start,
                        const std::array<GfVec3d, 4> &endRest,
                        const std::vector<double> &weights, double twistTurns)
 {
-    std::vector<RigExecPointFrame> result;
-    if (!std::isfinite(twistTurns))
-        return result;
-    result.reserve(weights.size());
-
-    RigExecTransformParams ps, pe;
-    const bool okS =
-        RigExecPointsToParams(startRest, start.points, RigExecAxis::Z, &ps);
-    const bool okE =
-        RigExecPointsToParams(endRest, end.points, RigExecAxis::Z, &pe);
-    if (!okS || !okE) {
-        for (double w : weights) {
-            RigExecPointFrame f = (w < 0.5) ? start : end;
-            f.flags |= RigExecPointFrameDegenerate;
-            result.push_back(f);
-        }
-        return result;
-    }
-
-    // Relative rotation decomposed into swing and unwrapped aim-axis twist.
-    const GfVec3d aim = (start.X() - start.Origin()).GetNormalized();
-    GfQuatd qs = ps.rotation, qe = pe.rotation;
-    if (GfDot(qs.GetImaginary(), qe.GetImaginary()) +
-            qs.GetReal() * qe.GetReal() <
-        0) {
-        qe = -qe;
-    }
-    const GfQuatd rel = qs.GetInverse() * qe;
-    // Axis in start-local space (column convention: rotate world aim by
-    // qs^-1).
-    const GfQuatd qsInv = qs.GetInverse();
-    const GfVec3d localAim = qsInv.Transform(aim);
-    GfQuatd swing, twist;
-    _SwingTwist(rel, localAim, &swing, &twist);
-
-    // Unwrapped twist angle about localAim.
-    double twistAngle = 2.0 * std::atan2(GfDot(twist.GetImaginary(), localAim),
-                                         twist.GetReal());
-    twistAngle += 2.0 * std::acos(-1.0) * twistTurns;
-    if (!std::isfinite(twistAngle))
-        return result;
-
-    for (size_t k = 0; k < weights.size(); ++k) {
-        const double w = std::min(std::max(weights[k], 0.0), 1.0);
-
-        const GfQuatd swingK =
-            GfSlerp(w, GfQuatd::GetIdentity(), swing).GetNormalized();
-        const double angK = twistAngle * w;
-        const GfQuatd twistK(std::cos(angK / 2), localAim * std::sin(angK / 2));
-        const GfQuatd qk = (qs * swingK * twistK).GetNormalized();
-
-        RigExecTransformParams pk;
-        pk.translation = ps.translation * (1 - w) + pe.translation * w;
-        pk.rotation = qk;
-        pk.scale = ps.scale * (1 - w) + pe.scale * w;
-        pk.shear = ps.shear * (1 - w) + pe.shear * w;
-
-        // Sample origin interpolates between the frame origins; the
-        // decomposed translations already carry that motion for identical
-        // rest sets, but samples use start's rest landmarks.
-        const GfMatrix4d m = RigExecParamsToMatrix(pk);
-        RigExecPointFrame f = RigExecMatrixToPoints(startRest, m);
-        const GfVec3d origin = start.Origin() * (1 - w) + end.Origin() * w;
-        const GfVec3d shift = origin - f.Origin();
-        for (auto &p : f.points) {
-            p += shift;
-        }
-        result.push_back(f);
-    }
-    return result;
+    return RigExecDistributeTwistKernel<GfVec3f, GfVec3d>(
+        start, end, startRest, endRest, weights, twistTurns);
 }
 
 GfVec3d
