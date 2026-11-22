@@ -30,6 +30,14 @@ struct RigExecProgramNode {
     uint32_t portCount = 0;
 };
 
+/// An array input's elements: listSlots[firstSlot, firstSlot + count).
+struct RigExecProgramList {
+    /// Into portSlots.
+    uint32_t port = 0;
+    uint32_t firstSlot = 0;
+    uint32_t count = 0;
+};
+
 /// Nodes of one op at one level, run in node order.
 struct RigExecProgramBatch {
     uint32_t op = kRigExecInvalidIndex;
@@ -55,8 +63,12 @@ public:
     uint64_t registryFingerprint = 0;
     std::vector<RigExecProgramSlot> slots;
     std::vector<RigExecProgramNode> nodes;
-    /// Slot per node port; kRigExecInvalidIndex for an unfed optional input.
+    /// Slot per node port; kRigExecInvalidIndex for an unfed optional input
+    /// and for an array input.
     std::vector<uint32_t> portSlots;
+    /// One per array input, in node then port order.
+    std::vector<RigExecProgramList> lists;
+    std::vector<uint32_t> listSlots;
     /// Node ids in batch order.
     std::vector<uint32_t> batchNodes;
     std::vector<RigExecProgramBatch> batches;

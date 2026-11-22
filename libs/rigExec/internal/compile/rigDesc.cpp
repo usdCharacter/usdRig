@@ -108,6 +108,17 @@ FindPort(const RigExecRigDescData &data, RigExecNodeId node,
     return index;
 }
 
+/// The next element of an array input; 0 for any other input.
+uint32_t
+NextElement(RigExecRigDescData &data, RigExecNodeId node, uint32_t port)
+{
+    const RigExecOpDesc &d =
+        *RigExecRegistry::Get().OpAt(data.nodes[node].op).desc;
+    if (!(d.ports[port].flags & kRigExecPortArray))
+        return 0;
+    return data.listSizes[{node, port}]++;
+}
+
 } // namespace
 
 void
@@ -123,7 +134,8 @@ RigExecRigDescBuilder::Connect(RigExecNodeId from, const RigExecPortHandle &out,
               std::to_string(to) + " names a port its op does not have");
         return;
     }
-    _data->connections.push_back({{from, o}, {to, i}});
+    _data->connections.push_back(
+        {{from, o}, {to, i}, NextElement(*_data, to, i)});
 }
 
 RigExecInputId
@@ -137,7 +149,7 @@ RigExecRigDescBuilder::BindInput(RigExecNodeId node,
         _Fail("BindInput: node " + std::to_string(node) + " has no such input");
         return {};
     }
-    _data->inputs.push_back({node, i});
+    _data->inputs.push_back({{node, i}, NextElement(*_data, node, i)});
     return {uint32_t(_data->inputs.size() - 1)};
 }
 

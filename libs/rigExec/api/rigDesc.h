@@ -61,7 +61,8 @@ public:
     /// payload handling and may be null for an op without one.
     RigExecNodeId AddOp(const RigExecOpHandle &op,
                         const void *payload = nullptr);
-    /// Feeds input \p in of \p to from output \p out of \p from.
+    /// Feeds input \p in of \p to from output \p out of \p from. On an
+    /// array input each Connect or BindInput appends one element.
     void Connect(RigExecNodeId from, const RigExecPortHandle &out,
                  RigExecNodeId to, const RigExecPortHandle &in);
     /// Makes input \p in of \p node host-written.

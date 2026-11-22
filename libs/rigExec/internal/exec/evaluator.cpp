@@ -67,6 +67,9 @@ struct RigExecEvaluatorState {
     /// Per program port: the value an op reads or writes there.
     std::vector<const void *> inputs;
     std::vector<void *> outputs;
+    /// Array inputs: element values, and the records inputs point to.
+    std::vector<const void *> listItems;
+    std::vector<RigExecPortList> lists;
     /// Per batch run: whether it failed and why.
     std::vector<uint8_t> failed;
     std::vector<std::string> errors;
@@ -199,6 +202,17 @@ RigExecEvaluator::_Bind(std::shared_ptr<const RigExecProgram> program,
             else
                 state->inputs[node.firstPort + port] = value;
         }
+    }
+    state->listItems.resize(p.listSlots.size());
+    for (size_t i = 0; i < p.listSlots.size(); ++i)
+        state->listItems[i] =
+            state->arena.Data() + p.slots[p.listSlots[i]].offset;
+    state->lists.resize(p.lists.size());
+    for (size_t i = 0; i < p.lists.size(); ++i) {
+        const RigExecProgramList &list = p.lists[i];
+        state->lists[i] = {state->listItems.data() + list.firstSlot,
+                           list.count};
+        state->inputs[list.port] = &state->lists[i];
     }
     state->failed.assign(p.batches.size(), 0);
     state->errors.assign(p.batches.size(), std::string());

@@ -20,7 +20,7 @@ inline constexpr uint32_t kRigExecInvalidIndex = 0xffffffffu;
 
 /// Raises a library's ABI version on any layout change of the descriptors
 /// below.
-inline constexpr uint32_t kRigExecRegistryAbiVersion = 1;
+inline constexpr uint32_t kRigExecRegistryAbiVersion = 2;
 
 /// Dense index assigned at freeze. Constant-initialized at namespace scope
 /// by the RIGEXEC_DEFINE_*_HANDLE macros; read only after Initialize.
@@ -115,6 +115,9 @@ enum RigExecPortFlags : uint32_t {
     kRigExecPortInput = 1u << 0,
     kRigExecPortOutput = 1u << 1,
     kRigExecPortOptional = 1u << 2,
+    /// Input only: fed by any number of connections and bindings, kept in
+    /// call order. The port's type is the element type; the op reads a
+    /// RigExecPortList.
     kRigExecPortArray = 1u << 3,
 };
 
@@ -177,7 +180,14 @@ struct RigExecOpStateHandling {
     void (*destroy)(void *dst) = nullptr;
 };
 
-/// Port values for one run, indexed by port handle.
+/// An array input's element values, in feed order.
+struct RigExecPortList {
+    const void *const *items = nullptr;
+    size_t count = 0;
+};
+
+/// Port values for one run, indexed by port handle. An array input's entry
+/// points to its RigExecPortList, empty when unfed.
 struct RigExecOpIo {
     const void *const *inputs = nullptr;
     void *const *outputs = nullptr;

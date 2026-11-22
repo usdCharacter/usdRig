@@ -19,8 +19,9 @@ struct RigExecCompileOptions {
     size_t maxBatchNodes = 0;
 };
 
-/// Null with \p error when an input is unfed or fed twice, a connection
-/// joins different types, or the order has a cycle.
+/// Null with \p error when a required input is unfed, an input other than
+/// an array is fed twice, a connection joins different types, or the order
+/// has a cycle.
 std::shared_ptr<const RigExecProgram>
 RigExecCompile(const RigExecRigDesc &desc,
                const RigExecCompileOptions &options = {},

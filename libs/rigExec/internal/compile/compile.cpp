@@ -89,40 +89,60 @@ RigExecCompile(const RigExecRigDesc &desc, const RigExecCompileOptions &options,
     const auto portType = [&](const RigExecDescPort &port) {
         return registry.OpAt(data.nodes[port.node].op).portTypes[port.port];
     };
+    const auto isList = [&](const RigExecDescPort &port) {
+        return (registry.OpAt(data.nodes[port.node].op)
+                    .desc->ports[port.port]
+                    .flags &
+                kRigExecPortArray) != 0;
+    };
 
-    // Feeds: one connection or binding per input.
+    // Feeds: one connection or binding per input; an array input takes any
+    // number, placed at the element index the description recorded.
     std::vector<uint8_t> fed(program->portSlots.size(), 0);
+    std::vector<std::vector<uint32_t>> elements(program->portSlots.size());
+    const auto feed = [&](const RigExecDescPort &to, uint32_t element,
+                          uint32_t slot) {
+        const uint32_t port = portIndex(to);
+        if (!isList(to)) {
+            program->portSlots[port] = slot;
+            return;
+        }
+        std::vector<uint32_t> &list = elements[port];
+        if (list.size() <= element)
+            list.resize(element + 1, kRigExecInvalidIndex);
+        list[element] = slot;
+    };
+    const auto fedTwice = [&](const RigExecDescPort &to) {
+        if (fed[portIndex(to)]++ && !isList(to)) {
+            Fail(error, NodeText(registry, data, to.node) + " input " +
+                            std::to_string(to.port) + " is fed twice");
+            return true;
+        }
+        return false;
+    };
     std::vector<std::vector<uint32_t>> successors(nodeCount);
     for (const RigExecDescConnection &c : data.connections) {
-        const uint32_t to = portIndex(c.to);
-        if (fed[to]++) {
-            Fail(error, NodeText(registry, data, c.to.node) + " input " +
-                            std::to_string(c.to.port) + " is fed twice");
+        if (fedTwice(c.to))
             return nullptr;
-        }
         if (portType(c.from) != portType(c.to)) {
             Fail(error, NodeText(registry, data, c.from.node) + " to " +
                             NodeText(registry, data, c.to.node) +
                             " joins different types");
             return nullptr;
         }
-        program->portSlots[to] = program->portSlots[portIndex(c.from)];
+        feed(c.to, c.element, program->portSlots[portIndex(c.from)]);
         if (c.from.node == c.to.node) {
             Fail(error, NodeText(registry, data, c.to.node) + " feeds itself");
             return nullptr;
         }
         successors[c.from.node].push_back(c.to.node);
     }
-    for (const RigExecDescPort &in : data.inputs) {
-        const uint32_t to = portIndex(in);
-        if (fed[to]++) {
-            Fail(error, NodeText(registry, data, in.node) + " input " +
-                            std::to_string(in.port) + " is fed twice");
+    for (const RigExecDescInput &in : data.inputs) {
+        if (fedTwice(in.to))
             return nullptr;
-        }
         const uint32_t slot = uint32_t(program->slots.size());
-        program->slots.push_back({0, portType(in)});
-        program->portSlots[to] = slot;
+        program->slots.push_back({0, portType(in.to)});
+        feed(in.to, in.element, slot);
         program->inputSlots.push_back(slot);
     }
     for (uint32_t n = 0; n < nodeCount; ++n) {
@@ -136,6 +156,15 @@ RigExecCompile(const RigExecRigDesc &desc, const RigExecCompileOptions &options,
                                 (d.ports[p].name ? d.ports[p].name : "") +
                                 " is not fed");
                 return nullptr;
+            }
+            if ((flags & kRigExecPortInput) && (flags & kRigExecPortArray)) {
+                const uint32_t port = program->nodes[n].firstPort + p;
+                const std::vector<uint32_t> &list = elements[port];
+                program->lists.push_back({port,
+                                          uint32_t(program->listSlots.size()),
+                                          uint32_t(list.size())});
+                program->listSlots.insert(program->listSlots.end(),
+                                          list.begin(), list.end());
             }
         }
     }

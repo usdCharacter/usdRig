@@ -260,6 +260,11 @@ RigExecRegistryBuilder::_FreezeOps(const RigExecRegistryInit &init)
                 _Error("op " + name + ": port " + Text(port.name) +
                        " is neither input nor output");
             }
+            if ((port.flags & kRigExecPortArray) &&
+                (port.flags & kRigExecPortOutput)) {
+                _Error("op " + name + ": port " + Text(port.name) +
+                       " is an array output; only inputs can be arrays");
+            }
             if (!_typeIndex.count(port.type)) {
                 _Error("op " + name + ": port " + Text(port.name) +
                        " uses a type that is not registered");

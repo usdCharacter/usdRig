@@ -5,6 +5,8 @@
 #include "rigExec/internal/program/alignedBuffer.h"
 
 #include <cstdint>
+#include <map>
+#include <utility>
 #include <vector>
 
 namespace rigExec {
@@ -24,15 +26,24 @@ struct RigExecDescPort {
 struct RigExecDescConnection {
     RigExecDescPort from;
     RigExecDescPort to;
+    /// Position in an array input's list; 0 otherwise.
+    uint32_t element = 0;
+};
+
+struct RigExecDescInput {
+    RigExecDescPort to;
+    uint32_t element = 0;
 };
 
 struct RigExecRigDescData {
     uint64_t registryFingerprint = 0;
     std::vector<RigExecDescNode> nodes;
     std::vector<RigExecDescConnection> connections;
-    std::vector<RigExecDescPort> inputs;
+    std::vector<RigExecDescInput> inputs;
     std::vector<RigExecDescPort> outputs;
     std::vector<std::pair<RigExecNodeId, RigExecNodeId>> orders;
+    /// Elements recorded so far per array input.
+    std::map<std::pair<RigExecNodeId, uint32_t>, uint32_t> listSizes;
 
     ~RigExecRigDescData();
 };

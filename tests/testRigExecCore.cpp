@@ -55,6 +55,40 @@ RunCheck(const void *, void *, const RigExecOpIo &io, std::string *error)
     return true;
 }
 
+// out = sum over elements k of (k + 1) * item, so order shows; Required
+// takes a required list. Norm has a Float output to mistype an element.
+RIGEXEC_DEFINE_OP_HANDLE(Weighted)
+RIGEXEC_DEFINE_PORT_HANDLE(WeightedItems)
+RIGEXEC_DEFINE_PORT_HANDLE(WeightedOut)
+RIGEXEC_DEFINE_OP_HANDLE(Required)
+RIGEXEC_DEFINE_PORT_HANDLE(RequiredItems)
+RIGEXEC_DEFINE_PORT_HANDLE(RequiredOut)
+RIGEXEC_DEFINE_OP_HANDLE(Norm)
+RIGEXEC_DEFINE_PORT_HANDLE(NormIn)
+RIGEXEC_DEFINE_PORT_HANDLE(NormOut)
+
+bool
+RunWeighted(const void *, void *, const RigExecOpIo &io, std::string *)
+{
+    const auto &list = *static_cast<const RigExecPortList *>(io.inputs[0]);
+    Vec3 sum{0.0f, 0.0f, 0.0f};
+    for (size_t k = 0; k < list.count; ++k) {
+        const Vec3 &v = *static_cast<const Vec3 *>(list.items[k]);
+        const float w = float(k + 1);
+        sum = Vec3{sum.x + w * v.x, sum.y + w * v.y, sum.z + w * v.z};
+    }
+    *static_cast<Vec3 *>(io.outputs[1]) = sum;
+    return true;
+}
+
+bool
+RunNorm(const void *, void *, const RigExecOpIo &io, std::string *)
+{
+    const Vec3 &v = *static_cast<const Vec3 *>(io.inputs[0]);
+    *static_cast<float *>(io.outputs[1]) = v.x + v.y + v.z;
+    return true;
+}
+
 void
 RegisterCheck(RigExecOpRegistrar &registrar)
 {
@@ -72,6 +106,39 @@ RegisterCheck(RigExecOpRegistrar &registrar)
         return d;
     }();
     registrar.Add(Check(), desc);
+
+    static const RigExecPortDesc weightedPorts[] = {
+        {&WeightedItems(), &fakeTypes::Vec3Type(),
+         kRigExecPortInput | kRigExecPortOptional | kRigExecPortArray, "items"},
+        {&WeightedOut(), &fakeTypes::Vec3Type(), kRigExecPortOutput, "out"},
+    };
+    static const RigExecPortDesc requiredPorts[] = {
+        {&RequiredItems(), &fakeTypes::Vec3Type(),
+         kRigExecPortInput | kRigExecPortArray, "items"},
+        {&RequiredOut(), &fakeTypes::Vec3Type(), kRigExecPortOutput, "out"},
+    };
+    static const RigExecPortDesc normPorts[] = {
+        {&NormIn(), &fakeTypes::Vec3Type(), kRigExecPortInput, "in"},
+        {&NormOut(), &fakeTypes::Float(), kRigExecPortOutput, "out"},
+    };
+    const auto op = [](const char *name, const RigExecPortDesc *ports,
+                       RigExecOpRunFn run) {
+        RigExecOpDesc d;
+        d.nameSpace = "test";
+        d.name = name;
+        d.ports = ports;
+        d.portCount = 2;
+        d.run = run;
+        return d;
+    };
+    static const RigExecOpDesc weighted =
+        op("Weighted", weightedPorts, &RunWeighted);
+    static const RigExecOpDesc required =
+        op("Required", requiredPorts, &RunWeighted);
+    static const RigExecOpDesc norm = op("Norm", normPorts, &RunNorm);
+    registrar.Add(Weighted(), weighted);
+    registrar.Add(Required(), required);
+    registrar.Add(Norm(), norm);
 }
 
 const RigExecOpLibraryDesc kCheckLibrary = [] {
@@ -234,6 +301,84 @@ TestCompileErrors()
     }
 }
 
+// Host inputs and upstream outputs interleave in call order; every
+// element's producer runs first, whatever its level.
+void
+TestListOrder()
+{
+    RigExecRigDescBuilder builder;
+    const RigExecNodeId a = builder.AddOp(fakeOps::Offset());
+    const RigExecNodeId b = builder.AddOp(fakeOps::Offset());
+    const RigExecNodeId list = builder.AddOp(Weighted());
+    const RigExecInputId aIn = builder.BindInput(a, fakeOps::OffsetIn());
+    builder.Connect(a, fakeOps::OffsetOut(), b, fakeOps::OffsetIn());
+    const RigExecInputId first = builder.BindInput(list, WeightedItems());
+    builder.Connect(b, fakeOps::OffsetOut(), list, WeightedItems());
+    const RigExecInputId third = builder.BindInput(list, WeightedItems());
+    builder.Connect(a, fakeOps::OffsetOut(), list, WeightedItems());
+    const RigExecOutputId out = builder.BindOutput(list, WeightedOut());
+    const RigExecNodeId empty = builder.AddOp(Weighted());
+    const RigExecOutputId emptyOut = builder.BindOutput(empty, WeightedOut());
+    std::string error;
+    auto program = Compile(builder, 0, &error);
+    CHECK(program);
+    if (!program) {
+        std::printf("%s\n", error.c_str());
+        return;
+    }
+    auto evaluator = RigExecEvaluator::Create(program);
+    const Vec3 x{1.0f, 0.0f, 0.0f}, y{0.0f, 1.0f, 0.0f}, z{0.0f, 0.0f, 1.0f};
+    CHECK(evaluator->SetInput(aIn, &x));
+    CHECK(evaluator->SetInput(first, &y));
+    CHECK(evaluator->SetInput(third, &z));
+    CHECK(evaluator->Evaluate(&error));
+    // y + 2 * (x + 2) + 3 * z + 4 * (x + 1)
+    const auto *result = static_cast<const Vec3 *>(evaluator->GetOutput(out));
+    CHECK(result && Same(*result, Vec3{14.0f, 9.0f, 11.0f}));
+    const auto *none =
+        static_cast<const Vec3 *>(evaluator->GetOutput(emptyOut));
+    CHECK(none && Same(*none, Vec3{0.0f, 0.0f, 0.0f}));
+
+    // A swapped program rebinds the lists.
+    CHECK(evaluator->SwapProgram(program));
+    CHECK(evaluator->SetInput(aIn, &x));
+    CHECK(evaluator->SetInput(first, &z));
+    CHECK(evaluator->SetInput(third, &y));
+    CHECK(evaluator->Evaluate(&error));
+    result = static_cast<const Vec3 *>(evaluator->GetOutput(out));
+    CHECK(result && Same(*result, Vec3{14.0f, 11.0f, 9.0f}));
+}
+
+void
+TestListErrors()
+{
+    std::string error;
+    {
+        RigExecRigDescBuilder builder;
+        builder.AddOp(Required());
+        CHECK(!Compile(builder, 0, &error));
+        CHECK(Contains(error, "test:Required") && Contains(error, "not fed"));
+    }
+    {
+        // One mistyped element fails the whole list.
+        RigExecRigDescBuilder builder;
+        const RigExecNodeId norm = builder.AddOp(Norm());
+        const RigExecNodeId list = builder.AddOp(Required());
+        builder.BindInput(norm, NormIn());
+        builder.BindInput(list, RequiredItems());
+        builder.Connect(norm, NormOut(), list, RequiredItems());
+        CHECK(!Compile(builder, 0, &error));
+        CHECK(Contains(error, "joins different types"));
+    }
+    {
+        RigExecRigDescBuilder builder;
+        const RigExecNodeId list = builder.AddOp(Weighted());
+        builder.Connect(list, WeightedOut(), list, WeightedItems());
+        CHECK(!Compile(builder, 0, &error));
+        CHECK(Contains(error, "feeds itself"));
+    }
+}
+
 // Many independent chains of every op, with failures planted in some.
 struct Wide {
     std::shared_ptr<const RigExecProgram> program;
@@ -340,6 +485,62 @@ TestFailureOrder()
     }
 }
 
+// Lists over many chains give the same bits on any thread count and batch
+// size.
+Wide
+BuildWideLists(size_t lists, size_t maxBatchNodes)
+{
+    Wide wide;
+    RigExecRigDescBuilder builder;
+    for (size_t i = 0; i < lists; ++i) {
+        const fakeOps::ScalePayload payload{0.41f + 0.017f * float(i)};
+        const RigExecNodeId scale = builder.AddOp(fakeOps::Scale(), &payload);
+        const RigExecNodeId offset = builder.AddOp(fakeOps::Offset());
+        const RigExecNodeId list = builder.AddOp(Weighted());
+        wide.inputs.push_back(builder.BindInput(scale, fakeOps::ScaleIn()));
+        builder.Connect(scale, fakeOps::ScaleOut(), offset,
+                        fakeOps::OffsetIn());
+        for (size_t k = 0; k < 1 + i % 4; ++k) {
+            if (k % 2)
+                wide.inputs.push_back(builder.BindInput(list, WeightedItems()));
+            else
+                builder.Connect(k % 4 ? scale : offset,
+                                k % 4 ? fakeOps::ScaleOut()
+                                      : fakeOps::OffsetOut(),
+                                list, WeightedItems());
+        }
+        wide.outputs.push_back(builder.BindOutput(list, WeightedOut()));
+    }
+    std::string error;
+    wide.program = Compile(builder, maxBatchNodes, &error);
+    if (!wide.program)
+        std::printf("%s\n", error.c_str());
+    return wide;
+}
+
+void
+TestListDeterminism()
+{
+    const size_t lists = 61;
+    std::string error;
+    const std::vector<Vec3> reference =
+        RunWide(BuildWideLists(lists, 0), nullptr, 4, &error);
+    CHECK(reference.size() == lists * 4);
+    for (const size_t threads : {size_t(1), size_t(2), size_t(4)}) {
+        auto tasks = RigExecCreateThreadTaskSystem(threads);
+        for (const size_t batch :
+             {size_t(0), size_t(1), size_t(2), size_t(7)}) {
+            const Wide wide = BuildWideLists(lists, batch);
+            CHECK(wide.program);
+            const std::vector<Vec3> got = RunWide(wide, tasks.get(), 4, &error);
+            bool same = got.size() == reference.size();
+            for (size_t i = 0; same && i < got.size(); ++i)
+                same = Same(got[i], reference[i]);
+            CHECK(same);
+        }
+    }
+}
+
 } // namespace
 
 int
@@ -358,6 +559,9 @@ main()
     TestCompileErrors();
     TestDeterminism();
     TestFailureOrder();
+    TestListOrder();
+    TestListErrors();
+    TestListDeterminism();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

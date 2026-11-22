@@ -57,9 +57,41 @@ RegisterBad(RigExecOpRegistrar &registrar)
     registrar.Add(BadOp(), desc);
 }
 
+// An op whose output claims to be an array.
+RIGEXEC_DEFINE_OP_HANDLE(ArrayOutOp)
+RIGEXEC_DEFINE_PORT_HANDLE(ArrayOutPort)
+
+void
+RegisterArrayOut(RigExecOpRegistrar &registrar)
+{
+    static const RigExecPortDesc ports[] = {
+        {&ArrayOutPort(), &fakeTypes::Float(),
+         kRigExecPortOutput | kRigExecPortArray, "list"}};
+    static const RigExecOpDesc desc = [] {
+        RigExecOpDesc d;
+        d.nameSpace = "test";
+        d.name = "ArrayOut";
+        d.ports = ports;
+        d.portCount = 1;
+        d.run = &NoRun;
+        return d;
+    }();
+    registrar.Add(ArrayOutOp(), desc);
+}
+
 void
 TestValidateErrors(const RigExecRegistryInit &good)
 {
+    {
+        RigExecOpLibraryDesc bad;
+        bad.name = "arrayOut";
+        bad.registerOps = &RegisterArrayOut;
+        RigExecRegistryInit init = good;
+        init.opLibraries.push_back(&bad);
+        std::vector<std::string> errors;
+        CHECK(!RigExecRegistry::Validate(init, &errors));
+        CHECK(Mentions(errors, "port list is an array output"));
+    }
     {
         RigExecOpLibraryDesc bad;
         bad.name = "bad";

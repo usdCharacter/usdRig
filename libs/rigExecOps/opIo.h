@@ -25,6 +25,28 @@ In(const rigExec::RigExecOpIo &io, const rigExec::RigExecPortHandle &port)
     return static_cast<const T *>(io.inputs[port.Index()]);
 }
 
+/// An array input's elements, in feed order.
+template <class T> class InList {
+public:
+    InList(const rigExec::RigExecOpIo &io,
+           const rigExec::RigExecPortHandle &port)
+        : _list(static_cast<const rigExec::RigExecPortList *>(
+              io.inputs[port.Index()]))
+    {
+    }
+    size_t Size() const
+    {
+        return _list->count;
+    }
+    const T &operator[](size_t i) const
+    {
+        return *static_cast<const T *>(_list->items[i]);
+    }
+
+private:
+    const rigExec::RigExecPortList *_list;
+};
+
 template <class T>
 T
 InOr(const rigExec::RigExecOpIo &io, const rigExec::RigExecPortHandle &port,
