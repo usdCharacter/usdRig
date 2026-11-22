@@ -1154,6 +1154,10 @@ RrRunProviderRefresh(RrProgram *program, const RigExecWireStep &step,
         diagnostics.push_back("connected base pose input incomplete: " + path);
     else if (outcome == RigExecProviderRefreshOutcome::MissingCurrent)
         diagnostics.push_back("connected final pose input incomplete: " + path);
+    else if (outcome == RigExecProviderRefreshOutcome::InvalidBase)
+        diagnostics.push_back(path +
+                              " produced an invalid or degenerate base frame; "
+                              "constraint passed through");
     else if (outcome == RigExecProviderRefreshOutcome::InvalidCurrent)
         diagnostics.push_back(path +
                               " produced an invalid or degenerate frame for " +

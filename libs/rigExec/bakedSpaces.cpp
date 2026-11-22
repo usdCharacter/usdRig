@@ -1190,6 +1190,10 @@ RigExecBakedRunProviderRefresh(RigExecBakedProgramImpl *program,
     else if (outcome == RigExecProviderRefreshOutcome::MissingCurrent)
         step->diagnostics.push_back("connected final pose input incomplete: " +
                                     path);
+    else if (outcome == RigExecProviderRefreshOutcome::InvalidBase)
+        step->diagnostics.push_back(
+            path + " produced an invalid or degenerate base frame; "
+                   "constraint passed through");
     else if (outcome == RigExecProviderRefreshOutcome::InvalidCurrent)
         step->diagnostics.push_back(
             path + " produced an invalid or degenerate frame for " + path +
