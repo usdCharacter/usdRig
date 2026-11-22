@@ -7,7 +7,7 @@
 #include "rigExec/internal/moverGraph.h"
 #include "rigExecScene/poseSceneTranslation.h"
 #include "rigExecScene/startFrameDerivation.h"
-#include "rigExec/internal/sceneDispatch.h"
+#include "rigExec/api/sceneDispatch.h"
 #include "rigExec/internal/rigEvaluatorDependencies.h"
 #include "rigExec/internal/rigEvaluatorPropertyBindings.h"
 #include "rigExec/internal/rigEvaluatorConstraints.h"

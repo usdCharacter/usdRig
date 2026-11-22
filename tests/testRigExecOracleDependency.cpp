@@ -1,5 +1,5 @@
-#include "rigExec/internal/goldenPose.h"
-#include "rigExec/internal/goldenSuite.h"
+#include "rigExec/api/goldenPose.h"
+#include "rigExec/api/goldenSuite.h"
 #if defined(RIGEXEC_EXPLICIT_ORACLE_REGISTRATION) ||                           \
     defined(RIGEXEC_TEST_ORACLE_RECOVERY)
 #include "rigExecOracle/registerOracle.h"

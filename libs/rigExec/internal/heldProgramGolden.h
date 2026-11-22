@@ -3,7 +3,7 @@
 
 // Passive, shared CURRENT/ORIGINAL observation. No numerical inputs or state
 // are changed here. In particular, actual refused pose/time remains intact.
-#include "rigExec/internal/goldenPose.h"
+#include "rigExec/api/goldenPose.h"
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>

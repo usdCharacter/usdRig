@@ -3,7 +3,7 @@
 #include "rigExecScene/registerScene.h"
 #endif
 #ifdef RIGEXEC_TEST_SCENE_RECOVERY
-#include "rigExec/internal/sceneDispatch.h"
+#include "rigExec/api/sceneDispatch.h"
 #include "rigExecScene/registerScene.h"
 #endif
 

@@ -1,4 +1,4 @@
-#include "rigExec/internal/goldenSuite.h"
+#include "rigExec/api/goldenSuite.h"
 #include "rigExec/api/rigEvaluator.h"
 #include <string>
 

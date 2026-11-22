@@ -4,8 +4,8 @@
 #ifndef RIGEXEC_ORACLE_DISPATCH_H
 #define RIGEXEC_ORACLE_DISPATCH_H
 
-#include "rigExec/internal/goldenPose.h"
-#include "rigExec/internal/goldenSuite.h"
+#include "rigExec/api/goldenPose.h"
+#include "rigExec/api/goldenSuite.h"
 #include "rigExec/internal/oracleInputs.h"
 #include "rigExec/internal/weightReference.h"
 

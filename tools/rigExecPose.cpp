@@ -5,7 +5,7 @@
 #include "rigExecSampler/runtimePoseProjection.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/frameExtraction.h"
-#include "rigExec/internal/goldenPose.h"
+#include "rigExec/api/goldenPose.h"
 #include "rigExec/internal/inputReplay.h"
 #include "rigExec/internal/bakedExecCrossCheckRows.h"
 #include "rigExec/internal/frozenContextInternal.h"

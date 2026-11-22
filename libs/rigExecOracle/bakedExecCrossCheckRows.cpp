@@ -3,7 +3,7 @@
 #include "rigExec/internal/bakedExecCrossCheckRows.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/api/bakedProgram.h"
-#include "rigExec/internal/goldenPose.h"
+#include "rigExec/api/goldenPose.h"
 #include "rigExec/internal/solverKernels.h"
 #include "rigExec/internal/weightPackets.h"
 #include "rigExec/internal/independentConstraintCheck.h"

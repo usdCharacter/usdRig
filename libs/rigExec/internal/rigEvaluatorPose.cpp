@@ -4,7 +4,7 @@
 #include "rigExec/internal/rigEvaluatorInternal.h"
 #include "rigExecScene/poseSceneTranslation.h"
 #include "rigExecScene/startFrameDerivation.h"
-#include "rigExec/internal/sceneDispatch.h"
+#include "rigExec/api/sceneDispatch.h"
 #include "rigExec/internal/rigEvaluatorDependencies.h"
 #include "rigExec/internal/rigEvaluatorConstraints.h"
 #include "rigExec/api/moverRegistry.h"

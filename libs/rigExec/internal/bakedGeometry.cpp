@@ -12,7 +12,7 @@
 // with the dynamic walk were captured into RigExecBakedProgramImpl at Build.
 #include "rigExec/internal/bakedOpValues.h"
 #include "rigExec/internal/bakedProgramImpl.h"
-#include "rigExec/internal/sceneDispatch.h"
+#include "rigExec/api/sceneDispatch.h"
 #include "rigExec/internal/bakedSchedule.h"
 
 #include "rigExec/internal/frameExtraction.h"

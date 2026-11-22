@@ -11,6 +11,7 @@ gpuDeformTranslation.h
 liveOperationGraph.h
 moverGraphCaches.h
 moverGraphTypes.h
+observerHost.h
 oracleInputs.h
 outputAffectedIndex.h
 pathText.h

@@ -1,5 +1,5 @@
 #include "rigExec/internal/oracleDispatch.h"
-#include "rigExec/internal/goldenSuite.h"
+#include "rigExec/api/goldenSuite.h"
 
 #include <atomic>
 #include <cstdlib>

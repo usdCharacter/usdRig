@@ -21,7 +21,7 @@
 #include "rigExecScene/skeleton2dTranslation.h"
 #include "rigExecScene/startFrameDerivation.h"
 #include "rigExecScene/constraintSceneTranslation.h"
-#include "rigExec/internal/sceneDispatch.h"
+#include "rigExec/api/sceneDispatch.h"
 #include "rigExec/api/types.h"
 
 #include "rigExecMath/geometryKernels.h"

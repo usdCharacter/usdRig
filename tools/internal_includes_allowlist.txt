@@ -26,20 +26,13 @@ libs/rigExecImaging/registryWarmWork.cpp | rigExec/internal/frameCacheSparsity.h
 libs/rigExecImaging/registryWarming.cpp | rigExec/internal/parallel.h
 libs/rigExecImaging/snapshotStore.h | rigExec/internal/gpuDeformTranslation.h
 libs/rigExecOracle/bakedExecCrossCheck.cpp | rigExec/internal/bakedExecCrossCheck.h
-libs/rigExecOracle/bakedExecCrossCheck.cpp | rigExec/internal/goldenPose.h
 libs/rigExecOracle/bakedExecCrossCheckRows.cpp | rigExec/internal/bakedExecCrossCheckRows.h
 libs/rigExecOracle/bakedExecCrossCheckRows.cpp | rigExec/internal/bakedProgramImpl.h
-libs/rigExecOracle/bakedExecCrossCheckRows.cpp | rigExec/internal/goldenPose.h
 libs/rigExecOracle/bakedExecCrossCheckRows.cpp | rigExec/internal/independentConstraintCheck.h
 libs/rigExecOracle/bakedExecCrossCheckRows.cpp | rigExec/internal/solverKernels.h
 libs/rigExecOracle/bakedExecCrossCheckRows.cpp | rigExec/internal/weightPackets.h
-libs/rigExecOracle/goldenPose.cpp | rigExec/internal/goldenPose.h
-libs/rigExecOracle/goldenSuite.cpp | rigExec/internal/goldenPose.h
-libs/rigExecOracle/goldenSuite.cpp | rigExec/internal/goldenSuite.h
 libs/rigExecOracle/oracleInputs.cpp | rigExec/internal/moverGraph.h
 libs/rigExecOracle/oracleInputs.cpp | rigExec/internal/oracleInputs.h
-libs/rigExecOracle/registerOracle.cpp | rigExec/internal/goldenPose.h
-libs/rigExecOracle/registerOracle.cpp | rigExec/internal/goldenSuite.h
 libs/rigExecOracle/registerOracle.cpp | rigExec/internal/oracleDispatch.h
 libs/rigExecOracle/registerOracle.cpp | rigExec/internal/oracleInputs.h
 libs/rigExecOracle/registerOracle.cpp | rigExec/internal/scalarReferenceAdapter.h
@@ -73,7 +66,6 @@ libs/rigExecScene/poseProgram.cpp | rigExec/internal/frameExtraction.h
 libs/rigExecScene/poseProgram.cpp | rigExec/internal/solverKernels.h
 libs/rigExecScene/providerContextBinding.cpp | rigExec/internal/pathText.h
 libs/rigExecScene/providerRecordExport.cpp | rigExec/internal/pathText.h
-libs/rigExecScene/registerScene.cpp | rigExec/internal/sceneDispatch.h
 libs/rigExecScene/sceneDescriptors.cpp | rigExec/internal/moverGraph.h
 libs/rigExecScene/sceneGraphBinding.cpp | rigExec/internal/frameExtraction.h
 libs/rigExecScene/sceneGraphTypedRead.cpp | rigExec/internal/pathText.h
@@ -99,7 +91,6 @@ tools/rigExecPose.cpp | rigExec/internal/bakedExecCrossCheckRows.h
 tools/rigExecPose.cpp | rigExec/internal/bakedProgramImpl.h
 tools/rigExecPose.cpp | rigExec/internal/frameExtraction.h
 tools/rigExecPose.cpp | rigExec/internal/frozenContextInternal.h
-tools/rigExecPose.cpp | rigExec/internal/goldenPose.h
 tools/rigExecPose.cpp | rigExec/internal/inputReplay.h
 tools/rigExecReplayInputs.cpp | rigExec/internal/inputReplay.h
 tools/rigExecReplayInputs.cpp | rigExec/internal/moverGraph.h

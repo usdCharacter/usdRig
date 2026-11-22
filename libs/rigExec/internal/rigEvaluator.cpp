@@ -4,7 +4,7 @@
 #include "rigExec/internal/rigEvaluatorDependencies.h"
 #include "rigExec/internal/rigEvaluatorPropertyBindings.h"
 #include "rigExec/internal/parallel.h"
-#include "rigExec/internal/goldenSuite.h"
+#include "rigExec/api/goldenSuite.h"
 #include "rigExec/internal/oracleDispatch.h"
 #include "rigExec/internal/inputReplay.h"
 

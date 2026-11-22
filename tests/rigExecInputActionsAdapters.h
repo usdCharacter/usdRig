@@ -2,7 +2,7 @@
 #define RIGEXEC_INPUT_ACTIONS_ADAPTERS_H
 
 #include "rigExec/api/bakedProgram.h"
-#include "rigExec/internal/goldenPose.h"
+#include "rigExec/api/goldenPose.h"
 #include "rigExec/internal/inputReplay.h"
 #include "rigExec/api/rigEvaluator.h"
 #include <cstdio>

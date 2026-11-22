@@ -3,7 +3,7 @@
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExec/internal/rigEvaluatorDependencies.h"
 #include "rigExec/internal/crossDomainInputs.h"
-#include "rigExec/internal/sceneDispatch.h"
+#include "rigExec/api/sceneDispatch.h"
 #include "rigExecScene/providerContextBinding.h"
 #include "rigExecMath/providerRefreshKernel.h"
 #include "rigExec/internal/parallel.h"

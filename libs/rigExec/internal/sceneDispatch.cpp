@@ -1,4 +1,4 @@
-#include "rigExec/internal/sceneDispatch.h"
+#include "rigExec/api/sceneDispatch.h"
 
 #include <atomic>
 #include <utility>

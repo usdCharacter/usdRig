@@ -3,7 +3,7 @@
 
 #include "rigExec/internal/independentConstraintReference.h"
 #include "rigExec/internal/bakedExecCrossCheck.h"
-#include "rigExec/internal/goldenPose.h"
+#include "rigExec/api/goldenPose.h"
 #include "rigExec/internal/moverGraphCaches.h"
 #include "rigExec/internal/frameExtraction.h"
 #include "rigExec/api/rigEvaluator.h"

@@ -8,7 +8,7 @@
 
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/projectorCaptureNotice.h"
-#include "rigExec/internal/sceneDispatch.h"
+#include "rigExec/api/sceneDispatch.h"
 #include "rigExec/internal/oracleDispatch.h"
 #include "rigExec/internal/bakedSchedule.h"
 #include "rigExec/internal/bakedOpGraph.h"

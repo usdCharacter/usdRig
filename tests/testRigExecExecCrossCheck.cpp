@@ -4,7 +4,7 @@
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/api/rigEvaluator.h"
 #include "pxr/usd/sdf/layer.h"
-#include "rigExec/internal/goldenPose.h"
+#include "rigExec/api/goldenPose.h"
 #include "rigExec/api/types.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/usd/usd/attribute.h"
