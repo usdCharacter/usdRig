@@ -127,6 +127,8 @@ add_library(rigExecScene SHARED
     libs/rigExecScene/constraintGraphBinding.cpp
     libs/rigExecScene/constraintSceneTranslation.cpp
     libs/rigExecScene/geometryGraphBinding.cpp
+    libs/rigExecScene/geometryOpRunner.cpp
+    libs/rigExecScene/geometryOps.cpp
     libs/rigExecScene/geometrySceneTranslation.cpp
     libs/rigExecScene/jointGroupTranslation.cpp
     libs/rigExecScene/poseCommit.cpp
@@ -158,7 +160,8 @@ target_include_directories(rigExecScene PUBLIC
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
 target_link_libraries(rigExecScene PUBLIC
     tf gf vt sdf ts usd usdGeom)
-target_link_libraries(rigExecScene PRIVATE rigExecGraph rigExecMath)
+target_link_libraries(rigExecScene PRIVATE rigExecGraph rigExecMath
+    rigExecBuiltins)
 set_target_properties(rigExecScene PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(rigExec::rigExecScene ALIAS rigExecScene)
 target_sources(rigExecScene INTERFACE
@@ -1317,10 +1320,9 @@ target_include_directories(rigExecBuiltins PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>")
 target_link_libraries(rigExecBuiltins PUBLIC rigExec PRIVATE rigExecMath)
 
-# Host-side bridge from translated USD movers to op nodes; not installed.
+# Host-side bridge from translated USD properties to op nodes; not installed.
 # Step 10 folds it into rigExecUsd.
-add_library(rigExecSceneOps STATIC libs/rigExecScene/propertyOps.cpp
-    libs/rigExecScene/geometryOps.cpp)
+add_library(rigExecSceneOps STATIC libs/rigExecScene/propertyOps.cpp)
 target_link_libraries(rigExecSceneOps PUBLIC rigExec rigExecScene
     rigExecBuiltins PRIVATE rigExecMath)
 set_target_properties(rigExecSceneOps PROPERTIES POSITION_INDEPENDENT_CODE ON)

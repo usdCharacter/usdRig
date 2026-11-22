@@ -4,7 +4,8 @@
 /// Host-side bridge from a geometry revision to rigExecOps' deform ops: the
 /// packet's settings become the op's payload and its per-frame values its
 /// inputs, so each RigExecMoverParameters field has a port or a payload
-/// field. Not installed; step 10 moves it to rigExecUsd.
+/// field. The scene program runs its geometry revisions through it; step
+/// 10 moves it to rigExecUsd.
 
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/rigDesc.h"
