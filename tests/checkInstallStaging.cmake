@@ -186,7 +186,6 @@ function(_destdir_logical_root stage_root logical_prefix out_var)
     set(${out_var} "${stage_root}${_stripped}" PARENT_SCOPE)
 endfunction()
 
-# Probe what this CMake and generator really do before asserting anything.
 macro(_probe probe_dir build_dir configure_args install_args destdir)
     file(WRITE "${probe_dir}/probe.txt" "probe\n")
     file(WRITE "${probe_dir}/CMakeLists.txt"
@@ -272,7 +271,6 @@ if (_hide_make)
     message(STATUS "make-program forwarding: pass (${_make_name} unreachable through the filtered PATH)")
 endif()
 
-# (a) plain prefix install.
 _configure_fixture("${SCRATCH_DIR}/prefix" "${_staged}" "")
 set(ENV{DESTDIR} "")
 _install("${SCRATCH_DIR}/prefix" "--prefix;${SCRATCH_DIR}/prefixInstall")
