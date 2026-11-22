@@ -1,7 +1,7 @@
 // RigExec solver kernels.
 #include "solvers.h"
 #include "matrixKernel.h"
-#include "skinAcceptance.h"
+#include "skinKernel.h"
 #include "envelope.h"
 
 #include "pxr/base/gf/matrix3d.h"
@@ -586,60 +586,20 @@ GfVec3d
 RigExecApplyLinearBlendSkin(const GfVec3d &point,
                             const RigExecSkinLayout &layout, size_t i)
 {
-    GfVec3d sum(0.0);
-    double total = 0.0;
-    for (size_t k = 0; k < layout.elementSize; ++k) {
-        const double w = layout.Weight(i, k);
-        if (w == 0.0) {
-            continue;
-        }
-        sum += layout.Transform(i, k).TransformAffine(point) * w;
-        total += w;
-    }
-    // The complement stays with the rest point; exact when total == 1.
-    return point * (1.0 - total) + sum;
+    return RigExecLinearBlendSkinPointKernel(point, layout, i);
 }
 
 void
 RigExecApplyLinearBlendSkin(const GfVec3f *in, GfVec3f *out,
                             const RigExecSkinLayout &layout)
 {
-    for (size_t i = 0; i < layout.pointCount; ++i) {
-        out[i] =
-            GfVec3f(RigExecApplyLinearBlendSkin(GfVec3d(in[i]), layout, i));
-    }
+    RigExecApplyLinearBlendSkinKernel<GfVec3f, GfVec3d>(in, out, layout);
 }
-
-namespace {
-
-// The per-point gather of the dual-quaternion kernel (see the header):
-// the largest-weight slot first so it becomes the blend's sign-correction
-// reference, the other non-zero slots in authored order, then the identity
-// entry palette[transformCount] with the weight complement when that is
-// not exactly zero. The weight total is accumulated in double in slot
-// order, exactly as RigExecApplyLinearBlendSkin accumulates it, so the two
-// kernels see the same complement bit for bit.
-void
-_GatherDualQuatInfluences(const RigExecSkinLayout &layout, size_t i,
-                          std::vector<int> *indices,
-                          std::vector<double> *weights)
-{
-    RigExecGatherDualQuatInfluences(layout, i, indices, weights);
-}
-
-} // namespace
 
 std::vector<RigExecScaledDualQuat>
 RigExecSkinDualQuatPalette(const RigExecSkinLayout &layout)
 {
-    std::vector<RigExecScaledDualQuat> palette;
-    palette.reserve(layout.transformCount + 1);
-    for (size_t t = 0; t < layout.transformCount; ++t) {
-        palette.push_back(
-            RigExecScaledDualQuatFromMatrix(layout.transforms[t]));
-    }
-    palette.emplace_back(); // identity: the weight complement's influence
-    return palette;
+    return RigExecSkinDualQuatPaletteKernel<GfVec3f, GfVec3d>(layout);
 }
 
 bool
@@ -650,7 +610,7 @@ RigExecApplyDualQuatSkin(const GfVec3d &point,
 {
     std::vector<int> indices;
     std::vector<double> weights;
-    _GatherDualQuatInfluences(layout, i, &indices, &weights);
+    RigExecGatherDualQuatInfluences(layout, i, &indices, &weights);
     RigExecScaledDualQuat blend;
     if (!RigExecBlendScaledDualQuats(palette, paletteSize, indices.data(),
                                      weights.data(), indices.size(), &blend)) {
@@ -666,22 +626,8 @@ RigExecApplyDualQuatSkin(const GfVec3f *in, GfVec3f *out,
                          const RigExecScaledDualQuat *palette,
                          size_t paletteSize)
 {
-    std::vector<int> indices;
-    std::vector<double> weights;
-    indices.reserve(layout.elementSize + 1);
-    weights.reserve(layout.elementSize + 1);
-    for (size_t i = 0; i < layout.pointCount; ++i) {
-        _GatherDualQuatInfluences(layout, i, &indices, &weights);
-        RigExecScaledDualQuat blend;
-        if (!RigExecBlendScaledDualQuats(palette, paletteSize, indices.data(),
-                                         weights.data(), indices.size(),
-                                         &blend)) {
-            return false;
-        }
-        out[i] =
-            GfVec3f(RigExecScaledDualQuatTransformPoint(blend, GfVec3d(in[i])));
-    }
-    return true;
+    return RigExecApplyDualQuatSkinKernel<GfVec3f, GfVec3d>(
+        in, out, layout, palette, paletteSize);
 }
 
 bool

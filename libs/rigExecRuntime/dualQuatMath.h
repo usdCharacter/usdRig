@@ -1,0 +1,199 @@
+// The runtime's dual-quaternion math policy (dualQuatKernel.h) over
+// runtimeMath.h's Gf mirror. Header-only and store-free, so the ops can
+// skin with it. USD-free.
+#ifndef RIGEXEC_RUNTIME_DUAL_QUAT_MATH_H
+#define RIGEXEC_RUNTIME_DUAL_QUAT_MATH_H
+
+#include "rigExecMath/dualQuatKernel.h"
+#include "rigExecRuntime/runtimeMath.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+
+namespace rigExec {
+
+/// RigExecFrameEpsilon: 1e-10 of the rest frame's longest edge, at least 1.
+inline double
+RrDualQuatFrameEpsilon(const std::array<RrVec3d, 4> &restPoints)
+{
+    const double lx = (restPoints[1] - restPoints[0]).GetLength();
+    const double ly = (restPoints[2] - restPoints[0]).GetLength();
+    const double lz = (restPoints[3] - restPoints[0]).GetLength();
+    return 1e-10 * std::max({1.0, lx, ly, lz});
+}
+
+inline RrMat3d
+RrDualQuatRowBasis(const std::array<RrVec3d, 4> &pts)
+{
+    return RrMat3d(
+        pts[1][0] - pts[0][0], pts[1][1] - pts[0][1], pts[1][2] - pts[0][2],
+        pts[2][0] - pts[0][0], pts[2][1] - pts[0][1], pts[2][2] - pts[0][2],
+        pts[3][0] - pts[0][0], pts[3][1] - pts[0][1], pts[3][2] - pts[0][2]);
+}
+
+/// RigExecPointsToMatrix: the affine map taking rest to pose; identity and
+/// false when the rest frame is degenerate.
+inline bool
+RrDualQuatPointsToMatrix(const std::array<RrVec3d, 4> &restPoints,
+                         const std::array<RrVec3d, 4> &posePoints,
+                         RrMat4d *matrix)
+{
+    const RrMat3d mq = RrDualQuatRowBasis(restPoints);
+    const RrMat3d mp = RrDualQuatRowBasis(posePoints);
+    const double det = mq.GetDeterminant();
+    const double eps = RrDualQuatFrameEpsilon(restPoints);
+    if (std::abs(det) < eps * eps * eps) {
+        if (matrix)
+            matrix->SetIdentity();
+        return false;
+    }
+    const RrMat3d m3 = mq.GetInverse() * mp;
+    const RrVec3d t = posePoints[0] - restPoints[0] * m3;
+    if (matrix) {
+        *matrix = RrMat4d(m3[0][0], m3[0][1], m3[0][2], 0.0, m3[1][0], m3[1][1],
+                          m3[1][2], 0.0, m3[2][0], m3[2][1], m3[2][2], 0.0,
+                          t[0], t[1], t[2], 1.0);
+    }
+    return true;
+}
+
+inline std::array<RrVec3d, 4>
+RrDualQuatMatrixToPoints(const std::array<RrVec3d, 4> &restPoints,
+                         const RrMat4d &matrix)
+{
+    std::array<RrVec3d, 4> points;
+    for (size_t i = 0; i < 4; ++i)
+        points[i] = matrix.TransformAffine(restPoints[i]);
+    return points;
+}
+
+/// GfMatrix3d::SetRotate(const GfQuatd&): the same _SetRotateFromQuat the
+/// 4x4 uses (verified equal on the USD build over random quaternions).
+inline void
+RrMat3SetRotate(RrMat3d *m, const RrQuatd &q)
+{
+    const double r = q.GetReal();
+    const RrVec3d i = q.GetImaginary();
+    (*m)[0][0] = 1.0 - 2.0 * (i[1] * i[1] + i[2] * i[2]);
+    (*m)[0][1] = 2.0 * (i[0] * i[1] + i[2] * r);
+    (*m)[0][2] = 2.0 * (i[2] * i[0] - i[1] * r);
+    (*m)[1][0] = 2.0 * (i[0] * i[1] - i[2] * r);
+    (*m)[1][1] = 1.0 - 2.0 * (i[2] * i[2] + i[0] * i[0]);
+    (*m)[1][2] = 2.0 * (i[1] * i[2] + i[0] * r);
+    (*m)[2][0] = 2.0 * (i[2] * i[0] + i[1] * r);
+    (*m)[2][1] = 2.0 * (i[1] * i[2] - i[0] * r);
+    (*m)[2][2] = 1.0 - 2.0 * (i[1] * i[1] + i[0] * i[0]);
+}
+
+/// GfMatrix3d::Orthonormalize: orthogonalize and normalize the row vectors
+/// (matrix3d.cpp), without the convergence warning, which the frame path
+/// never reads.
+inline void
+RrMat3Orthonormalize(RrMat3d *m)
+{
+    RrVec3d r0(m->GetRow(0)), r1(m->GetRow(1)), r2(m->GetRow(2));
+    RrOrthogonalizeBasis(&r0, &r1, &r2, true);
+    m->SetRow(0, r0);
+    m->SetRow(1, r1);
+    m->SetRow(2, r2);
+}
+
+/// GfMatrix3d::ExtractRotationQuaternion (matrix3d.cpp, transcribed verbatim
+/// including the int-typed 4 in the else arm), followed by the GfRotation
+/// round trip ExtractRotation().GetQuat() performs: SetQuat's length gate
+/// and axis/angle extraction, then GetQuat's half-angle sine and cosine with
+/// one normalization (rotation.cpp).
+inline RrQuatd
+RrMat3ExtractRotationQuaternion(const RrMat3d &m)
+{
+    int i;
+    if (m[0][0] > m[1][1]) {
+        i = (m[0][0] > m[2][2] ? 0 : 2);
+    } else {
+        i = (m[1][1] > m[2][2] ? 1 : 2);
+    }
+    RrVec3d im(0.0, 0.0, 0.0);
+    double r = 0.0;
+    if (m[0][0] + m[1][1] + m[2][2] > m[i][i]) {
+        r = 0.5 * std::sqrt(m[0][0] + m[1][1] + m[2][2] + 1);
+        im[0] = (m[1][2] - m[2][1]) / (4.0 * r);
+        im[1] = (m[2][0] - m[0][2]) / (4.0 * r);
+        im[2] = (m[0][1] - m[1][0]) / (4.0 * r);
+    } else {
+        const int j = (i + 1) % 3;
+        const int k = (i + 2) % 3;
+        const double q = 0.5 * std::sqrt(m[i][i] - m[j][j] - m[k][k] + 1);
+        im[i] = q;
+        im[j] = (m[i][j] + m[j][i]) / (4 * q);
+        im[k] = (m[k][i] + m[i][k]) / (4 * q);
+        r = (m[j][k] - m[k][j]) / (4 * q);
+    }
+    r = RrClamp(r, -1.0, 1.0);
+    RrRotation rotation;
+    rotation.SetQuat(RrQuatd(r, im));
+    return rotation.GetQuat();
+}
+
+/// GfDot(const GfQuatd&, const GfQuatd&), verbatim from quatd.h: the
+/// imaginary dot first, then the real product.
+inline double
+RrQuatDot(const RrQuatd &a, const RrQuatd &b)
+{
+    return RrDot(a.GetImaginary(), b.GetImaginary()) +
+           a.GetReal() * b.GetReal();
+}
+
+template <> struct RigExecDualQuatMath<RrVec3f, RrVec3d> {
+    using Mat4 = RrMat4d;
+    using Mat3 = RrMat3d;
+    using Quat = RrQuatd;
+
+    static bool PointsToMatrix(const std::array<RrVec3d, 4> &restPoints,
+                               const std::array<RrVec3d, 4> &posePoints,
+                               RrMat4d *matrix)
+    {
+        return RrDualQuatPointsToMatrix(restPoints, posePoints, matrix);
+    }
+
+    static std::array<RrVec3d, 4>
+    MatrixToPoints(const std::array<RrVec3d, 4> &restPoints,
+                   const RrMat4d &matrix)
+    {
+        return RrDualQuatMatrixToPoints(restPoints, matrix);
+    }
+
+    static double Dot(const RrVec3d &a, const RrVec3d &b)
+    {
+        return RrDot(a, b);
+    }
+
+    static RrVec3d Cross(const RrVec3d &a, const RrVec3d &b)
+    {
+        return RrCross(a, b);
+    }
+
+    static double QuatDot(const RrQuatd &a, const RrQuatd &b)
+    {
+        return RrQuatDot(a, b);
+    }
+
+    static void SetRotate(RrMat3d *m, const RrQuatd &q)
+    {
+        RrMat3SetRotate(m, q);
+    }
+
+    static void Orthonormalize(RrMat3d *m)
+    {
+        RrMat3Orthonormalize(m);
+    }
+
+    static RrQuatd ExtractRotationQuaternion(const RrMat3d &m)
+    {
+        return RrMat3ExtractRotationQuaternion(m);
+    }
+};
+
+} // namespace rigExec
+
+#endif

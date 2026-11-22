@@ -4,29 +4,12 @@
 // and libs/rigExec/solverKernels.cpp. Gf -> Rr, algorithm untouched.
 #include "rigExecRuntime/store.h"
 
+#include "rigExecRuntime/dualQuatMath.h"
+
 #include <algorithm>
 #include <cmath>
 
 namespace rigExec {
-
-namespace {
-
-RrMat3d
-_RrRowBasis(const std::array<RrVec3d, 4> &pts)
-{
-    return RrMat3d(
-        pts[1][0] - pts[0][0], pts[1][1] - pts[0][1], pts[1][2] - pts[0][2],
-        pts[2][0] - pts[0][0], pts[2][1] - pts[0][1], pts[2][2] - pts[0][2],
-        pts[3][0] - pts[0][0], pts[3][1] - pts[0][1], pts[3][2] - pts[0][2]);
-}
-
-RrVec3d
-_RrTransformDir(const RrVec3d &v, const RrMat3d &m)
-{
-    return v * m;
-}
-
-} // namespace
 
 RrPointFrame
 RrFrameFromMatrix(const RrMat4d &m)
@@ -49,37 +32,14 @@ RrFrameFromMatrix(const RrMat4d &m)
 double
 RrFrameEpsilon(const std::array<RrVec3d, 4> &restPoints)
 {
-    const double lx = (restPoints[1] - restPoints[0]).GetLength();
-    const double ly = (restPoints[2] - restPoints[0]).GetLength();
-    const double lz = (restPoints[3] - restPoints[0]).GetLength();
-    return 1e-10 * std::max({1.0, lx, ly, lz});
+    return RrDualQuatFrameEpsilon(restPoints);
 }
 
 bool
 RrPointsToMatrix(const std::array<RrVec3d, 4> &restPoints,
                  const std::array<RrVec3d, 4> &posePoints, RrMat4d *matrix)
 {
-    const RrMat3d mq = _RrRowBasis(restPoints);
-    const RrMat3d mp = _RrRowBasis(posePoints);
-
-    const double det = mq.GetDeterminant();
-    const double eps = RrFrameEpsilon(restPoints);
-    if (std::abs(det) < eps * eps * eps) {
-        if (matrix) {
-            matrix->SetIdentity();
-        }
-        return false;
-    }
-
-    const RrMat3d m3 = mq.GetInverse() * mp;
-    const RrVec3d t = posePoints[0] - _RrTransformDir(restPoints[0], m3);
-
-    if (matrix) {
-        *matrix = RrMat4d(m3[0][0], m3[0][1], m3[0][2], 0.0, m3[1][0], m3[1][1],
-                          m3[1][2], 0.0, m3[2][0], m3[2][1], m3[2][2], 0.0,
-                          t[0], t[1], t[2], 1.0);
-    }
-    return true;
+    return RrDualQuatPointsToMatrix(restPoints, posePoints, matrix);
 }
 
 bool
@@ -99,7 +59,7 @@ RrMatrixToPoints(const std::array<RrVec3d, 4> &restPoints,
     }
     frame.flags = RrPointFrameValid;
 
-    const RrMat3d posed = _RrRowBasis(frame.points);
+    const RrMat3d posed = RrDualQuatRowBasis(frame.points);
     if (posed.GetDeterminant() < 0) {
         frame.flags |= RrPointFrameReflected;
     }

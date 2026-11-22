@@ -25,6 +25,7 @@
 #include "rigExecMath/normalsLayoutKernel.h"
 #include "rigExecMath/pointBlocks.h"
 #include "rigExecMath/skinAcceptance.h"
+#include "rigExecMath/skinKernel.h"
 #include "rigExecMath/pointRanges.h"
 #include "rigExecMath/surfaceKernelCache.h"
 #include "rigExecMath/wireKernelCache.h"
@@ -834,66 +835,23 @@ RrGeoBlendEnvelopeAll(const RrVec3f *preceding, const float *envelope,
     RrGeoBlendEnvelopeRange(preceding, envelope, 0, count, blended);
 }
 
-// Skin tables (simdKernels.*, dualQuat.*, solvers.cpp, pointFrame.cpp).
+// Skinning: rigExecMath/skinKernel.h over the runtime mirror.
 
-enum { RrGeoSkinRowStride = 16 };
+enum { RrGeoSkinRowStride = int(kRigExecSkinRowStride) };
 
 void
 RrGeoNarrowSkinRows(const RrMat4d &transform, float *rows)
 {
-    for (int r = 0; r < 4; ++r) {
-        for (int c = 0; c < 3; ++c) {
-            rows[r * 4 + c] = float(transform[r][c]);
-        }
-        rows[r * 4 + 3] = 0.0f;
-    }
+    RigExecNarrowSkinRowsKernel(transform, rows);
 }
 
-struct RrGeoSkinLayout {
-    const RrMat4d *transforms = nullptr;
-    size_t transformCount = 0;
-    const int *indices = nullptr;
-    const float *weights = nullptr;
-    size_t indexCount = 0;
-    size_t elementSize = 0;
-    size_t pointCount = 0;
-
-    float Weight(size_t point, size_t slot) const
-    {
-        return weights[point * elementSize + slot];
-    }
-    const RrMat4d &Transform(size_t point, size_t slot) const
-    {
-        return transforms[size_t(indices[point * elementSize + slot])];
-    }
-};
-
-RrVec3d
-RrGeoApplyLinearBlendSkin(const RrVec3d &point, const RrGeoSkinLayout &layout,
-                          size_t i)
-{
-    RrVec3d sum(0.0);
-    double total = 0.0;
-    for (size_t k = 0; k < layout.elementSize; ++k) {
-        const double w = layout.Weight(i, k);
-        if (w == 0.0) {
-            continue;
-        }
-        sum += layout.Transform(i, k).TransformAffine(point) * w;
-        total += w;
-    }
-    // The complement stays with the rest point; exact when total == 1.
-    return point * (1.0 - total) + sum;
-}
+using RrGeoSkinLayout = RigExecSkinLayoutOf<RrMat4d>;
 
 void
 RrGeoApplyLinearBlendSkin(const RrVec3f *in, RrVec3f *out,
                           const RrGeoSkinLayout &layout)
 {
-    for (size_t i = 0; i < layout.pointCount; ++i) {
-        out[i] = RrGeoToVec3f(
-            RrGeoApplyLinearBlendSkin(RrGeoToVec3d(in[i]), layout, i));
-    }
+    RigExecApplyLinearBlendSkinKernel<RrVec3f, RrVec3d>(in, out, layout);
 }
 
 void
@@ -905,66 +863,13 @@ RrGeoApplyWeightedMatrixSimd(const RrVec3f *in, RrVec3f *out,
                                                            count, transform);
 }
 
-#if !RIGEXEC_RUNTIME_HAS_SSE2
-
 void
 RrGeoApplyLinearBlendSkinSimd(const RrVec3f *in, RrVec3f *out,
                               const RrGeoSkinLayout &layout, const float *rows)
 {
-    (void)rows;
-    RrGeoApplyLinearBlendSkin(in, out, layout);
+    RigExecApplyLinearBlendSkinSimdKernel<RrVec3f, RrVec3d>(in, out, layout,
+                                                            rows);
 }
-
-#else
-
-void
-RrGeoApplyLinearBlendSkinSimd(const RrVec3f *in, RrVec3f *out,
-                              const RrGeoSkinLayout &layout, const float *rows)
-{
-    std::vector<float> narrowed;
-    if (!rows) {
-        narrowed.resize(layout.transformCount * RrGeoSkinRowStride);
-        for (size_t t = 0; t < layout.transformCount; ++t) {
-            RrGeoNarrowSkinRows(layout.transforms[t],
-                                &narrowed[t * RrGeoSkinRowStride]);
-        }
-        rows = narrowed.data();
-    }
-
-    for (size_t i = 0; i < layout.pointCount; ++i) {
-        const __m128 q = _mm_setr_ps(in[i][0], in[i][1], in[i][2], 0.0f);
-        const __m128 qx = _mm_shuffle_ps(q, q, _MM_SHUFFLE(0, 0, 0, 0));
-        const __m128 qy = _mm_shuffle_ps(q, q, _MM_SHUFFLE(1, 1, 1, 1));
-        const __m128 qz = _mm_shuffle_ps(q, q, _MM_SHUFFLE(2, 2, 2, 2));
-        __m128 sum = _mm_setzero_ps();
-        float total = 0.0f;
-        for (size_t k = 0; k < layout.elementSize; ++k) {
-            const float w = layout.Weight(i, k);
-            if (w == 0.0f) {
-                continue;
-            }
-            const float *t =
-                rows + size_t(layout.indices[i * layout.elementSize + k]) *
-                           RrGeoSkinRowStride;
-            // Row-vector convention: p' = x*row0 + y*row1 + z*row2 + row3.
-            const __m128 moved =
-                _mm_add_ps(_mm_add_ps(_mm_mul_ps(qx, _mm_loadu_ps(t)),
-                                      _mm_mul_ps(qy, _mm_loadu_ps(t + 4))),
-                           _mm_add_ps(_mm_mul_ps(qz, _mm_loadu_ps(t + 8)),
-                                      _mm_loadu_ps(t + 12)));
-            sum = _mm_add_ps(sum, _mm_mul_ps(_mm_set1_ps(w), moved));
-            total += w;
-        }
-        // The complement stays with the rest point; exact when total == 1.
-        const __m128 blended =
-            _mm_add_ps(_mm_mul_ps(_mm_set1_ps(1.0f - total), q), sum);
-        alignas(16) float result[4];
-        _mm_store_ps(result, blended);
-        out[i] = RrVec3f(result[0], result[1], result[2]);
-    }
-}
-
-#endif // RIGEXEC_RUNTIME_HAS_SSE2
 
 // \p useSimd is the program's RrGeoSettings::useSimd. Reads \p in and writes
 // \p pts, which may be the same array: point i is written only after it is
@@ -1128,26 +1033,14 @@ RrGeoApplyMatrixKernel(const RrGeoMoverParameters &p, std::vector<RrVec3f> *pts,
     return true;
 }
 
-// Dual-quaternion skinning: rigExecMath/dualQuatKernel.h over the runtime
-// mirror is the one numeric definition (blend, normalize, polar split, point
-// apply). Only the palette build and the per-range apply below are the
-// runtime's, as solvers.cpp's RigExecSkinDualQuatPalette and
-// RigExecApplyDualQuatSkin are for the core.
+// Dual-quaternion skinning: rigExecMath/skinKernel.h over the runtime mirror.
 
 using RrGeoScaledDualQuat = RigExecScaledDualQuatKernelT<RrVec3f, RrVec3d>;
 
 std::vector<RrGeoScaledDualQuat>
 RrGeoSkinDualQuatPalette(const RrGeoSkinLayout &layout)
 {
-    std::vector<RrGeoScaledDualQuat> palette;
-    palette.reserve(layout.transformCount + 1);
-    for (size_t t = 0; t < layout.transformCount; ++t) {
-        palette.push_back(
-            RigExecScaledDualQuatFromMatrixKernel<RrVec3f, RrVec3d>(
-                layout.transforms[t]));
-    }
-    palette.emplace_back(); // identity: the weight complement's influence
-    return palette;
+    return RigExecSkinDualQuatPaletteKernel<RrVec3f, RrVec3d>(layout);
 }
 
 bool
@@ -1155,22 +1048,8 @@ RrGeoApplyDualQuatSkin(const RrVec3f *in, RrVec3f *out,
                        const RrGeoSkinLayout &layout,
                        const RrGeoScaledDualQuat *palette, size_t paletteSize)
 {
-    std::vector<int> indices;
-    std::vector<double> weights;
-    indices.reserve(layout.elementSize + 1);
-    weights.reserve(layout.elementSize + 1);
-    for (size_t i = 0; i < layout.pointCount; ++i) {
-        RigExecGatherDualQuatInfluences(layout, i, &indices, &weights);
-        RrGeoScaledDualQuat blend;
-        if (!RigExecBlendScaledDualQuatsKernel(palette, paletteSize,
-                                               indices.data(), weights.data(),
-                                               indices.size(), &blend)) {
-            return false;
-        }
-        out[i] = RrGeoToVec3f(RigExecScaledDualQuatTransformPointKernel(
-            blend, RrGeoToVec3d(in[i])));
-    }
-    return true;
+    return RigExecApplyDualQuatSkinKernel<RrVec3f, RrVec3d>(
+        in, out, layout, palette, paletteSize);
 }
 
 // Geometry kernels (geometryKernels.cpp): volume, smooth, normals, extent,
