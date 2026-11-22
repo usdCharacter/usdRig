@@ -13,7 +13,11 @@ if (NOT CMAKE_CROSSCOMPILING)
 endif()
 find_package(pxr REQUIRED CONFIG PATHS "${USD_INSTALL_DIR}" NO_DEFAULT_PATH)
 
-set(CMAKE_CXX_STANDARD 17)
+# Release builds pass the VFX Reference Platform year's standard
+# (packaging/vfx/profiles.json); C++17 stays the default and the minimum.
+if (NOT DEFINED CMAKE_CXX_STANDARD)
+    set(CMAKE_CXX_STANDARD 17)
+endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
