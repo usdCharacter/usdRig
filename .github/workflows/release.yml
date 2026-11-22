@@ -700,7 +700,7 @@ jobs:
           bundle="$(ls -d "$probe"/usdRig-*-vfx"$YEAR"-linux-x86_64)"
           echo "bundle=$bundle" >> "$GITHUB_OUTPUT"
           grep -m1 -E '^(PRETTY_NAME)=' /etc/os-release
-          ldd --version | head -1
+          ldd --version | sed -n 1p
 
       - name: Bundle check, imports and offscreen launch
         run: bash packaging/vfx/smoke_linux.sh "${{ steps.extract.outputs.bundle }}" offscreen

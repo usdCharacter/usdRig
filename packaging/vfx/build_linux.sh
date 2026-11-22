@@ -30,15 +30,15 @@ eval "$(python3 packaging/vfx/vfx_profile.py outputs "$year" | sed 's/^/P_/')"
 slug="vfx${P_year}-linux-x86_64"
 
 echo "::group::toolchain"
-cat /etc/os-release | sed -n '1,3p'
-gcc --version | head -1
-ldd --version | head -1
+sed -n '1,3p' /etc/os-release
+gcc --version | sed -n 1p
+ldd --version | sed -n 1p
 echo "::endgroup::"
 
 echo "::group::python ${P_python}"
 python3 -m pip install --quiet --disable-pip-version-check uv
 python3 -m uv python install "${P_python}" --install-dir "$root/pyroot"
-pyhome="$(ls -d "$root"/pyroot/cpython-"${P_python}".*-linux-x86_64-gnu | head -1)"
+pyhome="$(ls -d "$root"/pyroot/cpython-"${P_python}".*-linux-x86_64-gnu | sed -n 1p)"
 py="$pyhome/bin/python3"
 export PATH="$pyhome/bin:$PATH"
 "$py" -m pip install --quiet --disable-pip-version-check \
