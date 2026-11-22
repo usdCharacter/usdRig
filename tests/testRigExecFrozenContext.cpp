@@ -5122,36 +5122,37 @@ UsdStageRefPtr
 MakeRangeChainRig()
 {
     UsdStageRefPtr stage = UsdStage::CreateInMemory();
-    stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
-    stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
+    stage->DefinePrim(SdfPath("/Asset"), UsdGeomTokens->Scope);
+    stage->DefinePrim(SdfPath("/Asset/Rig"), SchemaType::RigExecRoot);
     const UsdPrim moving = stage->DefinePrim(SdfPath("/Asset/Rig/Moving"),
-                                             TfToken("RigExecControl"));
+                                             SchemaType::RigExecControl);
     for (int frame = 1; frame <= 3; ++frame) {
-        moving.GetAttribute(TfToken("avars:tx"))
+        moving.GetAttribute(SchemaAttr::avarsTx)
             .Set(double(frame), UsdTimeCode(frame));
     }
     const UsdPrim still = stage->DefinePrim(SdfPath("/Asset/Rig/Still"),
-                                            TfToken("RigExecControl"));
-    still.GetAttribute(TfToken("avars:ty")).Set(1.0);
+                                            SchemaType::RigExecControl);
+    still.GetAttribute(SchemaAttr::avarsTy).Set(1.0);
     const SdfPath target("/Asset/Shape.points");
-    const UsdPrim shape =
-        stage->DefinePrim(target.GetPrimPath(), TfToken("Points"));
+    const UsdGeomPoints shape =
+        UsdGeomPoints::Define(stage, target.GetPrimPath());
     VtVec3fArray base(10000);
     for (size_t i = 0; i < base.size(); ++i) {
         base[i] = GfVec3f(float(i % 101) * 0.25f, float(i / 101) * 0.125f,
                           1.0f + float(i % 7));
     }
-    shape.GetAttribute(TfToken("points")).Set(base);
-    stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
+    CHECK(shape.GetPointsAttr().Set(base));
+    stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), UsdGeomTokens->Scope);
     for (int i = 0; i < 3; ++i) {
         const UsdPrim mover = stage->DefinePrim(
             SdfPath("/Asset/Rig/Movers/M" + std::to_string(i)),
-            TfToken("RigExecMatrixMover"));
-        mover.ApplyAPI(TfToken("RigExecMoverAPI"));
-        mover.GetRelationship(TfToken("rigExec:moves")).SetTargets({target});
-        mover.GetRelationship(TfToken("rigExec:transform"))
-            .SetTargets({i == 0 ? moving.GetPath() : still.GetPath()});
-        mover.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
+            SchemaType::RigExecMatrixMover);
+        mover.ApplyAPI(SchemaType::RigExecMoverAPI);
+        CHECK(mover.GetRelationship(SchemaAttr::rigExecMoves)
+                  .SetTargets({target}));
+        CHECK(mover.GetRelationship(SchemaAttr::rigExecTransform)
+                  .SetTargets({i == 0 ? moving.GetPath() : still.GetPath()}));
+        CHECK(mover.GetAttribute(SchemaAttr::inputsDefaultWeight).Set(1.0f));
     }
     return stage;
 }
