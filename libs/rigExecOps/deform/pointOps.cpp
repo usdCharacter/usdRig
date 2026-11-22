@@ -1,6 +1,6 @@
 #include "rigExecOps/deform/pointOps.h"
 
-#include "rigExecMath/envelope.h"
+#include "rigExecOps/opIo.h"
 #include "rigExecMath/meshConnectivity.h"
 #include "rigExecMath/smoothKernel.h"
 #include "rigExecMath/volumeCorrectKernel.h"
@@ -33,43 +33,7 @@ using rigExec::RigExecPortHandle;
 using rigExecStd::RigExecArray;
 using rigExecStd::Vec3f;
 using Points = RigExecArray<Vec3f>;
-
-template <class T>
-const T *
-In(const RigExecOpIo &io, const RigExecPortHandle &port)
-{
-    return static_cast<const T *>(io.inputs[port.Index()]);
-}
-
-template <class T>
-T &
-Out(const RigExecOpIo &io, const RigExecPortHandle &port)
-{
-    return *static_cast<T *>(io.outputs[port.Index()]);
-}
-
-bool
-Fail(std::string *error, const char *op, const char *why)
-{
-    if (error)
-        *error = std::string(op) + ": " + why;
-    return false;
-}
-
-/// Blends \p out back toward \p in by \p envelope; null is 1 everywhere.
-bool
-BlendEnvelope(const Points &in, const RigExecArray<float> *envelope,
-              Points *out, const char *op, std::string *error)
-{
-    if (!envelope)
-        return true;
-    if (envelope->Size() != in.Size())
-        return Fail(error, op, "envelope length differs from the points");
-    for (size_t i = 0; i < in.Size(); ++i)
-        (*out)[i] =
-            rigExec::RigExecBlendEnvelope(in[i], (*out)[i], (*envelope)[i]);
-    return true;
-}
+using namespace opIo;
 
 float
 StrengthOr1(const float *strength)

@@ -1,9 +1,8 @@
 #include "rigExecOps/deform/latticeOp.h"
 
-#include "rigExecMath/envelope.h"
+#include "rigExecOps/opIo.h"
 
 #include <iterator>
-#include <memory>
 #include <string>
 #include <vector>
 
@@ -30,13 +29,7 @@ using rigExecStd::RigExecArray;
 using rigExecStd::Vec3d;
 using rigExecStd::Vec3f;
 using Points = RigExecArray<Vec3f>;
-
-template <class T>
-const T *
-In(const RigExecOpIo &io, const RigExecPortHandle &port)
-{
-    return static_cast<const T *>(io.inputs[port.Index()]);
-}
+using namespace opIo;
 
 Mat4d
 MatrixOr1(const Mat4d *m)
@@ -45,22 +38,11 @@ MatrixOr1(const Mat4d *m)
 }
 
 bool
-Fail(std::string *error, const char *why)
-{
-    if (error)
-        *error = std::string("Lattice: ") + why;
-    return false;
-}
-
-bool
 Run(const void *payload, void *, const RigExecOpIo &io, std::string *error)
 {
     const LatticePayload &p = *static_cast<const LatticePayload *>(payload);
     const Points &in = *In<Points>(io, LatticePoints());
     const Points &posedCage = *In<Points>(io, LatticePosedCage());
-    const auto *envelope = In<RigExecArray<float>>(io, LatticeEnvelope());
-    if (envelope && envelope->Size() != in.Size())
-        return Fail(error, "envelope length differs from the points");
     std::vector<Vec3f> points(in.begin(), in.end());
     if (p.settings.regularGrid) {
         if (!rigExec::RigExecApplyLatticeGridKernel<Vec3f, Vec3d>(
@@ -69,16 +51,19 @@ Run(const void *payload, void *, const RigExecOpIo &io, std::string *error)
                 MatrixOr1(In<Mat4d>(io, LatticeTargetToLattice())),
                 MatrixOr1(In<Mat4d>(io, LatticeLatticeToTarget())),
                 MatrixOr1(In<Mat4d>(io, LatticeCageToLattice()))))
-            return Fail(error, "the grid's settings, cage or spaces are "
-                               "unusable");
+            return Fail(error, "Lattice",
+                        "the grid's settings, cage or spaces are "
+                        "unusable");
     } else {
         const Points *rest = In<Points>(io, LatticeRestPoints());
         const Points *restCage = In<Points>(io, LatticeRestCage());
         if (!rest || !restCage)
-            return Fail(error, "a bound lattice needs rest points and a "
-                               "rest cage");
+            return Fail(error, "Lattice",
+                        "a bound lattice needs rest points and a "
+                        "rest cage");
         if (rest->Size() != in.Size())
-            return Fail(error, "rest points differ in count from the points");
+            return Fail(error, "Lattice",
+                        "rest points differ in count from the points");
         // No retained bind factors yet: each run streams them.
         rigExec::RigExecApplyLatticeKernelRange(
             &points, 0, points.size(), rest->Data(), rest->Size(),
@@ -86,32 +71,8 @@ Run(const void *payload, void *, const RigExecOpIo &io, std::string *error)
             posedCage.Size(), p.divisions[0], p.divisions[1], p.divisions[2],
             nullptr);
     }
-    Points &out = *static_cast<Points *>(io.outputs[LatticeOut().Index()]);
-    out = Points(points.data(), points.size());
-    if (envelope)
-        for (size_t i = 0; i < in.Size(); ++i)
-            out[i] =
-                rigExec::RigExecBlendEnvelope(in[i], out[i], (*envelope)[i]);
-    return true;
-}
-
-void
-Construct(void *dst)
-{
-    std::uninitialized_value_construct_n(static_cast<LatticePayload *>(dst), 1);
-}
-
-void
-Copy(void *dst, const void *src)
-{
-    std::uninitialized_copy_n(static_cast<const LatticePayload *>(src), 1,
-                              static_cast<LatticePayload *>(dst));
-}
-
-void
-Destroy(void *dst)
-{
-    std::destroy_at(static_cast<LatticePayload *>(dst));
+    return WritePoints(io, LatticeOut(), in, points,
+                       In<Envelope>(io, LatticeEnvelope()), "Lattice", error);
 }
 
 } // namespace
@@ -144,11 +105,7 @@ RegisterLatticeOps(rigExec::RigExecOpRegistrar &registrar)
         d.portCount = std::size(ports);
         d.run = &Run;
         d.capabilities = rigExec::kRigExecOpBakeable;
-        d.payload.size = sizeof(LatticePayload);
-        d.payload.align = alignof(LatticePayload);
-        d.payload.construct = &Construct;
-        d.payload.copy = &Copy;
-        d.payload.destroy = &Destroy;
+        d.payload = rigExec::RigExecPayloadHandlingFor<LatticePayload>();
         return d;
     }();
     registrar.Add(Lattice(), desc);

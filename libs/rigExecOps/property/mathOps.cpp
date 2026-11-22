@@ -1,7 +1,7 @@
 #include "rigExecOps/property/mathOps.h"
 
+#include "rigExecOps/opIo.h"
 #include <iterator>
-#include <memory>
 #include <string>
 
 namespace rigExecOps {
@@ -37,28 +37,7 @@ using rigExec::RigExecPortHandle;
 using rigExecStd::Mat4d;
 using rigExecStd::Vec2f;
 using rigExecStd::Vec3f;
-
-template <class T>
-const T *
-In(const RigExecOpIo &io, const RigExecPortHandle &port)
-{
-    return static_cast<const T *>(io.inputs[port.Index()]);
-}
-
-template <class T>
-T
-InOr(const RigExecOpIo &io, const RigExecPortHandle &port, const T &fallback)
-{
-    const T *value = In<T>(io, port);
-    return value ? *value : fallback;
-}
-
-template <class T>
-T &
-Out(const RigExecOpIo &io, const RigExecPortHandle &port)
-{
-    return *static_cast<T *>(io.outputs[port.Index()]);
-}
+using namespace opIo;
 
 const char *
 OpName(RigExecPropertyOp op)
@@ -82,14 +61,6 @@ OpName(RigExecPropertyOp op)
         return "path";
     }
     return "unknown";
-}
-
-bool
-Fail(std::string *error, const char *op, const std::string &why)
-{
-    if (error)
-        *error = std::string(op) + ": " + why;
-    return false;
 }
 
 bool
@@ -173,25 +144,6 @@ RunMatrix(const void *payload, void *, const RigExecOpIo &io,
     return true;
 }
 
-void
-ConstructPayload(void *dst)
-{
-    std::uninitialized_value_construct_n(static_cast<MathPayload *>(dst), 1);
-}
-
-void
-CopyPayload(void *dst, const void *src)
-{
-    std::uninitialized_copy_n(static_cast<const MathPayload *>(src), 1,
-                              static_cast<MathPayload *>(dst));
-}
-
-void
-DestroyPayload(void *dst)
-{
-    std::destroy_at(static_cast<MathPayload *>(dst));
-}
-
 rigExec::RigExecOpDesc
 MathDesc(const char *name, const rigExec::RigExecPortDesc *ports,
          size_t portCount, rigExec::RigExecOpRunFn run)
@@ -203,11 +155,7 @@ MathDesc(const char *name, const rigExec::RigExecPortDesc *ports,
     d.portCount = portCount;
     d.run = run;
     d.capabilities = rigExec::kRigExecOpBakeable;
-    d.payload.size = sizeof(MathPayload);
-    d.payload.align = alignof(MathPayload);
-    d.payload.construct = &ConstructPayload;
-    d.payload.copy = &CopyPayload;
-    d.payload.destroy = &DestroyPayload;
+    d.payload = rigExec::RigExecPayloadHandlingFor<MathPayload>();
     return d;
 }
 

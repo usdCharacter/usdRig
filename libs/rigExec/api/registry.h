@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -146,6 +147,25 @@ struct RigExecOpPayloadHandling {
     uint64_t (*hash)(const void *payload) = nullptr;
     bool (*equal)(const void *a, const void *b) = nullptr;
 };
+
+/// Payload handling for a copyable \p T (no hash or equality).
+template <class T>
+RigExecOpPayloadHandling
+RigExecPayloadHandlingFor()
+{
+    RigExecOpPayloadHandling h;
+    h.size = sizeof(T);
+    h.align = alignof(T);
+    h.construct = [](void *dst) {
+        std::uninitialized_value_construct_n(static_cast<T *>(dst), 1);
+    };
+    h.copy = [](void *dst, const void *src) {
+        std::uninitialized_copy_n(static_cast<const T *>(src), 1,
+                                  static_cast<T *>(dst));
+    };
+    h.destroy = [](void *dst) { std::destroy_at(static_cast<T *>(dst)); };
+    return h;
+}
 
 /// Per-instance caches and history an op owns.
 struct RigExecOpStateHandling {
