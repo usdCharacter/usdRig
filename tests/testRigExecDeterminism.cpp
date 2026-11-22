@@ -13,6 +13,7 @@
 #include "pxr/base/vt/array.h"
 #include "pxr/base/work/threadLimits.h"
 #include "pxr/usd/usd/prim.h"
+#include "pxr/usd/usd/primRange.h"
 #include "pxr/usd/usd/stage.h"
 
 #include <algorithm>
