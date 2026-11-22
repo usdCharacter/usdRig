@@ -46,6 +46,12 @@ else ()
     set(_conflict_flag "-ffast-math")
     set(_concat_head "-f")
     set(_concat_tail "fast-math")
+    # -ffast-math's reassociation sub-option, split so no fragment spells
+    # it, and its IEEE-safe negation used as the matcher's precision control.
+    set(_unsafe_flag "-funsafe-math-optimizations")
+    set(_unsafe_head "-funsafe-math-")
+    set(_unsafe_tail "optimizations")
+    set(_safe_head "-fno-unsafe-math-")
     set(_canonical "-fno-fast-math;-ffp-contract=off")
     set(_exe "")
 endif ()
@@ -697,6 +703,90 @@ foreach (_w_needle IN ITEMS
         _witness_fail("leg21 diagnostic lacks '${_w_needle}':\n${WITNESS_LOG}")
     endif ()
 endforeach ()
+
+# Legs 22-24: the reassociation sub-option spelled on its own after the
+# canonical pair. GNU-only: MSVC has no such spelling, and its /fp: family is
+# already covered by the fast-flag legs. The pre-fix commands for these legs
+# read "-fno-fast-math -ffp-contract=off -funsafe-math-optimizations" and the
+# built probe reassociated (probe reassoc 322bcc77, not 00000000), so the
+# matcher must classify the resolved argument, not only the raw entry.
+
+# Leg 22: the split unsafe sub-option as an interface compile option; the
+# rejection must name the consuming target, the owning interface target, the
+# full original entry and the resolved option.
+if (NOT _msvc)
+    set(_work22 "${BUILD_ROOT}/unsafe-expr-iface")
+    _witness_configure("${_work22}"
+        "-DWITNESS_CONCAT_TAIL=${_unsafe_tail}"
+        "-DWITNESS_EXPR_HEAD=${_unsafe_head}"
+        -DWITNESS_EXPR_IFACE_OPTION=ON)
+    if (WITNESS_RC EQUAL 0)
+        _witness_fail("reassociation sub-option reached the interface "
+            "options without a diagnostic (rc=0)")
+    endif ()
+    foreach (_w_needle IN ITEMS
+        "target witnessExprIface carries"
+        "fpIface: [$]<1:${_unsafe_head}>[$]<TARGET_PROPERTY:fpIface,FP_MODE>"
+        "via FP_MODE of fpIface: conflicting option \\(${_unsafe_flag}\\)")
+        if (NOT WITNESS_LOG MATCHES "${_w_needle}")
+            _witness_fail("leg22 diagnostic lacks '${_w_needle}':\n${WITNESS_LOG}")
+        endif ()
+    endforeach ()
+
+    # Leg 23: the same assembled option as a per-source COMPILE_OPTIONS entry
+    # on the dedicated witnessExprSource translation unit: the same matcher
+    # serves both option sources.
+    set(_work23 "${BUILD_ROOT}/unsafe-expr-source")
+    _witness_configure("${_work23}"
+        "-DWITNESS_CONCAT_TAIL=${_unsafe_tail}"
+        "-DWITNESS_EXPR_HEAD=${_unsafe_head}"
+        -DWITNESS_EXPR_SOURCE_OPTION=ON)
+    if (WITNESS_RC EQUAL 0)
+        _witness_fail("reassociation sub-option reached the per-source "
+            "options without a diagnostic (rc=0)")
+    endif ()
+    foreach (_w_needle IN ITEMS
+        "target witnessExprSource carries"
+        "source .*probeSrcOpt\\.cpp: [$]<1:${_unsafe_head}>[$]<TARGET_PROPERTY:fpIface,FP_MODE>"
+        "via FP_MODE of fpIface: conflicting option \\(${_unsafe_flag}\\)")
+        if (NOT WITNESS_LOG MATCHES "${_w_needle}")
+            _witness_fail("leg23 diagnostic lacks '${_w_needle}':\n${WITNESS_LOG}")
+        endif ()
+    endforeach ()
+
+    # Leg 24: the matcher's precision control. The same fixture and the same
+    # two-fragment assembly, negated to the IEEE-safe spelling: the rig must
+    # configure untouched, keep the assembled option in the real commands,
+    # and print the exact-mode patterns.
+    set(_work24 "${BUILD_ROOT}/third_party-unsafe-safe")
+    _witness_configure("${_work24}"
+        "-DWITNESS_CONCAT_TAIL=${_unsafe_tail}"
+        "-DWITNESS_EXPR_HEAD=${_safe_head}"
+        -DWITNESS_EXPR_IFACE_OPTION=ON)
+    if (NOT WITNESS_RC EQUAL 0)
+        _witness_fail("safe negated option rejected as a conflict:\n"
+            "${WITNESS_LOG}")
+    endif ()
+    execute_process(COMMAND "${CMAKE_COMMAND}" --build "${_work24}"
+        ${_build_config}
+        RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
+    if (NOT _rc EQUAL 0)
+        _witness_fail("safe negated leg failed to build: ${_out}${_err}")
+    endif ()
+    _witness_audit("${_work24}")
+    _witness_run_and_check_exact("${_work24}${_cfgdir}/witnessExprIface")
+    if (EXISTS "${_work24}/compile_commands.json")
+        file(READ "${_work24}/compile_commands.json" _cc24)
+        _witness_count("${_cc24}" "${_safe_head}${_unsafe_tail}" _n)
+        if (_n LESS 1)
+            _witness_fail("assembled safe option missing from commands")
+        endif ()
+        _witness_count("${_cc24}" "${_unsafe_flag}" _n)
+        if (NOT _n EQUAL 0)
+            _witness_fail("unsafe sub-option entered the safe leg")
+        endif ()
+    endif ()
+endif ()
 
 message(STATUS "exactFpCompilerWitness: command audit and numeric probes "
     "agree on the exact mode")

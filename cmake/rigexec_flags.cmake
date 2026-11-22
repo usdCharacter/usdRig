@@ -44,8 +44,26 @@ endfunction()
 # themselves match, so a caller that compares must first exclude entries
 # equal to a canonical flag. Entry detection and token filtering both use
 # this substring form, so a grouped entry like "-O2 -ffast-math" is caught.
+# Each result-altering sub-option of -ffast-math is listed on its own: one
+# spelled after the canonical flags restores the loosened mode past them.
+# The IEEE-safe negations (-fno-unsafe-math-optimizations, -fsigned-zeros
+# and friends) match no alternative, so a target asking for the safe form is
+# left alone.
 function(rigexec_get_exact_fp_conflict_regex out_var)
-    set(${out_var} [[-ffast-math|-Ofast|-ffp-contract=|[/-]fp:]] PARENT_SCOPE)
+    set(_rigexec_fp_conflicts
+        "-ffast-math"
+        "-Ofast"
+        "-funsafe-math-optimizations"
+        "-fassociative-math"
+        "-ffinite-math-only"
+        "-freciprocal-math"
+        "-fno-signed-zeros"
+        "-fno-trapping-math"
+        "-ffp-contract="
+        "-ffp-model="
+        "[/-]fp:")
+    list(JOIN _rigexec_fp_conflicts "|" _rigexec_fp_regex)
+    set(${out_var} "${_rigexec_fp_regex}" PARENT_SCOPE)
 endfunction()
 
 # PRIVATE: the content of the outermost generator expression, split at the
