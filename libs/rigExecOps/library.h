@@ -28,6 +28,7 @@ void RegisterChainSolverOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterFrameBlendOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterRibbonFramesOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterSplineIkOps(rigExec::RigExecOpRegistrar &registrar);
+void RegisterSingleChainIkOps(rigExec::RigExecOpRegistrar &registrar);
 
 } // namespace rigExecOps
 

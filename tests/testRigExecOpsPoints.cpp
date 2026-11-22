@@ -9,6 +9,7 @@
 #include "rigExecMath/normalsLayoutKernel.h"
 #include "rigExecMath/ribbonFramesKernel.h"
 #include "rigExecMath/simdKernels.h"
+#include "rigExecMath/singleChainIk.h"
 #include "rigExecMath/solvers.h"
 #include "rigExecMath/splineIk.h"
 #include "rigExecMath/surfaceProjectorKernel.h"
@@ -19,6 +20,7 @@
 #include "rigExecOps/solver/chainSolverOps.h"
 #include "rigExecOps/solver/frameBlendOps.h"
 #include "rigExecOps/solver/ribbonFramesOps.h"
+#include "rigExecOps/solver/singleChainIkOps.h"
 #include "rigExecOps/solver/splineIkOps.h"
 #include "rigExecOps/deform/blendShapeOp.h"
 #include "rigExecOps/deform/deltaMushOp.h"
@@ -2566,6 +2568,92 @@ TestRibbonFrames()
     CHECK(!single.Run({&curve, &curve}, &actual, &error));
 }
 
+void
+TestSingleChainIk()
+{
+    using namespace rigExecOps;
+    // A four-joint chain with a gentle bend and a turn at each joint.
+    std::vector<RigExecPointFrame> chain;
+    rigExecRig::PointFrameArray input;
+    input.frames = RigExecArray<rigExecRig::PointFrame>(4);
+    input.rests = RigExecArray<rigExecRig::PointLandmarks>(4);
+    for (size_t i = 0; i < 4; ++i) {
+        const double t = double(i);
+        chain.push_back(MakeFrame(GfVec3d(t, 0.2 * t * t, 0.1 * t),
+                                  GfVec3d(0, 0, 1), 10.0 * t, GfVec3d(1.0)));
+        input.frames[i] = ToRig(chain.back());
+        input.rests[i] = ToRigLandmarks(chain.back().points);
+    }
+    const GfVec3d pole(0.5, 2.0, -1.0);
+    const rigExecStd::Vec3d rigPole = ToRig(pole);
+    const double twist = 15.0;
+    rigExecRig::PointFrameArray actual;
+    const auto same = [&](const std::vector<RigExecPointFrame> &expected) {
+        bool ok = expected.size() == actual.frames.Size() &&
+                  actual.rests.Size() == input.rests.Size();
+        for (size_t i = 0; ok && i < expected.size(); ++i)
+            ok = SameBits(expected[i], actual.frames[i]) &&
+                 actual.rests[i] == input.rests[i];
+        return ok;
+    };
+    // A reachable goal and one past full reach.
+    for (const GfVec3d goal :
+         {GfVec3d(1.5, 1.2, 0.4), GfVec3d(9.0, 1.0, 0.0)}) {
+        const RigExecPointFrame effector =
+            MakeFrame(goal, GfVec3d(1, 1, 0), 25.0, GfVec3d(1.0));
+        const rigExecRig::PointFrame rigEffector = ToRig(effector);
+        for (const bool singleChain : {false, true})
+            for (const bool preserve : {false, true})
+                for (const double weight : {1.0, 0.4, 0.0})
+                    for (const double stretch : {0.0, 0.5}) {
+                        RigExecSingleChainIkParams params;
+                        params.mode =
+                            singleChain ? RigExecSingleChainIkMode::SingleChain
+                                        : RigExecSingleChainIkMode::RotatePlane;
+                        params.pole = pole;
+                        params.twistDegrees = twist;
+                        params.weight = weight;
+                        params.preserveJointOrientation = preserve;
+                        params.stretch = stretch;
+                        SingleChainIkPayload payload;
+                        payload.singleChain = singleChain;
+                        payload.preserveJointOrientation = preserve;
+                        Node node(
+                            SingleChainIk(),
+                            {&SingleChainIkChain(), &SingleChainIkEffector(),
+                             &SingleChainIkPole(), &SingleChainIkTwist(),
+                             &SingleChainIkWeight(), &SingleChainIkStretch()},
+                            SingleChainIkOut(), &payload);
+                        CHECK(node.Run({&input, &rigEffector, &rigPole, &twist,
+                                        &weight, &stretch},
+                                       &actual));
+                        CHECK(same(RigExecSolveSingleChainIk(chain, effector,
+                                                             params)));
+                    }
+
+        // Defaults: pole 0, 1, 0, no twist, full weight, no stretch.
+        SingleChainIkPayload payload;
+        Node bare(SingleChainIk(),
+                  {&SingleChainIkChain(), &SingleChainIkEffector()},
+                  SingleChainIkOut(), &payload);
+        CHECK(bare.Run({&input, &rigEffector}, &actual));
+        CHECK(same(RigExecSolveSingleChainIk(chain, effector)));
+    }
+
+    // A non-finite pole fails the solve: the chain comes back flagged.
+    SingleChainIkPayload payload;
+    Node node(
+        SingleChainIk(),
+        {&SingleChainIkChain(), &SingleChainIkEffector(), &SingleChainIkPole()},
+        SingleChainIkOut(), &payload);
+    const rigExecStd::Vec3d badPole(
+        0.0, std::numeric_limits<double>::quiet_NaN(), 0.0);
+    const rigExecRig::PointFrame rigEffector = ToRig(chain.back());
+    CHECK(node.Run({&input, &rigEffector, &badPole}, &actual));
+    for (size_t i = 0; i < actual.frames.Size(); ++i)
+        CHECK(actual.frames[i].flags & rigExecRig::kPointFrameDegenerate);
+}
+
 int
 main()
 {
@@ -2595,6 +2683,7 @@ main()
     TestChainSolvers();
     TestFrameBlend();
     TestRibbonFrames();
+    TestSingleChainIk();
     TestSplineIk();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
