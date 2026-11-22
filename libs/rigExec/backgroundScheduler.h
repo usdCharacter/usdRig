@@ -648,7 +648,8 @@ public:
     uint64_t ClockNowUs() const;
 
     /// Blocks until no job is queued or running. Event-driven, not timed:
-    /// returns when the last completion, drop, purge, or shed lands.
+    /// returns when the last completion, drop, purge, or shed lands. With
+    /// zero workers it returns once nothing runs; queued jobs stay queued.
     void WaitUntilIdle();
 
     /// Pops the highest-priority queued job -- neighbors before sweep, FIFO

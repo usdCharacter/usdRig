@@ -810,10 +810,11 @@ void
 RigExecBackgroundScheduler::WaitUntilIdle()
 {
     std::unique_lock<std::mutex> lock(_mutex);
-    // A stopping pool never drains its queue, so waiting on emptiness alone
-    // would hang against a concurrent shutdown (or a zero-worker pool).
-    _cv.wait(lock,
-             [this] { return _stopping || (_queue.empty() && _running == 0); });
+    // Nothing drains the queue of a stopping or zero-worker pool.
+    _cv.wait(lock, [this] {
+        return _stopping ||
+               (_running == 0 && (_queue.empty() || _workerCount == 0));
+    });
 }
 
 bool
@@ -1041,8 +1042,12 @@ RigExecBackgroundScheduler::_EnqueueTriggerTime(
     const double timeValue = time.GetValue();
     const std::pair<SdfPath, double> coalesceKey =
         std::make_pair(rig, timeValue);
+    // Taken before sampling: a cancel of this time while the factory runs
+    // must not let the job carry the newer token.
+    RigExecWarmFenceToken sampleToken = 0;
     {
         std::lock_guard<std::mutex> lock(_mutex);
+        sampleToken = _CurrentFenceTokenLocked(rig, timeValue);
         const auto current = _generations.find(rig);
         const RigExecFrameGeneration currentGeneration =
             current == _generations.end() ? 0 : current->second;
@@ -1128,6 +1133,9 @@ RigExecBackgroundScheduler::_EnqueueTriggerTime(
     if (_MergeIfQueuedLocked(coalesceKey, priority)) {
         return _TriggerOutcome::Skipped;
     }
+    if (_CurrentFenceTokenLocked(rig, timeValue) != sampleToken) {
+        return _TriggerOutcome::Skipped;
+    }
     const auto inFlight = _inFlight.find(rig);
     const size_t flying = inFlight == _inFlight.end() ? 0 : inFlight->second;
     if (flying >= _perRigCap) {
@@ -1139,7 +1147,7 @@ RigExecBackgroundScheduler::_EnqueueTriggerTime(
     request.time = time;
     request.priority = priority;
     request.generation = generation;
-    request.fenceToken = _CurrentFenceTokenLocked(rig, timeValue);
+    request.fenceToken = sampleToken;
     request.enqueuedUs = _NowUs();
     const _QueueKey key{int(priority), _sequence++};
     _QueuedJob queuedJob;
