@@ -75,7 +75,8 @@ RigExecImagingRegistry::LiveDebugJson(const SdfPath &rig,
         }
         const std::string generation =
             std::to_string(evaluator.GetBakedGenerationCount());
-        const auto &body = program->GetStepGraph();
+        const auto &body =
+            rigExec::RigExecBakedProgramAccess::StepGraph(*program);
         reply["active"] = JsValue(true);
         reply["rig"] = JsValue(rig.GetString());
         reply["graph_key"] = JsValue(session.debugGraphKey);

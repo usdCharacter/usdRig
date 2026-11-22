@@ -1834,7 +1834,8 @@ TestUntappedVolumeSourceBakesWithTheWalksKeys(const std::string &examplesDir)
     if (!program) {
         return;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     const auto slot = B.index.find(outsidePath);
     CHECK(slot != B.index.end());
     if (slot == B.index.end()) {

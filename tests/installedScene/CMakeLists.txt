@@ -31,6 +31,19 @@ target_link_libraries(testRigExecInstalledBinaryHeaders PRIVATE rigExec::rigExec
 add_test(NAME testRigExecInstalledBinaryHeaders
     COMMAND testRigExecInstalledBinaryHeaders)
 
+# The sealed compiled-program view is the SDK's route to a compiled rig: the
+# queries answer, and the evaluator's execution records are not nameable from
+# the installed headers.
+add_executable(testRigExecInstalledSeal ../testRigExecInstalledSeal.cpp)
+target_compile_features(testRigExecInstalledSeal PRIVATE cxx_std_17)
+target_link_libraries(testRigExecInstalledSeal PRIVATE
+    rigExec::rigExec rigExec::rigExecScene plug usd usdGeom)
+add_test(NAME testRigExecInstalledSeal COMMAND testRigExecInstalledSeal)
+set_tests_properties(testRigExecInstalledSeal PROPERTIES
+    ENVIRONMENT "PXR_PLUGINPATH_NAME=${rigExec_PLUGIN_DIR}/rigExecSchema/resources"
+    ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:${rigExec_LIBRARY_DIR};PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/bin;PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;LD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};LD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib")
+
 add_executable(testRigExecInstalledOracle ../testRigExecOracleDependency.cpp)
 target_compile_features(testRigExecInstalledOracle PRIVATE cxx_std_17)
 target_compile_definitions(testRigExecInstalledOracle PRIVATE

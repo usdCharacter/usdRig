@@ -218,7 +218,8 @@ RigExecRigEvaluator::GetSkinTopologyCacheSize() const
 {
     if (!_bakedProgram || _skinTopologyObservationPending)
         return 0;
-    const auto &program = _bakedProgram->GetStepGraph();
+    const auto &program =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*_bakedProgram);
     // Cache size counts retained answers, including invalid/dynamic layouts,
     // once per mover, as the original cache did for remembered refusals.
     std::set<SdfPath> answered;
@@ -241,7 +242,8 @@ RigExecRigEvaluator::GetCompiledRigRestFrameCount() const
 {
     if (!_bakedProgram)
         return 0;
-    const auto &B = _bakedProgram->GetStepGraph();
+    const auto &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*_bakedProgram);
     const auto &P = B.GetProviderProgram();
     std::map<RigExecValueId, const RigExecProviderOp *> producers;
     for (const auto &op : P.ops)

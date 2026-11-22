@@ -41,12 +41,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
@@ -130,12 +130,12 @@ TestKernel()
     const std::vector<float> line{0, 0, 0, 0, 0, 1, 0, 0, 2, 0, 0, 3};
     CHECK(Near(RigExecPathLength(Curve(line, RigExecPathBasis::Bezier, false)),
                3.0));
-    CHECK(Near(RigExecPathLength(
-                   Curve(line, RigExecPathBasis::CatmullRom, false)),
-               1.0));
-    CHECK(Near(RigExecPathLength(
-                   Curve(line, RigExecPathBasis::CatmullRom, true)),
-               3.0));
+    CHECK(Near(
+        RigExecPathLength(Curve(line, RigExecPathBasis::CatmullRom, false)),
+        1.0));
+    CHECK(
+        Near(RigExecPathLength(Curve(line, RigExecPathBasis::CatmullRom, true)),
+             3.0));
     CHECK(Near(RigExecPathLength(Curve(line, RigExecPathBasis::Bspline, true)),
                3.0));
     {
@@ -155,7 +155,7 @@ TestKernel()
 
     // A curved path: the integrated length matches a dense chord sum, and
     // equal arc steps are equal chord steps.
-    const std::vector<float> ess{0, 0, 0, 1, 0, 1, 0, 0, 2,
+    const std::vector<float> ess{0,  0, 0, 1, 0, 1, 0, 0, 2,
                                  -1, 0, 3, 0, 0, 4, 2, 0, 4};
     for (const RigExecPathBasis basis :
          {RigExecPathBasis::Bspline, RigExecPathBasis::CatmullRom}) {
@@ -197,16 +197,16 @@ const SdfPath kRoot("/Rig/Controls/Root");
 const SdfPath kPath("/Rig/Path");
 const SdfPath kGait("/Rig/Gait");
 
-const std::vector<GfVec3f> kPoints{{0, 0, 0},   {0.5, 0, 1},  {0, 0, 2},
-                                   {-0.5, 0, 3}, {0.5, 0, 4}};
+const std::vector<GfVec3f> kPoints{
+    {0, 0, 0}, {0.5, 0, 1}, {0, 0, 2}, {-0.5, 0, 3}, {0.5, 0, 4}};
 
 UsdPrim
 Mover(const UsdStageRefPtr &stage, const std::string &name,
       const SdfPath &target, const TfToken &op)
 {
-    const UsdPrim mover = stage->DefinePrim(
-        SdfPath("/Rig/Movers").AppendChild(TfToken(name)),
-        TfToken("RigExecFloatMathMover"));
+    const UsdPrim mover =
+        stage->DefinePrim(SdfPath("/Rig/Movers").AppendChild(TfToken(name)),
+                          TfToken("RigExecFloatMathMover"));
     mover.ApplyAPI(TfToken("RigExecMoverAPI"));
     mover.GetRelationship(TfToken("rigExec:moves")).SetTargets({target});
     mover.GetAttribute(TfToken("rigExec:operation")).Set(op);
@@ -252,8 +252,7 @@ PathRig()
     curves.CreateBasisAttr().Set(UsdGeomTokens->catmullRom);
     curves.CreateWrapAttr().Set(UsdGeomTokens->pinned);
     curves.CreateCurveVertexCountsAttr().Set(VtIntArray{int(kPoints.size())});
-    curves.CreatePointsAttr().Set(
-        VtVec3fArray(kPoints.begin(), kPoints.end()));
+    curves.CreatePointsAttr().Set(VtVec3fArray(kPoints.begin(), kPoints.end()));
     const UsdPrim gait = stage->DefinePrim(kGait, TfToken("Scope"));
     for (const char *name : {"end", "cycle"}) {
         const UsdAttribute a =
@@ -267,9 +266,9 @@ PathRig()
     PathMover(stage, "Heading", kRoot.AppendProperty(TfToken("avars:ry")),
               "heading");
     PathMover(stage, "End", kGait.AppendProperty(TfToken("end")), "end");
-    const UsdPrim stair = Mover(stage, "Stair",
-                                kGait.AppendProperty(TfToken("cycle")),
-                                TfToken("quantize"));
+    const UsdPrim stair =
+        Mover(stage, "Stair", kGait.AppendProperty(TfToken("cycle")),
+              TfToken("quantize"));
     stair.GetAttribute(TfToken("inputs:value")).Set(0.16f);
     stair.GetAttribute(TfToken("inputs:min")).Set(0.0267f);
     return stage;
@@ -278,8 +277,7 @@ PathRig()
 // What each target should hold at \p time: the kernel over the stage's
 // points and its distance there.
 std::map<std::string, float>
-Expected(const UsdStageRefPtr &stage, double time,
-         const VtVec3fArray &points)
+Expected(const UsdStageRefPtr &stage, double time, const VtVec3fArray &points)
 {
     std::map<std::string, float> out;
     double distance = 0.0;
@@ -394,7 +392,8 @@ CheckPurity(const char *what, const RigExecRigEvaluator &evaluator)
     if (!program) {
         return;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     CHECK(B.purityAudit);
     const uint64_t reads =
         B.purityViolations.count.load(std::memory_order_relaxed);
@@ -482,7 +481,8 @@ TestRig()
         return;
     }
     size_t pointsInput = 0;
-    const std::string pointsName = kPath.AppendProperty(TfToken("points")).GetString();
+    const std::string pointsName =
+        kPath.AppendProperty(TfToken("points")).GetString();
     CHECK(player->FindInput(pointsName, &pointsInput));
     CHECK(player->GetInputInfo(pointsInput).type == RrInputTag::Vec3fArray);
     CHECK(player->GetInputInfo(pointsInput).defaultCount == kPoints.size());
@@ -499,10 +499,10 @@ TestRig()
     }
     moved[2] += GfVec3f(0.3f, 0.0f, 0.0f);
     std::vector<RigExecRigPose> edited;
-    CHECK(RigExecTestEditedPoses(stage, kRig,
-                                 {{kPath.AppendProperty(TfToken("points")),
-                                   VtValue(moved)}},
-                                 {7.5}, &edited, &error));
+    CHECK(RigExecTestEditedPoses(
+        stage, kRig,
+        {{kPath.AppendProperty(TfToken("points")), VtValue(moved)}}, {7.5},
+        &edited, &error));
     if (!edited.empty()) {
         CheckPose("authored window", edited[0], Expected(stage, 7.5, moved));
         RigExecRuntimeArray array;
@@ -529,9 +529,8 @@ TestRig()
     // evaluator last ran.
     CheckPose("before override", evaluator.Evaluate(UsdTimeCode(7.5)),
               Expected(stage, 7.5, authored));
-    evaluator.SetInteractiveOverrides(
-        {RigExecValueOverride{kPath, TfToken(), TfToken("points"),
-                              VtValue(moved)}});
+    evaluator.SetInteractiveOverrides({RigExecValueOverride{
+        kPath, TfToken(), TfToken("points"), VtValue(moved)}});
     const RigExecRigPose preview = evaluator.Evaluate(UsdTimeCode(7.5));
     CHECK(preview.valid);
     if (!preview.valid) {
@@ -561,51 +560,59 @@ TestRig()
 void
 TestCompileRefusals()
 {
-    const auto refused = [](const std::function<void(const UsdStageRefPtr &)>
-                                &edit,
-                            const char *needle) {
-        UsdStageRefPtr stage = PathRig();
-        edit(stage);
-        RigExecRigEvaluator evaluator(stage, kRig);
-        std::vector<std::string> notices;
-        const bool compiled = evaluator.Compile(&notices);
-        bool named = false;
-        for (const std::string &n : notices) {
-            named = named || n.find(needle) != std::string::npos;
-        }
-        // A mover that fails validation is skipped with the reason.
-        if (!compiled || !named) {
-            ++failures;
-            std::printf("FAIL refusal '%s': compiled %d\n", needle,
-                        int(compiled));
+    const auto refused =
+        [](const std::function<void(const UsdStageRefPtr &)> &edit,
+           const char *needle) {
+            UsdStageRefPtr stage = PathRig();
+            edit(stage);
+            RigExecRigEvaluator evaluator(stage, kRig);
+            std::vector<std::string> notices;
+            const bool compiled = evaluator.Compile(&notices);
+            bool named = false;
             for (const std::string &n : notices) {
-                std::printf("  %s\n", n.c_str());
+                named = named || n.find(needle) != std::string::npos;
             }
-        }
-    };
-    refused([](const UsdStageRefPtr &stage) {
-        stage->GetPrimAtPath(SdfPath("/Rig/Movers/X"))
-            .GetRelationship(TfToken("rigExec:path"))
-            .SetTargets({kGait});
-    }, "is not a UsdGeomBasisCurves prim");
-    refused([](const UsdStageRefPtr &stage) {
-        UsdGeomBasisCurves(stage->GetPrimAtPath(kPath))
-            .GetWrapAttr()
-            .Set(UsdGeomTokens->periodic);
-    }, "nonperiodic or pinned");
-    refused([](const UsdStageRefPtr &stage) {
-        stage->GetPrimAtPath(SdfPath("/Rig/Movers/Z"))
-            .GetAttribute(TfToken("rigExec:pathComponent"))
-            .Set(TfToken("w"));
-    }, "unknown rigExec:pathComponent");
-    refused([](const UsdStageRefPtr &stage) {
-        UsdGeomBasisCurves(stage->GetPrimAtPath(kPath))
-            .GetCurveVertexCountsAttr()
-            .Set(VtIntArray{2, 3});
-    }, "exactly one curve");
+            // A mover that fails validation is skipped with the reason.
+            if (!compiled || !named) {
+                ++failures;
+                std::printf("FAIL refusal '%s': compiled %d\n", needle,
+                            int(compiled));
+                for (const std::string &n : notices) {
+                    std::printf("  %s\n", n.c_str());
+                }
+            }
+        };
+    refused(
+        [](const UsdStageRefPtr &stage) {
+            stage->GetPrimAtPath(SdfPath("/Rig/Movers/X"))
+                .GetRelationship(TfToken("rigExec:path"))
+                .SetTargets({kGait});
+        },
+        "is not a UsdGeomBasisCurves prim");
+    refused(
+        [](const UsdStageRefPtr &stage) {
+            UsdGeomBasisCurves(stage->GetPrimAtPath(kPath))
+                .GetWrapAttr()
+                .Set(UsdGeomTokens->periodic);
+        },
+        "nonperiodic or pinned");
+    refused(
+        [](const UsdStageRefPtr &stage) {
+            stage->GetPrimAtPath(SdfPath("/Rig/Movers/Z"))
+                .GetAttribute(TfToken("rigExec:pathComponent"))
+                .Set(TfToken("w"));
+        },
+        "unknown rigExec:pathComponent");
+    refused(
+        [](const UsdStageRefPtr &stage) {
+            UsdGeomBasisCurves(stage->GetPrimAtPath(kPath))
+                .GetCurveVertexCountsAttr()
+                .Set(VtIntArray{2, 3});
+        },
+        "exactly one curve");
 }
 
-}  // namespace
+} // namespace
 
 int
 main()

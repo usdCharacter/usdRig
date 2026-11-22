@@ -107,7 +107,8 @@ RigExecBridgeFrameCache::_SyncAffectedIndex(const RigExecCacheCall &call)
         _affectedValid = false;
         return nullptr;
     }
-    const RigExecBakedProgramImpl &impl = program->GetStepGraph();
+    const RigExecBakedProgramImpl &impl =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     const uint64_t compiledRig =
         RigExecFrameCacheCompiledRigSignature(call.evaluator);
     // The program object test matters as much as the compiled rig: a rebuild can
@@ -585,7 +586,8 @@ RigExecBridgeFrameCache::MemoizeLive(const RigExecCacheCall &call,
             // the dependency record ride with the pose, so a later edit
             // retains the source snapshot used to validate cache reuse.
             const RigExecBakedProgramImpl &impl =
-                call.evaluator.GetBakedProgram()->GetStepGraph();
+                rigExec::RigExecBakedProgramAccess::StepGraph(
+                    *call.evaluator.GetBakedProgram());
             RigExecRetainedFrameState retainedState =
                 RigExecCaptureRetainedState(
                     memoInputs, call.overrides, key.compiledRigSignature,

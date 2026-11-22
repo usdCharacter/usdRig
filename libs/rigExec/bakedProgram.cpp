@@ -5374,6 +5374,12 @@ RigExecBakedProgram::GetStepGraph() const
     return *_impl;
 }
 
+const RigExecBakedProgramImpl &
+RigExecBakedProgramAccess::StepGraph(const RigExecBakedProgram &program)
+{
+    return program.GetStepGraph();
+}
+
 const RigExecCompiledProgram &
 RigExecBakedProgram::GetCompiledProgram() const noexcept
 {

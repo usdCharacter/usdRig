@@ -122,7 +122,8 @@ _NativeRevisionSteps(const RigExecRigEvaluator &evaluator)
     if (!program) {
         return steps;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     for (size_t c = 0; c < B.opGraph.ops.size() && c < B.opExecution.ran.size();
          ++c) {
         if (!B.opExecution.ran[c]) {
@@ -4798,7 +4799,8 @@ TestAcceptanceFailureRecovers()
         if (!program) {
             return;
         }
-        const RigExecBakedProgramImpl &B = program->GetStepGraph();
+        const RigExecBakedProgramImpl &B =
+            rigExec::RigExecBakedProgramAccess::StepGraph(*program);
         const RigExecRevisionAcceptance expected =
             frame == 2.0 ? RigExecRevisionAcceptance::Refuses
                          : RigExecRevisionAcceptance::Applies;
@@ -5379,7 +5381,9 @@ TestNormalsLayout()
     }
     // A static topology carries its compiled vertex-normal walk.
     size_t walks = 0;
-    for (const auto &chain : evaluator.GetBakedProgram()->GetStepGraph().chains)
+    for (const auto &chain : rigExec::RigExecBakedProgramAccess::StepGraph(
+                                 *evaluator.GetBakedProgram())
+                                 .chains)
         for (const auto &derived : chain.derived)
             walks +=
                 derived.revision.op == RigExecRevisionOp::RecomputeNormals &&

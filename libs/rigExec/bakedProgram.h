@@ -526,15 +526,6 @@ public:
     /// back.
     void ReleaseStageReferences();
 
-    /// The step graph this program runs.
-    ///
-    /// The graph IS the program's structure, so the suite that asserts its
-    /// invariants -- every edge forward, every read written or sourced, no
-    /// two steps writing the same slot without an edge -- has to be able to
-    /// see it. RigExecBakedProgramImpl is declared in bakedProgramImpl.h,
-    /// which only this library's own sources and its tests include.
-    const RigExecBakedProgramImpl &GetStepGraph() const;
-
     /// The same compiled rig as the sealed read-only view
     /// (compiledProgram.h): counts, records by index, the operation graph,
     /// the declared reads and writes, the bound paths and the overridden
@@ -552,9 +543,14 @@ public:
     std::vector<RigExecOpGraphNode> GetOpGraph() const;
 
 private:
+    // The step graph this program runs. Only RigExecBakedProgramAccess
+    // (bakedProgramImpl.h), which the installed SDK does not ship, reaches it.
+    const RigExecBakedProgramImpl &GetStepGraph() const;
+
     // Test-only; reached through RigExecBakedProgramTesting
     // (bakedProgramImpl.h), because only this class is the evaluator's friend.
     friend struct RigExecBakedProgramTesting;
+    friend struct RigExecBakedProgramAccess;
     friend class RigExecRigEvaluator;
     /// Project the common compiler's exact SCC members to authored operation
     /// owners for the evaluator's public compile report. Neutral Build is unchanged.

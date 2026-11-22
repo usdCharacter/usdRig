@@ -453,7 +453,8 @@ TestTheGraphDescribesTheProgram(const BuiltProgram &built, const char *name)
     if (!built.program) {
         return;
     }
-    const RigExecBakedProgramImpl &B = built.program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program);
     CHECK(!B.steps.empty());
 
     // (1) Every edge points forward, and the identity permutation is
@@ -738,7 +739,8 @@ TestTheClusteringIsSound(const BuiltProgram &built, const char *name)
     CHECK(built.program != nullptr);
     if (!built.program)
         return;
-    const auto &B = built.program->GetStepGraph();
+    const auto &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program);
     std::string error;
     CHECK(RigExecValidateOpClusters(B.opGraph, &error));
     std::vector<double> costs;
@@ -793,10 +795,10 @@ TestTheReportIsDeterministic(const std::string &stagePath)
     if (!first.program || !second.program) {
         return;
     }
-    const std::string a =
-        RigExecBakedScheduleReport(first.program->GetStepGraph());
-    const std::string b =
-        RigExecBakedScheduleReport(second.program->GetStepGraph());
+    const std::string a = RigExecBakedScheduleReport(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*first.program));
+    const std::string b = RigExecBakedScheduleReport(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*second.program));
     CHECK(!a.empty());
     if (a == b) {
         return;
@@ -1066,7 +1068,8 @@ TestTheVertexPartitionCoversEveryVertexOnce(const std::string &stagePath,
     // of chunks nothing ran.
     RigExecRigPose pose;
     CHECK(built.program->Run(UsdTimeCode::Default(), &pose));
-    const RigExecBakedProgramImpl &B = built.program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program);
     const size_t cap =
         size_t(std::max(1, TfGetenvInt("RIGEXEC_BAKED_MAX_CHUNKS", 32)));
     size_t skinRevisions = 0;
@@ -1173,7 +1176,8 @@ TestThePartitionIsCutOnlyWhereItPays(const BuiltProgram &built,
     if (!built.program) {
         return;
     }
-    const RigExecBakedProgramImpl &B = built.program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program);
     size_t skins = 0, cut = 0;
     for (const RigExecBakedProgramImpl::GeomChain &chain : B.chains) {
         for (const RigExecBakedProgramImpl::GeomRevision &revision :
@@ -1244,7 +1248,8 @@ TestTheDerivedCompareAgreesWithTheElementwiseOne(const std::string &stagePath)
     CHECK(built.program->Run(UsdTimeCode::Default(), &repeated));
     // The identity arm, end to end: nothing moved, so nothing re-executed.
     CHECK(repeated.executedOpCount == 0);
-    const RigExecBakedProgramImpl &B = built.program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program);
     size_t derivedRevisions = 0;
     for (const RigExecBakedProgramImpl::GeomChain &chain : B.chains) {
         for (const RigExecBakedProgramImpl::GeomChain::Derived &derived :
@@ -1328,7 +1333,7 @@ TestARebuiltProgramKeepsItsRunState(const std::string &stagePath,
     std::map<SdfPath, VtVec3fArray> remembered;
     std::map<SdfPath, std::vector<GfMatrix4d>> folded;
     for (const RigExecBakedProgramImpl::GeomChain &chain :
-         built.program->GetStepGraph().chains) {
+         rigExec::RigExecBakedProgramAccess::StepGraph(*built.program).chains) {
         for (const RigExecBakedProgramImpl::GeomRevision &revision :
              chain.revisions) {
             if (revision.ran && !revision.influences.empty()) {
@@ -1355,7 +1360,7 @@ TestARebuiltProgramKeepsItsRunState(const std::string &stagePath,
 
     size_t carried = 0, tables = 0;
     for (const RigExecBakedProgramImpl::GeomChain &chain :
-         rebuilt->GetStepGraph().chains) {
+         rigExec::RigExecBakedProgramAccess::StepGraph(*rebuilt).chains) {
         for (const RigExecBakedProgramImpl::GeomRevision &revision :
              chain.revisions) {
             const auto found = folded.find(revision.moverPath);
@@ -1455,7 +1460,9 @@ TestARetainedSkinOpOutlivesItsLeafVersions(const std::string &stagePath,
                 }
             }
         };
-        weightVersions(built.program->GetStepGraph(), &outgoing);
+        weightVersions(
+            rigExec::RigExecBakedProgramAccess::StepGraph(*built.program),
+            &outgoing);
         std::vector<std::string> reasons;
         std::unique_ptr<RigExecBakedProgram> rebuilt =
             RigExecBakedProgram::Build(built.evaluator.get(), &reasons);
@@ -1464,14 +1471,17 @@ TestARetainedSkinOpOutlivesItsLeafVersions(const std::string &stagePath,
             return 0;
         }
         rebuilt->AdoptGeometryStateFrom(*built.program);
-        const auto &first = rebuilt->GetStepGraph().opAdapter.retainedFirst;
+        const auto &first =
+            rigExec::RigExecBakedProgramAccess::StepGraph(*rebuilt)
+                .opAdapter.retainedFirst;
         retained[detour] =
             size_t(std::count(first.begin(), first.end(), char(1)));
         RigExecRigPose after;
         CHECK(rebuilt->Run(UsdTimeCode(1.0), &after));
         executed[detour] = after.executedOpCount;
         std::map<SdfPath, uint64_t> replacement;
-        weightVersions(rebuilt->GetStepGraph(), &replacement);
+        weightVersions(rigExec::RigExecBakedProgramAccess::StepGraph(*rebuilt),
+                       &replacement);
         if (detour) {
             for (const auto &[mover, version] : replacement) {
                 const auto found = outgoing.find(mover);
@@ -1751,8 +1761,8 @@ TestAStalePartitionRunsTheRevisionWhole(const std::string &stagePath)
     // The program's own state, which is what a stale partition is a property
     // of. Nothing else can reach it, and a fallback nothing exercises is a
     // fallback nobody knows the value of.
-    RigExecBakedProgramImpl &B =
-        const_cast<RigExecBakedProgramImpl &>(built.program->GetStepGraph());
+    RigExecBakedProgramImpl &B = const_cast<RigExecBakedProgramImpl &>(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program));
     RigExecBakedProgramImpl::GeomRevision *stale = nullptr;
     for (RigExecBakedProgramImpl::GeomChain &chain : B.chains) {
         for (RigExecBakedProgramImpl::GeomRevision &revision :
@@ -1902,7 +1912,8 @@ TestARecutLayoutCannotReadAnUndeclaredJoint()
         if (!program) {
             return nullptr;
         }
-        for (const auto &chain : program->GetStepGraph().chains) {
+        for (const auto &chain :
+             rigExec::RigExecBakedProgramAccess::StepGraph(*program).chains) {
             for (const auto &revision : chain.revisions) {
                 if (revision.moverPath == skinPath) {
                     return &revision;
@@ -2154,7 +2165,8 @@ TestAStaleFuseKeepsTheChunkKeys()
         restore();
         return;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     const RigExecBakedProgramImpl::GeomRevision *revision = nullptr;
     for (const auto &chain : B.chains) {
         for (const auto &candidate : chain.revisions) {
@@ -2301,7 +2313,8 @@ TestTheConeClosuresAreSound(const BuiltProgram &built, const char *name)
         std::printf("FAIL %s: no program to check cones of\n", name);
         return;
     }
-    const auto &B = built.program->GetStepGraph();
+    const auto &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program);
     const size_t clusters = B.clustering.clusters.size();
     const size_t words = (clusters + 63) / 64;
     CHECK(B.cones.Cone().size() == clusters);
@@ -2387,7 +2400,8 @@ TestEveryPoseWriteHasItsOwnStorage(const BuiltProgram &built, const char *name)
         std::printf("FAIL %s: no program to check versions of\n", name);
         return;
     }
-    const RigExecBakedProgramImpl &B = built.program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program);
     const size_t slots = B.paths.size();
     CHECK(B.finLast.size() == slots);
     CHECK(B.baseLast.size() == slots);
@@ -2865,7 +2879,8 @@ TestALeafControlDragRunsOnlyItsCone(const std::string &stagePath,
         std::printf("FAIL leaf-drag: the rig did not bake\n");
         return;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     const auto slot = B.index.find(control);
     if (slot == B.index.end()) {
         ++failures;
@@ -3077,8 +3092,8 @@ TestTheValidatorAcceptsTheProgram(const BuiltProgram &built, const char *name)
         return;
     }
     std::string error;
-    const bool valid =
-        RigExecBakedValidateStepGraph(built.program->GetStepGraph(), &error);
+    const bool valid = RigExecBakedValidateStepGraph(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program), &error);
     CHECK(valid);
     if (!valid) {
         std::printf("FAIL %s: %s\n", name, error.c_str());
@@ -3251,7 +3266,9 @@ TestTheHeadValidatorRejectsAMalformedTier(const BuiltProgram &built)
 {
     std::string error;
     CHECK(built.program &&
-          RigExecBakedValidateHeadTier(built.program->GetStepGraph(), &error));
+          RigExecBakedValidateHeadTier(
+              rigExec::RigExecBakedProgramAccess::StepGraph(*built.program),
+              &error));
     {
         RigExecBakedProgramImpl B;
         HandBuiltHeadTier(&B);
@@ -4163,8 +4180,8 @@ TestTheValidatorRejectsALaterPoseVersion()
         return;
     }
     // The program is this test's own, so it may be edited in place.
-    RigExecBakedProgramImpl &B =
-        const_cast<RigExecBakedProgramImpl &>(built.program->GetStepGraph());
+    RigExecBakedProgramImpl &B = const_cast<RigExecBakedProgramImpl &>(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program));
     CHECK(B.commits.size() >= 2);
     if (B.commits.size() < 2 || B.commits.front().slotReads.empty() ||
         B.commits.front().slotCarry.empty() ||
@@ -4390,8 +4407,8 @@ TestTheValidatorRejectsABadFrameRecord(const std::string &fixtures)
     if (!built.program) {
         return;
     }
-    RigExecBakedProgramImpl &B =
-        const_cast<RigExecBakedProgramImpl &>(built.program->GetStepGraph());
+    RigExecBakedProgramImpl &B = const_cast<RigExecBakedProgramImpl &>(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program));
     TestTheValidatorAcceptsTheProgram(built, "frame_record_fallbacks");
     const auto passes = [&](const char *what) {
         std::string restored;
@@ -4489,8 +4506,8 @@ TestTheValidatorRejectsABadSolverRecord(const std::string &fixtures)
     if (!built.program) {
         return;
     }
-    RigExecBakedProgramImpl &B =
-        const_cast<RigExecBakedProgramImpl &>(built.program->GetStepGraph());
+    RigExecBakedProgramImpl &B = const_cast<RigExecBakedProgramImpl &>(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program));
     TestTheValidatorAcceptsTheProgram(built, "solver_checkpoint");
     const SdfPath legFk("/CheckpointAsset/Rig/Stack/LegFK");
     RigExecBakedFrameRecord *record = nullptr;
@@ -4640,7 +4657,8 @@ TestEachChainReaderBindsOneVersion(const BuiltProgram &built, const char *name)
     if (!built.program) {
         return 0;
     }
-    const RigExecBakedProgramImpl &B = built.program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program);
     const size_t revisions = B.revisionIndex.size();
     CHECK(B.revisionFuseStep.size() == revisions);
     if (B.revisionFuseStep.size() != revisions) {
@@ -5294,7 +5312,8 @@ TestThePointVersionsKeepTheOrder(const BuiltProgram &built, const char *name)
     if (!built.program) {
         return;
     }
-    const RigExecBakedProgramImpl &B = built.program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program);
     const size_t count = B.steps.size();
     const Reachability actual(B.steps);
     std::vector<std::vector<RigExecBakedSlotRange>> reads(count), writes(count);
@@ -5367,8 +5386,8 @@ TestTheValidatorRejectsAnUnboundPointVersion()
         return;
     }
     // The program is this test's own, so it may be edited in place.
-    RigExecBakedProgramImpl &B =
-        const_cast<RigExecBakedProgramImpl &>(built.program->GetStepGraph());
+    RigExecBakedProgramImpl &B = const_cast<RigExecBakedProgramImpl &>(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program));
     CHECK(B.revisionIndex.size() == 3);
     int chunk = -1;
     for (size_t index = 0; index < B.steps.size(); ++index) {
@@ -5780,7 +5799,8 @@ TestAChainRevisionRecoversAcrossAFailure()
         finish();
         return;
     }
-    const RigExecBakedProgramImpl &B = built.program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program);
     CHECK(B.verifyChainVersions);
     CHECK(B.chains.size() == 1 && B.chains[0].revisions.size() == 3);
     if (B.chains.size() != 1 || B.chains[0].revisions.size() != 3) {
@@ -5808,7 +5828,8 @@ TestAChainRevisionRecoversAcrossAFailure()
     // The same frame, never having failed.
     RigExecRigPose freshPose;
     CHECK(fresh.program->Run(UsdTimeCode(3.0), &freshPose));
-    const RigExecBakedProgramImpl &F = fresh.program->GetStepGraph();
+    const RigExecBakedProgramImpl &F =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*fresh.program);
     CHECK(SameBits(chain.result, F.chains[0].result));
     for (size_t r = 0; r < 3; ++r) {
         CHECK(chain.revisions[r].currentSource ==
@@ -5830,7 +5851,8 @@ TestAChainRevisionRecoversAcrossAFailure()
     }
     CHECK(outgoing.program->Run(UsdTimeCode(1.0), &pose));
     CHECK(outgoing.program->Run(UsdTimeCode(2.0), &pose));
-    const RigExecBakedProgramImpl &O = outgoing.program->GetStepGraph();
+    const RigExecBakedProgramImpl &O =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*outgoing.program);
     std::vector<uint64_t> versions;
     std::vector<std::vector<GfVec3f>> outputs, passed;
     for (const auto &revision : O.chains[0].revisions) {
@@ -5849,7 +5871,8 @@ TestAChainRevisionRecoversAcrossAFailure()
         return;
     }
     rebuilt->AdoptGeometryStateFrom(*outgoing.program);
-    const RigExecBakedProgramImpl &R = rebuilt->GetStepGraph();
+    const RigExecBakedProgramImpl &R =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*rebuilt);
     CHECK(R.chains.size() == 1 && R.chains[0].revisions.size() == 3);
     if (R.chains.size() != 1 || R.chains[0].revisions.size() != 3) {
         finish();
@@ -5893,7 +5916,8 @@ TestUnmovedPointsKeepTheirVersion()
     if (!built.program) {
         return;
     }
-    const RigExecBakedProgramImpl &B = built.program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program);
     CHECK(B.chains.size() == 1 && B.chains[0].revisions.size() == 3);
     if (B.chains.size() != 1 || B.chains[0].revisions.size() != 3) {
         return;
@@ -6099,7 +6123,8 @@ TestTheEpilogueVisitsTheStepsHoldingLines()
         finish();
         return;
     }
-    const RigExecBakedProgramImpl &B = built.program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program);
     CHECK(B.chains.size() == 2);
     std::vector<std::string> failedAtTwo;
     // Frame 2 twice: the second run skips the failed steps, which keep
@@ -6129,7 +6154,8 @@ TestTheEpilogueVisitsTheStepsHoldingLines()
         CHECK(rebuilt != nullptr);
         if (rebuilt) {
             rebuilt->AdoptGeometryStateFrom(*built.program);
-            const RigExecBakedProgramImpl &R = rebuilt->GetStepGraph();
+            const RigExecBakedProgramImpl &R =
+                rigExec::RigExecBakedProgramAccess::StepGraph(*rebuilt);
             CHECK(HeldStepsAreExact(R));
             for (const double frame : {2.0, 3.0, 2.0}) {
                 RigExecRigPose next;
@@ -6217,8 +6243,9 @@ TestTheEpilogueVisitsTheStepsHoldingLines()
                   evaluator.Evaluate(UsdTimeCode(2.0)).diagnostics) ==
               liveAtTwo);
         CHECK(evaluator.GetBakedProgram() != nullptr &&
-              evaluator.GetBakedProgram()->GetStepGraph().epilogue.mismatches ==
-                  0);
+              rigExec::RigExecBakedProgramAccess::StepGraph(
+                  *evaluator.GetBakedProgram())
+                      .epilogue.mismatches == 0);
     }
     finish();
 }
@@ -6405,7 +6432,8 @@ TestARangeChainIsCutIntoRanges(const BuiltProgram &built, const char *name)
     using D = RigExecBakedSlotDomain;
     using K = RigExecBakedStepKind;
     using Role = RigExecBakedRevisionRole;
-    const RigExecBakedProgramImpl &B = built.program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program);
     CHECK(B.rangeChains);
     CHECK(B.groupVertexTarget == 1024 && B.groupCap == 32 && B.groupGates);
     CHECK(B.roleMode == RigExecBakedRoleMode::Live);
@@ -6535,8 +6563,8 @@ TestTheValidatorRejectsABrokenRangeChain()
     using D = RigExecBakedSlotDomain;
     using K = RigExecBakedStepKind;
     // The program is this test's own, so it may be edited in place.
-    RigExecBakedProgramImpl &B =
-        const_cast<RigExecBakedProgramImpl &>(built.program->GetStepGraph());
+    RigExecBakedProgramImpl &B = const_cast<RigExecBakedProgramImpl &>(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program));
     CHECK(B.chains.size() == 1 && B.chains[0].revisions.size() == 3 &&
           B.chains[0].groupBounds.size() == 11);
     if (B.chains.size() != 1 || B.chains[0].revisions.size() != 3 ||
@@ -6699,8 +6727,10 @@ TestARangeChainMatchesTheWholeChain()
     if (!ranged.program || !whole.program) {
         return;
     }
-    const RigExecBakedProgramImpl &R = ranged.program->GetStepGraph();
-    const RigExecBakedProgramImpl &W = whole.program->GetStepGraph();
+    const RigExecBakedProgramImpl &R =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*ranged.program);
+    const RigExecBakedProgramImpl &W =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*whole.program);
     CHECK(R.verifyRangeChains && R.verifyChainVersions);
     CHECK(R.rangeChains && !W.rangeChains);
     CHECK(R.chains.size() == 1 && W.chains.size() == 1 &&
@@ -6918,8 +6948,10 @@ TestARangeChainCutsOffUnmovedRanges()
     using D = RigExecBakedSlotDomain;
     using K = RigExecBakedStepKind;
     using Role = RigExecBakedRevisionRole;
-    const RigExecBakedProgramImpl &B = built.program->GetStepGraph();
-    const RigExecBakedProgramImpl &W = whole.program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program);
+    const RigExecBakedProgramImpl &W =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*whole.program);
     CHECK(B.chains.size() == 1 && B.chains[0].revisions.size() == 3 &&
           W.chains.size() == 1);
     if (B.chains.size() != 1 || B.chains[0].revisions.size() != 3 ||
@@ -7083,7 +7115,8 @@ TestRangeJoinsKeepTheLineOrder()
     if (!ranged.program || !whole.program) {
         return;
     }
-    const RigExecBakedProgramImpl &R = ranged.program->GetStepGraph();
+    const RigExecBakedProgramImpl &R =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*ranged.program);
     const int zeta = RangeChainPosition(R, "/Asset/Rig/Movers/Zeta");
     const int alpha = RangeChainPosition(R, "/Asset/Rig/Movers/Alpha");
     CHECK(zeta >= 0 && alpha > zeta);
@@ -7110,8 +7143,11 @@ TestRangeJoinsKeepTheLineOrder()
         RigExecRigPose rangedPose, wholePose;
         CHECK(ranged.program->Run(UsdTimeCode(frame), &rangedPose));
         CHECK(whole.program->Run(UsdTimeCode(frame), &wholePose));
-        CHECK(SameBits(R.chains[0].result,
-                       whole.program->GetStepGraph().chains[0].result));
+        CHECK(SameBits(
+            R.chains[0].result,
+            rigExec::RigExecBakedProgramAccess::StepGraph(*whole.program)
+                .chains[0]
+                .result));
         const bool same = rangedPose.diagnostics == wholePose.diagnostics;
         CHECK(same);
         if (!same) {
@@ -7354,7 +7390,8 @@ TestTheLiveGrainFollowsTheMachine(const std::string &stagePath)
     if (!program) {
         return;
     }
-    const RigExecBakedProgramImpl &live = program->GetStepGraph();
+    const RigExecBakedProgramImpl &live =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     CHECK(live.roleMode == RigExecBakedRoleMode::Live);
     CHECK(RigExecBakedTranslationConcurrency(live) == machine);
     CHECK(live.clustering.grainUs ==
@@ -7369,7 +7406,8 @@ TestTheLiveGrainFollowsTheMachine(const std::string &stagePath)
     if (!rebuilt) {
         return;
     }
-    const RigExecBakedProgramImpl &exported = rebuilt->GetStepGraph();
+    const RigExecBakedProgramImpl &exported =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*rebuilt);
     CHECK(exported.roleMode == RigExecBakedRoleMode::Export);
     CHECK(RigExecBakedTranslationConcurrency(exported) ==
           kRigExecBakedReferenceConcurrency);
@@ -7447,7 +7485,8 @@ TestGroupChainsMatchTheWholeChain()
     if (!whole.program) {
         return;
     }
-    const RigExecBakedProgramImpl &W = whole.program->GetStepGraph();
+    const RigExecBakedProgramImpl &W =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*whole.program);
     CHECK(W.chains.size() == 1 && W.chains[0].revisions.size() == 6);
     if (W.chains.size() != 1 || W.chains[0].revisions.size() != 6) {
         return;
@@ -7475,7 +7514,8 @@ TestGroupChainsMatchTheWholeChain()
             if (!ranged.program) {
                 continue;
             }
-            const RigExecBakedProgramImpl &R = ranged.program->GetStepGraph();
+            const RigExecBakedProgramImpl &R =
+                rigExec::RigExecBakedProgramAccess::StepGraph(*ranged.program);
             CHECK(R.verifyChainVersions && R.verifyRangeChains);
             if (!GroupChainHasItsRoles(R, gates, what.c_str())) {
                 continue;
@@ -7624,7 +7664,8 @@ TestASmoothGroupReadsItsHalo()
     if (!whole.program) {
         return;
     }
-    const RigExecBakedProgramImpl &W = whole.program->GetStepGraph();
+    const RigExecBakedProgramImpl &W =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*whole.program);
     CHECK(W.chains.size() == 1 && W.chains[0].revisions.size() == 3);
     if (W.chains.size() != 1 || W.chains[0].revisions.size() != 3) {
         return;
@@ -7645,7 +7686,8 @@ TestASmoothGroupReadsItsHalo()
         if (!ranged.program) {
             continue;
         }
-        const RigExecBakedProgramImpl &R = ranged.program->GetStepGraph();
+        const RigExecBakedProgramImpl &R =
+            rigExec::RigExecBakedProgramAccess::StepGraph(*ranged.program);
         const RigExecBakedProgramImpl::GeomChain &chain = R.chains[0];
         CHECK(chain.revisions.size() == 3 && chain.groupBounds.size() == 11);
         if (chain.revisions.size() != 3 || chain.groupBounds.size() != 11) {
@@ -7741,7 +7783,8 @@ TestADeltaMushGroupReadsItsRegion()
     if (!whole.program) {
         return;
     }
-    const RigExecBakedProgramImpl &W = whole.program->GetStepGraph();
+    const RigExecBakedProgramImpl &W =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*whole.program);
     CHECK(W.chains.size() == 1 && W.chains[0].revisions.size() == 3);
     if (W.chains.size() != 1 || W.chains[0].revisions.size() != 3) {
         return;
@@ -7762,7 +7805,8 @@ TestADeltaMushGroupReadsItsRegion()
         if (!ranged.program) {
             continue;
         }
-        const RigExecBakedProgramImpl &R = ranged.program->GetStepGraph();
+        const RigExecBakedProgramImpl &R =
+            rigExec::RigExecBakedProgramAccess::StepGraph(*ranged.program);
         const RigExecBakedProgramImpl::GeomChain &chain = R.chains[0];
         CHECK(chain.revisions.size() == 3 && chain.groupBounds.size() == 11);
         if (chain.revisions.size() != 3 || chain.groupBounds.size() != 11) {
@@ -7866,7 +7910,8 @@ TestGroupStepsRunOnlyMovedGroups()
         return;
     }
     using K = RigExecBakedStepKind;
-    const RigExecBakedProgramImpl &B = built.program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program);
     if (!GroupChainHasItsRoles(B, /*gates=*/true, "dependence")) {
         return;
     }
@@ -8025,8 +8070,11 @@ TestARebuildAdoptsAGroupChain()
         RigExecRigPose adoptedPose, freshPose;
         CHECK(rebuilt->Run(UsdTimeCode(frame), &adoptedPose));
         CHECK(fresh.program->Run(UsdTimeCode(frame), &freshPose));
-        const auto &adopted = rebuilt->GetStepGraph().chains;
-        const auto &reference = fresh.program->GetStepGraph().chains;
+        const auto &adopted =
+            rigExec::RigExecBakedProgramAccess::StepGraph(*rebuilt).chains;
+        const auto &reference =
+            rigExec::RigExecBakedProgramAccess::StepGraph(*fresh.program)
+                .chains;
         CHECK(adopted.size() == 1 && reference.size() == 1 &&
               SameBits(adopted[0].result, reference[0].result));
         CHECK(adoptedPose.diagnostics == freshPose.diagnostics);
@@ -8146,7 +8194,8 @@ TestTheWeightOverlayIsReusedByVersion()
     if (!built.program) {
         return;
     }
-    const RigExecBakedProgramImpl &B = built.program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program);
     CHECK(B.verifyPacketVersions);
     int object = -1;
     const RigExecBakedProgramImpl::GeomRevision *found =
@@ -8225,7 +8274,8 @@ TestADefaultOnlyMoveResolvesTheWeightField()
     if (!built.program) {
         return;
     }
-    const RigExecBakedProgramImpl &B = built.program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program);
     int object = -1;
     const RigExecBakedProgramImpl::GeomRevision *found =
         WeightOverlayRevision(B, &object);
@@ -8296,7 +8346,8 @@ TestARebuildKeepsItsPointVersions(const std::string &stagePath,
         return 0;
     }
     rebuilt->AdoptGeometryStateFrom(*built.program);
-    const RigExecBakedProgramImpl &B = rebuilt->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*rebuilt);
     using D = RigExecBakedSlotDomain;
     std::vector<std::pair<size_t, uint64_t>> copied;
     for (size_t i = 0; i < B.opAdapter.values.size(); ++i) {
@@ -8377,9 +8428,10 @@ TestTheChainStatusKeepsAnUnmovedResult()
     if (!built.program || !whole.program) {
         return;
     }
-    RigExecBakedProgramImpl &B =
-        const_cast<RigExecBakedProgramImpl &>(built.program->GetStepGraph());
-    const RigExecBakedProgramImpl &W = whole.program->GetStepGraph();
+    RigExecBakedProgramImpl &B = const_cast<RigExecBakedProgramImpl &>(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program));
+    const RigExecBakedProgramImpl &W =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*whole.program);
     CHECK(B.chains.size() == 1 && W.chains.size() == 1);
     if (B.chains.size() != 1 || W.chains.size() != 1 ||
         B.chains[0].revisions.empty()) {
@@ -8451,7 +8503,8 @@ TestTheWeightFieldIsSharedNotCopied()
     if (!built.program) {
         return;
     }
-    const RigExecBakedProgramImpl &B = built.program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program);
     int object = -1;
     const RigExecBakedProgramImpl::GeomRevision *revision =
         WeightOverlayRevision(B, &object);
@@ -8546,9 +8599,12 @@ TestAnAdoptedRangeChainRemapsItsGroupIds()
     if (!outgoing.program || !rebuilt.program || !fresh.program) {
         return;
     }
-    const RigExecBakedProgramImpl &O = outgoing.program->GetStepGraph();
-    const RigExecBakedProgramImpl &R = rebuilt.program->GetStepGraph();
-    const RigExecBakedProgramImpl &F = fresh.program->GetStepGraph();
+    const RigExecBakedProgramImpl &O =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*outgoing.program);
+    const RigExecBakedProgramImpl &R =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*rebuilt.program);
+    const RigExecBakedProgramImpl &F =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*fresh.program);
     const int oc = ChainOf(O, shape), rc = ChainOf(R, shape);
     const int fc = ChainOf(F, shape), re = ChainOf(R, earlier);
     CHECK(oc >= 0 && rc >= 0 && fc >= 0 && re >= 0);
@@ -8675,9 +8731,10 @@ TestARangeSkinAgreesWithTheJudge()
     if (!ranged.program || !whole.program) {
         return;
     }
-    RigExecBakedProgramImpl &R =
-        const_cast<RigExecBakedProgramImpl &>(ranged.program->GetStepGraph());
-    const RigExecBakedProgramImpl &W = whole.program->GetStepGraph();
+    RigExecBakedProgramImpl &R = const_cast<RigExecBakedProgramImpl &>(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*ranged.program));
+    const RigExecBakedProgramImpl &W =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*whole.program);
     CHECK(R.verifyRangeChains);
     CHECK(R.chains.size() == 1 && W.chains.size() == 1);
     if (R.chains.size() != 1 || W.chains.size() != 1 ||
@@ -9061,7 +9118,8 @@ TestARangeChainGetsItsRolesAndGates()
     if (!built.program) {
         return;
     }
-    const RigExecBakedProgramImpl &B = built.program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program);
     int c = -1;
     const RigExecBakedProgramImpl::GeomChain *chain = GroupChain(B, &c);
     CHECK(chain && chain->revisions.size() == 7 &&
@@ -9236,8 +9294,8 @@ TestARoleFollowsTheValueBuildReads()
         if (!built.program) {
             return nullptr;
         }
-        const RigExecBakedProgramImpl::GeomChain *chain =
-            GroupChain(built.program->GetStepGraph());
+        const RigExecBakedProgramImpl::GeomChain *chain = GroupChain(
+            rigExec::RigExecBakedProgramAccess::StepGraph(*built.program));
         const int r = chain ? GroupPosition(*chain, name) : -1;
         return r < 0 ? nullptr : &chain->revisions[size_t(r)];
     };
@@ -9250,7 +9308,8 @@ TestARoleFollowsTheValueBuildReads()
               blend->chunks.size() == 1 && !blend->chunked &&
               HasPin(*blend, Pin::LeafToken, "surfaceFrame"));
         if (blend && built.program) {
-            const RigExecBakedProgramImpl &B = built.program->GetStepGraph();
+            const RigExecBakedProgramImpl &B =
+                rigExec::RigExecBakedProgramAccess::StepGraph(*built.program);
             int c = -1;
             const RigExecBakedProgramImpl::GeomChain *chain = GroupChain(B, &c);
             const int id =
@@ -9306,8 +9365,9 @@ TestARoleFollowsTheValueBuildReads()
         CHECK(skin && skin->role == Role::Range &&
               HasPin(*skin, Pin::LeafToken, "dualQuaternion"));
         CHECK(built.program &&
-              built.program->GetStepGraph().upstream.count(
-                  SdfPath("/Asset/Rig/Movers/L1.rigExec:skinningMethod")) == 1);
+              rigExec::RigExecBakedProgramAccess::StepGraph(*built.program)
+                      .upstream.count(SdfPath(
+                          "/Asset/Rig/Movers/L1.rigExec:skinningMethod")) == 1);
     }
     std::printf("  group roles by value: blend space, animated method, "
                 "overrides and upstream\n");
@@ -9330,7 +9390,8 @@ TestALegacyChainPinsItsWholeSkin()
     if (!built.program) {
         return;
     }
-    const RigExecBakedProgramImpl &B = built.program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program);
     const RigExecBakedProgramImpl::GeomChain *chain = GroupChain(B);
     CHECK(chain && chain->revisions.size() == 1);
     if (!chain || chain->revisions.size() != 1) {
@@ -9364,8 +9425,8 @@ TestTheRolesStandWhileTheirPinsHold()
     if (!built.program) {
         return;
     }
-    RigExecBakedProgramImpl &B =
-        const_cast<RigExecBakedProgramImpl &>(built.program->GetStepGraph());
+    RigExecBakedProgramImpl &B = const_cast<RigExecBakedProgramImpl &>(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program));
     const auto run = [&](const std::vector<RigExecValueOverride> &overrides) {
         if (overrides.empty()) {
             built.evaluator->ClearInteractiveOverrides();
@@ -9414,8 +9475,10 @@ TestExportModeBakesOnlyConstants()
     if (!live.program || !exported.program) {
         return;
     }
-    const RigExecBakedProgramImpl &L = live.program->GetStepGraph();
-    const RigExecBakedProgramImpl &E = exported.program->GetStepGraph();
+    const RigExecBakedProgramImpl &L =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*live.program);
+    const RigExecBakedProgramImpl &E =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*exported.program);
     CHECK(E.roleMode == RigExecBakedRoleMode::Export);
     const auto *liveChain = GroupChain(L);
     const auto *exportChain = GroupChain(E);
@@ -9463,7 +9526,8 @@ TestExportModeBakesOnlyConstants()
         GroupStageOptions(), {}, RigExecBakedRoleMode::Export, {method});
     CHECK(kept.program != nullptr);
     if (kept.program) {
-        const auto *chain = GroupChain(kept.program->GetStepGraph());
+        const auto *chain = GroupChain(
+            rigExec::RigExecBakedProgramAccess::StepGraph(*kept.program));
         const int l1 = chain ? GroupPosition(*chain, "L1") : -1;
         const int l2 = chain ? GroupPosition(*chain, "L2") : -1;
         CHECK(l1 >= 0 && l2 >= 0);
@@ -9487,8 +9551,12 @@ TestExportModeBakesOnlyConstants()
         GroupStageOptions(), {}, RigExecBakedRoleMode::Export, {gateDefault});
     CHECK(connectedLive.program && connectedExport.program);
     if (connectedLive.program && connectedExport.program) {
-        const auto *a = GroupChain(connectedLive.program->GetStepGraph());
-        const auto *b = GroupChain(connectedExport.program->GetStepGraph());
+        const auto *a =
+            GroupChain(rigExec::RigExecBakedProgramAccess::StepGraph(
+                *connectedLive.program));
+        const auto *b =
+            GroupChain(rigExec::RigExecBakedProgramAccess::StepGraph(
+                *connectedExport.program));
         const int ga = a ? GroupPosition(*a, "G0") : -1;
         const int gb = b ? GroupPosition(*b, "G0") : -1;
         CHECK(ga >= 0 && gb >= 0);
@@ -9538,8 +9606,8 @@ TestAFreshProgramChecksItsPins()
         CHECK((built.program->GetLastBail() == RigExecBakedBail::RoleFlip) ==
               flips);
         // A bailed run ran no step: ChainInputs never took the base.
-        const RigExecBakedProgramImpl::GeomChain *chain =
-            GroupChain(built.program->GetStepGraph());
+        const RigExecBakedProgramImpl::GeomChain *chain = GroupChain(
+            rigExec::RigExecBakedProgramAccess::StepGraph(*built.program));
         CHECK(chain && chain->haveBase == !flips);
     }
     std::printf("  a fresh program checks its pins on its first run\n");
@@ -9698,8 +9766,10 @@ TestASetAsideJoinFollowsTheBase()
     if (!ranged.program || !whole.program) {
         return;
     }
-    const RigExecBakedProgramImpl &R = ranged.program->GetStepGraph();
-    const RigExecBakedProgramImpl &W = whole.program->GetStepGraph();
+    const RigExecBakedProgramImpl &R =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*ranged.program);
+    const RigExecBakedProgramImpl &W =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*whole.program);
     const int blend = ChainPositionOf(R, "/Asset/Rig/Movers/Blend");
     const int shift = ChainPositionOf(R, "/Asset/Rig/Movers/Shift");
     CHECK(shift == 0 && blend == 1);
@@ -9868,8 +9938,10 @@ TestWholeReadersGatherAfterRangeRevisions()
     if (!ranged.program || !whole.program) {
         return;
     }
-    const RigExecBakedProgramImpl &R = ranged.program->GetStepGraph();
-    const RigExecBakedProgramImpl &W = whole.program->GetStepGraph();
+    const RigExecBakedProgramImpl &R =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*ranged.program);
+    const RigExecBakedProgramImpl &W =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*whole.program);
     const char *const movers[] = {"/Asset/Rig/Movers/Shift",
                                   "/Asset/Rig/Movers/Pull",
                                   "/Asset/Rig/Movers/Raise"};
@@ -9934,8 +10006,10 @@ TestAWholeSkinChunkOutlivesAStaleFuse()
     if (!whole.program || !ranged.program) {
         return;
     }
-    const RigExecBakedProgramImpl &R = ranged.program->GetStepGraph();
-    const RigExecBakedProgramImpl &W = whole.program->GetStepGraph();
+    const RigExecBakedProgramImpl &R =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*ranged.program);
+    const RigExecBakedProgramImpl &W =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*whole.program);
     if (!GroupChainHasItsRoles(R, /*gates=*/true, "stale fuse") ||
         W.chains.size() != 1) {
         return;
@@ -10008,8 +10082,8 @@ TestTheConeTableIsPublishedOnce()
         return;
     }
     // Build allocates the program non-const, and nothing else holds it.
-    RigExecBakedProgramImpl &B =
-        const_cast<RigExecBakedProgramImpl &>(built.program->GetStepGraph());
+    RigExecBakedProgramImpl &B = const_cast<RigExecBakedProgramImpl &>(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built.program));
     const size_t clusters = B.clustering.clusters.size();
     CHECK(clusters > 0);
     CHECK(B.cones.cone != nullptr);
@@ -10135,9 +10209,11 @@ TestPruningKeepsEveryValue(const std::string &examplesDir)
     CHECK(on.evaluator->GetBakedGenerationCount() ==
           off.evaluator->GetBakedGenerationCount());
     const RigExecBakedProgramImpl &U =
-        off.evaluator->GetBakedProgram()->GetStepGraph();
+        rigExec::RigExecBakedProgramAccess::StepGraph(
+            *off.evaluator->GetBakedProgram());
     const RigExecBakedProgramImpl &P =
-        on.evaluator->GetBakedProgram()->GetStepGraph();
+        rigExec::RigExecBakedProgramAccess::StepGraph(
+            *on.evaluator->GetBakedProgram());
     CHECK(U.providerStepsPruned == 0);
     CHECK(P.providerStepsPruned > 0);
     CHECK(P.providerPruneViolations == 0);
@@ -10243,7 +10319,9 @@ TestAnEditOnAPrunedAttributeStillRebuilds()
             return out;
         }
         for (const auto &leaf :
-             program->GetStepGraph().GetProviderProgram().sampled) {
+             rigExec::RigExecBakedProgramAccess::StepGraph(*program)
+                 .GetProviderProgram()
+                 .sampled) {
             out.sampled = out.sampled || leaf.attribute == restTx;
         }
         const size_t builds = rig.GetBakedProgramBuildCount();

@@ -59,7 +59,8 @@ RigExecBridgeFrameCache::AdmitOverrideControls(
         // plan over them stays conservative.
         return;
     }
-    const RigExecBakedProgramImpl &impl = program->GetStepGraph();
+    const RigExecBakedProgramImpl &impl =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     for (const RigExecValueOverride &o : overrides) {
         const RigExecControlId id = RigExecControlIdForOverride(o);
         if (_affectedIndex->IsKnownControl(id)) {

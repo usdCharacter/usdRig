@@ -243,7 +243,8 @@ main(int argc, char **argv)
         std::printf("FATAL: the biped built no program\n");
         return 1;
     }
-    const RigExecBakedProgramImpl &impl = program->GetStepGraph();
+    const RigExecBakedProgramImpl &impl =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     std::printf("[biped] providers=%zu bound=%zu varying=%zu "
                 "avarConstants=%zu avarBindings=%zu chains=%zu\n",
                 program->GetProviderCount(), program->GetBoundInputCount(),
