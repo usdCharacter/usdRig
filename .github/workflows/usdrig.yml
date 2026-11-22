@@ -26,6 +26,17 @@ jobs:
       - name: Scan parallel-lane sources
         run: python3 tools/check_hidden_locks.py
 
+  internal-includes:
+    name: no new rigExec internal includes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout usdRig
+        uses: actions/checkout@v4
+
+      - name: Scan includes of rigExec/internal
+        run: python3 tools/check_internal_includes.py
+
   allocations:
     name: no new bare new
     runs-on: ubuntu-24.04
