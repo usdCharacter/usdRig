@@ -7,8 +7,6 @@
 #include "rigExecMath/geometryKernels.h"
 #include "rigEvaluatorConstraints.h"
 #include "movers/moverRegistry.h"
-#include "weightReference.h"
-#include "scalarReference.h"
 #include "rigExecMath/envelope.h"
 #include "rigExecMath/weightFields.h"
 #include "rigExecScene/weightProgram.h"

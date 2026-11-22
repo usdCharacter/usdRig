@@ -21,6 +21,7 @@
 #include "pxr/external/boost/python/extract.hpp"
 
 #include "rigExec/rigEvaluator.h"
+#include "rigExec/evaluatorTesting.h"
 #include "rigExecGpu/gpuDeformExecutor.h"
 #include "rigExecMath/pointFrame.h"
 #include "rigExecMath/rbf.h"
@@ -889,7 +890,8 @@ PYBIND11_MODULE(_rigexec, m)
         .def_property_readonly(
             "skin_topology_cache_size",
             [](const _Rig &r) {
-                return r.evaluator->GetSkinTopologyCacheSize();
+                return rigExec::RigExecEvaluatorTesting::SkinTopologyCacheSize(
+                    *r.evaluator);
             },
             "How many skin layouts the compiled rig's topology cache holds "
             "answers\n"

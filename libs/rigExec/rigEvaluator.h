@@ -425,21 +425,6 @@ public:
     std::vector<RigExecOpTraceEntry> GetLastOpTrace() const;
     std::vector<RigExecOpGraphNode> GetOpGraph() const;
 
-    /// How many skin layouts the compiled rig's topology cache is holding answers
-    /// for. The cache is the dynamic walk's; a baked program builds its
-    /// layouts in its SkinTopology ops and never fills it.
-    ///
-    /// The other thing about an interactive generation that a published pose
-    /// cannot show: dropping the layouts and re-reading them publishes
-    /// exactly the same deformation as keeping them, so only the cache's own
-    /// occupancy says whether a drag paid for the re-read. A test that
-    /// overrides an unrelated control reads this to see that it did not.
-    size_t GetSkinTopologyCacheSize() const;
-    /// The same for the blend sample shapes: how many samples the cache is
-    /// holding an answer for, which a stage edit on one sample's shape
-    /// drops by one and an edit elsewhere leaves where it was.
-    size_t GetBlendSampleCacheSize() const;
-
     /// Values that stand in for authored attributes while they are set,
     /// with NOTHING authored: the manipulation path.
     ///
@@ -721,8 +706,6 @@ public:
     /// deterministic history. Owning thread only.
     bool GetWindowRings(UsdTimeCode time, std::vector<RigExecWindowRing> *rings,
                         std::string *error = nullptr) const;
-    /// How many history ticks the evaluator has run, for tests of the memo.
-    size_t GetHistoryTickCountForTesting() const;
 
     /// Advances for every stage notice the program could not absorb as
     /// values (any disposition but Patched or Edited). For a consumer that
@@ -1763,8 +1746,15 @@ private:
     RigExecProfiler _profiler;
     bool _opTimingEnabled = false;
 
+    // Cache occupancy and the history tick count; read by tests through
+    // RigExecEvaluatorTesting.
+    size_t GetSkinTopologyCacheSize() const;
+    size_t GetBlendSampleCacheSize() const;
+    size_t GetHistoryTickCountForTesting() const;
+
     friend class RigExecBakedProgram;
     friend class RigExecInputReplayHeldProgram;
+    friend struct RigExecEvaluatorTesting;
 };
 
 /// Temporarily changes upstream array admission for tests (on by default):

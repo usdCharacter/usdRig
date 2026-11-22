@@ -3040,6 +3040,8 @@ foreach(_lib rigExecGraph rigExecEvalCore rigExecScene rigExecMath rigExec rigEx
             PATTERN "__pycache__" EXCLUDE
             PATTERN "guideBoundsInternal.h" EXCLUDE
             PATTERN "registryInternal.h" EXCLUDE
+            PATTERN "evaluatorTesting.h" EXCLUDE
+            PATTERN "internal" EXCLUDE
             PATTERN "*.h")
 endforeach()
 # The FlatBuffers runtime headers the generated rigExecBinary headers

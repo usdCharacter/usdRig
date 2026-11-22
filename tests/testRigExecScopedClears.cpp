@@ -23,6 +23,7 @@
 #include "rigExec/bakedProgramImpl.h"
 #include "rigExec/profiler.h"
 #include "rigExec/rigEvaluator.h"
+#include "rigExec/evaluatorTesting.h"
 
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/plug/registry.h"
@@ -49,12 +50,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
@@ -84,8 +85,7 @@ void
 CheckAgreesWithFresh(const std::string &what, const UsdStageRefPtr &stage,
                      RigExecRigPose pose)
 {
-    RigExecRigPose fresh =
-        Compiled(stage)->Evaluate(UsdTimeCode::Default());
+    RigExecRigPose fresh = Compiled(stage)->Evaluate(UsdTimeCode::Default());
     CHECK(pose.valid);
     CHECK(fresh.valid);
     CHECK(pose.comparisonMismatches == 0);
@@ -126,21 +126,28 @@ ChainPartsRan(const RigExecRigEvaluator &evaluator, const SdfPath &target)
     std::set<int> parts;
     const auto *program = evaluator.GetBakedProgram();
     CHECK(program);
-    if (!program) return parts;
+    if (!program)
+        return parts;
     const auto &B = program->GetStepGraph();
     for (const auto &entry : evaluator.GetLastOpTrace()) {
-        if (entry.kind != "PropertyRevision") continue;
+        if (entry.kind != "PropertyRevision")
+            continue;
         CHECK(entry.step < B.opGraph.ops.size());
-        if (entry.step >= B.opGraph.ops.size()) continue;
+        if (entry.step >= B.opGraph.ops.size())
+            continue;
         const size_t body = B.opGraph.ops[entry.step].originalIndex;
         CHECK(body < B.steps.size());
-        if (body >= B.steps.size()) continue;
+        if (body >= B.steps.size())
+            continue;
         const auto &step = B.steps[body];
         CHECK(step.kind == RigExecBakedStepKind::PropertyRevision);
-        CHECK(step.object >= 0 && size_t(step.object) < B.propertyChains.size());
-        if (step.object < 0 || size_t(step.object) >= B.propertyChains.size()) continue;
+        CHECK(step.object >= 0 &&
+              size_t(step.object) < B.propertyChains.size());
+        if (step.object < 0 || size_t(step.object) >= B.propertyChains.size())
+            continue;
         const auto &chain = B.propertyChains[size_t(step.object)];
-        if (chain.target != target) continue;
+        if (chain.target != target)
+            continue;
         CHECK(step.part >= 0 && size_t(step.part) <= chain.revisions.size());
         CHECK(parts.insert(step.part).second);
     }
@@ -248,51 +255,55 @@ TestAChainInputDefaultEditReachesTheChain()
     CHECK(FloatAt(pose, dial) == 21.0f);
     const auto *program = evaluator->GetBakedProgram();
     CHECK(program);
-    if (!program) return;
+    if (!program)
+        return;
     const auto &chains = program->GetStepGraph().propertyChains;
-    const auto chain = std::find_if(chains.begin(), chains.end(),
-        [&](const auto &entry) { return entry.target == dial; });
+    const auto chain =
+        std::find_if(chains.begin(), chains.end(),
+                     [&](const auto &entry) { return entry.target == dial; });
     CHECK(chain != chains.end());
-    if (chain == chains.end()) return;
+    if (chain == chains.end())
+        return;
     CHECK(chain->revisions.size() == 2);
-    if (chain->revisions.size() != 2) return;
+    if (chain->revisions.size() != 2)
+        return;
     CHECK(chain->revisions[0].mover == SdfPath("/Asset/Rig/Movers/TimesTen"));
     CHECK(chain->revisions[1].mover == SdfPath("/Asset/Rig/Movers/AddOne"));
 
     // A value nothing the chain reads: the chain keeps its answer and does
     // not run.
     stage->GetPrimAtPath(SdfPath("/Asset/Shape"))
-        .GetAttribute(TfToken("foo")).Set(1.0f);
+        .GetAttribute(TfToken("foo"))
+        .Set(1.0f);
     evaluator->ClearProfile();
     pose = evaluator->Evaluate(UsdTimeCode::Default());
     CHECK(FloatAt(pose, dial) == 21.0f);
     CHECK(ChainPartsRan(*evaluator, dial).empty());
-    CheckAgreesWithFresh(std::string("unread value, ") + "graph",
-                         stage, pose);
+    CheckAgreesWithFresh(std::string("unread value, ") + "graph", stage, pose);
 
     // A default edit on an unconnected input, whose value the binding held
     // as a constant: the chain is rebound and runs.
     stage->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/TimesTen"))
-        .GetAttribute(TfToken("inputs:value")).Set(20.0f);
+        .GetAttribute(TfToken("inputs:value"))
+        .Set(20.0f);
     evaluator->ClearProfile();
     pose = evaluator->Evaluate(UsdTimeCode::Default());
     CHECK(FloatAt(pose, dial) == 41.0f);
     // The unchanged base is retained; TimesTen changes its output, so AddOne follows.
     CHECK((ChainPartsRan(*evaluator, dial) == std::set<int>{1, 2}));
-    CheckAgreesWithFresh(std::string("chain input default, ") +
-                             "graph",
-                         stage, pose);
+    CheckAgreesWithFresh(std::string("chain input default, ") + "graph", stage,
+                         pose);
 
     // A default edit one hop upstream of a connected input.
     stage->GetPrimAtPath(SdfPath("/Asset/Rig/Channels"))
-        .GetAttribute(TfToken("gain")).Set(5.0f);
+        .GetAttribute(TfToken("gain"))
+        .Set(5.0f);
     evaluator->ClearProfile();
     pose = evaluator->Evaluate(UsdTimeCode::Default());
     CHECK(FloatAt(pose, dial) == 45.0f);
     // Only AddOne reads gain. TimesTen and the authored base retain their versions.
     CHECK((ChainPartsRan(*evaluator, dial) == std::set<int>{2}));
-    CheckAgreesWithFresh(std::string("connection source default, ") +
-                             "graph",
+    CheckAgreesWithFresh(std::string("connection source default, ") + "graph",
                          stage, pose);
 
     // And the frame after: nothing moved, so nothing runs.
@@ -317,11 +328,11 @@ MakeSkinnedRig()
     UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const UsdPrim alongX = stage->DefinePrim(
-        SdfPath("/Asset/Rig/AlongX"), TfToken("RigExecControl"));
+    const UsdPrim alongX = stage->DefinePrim(SdfPath("/Asset/Rig/AlongX"),
+                                             TfToken("RigExecControl"));
     alongX.GetAttribute(TfToken("avars:tx")).Set(10.0);
-    const UsdPrim alongY = stage->DefinePrim(
-        SdfPath("/Asset/Rig/AlongY"), TfToken("RigExecControl"));
+    const UsdPrim alongY = stage->DefinePrim(SdfPath("/Asset/Rig/AlongY"),
+                                             TfToken("RigExecControl"));
     alongY.GetAttribute(TfToken("avars:ty")).Set(20.0);
     alongY.GetAttribute(TfToken("avars:rz")).Set(90.0);
 
@@ -341,8 +352,8 @@ MakeSkinnedRig()
     skin.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
     skin.CreateRelationship(TfToken("rigExec:influences"))
         .SetTargets({alongX.GetPath(), alongY.GetPath()});
-    skin.CreateAttribute(TfToken("rigExec:elementSize"),
-                         SdfValueTypeNames->Int).Set(2);
+    skin.CreateAttribute(TfToken("rigExec:elementSize"), SdfValueTypeNames->Int)
+        .Set(2);
     VtIntArray indices(kSkinPoints * 2);
     VtFloatArray weights(kSkinPoints * 2);
     for (size_t i = 0; i < kSkinPoints; ++i) {
@@ -352,11 +363,13 @@ MakeSkinnedRig()
         weights[i * 2 + 1] = 0.5f;
     }
     skin.CreateAttribute(TfToken("rigExec:jointIndices"),
-                         SdfValueTypeNames->IntArray).Set(indices);
+                         SdfValueTypeNames->IntArray)
+        .Set(indices);
     skin.CreateAttribute(TfToken("rigExec:jointWeights"),
-                         SdfValueTypeNames->FloatArray).Set(weights);
-    const UsdAttribute source = skin.CreateAttribute(
-        TfToken("inputs:method"), SdfValueTypeNames->Token);
+                         SdfValueTypeNames->FloatArray)
+        .Set(weights);
+    const UsdAttribute source = skin.CreateAttribute(TfToken("inputs:method"),
+                                                     SdfValueTypeNames->Token);
     source.Set(TfToken("classicLinear"));
     const UsdAttribute declared = skin.CreateAttribute(
         TfToken("rigExec:skinningMethod"), SdfValueTypeNames->Token);
@@ -383,21 +396,22 @@ TestAnInputsMethodEditOnASkinMover()
     const VtVec3fArray linear = Deformed(pose, kSkinTarget);
     CHECK(linear.size() == kSkinPoints);
     CHECK(evaluator->GetBakedProgram() != nullptr);
-    CHECK(evaluator->GetSkinTopologyCacheSize() > 0);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(*evaluator) > 0);
 
     // The mesh the layout deforms, and the mover's own envelope: neither is
     // a layout input, so the layout stays cached -- the case "the notice
     // names a mesh" would have dropped it for.
     stage->GetPrimAtPath(kSkinTarget.GetPrimPath())
-        .GetAttribute(TfToken("foo")).Set(1.0f);
-    CHECK(evaluator->GetSkinTopologyCacheSize() > 0);
+        .GetAttribute(TfToken("foo"))
+        .Set(1.0f);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(*evaluator) > 0);
     stage->GetPrimAtPath(kSkin)
-        .GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
-    CHECK(evaluator->GetSkinTopologyCacheSize() > 0);
+        .GetAttribute(TfToken("inputs:defaultWeight"))
+        .Set(1.0f);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(*evaluator) > 0);
     pose = evaluator->Evaluate(UsdTimeCode::Default());
     CHECK(Deformed(pose, kSkinTarget) == linear);
-    CheckAgreesWithFresh(std::string("skin, unrelated edits, ") +
-                             "graph",
+    CheckAgreesWithFresh(std::string("skin, unrelated edits, ") + "graph",
                          stage, pose);
 
     // The method, one connection hop upstream of rigExec:skinningMethod: a
@@ -405,15 +419,14 @@ TestAnInputsMethodEditOnASkinMover()
     stage->GetPrimAtPath(kSkin)
         .GetAttribute(TfToken("inputs:method"))
         .Set(TfToken("dualQuaternion"));
-    CHECK(evaluator->GetSkinTopologyCacheSize() == 0);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(*evaluator) == 0);
     pose = evaluator->Evaluate(UsdTimeCode::Default());
     const VtVec3fArray dual = Deformed(pose, kSkinTarget);
     CHECK(dual.size() == kSkinPoints);
     CHECK(dual != linear);
-    CHECK(evaluator->GetSkinTopologyCacheSize() > 0);
-    CheckAgreesWithFresh(std::string("skin, inputs:method, ") +
-                             "graph",
-                         stage, pose);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(*evaluator) > 0);
+    CheckAgreesWithFresh(std::string("skin, inputs:method, ") + "graph", stage,
+                         pose);
 
     // A weight paint is a layout input itself.
     VtFloatArray weights(kSkinPoints * 2);
@@ -422,13 +435,13 @@ TestAnInputsMethodEditOnASkinMover()
         weights[i * 2 + 1] = 0.0f;
     }
     stage->GetPrimAtPath(kSkin)
-        .GetAttribute(TfToken("rigExec:jointWeights")).Set(weights);
-    CHECK(evaluator->GetSkinTopologyCacheSize() == 0);
+        .GetAttribute(TfToken("rigExec:jointWeights"))
+        .Set(weights);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(*evaluator) == 0);
     pose = evaluator->Evaluate(UsdTimeCode::Default());
     CHECK(Deformed(pose, kSkinTarget) != dual);
-    CheckAgreesWithFresh(std::string("skin, weight paint, ") +
-                             "graph",
-                         stage, pose);
+    CheckAgreesWithFresh(std::string("skin, weight paint, ") + "graph", stage,
+                         pose);
 }
 
 // Blend sample shapes.
@@ -449,13 +462,12 @@ MakeBlendRig()
     mesh.GetAttribute(TfToken("points"))
         .Set(VtVec3fArray{{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}});
     mesh.GetAttribute(TfToken("faceVertexCounts")).Set(VtIntArray{4});
-    mesh.GetAttribute(TfToken("faceVertexIndices"))
-        .Set(VtIntArray{0, 1, 2, 3});
+    mesh.GetAttribute(TfToken("faceVertexIndices")).Set(VtIntArray{0, 1, 2, 3});
     const auto shape = [&stage](const char *name, const GfVec3f &offset,
                                 int index) {
-        const UsdPrim prim = stage->DefinePrim(
-            SdfPath(std::string("/Asset/Shapes/") + name),
-            TfToken("BlendShape"));
+        const UsdPrim prim =
+            stage->DefinePrim(SdfPath(std::string("/Asset/Shapes/") + name),
+                              TfToken("BlendShape"));
         prim.CreateAttribute(TfToken("offsets"),
                              SdfValueTypeNames->Vector3fArray)
             .Set(VtVec3fArray{offset});
@@ -473,11 +485,13 @@ MakeBlendRig()
             SdfPath("/Asset/Rig/Channels").AppendChild(TfToken(name));
         const UsdPrim channel =
             stage->DefinePrim(channelPath, TfToken("RigExecBlendInput"));
-        const UsdPrim sample = stage->DefinePrim(
-            channelPath.AppendChild(TfToken("Full")),
-            TfToken("RigExecBlendSample"));
-        sample.CreateAttribute(TfToken("rigExec:activation"),
-                               SdfValueTypeNames->Float).Set(1.0f);
+        const UsdPrim sample =
+            stage->DefinePrim(channelPath.AppendChild(TfToken("Full")),
+                              TfToken("RigExecBlendSample"));
+        sample
+            .CreateAttribute(TfToken("rigExec:activation"),
+                             SdfValueTypeNames->Float)
+            .Set(1.0f);
         sample.CreateRelationship(TfToken("rigExec:blendShape"))
             .SetTargets({blendShape.GetPath()});
         channel.GetRelationship(TfToken("rigExec:samples"))
@@ -485,8 +499,8 @@ MakeBlendRig()
         channel.GetAttribute(TfToken("inputs:weight")).Set(1.0f);
         channels.push_back(channelPath);
     }
-    const UsdPrim blend = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Blend"), TfToken("RigExecBlendShapeMover"));
+    const UsdPrim blend = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Blend"),
+                                            TfToken("RigExecBlendShapeMover"));
     blend.ApplyAPI(TfToken("RigExecMoverAPI"));
     blend.GetRelationship(TfToken("rigExec:moves")).SetTargets({kBlendTarget});
     blend.GetRelationship(TfToken("rigExec:blendInputs")).SetTargets(channels);
@@ -505,7 +519,7 @@ TestABlendSampleEdit()
         CHECK(points[2] == GfVec3f(1, 1, 1));
         CHECK(points[0] == GfVec3f(1, 0, 0));
     }
-    CHECK(evaluator->GetBlendSampleCacheSize() == 2);
+    CHECK(RigExecEvaluatorTesting::BlendSampleCacheSize(*evaluator) == 2);
 
     // One shape's offsets: that sample's cached shape goes, the other's
     // stays. Offsets are topology, so the program rebuilds.
@@ -515,36 +529,34 @@ TestABlendSampleEdit()
         .Set(VtVec3fArray{GfVec3f(0, 0, 2)});
     CHECK(evaluator->GetLastNoticeDisposition() ==
           RigExecNoticeDisposition::Stale);
-    CHECK(evaluator->GetBlendSampleCacheSize() == 1);
+    CHECK(RigExecEvaluatorTesting::BlendSampleCacheSize(*evaluator) == 1);
     pose = evaluator->Evaluate(UsdTimeCode::Default());
     CHECK(evaluator->GetBakedProgramBuildCount() == builds + 1);
     points = Deformed(pose, kBlendTarget);
     CHECK(points.size() == 4 && points[2] == GfVec3f(1, 1, 2));
-    CHECK(evaluator->GetBlendSampleCacheSize() == 2);
-    CheckAgreesWithFresh(std::string("blend shape offsets, ") +
-                             "graph",
-                         stage, pose);
+    CHECK(RigExecEvaluatorTesting::BlendSampleCacheSize(*evaluator) == 2);
+    CheckAgreesWithFresh(std::string("blend shape offsets, ") + "graph", stage,
+                         pose);
 
     // The other sample's own activation: a value on the sample prim.
     stage->GetPrimAtPath(SdfPath("/Asset/Rig/Channels/Push/Full"))
-        .GetAttribute(TfToken("rigExec:activation")).Set(0.5f);
-    CHECK(evaluator->GetBlendSampleCacheSize() == 1);
+        .GetAttribute(TfToken("rigExec:activation"))
+        .Set(0.5f);
+    CHECK(RigExecEvaluatorTesting::BlendSampleCacheSize(*evaluator) == 1);
     pose = evaluator->Evaluate(UsdTimeCode::Default());
-    CheckAgreesWithFresh(std::string("blend sample activation, ") +
-                             "graph",
+    CheckAgreesWithFresh(std::string("blend sample activation, ") + "graph",
                          stage, pose);
 
     // The points both layouts were range-checked against.
     stage->GetPrimAtPath(kBlendTarget.GetPrimPath())
         .GetAttribute(TfToken("points"))
         .Set(VtVec3fArray{{0, 0, 0}, {2, 0, 0}, {2, 2, 0}, {0, 2, 0}});
-    CHECK(evaluator->GetBlendSampleCacheSize() == 0);
+    CHECK(RigExecEvaluatorTesting::BlendSampleCacheSize(*evaluator) == 0);
     pose = evaluator->Evaluate(UsdTimeCode::Default());
     points = Deformed(pose, kBlendTarget);
     CHECK(points.size() == 4 && points[2] == GfVec3f(2, 2, 2));
-    CheckAgreesWithFresh(std::string("blend target points, ") +
-                             "graph",
-                         stage, pose);
+    CheckAgreesWithFresh(std::string("blend target points, ") + "graph", stage,
+                         pose);
 }
 
 // The sparse samples of the blend mover, in channel order.
@@ -612,7 +624,7 @@ TestASparseLayoutIsBuiltOncePerCompiledRig()
     CHECK(evaluator->GetBakedProgramBuildCount() == builds);
 }
 
-}  // namespace
+} // namespace
 
 int
 main()

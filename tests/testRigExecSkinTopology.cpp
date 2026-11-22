@@ -15,6 +15,7 @@
 #include "rigExec/bakedSchedule.h"
 #include "rigExec/moverGraph.h"
 #include "rigExec/rigEvaluator.h"
+#include "rigExec/evaluatorTesting.h"
 #include "rigExecInputActionsAdapters.h"
 
 #include "pxr/base/arch/env.h"
@@ -41,8 +42,13 @@
 using namespace rigExec;
 
 static int failures = 0;
-#define CHECK(condition) do { if (!(condition)) { ++failures; \
-    std::printf("FAIL %d: %s\n", __LINE__, #condition); } } while (0)
+#define CHECK(condition)                                                       \
+    do {                                                                       \
+        if (!(condition)) {                                                    \
+            ++failures;                                                        \
+            std::printf("FAIL %d: %s\n", __LINE__, #condition);                \
+        }                                                                      \
+    } while (0)
 
 namespace {
 
@@ -70,11 +76,11 @@ MakeSkinnedRig()
     UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const UsdPrim alongX = stage->DefinePrim(
-        SdfPath("/Asset/Rig/AlongX"), TfToken("RigExecControl"));
+    const UsdPrim alongX = stage->DefinePrim(SdfPath("/Asset/Rig/AlongX"),
+                                             TfToken("RigExecControl"));
     alongX.GetAttribute(TfToken("avars:tx")).Set(10.0);
-    const UsdPrim alongY = stage->DefinePrim(
-        SdfPath("/Asset/Rig/AlongY"), TfToken("RigExecControl"));
+    const UsdPrim alongY = stage->DefinePrim(SdfPath("/Asset/Rig/AlongY"),
+                                             TfToken("RigExecControl"));
     alongY.GetAttribute(TfToken("avars:ty")).Set(20.0);
 
     const UsdPrim mesh =
@@ -88,15 +94,16 @@ MakeSkinnedRig()
     skin.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
     skin.CreateRelationship(TfToken("rigExec:influences"))
         .SetTargets({alongX.GetPath(), alongY.GetPath()});
-    skin.CreateAttribute(TfToken("rigExec:elementSize"),
-                         SdfValueTypeNames->Int).Set(2);
+    skin.CreateAttribute(TfToken("rigExec:elementSize"), SdfValueTypeNames->Int)
+        .Set(2);
     VtIntArray indices(kPointCount * 2);
     for (size_t i = 0; i < kPointCount; ++i) {
         indices[i * 2] = 0;
         indices[i * 2 + 1] = 1;
     }
     skin.CreateAttribute(TfToken("rigExec:jointIndices"),
-                         SdfValueTypeNames->IntArray).Set(indices);
+                         SdfValueTypeNames->IntArray)
+        .Set(indices);
     return stage;
 }
 
@@ -135,8 +142,9 @@ CheckSkinned(const RigExecRigPose &pose, float alongX, float alongY,
         if ((GfVec3d(points[i]) - GfVec3d(expected)).GetLength() >= 1e-4) {
             ++failures;
             std::printf("FAIL %s: point %zu is (%g %g %g), expected "
-                        "(%g %g %g)\n", what, i, points[i][0], points[i][1],
-                        points[i][2], expected[0], expected[1], expected[2]);
+                        "(%g %g %g)\n",
+                        what, i, points[i][0], points[i][1], points[i][2],
+                        expected[0], expected[1], expected[2]);
         }
     }
 }
@@ -160,10 +168,8 @@ void
 TestWeightPaintEditAfterFirstEvaluate()
 {
     UsdStageRefPtr stage = MakeSkinnedRig();
-    const UsdAttribute weights =
-        stage->GetPrimAtPath(kSkin)
-            .CreateAttribute(TfToken("rigExec:jointWeights"),
-                             SdfValueTypeNames->FloatArray);
+    const UsdAttribute weights = stage->GetPrimAtPath(kSkin).CreateAttribute(
+        TfToken("rigExec:jointWeights"), SdfValueTypeNames->FloatArray);
     weights.Set(Weights(1.0f, 0.0f));
 
     RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
@@ -192,7 +198,8 @@ TestWeightPaintEditAfterFirstEvaluate()
         swapped[i * 2 + 1] = 0;
     }
     stage->GetPrimAtPath(kSkin)
-        .GetAttribute(TfToken("rigExec:jointIndices")).Set(swapped);
+        .GetAttribute(TfToken("rigExec:jointIndices"))
+        .Set(swapped);
     CheckSkinned(evaluator.Evaluate(UsdTimeCode::Default()), 0.5f, 0.25f,
                  "swapped joint indices");
 }
@@ -203,10 +210,8 @@ void
 TestTimeSampledWeightsRefuseTheCache()
 {
     UsdStageRefPtr stage = MakeSkinnedRig();
-    const UsdAttribute weights =
-        stage->GetPrimAtPath(kSkin)
-            .CreateAttribute(TfToken("rigExec:jointWeights"),
-                             SdfValueTypeNames->FloatArray);
+    const UsdAttribute weights = stage->GetPrimAtPath(kSkin).CreateAttribute(
+        TfToken("rigExec:jointWeights"), SdfValueTypeNames->FloatArray);
     // A default as well, because compile validates the layout at Default and
     // an export with samples only would fail there for an unrelated reason.
     weights.Set(Weights(1.0f, 0.0f));
@@ -232,10 +237,8 @@ void
 TestInteractiveOverrideOnTheLayout()
 {
     UsdStageRefPtr stage = MakeSkinnedRig();
-    const UsdAttribute weights =
-        stage->GetPrimAtPath(kSkin)
-            .CreateAttribute(TfToken("rigExec:jointWeights"),
-                             SdfValueTypeNames->FloatArray);
+    const UsdAttribute weights = stage->GetPrimAtPath(kSkin).CreateAttribute(
+        TfToken("rigExec:jointWeights"), SdfValueTypeNames->FloatArray);
     weights.Set(Weights(1.0f, 0.0f));
 
     RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
@@ -251,9 +254,9 @@ TestInteractiveOverrideOnTheLayout()
     // deformation by some other route: the cache is emptied by an override
     // that names a layout attribute, which is the YES branch of the
     // predicate SetInteractiveOverrides narrowed the clear to.
-    CHECK(evaluator.GetSkinTopologyCacheSize() > 0);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(evaluator) > 0);
     evaluator.SetInteractiveOverrides({override});
-    CHECK(evaluator.GetSkinTopologyCacheSize() == 0);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(evaluator) == 0);
     CheckSkinned(evaluator.Evaluate(UsdTimeCode::Default()), 0.0f, 1.0f,
                  "overridden weights");
 
@@ -359,15 +362,14 @@ TestPointCountChangeFailsAtomically()
     }
     bool reported = false;
     for (const std::string &diagnostic : pose.diagnostics) {
-        reported = reported ||
-            diagnostic.find("MoverFailed") != std::string::npos;
+        reported =
+            reported || diagnostic.find("MoverFailed") != std::string::npos;
     }
     CHECK(reported);
 
     // And it recovers at a time where the layout matches again.
     CheckSkinned(evaluator.Evaluate(1.0), 1.0f, 0.0f, "layout matched again");
 }
-
 
 // A partial constant envelope, which is the case both geometry loops' "the
 // blend is the identity, skip it" fast path must NOT take.
@@ -385,7 +387,8 @@ TestAPartialConstantEnvelopeIsApplied()
                          SdfValueTypeNames->FloatArray)
         .Set(Weights(1.0f, 0.0f));
     stage->GetPrimAtPath(kSkin)
-        .GetAttribute(TfToken("inputs:defaultWeight")).Set(0.5f);
+        .GetAttribute(TfToken("inputs:defaultWeight"))
+        .Set(0.5f);
 
     RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
     CompileOrReport(&evaluator);
@@ -395,7 +398,8 @@ TestAPartialConstantEnvelopeIsApplied()
                  "a half-strength constant envelope");
     // And zero strength is a pass-through, not a skip.
     stage->GetPrimAtPath(kSkin)
-        .GetAttribute(TfToken("inputs:defaultWeight")).Set(0.0f);
+        .GetAttribute(TfToken("inputs:defaultWeight"))
+        .Set(0.0f);
     CheckSkinned(evaluator.Evaluate(UsdTimeCode::Default()), 0.0f, 0.0f,
                  "a zero-strength constant envelope");
 }
@@ -411,10 +415,8 @@ void
 TestWeightsBecomeTimeSampledAfterCompile()
 {
     UsdStageRefPtr stage = MakeSkinnedRig();
-    const UsdAttribute weights =
-        stage->GetPrimAtPath(kSkin)
-            .CreateAttribute(TfToken("rigExec:jointWeights"),
-                             SdfValueTypeNames->FloatArray);
+    const UsdAttribute weights = stage->GetPrimAtPath(kSkin).CreateAttribute(
+        TfToken("rigExec:jointWeights"), SdfValueTypeNames->FloatArray);
     weights.Set(Weights(1.0f, 0.0f));
 
     RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
@@ -486,7 +488,8 @@ TestAnUnrelatedEditDoesNotRerunTheKernel()
     RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
     CompileOrReport(&evaluator);
     CHECK(evaluator.GetBakedProgram());
-    if (!evaluator.GetBakedProgram()) return;
+    if (!evaluator.GetBakedProgram())
+        return;
     const size_t compiledRig = evaluator.GetCompiledRigSignature();
     // The first generation builds the graph and runs the kernel; the second,
     // identical, must run nothing. That is the baseline the case below is
@@ -496,10 +499,12 @@ TestAnUnrelatedEditDoesNotRerunTheKernel()
 
     // A prim the rig has never heard of, between two identical frames.
     // Neutral routing preserves the stamp as well as the compiled rig.
-    const size_t stamp=evaluator.GetBakedProgram()->GetStepGraph().programStamp;
+    const size_t stamp =
+        evaluator.GetBakedProgram()->GetStepGraph().programStamp;
     stage->DefinePrim(SdfPath("/Scratch"), TfToken("Scope"));
-    CHECK(evaluator.GetLastNoticeDisposition()==RigExecNoticeDisposition::Edited);
-    CHECK(evaluator.GetBakedProgram()->GetStepGraph().programStamp==stamp);
+    CHECK(evaluator.GetLastNoticeDisposition() ==
+          RigExecNoticeDisposition::Edited);
+    CHECK(evaluator.GetBakedProgram()->GetStepGraph().programStamp == stamp);
     const RigExecRigPose after = evaluator.Evaluate(1.0);
     CheckSkinned(after, 1.0f, 0.0f, "after an unrelated edit");
     CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
@@ -508,7 +513,8 @@ TestAnUnrelatedEditDoesNotRerunTheKernel()
     // And the cache is still a cache, not a freeze: a real weight edit after
     // the unrelated one still lands.
     stage->GetPrimAtPath(kSkin)
-        .GetAttribute(TfToken("rigExec:jointWeights")).Set(Weights(0.0f, 1.0f));
+        .GetAttribute(TfToken("rigExec:jointWeights"))
+        .Set(Weights(0.0f, 1.0f));
     const RigExecRigPose repainted = evaluator.Evaluate(1.0);
     CheckSkinned(repainted, 0.0f, 1.0f, "repainted after an unrelated edit");
     CHECK(repainted.executedOpCount > 0);
@@ -543,7 +549,8 @@ TestAnOverrideUpstreamOfTheLayoutDropsTheCache()
         // differently: dual-quaternion and linear blending agree exactly
         // while every influence is a pure translation.
         stage->GetPrimAtPath(SdfPath("/Asset/Rig/AlongY"))
-            .GetAttribute(TfToken("avars:rz")).Set(90.0);
+            .GetAttribute(TfToken("avars:rz"))
+            .Set(90.0);
         const UsdAttribute source = skin.CreateAttribute(
             TfToken("inputs:method"), SdfValueTypeNames->Token);
         source.Set(method);
@@ -581,18 +588,18 @@ TestAnOverrideUpstreamOfTheLayoutDropsTheCache()
     RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
     CompileOrReport(&evaluator);
     CHECK(deformed(&evaluator) == linearPoints);
-    CHECK(evaluator.GetSkinTopologyCacheSize() > 0);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(evaluator) > 0);
 
     RigExecValueOverride override;
     override.prim = kSkin;
     override.attribute = TfToken("inputs:method");
     override.value = VtValue(TfToken("dualQuaternion"));
     evaluator.SetInteractiveOverrides({override});
-    CHECK(evaluator.GetSkinTopologyCacheSize() == 0);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(evaluator) == 0);
     CHECK(deformed(&evaluator) == dualPoints);
 
     evaluator.ClearInteractiveOverrides();
-    CHECK(evaluator.GetSkinTopologyCacheSize() == 0);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(evaluator) == 0);
     CHECK(deformed(&evaluator) == linearPoints);
 }
 
@@ -615,7 +622,8 @@ TestAnUnrelatedOverrideKeepsTheCache()
     CompileOrReport(&evaluator);
     CheckSkinned(evaluator.Evaluate(UsdTimeCode::Default()), 1.0f, 0.0f,
                  "before the drag");
-    const size_t cached = evaluator.GetSkinTopologyCacheSize();
+    const size_t cached =
+        RigExecEvaluatorTesting::SkinTopologyCacheSize(evaluator);
     CHECK(cached > 0);
 
     RigExecValueOverride override;
@@ -623,14 +631,14 @@ TestAnUnrelatedOverrideKeepsTheCache()
     override.attribute = TfToken("avars:tx");
     override.value = VtValue(20.0);
     evaluator.SetInteractiveOverrides({override});
-    CHECK(evaluator.GetSkinTopologyCacheSize() == cached);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(evaluator) == cached);
     // tx = 20 against a rest of 10 is two units of the influence's
     // displacement, which is what CheckSkinned's first argument scales.
     CheckSkinned(evaluator.Evaluate(UsdTimeCode::Default()), 2.0f, 0.0f,
                  "during the drag");
-    CHECK(evaluator.GetSkinTopologyCacheSize() == cached);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(evaluator) == cached);
     evaluator.ClearInteractiveOverrides();
-    CHECK(evaluator.GetSkinTopologyCacheSize() == cached);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(evaluator) == cached);
     CheckSkinned(evaluator.Evaluate(UsdTimeCode::Default()), 1.0f, 0.0f,
                  "after the drag");
 }
@@ -652,8 +660,7 @@ ParityMode()
 bool
 ReferenceChecksRequested()
 {
-    return ParityMode() ? true
-                        : false;
+    return ParityMode() ? true : false;
 }
 
 std::unique_ptr<RigExecRigEvaluator>
@@ -710,7 +717,8 @@ CheckAgreesWithFresh(const std::string &what, const UsdStageRefPtr &stage,
                      const std::vector<RigExecValueOverride> &overrides,
                      UsdTimeCode time, RigExecRigPose pose)
 {
-    auto fresh = CompiledIn(stage, SdfPath("/Asset/Rig"), ReferenceChecksRequested());
+    auto fresh =
+        CompiledIn(stage, SdfPath("/Asset/Rig"), ReferenceChecksRequested());
     fresh->SetInteractiveOverrides(overrides);
     RigExecRigPose expected = fresh->Evaluate(time);
     CHECK(pose.valid);
@@ -742,12 +750,10 @@ CheckAgreesWithFresh(const std::string &what, const UsdStageRefPtr &stage,
 // \p pose against the exec reference on the stage as it stands at \p time,
 // in every value; the counters and lines are what the reference built.
 void
-CheckAgreesWithReference(const std::string &what,
-                         const UsdStageRefPtr &stage, UsdTimeCode time,
-                         RigExecRigPose pose)
+CheckAgreesWithReference(const std::string &what, const UsdStageRefPtr &stage,
+                         UsdTimeCode time, RigExecRigPose pose)
 {
-    auto reference = CompiledIn(stage, SdfPath("/Asset/Rig"),
-                                true);
+    auto reference = CompiledIn(stage, SdfPath("/Asset/Rig"), true);
     const RigExecRigPose expected = reference->Evaluate(time);
     CHECK(pose.valid);
     CHECK(expected.valid);
@@ -776,8 +782,7 @@ WeightsOverride(const VtFloatArray &weights)
 
 // Calls ApplyValueEdits on a program run outside an evaluator, and bumps its
 // stamp for a notice it cannot route, as the evaluator's notice handler does.
-class ValueEditRouter : public TfWeakBase
-{
+class ValueEditRouter : public TfWeakBase {
 public:
     ValueEditRouter(const UsdStageRefPtr &stage, RigExecBakedProgram *program)
         : _program(program)
@@ -786,7 +791,11 @@ public:
         _key = TfNotice::Register(TfCreateWeakPtr(this),
                                   &ValueEditRouter::_OnChanged, stage);
     }
-    ~ValueEditRouter() { TfNotice::Revoke(_key); RigExecInputReplayHeldProgram::Router(_program, false); }
+    ~ValueEditRouter()
+    {
+        TfNotice::Revoke(_key);
+        RigExecInputReplayHeldProgram::Router(_program, false);
+    }
 
 private:
     void _OnChanged(const UsdNotice::ObjectsChanged &notice,
@@ -827,7 +836,8 @@ TestBakedLayoutFollowsEdits()
     const UsdAttribute weights = skin.CreateAttribute(
         TfToken("rigExec:jointWeights"), SdfValueTypeNames->FloatArray);
     weights.Set(Weights(1.0f, 0.0f));
-    auto evaluator = CompiledIn(stage, SdfPath("/Asset/Rig"), ReferenceChecksRequested());
+    auto evaluator =
+        CompiledIn(stage, SdfPath("/Asset/Rig"), ReferenceChecksRequested());
     const UsdTimeCode t1(1.0), t2(2.0);
     const std::vector<RigExecValueOverride> none;
 
@@ -892,8 +902,7 @@ TestBakedLayoutFollowsEdits()
     if (!revision) {
         return;
     }
-    const std::shared_ptr<const RigExecSkinTopology> held =
-        revision->topology;
+    const std::shared_ptr<const RigExecSkinTopology> held = revision->topology;
     CHECK(held != nullptr);
     ValueEditRouter router(stage, program.get());
     weights.Set(Weights(1.0f, 0.0f), 1.0);
@@ -904,13 +913,15 @@ TestBakedLayoutFollowsEdits()
     CheckAgreesWithReference("direct, time-sampled weights at 1", stage, t1,
                              pose);
     CHECK(revision->topologyResolved && revision->topology != nullptr);
-    CHECK(revision->layoutHandle == revision->topology && !revision->layoutFixed);
+    CHECK(revision->layoutHandle == revision->topology &&
+          !revision->layoutFixed);
     const auto firstAnimatedLayout = revision->topology;
     CHECK(RunSkinProgramAtTime(*program, rig, t2, &pose));
     CheckSkinned(pose, 1.0f, 0.0f, "direct, time-sampled weights at 2");
     CheckAgreesWithReference("direct, time-sampled weights at 2", stage, t2,
                              pose);
-    CHECK(revision->topology != nullptr && revision->topology != firstAnimatedLayout);
+    CHECK(revision->topology != nullptr &&
+          revision->topology != firstAnimatedLayout);
     CHECK(revision->layoutHandle == revision->topology);
     weights.ClearAtTime(1.0);
     weights.ClearAtTime(2.0);
@@ -921,7 +932,7 @@ TestBakedLayoutFollowsEdits()
     CHECK(revision->topology != nullptr && *revision->topology == *held);
     CHECK(revision->layoutHandle == revision->topology);
     const auto restoredLayout = revision->topology;
-    CHECK(RunSkinProgramAtTime(*program, rig, t1,&pose));
+    CHECK(RunSkinProgramAtTime(*program, rig, t1, &pose));
     CheckSkinned(pose, 0.5f, 0.25f, "held restored layout");
     CHECK(revision->topology == restoredLayout);
 }
@@ -941,9 +952,8 @@ TestATargetRefusalKeepsIndependentLayoutWork()
     const UsdPrim probePrim = stage->DefinePrim(probe, TfToken("Xform"));
     const SdfPath probeB("/Asset/Geom/ProbeB");
     const UsdPrim probeBPrim = stage->DefinePrim(probeB, TfToken("Xform"));
-    const UsdPrim aim = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/ProbeAim"),
-        TfToken("RigExecAimConstraint"));
+    const UsdPrim aim = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/ProbeAim"),
+                                          TfToken("RigExecAimConstraint"));
     CHECK(aim.CreateAttribute(TfToken("rigExec:aimAxis"),
                               SdfValueTypeNames->Token, false,
                               SdfVariabilityUniform)
@@ -952,16 +962,17 @@ TestATargetRefusalKeepsIndependentLayoutWork()
               .SetTargets({SdfPath("/Asset/Rig/AlongX")}));
     CHECK(aim.CreateRelationship(TfToken("rigExec:moves")).SetTargets({probe}));
 
-    const UsdPrim aimB = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/ProbeAimB"),
-        TfToken("RigExecAimConstraint"));
+    const UsdPrim aimB =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Movers/ProbeAimB"),
+                          TfToken("RigExecAimConstraint"));
     CHECK(aimB.CreateAttribute(TfToken("rigExec:aimAxis"),
-                              SdfValueTypeNames->Token, false,
-                              SdfVariabilityUniform)
+                               SdfValueTypeNames->Token, false,
+                               SdfVariabilityUniform)
               .Set(TfToken("z")));
     CHECK(aimB.CreateRelationship(TfToken("rigExec:aimTarget"))
               .SetTargets({SdfPath("/Asset/Rig/AlongX")}));
-    CHECK(aimB.CreateRelationship(TfToken("rigExec:moves")).SetTargets({probeB}));
+    CHECK(
+        aimB.CreateRelationship(TfToken("rigExec:moves")).SetTargets({probeB}));
 
     RigExecRigEvaluator rig(stage, SdfPath("/Asset/Rig"));
     CompileOrReport(&rig);
@@ -976,7 +987,8 @@ TestATargetRefusalKeepsIndependentLayoutWork()
     }
     const auto &compiled = (*program)->GetStepGraph();
     const auto hasRequiredTarget = [&](const SdfPath &path) {
-        return std::any_of(compiled.xformSlots.begin(), compiled.xformSlots.end(),
+        return std::any_of(
+            compiled.xformSlots.begin(), compiled.xformSlots.end(),
             [&](int slot) { return compiled.paths[size_t(slot)] == path; });
     };
     CHECK(hasRequiredTarget(probe));
@@ -989,28 +1001,35 @@ TestATargetRefusalKeepsIndependentLayoutWork()
     if (!revision) {
         return;
     }
-    const std::shared_ptr<const RigExecSkinTopology> held =
-        revision->topology;
+    const std::shared_ptr<const RigExecSkinTopology> held = revision->topology;
     CHECK(held != nullptr);
 
     // Duplicate admission input must be rejected, not counted as one read.
-    auto &mutableGraph = const_cast<RigExecBakedProgramImpl &>((*program)->GetStepGraph());
-    auto gate = std::find_if(mutableGraph.steps.begin(), mutableGraph.steps.end(), [](const auto &step) {
-        return std::any_of(step.reads.begin(), step.reads.end(), [](const auto &read) {
-            return read.domain == RigExecBakedSlotDomain::RequiredStageFramesAdmission;
+    auto &mutableGraph =
+        const_cast<RigExecBakedProgramImpl &>((*program)->GetStepGraph());
+    auto gate = std::find_if(
+        mutableGraph.steps.begin(), mutableGraph.steps.end(),
+        [](const auto &step) {
+            return std::any_of(
+                step.reads.begin(), step.reads.end(), [](const auto &read) {
+                    return read.domain ==
+                           RigExecBakedSlotDomain::RequiredStageFramesAdmission;
+                });
         });
-    });
     CHECK(gate != mutableGraph.steps.end());
     std::string graphError;
     CHECK(RigExecBakedValidateStepGraph(mutableGraph, &graphError));
     if (gate != mutableGraph.steps.end()) {
         const auto savedReads = gate->reads;
-        const auto admissionRead = *std::find_if(savedReads.begin(), savedReads.end(), [](const auto &read) {
-            return read.domain == RigExecBakedSlotDomain::RequiredStageFramesAdmission;
-        });
+        const auto admissionRead = *std::find_if(
+            savedReads.begin(), savedReads.end(), [](const auto &read) {
+                return read.domain ==
+                       RigExecBakedSlotDomain::RequiredStageFramesAdmission;
+            });
         gate->reads.push_back(admissionRead);
         CHECK(!RigExecBakedValidateStepGraph(mutableGraph, &graphError));
-        CHECK(graphError.find("required stage-frame admission role") != std::string::npos);
+        CHECK(graphError.find("required stage-frame admission role") !=
+              std::string::npos);
         gate->reads = savedReads;
         CHECK(RigExecBakedValidateStepGraph(mutableGraph, &graphError));
     }
@@ -1029,18 +1048,23 @@ TestATargetRefusalKeepsIndependentLayoutWork()
     int firstBad = -1;
     for (size_t i = 0; i < graph.xformSlots.size(); ++i) {
         const SdfPath &path = graph.paths[size_t(graph.xformSlots[i])];
-        if (path == probe || path == probeB) { firstBad = int(i); break; }
+        if (path == probe || path == probeB) {
+            firstBad = int(i);
+            break;
+        }
     }
     CHECK(firstBad >= 0 && admission.firstBadTarget == firstBad);
-    const SdfPath firstBadPath = firstBad >= 0
-        ? graph.paths[size_t(graph.xformSlots[size_t(firstBad)])] : SdfPath();
+    const SdfPath firstBadPath =
+        firstBad >= 0 ? graph.paths[size_t(graph.xformSlots[size_t(firstBad)])]
+                      : SdfPath();
     CHECK(given.providerXforms.empty());
     CHECK(given.providerBaseXforms.empty());
     CHECK(given.jointMatricesFinal.empty());
     CHECK(given.movedProperties.count(kTarget) == 0);
-    CHECK(!given.diagnostics.empty() && given.diagnostics.back() ==
-        "could not resolve constraint target " + firstBadPath.GetString() +
-        " relative to the asset root");
+    CHECK(!given.diagnostics.empty() &&
+          given.diagnostics.back() == "could not resolve constraint target " +
+                                          firstBadPath.GetString() +
+                                          " relative to the asset root");
     // Preparation survives, but the geometry adoption boundary does not run.
     CHECK(revision->topology == held);
     CHECK(revision->layoutHandle != nullptr && revision->layoutHandle != held);
@@ -1055,7 +1079,8 @@ TestATargetRefusalKeepsIndependentLayoutWork()
     RigExecRigPose heldRefusal;
     CHECK(!program->Run(UsdTimeCode(2.0), &heldRefusal, true));
     CHECK((*program)->GetLastBail() == RigExecBakedBail::StageFrames);
-    CHECK(!heldRefusal.valid && heldRefusal.movedProperties.count(kTarget) == 0);
+    CHECK(!heldRefusal.valid &&
+          heldRefusal.movedProperties.count(kTarget) == 0);
     CHECK(heldRefusal.diagnostics == given.diagnostics);
     CHECK(revision->topology == held);
     CHECK(revision->layoutHandle == repainted);
@@ -1065,7 +1090,9 @@ TestATargetRefusalKeepsIndependentLayoutWork()
     RigExecRigPose next;
     CHECK(program->Run(UsdTimeCode(3.0), &next, true));
     CHECK((*program)->GetStepGraph().requiredStageFramesAdmission.admitted);
-    CHECK((*program)->GetStepGraph().requiredStageFramesAdmission.firstBadTarget == -1);
+    CHECK((*program)
+              ->GetStepGraph()
+              .requiredStageFramesAdmission.firstBadTarget == -1);
     CheckSkinned(next, 0.0f, 1.0f, "the generation after the bail");
     CHECK(revision->topology != held);
     CHECK(revision->topology == repainted);
@@ -1075,15 +1102,22 @@ TestATargetRefusalKeepsIndependentLayoutWork()
 
     // Successfully reading a degenerate transform is not a missing source.
     // Downstream numerical refusal remains separate from StageFrames admission.
-    GfMatrix4d degenerate(1.0); degenerate.SetScale(GfVec3d(0.0));
-    CHECK(probePrim.CreateAttribute(TfToken("xformOp:transform"),
-        SdfValueTypeNames->Matrix4d).Set(degenerate));
-    CHECK(probePrim.CreateAttribute(TfToken("xformOpOrder"),
-        SdfValueTypeNames->TokenArray).Set(VtTokenArray{TfToken("xformOp:transform")}));
+    GfMatrix4d degenerate(1.0);
+    degenerate.SetScale(GfVec3d(0.0));
+    CHECK(probePrim
+              .CreateAttribute(TfToken("xformOp:transform"),
+                               SdfValueTypeNames->Matrix4d)
+              .Set(degenerate));
+    CHECK(probePrim
+              .CreateAttribute(TfToken("xformOpOrder"),
+                               SdfValueTypeNames->TokenArray)
+              .Set(VtTokenArray{TfToken("xformOp:transform")}));
     RigExecRigPose degeneratePose;
     program->Run(UsdTimeCode(4.0), &degeneratePose, true);
     CHECK((*program)->GetStepGraph().requiredStageFramesAdmission.admitted);
-    CHECK((*program)->GetStepGraph().requiredStageFramesAdmission.firstBadTarget == -1);
+    CHECK((*program)
+              ->GetStepGraph()
+              .requiredStageFramesAdmission.firstBadTarget == -1);
     CHECK((*program)->GetLastBail() != RigExecBakedBail::StageFrames);
 }
 
@@ -1097,10 +1131,11 @@ struct Fnv {
             h = (h ^ p[i]) * 1099511628211ull;
         }
     }
-    template <class T>
-    void Pod(const T &value) { Bytes(&value, sizeof(value)); }
-    template <class T>
-    void Vector(const std::vector<T> &values)
+    template <class T> void Pod(const T &value)
+    {
+        Bytes(&value, sizeof(value));
+    }
+    template <class T> void Vector(const std::vector<T> &values)
     {
         Pod(values.size());
         if (!values.empty()) {
@@ -1139,9 +1174,9 @@ FoldLayoutFields(Fnv *f, const Revision &revision)
     f->Pod(revision.skinTopologyFixed);
     f->Pod(revision.topologyResolved);
     FoldTopology(f, revision.topology.get());
-    const int partition =
-        !revision.partitionTopology ? 0
-        : revision.partitionTopology == revision.topology ? 1 : 2;
+    const int partition = !revision.partitionTopology                       ? 0
+                          : revision.partitionTopology == revision.topology ? 1
+                                                                            : 2;
     f->Pod(partition);
     if (partition == 2) {
         FoldTopology(f, revision.partitionTopology.get());
@@ -1219,8 +1254,7 @@ CheckLayoutFields(const std::string &what, const UsdStageRefPtr &stage,
                 fn(revision, chain.haveBase);
             }
             for (const auto &derived : chain.derived) {
-                fn(derived.revision,
-                   derived.haveBase && !derived.matrixTarget);
+                fn(derived.revision, derived.haveBase && !derived.matrixTarget);
             }
         }
     };
@@ -1245,8 +1279,10 @@ CheckLayoutFields(const std::string &what, const UsdStageRefPtr &stage,
                 what + " " + when + " " + revision.moverPath.GetString();
             // Set when an owning body adopts a sampled SkinTopology handle.
             bool &expected = resolved[revision.moverPath];
-            expected = expected ||
-                       (ran && revision.op == rigExec::RigExecRevisionOp::Skin && haveBase);
+            expected =
+                expected ||
+                (ran && revision.op == rigExec::RigExecRevisionOp::Skin &&
+                 haveBase);
             if (revision.topologyResolved != expected) {
                 ++violations;
                 std::printf("FAIL %s: topologyResolved %d, expected %d\n",
@@ -1284,7 +1320,8 @@ CheckLayoutFields(const std::string &what, const UsdStageRefPtr &stage,
                 revision.partitionElementSize != b.elementSize) {
                 ++violations;
                 std::printf("FAIL %s: the partition is not Build's cut of "
-                            "the adopted layout\n", at.c_str());
+                            "the adopted layout\n",
+                            at.c_str());
             }
         });
         failures += int(violations);
@@ -1348,14 +1385,18 @@ TestTheLayoutFieldsAreSetWhereTheyWere(const std::string &examples)
             if (c.name == "volume_placements") {
                 // This parity history requests the original final-placement
                 // field explicitly; unannotated fields retain the base default.
-                const auto weight = stage->GetPrimAtPath(
-                    SdfPath("/PlacementAsset/Rig/GeometryMovers/StripSmooth"))
-                    .GetRelationship(TfToken("rigExec:weightObject"));
+                const auto weight =
+                    stage
+                        ->GetPrimAtPath(SdfPath(
+                            "/PlacementAsset/Rig/GeometryMovers/StripSmooth"))
+                        .GetRelationship(TfToken("rigExec:weightObject"));
                 CHECK(weight);
                 if (weight) {
-                    const UsdEditContext edit(stage, UsdEditTarget(stage->GetSessionLayer()));
-                    CHECK(weight.SetMetadata(TfToken(RigExecReadPhaseMetadataName),
-                                             std::string("final")));
+                    const UsdEditContext edit(
+                        stage, UsdEditTarget(stage->GetSessionLayer()));
+                    CHECK(weight.SetMetadata(
+                        TfToken(RigExecReadPhaseMetadataName),
+                        std::string("final")));
                 }
             }
             CheckLayoutFields(c.name + (always ? " chunked" : ""), stage,
@@ -1388,15 +1429,13 @@ TestTheLayoutHandleSurvivesUnrelatedNotices()
     skin.CreateAttribute(TfToken("rigExec:jointWeights"),
                          SdfValueTypeNames->FloatArray)
         .Set(Weights(1.0f, 0.0f));
-    auto evaluator = CompiledIn(stage, SdfPath("/Asset/Rig"), ReferenceChecksRequested());
-    CHECK(evaluator->Evaluate(UsdTimeCode(1.0)).executedOpCount >
-          0);
-    CHECK(evaluator->Evaluate(UsdTimeCode(1.0)).executedOpCount ==
-          0);
-    const std::shared_ptr<const RigExecSkinTopology> held =
-        Adopted(*evaluator);
+    auto evaluator =
+        CompiledIn(stage, SdfPath("/Asset/Rig"), ReferenceChecksRequested());
+    CHECK(evaluator->Evaluate(UsdTimeCode(1.0)).executedOpCount > 0);
+    CHECK(evaluator->Evaluate(UsdTimeCode(1.0)).executedOpCount == 0);
+    const std::shared_ptr<const RigExecSkinTopology> held = Adopted(*evaluator);
     CHECK(held != nullptr);
-    const auto unrelated = [&](const std::string &what, bool rebuilt=false) {
+    const auto unrelated = [&](const std::string &what, bool rebuilt = false) {
         const RigExecRigPose pose = evaluator->Evaluate(UsdTimeCode(1.0));
         CheckSkinned(pose, 1.0f, 0.0f, what.c_str());
         if (!rebuilt && pose.executedOpCount != 0) {
@@ -1409,21 +1448,24 @@ TestTheLayoutHandleSurvivesUnrelatedNotices()
             // ORIGINAL requires no retained geometry kernels. The new control
             // still initializes through the common graph in this generation.
             CHECK(pose.valid && pose.executedOpCount > 0);
-            const auto &B=evaluator->GetBakedProgram()->GetStepGraph();
-            size_t geometryBodies=0;
-            for(size_t i=0;i<B.steps.size();++i)
-                if(i<B.opExecution.ran.size() && B.opExecution.ran[i] &&
-                   (B.steps[i].kind==RigExecBakedStepKind::RevisionChunk ||
-                    B.steps[i].kind==RigExecBakedStepKind::RevisionFuse))++geometryBodies;
+            const auto &B = evaluator->GetBakedProgram()->GetStepGraph();
+            size_t geometryBodies = 0;
+            for (size_t i = 0; i < B.steps.size(); ++i)
+                if (i < B.opExecution.ran.size() && B.opExecution.ran[i] &&
+                    (B.steps[i].kind == RigExecBakedStepKind::RevisionChunk ||
+                     B.steps[i].kind == RigExecBakedStepKind::RevisionFuse))
+                    ++geometryBodies;
             CHECK(geometryBodies == 0);
             CHECK(pose.controlFrames.count(SdfPath("/Asset/Rig/Extra")) == 1);
-            const auto extra=B.index.find(SdfPath("/Asset/Rig/Extra"));
-            CHECK(extra!=B.index.end());
-            bool initialized=false;
-            if(extra!=B.index.end())for(size_t i=0;i<B.steps.size();++i)
-                if(B.steps[i].kind==RigExecBakedStepKind::AvarInputs &&
-                   B.steps[i].object==extra->second && i<B.opExecution.ran.size() &&
-                   B.opExecution.ran[i])initialized=true;
+            const auto extra = B.index.find(SdfPath("/Asset/Rig/Extra"));
+            CHECK(extra != B.index.end());
+            bool initialized = false;
+            if (extra != B.index.end())
+                for (size_t i = 0; i < B.steps.size(); ++i)
+                    if (B.steps[i].kind == RigExecBakedStepKind::AvarInputs &&
+                        B.steps[i].object == extra->second &&
+                        i < B.opExecution.ran.size() && B.opExecution.ran[i])
+                        initialized = true;
             CHECK(initialized);
         }
         CHECK(Adopted(*evaluator) == held);
@@ -1444,16 +1486,20 @@ TestTheLayoutHandleSurvivesUnrelatedNotices()
     // one's geometry state, and its first build of the same layout hands
     // back the same object, so the kept packet still compares equal.
     const size_t builds = evaluator->GetBakedProgramBuildCount();
-    const int oldAlongX=evaluator->GetBakedProgram()->GetStepGraph().index.at(SdfPath("/Asset/Rig/AlongX"));
-    const auto reordered=stage->DefinePrim(SdfPath("/Asset/Rig/A0Extra"),TfToken("RigExecControl"));
+    const int oldAlongX = evaluator->GetBakedProgram()->GetStepGraph().index.at(
+        SdfPath("/Asset/Rig/AlongX"));
+    const auto reordered = stage->DefinePrim(SdfPath("/Asset/Rig/A0Extra"),
+                                             TfToken("RigExecControl"));
     CHECK(reordered.GetAttribute(TfToken("avars:tx")).Set(3.0));
     stage->DefinePrim(SdfPath("/Asset/Rig/Extra"), TfToken("RigExecControl"));
     unrelated("after a rebuild", true);
-    CHECK(evaluator->GetBakedProgram()->GetStepGraph().index.at(SdfPath("/Asset/Rig/AlongX"))!=oldAlongX);
-    const auto reorderedPose=evaluator->Evaluate(UsdTimeCode(1.0));
-    CHECK(reorderedPose.controlFrames.count(reordered.GetPath())==1);
-    if(reorderedPose.controlFrames.count(reordered.GetPath()))
-        CHECK(reorderedPose.controlFrames.at(reordered.GetPath()).Origin()==GfVec3d(3,0,0));
+    CHECK(evaluator->GetBakedProgram()->GetStepGraph().index.at(
+              SdfPath("/Asset/Rig/AlongX")) != oldAlongX);
+    const auto reorderedPose = evaluator->Evaluate(UsdTimeCode(1.0));
+    CHECK(reorderedPose.controlFrames.count(reordered.GetPath()) == 1);
+    if (reorderedPose.controlFrames.count(reordered.GetPath()))
+        CHECK(reorderedPose.controlFrames.at(reordered.GetPath()).Origin() ==
+              GfVec3d(3, 0, 0));
     unrelated("held after a rebuild");
     CHECK(evaluator->GetBakedProgramBuildCount() > builds);
 
@@ -1462,11 +1508,14 @@ TestTheLayoutHandleSurvivesUnrelatedNotices()
     // the weights builds a new layout, and so does its lift.
     const auto layoutOpsRun = [&evaluator]() {
         const RigExecBakedProgram *program = evaluator->GetBakedProgram();
-        if (!program) return size_t(0);
+        if (!program)
+            return size_t(0);
         const auto &B = program->GetStepGraph();
         size_t count = 0;
-        for (size_t i = 0; i < B.steps.size() && i < B.opExecution.ran.size(); ++i)
-            if (B.steps[i].kind == RigExecBakedStepKind::SkinTopology && B.opExecution.ran[i])
+        for (size_t i = 0; i < B.steps.size() && i < B.opExecution.ran.size();
+             ++i)
+            if (B.steps[i].kind == RigExecBakedStepKind::SkinTopology &&
+                B.opExecution.ran[i])
                 ++count;
         return count;
     };
@@ -1499,34 +1548,50 @@ TestTheLayoutHandleSurvivesUnrelatedNotices()
     CHECK(layoutOpsRun() == 1);
 }
 
-void TestRetainedSkinRebuildInvalidation()
+void
+TestRetainedSkinRebuildInvalidation()
 {
-    for(int mode=0;mode<2;++mode) {
-        const auto stage=MakeSkinnedRig();const auto skin=stage->GetPrimAtPath(kSkin);
-        CHECK(skin.CreateAttribute(TfToken("rigExec:jointWeights"),SdfValueTypeNames->FloatArray)
-            .Set(Weights(1.0f,0.0f)));
-        auto evaluator=CompiledIn(stage,SdfPath("/Asset/Rig"),ReferenceChecksRequested());
-        CheckSkinned(evaluator->Evaluate(UsdTimeCode(1)),1.0f,0.0f,"before retained input change");
-        CHECK(evaluator->Evaluate(UsdTimeCode(1)).executedOpCount==0);
-        const size_t builds=evaluator->GetBakedProgramBuildCount();
-        if(mode==0)CHECK(skin.GetAttribute(TfToken("inputs:defaultWeight")).Set(0.5f));
-        else CHECK(skin.GetRelationship(TfToken("rigExec:influences")).SetTargets(
-            {SdfPath("/Asset/Rig/AlongY"),SdfPath("/Asset/Rig/AlongX")}));
-        stage->DefinePrim(SdfPath("/Asset/Rig/A0Changed"),TfToken("RigExecControl"));
-        const auto changed=evaluator->Evaluate(UsdTimeCode(1));
-        CheckSkinned(changed,mode==0?0.5f:0.0f,mode==0?0.0f:1.0f,"changed retained inputs");
-        CHECK(changed.diagnostics==(std::vector<std::string>{"structural edit: compiled rig rebuilt"}));
-        CHECK(evaluator->GetBakedProgramBuildCount()>builds);
-        const auto &B=evaluator->GetBakedProgram()->GetStepGraph();size_t kernels=0;
-        for(size_t i=0;i<B.steps.size();++i)
-            if(B.steps[i].kind==RigExecBakedStepKind::RevisionChunk && i<B.opExecution.ran.size() &&
-               B.opExecution.ran[i])++kernels;
-        CHECK(kernels>0);
-        const auto held=evaluator->Evaluate(UsdTimeCode(1));
-        CheckSkinned(held,mode==0?0.5f:0.0f,mode==0?0.0f:1.0f,"held changed inputs");
-        CHECK(held.executedOpCount==0);
+    for (int mode = 0; mode < 2; ++mode) {
+        const auto stage = MakeSkinnedRig();
+        const auto skin = stage->GetPrimAtPath(kSkin);
+        CHECK(skin.CreateAttribute(TfToken("rigExec:jointWeights"),
+                                   SdfValueTypeNames->FloatArray)
+                  .Set(Weights(1.0f, 0.0f)));
+        auto evaluator = CompiledIn(stage, SdfPath("/Asset/Rig"),
+                                    ReferenceChecksRequested());
+        CheckSkinned(evaluator->Evaluate(UsdTimeCode(1)), 1.0f, 0.0f,
+                     "before retained input change");
+        CHECK(evaluator->Evaluate(UsdTimeCode(1)).executedOpCount == 0);
+        const size_t builds = evaluator->GetBakedProgramBuildCount();
+        if (mode == 0)
+            CHECK(skin.GetAttribute(TfToken("inputs:defaultWeight")).Set(0.5f));
+        else
+            CHECK(skin.GetRelationship(TfToken("rigExec:influences"))
+                      .SetTargets({SdfPath("/Asset/Rig/AlongY"),
+                                   SdfPath("/Asset/Rig/AlongX")}));
+        stage->DefinePrim(SdfPath("/Asset/Rig/A0Changed"),
+                          TfToken("RigExecControl"));
+        const auto changed = evaluator->Evaluate(UsdTimeCode(1));
+        CheckSkinned(changed, mode == 0 ? 0.5f : 0.0f, mode == 0 ? 0.0f : 1.0f,
+                     "changed retained inputs");
+        CHECK(changed.diagnostics ==
+              (std::vector<std::string>{
+                  "structural edit: compiled rig rebuilt"}));
+        CHECK(evaluator->GetBakedProgramBuildCount() > builds);
+        const auto &B = evaluator->GetBakedProgram()->GetStepGraph();
+        size_t kernels = 0;
+        for (size_t i = 0; i < B.steps.size(); ++i)
+            if (B.steps[i].kind == RigExecBakedStepKind::RevisionChunk &&
+                i < B.opExecution.ran.size() && B.opExecution.ran[i])
+                ++kernels;
+        CHECK(kernels > 0);
+        const auto held = evaluator->Evaluate(UsdTimeCode(1));
+        CheckSkinned(held, mode == 0 ? 0.5f : 0.0f, mode == 0 ? 0.0f : 1.0f,
+                     "held changed inputs");
+        CHECK(held.executedOpCount == 0);
         CHECK(held.diagnostics.empty());
-        CheckAgreesWithFresh("held changed retained inputs",stage,{},UsdTimeCode(1),held);
+        CheckAgreesWithFresh("held changed retained inputs", stage, {},
+                             UsdTimeCode(1), held);
     }
 }
 
@@ -1543,8 +1608,8 @@ TestATopologyEditRebuildsTheProgram()
     const UsdAttribute weights = skin.CreateAttribute(
         TfToken("rigExec:jointWeights"), SdfValueTypeNames->FloatArray);
     weights.Set(Weights(1.0f, 0.0f));
-    auto evaluator = CompiledIn(stage, SdfPath("/Asset/Rig"),
-                                ReferenceChecksRequested());
+    auto evaluator =
+        CompiledIn(stage, SdfPath("/Asset/Rig"), ReferenceChecksRequested());
     const UsdTimeCode t1(1.0);
     const std::vector<RigExecValueOverride> none;
     CheckSkinned(evaluator->Evaluate(t1), 1.0f, 0.0f, "topology, before");
@@ -1616,8 +1681,7 @@ TestATopologyEditRebuildsTheProgram()
           RigExecNoticeDisposition::Stale);
     pose = evaluator->Evaluate(t1);
     CheckSkinned(pose, 0.5f, 0.0f, "topology, weights repainted");
-    CheckAgreesWithFresh("topology, weights repainted", stage, none, t1,
-                         pose);
+    CheckAgreesWithFresh("topology, weights repainted", stage, none, t1, pose);
     CHECK(evaluator->GetBakedProgramBuildCount() == builds);
 }
 
@@ -1629,18 +1693,15 @@ void
 TestAnimatedWeightsOverFixedIndices()
 {
     UsdStageRefPtr stage = MakeSkinnedRig();
-    const UsdAttribute weights =
-        stage->GetPrimAtPath(kSkin)
-            .CreateAttribute(TfToken("rigExec:jointWeights"),
-                             SdfValueTypeNames->FloatArray);
+    const UsdAttribute weights = stage->GetPrimAtPath(kSkin).CreateAttribute(
+        TfToken("rigExec:jointWeights"), SdfValueTypeNames->FloatArray);
     weights.Set(Weights(1.0f, 0.0f));
     weights.Set(Weights(1.0f, 0.0f), 1.0);
     weights.Set(Weights(0.0f, 1.0f), 2.0);
     weights.Set(Weights(0.5f, 0.5f), 3.0);
-    auto evaluator = CompiledIn(stage, SdfPath("/Asset/Rig"),
-                                ReferenceChecksRequested());
-    CheckSkinned(evaluator->Evaluate(1.0), 1.0f, 0.0f,
-                 "animated weights at 1");
+    auto evaluator =
+        CompiledIn(stage, SdfPath("/Asset/Rig"), ReferenceChecksRequested());
+    CheckSkinned(evaluator->Evaluate(1.0), 1.0f, 0.0f, "animated weights at 1");
     const size_t builds = evaluator->GetBakedProgramBuildCount();
     const Revision *revision = SkinRevision(*evaluator);
     CHECK(revision != nullptr);
@@ -1653,8 +1714,7 @@ TestAnimatedWeightsOverFixedIndices()
     const RigExecBakedPathLeaves &leaves = revision->layoutLeaves;
     const int indices = leaves.decl.Role(RigExecRevisionLeafRole::JointIndices);
     const int size = leaves.decl.Role(RigExecRevisionLeafRole::ElementSize);
-    const int painted =
-        leaves.decl.Role(RigExecRevisionLeafRole::JointWeights);
+    const int painted = leaves.decl.Role(RigExecRevisionLeafRole::JointWeights);
     const auto flag = [](const std::vector<char> &flags, int k) {
         return k >= 0 && size_t(k) < flags.size() && flags[size_t(k)] != 0;
     };
@@ -1677,7 +1737,7 @@ TestAnimatedWeightsOverFixedIndices()
     CHECK(evaluator->GetBakedProgramBuildCount() == builds);
 }
 
-}  // namespace
+} // namespace
 
 int
 main(int argc, char **argv)
