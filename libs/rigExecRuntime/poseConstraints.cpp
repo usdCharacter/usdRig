@@ -101,6 +101,7 @@ struct _RrSingleChainIkParams {
     double twistDegrees = 0.0;
     double stretch = 0;
     double weight = 1.0;
+    bool preserveJointOrientation = false;
 };
 
 // RigExecSolveSingleChainIk (rigExecMath/singleChainIkKernel.h).
@@ -115,6 +116,7 @@ _RrSolveSingleChainIk(const std::vector<RrPointFrame> &currentFrames,
     p.twistDegrees = params.twistDegrees;
     p.weight = params.weight;
     p.stretch = params.stretch;
+    p.preserveJointOrientation = params.preserveJointOrientation;
     return RigExecSolveSingleChainIkKernel<RrVec3f, RrVec3d>(currentFrames,
                                                              effectorFrame, p);
 }
@@ -858,6 +860,8 @@ _RrRunConstraintStep(RrProgram *program, size_t step, std::string *error)
             c.stretch ? program->ReadConstraint(ci, RrConstraintStretch).f32
                       : 0;
         params.mode = _RrSingleChainIkMode(c.ikMode);
+        params.preserveJointOrientation =
+            (c.flags & RigExecWireConstraintPreserveJointOrientation) != 0;
         params.weight = weight;
         if (c.ikMode == 0) {
             params.pole =

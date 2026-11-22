@@ -181,7 +181,10 @@ enum ConstraintFlags : ubyte (bit_flags) {
   /// rigExec:worldUpRotationOnly on an Aim constraint.
   WorldUpRotationOnly,
   /// rigExec:weightBlend = "radial" on a transform-domain matrix mover.
-  RadialBlend
+  RadialBlend,
+  /// rigExec:orientationMode = "preserve" on a SingleChainIK constraint
+  /// (format 34).
+  PreserveJointOrientation
 }
 
 // ------------------------------------------------ structs (stored verbatim)

@@ -4634,6 +4634,63 @@ TestSingleChainIkOwnInputsMoveOverTimeAndUnderDrag()
     }
 }
 
+// rigExec:orientationMode "preserve" reaches the baked runtime: the
+// .rigexec file carries it, and the zero-USD solve keeps each joint's
+// orientation relative to its bone as the native solve does.
+static void
+TestSingleChainIkPreserveOrientationBaked()
+{
+    const SdfPath ikPath("/Asset/Rig/Movers/IK");
+    const SdfPath midPath("/Asset/Rig/Joints/Root/Mid");
+    GfMatrix4d mids[2];
+    for (const bool preserve : {false, true}) {
+        const UsdStageRefPtr stage = BuildConstraintStage(nullptr);
+        // The mid joint's X does not run along its bone.
+        stage->GetPrimAtPath(midPath)
+            .GetAttribute(TfToken("posed:space"))
+            .Set(Matrix(GfVec3d(2, 0, 0), GfRotation(GfVec3d(0, 0, 1), 35)));
+        stage->GetPrimAtPath(ikPath)
+            .CreateAttribute(TfToken("rigExec:orientationMode"),
+                             SdfValueTypeNames->Token, /*custom=*/false,
+                             SdfVariabilityUniform)
+            .Set(TfToken(preserve ? "preserve" : "aimX"));
+        RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+        CHECK(evaluator.Compile());
+        const RigExecRigPose native = evaluator.Evaluate(UsdTimeCode(1));
+        CHECK(native.valid);
+        const auto mid = native.jointFramesFinal.find(midPath);
+        CHECK(mid != native.jointFramesFinal.end());
+        if (mid != native.jointFramesFinal.end()) {
+            GfMatrix4d m(1.0);
+            RigExecPointsToMatrix(RigExecIdentityLandmarks(),
+                                  mid->second.points, &m);
+            mids[preserve] = m;
+        }
+        std::vector<uint8_t> bytes;
+        std::string error;
+        const bool baked = RigExecTestBakeAt(evaluator, 1, &bytes, &error);
+        CHECK(baked);
+        RigExecTestPlayer player;
+        const bool played = baked && player.Open(bytes, stage, &error) &&
+                            player.Play(1.0, &error);
+        CHECK(played);
+        if (!played) {
+            std::printf("preserve orientation: %s\n", error.c_str());
+            continue;
+        }
+        RigExecRigPose runtime;
+        CHECK(RigExecProjectRuntimePose(player.Reader(), UsdTimeCode(1), true,
+                                        &runtime, &error));
+        int failures = 0;
+        rigExecTest::CompareEveryMap(
+            &failures, preserve ? "preserve runtime" : "aimX runtime", native,
+            runtime);
+        CHECK(failures == 0);
+    }
+    // The two modes orient the mid joint differently.
+    CHECK(!GfIsClose(mids[0], mids[1], 1e-6));
+}
+
 // Computed float connections and preview overrides must reach IK through
 // the dynamic, baked and frozen routes, including release at the same time.
 static void
@@ -5769,6 +5826,7 @@ main()
     TestAuthoredPosedSpaceBakesAndAnimatedOneFollows();
     TestSingleChainIkOwnInputsMoveOverTimeAndUnderDrag();
     TestSingleChainIkComputedStretch();
+    TestSingleChainIkPreserveOrientationBaked();
     TestIkFkMatchSceneProgramMatchesNative();
     TestStackedSolversSceneProgramMatchesNative();
 

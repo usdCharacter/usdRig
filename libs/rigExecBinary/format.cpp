@@ -5866,6 +5866,13 @@ private:
             (c.flags & ~uint8_t(fb::ConstraintFlags::ANY)) != 0) {
             return _Bad(row + ": order, ik_mode or flags out of range");
         }
+        if ((c.flags & RigExecWireConstraintPreserveJointOrientation) &&
+            (!c.singleChainIk ||
+             _f.formatVersion < RigExecFormatPreserveJointOrientationVersion)) {
+            return _Bad(row + ": preserve joint orientation outside a format " +
+                        _N(RigExecFormatPreserveJointOrientationVersion) +
+                        " SingleChainIK constraint");
+        }
         const bool envelope = c.weightObject != 0 && c.pointsTarget == 0;
         if ((c.weightObjectIndex >= 0) != envelope ||
             (envelope &&

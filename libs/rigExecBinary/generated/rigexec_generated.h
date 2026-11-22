@@ -2013,33 +2013,41 @@ enum class ConstraintFlags : uint8_t {
   WorldUpRotationOnly = 2,
   /// rigExec:weightBlend = "radial" on a transform-domain matrix mover.
   RadialBlend = 4,
+  /// rigExec:orientationMode = "preserve" on a SingleChainIK constraint
+  /// (format 34).
+  PreserveJointOrientation = 8,
   NONE = 0,
-  ANY = 7
+  ANY = 15
 };
 FLATBUFFERS_DEFINE_BITMASK_OPERATORS(ConstraintFlags, uint8_t)
 
-inline const ConstraintFlags (&EnumValuesConstraintFlags())[3] {
+inline const ConstraintFlags (&EnumValuesConstraintFlags())[4] {
   static const ConstraintFlags values[] = {
     ConstraintFlags::BlendShear,
     ConstraintFlags::WorldUpRotationOnly,
-    ConstraintFlags::RadialBlend
+    ConstraintFlags::RadialBlend,
+    ConstraintFlags::PreserveJointOrientation
   };
   return values;
 }
 
 inline const char * const *EnumNamesConstraintFlags() {
-  static const char * const names[5] = {
+  static const char * const names[9] = {
     "BlendShear",
     "WorldUpRotationOnly",
     "",
     "RadialBlend",
+    "",
+    "",
+    "",
+    "PreserveJointOrientation",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameConstraintFlags(ConstraintFlags e) {
-  if (::flatbuffers::IsOutRange(e, ConstraintFlags::BlendShear, ConstraintFlags::RadialBlend)) return "";
+  if (::flatbuffers::IsOutRange(e, ConstraintFlags::BlendShear, ConstraintFlags::PreserveJointOrientation)) return "";
   const size_t index = static_cast<size_t>(e) - static_cast<size_t>(ConstraintFlags::BlendShear);
   return EnumNamesConstraintFlags()[index];
 }
@@ -29095,14 +29103,15 @@ inline const ::flatbuffers::TypeTable *ConstraintFlagsTypeTable() {
   static const ::flatbuffers::TypeCode type_codes[] = {
     { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::ConstraintFlagsTypeTable
   };
-  static const int64_t values[] = { 1, 2, 4 };
+  static const int64_t values[] = { 1, 2, 4, 8 };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_ENUM, 3, type_codes, type_refs, nullptr, values, nullptr
+    ::flatbuffers::ST_ENUM, 4, type_codes, type_refs, nullptr, values, nullptr
   };
   return &tt;
 }

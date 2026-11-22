@@ -526,6 +526,8 @@ inline constexpr uint8_t RigExecWireConstraintWorldUpRotationOnly =
     uint8_t(fb::ConstraintFlags::WorldUpRotationOnly);
 inline constexpr uint8_t RigExecWireConstraintRadialBlend =
     uint8_t(fb::ConstraintFlags::RadialBlend);
+inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
+    uint8_t(fb::ConstraintFlags::PreserveJointOrientation);
 
 /// The format version every writer writes; every change to rigexec.fbs or
 /// to what its records mean bumps it. Open reads it and every version from
@@ -600,7 +602,15 @@ inline constexpr uint8_t RigExecWireConstraintRadialBlend =
 /// property op, provider op and value type ordinal (rigExecBinary/manifest.h).
 /// Open maps a file's ordinals to this build's through it, and gives older
 /// files the format-32 table.
-inline constexpr uint32_t RigExecFormatVersion = 33;
+///
+/// Format 34 adds ConstraintFlags.PreserveJointOrientation: a
+/// SingleChainIK constraint's rigExec:orientationMode "preserve". Older
+/// files hold none, so their constraints aim X.
+inline constexpr uint32_t RigExecFormatVersion = 34;
+
+/// The first format version whose constraints may carry
+/// PreserveJointOrientation.
+inline constexpr uint32_t RigExecFormatPreserveJointOrientationVersion = 34;
 
 /// The first format version whose RecomputeNormals binding may carry the
 /// normals layout.

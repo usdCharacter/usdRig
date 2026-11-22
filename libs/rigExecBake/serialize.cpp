@@ -943,7 +943,10 @@ _FileFill::_Constraint(size_t index, fb::RigExecWireConstraint *out)
         (constraint.worldUpRotationOnly
              ? RigExecWireConstraintWorldUpRotationOnly
              : 0) |
-        (constraint.radialBlend ? RigExecWireConstraintRadialBlend : 0));
+        (constraint.radialBlend ? RigExecWireConstraintRadialBlend : 0) |
+        (constraint.singleChainIk && constraint.preserveJointOrientation
+             ? RigExecWireConstraintPreserveJointOrientation
+             : 0));
     out->singleChainIk = constraint.singleChainIk;
     out->ikMode = uint8_t(constraint.ikMode);
     out->poleModeObject = constraint.poleModeObject;

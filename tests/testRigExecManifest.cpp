@@ -136,12 +136,12 @@ TestRefusals()
 }
 
 // The checked-in format-32 program opens with the format-32 manifest and
-// writes, as format 33, the bytes of the checked-in format-33 program.
+// writes, at the current format, the bytes of the checked-in current program.
 void
-TestUpgrade(const char *format32, const char *format33)
+TestUpgrade(const char *format32, const char *currentPath)
 {
     const std::vector<uint8_t> old = Read(format32);
-    const std::vector<uint8_t> current = Read(format33);
+    const std::vector<uint8_t> current = Read(currentPath);
     std::unique_ptr<fb::RigExecWireFile> file;
     std::string error;
     CHECK(RigExecFormatOpen(old.data(), old.size(), &file, &error));

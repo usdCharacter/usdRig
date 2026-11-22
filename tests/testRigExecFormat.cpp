@@ -686,7 +686,9 @@ _RichFileBody()
     constraint.worldUpVector = _In(InputTag::Vec3d);
     constraint.aimAxisFallback = _V3d(1);
     constraint.sceneUp = _V3d(4);
-    constraint.flags = uint8_t(fb::ConstraintFlags::ANY);
+    // Every flag a non-IK constraint may carry.
+    constraint.flags = uint8_t(fb::ConstraintFlags::ANY) &
+                       ~RigExecWireConstraintPreserveJointOrientation;
     constraint.arrays = 0;
     constraint.poleVector = _In(InputTag::Vec3d);
     constraint.twistDegrees = _In(InputTag::Double);
@@ -1409,7 +1411,7 @@ TestBitExactness()
     const fb::RigExecWireConstraint &k = o->pose->constraints[0];
     CHECK(_Same(k.aimAxisFallback, file.pose->constraints[0].aimAxisFallback));
     CHECK(_Same(k.sceneUp, file.pose->constraints[0].sceneUp));
-    CHECK(k.flags == uint8_t(fb::ConstraintFlags::ANY));
+    CHECK(k.flags == file.pose->constraints[0].flags);
     const fb::RigExecWireConstraintArrays &a = o->pose->constraintArrays[0];
     const fb::RigExecWireConstraintArrays &a0 = file.pose->constraintArrays[0];
     CHECK(_Same(a.weights, a0.weights) &&
@@ -1565,7 +1567,7 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 33 &&
+    static_assert(RigExecFormatVersion == 34 &&
                       RigExecFormatOldestReadable == 20,
                   "format 22 adds the IK/FK match, format 23 the property "
                   "movers' quantize and path operations, format 24 "
@@ -1576,7 +1578,7 @@ TestOpenRefusals()
                   "format 30 Range DQ and independent summaries and format 31 "
                   "the 2D skeleton, unclamped animated map and scalar primvar "
                   "records, format 32 the recomputed normals layout, format 33 "
-                  "the manifest; per-group "
+                  "the manifest, format 34 IK joint orientation; per-group "
                   "range chains pin the oldest readable "
                   "format at 20");
     // Every format before 20, 19 among them, requires re-export: a chain
@@ -1926,6 +1928,11 @@ TestValidationSmoke()
     // Constraints.
     expect("envelope without weight object", "weight_object_index",
            [](F &f) { f.pose->constraints[0].weightObjectIndex = 0; });
+    expect("preserve orientation off SingleChainIK",
+           "preserve joint orientation", [](F &f) {
+               f.pose->constraints[0].flags |=
+                   RigExecWireConstraintPreserveJointOrientation;
+           });
     // Space switches.
     expect("switch filters", "filters",
            [](F &f) { f.pose->spaceSwitches[0].filters = {0, 1}; });
