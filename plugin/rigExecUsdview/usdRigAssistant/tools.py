@@ -1559,7 +1559,7 @@ class Toolbox(QtCore.QObject):
 
         def guard(change):
             target = self.stage.GetEditTarget()
-            paths = _spec_paths([change], target)
+            paths = _spec_paths([change], target, self.stage)
             return self._authored_edit(
                 stack, paths, 'AI Assistant changes',
                 defer_notice=change.get('action') in
@@ -1708,9 +1708,10 @@ _PROPERTY_ACTIONS = ('set_attr', 'clear_attr', 'block_attr',
                      'set_connections', 'set_relationship', 'set_metadata')
 
 
-def _spec_paths(changes, target=None):
+def _spec_paths(changes, target, stage):
     """Paths to snapshot before a write; target maps missing ancestors
-    to the layer where the write will create them."""
+    to the layer where the write will create them, and stage names the
+    ancestors a write will promote to def."""
     paths = set()
 
     def add(text):
@@ -1748,6 +1749,8 @@ def _spec_paths(changes, target=None):
         if prim is not None and target is not None and action in (
                 'define_prim', 'override_prim', 'set_active',
                 'add_reference'):
+            # Every ancestor the edit target's layer is missing is created
+            # inside the topmost one, so that one snapshot covers them.
             top = prim
             parent = prim.GetParentPath()
             while parent != Sdf.Path.absoluteRootPath:
@@ -1758,6 +1761,9 @@ def _spec_paths(changes, target=None):
                 top = parent
                 parent = parent.GetParentPath()
             paths.add(top)
+            # define_prim also promotes every ancestor the stage does not
+            # compose as defined; each of those needs its own snapshot.
+            paths.update(stage_actions.parents_to_define(stage, prim))
     # A prim's snapshot holds its subtree, so its descendants need none.
     kept = [p for p in paths
             if not any(p != q and p.HasPrefix(q) for q in paths)]

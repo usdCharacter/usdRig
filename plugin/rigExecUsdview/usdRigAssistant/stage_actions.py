@@ -195,6 +195,21 @@ DEFER_NOTICE_ACTIONS = frozenset((
     'set_metadata'))
 
 
+def parents_to_define(stage, path):
+    """The ancestors a write at path creates or promotes to def: every
+    parent up to the first one the stage already composes as defined."""
+    parents = []
+    parent = path.GetParentPath()
+    while parent and not parent.IsAbsoluteRootPath():
+        prim = stage.GetPrimAtPath(parent)
+        if prim and prim.IsDefined():
+            break
+        parents.append(parent)
+        parent = parent.GetParentPath()
+    parents.reverse()
+    return parents
+
+
 class Applier(object):
     """Applies actions to stage, each one to the current edit target.
 
@@ -255,18 +270,6 @@ class Applier(object):
             raise ActionError('Cannot edit {}'.format(spec_path))
         return spec
 
-    def plain_parents(self, path):
-        parents = []
-        parent = path.GetParentPath()
-        while parent and not parent.IsAbsoluteRootPath():
-            prim = self.stage.GetPrimAtPath(parent)
-            if prim and prim.IsDefined():
-                break
-            parents.append(parent)
-            parent = parent.GetParentPath()
-        parents.reverse()
-        return parents
-
     def path(self, action, key='path'):
         text = str(action.get(key) or '').strip()
         if not text:
@@ -314,7 +317,7 @@ class Applier(object):
                 path, ' as ' + type_name if type_name else '')
         target, spec_path = self.spec_target(path)
         plain = [target.MapToSpecPath(parent)
-                 for parent in self.plain_parents(path)]
+                 for parent in parents_to_define(self.stage, path)]
         with self.write(action):
             spec = self.create_spec(target, spec_path)
             layer = target.GetLayer()
@@ -503,10 +506,19 @@ class Applier(object):
         target, spec_path = self.spec_target(path)
         reference = Sdf.Reference(asset, target_path)
         with self.write(action):
-            refs = self.create_spec(target, spec_path).referenceList
-            prepended = [item for item in refs.prependedItems
-                         if item != reference]
-            refs.prependedItems = prepended + [reference]
+            listOp = self.create_spec(target, spec_path).referenceList
+            # Match UsdReferences.AddReference: append to the list the prim's
+            # list op already edits, and move a repeat to the back of it.
+            explicit = listOp.isExplicit
+            items = list(listOp.explicitItems if explicit
+                         else listOp.prependedItems)
+            if reference in items:
+                items.remove(reference)
+            items.append(reference)
+            if explicit:
+                listOp.explicitItems = items
+            else:
+                listOp.prependedItems = items
         return 'Referenced {} on {}'.format(asset, path)
 
     def do_add_sublayer(self, action):

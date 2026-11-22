@@ -355,6 +355,15 @@ mis-ordered:
   already there — the opposite of what "Prepend (stronger than existing
   arcs)" promises.
 
+An action that adds one arc without asking where it goes follows
+`UsdReferences.AddReference` instead: it appends to the arm the prim's
+opinion already edits, so an explicit list stays explicit and an existing
+prepend list keeps its order. That is what the Assistant's `add_reference`
+action does (`usdRigAssistant/stage_actions.py`, `do_add_reference`), and
+`tests/python/test_assistant.py`
+(`TestAddReferenceMatchesTheUsdApiOnEveryListOpMode`) compares its authored
+arcs and composed order with the API on every arm.
+
 ## Where the code is
 
 | File | Holds |

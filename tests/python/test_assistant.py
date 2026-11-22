@@ -846,6 +846,130 @@ def TestCreationNoticeKeepsTheArtistEditSeparate():
                '{} second redo restores artist edit'.format(action['action']))
 
 
+def _Assets(references):
+    """The referenced layers by short name, in authored order."""
+    return [str(reference.assetPath).split(':')[-1]
+            for reference in references]
+
+
+def TestDefinePrimUnderAnOverAncestorUndoesTheWholeEdit():
+    layer = Sdf.Layer.CreateAnonymous('assistant_over_ancestor.usda')
+    layer.ImportFromString('''#usda 1.0
+(
+)
+over "Root"
+{
+}
+''')
+    stage = Usd.Stage.Open(layer)
+    container = _Container()
+    box, _api = _Toolbox(stage, container, can_edit=True)
+    original = layer.ExportToString()
+    text, failed = box.call('change_stage', {'changes': [
+        {'action': 'define_prim', 'path': '/Root/Child', 'type': 'Xform'}]})
+    _Check(not failed, text)
+    _Check(stage.GetPrimAtPath('/Root/Child').IsDefined() and
+           stage.GetPrimAtPath('/Root').GetSpecifier() == Sdf.SpecifierDef,
+           'define_prim under an over ancestor: %s' % text)
+    _Check(container.stack.Undo(), 'the Assistant edit was not recorded')
+    restored = layer.ExportToString()
+    _Check(restored == original,
+           'one undo restores the whole layer: %r != %r' % (restored, original))
+    _Check(stage.GetPrimAtPath('/Root').GetSpecifier() == Sdf.SpecifierOver and
+           not stage.GetPrimAtPath('/Root/Child'),
+           'one undo restores the over ancestor and removes the child')
+    _Check(container.stack.Redo() and
+           stage.GetPrimAtPath('/Root/Child').IsDefined() and
+           stage.GetPrimAtPath('/Root').GetSpecifier() == Sdf.SpecifierDef,
+           'one redo restores the intended definitions')
+
+
+def TestAddReferenceMatchesTheUsdApiOnEveryListOpMode():
+    assets = []
+    for name, child in (('model_one', 'One'), ('model_two', 'Two'),
+                        ('model_three', 'Three')):
+        asset = Sdf.Layer.CreateAnonymous(name + '.usda')
+        Sdf.CreatePrimInLayer(asset, '/Root').specifier = Sdf.SpecifierDef
+        Sdf.CreatePrimInLayer(
+            asset, '/Root/%s' % child).specifier = Sdf.SpecifierDef
+        asset.defaultPrim = 'Root'
+        assets.append(asset)
+
+    def state(stage):
+        """What the edit target authors about the arcs, and what the stage
+        composes from them."""
+        listOp = stage.GetEditTarget().GetLayer().GetPrimAtPath(
+            '/Char/Ctl').referenceList
+        return (listOp.isExplicit, _Assets(listOp.explicitItems),
+                _Assets(listOp.prependedItems), _Assets(listOp.appendedItems),
+                [child.GetName()
+                 for child in stage.GetPrimAtPath('/Char/Ctl').GetChildren()])
+
+    def rig(mode):
+        layer = Sdf.Layer.CreateAnonymous('assistant_references.usda')
+        layer.ImportFromString('''#usda 1.0
+def Xform "Char"
+{
+    def Xform "Ctl"
+    {
+    }
+}
+''')
+        stage = Usd.Stage.Open(layer)
+        first, second = [Sdf.Reference(asset.identifier)
+                         for asset in assets[:2]]
+        if mode == 'explicit':
+            stage.GetPrimAtPath('/Char/Ctl').GetReferences().SetReferences(
+                [first, second])
+        elif mode == 'prepended':
+            layer.GetPrimAtPath('/Char/Ctl').referenceList.prependedItems = [
+                first, second]
+        elif mode == 'appended':
+            layer.GetPrimAtPath('/Char/Ctl').referenceList.appendedItems = [
+                first, second]
+        elif mode == 'split':
+            listOp = layer.GetPrimAtPath('/Char/Ctl').referenceList
+            listOp.prependedItems = [first]
+            listOp.appendedItems = [second]
+        return stage
+
+    for mode in ('none', 'explicit', 'prepended', 'appended', 'split'):
+        assistant = rig(mode)
+        referenceApi = rig(mode)
+        _Check(referenceApi.GetPrimAtPath('/Char/Ctl').GetReferences()
+               .AddReference(assets[2].identifier),
+               '%s: the reference API refused the third arc' % mode)
+        expected = state(referenceApi)
+        _Check(expected[1] or expected[2] or expected[3],
+               '%s: the reference API authored no arc: %r' % (mode, expected))
+        before = state(assistant)
+        artistChildren = [] if mode == 'none' else ['Two', 'One']
+        _Check(before[4] == artistChildren,
+               '%s: the artist arcs do not compose: %r' % (mode, before))
+        layer = assistant.GetEditTarget().GetLayer()
+        original = layer.ExportToString()
+        container = _Container()
+        box, _api = _Toolbox(assistant, container, can_edit=True)
+        text, failed = box.call('change_stage', {'changes': [
+            {'action': 'add_reference', 'path': '/Char/Ctl',
+             'asset': assets[2].identifier}]})
+        _Check(not failed, '%s: %s' % (mode, text))
+        got = state(assistant)
+        _Check(got == expected,
+               '%s: the Assistant arc list differs from the API: %r != %r'
+               % (mode, got, expected))
+        _Check(container.stack.Undo(),
+               '%s: the Assistant edit was not recorded' % mode)
+        reverted = layer.ExportToString()
+        _Check(reverted == original,
+               '%s: one undo restores the artist list: %r != %r'
+               % (mode, reverted, original))
+        _Check(state(assistant) == before,
+               '%s: one undo restores the artist arcs' % mode)
+        _Check(container.stack.Redo() and state(assistant) == expected,
+               '%s: one redo restores the API result' % mode)
+
+
 def TestReferencePreservesExistingOpinionsAndOrder():
     stage = _Stage()
     prim = stage.GetPrimAtPath('/Char/Ctl')
@@ -1970,6 +2094,8 @@ def main():
                  TestAClearCommitFromAStageNoticeKeepsTheAuthoredOrder,
                  TestCreationNoticeKeepsTheArtistEditSeparate,
                  TestReferencePreservesExistingOpinionsAndOrder,
+                 TestDefinePrimUnderAnOverAncestorUndoesTheWholeEdit,
+                 TestAddReferenceMatchesTheUsdApiOnEveryListOpMode,
                  TestACallThatChangesNothingLeavesHistoryAlone,
                  TestAWriteAfterAnUndoDoesNotGrowAnOlderStep,
                  TestHostUndoStackWithoutLastEdit,
