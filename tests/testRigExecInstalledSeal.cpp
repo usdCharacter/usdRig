@@ -307,10 +307,14 @@ TestSeal()
     CHECK(pose.controlFrames.count(SdfPath("/View/Rig/Joint")) > 0);
     const auto dialed =
         pose.movedProperties.find(SdfPath("/View/Channels.dial"));
-    CHECK(dialed != pose.movedProperties.end());
-    if (dialed != pose.movedProperties.end() &&
-        dialed->second.IsHolding<double>()) {
-        CHECK(dialed->second.Get<double>() == 6.0);
+    const bool dialedFound = dialed != pose.movedProperties.end();
+    CHECK(dialedFound);
+    if (dialedFound) {
+        const bool dialedIsDouble = dialed->second.IsHolding<double>();
+        CHECK(dialedIsDouble);
+        if (dialedIsDouble) {
+            CHECK(dialed->second.Get<double>() == 6.0);
+        }
     }
 
     // Nothing a consumer can reach is a writable execution record.
