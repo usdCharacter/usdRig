@@ -41,8 +41,8 @@ double
 Quantile(std::vector<double> samples, double q)
 {
     std::sort(samples.begin(), samples.end());
-    const size_t index = std::min(
-        samples.size() - 1, size_t(q * double(samples.size() - 1) + 0.5));
+    const size_t index = std::min(samples.size() - 1,
+                                  size_t(q * double(samples.size() - 1) + 0.5));
     return samples[index];
 }
 
@@ -90,8 +90,7 @@ main(int argc, char **argv)
         std::fprintf(stderr, "cannot open %s\n", stagePath.c_str());
         return 1;
     }
-    const SdfPath rigPath =
-        argc > 5 ? SdfPath(argv[5]) : FindRig(stage);
+    const SdfPath rigPath = argc > 5 ? SdfPath(argv[5]) : FindRig(stage);
     if (rigPath.IsEmpty()) {
         std::fprintf(stderr, "no RigExecRoot in %s\n", stagePath.c_str());
         return 1;
