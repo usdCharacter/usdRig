@@ -1,8 +1,8 @@
 // A consumer built against the installed SDK alone: the sealed compiled-program
 // view answers the queries it advertises, and the evaluator's execution records
 // are not nameable from the installed headers. Each probe is a pair of
-// overloads; the first is viable only when the write names something the SDK
-// exposes, so a probe returning 1 is a write that does not compile.
+// overloads; the first is viable only when the name is reachable through the
+// installed headers, so a probe returning 1 is a record the seal keeps out.
 #include "rigExec/compiledProgram.h"
 #include "rigExec/frozenContext.h"
 #include "rigExec/rigEvaluator.h"
@@ -129,14 +129,13 @@ _LendsWeightRecord(const View &view, long)
 
 template <class Program>
 int
-_WritesStepGraph(Program &program,
-                 decltype(program.GetStepGraph().frozenArrayBuilt = true, 0))
+_ReachesStepGraph(Program &program, decltype(program.GetStepGraph(), 0))
 {
     return 0;
 }
 template <class Program>
 long
-_WritesStepGraph(const Program &program, long)
+_ReachesStepGraph(const Program &program, long)
 {
     return 1;
 }
@@ -284,8 +283,10 @@ TestSeal()
         }
     }
     CHECK(view.GetWeightObjectCount() == 1);
-    CHECK(view.GetWeightObjectFacts(0).path ==
-          SdfPath("/View/Rig/Weights/PanelEdge"));
+    if (view.GetWeightObjectCount() > 0) {
+        CHECK(view.GetWeightObjectFacts(0).path ==
+              SdfPath("/View/Rig/Weights/PanelEdge"));
+    }
     CHECK(view.GetPropertyChainCount() > 0);
     CHECK(view.GetBoundInputCount() > 0);
     CHECK(view.GetAvarSlotCount() > 0);
@@ -313,7 +314,7 @@ TestSeal()
     CHECK(_LendsChainRecord(view, 0) == 1);
     CHECK(_LendsRevisionRecord(view, 0) == 1);
     CHECK(_LendsWeightRecord(view, 0) == 1);
-    CHECK(_WritesStepGraph(*program, 0) == 1);
+    CHECK(_ReachesStepGraph(*program, 0) == 1);
     std::shared_ptr<const RigExecFrozenProgram> frozen;
     CHECK(_ReadsFrozenHandle(frozen, 0) == 1);
     CHECK(_NamesImplType<RigExecBakedProgramImpl>(0, 0) == 1);

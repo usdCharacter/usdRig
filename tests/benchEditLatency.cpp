@@ -389,7 +389,8 @@ CountProgramWork(const RigExecRigEvaluator &evaluator, Round *r)
     }
     r->clusters = double(program->GetClusterCount());
     r->clustersRun = double(program->GetClustersRunLastGeneration());
-    const RigExecBakedProgramImpl &impl = program->GetStepGraph();
+    const RigExecBakedProgramImpl &impl =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     r->steps = double(impl.opGraph.ops.size());
     r->stepsRun = double(impl.opExecution.executed);
 }

@@ -35,6 +35,7 @@
 // so the on-vs-off p95 answers the contention question on any rig.
 #include "rigExec/backgroundScheduler.h"
 #include "rigExec/bakedProgram.h"
+#include "rigExec/bakedProgramImpl.h"
 #include "rigExec/frameCache.h"
 #include "rigExec/frameCacheSparsity.h"
 #include "rigExec/frozenContext.h"
@@ -701,7 +702,8 @@ BenchEdit(BenchRig *rig, const std::vector<double> &frames)
                 affectedUs / double(frames.size()), affected, frames.size());
 
     RigExecOutputAffectedIndex index;
-    index.Build(rig->evaluator->GetBakedProgram()->GetStepGraph(),
+    index.Build(rigExec::RigExecBakedProgramAccess::StepGraph(
+                    *rig->evaluator->GetBakedProgram()),
                 rig->compiledRig);
     RigExecRetainedFrameState retained;
     retained.inputs = warmed[affectedIndex];

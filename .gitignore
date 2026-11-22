@@ -91,3 +91,5 @@ desktop.ini
 /dist/
 # Viewport captures from investigating the arm.
 /arm_*.png
+installed-scene-build/
+usdrig-install/

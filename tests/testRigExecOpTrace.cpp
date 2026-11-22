@@ -128,7 +128,8 @@ CheckTraceMatchesClosure(const RigExecRigEvaluator &E,
         std::printf("FAIL %s: no program\n", what.c_str());
         return;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     std::set<size_t> traced;
     for (const RigExecOpTraceEntry &entry : trace) {
         CHECK(entry.step < B.steps.size());
@@ -199,7 +200,8 @@ CheckOpPhases(const RigExecRigEvaluator &E,
               const std::vector<RigExecOpTraceEntry> &trace,
               const std::string &what)
 {
-    const RigExecBakedProgramImpl &B = E.GetBakedProgram()->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*E.GetBakedProgram());
     std::map<std::string, std::vector<std::pair<uint64_t, uint64_t>>> lanes;
     size_t unbracketed = 0;
     for (const RigExecOpTraceEntry &entry : trace) {
@@ -282,7 +284,8 @@ TestStage(const std::string &examplesDir, const std::string &file, double t0,
     const std::vector<RigExecOpTraceEntry> trace0 = E.GetLastOpTrace();
     CHECK(!graph.empty());
     CHECK(!trace0.empty());
-    const auto &B = E.GetBakedProgram()->GetStepGraph();
+    const auto &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*E.GetBakedProgram());
     CHECK(graph.size() == B.opGraph.ops.size());
     for (size_t i = 0; i < graph.size(); ++i) {
         CHECK(B.opGraph.ops[i].originalIndex == i);
@@ -423,7 +426,8 @@ TestOpTimingAloneStampsOperationPhases(const std::string &examplesDir,
                            RigExecBakedScheduleCalibrationRequested();
     for (const double t : {t0, t1}) {
         CHECK(E.Evaluate(UsdTimeCode(t)).valid);
-        const RigExecBakedProgramImpl &B = E.GetBakedProgram()->GetStepGraph();
+        const RigExecBakedProgramImpl &B =
+            rigExec::RigExecBakedProgramAccess::StepGraph(*E.GetBakedProgram());
         CHECK(B.recordOpTimings);
         CHECK(!B.profiler || !B.profiler->IsEnabled());
         const std::vector<RigExecOpTraceEntry> trace = E.GetLastOpTrace();
@@ -452,7 +456,8 @@ TestMeasurementFoldsOperationPhases(const std::string &examplesDir)
     CHECK(!E.GetOpTimingEnabled());
     CHECK(E.Evaluate(UsdTimeCode(1001)).valid);
     CHECK(E.Evaluate(UsdTimeCode(1024)).valid);
-    const RigExecBakedProgramImpl &B = E.GetBakedProgram()->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*E.GetBakedProgram());
     const bool requested = RigExecBakedStepTimingRequested() ||
                            RigExecBakedScheduleCalibrationRequested();
     CHECK(B.opAdapter.measuring == requested);
@@ -513,8 +518,8 @@ TestStepTimingLeavesOutColdRuns(const std::string &examplesDir)
     CHECK(program);
     if (!program)
         return;
-    RigExecBakedProgramImpl &B =
-        const_cast<RigExecBakedProgramImpl &>(program->GetStepGraph());
+    RigExecBakedProgramImpl &B = const_cast<RigExecBakedProgramImpl &>(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program));
     B.opAdapter.measuring = true;
     B.measureColdRuns = false;
     // (body runs, memo runs) summed over every step.
@@ -700,7 +705,7 @@ TestInvalidTargetStillExecutesUnrelatedOperations(
           given.diagnostics.back() == "could not resolve constraint target " +
                                           target.GetString() +
                                           " relative to the asset root");
-    const auto &state = program->GetStepGraph();
+    const auto &state = rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     // Refusal preserves caller metadata; the trace describes actual callbacks.
     CHECK(given.executedOpCount == callerExecutedOpCount);
     CHECK(trace.size() ==
@@ -758,8 +763,8 @@ TestTheReplayRecordsEachStepOnce(const std::string &examplesDir)
     CHECK(program != nullptr);
     if (!program)
         return;
-    RigExecBakedProgramImpl &B =
-        const_cast<RigExecBakedProgramImpl &>(program->GetStepGraph());
+    RigExecBakedProgramImpl &B = const_cast<RigExecBakedProgramImpl &>(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program));
     CHECK(!B.stampedSteps.empty() && !B.timedClusters.empty());
 
     // What a sweep over every step and cluster records, by the replay's

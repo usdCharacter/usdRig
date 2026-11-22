@@ -30,7 +30,6 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((avarsTx, rigExec::SchemaAttrText::avarsTx))
     ((skinMover, rigExec::SchemaTypeName::RigExecSkinMover))
     ((moverAPI, rigExec::SchemaTypeName::RigExecMoverAPI))
-    ((moves, rigExec::SchemaAttrText::rigExecMoves))
     ((influences, rigExec::SchemaAttrText::rigExecInfluences))
     ((elementSize, rigExec::SchemaAttrText::rigExecElementSize))
     ((jointIndices, rigExec::SchemaAttrText::rigExecJointIndices))
@@ -93,17 +92,17 @@ MakeStage()
     math("AFirst", 1.0f);
     math("BSecond", 2.0f);
 
-    // A skinned mesh, so the chain, revision and weight loops below have
-    // records to compare against rather than running empty.
+    // A skinned point set, so the chain, revision and weight queries below
+    // have records to answer about.
     const SdfPath geomPath("/View/Geom/Panel");
-    const UsdPrim mesh = UsdGeomPoints::Define(stage, geomPath).GetPrim();
+    const UsdPrim panel = UsdGeomPoints::Define(stage, geomPath).GetPrim();
     const SdfPath pointsProp =
-        mesh.GetPath().AppendProperty(UsdGeomTokens->points);
+        panel.GetPath().AppendProperty(UsdGeomTokens->points);
     VtVec3fArray panelPoints(4);
     for (size_t i = 0; i < panelPoints.size(); ++i) {
         panelPoints[i] = GfVec3f(float(i), float(i % 2), 0.0f);
     }
-    CHECK(mesh.GetAttribute(UsdGeomTokens->points).Set(panelPoints));
+    CHECK(panel.GetAttribute(UsdGeomTokens->points).Set(panelPoints));
     const UsdPrim joint = stage->DefinePrim(SdfPath("/View/Rig/Joint"),
                                             _sealedViewTokens->control);
     CHECK(joint.GetAttribute(_sealedViewTokens->avarsTx).Set(1.0));
@@ -111,7 +110,7 @@ MakeStage()
         UsdPrim prim = stage->DefinePrim(root.AppendChild(TfToken(name)),
                                          _sealedViewTokens->skinMover);
         CHECK(prim.ApplyAPI(_sealedViewTokens->moverAPI));
-        CHECK(prim.GetRelationship(_sealedViewTokens->moves)
+        CHECK(prim.GetRelationship(SchemaAttr::rigExecMoves)
                   .SetTargets({pointsProp}));
         CHECK(prim.CreateRelationship(_sealedViewTokens->influences)
                   .SetTargets({joint.GetPath()}));
@@ -201,7 +200,8 @@ TestView()
     if (!program) {
         return;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     const RigExecCompiledProgram &V = program->GetCompiledProgram();
     CHECK(B.steps.size() > 0);
     CHECK(B.propertyChains.size() > 0);

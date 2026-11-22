@@ -622,7 +622,8 @@ TestAGatedChainForwards()
     }
     CHECK(evaluator.Evaluate(time).valid);
     CHECK(evaluator.Evaluate(time).valid);
-    const Program &B = evaluator.GetBakedProgram()->GetStepGraph();
+    const Program &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
     CHECK(B.verifyRangeChains);
     const int c = FindChain(B, target);
     CHECK(c >= 0);
@@ -722,7 +723,9 @@ TestAGatedChainForwards()
         const RigExecRigPose expectedPose = reference.Evaluate(time);
         CHECK(expectedPose.valid);
         const bool sameAsCold =
-            SameResult(reference.GetBakedProgram()->GetStepGraph(), B, c);
+            SameResult(rigExec::RigExecBakedProgramAccess::StepGraph(
+                           *reference.GetBakedProgram()),
+                       B, c);
         if (!sameAsCold) {
             std::printf(
                 "  %s: the warm chain differs from a cold evaluator's\n",
@@ -844,7 +847,8 @@ TestSparseBlendChunks()
         return;
     CHECK(evaluator.Evaluate(UsdTimeCode(1)).valid);
     CHECK(evaluator.Evaluate(UsdTimeCode(1)).valid);
-    const auto &B = evaluator.GetBakedProgram()->GetStepGraph();
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
     const int c = FindChain(B, SdfPath("/Asset/Shape.points"));
     CHECK(c >= 0);
     if (c < 0)
@@ -1008,7 +1012,8 @@ TestDualQuatChunks()
     if (!compiled)
         return;
     CHECK(evaluator.Evaluate(UsdTimeCode(1)).valid);
-    const auto &B = evaluator.GetBakedProgram()->GetStepGraph();
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
     const int c = FindChain(B, SdfPath("/Asset/Shape.points"));
     CHECK(c >= 0);
     if (c < 0)
@@ -1100,7 +1105,9 @@ MatchesColdEvaluator(const std::string &stagePath,
     if (!reference.Evaluate(UsdTimeCode::Default()).valid) {
         return false;
     }
-    return SameResult(reference.GetBakedProgram()->GetStepGraph(), B, c);
+    return SameResult(rigExec::RigExecBakedProgramAccess::StepGraph(
+                          *reference.GetBakedProgram()),
+                      B, c);
 }
 
 void
@@ -1132,7 +1139,8 @@ TestTheBipedArmEditForwards(const std::string &examplesDir)
     }
     CHECK(evaluator.Evaluate(time).valid);
     CHECK(evaluator.Evaluate(time).valid);
-    const Program &B = evaluator.GetBakedProgram()->GetStepGraph();
+    const Program &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
     const int c = FindChain(B, SdfPath(kBody));
     CHECK(c >= 0);
     if (c < 0) {

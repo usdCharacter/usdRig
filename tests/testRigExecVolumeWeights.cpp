@@ -1604,7 +1604,8 @@ TestCombineCycleSetsAsideMembers()
     CHECK(evaluator.GetBakedProgram());
     if (!evaluator.GetBakedProgram())
         return;
-    const auto &B = evaluator.GetBakedProgram()->GetStepGraph();
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
     CHECK(B.opGraph.cycles.size() == 1);
     bool namedA = false, namedB = false;
     for (const auto &loop : B.opGraph.cycles)
@@ -1996,7 +1997,8 @@ def Xform "Asset"
     CHECK(authored != answer.weightFrames.end() &&
           authored->second.ExtractTranslation()[1] == 3.0);
     for (const RigExecBakedStep &step :
-         E.GetBakedProgram()->GetStepGraph().steps) {
+         rigExec::RigExecBakedProgramAccess::StepGraph(*E.GetBakedProgram())
+             .steps) {
         CHECK(!step.externalReads);
     }
 
@@ -2311,7 +2313,8 @@ TestVolumePlacementsAreIndependent(const std::string &examplesDir)
         // makes it.
         bool skinExecuted = true, smoothExecuted = false;
         const RigExecBakedProgramImpl &B =
-            baked->GetBakedProgram()->GetStepGraph();
+            rigExec::RigExecBakedProgramAccess::StepGraph(
+                *baked->GetBakedProgram());
         for (const auto &chain : B.chains) {
             for (const auto &revision : chain.revisions) {
                 if (revision.moverPath == skin) {
@@ -2639,7 +2642,8 @@ TestWeightFieldTokenProducer()
     CHECK(baked.Compile(&errors));
     CHECK(reference.Compile(&errors));
     for (const auto &object :
-         baked.GetBakedProgram()->GetStepGraph().weightObjects) {
+         rigExec::RigExecBakedProgramAccess::StepGraph(*baked.GetBakedProgram())
+             .weightObjects) {
         CHECK(object.oracleFrozenKeys.size() ==
               object.oracleLeaves.decl.keys.size());
         std::set<SdfPath> keys;
@@ -2706,7 +2710,7 @@ TestWeightFieldTokenProducer()
         CHECK(program != nullptr);
         if (!program)
             continue;
-        const auto &B = program->GetStepGraph();
+        const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(*program);
         CHECK(B.weightFields.size() == 1);
         if (B.weightFields.size() != 1)
             continue;

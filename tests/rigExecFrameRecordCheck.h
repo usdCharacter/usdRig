@@ -55,7 +55,8 @@ FirstValidRecord(const rigExec::RigExecBakedProgramImpl &B,
 {
     for (const int record : records) {
         if (record >= 0 && size_t(record) < B.frameMatrixValid.size() &&
-            size_t(record) < B.frameMatrix.size() && B.frameMatrixValid[size_t(record)]) {
+            size_t(record) < B.frameMatrix.size() &&
+            B.frameMatrixValid[size_t(record)]) {
             *matrix = B.frameMatrix[size_t(record)];
             return true;
         }
@@ -75,7 +76,7 @@ struct LiteralFrameFact {
 inline size_t
 CheckFrameRecords(int *failures, const std::string &where,
                   const rigExec::RigExecRigEvaluator &evaluator,
-                  const std::map<int,LiteralFrameFact> *literalFacts = nullptr)
+                  const std::map<int, LiteralFrameFact> *literalFacts = nullptr)
 {
     const auto expect = [failures](const std::string &at, bool ok,
                                    const char *what) {
@@ -90,55 +91,78 @@ CheckFrameRecords(int *failures, const std::string &where,
     if (!program) {
         return answered;
     }
-    const rigExec::RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const rigExec::RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     expect(where, B.frameMatrix.size() == B.frameRecords.size(),
            "one frameMatrix per record");
     expect(where, B.frameMatrixValid.size() == B.frameRecords.size(),
            "one frameMatrixValid per record");
-    const auto check =
-        [&](const std::string &at, int slot,
-            const rigExec::RigExecBakedProgramImpl::GeomRevision &r,
-            const std::vector<int> &records) {
-        expect(at, slot >= 0 && size_t(slot) < B.paths.size(), "valid provider slot");
+    const auto check = [&](const std::string &at, int slot,
+                           const rigExec::RigExecBakedProgramImpl::GeomRevision
+                               &r,
+                           const std::vector<int> &records) {
+        expect(at, slot >= 0 && size_t(slot) < B.paths.size(),
+               "valid provider slot");
         for (const int id : records) {
             const bool validId = id >= 0 && size_t(id) < B.frameRecords.size();
-            expect(at,validId,"record index is in range");
-            if (!validId) continue;
-            if (size_t(id) >= B.frameMatrixValid.size() || size_t(id) >= B.frameMatrix.size()) continue;
+            expect(at, validId, "record index is in range");
+            if (!validId)
+                continue;
+            if (size_t(id) >= B.frameMatrixValid.size() ||
+                size_t(id) >= B.frameMatrix.size())
+                continue;
             const auto &record = B.frameRecords[size_t(id)];
-            expect(at,record.slot == slot,"record belongs to the requested provider");
-            expect(at,record.version < B.fin.size(),"record names a typed final-frame version");
+            expect(at, record.slot == slot,
+                   "record belongs to the requested provider");
+            expect(at, record.version < B.fin.size(),
+                   "record names a typed final-frame version");
             size_t producers = 0;
             for (const auto &step : B.steps) {
-                if (step.kind != rigExec::RigExecBakedStepKind::FrameMatrix || step.object != id) continue;
+                if (step.kind != rigExec::RigExecBakedStepKind::FrameMatrix ||
+                    step.object != id)
+                    continue;
                 ++producers;
                 bool readsVersion = false;
                 for (const auto &range : step.reads)
-                    readsVersion = readsVersion ||
-                        (range.domain == rigExec::RigExecBakedSlotDomain::PoseFin &&
-                         record.version >= range.begin && record.version < range.end);
-                expect(at,readsVersion,"checkpoint producer reads the exact frame version");
+                    readsVersion =
+                        readsVersion ||
+                        (range.domain ==
+                             rigExec::RigExecBakedSlotDomain::PoseFin &&
+                         record.version >= range.begin &&
+                         record.version < range.end);
+                expect(at, readsVersion,
+                       "checkpoint producer reads the exact frame version");
             }
-            expect(at,producers == 1,"checkpoint has exactly one declared producer");
+            expect(at, producers == 1,
+                   "checkpoint has exactly one declared producer");
             if (literalFacts) {
                 const auto fact = literalFacts->find(id);
-                if (fact != literalFacts->end() && record.version < B.fin.size()) {
-                    expect(at,B.fin[record.version] == fact->second.frame,"literal checkpoint frame");
-                    expect(at,bool(B.frameMatrixValid[size_t(id)]) == fact->second.hasValue,
+                if (fact != literalFacts->end() &&
+                    record.version < B.fin.size()) {
+                    expect(at, B.fin[record.version] == fact->second.frame,
+                           "literal checkpoint frame");
+                    expect(at,
+                           bool(B.frameMatrixValid[size_t(id)]) ==
+                               fact->second.hasValue,
                            "literal checkpoint presence");
                     if (fact->second.hasValue)
-                        expect(at,B.frameMatrix[size_t(id)] == fact->second.matrix,"literal checkpoint matrix");
+                        expect(at,
+                               B.frameMatrix[size_t(id)] == fact->second.matrix,
+                               "literal checkpoint matrix");
                 }
             }
         }
         GfMatrix4d bound(1.0);
-        const bool recordAnswered = FirstValidRecord(B,records,&bound);
+        const bool recordAnswered = FirstValidRecord(B, records, &bound);
         if (rigExecOriginalQuery::configuration.check && !literalFacts) {
             const VtValue value = recordAnswered ? VtValue(bound) : VtValue();
-            rigExecOriginalQuery::Emit(at,r.moverPath.GetString(),
-                slot >= 0 && size_t(slot) < B.paths.size() ? B.paths[size_t(slot)].GetString() : std::string(),
-                r.binding.transformPhase.GetAsString(),B.lastTime.IsDefault(),
-                B.lastTime.GetValue(),recordAnswered ? &value : nullptr);
+            rigExecOriginalQuery::Emit(
+                at, r.moverPath.GetString(),
+                slot >= 0 && size_t(slot) < B.paths.size()
+                    ? B.paths[size_t(slot)].GetString()
+                    : std::string(),
+                r.binding.transformPhase.GetAsString(), B.lastTime.IsDefault(),
+                B.lastTime.GetValue(), recordAnswered ? &value : nullptr);
         }
         return recordAnswered;
     };
@@ -151,8 +175,7 @@ CheckFrameRecords(int *failures, const std::string &where,
                        "a reader at no AtPrim phase lists no record");
                 continue;
             }
-            const std::string at =
-                where + " " + revision.moverPath.GetString();
+            const std::string at = where + " " + revision.moverPath.GetString();
             if (check(at, revision.transformSlot, revision,
                       revision.transformRecords)) {
                 ++answered;
@@ -167,6 +190,6 @@ CheckFrameRecords(int *failures, const std::string &where,
     return answered;
 }
 
-}  // namespace rigExecTest
+} // namespace rigExecTest
 
 #endif

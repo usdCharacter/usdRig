@@ -20,7 +20,7 @@
 //     overhead is estimated at 32 bytes per entry (MSVC x64) and reported
 //     on its own line, never folded into the payload.
 //   * Arena bytes walk the baked program's per-frame working state through
-//     GetStepGraph: SSA frame versions, avars, matrices, property results,
+//     the step graph: SSA frame versions, avars, matrices, property results,
 //     solver outputs and scratch, geometry outputs and packets, weight
 //     packets, chain buffers, and the last-run comparison buffers. Compiled rig
 //     structure (steps, clustering, cones, walk, ladder tables) is excluded.
@@ -99,9 +99,9 @@ VtValueBytes(const VtValue &value, size_t *unknownTypes,
     if (value.IsEmpty()) {
         return 0;
     }
-#define _RIGEXEC_BENCH_ARRAY(type, element)                       \
-    if (value.IsHolding<type>()) {                                \
-        return value.UncheckedGet<type>().size() * sizeof(element); \
+#define _RIGEXEC_BENCH_ARRAY(type, element)                                    \
+    if (value.IsHolding<type>()) {                                             \
+        return value.UncheckedGet<type>().size() * sizeof(element);            \
     }
     _RIGEXEC_BENCH_ARRAY(VtVec3fArray, GfVec3f)
     _RIGEXEC_BENCH_ARRAY(VtVec3dArray, GfVec3d)
@@ -113,9 +113,9 @@ VtValueBytes(const VtValue &value, size_t *unknownTypes,
     _RIGEXEC_BENCH_ARRAY(VtBoolArray, bool)
     _RIGEXEC_BENCH_ARRAY(VtStringArray, std::string)
 #undef _RIGEXEC_BENCH_ARRAY
-#define _RIGEXEC_BENCH_SCALAR(type)              \
-    if (value.IsHolding<type>()) {               \
-        return sizeof(type);                     \
+#define _RIGEXEC_BENCH_SCALAR(type)                                            \
+    if (value.IsHolding<type>()) {                                             \
+        return sizeof(type);                                                   \
     }
     _RIGEXEC_BENCH_SCALAR(float)
     _RIGEXEC_BENCH_SCALAR(double)
@@ -156,11 +156,10 @@ PointFrameArrayBytes(const RigExecPointFrameArray &array)
 size_t
 MoverParametersBytes(const RigExecMoverParameters &params)
 {
-    return WeightPacketBytes(params.weights) +
-           VecBytes(params.blendDeltas) + VecBytes(params.topologyCounts) +
-           VecBytes(params.topologyIndices) + VecBytes(params.auxPoints) +
-           VecBytes(params.auxPointsB) + VecBytes(params.restPoints) +
-           VecBytes(params.bindCoords) +
+    return WeightPacketBytes(params.weights) + VecBytes(params.blendDeltas) +
+           VecBytes(params.topologyCounts) + VecBytes(params.topologyIndices) +
+           VecBytes(params.auxPoints) + VecBytes(params.auxPointsB) +
+           VecBytes(params.restPoints) + VecBytes(params.bindCoords) +
            PointFrameArrayBytes(params.frames) +
            params.wireBindCoords.size() * sizeof(GfVec2f) +
            VecBytes(params.curveKnots) + VecBytes(params.widths) +
@@ -227,8 +226,7 @@ MeasurePoseBytes(const RigExecRigPose &pose, const char *rig)
     size_t movedBytes = keyBytes(pose.movedProperties.size());
     for (const auto &[path, value] : pose.movedProperties) {
         (void)path;
-        movedBytes +=
-            VtValueBytes(value, &unknownTypes, &unknownNames);
+        movedBytes += VtValueBytes(value, &unknownTypes, &unknownNames);
     }
     line("movedProperties", movedBytes, pose.movedProperties.size());
 
@@ -282,9 +280,8 @@ VtArrayVec3fBytes(const VtVec3fArray &array)
 // last-run comparison copies. Compiled rig structure (bindings, topology handles,
 // blend channel stage handles) is excluded.
 size_t
-GeomRevisionBytes(
-    const RigExecBakedProgramImpl::GeomRevision &revision,
-    size_t *unknownTypes, std::vector<std::string> *unknownNames)
+GeomRevisionBytes(const RigExecBakedProgramImpl::GeomRevision &revision,
+                  size_t *unknownTypes, std::vector<std::string> *unknownNames)
 {
     (void)unknownTypes;
     (void)unknownNames;
@@ -317,7 +314,7 @@ GeomRevisionBytes(
     return bytes;
 }
 
-// The program's per-frame working state through GetStepGraph, in payload
+// The program's per-frame working state, in payload
 // bytes. Prints the per-domain breakdown and returns the total. Compiled rig
 // structure -- steps, clustering, cones, walk/commits, ladder tables,
 // invalidation index, topology and bind caches -- is excluded: it is the
@@ -336,13 +333,11 @@ MeasureArenaBytes(const RigExecBakedProgramImpl &B, const char *rig)
     std::printf("[%s] slot-arena bytes (per-frame state only):\n", rig);
     line("avars+posedM",
          VecBytes(B.avars) + VecBytes(B.lastAvars) + VecBytes(B.posedM));
-    line("base+fin versions",
-         VecBytes(B.base) + VecBytes(B.fin) + VecBytes(B.finLast) +
-             VecBytes(B.baseLast));
+    line("base+fin versions", VecBytes(B.base) + VecBytes(B.fin) +
+                                  VecBytes(B.finLast) + VecBytes(B.baseLast));
     line("rest->pose matrices",
          VecBytes(B.finalMatrix) + VecBytes(B.baseMatrix));
-    line("xform seeds",
-         VecBytes(B.xformBase) + VecBytes(B.lastXformBase));
+    line("xform seeds", VecBytes(B.xformBase) + VecBytes(B.lastXformBase));
     line("native sources",
          VecBytes(B.nativeFrames) + VecBytes(B.lastNativeFrames) +
              VecBytes(B.nativeFrameOk) + VecBytes(B.lastNativeFrameOk));
@@ -366,21 +361,18 @@ MeasureArenaBytes(const RigExecBakedProgramImpl &B, const char *rig)
 
     size_t solverBytes = 0;
     for (const RigExecBakedProgramImpl::Solver &solver : B.solvers) {
-        solverBytes += VecBytes(solver.outFrames) +
-                       VecBytes(solver.outPresent) +
-                       VecBytes(solver.outPosition) +
-                       VecBytes(solver.kernelWorkspace.fkElements) +
-                       VecBytes(solver.controlReads) +
-                       VecBytes(solver.fallbackSlots) +
-                       VecBytes(solver.ribbonPoints) +
-                       VecBytes(solver.lastRibbonPoints);
+        solverBytes +=
+            VecBytes(solver.outFrames) + VecBytes(solver.outPresent) +
+            VecBytes(solver.outPosition) +
+            VecBytes(solver.kernelWorkspace.fkElements) +
+            VecBytes(solver.controlReads) + VecBytes(solver.fallbackSlots) +
+            VecBytes(solver.ribbonPoints) + VecBytes(solver.lastRibbonPoints);
         // The rest description is rebuilt per frame only for a solver whose
         // rests can move within the compiled rig; otherwise it is compiled rig state.
         if (solver.restsVary || solver.hasLiveRest) {
             solverBytes +=
                 VecBytes(solver.restSlots) + VecBytes(solver.restRefs) +
-                VecBytes(solver.restReads) +
-                VecBytes(solver.jointRests) +
+                VecBytes(solver.restReads) + VecBytes(solver.jointRests) +
                 VecBytes(solver.restOverrides) +
                 VecBytes(solver.splineRestWeights) +
                 VecBytes(solver.controlRests) +
@@ -398,14 +390,12 @@ MeasureArenaBytes(const RigExecBakedProgramImpl &B, const char *rig)
     }
     for (const RigExecBakedProgramImpl::ConstraintArrays &arrays :
          B.constraintArrays) {
-        constraintBytes += VecBytes(arrays.weights) +
-                           VecBytes(arrays.translationOffsets) +
-                           VecBytes(arrays.rotationOffsets) +
-                           VecBytes(arrays.lastWeights) +
-                           VecBytes(arrays.lastTranslationOffsets) +
-                           VecBytes(arrays.lastRotationOffsets) +
-                           VecBytes(arrays.poleWeights) +
-                           VecBytes(arrays.lastPoleWeights);
+        constraintBytes +=
+            VecBytes(arrays.weights) + VecBytes(arrays.translationOffsets) +
+            VecBytes(arrays.rotationOffsets) + VecBytes(arrays.lastWeights) +
+            VecBytes(arrays.lastTranslationOffsets) +
+            VecBytes(arrays.lastRotationOffsets) +
+            VecBytes(arrays.poleWeights) + VecBytes(arrays.lastPoleWeights);
         for (const std::string &d : arrays.diagnostics) {
             constraintBytes += StringBytes(d);
         }
@@ -430,8 +420,8 @@ MeasureArenaBytes(const RigExecBakedProgramImpl &B, const char *rig)
         for (const RigExecBakedProgramImpl::GeomRevision &revision :
              chain.revisions) {
             ++revisionCount;
-            chainBytes += GeomRevisionBytes(revision, &unknownTypes,
-                                            &unknownNames);
+            chainBytes +=
+                GeomRevisionBytes(revision, &unknownTypes, &unknownNames);
         }
         for (const RigExecBakedProgramImpl::GeomChain::Derived &derived :
              chain.derived) {
@@ -456,8 +446,7 @@ MeasureArenaBytes(const RigExecBakedProgramImpl &B, const char *rig)
          VecBytes(B.deltaValues) + VecBytes(B.deltaPresent) +
              VecBytes(B.deltaBaseMatrix) + VecBytes(B.lastDeltaBaseMatrix) +
              VecBytes(B.deltaBaseOk) + VecBytes(B.lastDeltaBaseOk));
-    line("cone state",
-         VecBytes(B.lastOverridden) + VecBytes(B.lastHaveBase));
+    line("cone state", VecBytes(B.lastOverridden) + VecBytes(B.lastHaveBase));
     // The provider ladder: per-frame state only while a rest channel can
     // move within the compiled rig, compiled rig constant tables otherwise.
     const size_t ladderBytes =
@@ -518,8 +507,7 @@ CollectBinding(const RigExecBakedInput<T> &input,
 void
 CollectSolverBindings(const RigExecBakedProgramImpl::Solver &solver,
                       std::vector<UsdAttributeQuery> *queries,
-                      std::vector<UsdAttribute> *chainAttrs,
-                      size_t *overrides)
+                      std::vector<UsdAttribute> *chainAttrs, size_t *overrides)
 {
     CollectBinding(solver.bend, queries, chainAttrs, overrides);
     CollectBinding(solver.upperOffset, queries, chainAttrs, overrides);
@@ -537,10 +525,10 @@ CollectSolverBindings(const RigExecBakedProgramImpl::Solver &solver,
 }
 
 void
-CollectConstraintBindings(
-    const RigExecBakedProgramImpl::Constraint &constraint,
-    std::vector<UsdAttributeQuery> *queries,
-    std::vector<UsdAttribute> *chainAttrs, size_t *overrides)
+CollectConstraintBindings(const RigExecBakedProgramImpl::Constraint &constraint,
+                          std::vector<UsdAttributeQuery> *queries,
+                          std::vector<UsdAttribute> *chainAttrs,
+                          size_t *overrides)
 {
     CollectBinding(constraint.enabled, queries, chainAttrs, overrides);
     CollectBinding(constraint.defaultWeight, queries, chainAttrs, overrides);
@@ -568,8 +556,7 @@ CollectConstraintBindings(
 void
 CollectWeightBindings(const RigExecBakedProgramImpl::WeightObject &object,
                       std::vector<UsdAttributeQuery> *queries,
-                      std::vector<UsdAttribute> *chainAttrs,
-                      size_t *overrides)
+                      std::vector<UsdAttribute> *chainAttrs, size_t *overrides)
 {
     CollectBinding(object.defaultWeight, queries, chainAttrs, overrides);
     CollectBinding(object.driver, queries, chainAttrs, overrides);
@@ -617,8 +604,7 @@ MeasureSampling(const RigExecBakedProgramImpl &B, UsdTimeCode time,
             CollectBinding(ladder.defaultAvars[i], &queries, &chainAttrs,
                            &overrides);
         }
-        CollectBinding(ladder.rotationOrder, &queries, &chainAttrs,
-                       &overrides);
+        CollectBinding(ladder.rotationOrder, &queries, &chainAttrs, &overrides);
     }
     for (const RigExecBakedProgramImpl::PoseInterpolator &interp :
          B.poseInterpolators) {
@@ -630,7 +616,7 @@ MeasureSampling(const RigExecBakedProgramImpl &B, UsdTimeCode time,
     for (const RigExecBakedProgramImpl::Constraint &constraint :
          B.constraints) {
         CollectConstraintBindings(constraint, &queries, &chainAttrs,
-                                 &overrides);
+                                  &overrides);
     }
     for (const RigExecBakedProgramImpl::WeightObject &object :
          B.weightObjects) {
@@ -686,8 +672,7 @@ MeasureSampling(const RigExecBakedProgramImpl &B, UsdTimeCode time,
     // when it can vary.
     std::vector<UsdAttributeQuery> ribbonQueries;
     for (const RigExecBakedProgramImpl::Solver &solver : B.solvers) {
-        if (solver.ribbonPointsVarying &&
-            solver.ribbonPointsQuery.IsValid()) {
+        if (solver.ribbonPointsVarying && solver.ribbonPointsQuery.IsValid()) {
             ribbonQueries.push_back(solver.ribbonPointsQuery);
         }
     }
@@ -721,16 +706,11 @@ MeasureSampling(const RigExecBakedProgramImpl &B, UsdTimeCode time,
     std::printf("[%s] sampling one frame's input vector at t=%.1f:\n", rig,
                 time.GetValue());
     std::printf("  %-22s %10zu\n", "query reads", queries.size());
-    std::printf("  %-22s %10zu\n", "chain-resolved reads",
-                chainAttrs.size());
-    std::printf("  %-22s %10zu\n", "blend channel reads",
-                blendAttrs.size());
-    std::printf("  %-22s %10zu\n", "operator array reads",
-                arrayReads.size());
-    std::printf("  %-22s %10zu\n", "ribbon point reads",
-                ribbonQueries.size());
-    std::printf("  %-22s %10zu\n", "override-registered inputs",
-                overrides);
+    std::printf("  %-22s %10zu\n", "chain-resolved reads", chainAttrs.size());
+    std::printf("  %-22s %10zu\n", "blend channel reads", blendAttrs.size());
+    std::printf("  %-22s %10zu\n", "operator array reads", arrayReads.size());
+    std::printf("  %-22s %10zu\n", "ribbon point reads", ribbonQueries.size());
+    std::printf("  %-22s %10zu\n", "override-registered inputs", overrides);
     std::printf("  %-22s %10.1f us/frame\n", "sample cost", totalUs);
     std::printf("  %-22s %10.1f ns/read\n", "per read",
                 reads ? totalUs * 1000.0 / double(reads) : 0.0);
@@ -767,8 +747,7 @@ MeasureSampling(const RigExecBakedProgramImpl &B, UsdTimeCode time,
     const double baseUs =
         std::chrono::duration<double, std::micro>(baseEnd - baseStart).count() /
         kRepeats;
-    std::printf("  %-22s %10zu\n", "base geometry reads",
-                baseQueries.size());
+    std::printf("  %-22s %10zu\n", "base geometry reads", baseQueries.size());
     std::printf("  %-22s %10zu bytes\n", "base points", baseBytes);
     std::printf("  %-22s %10.1f us/frame\n", "base read cost", baseUs);
     std::printf("  %-22s %10.1f us/frame\n", "sample+base cost",
@@ -801,10 +780,10 @@ MakeAnimatedMultiMeshRig(size_t meshCount)
     UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const UsdPrim alongX = stage->DefinePrim(
-        SdfPath("/Asset/Rig/AlongX"), TfToken("RigExecControl"));
-    const UsdPrim alongY = stage->DefinePrim(
-        SdfPath("/Asset/Rig/AlongY"), TfToken("RigExecControl"));
+    const UsdPrim alongX = stage->DefinePrim(SdfPath("/Asset/Rig/AlongX"),
+                                             TfToken("RigExecControl"));
+    const UsdPrim alongY = stage->DefinePrim(SdfPath("/Asset/Rig/AlongY"),
+                                             TfToken("RigExecControl"));
     UsdAttribute tx = alongX.GetAttribute(TfToken("avars:tx"));
     UsdAttribute ty = alongY.GetAttribute(TfToken("avars:ty"));
     for (int t = 1; t <= 40; ++t) {
@@ -819,14 +798,13 @@ MakeAnimatedMultiMeshRig(size_t meshCount)
         indices[i * 2 + 1] = 1;
     }
     for (size_t mesh = 0; mesh < meshCount; ++mesh) {
-        const SdfPath meshPath(
-            TfStringPrintf("/Asset/Geom/Mesh_%zu", mesh));
+        const SdfPath meshPath(TfStringPrintf("/Asset/Geom/Mesh_%zu", mesh));
         const UsdPrim prim = stage->DefinePrim(meshPath, TfToken("Mesh"));
         VtVec3fArray points(kPointCount);
         for (size_t i = 0; i < kPointCount; ++i) {
-            points[i] = GfVec3f(float(i) * 0.5f + float(mesh),
-                                float(i) * -0.25f,
-                                float(mesh) * 3.0f - float(i) * 0.125f);
+            points[i] =
+                GfVec3f(float(i) * 0.5f + float(mesh), float(i) * -0.25f,
+                        float(mesh) * 3.0f - float(i) * 0.125f);
         }
         prim.GetAttribute(TfToken("points")).Set(points);
 
@@ -835,15 +813,16 @@ MakeAnimatedMultiMeshRig(size_t meshCount)
             TfToken("RigExecSkinMover"));
         skin.ApplyAPI(TfToken("RigExecMoverAPI"));
         skin.GetRelationship(TfToken("rigExec:moves"))
-            .SetTargets(
-                {meshPath.AppendProperty(TfToken("points"))});
+            .SetTargets({meshPath.AppendProperty(TfToken("points"))});
         skin.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
         skin.CreateRelationship(TfToken("rigExec:influences"))
             .SetTargets({alongX.GetPath(), alongY.GetPath()});
         skin.CreateAttribute(TfToken("rigExec:elementSize"),
-                             SdfValueTypeNames->Int).Set(2);
+                             SdfValueTypeNames->Int)
+            .Set(2);
         skin.CreateAttribute(TfToken("rigExec:jointIndices"),
-                             SdfValueTypeNames->IntArray).Set(indices);
+                             SdfValueTypeNames->IntArray)
+            .Set(indices);
         VtFloatArray weights(kPointCount * 2);
         const float xWeight = 0.1f + 0.05f * float(mesh);
         const float yWeight = 0.9f - 0.05f * float(mesh);
@@ -852,7 +831,8 @@ MakeAnimatedMultiMeshRig(size_t meshCount)
             weights[i * 2 + 1] = yWeight;
         }
         skin.CreateAttribute(TfToken("rigExec:jointWeights"),
-                             SdfValueTypeNames->FloatArray).Set(weights);
+                             SdfValueTypeNames->FloatArray)
+            .Set(weights);
     }
     return stage;
 }
@@ -883,27 +863,23 @@ MeasureRig(const char *rig, const UsdStageRefPtr &stage,
         }
         return false;
     }
-    std::printf("  %-22s %10.1f ms\n", "compile",
-                NowMs() - compileStart);
+    std::printf("  %-22s %10.1f ms\n", "compile", NowMs() - compileStart);
 
     const RigExecBakedProgram *program = evaluator.GetBakedProgram();
     if (!program) {
         std::printf("FATAL: %s built no program\n", rig);
         return false;
     }
-    std::printf("  %-22s %10zu\n", "providers",
-                program->GetProviderCount());
+    std::printf("  %-22s %10zu\n", "providers", program->GetProviderCount());
     std::printf("  %-22s %10zu\n", "bound inputs",
                 program->GetBoundInputCount());
     std::printf("  %-22s %10zu\n", "varying inputs",
                 program->GetVaryingInputCount());
-    std::printf("  %-22s %10zu\n", "clusters",
-                program->GetClusterCount());
+    std::printf("  %-22s %10zu\n", "clusters", program->GetClusterCount());
 
     // The cold frame: first generation out of a fresh program.
     const double coldStart = NowMs();
-    RigExecRigPose first =
-        evaluator.Evaluate(UsdTimeCode(frameTimes[0]));
+    RigExecRigPose first = evaluator.Evaluate(UsdTimeCode(frameTimes[0]));
     const double coldMs = NowMs() - coldStart;
     if (!first.valid) {
         std::printf("FATAL: %s first frame invalid\n", rig);
@@ -917,19 +893,18 @@ MeasureRig(const char *rig, const UsdStageRefPtr &stage,
     const size_t poseBytes = MeasurePoseBytes(first, rig);
     // A second frame's total beside the first: the stored-bytes number is
     // only a number if it does not wander frame to frame.
-    RigExecRigPose second =
-        evaluator.Evaluate(UsdTimeCode(frameTimes[1]));
+    RigExecRigPose second = evaluator.Evaluate(UsdTimeCode(frameTimes[1]));
     const size_t poseBytes2 = MeasurePoseBytes(second, rig);
     std::printf("  pose bytes stable across frames: %s (%zu vs %zu)\n",
-                poseBytes == poseBytes2 ? "yes" : "NO", poseBytes,
-                poseBytes2);
+                poseBytes == poseBytes2 ? "yes" : "NO", poseBytes, poseBytes2);
 
-    const size_t arenaBytes =
-        MeasureArenaBytes(program->GetStepGraph(), rig);
+    const size_t arenaBytes = MeasureArenaBytes(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program), rig);
     std::printf("  stored bytes per frame: %zu pose + %zu arena = %zu\n",
                 poseBytes, arenaBytes, poseBytes + arenaBytes);
 
-    MeasureSampling(program->GetStepGraph(), UsdTimeCode(sampleTime), rig);
+    MeasureSampling(rigExec::RigExecBakedProgramAccess::StepGraph(*program),
+                    UsdTimeCode(sampleTime), rig);
 
     // Warm frames: min-of-5 pass means over animated frames, with the
     // minimum clusters-run proving every timed frame ran the whole program.
@@ -948,8 +923,7 @@ MeasureRig(const char *rig, const UsdStageRefPtr &stage,
             }
             minClustersRun = std::min(
                 minClustersRun,
-                evaluator.GetBakedProgram()
-                    ->GetClustersRunLastGeneration());
+                evaluator.GetBakedProgram()->GetClustersRunLastGeneration());
             ++frames;
         }
         const auto end = std::chrono::steady_clock::now();
@@ -964,12 +938,10 @@ MeasureRig(const char *rig, const UsdStageRefPtr &stage,
     const double medianMean = passMeans[passMeans.size() / 2];
     std::printf("[%s] baked frame cost (%zu frames x %zu passes):\n", rig,
                 kFramesPerPass, kTimedPasses);
-    std::printf("  %-22s %10.1f us/frame\n", "min-of-5 pass mean",
-                minMean);
-    std::printf("  %-22s %10.1f us/frame\n", "median pass mean",
-                medianMean);
-    std::printf("  %-22s %10zu of %zu\n", "min clusters run",
-                minClustersRun, program->GetClusterCount());
+    std::printf("  %-22s %10.1f us/frame\n", "min-of-5 pass mean", minMean);
+    std::printf("  %-22s %10.1f us/frame\n", "median pass mean", medianMean);
+    std::printf("  %-22s %10zu of %zu\n", "min clusters run", minClustersRun,
+                program->GetClusterCount());
     std::printf("  %-22s %10zu\n", "generations requested", frames + 2);
     return true;
 }
@@ -984,7 +956,7 @@ SchemaResourceDir()
 #endif
 }
 
-}  // namespace
+} // namespace
 
 int
 main(int argc, char **argv)
@@ -1005,8 +977,7 @@ main(int argc, char **argv)
     const std::string resources = SchemaResourceDir();
     if (!resources.empty() &&
         PlugRegistry::GetInstance().RegisterPlugins(resources).empty()) {
-        std::printf("FATAL: no schema plugin found at %s\n",
-                    resources.c_str());
+        std::printf("FATAL: no schema plugin found at %s\n", resources.c_str());
         return 2;
     }
 
@@ -1014,13 +985,12 @@ main(int argc, char **argv)
                 RigExecParallelEvaluationEnabled() ? "ON" : "OFF (serial)");
     std::printf("sizeof(RigExecPointFrame)=%zu sizeof(GfMatrix4d)=%zu "
                 "sizeof(SdfPath)=%zu sizeof(VtValue)=%zu\n",
-                sizeof(RigExecPointFrame), sizeof(GfMatrix4d),
-                sizeof(SdfPath), sizeof(VtValue));
+                sizeof(RigExecPointFrame), sizeof(GfMatrix4d), sizeof(SdfPath),
+                sizeof(VtValue));
 
     bool ok = true;
     if (which == "biped" || which == "all") {
-        const std::string stagePath =
-            examplesDir + "/biped/Biped_anim.usda";
+        const std::string stagePath = examplesDir + "/biped/Biped_anim.usda";
         UsdStageRefPtr stage = UsdStage::Open(stagePath);
         if (!stage) {
             std::printf("FATAL: cannot open %s\n", stagePath.c_str());

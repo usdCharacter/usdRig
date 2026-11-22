@@ -59,7 +59,8 @@ namespace {
 void
 CheckWholeExecution(const RigExecRigEvaluator &evaluator)
 {
-    const auto &B = evaluator.GetBakedProgram()->GetStepGraph();
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
     std::set<uint32_t> clusters;
     CHECK(!B.opGraph.ops.empty());
     CHECK(B.opExecution.ran.size() == B.opGraph.ops.size());
@@ -242,7 +243,8 @@ RunCase(const Case &c)
     // Steps rather than clusters: a small rig packs into one cluster, and a
     // cluster runs only the closed steps it holds.
     const RigExecBakedProgramImpl &B =
-        evaluator.GetBakedProgram()->GetStepGraph();
+        rigExec::RigExecBakedProgramAccess::StepGraph(
+            *evaluator.GetBakedProgram());
     const size_t ran = B.lastClosedSteps;
     const size_t total = B.steps.size();
     std::printf("  %s: %s, %zu of %zu step(s) ran\n", c.name.c_str(),
@@ -469,7 +471,8 @@ TestAConstraintInputSampleRunsItsCone(const std::string &examplesDir)
     CHECK(paths.size() == 1 &&
           paths[0] == kAim.AppendProperty(TfToken("inputs:defaultWeight")));
     const RigExecBakedProgramImpl &B =
-        evaluator.GetBakedProgram()->GetStepGraph();
+        rigExec::RigExecBakedProgramAccess::StepGraph(
+            *evaluator.GetBakedProgram());
     CHECK(B.anyEdited);
 }
 

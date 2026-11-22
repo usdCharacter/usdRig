@@ -26,6 +26,7 @@
 #include "rigExec/frozenContextInternal.h"
 #include "rigExec/backgroundScheduler.h"
 #include "rigExec/bakedProgram.h"
+#include "rigExec/bakedProgramImpl.h"
 #include "rigExec/frameCache.h"
 #include "rigExec/frameCacheSparsity.h"
 #include "rigExec/generation.h"
@@ -316,7 +317,8 @@ TestSamplerMatchesLiveReads()
                                    &inputs, &error));
     CHECK(error.empty());
     CHECK(inputs.time == UsdTimeCode(1.0));
-    const auto &B = evaluator.GetBakedProgram()->GetStepGraph();
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
     std::set<SdfPath> expectedKeys{
         SdfPath("/Asset/Rig/AlongX.avars:tx"),
         SdfPath("/Asset/Rig/AlongY.avars:ty"),
@@ -2221,7 +2223,8 @@ TestVolumeWeightsBurstMatchesPlain(const std::string &examplesDir)
     CHECK(evaluator.Compile(&errors));
     CHECK(evaluator.Evaluate(UsdTimeCode(1001.0)).valid);
     const RigExecBakedProgramImpl &B =
-        evaluator.GetBakedProgram()->GetStepGraph();
+        rigExec::RigExecBakedProgramAccess::StepGraph(
+            *evaluator.GetBakedProgram());
     CHECK(B.weightObjects.size() >= 2);
 
     RigExecChainSampleBindings pinned;
@@ -2316,7 +2319,8 @@ CheckFrozenWeightFramesMatchLive(RigExecRigEvaluator *evaluator,
 {
     const auto live = evaluator->Evaluate(time);
     CHECK(live.valid && !live.weightFrames.empty());
-    const auto &B = evaluator->GetBakedProgram()->GetStepGraph();
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator->GetBakedProgram());
     CHECK(KeysOf(live.weightFrames) == PlacedVolumeSlots(B));
     std::shared_ptr<const RigExecFrozenProgram> frozen;
     std::string error;
@@ -2420,7 +2424,8 @@ TestFrozenWeightFramesMatchLive(const std::string &examplesDir)
     // Not vacuous: the untapped volume is a volume slot, and the cone that
     // ran its placement step placed it (ty = 5) without publishing it.
     const RigExecBakedProgramImpl &B =
-        evaluator.GetBakedProgram()->GetStepGraph();
+        rigExec::RigExecBakedProgramAccess::StepGraph(
+            *evaluator.GetBakedProgram());
     const auto slot = B.index.find(outsidePath);
     CHECK(slot != B.index.end());
     if (slot == B.index.end() || !ranSlots) {
@@ -2493,7 +2498,8 @@ def Xform "Asset"
     }
     // The guide has distinct Base and Final placement producers; neither
     // reads outside the graph or belongs to an always-running cluster.
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     const std::vector<int> placements = VolumePlacementsClusters(B);
     for (const int placement : placements) {
         CHECK(placement >= 0 && !B.cones.always.Test(placement));
@@ -2889,7 +2895,8 @@ TestUnavailableTargetSamplesLocalInvalidRoles(const std::string &examplesDir)
                                    &before, &error));
     CHECK(!before.stageSeeds.xformBase.empty());
 
-    const auto &B = evaluator.GetBakedProgram()->GetStepGraph();
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
     // Sampling time 25 does not mutate the live buffers last evaluated at 1.
     // Refusal retains these buffers, not the independently sampled time-25 pose.
     RigExecStageFrameSeeds retained;
@@ -3336,7 +3343,8 @@ TestStaticLeavesFollowEdits()
     if (!program) {
         return;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     CHECK(B.verifyFrozenStatic);
     CHECK(B.revisionIndex.size() == 1);
     if (B.revisionIndex.size() != 1) {
@@ -3673,7 +3681,8 @@ TestTheSamplerServesSourceBackedReads(const std::string &examplesDir)
     if (!program) {
         return;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     CHECK(B.verifyFrozenStatic);
     CHECK(!B.sourceBackedPaths.empty());
     // The paths no other binding samples under the same key.
@@ -3741,7 +3750,8 @@ TestASourceBackedEditReachesTheNextVector()
     if (!program) {
         return;
     }
-    CHECK(program->GetStepGraph().sourceBackedPaths.count(restTxPath) == 1);
+    CHECK(rigExec::RigExecBakedProgramAccess::StepGraph(*program)
+              .sourceBackedPaths.count(restTxPath) == 1);
     RigExecChainSampleBindings bindings;
     std::string error;
     CHECK(RigExecBindChainSampleInputs(evaluator, &bindings, &error));
@@ -3815,7 +3825,8 @@ TestTheSamplerServesStaticBasesAndBlends(const std::string &examplesDir)
     if (!program) {
         return;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     CHECK(B.verifyFrozenStatic);
     CHECK(B.chains.size() == 1);
     // Every read the memo can hold here: the brow weight, the bases, and
@@ -5167,7 +5178,8 @@ TestRangeChainWarmsBitIdentical()
         return;
     }
     size_t ranged = 0;
-    for (const auto &chain : program->GetStepGraph().chains) {
+    for (const auto &chain :
+         rigExec::RigExecBakedProgramAccess::StepGraph(*program).chains) {
         for (const auto &revision : chain.revisions) {
             ranged +=
                 revision.rangeRole && chain.groupBounds.size() >= 3 &&
@@ -5189,7 +5201,8 @@ TestRangeChainWarmsBitIdentical()
     // Right after the freeze every published group, and every base group,
     // is the live one's: shared by refcount, never copied. The live bytes
     // are kept aside to show no frozen job writes into them.
-    const RigExecBakedProgramImpl &live = program->GetStepGraph();
+    const RigExecBakedProgramImpl &live =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     struct LiveGroup {
         const GfVec3f *data = nullptr;
         std::vector<GfVec3f> bytes;
@@ -5426,7 +5439,7 @@ TestAHeldFactsViewAndJobSurviveAValueEdit()
     }
     const VtValue *preDriver = preEdit.inputs.Find(driver);
     CHECK(preDriver != nullptr && preDriver->IsHolding<double>());
-    if (!preDriver) {
+    if (preDriver == nullptr || !preDriver->IsHolding<double>()) {
         return;
     }
     const RigExecRigPose liveBefore = evaluator.Evaluate(UsdTimeCode(2.0));
@@ -5467,10 +5480,12 @@ TestAHeldFactsViewAndJobSurviveAValueEdit()
     CHECK(postEdit.inputs.values.size() == preEdit.inputs.values.size());
     const VtValue *postDriver = postEdit.inputs.Find(driver);
     CHECK(postDriver != nullptr && postDriver->IsHolding<double>());
-    // The held job carries its own driver sample, so its answer cannot come
-    // from the patched program.
-    CHECK(preDriver != nullptr && postDriver != nullptr &&
-          preDriver->Get<double>() != postDriver->Get<double>());
+    if (postDriver == nullptr || !postDriver->IsHolding<double>()) {
+        return;
+    }
+    // The detached job carries its own driver sample, so its answer cannot
+    // come from the patched program.
+    CHECK(preDriver->Get<double>() != postDriver->Get<double>());
     const RigExecRigPose warmed = _RunDetachedFrozenJob(postEdit, &scheduler);
     CheckPosesBitIdentical("job bound after the value edit", liveAfter, warmed);
     CheckJobAccepted("job bound after the value edit", postEdit.inputs, warmed);
@@ -6011,7 +6026,8 @@ TestFrozenAssemblesFromLeaves(const std::string &examplesDir)
             // The keys the worker reads instead of building them: the
             // sampler's own, one per revision and four per weight object.
             const RigExecBakedProgramImpl &B =
-                evaluator.GetBakedProgram()->GetStepGraph();
+                rigExec::RigExecBakedProgramAccess::StepGraph(
+                    *evaluator.GetBakedProgram());
             CHECK(frozen->bindings->moverDefaultWeightKeys.size() ==
                   B.revisionIndex.size());
             for (size_t r = 0;
@@ -6075,7 +6091,8 @@ TestFrozenAssemblesFromLeaves(const std::string &examplesDir)
                         RigExecCaptureRetainedState(allSampled, {}, 0, 0, 0)));
             }
             const RigExecBakedProgramImpl &B =
-                evaluator.GetBakedProgram()->GetStepGraph();
+                rigExec::RigExecBakedProgramAccess::StepGraph(
+                    *evaluator.GetBakedProgram());
             const auto carried =
                 [&](const std::vector<VtValue> &values,
                     const RigExecBakedProgramImpl::GeomRevision &revision) {
@@ -6514,7 +6531,8 @@ CheckConstraintStageWarmsBitIdentical(const std::string &stagePath,
         CHECK(evaluator.Evaluate(UsdTimeCode(frame)).valid);
     }
     const RigExecBakedProgramImpl &B =
-        evaluator.GetBakedProgram()->GetStepGraph();
+        rigExec::RigExecBakedProgramAccess::StepGraph(
+            *evaluator.GetBakedProgram());
     CHECK(B.xformSlots.size() == expectXform);
     CHECK(B.nativeSources.size() == expectNative);
     CHECK(B.deltaBasePaths.size() == expectDelta);
@@ -6755,7 +6773,9 @@ TestAFrozenRewarmAfterAReleasedOverrideCarriesTheEdit(
     CHECK(evaluator.GetLastNoticeDisposition() ==
           RigExecNoticeDisposition::Edited);
     evaluator.SetInteractiveOverrides({});
-    CHECK(evaluator.GetBakedProgram()->GetStepGraph().anyEdited);
+    CHECK(rigExec::RigExecBakedProgramAccess::StepGraph(
+              *evaluator.GetBakedProgram())
+              .anyEdited);
 
     std::shared_ptr<const RigExecFrozenProgram> frozen;
     std::string error;
@@ -6835,7 +6855,7 @@ TestAStandingSnapshotPatchedAfterALiveRunCarriesTheEdit(
           RigExecNoticeDisposition::Edited);
     const RigExecRigPose live = evaluator.Evaluate(held);
     CHECK(live.valid);
-    CHECK(!program->GetStepGraph().anyEdited);
+    CHECK(!rigExec::RigExecBakedProgramAccess::StepGraph(*program).anyEdited);
     // The edit moved no avar: the digest alone would keep the snapshot.
     CHECK(RigExecFrozenAvarRegionDigest(*program) == avarDigest);
     CHECK(RigExecFrozenSnapshotOwesLiveEdits(*standing, *program));
@@ -6867,8 +6887,10 @@ TestAStandingSnapshotPatchedAfterALiveRunCarriesTheEdit(
     if (!patched) {
         return;
     }
-    CHECK(patched->avarPatch && patched->avarPatch->valueEditSerial ==
-                                    program->GetStepGraph().valueEditSerial);
+    CHECK(patched->avarPatch &&
+          patched->avarPatch->valueEditSerial ==
+              rigExec::RigExecBakedProgramAccess::StepGraph(*program)
+                  .valueEditSerial);
     CHECK(!RigExecFrozenSnapshotOwesLiveEdits(*patched, *program));
     ran = false;
     const RigExecRigPose warmed =
@@ -6985,7 +7007,8 @@ TestUnboundConstraintArrayKeysIgnoreEmptyRows()
     CHECK(baseline.valid);
     if (!evaluator.GetBakedProgram())
         return;
-    const auto &B = evaluator.GetBakedProgram()->GetStepGraph();
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
     CHECK(B.constraintArrays.size() == 1);
     std::shared_ptr<const RigExecFrozenProgram> frozen;
     std::string error;
@@ -7758,7 +7781,8 @@ TestPrecedingOwnChainFreezes(const std::string &examplesDir)
         ++failures;
         return;
     }
-    const RigExecBakedProgramImpl &B = coned.GetBakedProgram()->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*coned.GetBakedProgram());
     std::shared_ptr<const RigExecFrozenProgram> frozen;
     CHECK(RigExecFreezeProgram(coned, &frozen, &error));
     RigExecFrameInputs liftedInputs, weightedInputs;
@@ -7916,7 +7940,8 @@ TestVolumePlacementsFixtureFreezes(const std::string &examplesDir)
         // the placement of its base frame.
         const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
         const RigExecBakedProgramImpl &B =
-            evaluator.GetBakedProgram()->GetStepGraph();
+            rigExec::RigExecBakedProgramAccess::StepGraph(
+                *evaluator.GetBakedProgram());
         const auto slot = B.index.find(sphereB);
         const auto published = live.weightFrames.find(sphereB);
         CHECK(slot != B.index.end() && published != live.weightFrames.end());
@@ -7966,7 +7991,8 @@ TestFrozenVolumePlacementUsesTheSharedGate(const std::string &examplesDir)
     const RigExecRigPose live = evaluator.Evaluate(time);
     CHECK(live.valid);
     const RigExecBakedProgramImpl &B =
-        evaluator.GetBakedProgram()->GetStepGraph();
+        rigExec::RigExecBakedProgramAccess::StepGraph(
+            *evaluator.GetBakedProgram());
 
     // The first published volume and its VolumePlacements step.
     size_t slot = B.placedVolumes.size();
@@ -8118,7 +8144,8 @@ CheckRecomposingLadderFreezes(const _RecomposingLadderCase &c)
         return;
     }
     const RigExecBakedProgramImpl &B =
-        evaluator.GetBakedProgram()->GetStepGraph();
+        rigExec::RigExecBakedProgramAccess::StepGraph(
+            *evaluator.GetBakedProgram());
     CHECK(c.varying == !c.varyingSources.empty());
     for (const auto &path : c.varyingSources) {
         const auto attribute = stage->GetAttributeAtPath(path);
@@ -8560,7 +8587,8 @@ TestFrozenPropertySkinLayoutRecovery()
         CHECK(before.tag == after.tag && before.f32 == after.f32);
     }
     CHECK(evaluator.Evaluate(UsdTimeCode(1)).valid);
-    const auto &B = evaluator.GetBakedProgram()->GetStepGraph();
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
     bool walkedSkin = false, derivedExtent = false;
     for (const auto &chain : B.chains) {
         for (const auto &revision : chain.revisions)
@@ -8714,7 +8742,8 @@ TestFrozenEnvelopeVolumesRecovery(const std::string &examples)
             &heldReport);
         CHECK(heldReport.ran);
         CheckPosesBitIdentical("held envelope volume", pose, held);
-        const auto &graph = evaluator.GetBakedProgram()->GetStepGraph();
+        const auto &graph = rigExec::RigExecBakedProgramAccess::StepGraph(
+            *evaluator.GetBakedProgram());
         for (const auto &entry : heldReport.region) {
             CHECK(entry.step < graph.steps.size());
             if (entry.step < graph.steps.size())
@@ -8870,7 +8899,8 @@ TestAFreezeSharesTheConeTable(const std::string &examplesDir)
     if (!program) {
         return;
     }
-    const RigExecBakedProgramImpl &live = program->GetStepGraph();
+    const RigExecBakedProgramImpl &live =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     const size_t clusters = live.clustering.clusters.size();
     CHECK(clusters > 0);
     CHECK(live.cones.cone != nullptr);
@@ -8905,7 +8935,8 @@ TestAFreezeSharesTheConeTable(const std::string &examplesDir)
     const RigExecBakedProgram *rebuilt = evaluator.GetBakedProgram();
     CHECK(rebuilt != nullptr);
     if (rebuilt) {
-        const RigExecBakedProgramImpl &after = rebuilt->GetStepGraph();
+        const RigExecBakedProgramImpl &after =
+            rigExec::RigExecBakedProgramAccess::StepGraph(*rebuilt);
         CHECK(after.cones.cone != nullptr);
         CHECK(after.cones.cone.get() != table);
         CHECK(after.compiledProviderProgram.get() != providers);
@@ -9116,7 +9147,10 @@ TestBlendDeltasAlternateBuffers(const std::string &examplesDir)
         CHECK(pose.valid);
         const RigExecBakedProgram *program = evaluator.GetBakedProgram();
         const RigExecBakedProgramImpl::GeomRevision *revision =
-            program ? _RevisionOf(program->GetStepGraph(), mover) : nullptr;
+            program ? _RevisionOf(rigExec::RigExecBakedProgramAccess::StepGraph(
+                                      *program),
+                                  mover)
+                    : nullptr;
         CHECK(revision != nullptr);
         if (!revision) {
             return;
@@ -9180,11 +9214,12 @@ TestAClonesDropsIdleScratch(const std::string &examplesDir)
         return;
     }
     // Not vacuous: after its second packet the live revision holds a spare.
-    const RigExecBakedProgramImpl::GeomRevision *live =
-        _RevisionOf(program->GetStepGraph(), mover);
+    const RigExecBakedProgramImpl::GeomRevision *live = _RevisionOf(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program), mover);
     CHECK(live != nullptr);
     CHECK(live && live->deltasSpare.capacity() > 0);
-    CHECK(_HeldScratch(program->GetStepGraph()) > 0);
+    CHECK(_HeldScratch(
+              rigExec::RigExecBakedProgramAccess::StepGraph(*program)) > 0);
     std::shared_ptr<const RigExecFrozenProgram> frozen;
     std::string error;
     CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));

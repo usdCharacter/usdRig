@@ -1,6 +1,3 @@
-// The compiled rig as a sealed read-only view: the records it still lends by
-// index, and the queries that reach them without the builder. Chain, revision
-// and weight identity answers with published facts.
 #ifndef RIGEXEC_COMPILED_PROGRAM_H
 #define RIGEXEC_COMPILED_PROGRAM_H
 

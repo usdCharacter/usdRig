@@ -4438,6 +4438,14 @@ RigExecBakedRunProjectorTarget(const RigExecBakedProgramImpl &B,
                                GfMatrix4d *matrix,
                                std::vector<std::string> *diagnostics);
 
+/// The step graph, for this library's own compile, schedule and replay code.
+/// The program keeps the graph private; only this route reaches it, and this
+/// header is not installed.
+struct RigExecBakedProgramAccess {
+    static const RigExecBakedProgramImpl &
+    StepGraph(const RigExecBakedProgram &program);
+};
+
 /// Test-only access to evaluator state a baked run must not touch.
 struct RigExecBakedProgramTesting {
     /// Enables live per-operation exec witnesses. Build and Evaluate are

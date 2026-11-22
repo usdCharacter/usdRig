@@ -779,7 +779,9 @@ TestAnAnimatedRestRigServesWarmedHits()
     CHECK(program != nullptr);
     // Not vacuous: the ladder is read per frame, which the freeze refused
     // before the worker ran the rest tier.
-    CHECK(program && program->GetStepGraph().ladderVarying);
+    CHECK(
+        program &&
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program).ladderVarying);
     std::string why;
     CHECK(RigExecCanFreezeProgram(bridge->GetEvaluator(), &why));
     if (!why.empty()) {
@@ -4881,8 +4883,8 @@ TestDragReleaseRewarmsAffected()
                                      VtValue(999.0)};
         const RigExecControlId id = RigExecControlIdForOverride(o);
         CHECK(index->IsKnownControl(id));
-        const std::vector<int> seeds =
-            RigExecOverrideSeeds(program->GetStepGraph(), o);
+        const std::vector<int> seeds = RigExecOverrideSeeds(
+            rigExec::RigExecBakedProgramAccess::StepGraph(*program), o);
         CHECK(!seeds.empty());
         CHECK(index->SeedsForControl(id) == seeds);
     }

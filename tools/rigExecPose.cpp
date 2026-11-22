@@ -121,7 +121,8 @@ EvaluateChecked(rigExec::RigExecRigEvaluator &evaluator, UsdTimeCode time)
         const auto *program = evaluator.GetBakedProgram();
         size_t expected = 0;
         if (program)
-            for (const auto &chain : program->GetStepGraph().chains)
+            for (const auto &chain :
+                 rigExec::RigExecBakedProgramAccess::StepGraph(*program).chains)
                 if (chain.haveBase && chain.haveResult)
                     ++expected;
         if (pose.referenceAgreements + pose.referenceMismatches != expected) {
@@ -725,7 +726,8 @@ _VerifySampledInputs(const rigExec::RigExecRigEvaluator &evaluator,
                            "against");
         return check;
     }
-    const rigExec::RigExecBakedProgramImpl &graph = program->GetStepGraph();
+    const rigExec::RigExecBakedProgramImpl &graph =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     std::vector<char> visited(reader.GetInputCount(), 0);
     const auto compare = [&](const std::string &name, size_t index,
                              bool answered, const VtValue &read) {
