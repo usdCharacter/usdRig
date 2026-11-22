@@ -17,6 +17,7 @@ void RegisterWrinkleOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterSurfaceProjectOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterMatrixDeformOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterSkinOps(rigExec::RigExecOpRegistrar &registrar);
+void RegisterBlendShapeOps(rigExec::RigExecOpRegistrar &registrar);
 
 } // namespace rigExecOps
 

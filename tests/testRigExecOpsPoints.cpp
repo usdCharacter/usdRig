@@ -8,6 +8,7 @@
 #include "rigExecMath/geometryKernels.h"
 #include "rigExecMath/simdKernels.h"
 #include "rigExecMath/solvers.h"
+#include "rigExecOps/deform/blendShapeOp.h"
 #include "rigExecOps/deform/deltaMushOp.h"
 #include "rigExecOps/deform/latticeOp.h"
 #include "rigExecOps/deform/matrixDeformOp.h"
@@ -867,6 +868,224 @@ TestSkin()
     CHECK(!empty.Run({&in, &transforms, &indexArray, &weightArray}, &actual));
 }
 
+// The baked channel sum, spelled out in Gf: dense pairs lerp their deltas,
+// anything sparse accumulates each endpoint over its own indices.
+struct RefSample {
+    float activation;
+    std::vector<GfVec3f> points;
+    std::vector<GfVec3f> offsets;
+    std::vector<int> indices;
+    bool sparse;
+};
+
+std::vector<GfVec3f>
+RefBlendDeltas(const std::vector<std::vector<RefSample>> &channels,
+               const std::vector<float> &weights,
+               const std::vector<GfVec3f> &base)
+{
+    std::vector<GfVec3f> deltas(base.size(), GfVec3f(0));
+    const auto add = [&](const RefSample &s, float scale) {
+        if (!s.sparse) {
+            for (size_t i = 0; i < base.size(); ++i)
+                deltas[i] += (s.points[i] - base[i]) * scale;
+        } else if (s.indices.empty()) {
+            for (size_t i = 0; i < s.offsets.size(); ++i)
+                deltas[i] += s.offsets[i] * scale;
+        } else {
+            for (size_t k = 0; k < s.indices.size(); ++k)
+                deltas[size_t(s.indices[k])] += s.offsets[k] * scale;
+        }
+    };
+    for (size_t c = 0; c < channels.size(); ++c) {
+        const auto &samples = channels[c];
+        const float raw = std::isfinite(weights[c]) ? weights[c] : 0.0f;
+        const float w =
+            std::min(std::max(raw, 0.0f), samples.back().activation);
+        if (w == 0.0f)
+            continue;
+        size_t hi = 0;
+        while (hi + 1 < samples.size() && samples[hi].activation < w)
+            ++hi;
+        const float aHi = samples[hi].activation;
+        const float aLo = hi ? samples[hi - 1].activation : 0.0f;
+        const float t = aHi > aLo ? (w - aLo) / (aHi - aLo) : 1.0f;
+        const RefSample *lo = hi ? &samples[hi - 1] : nullptr;
+        if (!samples[hi].sparse && (!lo || !lo->sparse)) {
+            for (size_t i = 0; i < base.size(); ++i) {
+                const GfVec3f dHi = samples[hi].points[i] - base[i];
+                const GfVec3f dLo = lo ? lo->points[i] - base[i] : GfVec3f(0);
+                deltas[i] += dLo + (dHi - dLo) * t;
+            }
+            continue;
+        }
+        if (lo)
+            add(*lo, 1.0f - t);
+        add(samples[hi], t);
+    }
+    return deltas;
+}
+
+void
+TestBlendShape()
+{
+    using namespace rigExecOps;
+    const Grid grid(9, 31);
+    const std::vector<GfVec3f> &base = grid.points;
+    std::vector<GfVec3f> posed = base;
+    for (GfVec3f &p : posed)
+        p = GfVec3f(p[0], p[1] + 0.05f * p[0] * p[0], p[2] + 0.5f);
+    const size_t n = base.size();
+    std::mt19937 rng(11);
+    std::uniform_real_distribution<float> unit(-0.3f, 0.3f);
+    const auto moved = [&] {
+        std::vector<GfVec3f> pts = base;
+        for (GfVec3f &p : pts)
+            p += GfVec3f(unit(rng), unit(rng), unit(rng));
+        return pts;
+    };
+    const auto offsets = [&](size_t count) {
+        std::vector<GfVec3f> o(count);
+        for (GfVec3f &v : o)
+            v = GfVec3f(unit(rng), unit(rng), unit(rng));
+        return o;
+    };
+    std::vector<int> some;
+    for (size_t i = 0; i < n; i += 7)
+        some.push_back(int(i));
+    some.push_back(3); // a repeated index accumulates twice
+
+    // Dense pair, sparse pair, mixed pair, full-length layout, single.
+    std::vector<std::vector<RefSample>> ref = {
+        {{0.5f, moved(), {}, {}, false}, {1.0f, moved(), {}, {}, false}},
+        {{0.4f, {}, offsets(some.size()), some, true},
+         {1.0f, {}, offsets(some.size()), some, true}},
+        {{0.3f, moved(), {}, {}, false},
+         {0.9f, {}, offsets(some.size()), some, true}},
+        {{1.0f, {}, offsets(n), {}, true}},
+        {{1.0f, moved(), {}, {}, false}},
+    };
+    BlendShapePayload payload;
+    for (const auto &samples : ref) {
+        BlendShapeChannel channel;
+        for (const RefSample &r : samples) {
+            BlendShapeSample s;
+            s.activation = r.activation;
+            if (r.sparse) {
+                auto layout = std::make_shared<BlendShapeLayout>();
+                for (const GfVec3f &o : r.offsets)
+                    layout->offsets.push_back(Vec3f(o[0], o[1], o[2]));
+                layout->indices = r.indices;
+                layout->pointCount = n;
+                layout->valid = true;
+                s.layout = layout;
+            } else {
+                for (const GfVec3f &q : r.points)
+                    s.points.push_back(Vec3f(q[0], q[1], q[2]));
+            }
+            channel.samples.push_back(std::move(s));
+        }
+        payload.channels.push_back(std::move(channel));
+    }
+    std::vector<float> envelope(n);
+    for (size_t i = 0; i < n; ++i)
+        envelope[i] = 0.09f * (i % 13);
+    const Points in = ToStd(posed), baseArray = ToStd(base);
+    const auto envelopeArray = ToArray(envelope);
+    const auto counts = ToArray(grid.counts);
+    const auto indices = ToArray(grid.indices);
+
+    const std::vector<std::vector<float>> weightSets = {
+        {0.7f, 0.2f, 0.6f, 1.0f, 0.5f},
+        {0.0f, 1.3f, 0.3f, -1.0f, NAN},
+        {0.5f, 0.4f, 0.95f, 0.25f, 1.0f},
+    };
+    for (const bool surfaceFrame : {false, true})
+        for (const auto &w : weightSets) {
+            payload.surfaceFrame = surfaceFrame;
+            const auto weightArray = ToArray(w);
+            std::vector<GfVec3f> deltas = RefBlendDeltas(ref, w, base);
+            if (surfaceFrame) {
+                std::vector<GfVec3f> transported;
+                CHECK(RigExecTransportSurfaceOffsets(base, posed, grid.counts,
+                                                     grid.indices, deltas,
+                                                     &transported));
+                deltas = transported;
+            }
+            std::vector<GfVec3f> expected = posed;
+            for (size_t i = 0; i < n; ++i)
+                expected[i] = posed[i] + deltas[i];
+            Node full(BlendShape(),
+                      {&BlendShapePoints(), &BlendShapeWeights(),
+                       &BlendShapeBase(), &BlendShapeRest(),
+                       &BlendShapeCounts(), &BlendShapeIndices()},
+                      BlendShapeOut(), &payload);
+            Points actual;
+            CHECK(full.Run(
+                {&in, &weightArray, &baseArray, &baseArray, &counts, &indices},
+                &actual));
+            if (!SameBits(expected, actual)) {
+                std::printf("blend shape frame %d differs\n",
+                            int(surfaceFrame));
+                CHECK(false);
+            }
+            Blend(posed, envelope, &expected);
+            Node weighted(BlendShape(),
+                          {&BlendShapePoints(), &BlendShapeWeights(),
+                           &BlendShapeBase(), &BlendShapeRest(),
+                           &BlendShapeCounts(), &BlendShapeIndices(),
+                           &BlendShapeEnvelope()},
+                          BlendShapeOut(), &payload);
+            CHECK(weighted.Run({&in, &weightArray, &baseArray, &baseArray,
+                                &counts, &indices, &envelopeArray},
+                               &actual));
+            if (!SameBits(expected, actual)) {
+                std::printf("blend shape envelope frame %d differs\n",
+                            int(surfaceFrame));
+                CHECK(false);
+            }
+        }
+
+    // Base defaults to the incoming points.
+    payload.surfaceFrame = false;
+    {
+        const auto weightArray = ToArray(weightSets[0]);
+        const std::vector<GfVec3f> deltas =
+            RefBlendDeltas(ref, weightSets[0], posed);
+        std::vector<GfVec3f> expected = posed;
+        for (size_t i = 0; i < n; ++i)
+            expected[i] = posed[i] + deltas[i];
+        Node node(BlendShape(), {&BlendShapePoints(), &BlendShapeWeights()},
+                  BlendShapeOut(), &payload);
+        Points actual;
+        CHECK(node.Run({&in, &weightArray}, &actual));
+        CHECK(SameBits(expected, actual));
+    }
+
+    // Refusals: weight count, a short dense target, repeated activations,
+    // and a surface frame with no rest mesh.
+    Node node(BlendShape(), {&BlendShapePoints(), &BlendShapeWeights()},
+              BlendShapeOut(), &payload);
+    Points actual;
+    const RigExecArray<float> shortWeights(weightSets[0].data(), 4);
+    CHECK(!node.Run({&in, &shortWeights}, &actual));
+    const auto weightArray = ToArray(weightSets[0]);
+    BlendShapePayload bad = payload;
+    bad.channels[4].samples[0].points.pop_back();
+    Node shortTarget(BlendShape(), {&BlendShapePoints(), &BlendShapeWeights()},
+                     BlendShapeOut(), &bad);
+    CHECK(!shortTarget.Run({&in, &weightArray}, &actual));
+    bad = payload;
+    bad.channels[0].samples[0].activation = 1.0f;
+    Node repeated(BlendShape(), {&BlendShapePoints(), &BlendShapeWeights()},
+                  BlendShapeOut(), &bad);
+    CHECK(!repeated.Run({&in, &weightArray}, &actual));
+    bad = payload;
+    bad.surfaceFrame = true;
+    Node noRest(BlendShape(), {&BlendShapePoints(), &BlendShapeWeights()},
+                BlendShapeOut(), &bad);
+    CHECK(!noRest.Run({&in, &weightArray}, &actual));
+}
+
 } // namespace
 
 int
@@ -886,6 +1105,7 @@ main()
     TestSurfaceProject();
     TestMatrixDeform();
     TestSkin();
+    TestBlendShape();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;
