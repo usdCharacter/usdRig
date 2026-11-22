@@ -273,6 +273,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                                         _CompileFailure *failure)
 {
     RIGEXEC_PROFILE_SCOPE_CAT(_profiler, "Compile", "compile");
+    const uint64_t compileSerial = _stageEditSerial;
     // Exec preparation may load Python plugins on a worker. Release the GIL
     // through dispatcher destruction too, since early returns still join tasks.
     TF_PY_ALLOW_THREADS_IN_SCOPE();
@@ -4089,7 +4090,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                     _hierDescendants[i].push_back(static_cast<int>(j));
         }
     }
-    _structureDirty = false;
+    // A notice that landed during this compile still stands.
+    _structureDirty = _stageEditSerial != compileSerial;
     // Compile the complete native domain graph for this compiled rig.
     _RebuildBakedProgram(std::move(retiringBakedProgram),
                          compileSceneReusable ? compileScene.get() : nullptr,
@@ -4180,6 +4182,7 @@ RigExecRigEvaluator::_CompileUnlessKnownBroken(
 bool
 RigExecRigEvaluator::_SettleCompiledRig(std::vector<std::string> *diagnostics)
 {
+    const uint64_t settleSerial = _stageEditSerial;
     if (!_compiled && !_CompileUnlessKnownBroken(diagnostics)) {
         return false;
     }
@@ -4249,9 +4252,11 @@ RigExecRigEvaluator::_SettleCompiledRig(std::vector<std::string> *diagnostics)
             std::fflush(stderr);
         }
     }
-    _structureDirty = false;
-    _certainCandidates.clear();
-    _certainCandidatesOverflowed = false;
+    if (_stageEditSerial == settleSerial) {
+        _structureDirty = false;
+        _certainCandidates.clear();
+        _certainCandidatesOverflowed = false;
+    }
     _restEditedProviders.clear();
     return true;
 }
