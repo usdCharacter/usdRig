@@ -7,6 +7,7 @@
 #include "rigExecMath/envelope.h"
 #include "rigExecMath/geometryKernels.h"
 #include "rigExecOps/deform/deltaMushOp.h"
+#include "rigExecOps/deform/latticeOp.h"
 #include "rigExecOps/deform/pointOps.h"
 
 #include "pxr/base/gf/rotation.h"
@@ -98,10 +99,10 @@ struct Node {
 
     Node(const RigExecOpHandle &op,
          const std::vector<const RigExecPortHandle *> &ins,
-         const RigExecPortHandle &output)
+         const RigExecPortHandle &output, const void *payload = nullptr)
     {
         RigExecRigDescBuilder b;
-        const RigExecNodeId node = b.AddOp(op);
+        const RigExecNodeId node = b.AddOp(op, payload);
         for (const RigExecPortHandle *port : ins)
             inputs.push_back(b.BindInput(node, *port));
         out = b.BindOutput(node, output);
@@ -317,6 +318,166 @@ TestDeltaMush()
             }
 }
 
+/// A cage of d.x * d.y * d.z points over [lo, hi], x fastest, jittered.
+std::vector<GfVec3f>
+Cage(const GfVec3i &d, const GfVec3f &lo, const GfVec3f &hi, float jitter,
+     unsigned seed)
+{
+    std::mt19937 rng(seed);
+    std::uniform_real_distribution<float> j(-jitter, jitter);
+    std::vector<GfVec3f> cage;
+    for (int z = 0; z < d[2]; ++z)
+        for (int y = 0; y < d[1]; ++y)
+            for (int x = 0; x < d[0]; ++x) {
+                const GfVec3f t(d[0] > 1 ? float(x) / (d[0] - 1) : 0.5f,
+                                d[1] > 1 ? float(y) / (d[1] - 1) : 0.5f,
+                                d[2] > 1 ? float(z) / (d[2] - 1) : 0.5f);
+                cage.emplace_back(lo[0] + t[0] * (hi[0] - lo[0]) + j(rng),
+                                  lo[1] + t[1] * (hi[1] - lo[1]) + j(rng),
+                                  lo[2] + t[2] * (hi[2] - lo[2]) + j(rng));
+            }
+    return cage;
+}
+
+void
+CheckLattice(Node &node, const std::vector<const void *> &values,
+             const std::vector<GfVec3f> &expected, bool ok, const char *what)
+{
+    Points actual;
+    std::string error;
+    const bool ran = node.Run(values, &actual, &error);
+    if (ran != ok || (ok && !SameBits(expected, actual))) {
+        std::printf("lattice %s: ran %d, expected %d %s\n", what, int(ran),
+                    int(ok), error.c_str());
+        CHECK(false);
+    }
+}
+
+void
+TestLattice()
+{
+    using namespace rigExecOps;
+    const Grid grid(9, 3);
+    const Points in = ToStd(grid.points);
+    std::vector<float> envelope(grid.points.size());
+    for (size_t i = 0; i < envelope.size(); ++i)
+        envelope[i] = 0.09f * (i % 12);
+    const auto envelopeArray = ToArray(envelope);
+    const Points rest = ToStd(grid.points);
+
+    // Bound: the bind box from the rest cage, the posed cage moved.
+    for (const GfVec3i &d :
+         {GfVec3i(2, 2, 2), GfVec3i(3, 4, 2), GfVec3i(4, 3, 5)}) {
+        const auto restCage =
+            Cage(d, GfVec3f(-0.5f, -0.5f, -2), GfVec3f(8.5f, 8.5f, 2), 0, 1);
+        const auto posedCage =
+            Cage(d, GfVec3f(-1, -0.2f, -2.5f), GfVec3f(9, 9.5f, 1.5f), 0.4f,
+                 d[0] * 7u + d[2]);
+        const Points restCageArray = ToStd(restCage);
+        const Points posedCageArray = ToStd(posedCage);
+        LatticePayload payload;
+        payload.divisions = {d[0], d[1], d[2]};
+        std::vector<GfVec3f> expected = grid.points;
+        RigExecApplyLattice(&expected, grid.points, restCage, posedCage, d);
+        CHECK(expected != grid.points);
+
+        Node plain(Lattice(),
+                   {&LatticePoints(), &LatticeRestPoints(), &LatticeRestCage(),
+                    &LatticePosedCage()},
+                   LatticeOut(), &payload);
+        CheckLattice(plain, {&in, &rest, &restCageArray, &posedCageArray},
+                     expected, true, "bound");
+
+        Node enveloped(Lattice(),
+                       {&LatticePoints(), &LatticeRestPoints(),
+                        &LatticeRestCage(), &LatticePosedCage(),
+                        &LatticeEnvelope()},
+                       LatticeOut(), &payload);
+        Blend(grid.points, envelope, &expected);
+        CheckLattice(
+            enveloped,
+            {&in, &rest, &restCageArray, &posedCageArray, &envelopeArray},
+            expected, true, "bound enveloped");
+
+        // A bound lattice without its rest inputs is an error.
+        Node unbound(Lattice(), {&LatticePoints(), &LatticePosedCage()},
+                     LatticeOut(), &payload);
+        CheckLattice(unbound, {&in, &posedCageArray}, {}, false, "unbound");
+    }
+
+    // Regular grid: posed node offsets from the grid positions.
+    GfMatrix4d toLattice(1.0);
+    toLattice.SetRotate(GfRotation(GfVec3d(0.3, 0.2, 1), 20.0));
+    toLattice.SetTranslateOnly(GfVec3d(-4, -4, 0.5));
+    const GfMatrix4d fromLattice = RigExecSurfaceSnapAffineInverse(toLattice);
+    GfMatrix4d cageToLattice(1.0);
+    cageToLattice.SetScale(GfVec3d(1.0, 1.1, 0.9));
+    const auto toLatticeStd = ToStd(toLattice);
+    const auto fromLatticeStd = ToStd(fromLattice);
+    const auto cageToLatticeStd = ToStd(cageToLattice);
+    using Interp = RigExecLatticeInterpolation;
+    for (const GfVec3i &d : {GfVec3i(4, 4, 3), GfVec3i(5, 1, 6)})
+        for (const Interp mode : {Interp::BSpline, Interp::Linear,
+                                  Interp::Cardinal, Interp::CatmullRom})
+            for (const bool masked : {false, true}) {
+                LatticePayload payload;
+                payload.divisions = {d[0], d[1], d[2]};
+                RigExecLatticeSettings &s = payload.settings;
+                s.regularGrid = true;
+                s.interpolation = {mode, Interp::BSpline, mode};
+                s.origin = {-5, -5, -2};
+                s.spacing = {10.0f / (d[0] > 1 ? d[0] - 1 : 1),
+                             10.0f / (d[1] > 1 ? d[1] - 1 : 1),
+                             4.0f / (d[2] > 1 ? d[2] - 1 : 1)};
+                s.strength = masked ? 0.7f : 1.0f;
+                if (masked)
+                    s.mask = envelope;
+                const auto posedCage = Cage(d, GfVec3f(-5, -5, -2),
+                                            GfVec3f(5, 5, 2), 0.6f, 3u + d[0]);
+                const Points posedCageArray = ToStd(posedCage);
+
+                std::vector<GfVec3f> expected = grid.points;
+                CHECK((RigExecApplyLatticeGridKernel<GfVec3f, GfVec3d>(
+                    &expected, posedCage, d, s, toLattice, fromLattice,
+                    cageToLattice)));
+                CHECK(expected != grid.points);
+                Node spaced(Lattice(),
+                            {&LatticePoints(), &LatticePosedCage(),
+                             &LatticeTargetToLattice(),
+                             &LatticeLatticeToTarget(), &LatticeCageToLattice(),
+                             &LatticeEnvelope()},
+                            LatticeOut(), &payload);
+                std::vector<GfVec3f> blended = expected;
+                Blend(grid.points, envelope, &blended);
+                CheckLattice(spaced,
+                             {&in, &posedCageArray, &toLatticeStd,
+                              &fromLatticeStd, &cageToLatticeStd,
+                              &envelopeArray},
+                             blended, true, "grid");
+
+                // Unfed spaces are identity.
+                expected = grid.points;
+                CHECK((RigExecApplyLatticeGridKernel<GfVec3f, GfVec3d>(
+                    &expected, posedCage, d, s, GfMatrix4d(1.0),
+                    GfMatrix4d(1.0), GfMatrix4d(1.0))));
+                Node plain(Lattice(), {&LatticePoints(), &LatticePosedCage()},
+                           LatticeOut(), &payload);
+                CheckLattice(plain, {&in, &posedCageArray}, expected, true,
+                             "grid identity");
+
+                // A cage of the wrong count is refused by both.
+                const Points shortCage(posedCageArray.Data(),
+                                       posedCageArray.Size() - 1);
+                std::vector<GfVec3f> refused = grid.points;
+                CHECK((!RigExecApplyLatticeGridKernel<GfVec3f, GfVec3d>(
+                    &refused,
+                    std::vector<GfVec3f>(posedCage.begin(),
+                                         posedCage.end() - 1),
+                    d, s, GfMatrix4d(1.0), GfMatrix4d(1.0), GfMatrix4d(1.0))));
+                CheckLattice(plain, {&in, &shortCage}, {}, false, "short cage");
+            }
+}
+
 } // namespace
 
 int
@@ -331,6 +492,7 @@ main()
     TestSmooth();
     TestVolumeCorrect();
     TestDeltaMush();
+    TestLattice();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

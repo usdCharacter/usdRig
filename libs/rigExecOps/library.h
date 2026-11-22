@@ -12,6 +12,7 @@ namespace rigExecOps {
 void RegisterPropertyMathOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterPointOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterDeltaMushOps(rigExec::RigExecOpRegistrar &registrar);
+void RegisterLatticeOps(rigExec::RigExecOpRegistrar &registrar);
 
 } // namespace rigExecOps
 
