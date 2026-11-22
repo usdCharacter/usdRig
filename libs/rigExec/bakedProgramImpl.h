@@ -483,9 +483,6 @@ struct RigExecBakedSparseInputs {
     uint64_t pass = 0;
 };
 
-/// The evaluator's execution records: the geometry chain, its revisions and
-/// the weight objects a run mutates. Only the compiled program's own storage
-/// holds these; the sealed view answers their identity with facts.
 struct RigExecBakedGeomRevision {
     RigExecGeometryRecord kernelRecord;
     RigExecSceneGeometryDescriptor sceneGeometry;
@@ -1134,8 +1131,6 @@ struct RigExecBakedWeightObject {
 };
 
 struct RigExecBakedProgramImpl {
-    // The records defined above keep these short spellings for the build and
-    // run halves; the rest live in compiledProgram.h.
     using ConstraintArrays = RigExecBakedConstraintArray;
     using NativeXformSource = RigExecBakedNativeXformSource;
     using Ladder = RigExecBakedLadder;

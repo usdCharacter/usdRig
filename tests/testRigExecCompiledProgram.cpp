@@ -8,10 +8,13 @@
 #include "rigExec/frozenContext.h"
 #include "rigExec/rigEvaluator.h"
 #include "rigExecSchema/schemaNames.h"
+#include "rigExecSchema/schemaTokens.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/staticTokens.h"
 #include "pxr/usd/sdf/types.h"
 #include "pxr/usd/usd/stage.h"
+#include "pxr/usd/usdGeom/points.h"
+#include "pxr/usd/usdGeom/tokens.h"
 #include <cstdio>
 #include <map>
 #include <string>
@@ -21,12 +24,8 @@
 PXR_NAMESPACE_USING_DIRECTIVE
 using namespace rigExec;
 
-// Schema names the skinned-mesh fixture below authors, each declared once;
-// RigExec spellings stay single-sourced in schemaNames.h.
 TF_DEFINE_PRIVATE_TOKENS(
     _sealedViewTokens,
-    ((points, "points"))
-    ((pointsType, "Points"))
     ((control, rigExec::SchemaTypeName::RigExecControl))
     ((avarsTx, rigExec::SchemaAttrText::avarsTx))
     ((skinMover, rigExec::SchemaTypeName::RigExecSkinMover))
@@ -72,23 +71,23 @@ UsdStageRefPtr
 MakeStage()
 {
     auto stage = UsdStage::CreateInMemory();
-    stage->DefinePrim(SdfPath("/View"), TfToken("Scope"));
+    stage->DefinePrim(SdfPath("/View"), UsdGeomTokens->Scope);
     const SdfPath root("/View/Rig");
-    stage->DefinePrim(root, TfToken("RigExecRoot"));
+    stage->DefinePrim(root, SchemaType::RigExecRoot);
     auto channels =
-        stage->DefinePrim(SdfPath("/View/Channels"), TfToken("Scope"));
+        stage->DefinePrim(SdfPath("/View/Channels"), UsdGeomTokens->Scope);
     const auto own = channels.CreateAttribute(TfToken("own"),
                                               SdfValueTypeNames->Double, true);
     CHECK(own.Set(3.0));
     const auto math = [&](const char *name, float argument) {
         auto prim = stage->DefinePrim(root.AppendChild(TfToken(name)),
-                                      TfToken("RigExecFloatMathMover"));
-        CHECK(prim.ApplyAPI(TfToken("RigExecMoverAPI")));
-        CHECK(prim.GetRelationship(TfToken("rigExec:moves"))
+                                      SchemaType::RigExecFloatMathMover);
+        CHECK(prim.ApplyAPI(SchemaType::RigExecMoverAPI));
+        CHECK(prim.GetRelationship(SchemaAttr::rigExecMoves)
                   .SetTargets({own.GetPath()}));
-        CHECK(prim.GetAttribute(TfToken("rigExec:operation"))
-                  .Set(TfToken("add")));
-        CHECK(prim.GetAttribute(TfToken("inputs:value")).Set(argument));
+        CHECK(prim.GetAttribute(SchemaAttr::rigExecOperation)
+                  .Set(TfToken(SchemaValueText::add)));
+        CHECK(prim.GetAttribute(SchemaAttr::inputsValue).Set(argument));
         return prim;
     };
     math("AFirst", 1.0f);
@@ -97,15 +96,14 @@ MakeStage()
     // A skinned mesh, so the chain, revision and weight loops below have
     // records to compare against rather than running empty.
     const SdfPath geomPath("/View/Geom/Panel");
+    const UsdPrim mesh = UsdGeomPoints::Define(stage, geomPath).GetPrim();
     const SdfPath pointsProp =
-        geomPath.AppendProperty(_sealedViewTokens->points);
-    const UsdPrim mesh =
-        stage->DefinePrim(geomPath, _sealedViewTokens->pointsType);
+        mesh.GetPath().AppendProperty(UsdGeomTokens->points);
     VtVec3fArray panelPoints(4);
     for (size_t i = 0; i < panelPoints.size(); ++i) {
         panelPoints[i] = GfVec3f(float(i), float(i % 2), 0.0f);
     }
-    CHECK(mesh.GetAttribute(_sealedViewTokens->points).Set(panelPoints));
+    CHECK(mesh.GetAttribute(UsdGeomTokens->points).Set(panelPoints));
     const UsdPrim joint = stage->DefinePrim(SdfPath("/View/Rig/Joint"),
                                             _sealedViewTokens->control);
     CHECK(joint.GetAttribute(_sealedViewTokens->avarsTx).Set(1.0));
@@ -273,10 +271,6 @@ TestView()
     CHECK(V.GetConstraintCount() == B.constraints.size());
     for (size_t i = 0; i < B.constraints.size(); ++i) {
         CHECK(&V.GetConstraint(i) == &B.constraints[i]);
-    }
-    CHECK(V.GetSolverCount() == B.solvers.size());
-    for (size_t i = 0; i < B.solvers.size(); ++i) {
-        CHECK(&V.GetSolver(i) == &B.solvers[i]);
     }
     CHECK(V.GetSolverArrayCount() == B.solverArrays.size());
     CHECK(&V.GetSolverArrays() == &B.solverArrays);

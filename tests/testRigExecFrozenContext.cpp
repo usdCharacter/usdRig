@@ -49,6 +49,8 @@
 #include "pxr/usd/usd/relationship.h"
 #include "pxr/usd/usd/resolveInfo.h"
 #include "pxr/usd/usd/stage.h"
+#include "pxr/usd/usdGeom/points.h"
+#include "pxr/usd/usdGeom/tokens.h"
 
 #include <algorithm>
 #include <atomic>
@@ -60,6 +62,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -5280,22 +5283,6 @@ TestRangeChainWarmsBitIdentical()
           two != warm2.movedProperties.end() && one->second != two->second);
 }
 
-// Held views across an edit: the compiled-facts reference borrowed from a
-// shared version, and a warming job bound before the edit, both read after
-// it landed. The facts queries and the counts that guard them are the only
-// route these tests take to the compiled chain.
-
-// Schema names the structural-rebuild fixture below authors, each declared
-// once; the RigExec spelling stays single-sourced in schemaNames.h.
-TF_DEFINE_PRIVATE_TOKENS(
-    _heldViewTokens,
-    ((points, "points"))
-    ((pointsType, "Points"))
-    ((moves, rigExec::SchemaAttrText::rigExecMoves))
-);
-
-// The points \p target publishes in \p pose, as exact bytes; empty when the
-// pose publishes no such array.
 static std::vector<std::byte>
 _PublishedPointBytes(const RigExecRigPose &pose, const SdfPath &target)
 {
@@ -5313,32 +5300,25 @@ _PublishedPointBytes(const RigExecRigPose &pose, const SdfPath &target)
     return bytes;
 }
 
-// The (chain, revision) index whose published facts name \p moverPath over
-// \p target, false when \p view names no such revision.
-static bool
+static std::optional<std::pair<size_t, size_t>>
 _FindRevisionFacts(const RigExecCompiledProgram &view, const SdfPath &moverPath,
-                   const SdfPath &target, size_t *chainIndex,
-                   size_t *revisionIndex)
+                   const SdfPath &target)
 {
     for (size_t c = 0; c < view.GetChainCount(); ++c) {
         for (size_t r = 0; r < view.GetChainRevisionCount(c); ++r) {
             const RigExecCompiledRevisionFacts &facts =
                 view.GetChainRevisionFacts(c, r);
             if (facts.moverPath == moverPath && facts.target == target) {
-                *chainIndex = c;
-                *revisionIndex = r;
-                return true;
+                return std::make_pair(c, r);
             }
         }
     }
-    return false;
+    return std::nullopt;
 }
 
-// A warming job bound before a stage edit: the snapshot, the sampled inputs,
-// the compiled-rig pin and the arena size are what the standing program
-// promised at bind time, so running it later answers that version and no
-// live state.
-struct _HeldFrozenJob {
+// A detached replay, not a publication: the run reads only the inputs it
+// captured at bind time, and opens no frame-cache entry.
+struct _DetachedFrozenJob {
     SdfPath rig;
     std::shared_ptr<const RigExecFrozenProgram> frozen;
     RigExecFrameInputs inputs;
@@ -5348,43 +5328,42 @@ struct _HeldFrozenJob {
 };
 
 static bool
-_BindHeldFrozenJob(RigExecRigEvaluator &evaluator, const SdfPath &rig,
-                   UsdTimeCode time, _HeldFrozenJob *job)
+_BindDetachedFrozenJob(RigExecRigEvaluator &evaluator, const SdfPath &rig,
+                       UsdTimeCode time, _DetachedFrozenJob &job)
 {
     std::string error;
-    job->rig = rig;
-    if (!RigExecFreezeProgram(evaluator, &job->frozen, &error) ||
-        !job->frozen) {
-        std::printf("FAIL held job at %g: the freeze refused: %s\n",
+    job.rig = rig;
+    if (!RigExecFreezeProgram(evaluator, &job.frozen, &error) || !job.frozen) {
+        std::printf("FAIL detached job at %g: the freeze refused: %s\n",
                     time.GetValue(), error.c_str());
         return false;
     }
-    if (!RigExecSampleFrameInputs(evaluator, time, {}, &job->inputs, &error)) {
-        std::printf("FAIL held job at %g: the sample refused: %s\n",
+    if (!RigExecSampleFrameInputs(evaluator, time, {}, &job.inputs, &error)) {
+        std::printf("FAIL detached job at %g: the sample refused: %s\n",
                     time.GetValue(), error.c_str());
         return false;
     }
     const RigExecBakedProgram *program = evaluator.GetBakedProgram();
     if (!program) {
-        std::printf("FAIL held job at %g: no standing program\n",
+        std::printf("FAIL detached job at %g: no standing program\n",
                     time.GetValue());
         return false;
     }
-    job->compiledRigSignature = uint64_t(evaluator.GetCompiledRigSignature());
-    job->slotCount = program->GetProviderCount();
-    job->flags = 0;
+    job.compiledRigSignature = uint64_t(evaluator.GetCompiledRigSignature());
+    job.slotCount = program->GetProviderCount();
+    job.flags = 0;
     if (evaluator.GetPublishWeightFields()) {
-        job->flags |= kRigExecFrozenPublishWeightFields;
+        job.flags |= kRigExecFrozenPublishWeightFields;
     }
     if (evaluator.GetSolverGuidesEnabled()) {
-        job->flags |= kRigExecFrozenSolverGuidesEnabled;
+        job.flags |= kRigExecFrozenSolverGuidesEnabled;
     }
     return true;
 }
 
 static RigExecRigPose
-_RunHeldFrozenJob(const _HeldFrozenJob &job,
-                  RigExecBackgroundScheduler *scheduler)
+_RunDetachedFrozenJob(const _DetachedFrozenJob &job,
+                      RigExecBackgroundScheduler *scheduler)
 {
     RigExecFrozenEvalContext context;
     context.compiledRigSignature = job.compiledRigSignature;
@@ -5399,11 +5378,8 @@ _RunHeldFrozenJob(const _HeldFrozenJob &job,
                                  job.rig);
 }
 
-// A value edit with the held view and job still standing: the edit patches
-// the standing program instead of opening a version, so the borrowed facts
-// references still name the chain they named before, a job bound after the
-// edit matches the new live points, and the pre-edit job run after the edit
-// answers its own captured driver sample and its own expected points.
+// A value edit patches the standing program, so a held view keeps its facts
+// and a job bound before the edit keeps its captured sample.
 static void
 TestAHeldFactsViewAndJobSurviveAValueEdit()
 {
@@ -5428,11 +5404,13 @@ TestAHeldFactsViewAndJobSurviveAValueEdit()
         return;
     }
     CHECK(held->GetChainCount() > 0);
-    size_t chainIndex = 0, revisionIndex = 0;
-    CHECK(
-        _FindRevisionFacts(*held, mover1, target, &chainIndex, &revisionIndex));
-    CHECK(chainIndex < held->GetChainCount());
-    CHECK(revisionIndex < held->GetChainRevisionCount(chainIndex));
+    const auto found = _FindRevisionFacts(*held, mover1, target);
+    CHECK(found.has_value());
+    if (!found) {
+        return;
+    }
+    const size_t chainIndex = found->first;
+    const size_t revisionIndex = found->second;
     const RigExecCompiledChainFacts &chain = held->GetChainFacts(chainIndex);
     const RigExecCompiledRevisionFacts &revision =
         held->GetChainRevisionFacts(chainIndex, revisionIndex);
@@ -5441,18 +5419,25 @@ TestAHeldFactsViewAndJobSurviveAValueEdit()
     CHECK(revision.target == target);
     CHECK(revision.op == RigExecRevisionOp::Matrix);
 
-    _HeldFrozenJob preEdit;
-    CHECK(_BindHeldFrozenJob(evaluator, rig, UsdTimeCode(2.0), &preEdit));
+    _DetachedFrozenJob preEdit;
+    CHECK(_BindDetachedFrozenJob(evaluator, rig, UsdTimeCode(2.0), preEdit));
+    if (!preEdit.frozen) {
+        return;
+    }
     const VtValue *preDriver = preEdit.inputs.Find(driver);
     CHECK(preDriver != nullptr && preDriver->IsHolding<double>());
+    if (!preDriver) {
+        return;
+    }
     const RigExecRigPose liveBefore = evaluator.Evaluate(UsdTimeCode(2.0));
     CHECK(liveBefore.valid);
     const std::vector<std::byte> expected =
         _PublishedPointBytes(liveBefore, target);
     CHECK(!expected.empty());
+    if (expected.empty()) {
+        return;
+    }
 
-    // The edit: a new driver sample at the job's own frame, replacing the
-    // one the held vector carries.
     stage->GetAttributeAtPath(driver).Set(25.0, UsdTimeCode(2.0));
     CHECK(evaluator.GetBakedProgram() == program);
     const std::shared_ptr<const RigExecCompiledProgram> current =
@@ -5462,7 +5447,6 @@ TestAHeldFactsViewAndJobSurviveAValueEdit()
     CHECK(current->GetChainCount() == held->GetChainCount());
     CHECK(current->GetChainRevisionCount(chainIndex) ==
           held->GetChainRevisionCount(chainIndex));
-    // The borrowed references answer the same records they answered before.
     CHECK(&chain == &current->GetChainFacts(chainIndex));
     CHECK(&revision ==
           &current->GetChainRevisionFacts(chainIndex, revisionIndex));
@@ -5478,21 +5462,21 @@ TestAHeldFactsViewAndJobSurviveAValueEdit()
     CHECK(after != expected);
 
     RigExecBackgroundScheduler scheduler;
-    _HeldFrozenJob postEdit;
-    CHECK(_BindHeldFrozenJob(evaluator, rig, UsdTimeCode(2.0), &postEdit));
+    _DetachedFrozenJob postEdit;
+    CHECK(_BindDetachedFrozenJob(evaluator, rig, UsdTimeCode(2.0), postEdit));
     CHECK(postEdit.inputs.values.size() == preEdit.inputs.values.size());
     const VtValue *postDriver = postEdit.inputs.Find(driver);
     CHECK(postDriver != nullptr && postDriver->IsHolding<double>());
-    // The two vectors differ exactly where the edit landed, so the held
-    // job's answer can come only from the inputs it captured.
+    // The held job carries its own driver sample, so its answer cannot come
+    // from the patched program.
     CHECK(preDriver != nullptr && postDriver != nullptr &&
           preDriver->Get<double>() != postDriver->Get<double>());
-    const RigExecRigPose warmed = _RunHeldFrozenJob(postEdit, &scheduler);
+    const RigExecRigPose warmed = _RunDetachedFrozenJob(postEdit, &scheduler);
     CheckPosesBitIdentical("job bound after the value edit", liveAfter, warmed);
     CheckJobAccepted("job bound after the value edit", postEdit.inputs, warmed);
     CHECK(_PublishedPointBytes(warmed, target) == after);
 
-    const RigExecRigPose heldRun = _RunHeldFrozenJob(preEdit, &scheduler);
+    const RigExecRigPose heldRun = _RunDetachedFrozenJob(preEdit, &scheduler);
     CheckJobAccepted("held pre-edit job", preEdit.inputs, heldRun);
     CheckSameReadings("held pre-edit job", liveBefore, heldRun);
     const std::vector<std::byte> heldBytes =
@@ -5501,11 +5485,8 @@ TestAHeldFactsViewAndJobSurviveAValueEdit()
     CHECK(heldBytes != after);
 }
 
-// A structural edit with the held view and job still standing: re-targeting
-// one mover opens a new version whose facts name a different chain, the old
-// view and its borrowed references still name the chain as it was, the old
-// job still answers the pre-edit points, and a job bound on the rebuilt
-// program matches the new live points.
+// A structural edit opens a new version; the held view keeps the records it
+// borrowed, and a job bound before the edit keeps its captured inputs.
 static void
 TestAHeldFactsViewAndJobSurviveAStructuralRebuild()
 {
@@ -5532,36 +5513,45 @@ TestAHeldFactsViewAndJobSurviveAStructuralRebuild()
         return;
     }
     CHECK(held->GetChainCount() == 1);
-    size_t chainIndex = 0, revisionIndex = 0;
-    CHECK(
-        _FindRevisionFacts(*held, mover1, target, &chainIndex, &revisionIndex));
+    const auto found = _FindRevisionFacts(*held, mover1, target);
+    CHECK(found.has_value());
+    if (!found) {
+        return;
+    }
+    const size_t chainIndex = found->first;
     CHECK(held->GetChainRevisionCount(chainIndex) == 3);
     const RigExecCompiledChainFacts &chain = held->GetChainFacts(chainIndex);
     const RigExecCompiledRevisionFacts &revision =
-        held->GetChainRevisionFacts(chainIndex, revisionIndex);
+        held->GetChainRevisionFacts(chainIndex, found->second);
     CHECK(chain.target == target);
     CHECK(revision.moverPath == mover1 && revision.target == target &&
           revision.op == RigExecRevisionOp::Matrix);
 
-    _HeldFrozenJob preEdit;
-    CHECK(_BindHeldFrozenJob(evaluator, rig, UsdTimeCode(2.0), &preEdit));
+    _DetachedFrozenJob preEdit;
+    CHECK(_BindDetachedFrozenJob(evaluator, rig, UsdTimeCode(2.0), preEdit));
+    if (!preEdit.frozen) {
+        return;
+    }
     const RigExecRigPose liveBefore = evaluator.Evaluate(UsdTimeCode(2.0));
     CHECK(liveBefore.valid);
     const std::vector<std::byte> expected =
         _PublishedPointBytes(liveBefore, target);
     CHECK(!expected.empty());
+    if (expected.empty()) {
+        return;
+    }
 
-    // The edit: M1 moves to a second target, so its old chain loses that
-    // revision and a new chain appears.
-    const UsdPrim shape2 =
-        stage->DefinePrim(second.GetPrimPath(), _heldViewTokens->pointsType);
+    // M1 moves to a second target: the old chain loses that revision and a
+    // new chain appears.
+    const UsdGeomPoints shape2 =
+        UsdGeomPoints::Define(stage, second.GetPrimPath());
     VtVec3fArray base2(64);
     for (size_t i = 0; i < base2.size(); ++i) {
         base2[i] = GfVec3f(float(i % 8) * 0.5f, float(i / 8) * -0.25f, 0.0f);
     }
-    CHECK(shape2.GetAttribute(_heldViewTokens->points).Set(base2));
+    CHECK(shape2.GetPointsAttr().Set(base2));
     CHECK(stage->GetPrimAtPath(mover1)
-              .GetRelationship(_heldViewTokens->moves)
+              .GetRelationship(SchemaAttr::rigExecMoves)
               .SetTargets({second}));
 
     // The first evaluation after the edit rebuilds, and that frame's pose
@@ -5581,14 +5571,15 @@ TestAHeldFactsViewAndJobSurviveAStructuralRebuild()
     CHECK(!current->IsSameVersionAs(*held));
     CHECK(current->GetChainCount() == held->GetChainCount() + 1);
 
-    // The new facts name the changed chain: M1 over the new target.
-    size_t movedChain = 0, movedRevision = 0;
-    CHECK(_FindRevisionFacts(*current, mover1, second, &movedChain,
-                             &movedRevision));
+    const auto moved = _FindRevisionFacts(*current, mover1, second);
+    CHECK(moved.has_value());
+    if (!moved) {
+        return;
+    }
     const RigExecCompiledChainFacts &movedTarget =
-        current->GetChainFacts(movedChain);
+        current->GetChainFacts(moved->first);
     const RigExecCompiledRevisionFacts &movedRevisionFacts =
-        current->GetChainRevisionFacts(movedChain, movedRevision);
+        current->GetChainRevisionFacts(moved->first, moved->second);
     CHECK(movedTarget.target == second);
     CHECK(movedRevisionFacts.moverPath == mover1);
     CHECK(movedRevisionFacts.target == second);
@@ -5596,16 +5587,17 @@ TestAHeldFactsViewAndJobSurviveAStructuralRebuild()
     CHECK(movedTarget.target != chain.target);
     CHECK(movedRevisionFacts.target != revision.target);
 
-    // And the old chain no longer names M1: it answers M0 and M2.
-    size_t shapeChain = 0, shapeRevision = 0;
-    CHECK(_FindRevisionFacts(*current, mover0, target, &shapeChain,
-                             &shapeRevision));
-    CHECK(current->GetChainFacts(shapeChain).target == target);
-    CHECK(current->GetChainRevisionCount(shapeChain) == 2);
+    const auto shape = _FindRevisionFacts(*current, mover0, target);
+    CHECK(shape.has_value());
+    if (!shape) {
+        return;
+    }
+    CHECK(current->GetChainFacts(shape->first).target == target);
+    CHECK(current->GetChainRevisionCount(shape->first) == 2);
     std::vector<SdfPath> remaining;
-    for (size_t r = 0; r < current->GetChainRevisionCount(shapeChain); ++r) {
+    for (size_t r = 0; r < current->GetChainRevisionCount(shape->first); ++r) {
         remaining.push_back(
-            current->GetChainRevisionFacts(shapeChain, r).moverPath);
+            current->GetChainRevisionFacts(shape->first, r).moverPath);
     }
     // A rebuild orders the surviving revisions its own way; the set is what
     // says the chain changed.
@@ -5613,11 +5605,8 @@ TestAHeldFactsViewAndJobSurviveAStructuralRebuild()
     std::vector<SdfPath> want{mover0, mover2};
     std::sort(want.begin(), want.end());
     CHECK(remaining == want);
-    size_t absentChain = 0, absentRevision = 0;
-    CHECK(!_FindRevisionFacts(*current, mover1, target, &absentChain,
-                              &absentRevision));
+    CHECK(!_FindRevisionFacts(*current, mover1, target).has_value());
 
-    // The held view and its borrowed references are where they were.
     CHECK(held->GetChainCount() == 1);
     CHECK(held->GetChainRevisionCount(chainIndex) == 3);
     CHECK(chain.target == target);
@@ -5631,9 +5620,12 @@ TestAHeldFactsViewAndJobSurviveAStructuralRebuild()
     CHECK(_PublishedPointBytes(rebuilt, target) == after);
 
     RigExecBackgroundScheduler scheduler;
-    _HeldFrozenJob postEdit;
-    CHECK(_BindHeldFrozenJob(evaluator, rig, UsdTimeCode(2.0), &postEdit));
-    const RigExecRigPose warmed = _RunHeldFrozenJob(postEdit, &scheduler);
+    _DetachedFrozenJob postEdit;
+    CHECK(_BindDetachedFrozenJob(evaluator, rig, UsdTimeCode(2.0), postEdit));
+    if (!postEdit.frozen) {
+        return;
+    }
+    const RigExecRigPose warmed = _RunDetachedFrozenJob(postEdit, &scheduler);
     CheckPosesBitIdentical("job bound after the structural edit", liveAfter,
                            warmed);
     CheckJobAccepted("job bound after the structural edit", postEdit.inputs,
@@ -5641,7 +5633,7 @@ TestAHeldFactsViewAndJobSurviveAStructuralRebuild()
     CHECK(_PublishedPointBytes(warmed, target) == after);
     CHECK(!_PublishedPointBytes(warmed, second).empty());
 
-    const RigExecRigPose heldRun = _RunHeldFrozenJob(preEdit, &scheduler);
+    const RigExecRigPose heldRun = _RunDetachedFrozenJob(preEdit, &scheduler);
     CheckJobAccepted("held pre-edit job across the rebuild", preEdit.inputs,
                      heldRun);
     CheckSameReadings("held pre-edit job across the rebuild", liveBefore,

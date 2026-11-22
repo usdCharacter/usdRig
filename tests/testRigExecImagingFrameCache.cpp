@@ -50,6 +50,11 @@
 //   * PRODUCTION. The C-API trigger path (no injected runner) enqueues the
 //     same bursts through the production runner, and the generation fence
 //     drops stale production work.
+//   * HELD RELEASE. A job built under one generation, released after the
+//     mover is retargeted through the notice path, publishes nothing; the
+//     live generation's work serves the retargeted points, and a constant
+//     patch carries the generation number while the lookup serves the new
+//     bytes.
 //   * SERVED. A background completion plus its enqueue-time proof serves
 //     without evaluating: the warmed pose reaches the viewport with zero
 //     evaluator pulls.
@@ -99,6 +104,7 @@
 // tests set RIGEXEC_FRAME_CACHE in-process and also pass under the
 // validation plan's outer combos (cache off, parallel eval off, verify on)
 // by reading the live switches and expecting the combo's own counts.
+#include "rigExecSchema/schemaTokens.h"
 #include "rigExecImaging/bridge.h"
 #include "rigExecImaging/registry.h"
 #include "rigExecBake/bake.h"
@@ -130,6 +136,8 @@
 #include "pxr/usd/usd/relationship.h"
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usd/usd/primRange.h"
+#include "pxr/usd/usdGeom/mesh.h"
+#include "pxr/usd/usdGeom/tokens.h"
 #include "pxr/usd/usdUtils/stageCache.h"
 
 #include <algorithm>
@@ -1681,6 +1689,159 @@ TestProductionTriggerPathEnqueuesAndFences()
     CHECK(after.queuedDepth == 0 && after.running == 0);
     CHECK(registry->GetFrameCacheStats(rig).published ==
           publishedBeforeBurst + 16);
+    registry->ClearFrameCache(rig);
+    registry->Deactivate();
+}
+
+// HELD RELEASE. A job built by BuildWarmWork carries the generation, fence
+// token, and snapshot lane it was sampled under. Retargeting the mover
+// through the notice path retires that frame, so releasing the held job
+// publishes nothing and the current lookup serves the live pose instead.
+// Fresh work under the live generation serves the retargeted points, and a
+// constant patch keeps the generation number while the lookup serves the
+// patched bytes.
+void
+TestHeldWarmWorkIsDeclinedAfterRetarget()
+{
+    std::printf("progress: TestHeldWarmWorkIsDeclinedAfterRetarget\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "on");
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    if (!RigExecBackgroundWarmingEnabled()) {
+        return;
+    }
+    const SdfPath rig("/Asset/Rig");
+    const SdfPath skinPath("/Asset/Rig/Movers/Skin_0");
+    const SdfPath meshA("/Asset/Geom/Mesh_0");
+    const SdfPath meshB("/Asset/Geom/Mesh_1");
+    const UsdTimeCode frame(3.0);
+
+    UsdStageRefPtr stage = MakeTinyRig(/*staticY=*/true);
+    VtVec3fArray restB(kTinyPointCount);
+    for (size_t i = 0; i < kTinyPointCount; ++i) {
+        restB[i] = GfVec3f(float(i) * 0.4f, float(i) * 0.1f, float(i) * 0.7f);
+    }
+    CHECK(stage->DefinePrim(meshB, UsdGeomTokens->Mesh)
+              .GetAttribute(UsdGeomTokens->points)
+              .Set(restB));
+
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
+    std::vector<std::string> errors;
+    CHECK(registry->Activate(stage, rig, UsdTimeCode(2.0), &errors));
+    CHECK(registry->SetTime(UsdTimeCode(2.0)));
+
+    const RigExecFrameGeneration generation =
+        registry->CurrentFrameGeneration(rig);
+    RigExecWarmFactoryResult held = registry->BuildWarmWork(
+        rig, frame, generation, RigExecFrozenStepRunner());
+    CHECK(static_cast<bool>(held.work));
+    if (!held.work) {
+        registry->Deactivate();
+        return;
+    }
+    RigExecWarmRequest heldRequest;
+    heldRequest.rig = rig;
+    heldRequest.time = frame;
+    heldRequest.priority = RigExecWarmPriority::Neighbor;
+    heldRequest.generation = generation;
+    heldRequest.fenceToken = registry->CurrentFenceToken(rig, frame);
+    CHECK(held.work(heldRequest) == RigExecWarmOutcome::Published);
+
+    CHECK(registry->SetTime(UsdTimeCode(4.0)));
+    CHECK(registry->SetTime(frame));
+    const _GenerationGeometry original =
+        _CaptureGeometry(registry->GetStore()->Get());
+    CHECK(original.points.count(meshA) == 1);
+    CHECK(original.points.count(meshB) == 0);
+
+    // Retargeting the mover is a structural edit: the program rebuilds and
+    // the generation moves, so the held job's own generation is stale.
+    CHECK(stage->GetPrimAtPath(skinPath)
+              .GetRelationship(rigExec::SchemaAttr::rigExecMoves)
+              .SetTargets({meshB.AppendProperty(UsdGeomTokens->points)}));
+    const RigExecImagingBridge *bridge = registry->GetBridge(rig);
+    CHECK(bridge != nullptr);
+    if (bridge) {
+        CHECK(bridge->GetEvaluator().GetLastNoticeDisposition() ==
+              RigExecNoticeDisposition::StampBumped);
+    }
+    CHECK(registry->CurrentFrameGeneration(rig) == generation + 1);
+
+    const size_t publishedBefore = registry->GetFrameCacheStats(rig).published;
+    const size_t entriesBefore = registry->GetFrameCacheStats(rig).entryCount;
+    CHECK(held.work(heldRequest) == RigExecWarmOutcome::DeclinedGeneration);
+    CHECK(registry->GetFrameCacheStats(rig).published == publishedBefore);
+    CHECK(registry->GetFrameCacheStats(rig).entryCount == entriesBefore);
+
+    // The frame the held job would have served now comes from the retargeted
+    // rig: Mesh_1 moves and Mesh_0 is untouched by any mover.
+    CHECK(registry->SetTime(UsdTimeCode(4.0)));
+    CHECK(registry->SetTime(frame));
+    const _GenerationGeometry retargeted =
+        _CaptureGeometry(registry->GetStore()->Get());
+    CHECK(retargeted.points.count(meshB) == 1);
+    CHECK(retargeted.points.count(meshA) == 0);
+    CHECK(!_SameArrays(retargeted.points.at(meshB), restB));
+
+    // Work built under the live generation publishes, and its served bytes
+    // agree with a live evaluation of the same frame.
+    const RigExecFrameGeneration liveGeneration =
+        registry->CurrentFrameGeneration(rig);
+    RigExecWarmFactoryResult fresh = registry->BuildWarmWork(
+        rig, frame, liveGeneration, RigExecFrozenStepRunner());
+    CHECK(static_cast<bool>(fresh.work));
+    if (fresh.work) {
+        RigExecWarmRequest freshRequest = heldRequest;
+        freshRequest.generation = liveGeneration;
+        freshRequest.fenceToken = registry->CurrentFenceToken(rig, frame);
+        CHECK(fresh.work(freshRequest) == RigExecWarmOutcome::Published);
+        const std::vector<RigExecWarmFrameState> servedStates =
+            registry->GetFrameStates(rig, {3.0});
+        CHECK(servedStates.size() == 1);
+        if (servedStates.size() == 1) {
+            CHECK(servedStates[0] == RigExecWarmFrameState::Cached);
+        }
+    }
+    CHECK(registry->SetTime(UsdTimeCode(4.0)));
+    CHECK(registry->SetTime(frame));
+    CHECK(_SameGeometry(retargeted,
+                        _CaptureGeometry(registry->GetStore()->Get())));
+    registry->ClearFrameCache(rig);
+    CHECK(registry->SetTime(UsdTimeCode(4.0)));
+    CHECK(registry->SetTime(frame));
+    if (!_SameGeometry(retargeted,
+                       _CaptureGeometry(registry->GetStore()->Get()))) {
+        std::printf("retargeted warm frame differs from live\n");
+        CHECK(false);
+    }
+
+    // A constant patch needs no generation bump: the lookup re-evaluates once
+    // and then serves the patched bytes from the cache.
+    const RigExecFrameGeneration patchedGeneration =
+        registry->CurrentFrameGeneration(rig);
+    CHECK(stage->GetPrimAtPath(SdfPath("/Asset/Rig/AlongY"))
+              .GetAttribute(rigExec::SchemaAttr::avarsTy)
+              .Set(9.0));
+    if (bridge) {
+        CHECK(bridge->GetEvaluator().GetLastNoticeDisposition() ==
+              RigExecNoticeDisposition::Patched);
+    }
+    CHECK(registry->CurrentFrameGeneration(rig) == patchedGeneration);
+    CHECK(registry->SetTime(UsdTimeCode(4.0)));
+    CHECK(registry->SetTime(frame));
+    const _GenerationGeometry patched =
+        _CaptureGeometry(registry->GetStore()->Get());
+    CHECK(!_SameGeometry(patched, retargeted));
+    CHECK(registry->SetTime(UsdTimeCode(4.0)));
+    CHECK(registry->SetTime(frame));
+    CHECK(
+        _SameGeometry(patched, _CaptureGeometry(registry->GetStore()->Get())));
+
     registry->ClearFrameCache(rig);
     registry->Deactivate();
 }
@@ -6999,6 +7160,7 @@ main(int argc, char **argv)
     TestUnactivatedStageProofTracksSampleRemoval();
     TestCommitOfAChainTargetSettles();
     TestProductionTriggerPathEnqueuesAndFences();
+    TestHeldWarmWorkIsDeclinedAfterRetarget();
     TestWarmedCompletionServesWithoutEvaluating();
     TestConnectedSpaceRigMemoizesResults();
     TestPropertyChainRigMemoizesCompletePoses();

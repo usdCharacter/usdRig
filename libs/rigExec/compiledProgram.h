@@ -1,12 +1,6 @@
-// The compiled rig as a sealed read-only view: the record types the view can
-// still lend by index, defined here, and the queries that reach them without
-// the builder. The chain, revision and weight execution records live in
-// bakedProgramImpl.h; the view answers their identity with published facts.
-//
-// RigExecBakedProgramImpl keeps the builder state, the mutable counters and
-// the per-frame arena; it reaches the records through the same storage, so a
-// view and the program that runs them describe one compiled rig, not two
-// copies of it.
+// The compiled rig as a sealed read-only view: the records it still lends by
+// index, and the queries that reach them without the builder. Chain, revision
+// and weight identity answers with published facts.
 #ifndef RIGEXEC_COMPILED_PROGRAM_H
 #define RIGEXEC_COMPILED_PROGRAM_H
 
@@ -2190,11 +2184,6 @@ struct RigExecBakedGeomBlendChannel {
     int weightHeldLeaf = -1;
 };
 
-/// The identity facts of one chain, one of its revisions, and one weight
-/// object: the paths and operation that name them, and nothing an evaluator
-/// computes. The view copies these from the program once, at construction,
-/// so a consumer can hold an identity across a frame without reaching an
-/// execution record.
 struct RigExecCompiledChainFacts {
     SdfPath target;
 };
@@ -2253,10 +2242,7 @@ public:
     std::pair<int, int> GetDerivedIdentity(size_t index) const noexcept;
     size_t GetWeightObjectCount() const noexcept;
 
-    /// The published facts of one chain, one of its revisions, or one weight
-    /// object, indexed as the records above: the chain index guards the
-    /// revision index. These references borrow the view's own storage, so
-    /// they live as long as the view does, across a value patch and a frame.
+    /// The chain index guards the revision index.
     const RigExecCompiledChainFacts &GetChainFacts(size_t index) const noexcept;
     const RigExecCompiledRevisionFacts &
     GetChainRevisionFacts(size_t chainIndex,
@@ -2266,8 +2252,6 @@ public:
 
     size_t GetConstraintCount() const noexcept;
     const RigExecBakedConstraint &GetConstraint(size_t index) const noexcept;
-    size_t GetSolverCount() const noexcept;
-    const RigExecBakedSolver &GetSolver(size_t index) const noexcept;
     size_t GetSolverArrayCount() const noexcept;
     const std::vector<std::pair<SdfPath, int>> &
     GetSolverArrays() const noexcept;
@@ -2391,8 +2375,6 @@ public:
         _VersionTag, std::shared_ptr<const RigExecBakedProgramImpl> compiled);
 
 private:
-    /// The compiled storage this version reads. Private: the view is the
-    /// only way a consumer reaches it.
     const RigExecBakedProgramImpl &Storage() const noexcept
     {
         return *_compiled;

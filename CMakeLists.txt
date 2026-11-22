@@ -3049,6 +3049,14 @@ foreach(_lib rigExecGraph rigExecEvalCore rigExecScene rigExecMath rigExec rigEx
             PATTERN "__pycache__" EXCLUDE
             PATTERN "guideBoundsInternal.h" EXCLUDE
             PATTERN "registryInternal.h" EXCLUDE
+            # The evaluator's execution records and the builder state they
+            # carry are this library's own: the sealed compiled-program view
+            # is the SDK surface, so these headers stay out of the install.
+            PATTERN "bakedProgramImpl.h" EXCLUDE
+            PATTERN "bakedSchedule.h" EXCLUDE
+            PATTERN "bakedOpGraph.h" EXCLUDE
+            PATTERN "frozenProgram.h" EXCLUDE
+            PATTERN "frozenContextInternal.h" EXCLUDE
             PATTERN "*.h")
 endforeach()
 # The FlatBuffers runtime headers the generated rigExecBinary headers

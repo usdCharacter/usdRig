@@ -1,9 +1,3 @@
-// The read-only surface of one compiled rig version. Record queries borrow
-// the records the program was built from, through the storage the program
-// itself runs, and copy nothing; the facts queries answer the view's own
-// projections, which are copied once here, at construction, and never again.
-// Nothing here mutates the program.
-
 #include "compiledProgram.h"
 #include "bakedProgramImpl.h"
 
@@ -189,18 +183,6 @@ const RigExecBakedConstraint &
 RigExecCompiledProgram::GetConstraint(size_t index) const noexcept
 {
     return _compiled->constraints[index];
-}
-
-size_t
-RigExecCompiledProgram::GetSolverCount() const noexcept
-{
-    return _compiled->solvers.size();
-}
-
-const RigExecBakedSolver &
-RigExecCompiledProgram::GetSolver(size_t index) const noexcept
-{
-    return _compiled->solvers[index];
 }
 
 size_t
