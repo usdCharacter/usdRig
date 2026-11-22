@@ -3,9 +3,9 @@
 # must be the fragment's, and the manifests the SDK ships must be the same
 # paths, relocated against a checkout root.
 
-if (NOT SOURCE_DIR OR NOT BINARY_DIR OR NOT EXPORT_SCRIPT OR NOT INSTALL_DATADIR)
+if (NOT SOURCE_DIR OR NOT BINARY_DIR OR NOT STAGED_DIR)
     message(FATAL_ERROR
-        "checkExactFpFragment.cmake needs SOURCE_DIR, BINARY_DIR, EXPORT_SCRIPT and INSTALL_DATADIR")
+        "checkExactFpFragment.cmake needs SOURCE_DIR, BINARY_DIR and STAGED_DIR")
 endif ()
 
 file(GLOB _compiler_info "${BINARY_DIR}/CMakeFiles/*/CMakeCXXCompiler.cmake")
@@ -38,19 +38,34 @@ if (NOT _expected_text STREQUAL _generated_text)
     message(FATAL_ERROR "build/exactFpFlags.txt lists ${_generated_text}, the fragment says ${_expected_text}")
 endif ()
 
-set(_export_dir "${BINARY_DIR}/exactFpFragmentCheck")
-file(REMOVE_RECURSE "${_export_dir}")
-execute_process(COMMAND "${CMAKE_COMMAND}"
-    "-DSOURCE_ROOT=${SOURCE_DIR}" "-DBUILD_DIR=${BINARY_DIR}"
-    "-DPREFIX=${_export_dir}" "-DDATA_DIR=${INSTALL_DATADIR}"
-    -P "${EXPORT_SCRIPT}" RESULT_VARIABLE _status)
-if (NOT _status EQUAL 0)
-    message(FATAL_ERROR "cmake/exportManifests.cmake failed: ${_status}")
-endif ()
+foreach (_manifest runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes)
+    if (NOT EXISTS "${STAGED_DIR}/${_manifest}.txt")
+        message(FATAL_ERROR
+            "no staged ${STAGED_DIR}/${_manifest}.txt: build the rigexecSdkManifests target")
+    endif ()
+endforeach ()
+
+# The staged copies must be the relocation of the current build lists, in
+# order and byte for byte: an equal count in a different order, or a list
+# from an earlier generation, is a stale export.
+include("${SOURCE_DIR}/cmake/manifestRelocate.cmake")
+foreach (_manifest runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes)
+    if (NOT EXISTS "${BINARY_DIR}/${_manifest}.txt")
+        message(FATAL_ERROR
+            "generated ${BINARY_DIR}/${_manifest}.txt is missing; the staged copy is stale")
+    endif ()
+    file(STRINGS "${BINARY_DIR}/${_manifest}.txt" _built)
+    rigexec_relocate_manifest_text("${SOURCE_DIR}" _expected _built)
+    file(READ "${STAGED_DIR}/${_manifest}.txt" _shipped_text)
+    if (NOT _shipped_text STREQUAL _expected)
+        message(FATAL_ERROR
+            "${_manifest}.txt is not the ordered relocation of the current ${BINARY_DIR}/${_manifest}.txt (stale export)")
+    endif ()
+endforeach ()
 
 foreach (_manifest runtimeSources evalCoreSources)
     file(STRINGS "${BINARY_DIR}/${_manifest}.txt" _built)
-    file(STRINGS "${_export_dir}/${INSTALL_DATADIR}/${_manifest}.txt" _shipped)
+    file(STRINGS "${STAGED_DIR}/${_manifest}.txt" _shipped)
     list(LENGTH _built _built_count)
     list(LENGTH _shipped _shipped_count)
     if (NOT _built_count EQUAL _shipped_count OR NOT _built_count)
@@ -67,7 +82,7 @@ foreach (_manifest runtimeSources evalCoreSources)
 endforeach ()
 
 foreach (_manifest runtimeIncludes evalCoreIncludes)
-    file(STRINGS "${_export_dir}/${INSTALL_DATADIR}/${_manifest}.txt" _shipped)
+    file(STRINGS "${STAGED_DIR}/${_manifest}.txt" _shipped)
     list(LENGTH _shipped _shipped_count)
     if (NOT _shipped_count)
         message(FATAL_ERROR "${_manifest}.txt ships no include directory")
@@ -82,5 +97,4 @@ foreach (_manifest runtimeIncludes evalCoreIncludes)
     endforeach ()
 endforeach ()
 
-file(REMOVE_RECURSE "${_export_dir}")
 message(STATUS "exact-FP fragment and manifests agree (${_expected_text})")

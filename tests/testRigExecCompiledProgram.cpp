@@ -7,6 +7,7 @@
 #include "rigExec/compiledProgram.h"
 #include "rigExec/frozenContext.h"
 #include "rigExec/rigEvaluator.h"
+#include "pxr/base/plug/registry.h"
 #include "pxr/usd/sdf/types.h"
 #include "pxr/usd/usd/stage.h"
 #include <cstdio>
@@ -297,6 +298,9 @@ TestView()
 int
 main()
 {
+    // The codeless rigExec schema is a plugin: register it rather than rely on
+    // an ambient PXR_PLUGINPATH_NAME.
+    PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
     TestView();
     if (failures == 0) {
         std::printf("testRigExecCompiledProgram passed\n");
