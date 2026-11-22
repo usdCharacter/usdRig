@@ -95,6 +95,9 @@ for flag in "${fp_flags[@]}"; do
     fi
 done
 
+# The exact-FP list is the language-neutral floating-point contract from
+# cmake/rigexec_flags.cmake (/fp:precise, or -fno-fast-math -ffp-contract=off),
+# so it goes to the C units as well; everything else stays per language.
 CXXFLAGS=(
     -std=c++17 -O2 "${fp_flags[@]}" -pthread
     -I "$ROOT/libs"
@@ -102,7 +105,7 @@ CXXFLAGS=(
     -I "$ROOT/thirdparty/lzma/C"
 )
 CFLAGS=(
-    -std=c11 -O2 -DZ7_ST -DRIGEXEC_LZMA_PORTABLE_SCALAR
+    -std=c11 -O2 "${fp_flags[@]}" -DZ7_ST -DRIGEXEC_LZMA_PORTABLE_SCALAR
     -I "$ROOT/thirdparty/lzma/C"
 )
 resolve_manifest_entry() {
@@ -142,7 +145,10 @@ for manifest in runtimeIncludes.txt evalCoreIncludes.txt; do
             echo "runtime/EvalCore include directories expose OpenUSD: $include_dir" >&2
             exit 1
         fi
+        # The include manifest is a compile input for every unit the source
+        # manifests name, C included, not a C++-only setting.
         CXXFLAGS+=(-I "$include_dir")
+        CFLAGS+=(-I "$include_dir")
     done < "$MANIFESTS/$manifest"
 done
 

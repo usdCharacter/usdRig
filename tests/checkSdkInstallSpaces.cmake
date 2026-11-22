@@ -182,8 +182,15 @@ if (NOT WIN32)
         _fail("staged install: cmake --install exited ${_rc}: ${_out}")
     endif()
     _assert_sdk("${_stage_root}${_staged_prefix}" "${INSTALL_DATADIR}")
-    if (EXISTS "${_staged_prefix}/${INSTALL_DATADIR}/runtimeSources.txt")
-        _fail("staged install: DESTDIR staged the payload but wrote the manifests to the unstaged prefix")
+    # Every install destination honours DESTDIR, so the fresh logical prefix
+    # itself must still be absent: one stray manifest, flags file or generated
+    # source there means a rule wrote beside the stage root instead of under it.
+    if (EXISTS "${_staged_prefix}")
+        file(GLOB_RECURSE _stray RELATIVE "${_staged_prefix}" "${_staged_prefix}/*")
+        list(JOIN _stray ", " _stray)
+        string(CONCAT _why "staged install: DESTDIR staging populated the unstaged "
+            "prefix ${_staged_prefix}: ${_stray}")
+        _fail("${_why}")
     endif()
     message(STATUS "staged install: pass (everything under ${_stage_root}${_staged_prefix}/${INSTALL_DATADIR})")
 else()

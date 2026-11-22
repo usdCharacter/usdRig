@@ -99,6 +99,38 @@ jobs:
              build/exactFpFlags.txt runtime-build-alt/
           bin/check_runtime_usd_free.sh runtime-build-alt
 
+      # The include manifests are compile inputs for every unit the source
+      # manifests name, C units included. A .c unit that reaches a header only
+      # present in an include-manifest directory must compile and get its own
+      # object from a configured build tree.
+      - name: Compile a manifest-listed .c unit through a build-tree include manifest
+        run: |
+          mkdir -p build-c runtime-probe-c/headers
+          cp build/runtimeSources.txt build/runtimeIncludes.txt \
+             build/evalCoreSources.txt build/evalCoreIncludes.txt \
+             build/exactFpFlags.txt build-c/
+          printf '%s\n' '#ifndef RIGEXEC_MANIFEST_C_PROBE_H' \
+            '#define RIGEXEC_MANIFEST_C_PROBE_H 4271' '#endif' \
+            > runtime-probe-c/headers/rigExecManifestCProbe.h
+          printf '%s\n' '#include "rigExecManifestCProbe.h"' \
+            'int RigExecManifestCProbe(void){ return RIGEXEC_MANIFEST_C_PROBE_H; }' \
+            > runtime-probe-c/probe_c_unit.c
+          sed -i '1i runtime-probe-c/probe_c_unit.c' build-c/runtimeSources.txt
+          sed -i '1i runtime-probe-c/headers' build-c/runtimeIncludes.txt
+          bin/check_runtime_usd_free.sh build-c --list-objects \
+            | tee build-c-objects.txt
+          grep -F 'object: runtime-probe-c@probe_c_unit.c.o' build-c-objects.txt \
+            >/dev/null || { echo "the manifest-listed .c unit has no object target"; exit 1; }
+          sed -i '\|^runtime-probe-c/headers$|d' build-c/runtimeIncludes.txt
+          if bin/check_runtime_usd_free.sh build-c > build-c-noinclude.log 2>&1; then
+            echo "the .c unit compiled without the include directory the manifest names"
+            exit 1
+          fi
+          grep -F "rigExecManifestCProbe.h" build-c-noinclude.log >/dev/null \
+            || { echo "the failure did not name the header only the include manifest supplies"
+                 cat build-c-noinclude.log; exit 1; }
+          echo "build-tree mode: the .c unit needs and gets the manifest include directory"
+
   # --------------------------------------------------------------------------
   # OpenUSD v26.08 (PixarAnimationStudios/OpenUSD @ tag v26.08).
   # Cache key = OS + arch + resolved commit + recipe epoch. Bump the epoch
@@ -984,6 +1016,53 @@ jobs:
           print("\nthe multi-dot and same-stem units added %d distinct object "
                 "targets (%d total)" % (len(expected), len(with_cxx)))
           PY
+
+      # The installed include manifests name the SDK's and the consumer's
+      # include directories, and a C unit reads them just as a C++ unit does:
+      # a .c source listed in the source manifests, on the SDK payload side and
+      # on the consumer-checkout side, must reach a header that exists only in
+      # an include-manifest directory and get its own object target.
+      - name: Compile manifest-listed .c units through installed include directories
+        run: |
+          cp -r sdk-relocated/share/rigExec c-sdk
+          mkdir -p c-sdk/runtime-generated/probe-include \
+            consumer-src/runtime-probe-c/headers
+          printf '%s\n' '#ifndef RIGEXEC_MANIFEST_C_PROBE_H' \
+            '#define RIGEXEC_MANIFEST_C_PROBE_H 4271' '#endif' \
+            > c-sdk/runtime-generated/probe-include/rigExecManifestCProbe.h
+          printf '%s\n' '#ifndef RIGEXEC_MANIFEST_C_PROBE_CHECKOUT_H' \
+            '#define RIGEXEC_MANIFEST_C_PROBE_CHECKOUT_H 6199' '#endif' \
+            > consumer-src/runtime-probe-c/headers/rigExecManifestCProbeCheckout.h
+          printf '%s\n' '#include "rigExecManifestCProbe.h"' \
+            'int RigExecManifestCProbeSdk(void){ return RIGEXEC_MANIFEST_C_PROBE_H; }' \
+            > c-sdk/runtime-generated/probe_c_sdk.c
+          printf '%s\n' '#include "rigExecManifestCProbeCheckout.h"' \
+            'int RigExecManifestCProbeCheckout(void){ return RIGEXEC_MANIFEST_C_PROBE_CHECKOUT_H; }' \
+            > consumer-src/runtime-probe-c/probe_c_checkout.c
+          for entry in runtime-generated/probe_c_sdk.c runtime-probe-c/probe_c_checkout.c; do
+            sed -i "1i $entry" c-sdk/runtimeSources.txt
+          done
+          for entry in runtime-generated/probe-include runtime-probe-c/headers; do
+            sed -i "1i $entry" c-sdk/runtimeIncludes.txt
+          done
+          ./consumer-src/bin/check_runtime_usd_free.sh --sdk "$GITHUB_WORKSPACE/c-sdk" \
+            --list-objects | tee sdk-c-objects.txt
+          for object in 'runtime-generated@probe_c_sdk.c.o' \
+                        'runtime-probe-c@probe_c_checkout.c.o'; do
+            grep -F "object: $object" sdk-c-objects.txt >/dev/null \
+              || { echo "no object target for the installed .c unit $object"; exit 1; }
+          done
+          sed -i '\|^runtime-generated/probe-include$|d; \|^runtime-probe-c/headers$|d' \
+            c-sdk/runtimeIncludes.txt
+          if ./consumer-src/bin/check_runtime_usd_free.sh --sdk "$GITHUB_WORKSPACE/c-sdk" \
+              > sdk-c-noinclude.log 2>&1; then
+            echo "an installed .c unit compiled without the installed include directories"
+            exit 1
+          fi
+          grep -F "rigExecManifestCProbe" sdk-c-noinclude.log >/dev/null \
+            || { echo "the failure did not name the header only the include manifest supplies"
+                 cat sdk-c-noinclude.log; exit 1; }
+          echo "installed mode: .c units on both sides read the include manifests"
 
       # The strict installed-manifest rule stays strict: one producer-absolute
       # entry in an otherwise valid copied SDK manifest must fail, and the
