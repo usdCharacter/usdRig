@@ -6,7 +6,10 @@
 #include "rigExec/api/rigDesc.h"
 #include "rigExecMath/envelope.h"
 #include "rigExecMath/geometryKernels.h"
+#include "rigExecOps/deform/deltaMushOp.h"
 #include "rigExecOps/deform/pointOps.h"
+
+#include "pxr/base/gf/rotation.h"
 
 #include <cstdio>
 #include <cstring>
@@ -207,6 +210,113 @@ TestVolumeCorrect()
     }
 }
 
+rigExecStd::Mat4d
+ToStd(const GfMatrix4d &m)
+{
+    rigExecStd::Mat4d out;
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            out._mtx[r][c] = m[r][c];
+    return out;
+}
+
+void
+TestDeltaMush()
+{
+    using namespace rigExecOps;
+    const Grid rest(8, 5);
+    // The posed grid: bent along x and lifted.
+    std::vector<GfVec3f> posed = rest.points;
+    for (GfVec3f &p : posed)
+        p = GfVec3f(p[0], p[1] + 0.05f * p[0] * p[0], p[2] + 0.5f);
+    std::vector<float> envelope(posed.size());
+    for (size_t i = 0; i < envelope.size(); ++i)
+        envelope[i] = 0.07f * (i % 15);
+    const Points in = ToStd(posed), restArray = ToStd(rest.points);
+    const auto counts = ToArray(rest.counts);
+    const auto indices = ToArray(rest.indices);
+    const auto envelopeArray = ToArray(envelope);
+
+    std::vector<RigExecDeltaMushSettings> settings(6);
+    settings[1].smoothing = RigExecDeltaMushSmoothing::Simple;
+    settings[2].smoothing = RigExecDeltaMushSmoothing::LengthWeighted;
+    settings[2].frameTransport = RigExecDeltaMushFrameTransport::Corner;
+    settings[3].onlySmooth = true;
+    settings[4].smoothWeights.assign(posed.size(), 0.0f);
+    for (size_t i = 0; i < posed.size(); ++i)
+        settings[4].smoothWeights[i] = 0.1f * (i % 11);
+    // Explicit edges cover every polygon edge; add each quad's diagonal.
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x) {
+            const int i = y * 8 + x;
+            if (x + 1 < 8)
+                settings[5].edges.insert(settings[5].edges.end(), {i, i + 1});
+            if (y + 1 < 8)
+                settings[5].edges.insert(settings[5].edges.end(), {i, i + 8});
+            if (x + 1 < 8 && y + 1 < 8)
+                settings[5].edges.insert(settings[5].edges.end(), {i, i + 9});
+        }
+    GfMatrix4d rotated(1.0);
+    rotated.SetRotate(GfRotation(GfVec3d(0.2, 1, 0.1), 35.0));
+    rotated.SetTranslateOnly(GfVec3d(0.5, -1, 2));
+    GfMatrix4d projective(1.0);
+    projective[0][3] = 0.5;
+
+    for (size_t s = 0; s < settings.size(); ++s)
+        for (const GfMatrix4d &map : {GfMatrix4d(1.0), rotated, projective})
+            for (const bool pin : {true, false}) {
+                DeltaMushPayload payload;
+                payload.iterations = 4;
+                payload.step = 0.4;
+                payload.pinBorders = pin;
+                payload.distanceWeight = s == 1 ? 0.5 : 0.0;
+                payload.displacement = 0.8;
+                payload.settings = settings[s];
+                RigExecRigDescBuilder b;
+                const RigExecNodeId node = b.AddOp(DeltaMush(), &payload);
+                const RigExecInputId ins[] = {
+                    b.BindInput(node, DeltaMushPoints()),
+                    b.BindInput(node, DeltaMushRest()),
+                    b.BindInput(node, DeltaMushCounts()),
+                    b.BindInput(node, DeltaMushIndices()),
+                    b.BindInput(node, DeltaMushComputationToTarget()),
+                    b.BindInput(node, DeltaMushEnvelope())};
+                const RigExecOutputId out = b.BindOutput(node, DeltaMushOut());
+                std::string error;
+                auto desc = b.Build(&error);
+                auto program =
+                    desc ? RigExecCompile(*desc, {}, &error) : nullptr;
+                auto e = program ? RigExecEvaluator::Create(program, {}, &error)
+                                 : nullptr;
+                CHECK(e);
+                if (!e)
+                    continue;
+                const auto mapArray = ToStd(map);
+                const void *values[] = {&in,      &restArray, &counts,
+                                        &indices, &mapArray,  &envelopeArray};
+                for (size_t i = 0; i < std::size(ins); ++i)
+                    CHECK(e->SetInput(ins[i], values[i], &error));
+                std::vector<GfVec3f> expected = posed;
+                const bool ok = RigExecApplyDeltaMush(
+                    &expected, rest.points, rest.counts, rest.indices,
+                    payload.iterations, payload.step, payload.pinBorders,
+                    payload.distanceWeight, payload.displacement,
+                    payload.settings, map);
+                CHECK(map[0][3] == 0.0 || !ok);
+                CHECK(map[0][3] != 0.0 || ok);
+                CHECK(e->Evaluate(&error) == ok);
+                if (!ok)
+                    continue;
+                Blend(posed, envelope, &expected);
+                if (!SameBits(expected, *static_cast<const Points *>(
+                                            e->GetOutput(out)))) {
+                    std::printf("delta mush settings %zu pin %d differs\n", s,
+                                int(pin));
+                    CHECK(false);
+                }
+            }
+}
+
 } // namespace
 
 int
@@ -220,6 +330,7 @@ main()
     }
     TestSmooth();
     TestVolumeCorrect();
+    TestDeltaMush();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

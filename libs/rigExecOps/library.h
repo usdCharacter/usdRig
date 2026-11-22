@@ -11,6 +11,7 @@ namespace rigExecOps {
 /// Each family's registration, called by the library's entry.
 void RegisterPropertyMathOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterPointOps(rigExec::RigExecOpRegistrar &registrar);
+void RegisterDeltaMushOps(rigExec::RigExecOpRegistrar &registrar);
 
 } // namespace rigExecOps
 

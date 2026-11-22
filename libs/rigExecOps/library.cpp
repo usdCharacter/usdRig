@@ -8,6 +8,7 @@ Register(rigExec::RigExecOpRegistrar &registrar)
 {
     RegisterPropertyMathOps(registrar);
     RegisterPointOps(registrar);
+    RegisterDeltaMushOps(registrar);
 }
 
 const rigExec::RigExecOpLibraryDesc kLibrary = [] {
