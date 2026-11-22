@@ -2094,6 +2094,11 @@ target_link_libraries(benchEditLatency PRIVATE rigExec)
 target_compile_definitions(benchEditLatency PRIVATE
     ${_rigexec_schema_resource_define})
 
+add_executable(benchRigSpeed tests/benchRigSpeed.cpp)
+target_link_libraries(benchRigSpeed PRIVATE rigExec)
+target_compile_definitions(benchRigSpeed PRIVATE
+    ${_rigexec_schema_resource_define})
+
 add_executable(benchPlayback tests/benchPlayback.cpp)
 target_link_libraries(benchPlayback PRIVATE rigExecImaging rigExecBake)
 target_include_directories(benchPlayback PRIVATE
@@ -2926,7 +2931,8 @@ endif()
 # the library and are not scene tests. testRigExecStandalone calls the
 # translation functions from the test itself.
 foreach(_rigexec_scene_exe IN ITEMS
-    benchEditLatency benchFrameCache benchFrameCacheWarm probeCodingError
+    benchEditLatency benchFrameCache benchFrameCacheWarm benchRigSpeed
+    probeCodingError
     rigExecPose rigExecBakeTool
     testRigExecAffineFrames testRigExecArm testRigExecBakedAttribute
     testRigExecBakedMode testRigExecBakedSchedule testRigExecBinary
