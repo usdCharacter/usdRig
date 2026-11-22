@@ -2385,6 +2385,20 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             op = RigExecRevisionOp::Matrix;
         }
         if (!op) {
+            // A mover row that resolves no op for a points write would leave
+            // the chain unrevised.
+            if (RigExecFindMoverHandler(mover.schemaType)) {
+                for (const SdfPath &target : mover.targets) {
+                    if (target.IsPropertyPath() &&
+                        target.GetNameToken() == "points") {
+                        return fail(mover.schemaType.GetString() + " " +
+                                        mover.moverPath.GetString() +
+                                        " resolves no point op for mode '" +
+                                        curveMode.GetString() + "'",
+                                    {mover.moverPath});
+                    }
+                }
+            }
             continue;
         }
         for (const SdfPath &target : mover.targets) {

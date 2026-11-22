@@ -738,9 +738,9 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
     movers.reserve(moverCount);
     for (size_t i = 0; i < moverCount; ++i)
         movers.push_back(factories[i]());
-    std::string registrationError;
-    self->InstallMoverDefinitions(movers.data(), movers.size(),
-                                  &registrationError);
+    if (!self->InstallMoverDefinitions(movers.data(), movers.size(), error))
+        return fail(error ? *error
+                          : std::string("built-in mover registration failed"));
     // History ticks open their own program from these (ExecuteHistory).
     if (!program.windowedOps.empty()) {
         self->_historyBytes =
@@ -755,7 +755,9 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
                            size_t moverCount, std::string *error)
 {
     auto reader = Open(bytes, size, error);
-    if (reader && !reader->InstallMoverDefinitions(movers, moverCount, error))
+    if (reader &&
+        (!reader->InstallMoverDefinitions(movers, moverCount, error) ||
+         !reader->_RequireExternalKernels(error)))
         return nullptr;
     return reader;
 }

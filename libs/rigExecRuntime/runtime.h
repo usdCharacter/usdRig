@@ -604,6 +604,7 @@ private:
     std::shared_ptr<const std::vector<uint8_t>> _historyBytes;
     std::unique_ptr<RigExecRuntimeReader> _history;
     bool _RunHistoryTick(std::string *error);
+    bool _RequireExternalKernels(std::string *error) const;
 
     // What the input getters answer past the count: a Double +0.0, every
     // other member zero.

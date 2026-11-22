@@ -814,6 +814,24 @@ RigExecRigEvaluator::_DiscoverMovers(
                     {prim.GetPath()});
             }
 
+            // A write set no op in this build can run fails here, not as
+            // pass-through at evaluation.
+            if (!RigExecFindMoverHandler(record.schemaType) &&
+                !_FindConstraintHandler(record.schemaType) &&
+                !_IsSourceFrameConstraintType(record.schemaType) &&
+                record.schemaType !=
+                    SchemaTypeName::RigExecSingleChainIkConstraint &&
+                record.schemaType !=
+                    SchemaTypeName::RigExecHarmonicsConstraint &&
+                record.schemaType !=
+                    SchemaTypeName::RigExecIkFkMatchConstraint) {
+                return fail(record.schemaType.GetString() + " " +
+                                prim.GetPath().GetString() +
+                                " has rigExec:moves but no op is registered "
+                                "for its type in this build",
+                            {prim.GetPath()});
+            }
+
             // Mover target rules and mover-specific validation, from the
             // mover's own row (see movers/). The generic rules check every
             // target's domain and the single-target cardinality; the row's validate

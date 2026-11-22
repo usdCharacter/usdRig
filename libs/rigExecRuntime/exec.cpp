@@ -955,10 +955,31 @@ RigExecRuntimeReader::_RunHistoryTick(std::string *error)
     return true;
 }
 
+// A plugin mover with no kernel installed refuses the run.
+bool
+RigExecRuntimeReader::_RequireExternalKernels(std::string *error) const
+{
+    const RrProgram &program = *_program;
+    for (const auto &[slot, index] : program.externalIndex) {
+        const RrProgram::ExternalRevision &state = program.externals[index];
+        if (state.state)
+            continue;
+        const RigExecWireRevision &wire =
+            program.geometry->chains[slot.first].revisions[slot.second];
+        if (error)
+            *error = program.TextOrEmpty(wire.moverPath) + " is a " +
+                     state.type + ", which this runtime has no kernel for";
+        return false;
+    }
+    return true;
+}
+
 bool
 RigExecRuntimeReader::Execute(std::string *error)
 {
     RrProgram &program = *_program;
+    if (!_RequireExternalKernels(error))
+        return false;
     RrStore &store = program.store;
     store.runTrace.clear();
     // The inputs set since the last run. Only an Animated input set, or
@@ -1045,22 +1066,6 @@ RigExecRuntimeReader::Execute(std::string *error)
 
     RigExecRuntimeCounters counters;
     counters.executedOpCount = store.opExecution.executed;
-
-    // A plugin mover this runtime has no kernel for is a no-op, said on
-    // every frame it is one, beside the lines of the step it sat in.
-    for (const auto &[slot, index] : program.externalIndex) {
-        const RrProgram::ExternalRevision &state = program.externals[index];
-        if (state.state) {
-            continue;
-        }
-        const RigExecWireRevision &wire =
-            program.geometry->chains[slot.first].revisions[slot.second];
-        poseDiagnostics.push_back(
-            "warning: " + program.TextOrEmpty(wire.moverPath) + " is a " +
-            state.type +
-            ", which this runtime has no kernel for; its "
-            "points pass through");
-    }
 
     // The compile notices a fresh evaluator seeds its first generation
     // with (inert movers, purpose warnings): file order, ahead of
