@@ -718,8 +718,8 @@ RigExecBackgroundScheduler::NotePlaybackAdvanced(const SdfPath &rig,
             ++it;
             continue;
         }
-        // A sweep job at or behind the playhead: the live path serves that
-        // frame now, so warming it is pointless. Neighbors stand -- the
+        // Jobs at/behind the playhead are dropped: the live path serves that
+        // frame. Neighbors stand -- the
         // frames ahead still warm the imminent scrub path -- and the standing
         // neighbor-before-sweep order deprioritizes the sweep that remains.
         _queuedByRigAndTime.erase(std::make_pair(rig, request.time.GetValue()));

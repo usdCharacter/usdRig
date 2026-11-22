@@ -16,10 +16,8 @@
 // instead. The worker-side entry point (RigExecEvaluateFrozen with a runner)
 // checks the compiled rig pin and the generation fence, forces the serial kernel
 // variants for the calling thread, and runs the supplied serial step runner
-// against the private arena; anything it cannot prove bit-identical --
-// unimplemented, inconsistent, stale, or cancelled -- answers with an invalid
-// pose, which is the fail-closed stub the caller falls back from into live
-// evaluation.
+// against the private arena. Returns an invalid pose when bit-identity is
+// not provable. Caller then evaluates live.
 // THREADING. The context is trivially copyable plain data: safe to build on
 // the UI thread, hand across threads, and hold past the stage edit that
 // cancels the job it was sampled for. The input vector is likewise plain
@@ -637,8 +635,8 @@ using RigExecFrozenStepRunner = std::function<bool(
 
 /// Evaluates \p inputs under \p context with \p runner, reading nothing
 /// else. The returned pose is bit-identical to a live evaluation of the same
-/// inputs; when it cannot be -- unimplemented, inconsistent, stale, or
-/// cancelled -- the pose is invalid and the caller evaluates live instead.
+/// inputs. Returns an invalid pose when bit-identity is not provable; the
+/// caller then evaluates live.
 ///
 /// The checks, in order: the context must carry an admitted program; the
 /// input vector's count must equal the context's sampled count; when \p
@@ -661,14 +659,11 @@ RigExecRigPose RigExecEvaluateFrozen(
     const SdfPath &rig = SdfPath(), RigExecFrozenRunReport *report = nullptr);
 
 /// Evaluates \p inputs under \p context, reading nothing else. The returned
-/// pose is bit-identical to a live evaluation of the same inputs; when it
-/// cannot be -- unimplemented, inconsistent, or cancelled -- the pose is
-/// invalid and the caller evaluates live instead.
+/// pose is bit-identical to a live evaluation of the same inputs. Returns an
+/// invalid pose when bit-identity is not provable; the caller then evaluates
+/// live.
 ///
-/// Without a step runner this overload cannot prove bit-identity, so it
-/// always answers invalid at the requested time: the fail-closed stub.
-/// Every request declines and the caller evaluates live; production call
-/// sites use the runner overload above.
+/// Always returns invalid; use the runner overload.
 RigExecRigPose RigExecEvaluateFrozen(const RigExecFrozenEvalContext &context,
                                      const RigExecFrameInputs &inputs);
 
@@ -1003,7 +998,7 @@ RigExecFrozenStepRunner RigExecMakeProductionStepRunner();
 
 /// Hashes \p inputs to the control-state digest the frame cache keys on
 /// (the frame cache feeds this into RigExecFrameCacheKey::controlDigest). Time is
-/// deliberately NOT hashed: a scrub between identical control states hits
+/// not hashed: a scrub between identical control states hits
 /// across times, and a control edit changes the digest at every affected
 /// frame by construction. Overrides are hashed with the authored values,
 /// because a drag must never be served a pre-drag pose, and so are the

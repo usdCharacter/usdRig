@@ -206,8 +206,7 @@ RigExecBuildVolumeWeightPacket(const TfToken &typeName,
 void RigExecWeightPacketsTouchTokens();
 
 /// Folds \p inputs together in AUTHORED ORDER (subtract and overlay are
-/// order dependent by design) and applies invert, strength, and the range
-/// policy.
+/// order dependent) and applies invert, strength, and the range policy.
 ///
 /// \p weightTargetCount is the combine's own rigExec:weightTarget point
 /// count, consulted only when no input is dense enough to carry the

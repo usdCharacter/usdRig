@@ -652,9 +652,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(unsigned segments,
         // Volumetric extension. Only STRUCTURAL properties belong here:
         // the shape family, which axis it measures, where it samples,
         // and the baked remap. inputs:falloffMin/Max, invert, strength,
-        // scaleX/Y/Z and extentU/V are deliberately absent -- they are
-        // per-frame exec values, and hashing them would recompile every
-        // frame an artist scrubs one. rigExec:planeBounds IS here
+        // scaleX/Y/Z and extentU/V are absent: per-frame exec values are not
+        // hashed. rigExec:planeBounds IS here
         // because it selects which field function runs, exactly as
         // rigExec:planeAxis selects which coordinate it measures.
         appendToken(w, _tokens->rigExecFalloffProfile);
@@ -869,9 +868,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(unsigned segments,
         // identity: which prim is switched, the ordered source list, the labels
         // parallel to it, where the active index is read from, and the masks --
         // all of which decide the shape of the taps and the dependency order
-        // between switches. inputs:activeSpace is deliberately NOT hashed: it is
-        // the animated channel, read per frame like any avar, and an edit to it
-        // must not rebuild the compiled rig.
+        // between switches. inputs:activeSpace is per-frame; not hashed.
         for (const UsdPrim &prim :
              UsdPrimRange(_stage->GetPrimAtPath(_rigPath))) {
             if (prim.GetTypeName() != _tokens->rigExecSpaceSwitch)
@@ -1005,10 +1002,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(unsigned segments,
     // computed on every evaluate that follows any stage edit, so the memo
     // keeps it to one closure per prim.
     // The caches are function-local: nothing survives the call, so a stage
-    // edit between two digests is still seen. They are deliberately NOT
-    // evaluator members -- a member cache would have to be invalidated by
-    // _OnObjectsChanged, and the whole point of the digest is to be the
-    // thing that does not trust incremental invalidation.
+    // edit between two digests is still seen. The digest must not rely on
+    // incremental invalidation.
     std::unordered_map<SdfPath, std::string, SdfPath::Hash> solverInputTokens;
     // One attribute can sit in many blocks (every joint's parent:space chain
     // republishes its ancestors' attributes), so resolve each path's
@@ -1686,8 +1681,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(unsigned segments,
         // solver's full path, so a sibling reorder (or a layer-strength
         // change that composes a different order) changes the concatenation
         // and starts a new compiled rig -- which is the only reason a reordered
-        // stack cannot keep a stale schedule. Do not "optimize" this into a
-        // sorted set or a path-keyed map.
+        // stack cannot keep a stale schedule. Visit order is semantic: never
+        // sort or key by path.
         const TfToken &kJointsRel = _tokens->rigExecJoints;
         const TfToken &kJointElements = _tokens->rigExecJointElements;
         const TfToken &kCount = _tokens->rigExecCount;
@@ -2354,13 +2349,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(unsigned segments,
                                      true);
                     appendPhase(sample, _tokens->rigExecTargetPoints);
                     // WHICH blend shape a sparse sample names is structure,
-                    // so it belongs in the compiled rig signature. What the shape
-                    // CONTAINS deliberately does not: offsets and
-                    // pointIndices are uniform, so they cannot be time
-                    // samples, and RigExecBlendSampleCache is cleared by
-                    // every notice -- a sculpt edit is caught by the cache's
-                    // array compare on the next frame without forcing a
-                    // recompile of the whole rig.
+                    // so it belongs in the compiled rig signature. Shape
+                    // contents not hashed; blend sample cache catches edits.
                     appendRelTargets(sample, _tokens->rigExecBlendShape, true);
                     float activation = 1;
                     noteValueNamed(sample, _tokens->rigExecActivation);

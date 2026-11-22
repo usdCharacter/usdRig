@@ -72,13 +72,9 @@ struct RigExecWireBasis;
 ///     an edit reaches the very next read. A notice reports a composed
 ///     change at every stage path that depends on the edited spec, which is
 ///     what makes the entry's own path the right key. It also clears it when
-///     interactive overrides are set AND when they are cleared, which is
-///     defence in depth and not a correctness requirement: an attribute
-///     override is written into the generation's resolved inputs before
-///     anything reads one, and GetAttribute consults this cache only where
-///     the resolved map has no entry, so an overridden attribute is never
-///     answered from here in the first place. Kept because a drag is cheap
-///     to re-fill from and the alternative is an argument;
+///     interactive overrides are set and when they are cleared. An
+///     overridden attribute is never answered from here: GetAttribute
+///     consults this cache only where the resolved map has no entry;
 ///   * precedence: a value this generation already resolved in memory (a
 ///     property chain result, an interactive override) is consulted before
 ///     the cache is, by RigExecResolvedInputs::GetAttribute.
@@ -90,9 +86,7 @@ public:
     /// Forgets everything. Called on every notice: the cache holds authored
     /// values, and a notice is the only way an authored value moves.
     ///
-    /// The counters below are cumulative and deliberately survive this: they
-    /// describe what the cache DID, which a test reads across the notices it
-    /// provokes.
+    /// Counters are cumulative; Clear() keeps them.
     void Clear() {
         _entries.clear();
         // The cache is single-threaded state. It is stamped with the thread

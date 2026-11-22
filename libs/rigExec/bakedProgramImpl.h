@@ -175,7 +175,7 @@ RigExecBakedAnimatedOrConnected(const UsdAttribute &attribute)
     }
     // A connection means the value comes from somewhere this check has not
     // looked at. HasAuthoredConnections first: see _AuthoredConnections in
-    // rigEvaluator.cpp for why the guard is worth its line.
+    // rigEvaluator.cpp.
     SdfPathVector connections;
     return attribute.HasAuthoredConnections() &&
            attribute.GetConnections(&connections) && !connections.empty();
@@ -979,9 +979,7 @@ struct RigExecBakedProgramImpl {
 
     /// The partition of `steps` the parallel executor runs, chosen once at
     /// Build. Its grain comes from the cost model and the machine's
-    /// concurrency, never from a measurement: a schedule that depended on
-    /// what the box was doing at Build time would make "the same program
-    /// produces the same answers at every grain" a claim nobody could test.
+    /// concurrency, never from a measurement.
     RigExecBakedClustering clustering;
     // Settings a body path needs, read from the environment once at Build so
     // that no body reads the environment or a function-local static.
@@ -2677,9 +2675,8 @@ struct RigExecBakedBuildContext {
     /// the same order the bindings appear in the program and a parallel
     /// resolve produces a bake identical to a serial one, byte for byte;
     /// call it in completion order and the program still works while no two
-    /// builds of one rig agree. A loop with enough inputs to be worth it
-    /// commits through shards instead, which keeps the numbering by a prefix
-    /// sum rather than by order (see RigExecBakedRecordBind).
+    /// builds of one rig agree. Large loops commit via shards
+    /// (RigExecBakedRecordBind).
     template <class T>
     void CommitBind(const UsdPrim &prim, const TfToken &name,
                     RigExecBakedInput<T> *input, const SdfPathVector &walk);
@@ -3486,12 +3483,10 @@ void RigExecBakedDeclareInputDependencies(RigExecBakedProgramImpl *program);
 /// Work observations are projected through the cone's actual body selection. Nothing here is on a production
 /// path -- the state is large and copying it is the point.
 ///
-/// WHAT IT DELIBERATELY DOES NOT COMPARE, and why each one is scratch rather
-/// than an answer. An instrument that agrees about state it never looked at
-/// is worse than no instrument, so this list is meant to be exhaustive
-/// against the mutable fields of RigExecBakedProgramImpl, RigExecBakedStep,
-/// GeomChain, GeomRevision and GeomChunk; a field added to any of those
-/// belongs either in Compare or in this list.
+/// Not compared (scratch, not answers):
+/// Invariant: every mutable field of RigExecBakedProgramImpl,
+/// RigExecBakedStep, GeomChain, GeomRevision and GeomChunk is in Compare or
+/// this list.
 ///
 ///  * everything Build wrote and no run touches -- the slot tables, the
 ///    input bindings, the step graph, the clustering, the cones.
@@ -3515,9 +3510,8 @@ void RigExecBakedDeclareInputDependencies(RigExecBakedProgramImpl *program);
 ///    and the forced second pass needs none),
 ///    `lastHaveBase`, `lastTime`, `everRan`,
 ///    `lastProgramStamp`, and the provider leaves' `spaceLeafRekey`. The
-///    second pass is FORCED, so its closure differs
-///    from the first's on purpose; comparing them would report the mode
-///    rather than the program. The run statistics that observers read are
+///    second pass is FORCED, so its closure differs from the first's;
+///    comparing them would report the mode rather than the program. The run statistics that observers read are
 ///    put back by RigExecBakedRunStatistics instead.
 ///  * each chain's `spare`, the other half of the published double buffer.
 ///    A pass that publishes swaps it with `result`; a pass that skips the

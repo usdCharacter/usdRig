@@ -551,9 +551,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             _profiler, "Compile.Providers.BoundsValidation", "compile");
         const SdfPath assetRoot = _rigPath.GetParentPath();
         auto warn = [errors](const std::string &message) {
-            // Both channels on purpose: TF_WARN is what a host surfaces to
-            // the author, and the errors vector is what a test can read.
-            // Compile still returns true.
+            // TF_WARN for hosts, errors for tests; Compile returns true.
             if (errors) {
                 errors->push_back("warning: " + message);
             }
@@ -632,10 +630,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                     continue;
                 }
                 // A provider nested under a provider with a DIFFERENT
-                // resolved purpose is dropped from the ancestor's extent
-                // on purpose: one extent carries one purpose, and the
-                // bounding-box cache files it under the ancestor's. Nobody
-                // reading the namespace would guess that, so say it.
+                // resolved purpose is dropped from the ancestor's extent:
+                // one extent, one purpose.
                 if (descendant.IsA<UsdGeomImageable>()) {
                     const TfToken descendantPurpose =
                         resolvedPurpose(descendant);
@@ -731,15 +727,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // nameChildren) already folded in; the stack consumes that order in
     // reverse so the bottom branch runs first. A reorder is a convenience for
     // redirecting that order, never a precondition for having one.
-    // This deliberately does not reason about HOW the composed order arose --
-    // which layer authored a sibling, which arc contributed it, whether a
-    // reorder opinion exists. The compiler reads the final stage and nothing
-    // else. An earlier revision rejected non-nested same-target writers that
-    // lacked an authored reorder covering both branches; it demanded ceremony
-    // (examples/13_ReadPhases.usda restated its own file order to satisfy it)
-    // while not actually preventing the precedence surprises it cited, which
-    // come from arc order and weak-side insertion rather than from a missing
-    // reorder opinion.
+    // Reads only the final composed order; provenance is ignored.
 
     // final transform reads are legal only when every writer of that
     // provider precedes the reader in logical order: a
@@ -851,10 +839,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // usdview reorders the stack.
     // It is a pre-order of the WHOLE rig, not a sibling order: two solvers in
     // different scopes are ordered by where their scopes sit, and a nested
-    // solver comes before its ancestor. This is deliberately the same walk
-    // the compiled rig signature uses (see the aggregate-solver segment of the digest
-    // below), so an order edit can never retain the old digest while
-    // executing a different stack.
+    // solver comes before its ancestor. Must match the digest's solver walk
+    // (the aggregate-solver segment of the digest).
     std::map<SdfPath, int> solverStackOrdinal;
     {
         int ordinal = 0;
@@ -2125,9 +2111,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                                  &constraint.effector)) {
                 return false;
             }
-            // SingleChain deliberately ignores every pole input. Do not even
-            // bind these relationships: an otherwise malformed dormant pole
-            // must not make the selected solver mode fail to compile.
+            // SingleChain binds no pole input; a malformed dormant pole must
+            // not fail compile.
             TfToken solverMode = _tokens->rotatePlane;
             if (const UsdAttribute a =
                     moverPrim.GetAttribute(_tokens->rigExecSolverMode)) {
@@ -2230,9 +2215,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // feeds it (the incoming frame becomes that solver's rest reference); a
     // constraint above it revises its output, which is what every shipped rig
     // authors and why they are unchanged.
-    // A PRODUCER is deliberately ABSENT from this map (see
-    // jointWritingSolvers above for what makes one), so every consumer of the
-    // map must test membership rather than use operator[].
+    // Producers absent (see jointWritingSolvers): use find(), never
+    // operator[].
     std::map<SdfPath, int> poseStackOrdinal;
     {
         std::set<SdfPath> stackSteps = jointWritingSolvers;
@@ -2794,10 +2778,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // It is a pure function of the composed stage and of the joint binding
     // this compile has already decided above; neither changes while a compile
     // runs, so a memoized answer is the answer a recomputation would give.
-    // It is compile-local, deliberately separate from the digest's own
-    // caches: the digest must stay a self-contained recomputation. (Its
-    // sibling, a prim's connection-input set, went with the solver-input
-    // index to _BuildSolverInputIndex, whose pool reads each prim once.)
+    // Compile-local; must not share the digest's caches.
     std::unordered_map<SdfPath, std::set<SdfPath>, SdfPath::Hash>
         poseClosureCache;
     // The per-prim half of the pose closure, computed ahead of the walks
@@ -2806,12 +2787,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // the composed stage, so its answer does not depend on when it is
     // computed, which is what lets the walk below take one out of here
     // instead of paying for it in line.
-    // Deliberately NOT newPoseInputInfo itself. That map is iterated as a
-    // RESULT further down (the connected-pose taps, newPoseProviderInputs),
-    // so it has to hold exactly the prims a closure walk actually reached
-    // and nothing more. This one is free to overshoot -- a prefetched prim
-    // no walk asks about costs a worker's time and nothing else -- which is
-    // what makes seeding it generously safe.
+    // Separate from newPoseInputInfo, which must hold only reached prims.
+    // This one may overshoot.
     std::unordered_map<SdfPath, _PoseInputInfo, SdfPath::Hash> poseInfoPrefetch;
     // Shared, not local: a deferred compiled rig hands it to
     // _RealizeDeferredExecPrep, which materializes the attribute sets the

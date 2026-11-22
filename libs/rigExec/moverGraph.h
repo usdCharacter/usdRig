@@ -293,8 +293,8 @@ RigExecClusterInPointFrame(const GfMatrix4d &m, const GfMatrix4d &space,
         // The guard is "a carry was NAMED", never "the carry is identity":
         // `carry^-1 * m * carry` for a master standing at its rest is m to
         // the last few ulps and not bit for bit, and a rig that named a
-        // space has asked for that product. What must stay untouched is the
-        // rig that named NOTHING, which is the branch below.
+        // space has asked for that product. No carry named: take the branch
+        // below.
         out = carry->GetInverse() * m * *carry;
     } else {
         const GfVec3d k = RigExecFrameScale(space);

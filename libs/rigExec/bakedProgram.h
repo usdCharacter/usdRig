@@ -331,9 +331,8 @@ public:
 
     /// Whether \p notice can have moved anything the bake captured.
     ///
-    /// The compiled rig signature is deliberately blind to values, so it cannot answer
-    /// this: it is unchanged by exactly the edits that make a captured
-    /// constant wrong. The bake therefore records WHICH properties it read
+    /// Signature excludes values; this index answers value invalidation.
+    /// The bake records WHICH properties it read
     /// and which prims it read them from, and this asks that index. An edit
     /// that misses it -- a value on an input the program re-reads every
     /// frame, or anything on a prim the bake never looked at -- leaves the

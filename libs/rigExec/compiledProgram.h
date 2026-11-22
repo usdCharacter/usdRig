@@ -475,10 +475,9 @@ enum class RigExecBakedSlotKind {
     /// a descendant, and the only kind a solver or the compose writes.
     FirstFramePose,
     /// A plain Xformable a constraint targets. The dynamic walk seeds it from
-    /// the stage and revises it like any other target, but deliberately keeps
-    /// it out of hierarchicalProviders, so it is never propagated TO -- while
-    /// it can still be the closest revised ancestor a RigExec descendant
-    /// rides.
+    /// the stage and revises it like any other target. Not in
+    /// hierarchicalProviders: never propagated to, but can be the closest
+    /// revised ancestor a RigExec descendant rides.
     XformDerived,
 };
 
@@ -1273,7 +1272,7 @@ struct RigExecBakedCones {
     // from them on demand: the output-affected index, the sparse frame-cache
     // planner and the frozen clone read them, and each wants a cluster
     // answer. Every entry below is the step-grain twin of the entry of the
-    // same name above; a seed added to one family belongs in both.
+    // same name above. Invariant: step and cluster tables list the same seeds.
 
     /// Steps that read outside the graph (dirty every run), and steps that
     /// are not geometry steps (dirty on a program's first run).
@@ -1313,10 +1312,8 @@ struct RigExecBakedComposeGroup {
 ///
 /// A solver STACK is two commits on one slot, never two producers inside one
 /// commit: each solver batch holds exactly one solver, so each write of a
-/// stacked joint gets its own SSA version. If a batch is ever widened to hold
-/// two solvers that write one slot, the merge below would silently collapse
-/// two stack entries into one -- so Build REFUSES that shape by name (see the
-/// duplicate-slot check in bakedPose.cpp's commit sizing).
+/// stacked joint gets its own SSA version. Build refuses duplicate slots in
+/// one batch (bakedPose.cpp).
 struct RigExecBakedCommit {
     /// One provider above a NATIVE Xformable source: the slot, and the
     /// versions of its base and final frames live where this commit runs.
@@ -1829,9 +1826,7 @@ struct RigExecBakedConstraint {
     TfToken type;
     /// rigExec:weightObject, empty when the constraint binds none.
     ///
-    /// Deliberately NOT an index into `weightObjects`: a constraint
-    /// copies the ORACLE, and the oracle resolves the whole composition
-    /// itself from the stage (see the head of bakedWeights.cpp).
+    /// Path, not index: resolved by the oracle from the stage.
     SdfPath weightObject;
     int weightField = -1;
     /// The one float the oracle resolves into, and the string it would
@@ -2225,8 +2220,8 @@ struct RigExecBakedGeomRevision {
     /// index into `solvers`, or -1 when this revision reads none. The
     /// dynamic path takes it off a per-revision tap on the solver's
     /// computePointFrameArray; the program already holds that aggregate,
-    /// so the tap becomes a slot. Nothing fills it yet: IsBakeable still
-    /// refuses "driver frames on mover".
+    /// so the tap becomes a slot. Always -1: IsBakeable refuses driver frames
+    /// on mover.
     int driverFramesSolver = -1;
     bool finalPhase = false;
     /// rigExec:pointFrame == "posed": a skin already carried

@@ -6,10 +6,8 @@
 // whole answer is shadowed, the starting point is put back, every step runs,
 // and the two answers are compared slot by slot, counter by counter and
 // diagnostic by diagnostic.
-// Nothing here is on a production path. It is deliberately a deep copy of
-// everything a step can touch, because a shadow that left a field out would
-// agree with the cone run about the one thing the cone got wrong. What it
-// leaves out on purpose, and why, is listed beside RigExecBakedRunShadow.
+// Debug only. Deep-copies all step-reachable state. Exclusions: see
+// RigExecBakedRunShadow.
 #include "bakedProgramImpl.h"
 #include "pathText.h"
 
@@ -42,14 +40,9 @@ namespace {
 // field holding a non-finite number in one holds the identical one in the
 // other -- and `==` calls every one of them a difference, because a NaN is
 // equal to nothing, itself included.
-// Rigs carry non-finite numbers into slots on purpose. A mover whose inputs
-// the kernel rejects still publishes the packet it rejected, NaN and all,
-// which is how the pass-through diagnostic can name the value; an override
-// of inputs:defaultWeight to a NaN is the fixture that drives it. Comparing
-// those with `==` turned a correct cone into three "baked cone mismatch"
-// lines and a failed parity run -- the instrument crying wolf on the one
-// generation a reader most needs to trust it.
-// So every floating-point comparison below goes through Same(), which counts
+// Slots may hold NaN: a mover whose inputs the kernel rejects still publishes
+// the packet it rejected. Every floating-point comparison below goes through
+// Same(), which counts
 // two NaNs as the same value and is `==` otherwise. ANY type with a float or
 // a double anywhere in it needs its own overload: the fallback at the end of
 // the list is `a == b`, which is right for a path, a token or an integer and
@@ -726,7 +719,7 @@ CompareRevision(std::vector<std::string> *differences, size_t *count,
     // Work flags follow the cone's own selected bodies. Value-based fold
     // changes still agree exactly against the shared starting state.
     // An unselected static/fuse body resets its flag under MarkSkipped;
-    // the forced pass deliberately executes those same bodies.
+    // the forced pass executes those same bodies.
     CompareValue(differences, count, where + " executed", shadow.executed,
                  fuseSelected && revision.executed);
     CompareValue(differences, count, where + " influencesChanged",
@@ -1071,7 +1064,7 @@ RigExecBakedRunShadow::Compare(const RigExecBakedProgramImpl &program,
     size_t count = 0;
     RigExecPathText pathText;
     // Project work observations through the cone's actual body selection.
-    // A forced run computes identical values while deliberately doing more work.
+    // A forced run computes identical values while doing more work.
     std::vector<char> selected(program.steps.size(), 1);
     if (!program.opGraph.ops.empty()) {
         if (opExecution.ran.size() != program.opGraph.ops.size())

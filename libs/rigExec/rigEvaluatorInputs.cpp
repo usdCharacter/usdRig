@@ -550,17 +550,9 @@ RigExecRigEvaluator::SetInteractiveOverrides(
     //   * lifting an override is safe, because the cache only ever holds the
     //     authored value it read from the stage.
     // Authored edits still clear it: every notice does.
-    // _propertyChainBindings is NOT dropped here, and the asymmetry with the
-    // cache above is deliberate. It folds constants for the same class of
-    // attribute, but _PinnedRead consults the resolved inputs FIRST -- and
-    // _ApplyInteractiveOverridesToResolved writes every override into those
-    // before a chain runs, on both paths -- so an overridden attribute can
-    // never reach a folded constant to begin with. Dropping the bindings per
-    // drag would rebind every chain input of the rig on both halves of every
-    // drag, which is the whole of what binding once per compile bought. The
-    // two invalidations it does have are the ones that make a binding WRONG
-    // rather than outranked: a stage edit (_OnObjectsChanged) and the
-    // recompile that replaces the chains the bindings describe.
+    // _propertyChainBindings not dropped: overrides are applied before any
+    // chain reads. Invalidated by a stage edit (_OnObjectsChanged) and by
+    // recompile.
     // An override is a value the static reads must prefer over the stage,
     // and the skin layout is read through exactly that route -- so a layout
     // resolved before the override set changed was resolved against a

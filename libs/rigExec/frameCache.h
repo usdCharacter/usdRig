@@ -49,8 +49,7 @@ struct RigExecUpstreamValue;
 /// Default per-rig byte cap for published poses and retained source snapshots.
 constexpr size_t kRigExecFrameCacheDefaultByteCap = size_t(1280) * 1024 * 1024;
 
-/// What a cached pose is a function of. Time is deliberately absent: see the
-/// file header.
+/// What a cached pose is a function of. Time is not part of the key.
 struct RigExecFrameCacheKey {
     uint64_t compiledRigSignature = 0;
     uint64_t controlDigest = 0;
@@ -467,8 +466,7 @@ private:
         // NoteProvenanceAlias.
         RigExecEntryProvenance provenance;
         // LRU clock tick of the last Lookup or Publish touching this entry.
-        // Approximate across threads by design: a race only evicts a
-        // recently-used entry early (a miss, never a wrong pose).
+        // Relaxed: a race only evicts early (a miss, never a wrong pose).
         mutable std::atomic<uint64_t> lastUse{0};
     };
     struct _Shard {

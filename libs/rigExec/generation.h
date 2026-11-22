@@ -14,9 +14,6 @@
 // token. Entering a rig at generation 0 and bumping on every edit is what
 // makes "stale" decidable from the token alone, with no frame-level
 // invalidation bookkeeping.
-// Header-only on purpose: the checks are two comparisons, and every caller
-// -- the frozen worker, the scheduler, the imaging publish fence -- inlines
-// them rather than paying for a call across the library boundary per frame.
 #ifndef RIGEXEC_GENERATION_H
 #define RIGEXEC_GENERATION_H
 
@@ -48,12 +45,8 @@ RigExecGenerationCheckAtStart(const RigExecBackgroundScheduler &scheduler,
 /// when the token survived the run. Asked by the worker after it evaluates
 /// and before the result reaches the cache.
 ///
-/// The same predicate as CheckAtStart, and deliberately a second call
-/// rather than the first call's answer carried forward: an edit that lands
-/// DURING the run must drop a result that was current when the run began.
-/// Publishing it would store a pose of the older edit under a digest the
-/// newer edit's lookup recomputes -- a plausible wrong answer, which the
-/// cache's "drop, don't guess" rule exists to forbid.
+/// The same predicate as CheckAtStart. Re-checked after the run: an edit
+/// during the run drops it.
 inline bool
 RigExecGenerationCheckBeforePublish(
     const RigExecBackgroundScheduler &scheduler, const SdfPath &rig,

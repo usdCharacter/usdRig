@@ -273,9 +273,8 @@ RigExecEvaluateFrozen(const RigExecFrozenEvalContext &context,
     if (context.frozen && context.frozen->RecordsInputReplay()) {
         replayComparison.emplace("RigExecEvaluateFrozen");
     }
-    // Fail-closed stub: without a step runner no request can prove
-    // bit-identity, so every request answers invalid -- the fail-closed
-    // answer -- while still carrying the requested time on that pose.
+    // No step runner: every request returns an invalid pose at the requested
+    // time.
     (void)context;
     RigExecRigPose pose;
     pose.time = inputs.time;

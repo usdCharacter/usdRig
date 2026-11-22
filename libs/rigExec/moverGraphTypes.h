@@ -255,9 +255,8 @@ struct RigExecRevisionBinding {
 /// through the revision binding. These are the dynamic ones: results of
 /// computations on authored prims, pulled through a tap set on that same stage.
 /// A null/empty member means the provider produced nothing and normally fails
-/// the application rather than substituting a default. The one
-/// deliberate exception is weights: null means no weight object was bound,
-/// so inputs:defaultWeight supplies the common envelope.
+/// the application rather than substituting a default. Exception: null
+/// weights = none bound; inputs:defaultWeight applies.
 struct RigExecProviderValues {
     const GfMatrix4d *transform = nullptr; ///< computeMatrix
     /// computeMatrix per binding.influences entry, in that order (skin).

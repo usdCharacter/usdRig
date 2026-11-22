@@ -2271,11 +2271,7 @@ RigExecBakedBuildGeometrySteps(RigExecBakedProgramImpl *program)
                         RigExecBakedSlotDomain::RevisionTransforms, id));
                 }
                 if (revision.chunked) {
-                    // The whole point: this chunk waits for ITS influences
-                    // and for nothing else. Not the fold, not the other
-                    // chunks' joints -- it starts the instant its own are
-                    // final and the fuse decides afterwards whether the work
-                    // was wanted.
+                    // Waits only on its own influences; the fuse decides use.
                     const RigExecBakedSlotDomain domain =
                         RigExecBakedOwnMatrixDomain(revision);
                     for (const int position : revision.chunks[k].key) {
@@ -2326,11 +2322,8 @@ RigExecBakedBuildGeometrySteps(RigExecBakedProgramImpl *program)
                 if (revision.weightObject >= 0) {
                     // The packet the MoverFailed arm consults. The assemble
                     // declares it too and the fuse waits on the assemble
-                    // either way, so this changes no order -- but a step
-                    // that touches a slot it did not declare is a bug even
-                    // when a neighbour's declaration happens to cover it,
-                    // and the next reader of either builder would have to
-                    // rediscover why it was safe.
+                    // either way, so this changes no order. Every slot a
+                    // step touches must be declared by that step.
                     fuse.reads.push_back(
                         RigExecBakedOne(RigExecBakedSlotDomain::WeightPacket,
                                         revision.weightObject));
@@ -2403,8 +2396,8 @@ RigExecBakedBuildGeometrySteps(RigExecBakedProgramImpl *program)
             RigExecBakedStep &step =
                 AddGeometryStep(&B, RigExecBakedStepKind::Derived, id);
             step.maxDiagnostics = derived.revision.binding.phases.size() + 1;
-            // The chain's FINAL points, deliberately: recomputeNormals and
-            // recomputeExtent describe the geometry as published. The
+            // Final chain points: recomputeNormals and recomputeExtent
+            // describe the geometry as published. The
             // target's own authored base is prologue state, read beside the
             // chain's.
             step.reads.push_back(
@@ -3145,13 +3138,8 @@ RevisionValues(RigExecBakedProgramImpl &B,
     RigExecProviderValues values;
     // The fold decided whether there is a matrix at all -- a bound transform
     // provider, or a geometry-domain constraint's delta -- and wrote it.
-    // A SKIN revision is assembled without one, and that is not an omission:
-    // its static step runs BEFORE its fold, precisely so its chunks wait for
-    // their own joints rather than for the rig's, so the fold's matrix here
-    // would be the one last run measured. Nothing reads it --
-    // RigExecAssembleSkinParameters takes no transform, which is also how
-    // the dynamic path treats a delta landing on a skin mover -- so the
-    // packet is assembled without a matrix rather than with a stale one.
+    // Skin packets carry no matrix: the skin's static step precedes the fold,
+    // and RigExecAssembleSkinParameters takes no transform.
     if (revision->haveTransform && revision->op != RigExecRevisionOp::Skin) {
         values.transform = &revision->transform;
     }
@@ -3174,9 +3162,7 @@ RevisionValues(RigExecBakedProgramImpl &B,
     // The weight object's packet, shared with every other mover that binds
     // it and built by its own step earlier in the frame. A mover copies EXEC
     // here (see bakedWeights.cpp): this is the packet the tap would have
-    // carried, and `inputs:defaultWeight` is deliberately NOT consulted
-    // beside it -- the assembler falls back to that scalar only when no
-    // packet is bound at all.
+    // carried. `inputs:defaultWeight` is used only when no packet is bound.
     if (revision->weightObject >= 0) {
         values.weights = revision->weightCurrentPhase
                              ? &revision->currentPhasePacket
@@ -3188,7 +3174,7 @@ RevisionValues(RigExecBakedProgramImpl &B,
         revision->op != RigExecRevisionOp::Skin &&
         revision->op != RigExecRevisionOp::Wire) {
         if (revision->op == RigExecRevisionOp::External) {
-            // API4 currently exposes an owning vector view to plugin code.
+            // API4 exposes an owning vector view to plugins.
             if (basePointCount)
                 values.basePoints.assign(basePoints,
                                          basePoints + basePointCount);

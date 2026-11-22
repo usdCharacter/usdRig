@@ -205,7 +205,7 @@ PutRun(std::string *out, const T *data, size_t count)
 }
 template <class ArrayT> void Array(std::string *out, const ArrayT &values);
 // Boxed samples retain a type tag plus exact payload bytes. Unknown plugin
-// values are deliberately non-exact; callers must propagate conservatively.
+// values are non-exact; callers must propagate conservatively.
 bool
 BoxExact(const VtValue &v)
 {
@@ -535,7 +535,7 @@ Put(std::string *out, const RigExecMoverParameters &v)
     if (v.skinTopology)
         Put(out, *v.skinTopology);
     // mushRest and externalHandler are derived immutable handles. Opaque
-    // externalData is deliberately not approximated by printable text/hash.
+    // externalData has no text/hash approximation.
     Put(out, v.externalSchema);
     Put(out, v.externalData.IsEmpty());
 }

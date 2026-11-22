@@ -133,9 +133,8 @@ RigExecRigEvaluator::_VerifyScopedClears(UsdTimeCode time, RigExecRigPose *pose)
     _scopedClearShadow->cpuReference = cpuReference;
     const RigExecRigPose shadow = _scopedClearShadow->Evaluate(time);
     // Every domain --pose-out writes. RigExecComparePoses covers the maps,
-    // the ordered diagnostics and the work counters; the scalars it leaves
-    // out on purpose, because the two paths it was written for disagree
-    // about them, are the same path here and must agree too.
+    // the ordered diagnostics and the work counters. Also compares the
+    // scalars RigExecComparePoses skips.
     RigExecRigPose differences;
     RigExecComparePoses(shadow, *pose, &differences);
     const auto scalar = [&differences](size_t wholesale, size_t scoped,

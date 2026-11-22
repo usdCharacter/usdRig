@@ -432,9 +432,8 @@ VtValue RigExecPhasedConsumerValue(const VtValue &chainValue,
 /// on \p ctx's mover: resolves the phase and reads `ctx.entering` for
 /// `preceding` on the oracle's own chain past its first mover, otherwise
 /// the recorded snapshot, or the authored stage value when the phase is
-/// Base or no snapshot was recorded. Deliberately independent of
-/// RigExecResolveRevisionBinding (that independence is what makes parity a
-/// real check) while sharing the authored intent.
+/// Base or no snapshot was recorded. Independent of
+/// RigExecResolveRevisionBinding (parity oracle).
 void RigExecReadPhasedPoints(const RigExecMoverOracleContext &ctx,
                              const char *relName, const SdfPath &pointsPath,
                              VtVec3fArray *out);
@@ -470,8 +469,7 @@ bool RigExecValidateMoverTargets(const UsdStageRefPtr &stage,
 /// connected shape, whose value can move within the compiled rig); the layout
 /// itself is still filled in, because a refusal means "read this every
 /// frame", not "this is unusable". Shared by the packet assembly and the
-/// oracle, which deliberately reads through this rather than the
-/// compiled rig cache.
+/// oracle; the oracle reads through this, not the compiled-rig cache.
 bool RigExecResolveBlendSampleLayout(const UsdStageRefPtr &stage,
                                      const SdfPath &blendShapePath,
                                      size_t pointCount,

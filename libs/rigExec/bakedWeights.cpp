@@ -112,7 +112,7 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx, const SdfPath &path)
     // Composition first, and depth first: the table is in dependency order,
     // so everything this object reads has to be in it already. The authored
     // order of rigExec:inputWeights is kept -- subtract and overlay are
-    // order dependent by design.
+    // order dependent.
     object.base = RigExecBakedBakeWeightObject(ctx, [&]() {
         const SdfPathVector targets =
             ctx->Targets(prim, _tokens->rigExecBaseWeight);
@@ -603,24 +603,7 @@ RigExecBakedRunWeightStep(RigExecBakedProgramImpl *program,
     }
     RigExecBakedProgramImpl::WeightObject &weight =
         B.weightObjects[size_t(step->object)];
-    // Rebuilt every frame, with NO packet carried over from the last one,
-    // and that is a decision rather than an omission: the predicate is the
-    // hard part. The obvious one -- "no input of this closure is a function
-    // of TIME" -- is not "nothing moved": an interactive override standing
-    // on a painted weight moves it, so does the frame AFTER one is lifted,
-    // and a volume's placement moves with the rig whatever its own inputs
-    // do. A wrong predicate here is a silently stale field, while a packet
-    // rebuilt from values that did not move is the same packet, so the only
-    // thing at stake is the work -- and the only object for which that work
-    // is more than a few floats is a volume field over a large mesh, which
-    // is also the object the tempting predicate cannot cover. The sharing
-    // that did matter is what this step IS: one packet per object per
-    // frame rather than per consumer, which is what exec's node cache buys.
-    // If a large painted weight ever measures, the predicate to write is
-    // "no override index in this closure is set now or was set last run",
-    // and it is sound only for a SOURCE weight step, because
-    // RigExecBakedComputeClosure rewrites lastOverridden between the source
-    // pass and everything else.
+    // Rebuilt every frame; one packet per object per frame.
     B.weightPackets[size_t(step->object)] =
         RigExecBakedWeightPacket(B, &weight, B.weightPackets, time);
 }

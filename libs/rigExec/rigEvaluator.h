@@ -295,9 +295,7 @@ RigExecPrepareRestDerivedIkChain(const std::vector<RigExecPointFrame> &current,
 /// Compiles and evaluates one RigExecRoot prim.
 /// The pinned reads a property chain re-uses every frame (rigEvaluator.cpp).
 ///
-/// Opaque here on purpose: it holds one UsdAttributeQuery per input the
-/// chains read, which is a value-resolution cache and therefore something
-/// only the routine that fills it should be able to reach.
+/// Opaque: holds per-input UsdAttributeQuery.
 struct RigExecPropertyChainBindings;
 class RigExecGoldenSuiteObserver;
 class RigExecInputReplayObserver;
@@ -1142,10 +1140,8 @@ private:
     /// stack): any number of aggregate solvers may name one
     /// joint. The vector is in POSE-WALK order, so its LAST entry is the
     /// writer that supplies the joint's base frame and every earlier entry
-    /// is a version a reader can still name. Almost every rig has exactly
-    /// one entry per joint, and a one-element stack has no order to get
-    /// wrong -- so every count() user of this map is unaffected by the
-    /// stack and must stay a membership test.
+    /// is a version a reader can still name. count() callers test
+    /// membership only.
     std::map<SdfPath, std::vector<std::pair<SdfPath, int>>> _jointSolverBinding;
     struct _SolverBatch {
         std::set<SdfPath> solvers;
@@ -1651,7 +1647,7 @@ private:
 
     /// Baked falloff remaps for every volumetric weight object reachable
     /// in this compiled rig, ready to hand to RigExecTapSet::Evaluate as value
-    /// overrides on each volume's computeFalloffLut stub.
+    /// overrides on each volume's computeFalloffLut.
     ///
     /// They live here rather than being rebuilt per frame because a
     /// falloff curve is structural: it is resampled once at Compile and
@@ -1782,9 +1778,6 @@ private:
     RigExecProfiler _profiler;
     bool _opTimingEnabled = false;
 
-    /// The program is built from the compiled rig tables above, which are
-    /// private because they are not a published surface -- not because the
-    /// one class whose whole job is to flatten them should re-derive them.
     friend class RigExecBakedProgram;
     friend class RigExecInputReplayHeldProgram;
 };

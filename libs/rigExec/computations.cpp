@@ -564,9 +564,8 @@ RIGEXEC_REGISTER_XFORMABLE(RigExecControl, &_ComputeJointPointFrame,
 // The volumetric weight objects are RigExecXformables too, so they get the same placement contract: a
 // volume authored inside a joint follows it through the same
 // NamespaceAncestor chain, with nothing wired. Unlike controls and joints,
-// it deliberately does not bind avars:sx/sy/sz: volume shape is authored only
-// through inputs:scaleX/Y/Z, and its placement is rigidized by both evaluation
-// and imaging.
+// it binds no avars:sx/sy/sz: shape comes only from inputs:scaleX/Y/Z, and
+// its placement is rigidized by both evaluation and imaging.
 // Registered ONCE on the ABSTRACT base, unlike the two above. Exec
 // composes a prim's computation set by walking its full ancestor type
 // vector strongest-to-weakest (exec/definitionRegistry.cpp
@@ -766,8 +765,7 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecFkChain)
                 .TargetedObjects<RigExecPointFrame>(_tokens->computeRestFrame)
                 .InputName(_tokens->controlRests)
                 .Required(),
-            // Optional by design: an unauthored relationship contributes no
-            // input, and the kernel then runs the historical absolute path.
+            // Optional; unauthored -> absolute solve.
             Relationship(_tokens->startFrameRel)
                 .TargetedObjects<RigExecPointFrame>(_tokens->computePointFrame)
                 .InputName(_tokens->startFrame),
@@ -1020,9 +1018,8 @@ _ComputeBlendPointFrames(const VdfContext &ctx)
         (scaleTok && *scaleTok == rigExec::SchemaValueText::linear)
             ? rigExec::RigExecScaleBlend::Linear
             : rigExec::RigExecScaleBlend::Log;
-    // rotationBlend currently admits only "shortestArc" (schema
-    // allowedTokens); parse it so authored intent is honored, and reject
-    // unknown tokens explicitly rather than silently substituting.
+    // rotationBlend admits only "shortestArc" (schema allowedTokens); other
+    // tokens are rejected.
     const TfToken *rotTok =
         ctx.GetInputValuePtr<TfToken>(_tokens->rotationBlend);
     if (rotTok && !rotTok->IsEmpty() &&

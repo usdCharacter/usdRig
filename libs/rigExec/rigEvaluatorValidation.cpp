@@ -686,7 +686,7 @@ RigExecRigEvaluator::_DiscoverMovers(
                 const SdfPath &constraintTarget = record.targets[0];
                 // <prim>.points names the geometry domain. It is a legal
                 // spelling the compiler must recognise, not a malformed
-                // transform target; the implementation lands in phase 4.
+                // transform target.
                 if (constraintTarget.IsPropertyPath() &&
                     constraintTarget.GetNameToken() == "points") {
                     const UsdPrim owner =
@@ -1175,8 +1175,8 @@ RigExecRigEvaluator::_DiscoverMovers(
                 // implementation; it is already the behavior.
                 // Any OTHER value does not. ["scale"] alone would ask an aim
                 // to move the origin too, which requires writing the
-                // translation group that Aim does not write. That is the
-                // dangerous case today: accepted and silently ignored.
+                // translation group that Aim does not write. Any other value
+                // is rejected.
                 if (const UsdAttribute preserve =
                         prim.GetAttribute(_tokens->rigExecPreserve)) {
                     VtTokenArray value;

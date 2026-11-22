@@ -268,8 +268,7 @@ RigExecTapSet::Warm(UsdTimeCode time)
     }
     ExecUsdSystem *const system = GetSystem();
     system->ChangeTime(time);
-    // The cache view is deliberately dropped: the point is the computation it
-    // leaves behind in the shared executor, not the values.
+    // Only the executor registration is kept, not the cache view.
     system->Compute(*_request);
 }
 

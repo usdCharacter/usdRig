@@ -778,13 +778,7 @@ RigExecRigEvaluator::_OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
     // notice would re-bind and re-read, on the first frame after any edit,
     // chains, layouts and shapes the edit never touched.
     _ClearValueCaches(notice, avarValuesOnly);
-    // The baked program captured values, and the compiled rig signature is deliberately
-    // blind to values, so the digest cannot say whether one of them moved.
-    // The program's own index of what the bake read can: a notice that hits
-    // it asks for a rebuild, and one that misses it -- a value on an input
-    // read per frame, anything on a prim the bake never looked at -- leaves
-    // the program standing, which is what keeps an edit elsewhere in the
-    // scene from degrading the rig to the dynamic path.
+    // Signature excludes values; the bake read-index decides rebuilds.
     if (_bakedProgram) {
         // Classified first, through the same query the registry's notice
         // adapter consumes: the branch below and the adapter's

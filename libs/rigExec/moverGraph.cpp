@@ -1157,7 +1157,7 @@ RigExecApplyDerivedKernel(RigExecRevisionOp op, const RigExecMoverParameters &p,
             values[i] =
                 RigExecBlendEnvelope(authored[i], values[i], envelope[i]);
     }
-    // Do not touch the caller's output until all original refusal checks pass.
+    // Writes *out only after every refusal check passes.
     *result = std::move(values);
     return true;
 }
@@ -2657,7 +2657,7 @@ RigExecStatusForParameters(const RigExecMoverParameters &parameters,
     } else {
         status.state = _valueTokens->moverFailed;
         // First bad canonical public address: v0.1 reports the
-        // failed mover's own path; per-input attribution is future work.
+        // failed mover's own path.
         status.firstBadAddress = moverText;
     }
     return status;

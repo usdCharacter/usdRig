@@ -343,8 +343,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 // Unreachable: these joints come from the compiler's joint
                 // binding, so they are in _jointPaths, and IsBakeable
                 // refuses a rig whose joint is not a seeded pose provider.
-                // Skipped rather than refused because exec's answer to it is
-                // simply that no element is ever extracted for the joint.
+                // No element is extracted for it; not a refusal.
                 continue;
             }
             s.outputs.emplace_back(slot, element);
@@ -701,16 +700,8 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 // it folded -- a value edit on the curve rebuilds, and an
                 // override on it cannot be placed, which is right because
                 // the dynamic path would ignore that override.
-                // Inside the read, and deliberately so: a resolved path
-                // that names nothing on this stage was never read, and the
-                // day an attribute appears there it is the compiled rig signature
-                // that sees it -- creating a property is a structural edit,
-                // so the compiled rig recompiles and this program is rebuilt with
-                // it before the next generation chooses a path. Registering
-                // a path the bake could not read would claim an
-                // invalidation this index does not owe. The fixture "the
-                // driver curve's points created later" is where that is
-                // measured.
+                // Unresolved paths are not registered; property creation
+                // recompiles.
                 B.rebuild.insert(s.ribbonPointsPath);
                 B.folded.insert(s.ribbonPointsPath);
                 B.named.insert(s.ribbonPointsPath);
@@ -721,11 +712,8 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             // recompile when the count changes the frame cardinality.
             s.ribbonSampleCount = bind(prim, _tokens->rigExecSampleCount, 5);
             // rigExec:parameterization, frameTransport, startFrame,
-            // endFrame and twistFrames are
-            // deliberately NOT read: the computation does not read them
-            // either -- they shape batching and the compiled rig signature -- and
-            // folding one would rebuild the program for an edit that cannot
-            // change what it publishes.
+            // endFrame and twistFrames are not read: they affect batching and
+            // the signature only.
         } else if (s.type == SchemaTypeName::RigExecSkeleton2d) {
             translated = RigExecDispatchTranslateSceneSolver(
                              *B.sceneDescriptors, solverPath, providerRests,
@@ -1330,8 +1318,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             // choice between aimVector and the legacy aimAxis is baked.
             foldShape(prim, _tokens->inputsAimVector);
             c.aimVectorAuthored = aimAttr && aimAttr.HasAuthoredValueOpinion();
-            // Existing assets author aimAxis but predate aimVector; keep that
-            // meaning until they opt into the vector form.
+            // aimAxis applies when aimVector is unauthored.
             const TfToken axis =
                 readToken(prim, _tokens->rigExecAimAxis, _tokens->x);
             c.aimAxisFallback = axis == SchemaValueText::y   ? GfVec3d(0, 1, 0)
@@ -2120,9 +2107,8 @@ BindFrameRecordVersions(RigExecBakedProgramImpl *program)
         }
         record.version =
             commit.slotWrites[size_t(found - commit.slots.begin())];
-        // The propagation pairs exclude every candidate (buildPropagation),
-        // so this finds nothing today; it keeps the binding at the slot's
-        // last version in the commit should a pair ever carry a candidate.
+        // The propagation pairs exclude every candidate (buildPropagation).
+        // Binds to the slot's last commit version.
         for (size_t k = 0; k < commit.propagate.size(); ++k) {
             if (commit.propagate[k].first == record.slot) {
                 record.version = commit.descendantWrites[k];
@@ -5318,9 +5304,8 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
             B.composeGroups[size_t(step->object)];
         for (int i = group.begin; i < group.end; ++i) {
             if (B.slotKind[size_t(i)] != RigExecBakedSlotKind::FirstFramePose) {
-                // An xform-derived slot is not composed from avars: the
-                // dynamic path seeds it from the stage, and until the program
-                // does the same nothing writes it.
+                // An xform-derived slot is not composed from avars. Seeded
+                // from the stage by the dynamic path only; not written here.
                 continue;
             }
             if (B.execCheckRows)
@@ -5784,10 +5769,8 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
         // Textually the dynamic path's gate, second clause included. With
         // the three arms above the clause cannot change the answer -- the
         // only constraint that reaches here with a bound geometry weight
-        // object has weight == 1.0 -- but the two conditions are kept alike
-        // on purpose: this is the pair that silently disagreed when the
-        // third arm was missing, and the next person to add an arm should
-        // find one shape to compare, not two.
+        // object has weight == 1.0. Must match the dynamic path's gate clause
+        // for clause.
         if (weight <= 0.0 &&
             (c.pointsTarget.IsEmpty() || c.weightObject.IsEmpty())) {
             // A zero envelope is an exact dormant pass-through, decided

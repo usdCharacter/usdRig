@@ -150,8 +150,7 @@ RigExecMoverBuildStatus(const VdfContext &ctx)
     } else {
         status.state = RigExecMoverExecTokens->moverFailed;
         // First bad canonical public address. v0.1 reports
-        // the failed mover's own canonical path; per-input attribution
-        // is future diagnostic work.
+        // the failed mover's own canonical path.
         const SdfPath *path =
             ctx.GetInputValuePtr<SdfPath>(RigExecMoverExecTokens->moverPath);
         if (path) {

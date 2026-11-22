@@ -67,7 +67,7 @@ struct RigExecRetainedFrameState {
     std::vector<RigExecValueOverride> overrides;
     uint64_t compiledRigSignature = 0;
     /// The compiled rig constant digest (RigExecCompiledRigConstantDigest) the frame was
-    /// retained under. Sampled values exclude avar constants by design, so
+    /// retained under. Sampled values exclude avar constants, so
     /// a value comparison alone cannot see a constant patch: reuse plans
     /// against this base only when the live program's constant digest
     /// still agrees, and live-evaluates (or carries) otherwise.

@@ -5,7 +5,7 @@
 
 namespace rigExec {
 // Input-only packet populated by the retained ORIGINAL stage/context resolver.
-// Never populate these fields from ConstraintProgram output or geometry deltas.
+// Invariant: filled only by the original stage resolver.
 struct RigExecIndependentConstraintInputs {
     enum class Kind { Aim, Rotation, Parent } kind = Kind::Aim;
     RigExecPointFrame entering;
@@ -15,9 +15,7 @@ struct RigExecIndependentConstraintInputs {
     RigExecParentConstraintParams parent;
 };
 
-// This helper is deliberately only numerical dispatch. Original enable,
-// source-array admission, world-up resolution and commit policy remain the
-// independently captured reference callback's responsibility.
+// Numerical dispatch only; admission and commit are the caller's.
 inline bool RigExecIndependentConstraintCandidate(
     const RigExecIndependentConstraintInputs &input,
     RigExecPointFrame *candidate)

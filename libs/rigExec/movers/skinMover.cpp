@@ -207,7 +207,7 @@ _ValidateSkinMover(const rigExec::RigExecMoverValidateContext &ctx,
             double sum = 0.0;
             for (size_t k = 0; k < size_t(elementSize); ++k)
                 sum += weights[p * size_t(elementSize) + k];
-            // A zero sum marks a deliberately unskinned point.
+            // Zero sum: unskinned point.
             if (sum > kSumTolerance && std::abs(sum - 1.0) > kSumTolerance) {
                 if (offSum++ == 0) {
                     firstOff = p;
@@ -446,10 +446,8 @@ _MakeHandler()
     handler.transformRelationship = rigExec::SchemaAttrText::rigExecInfluences;
     // The four the layout is assembled from: the two arrays and the
     // element size RigExecResolveSkinTopology reads, and the method
-    // RigExecAssembleSkinParameters reads beside them. inputs:enabled
-    // and inputs:defaultWeight are deliberately NOT here -- they are
-    // read per frame, never cached, so an override on one reaches the
-    // next generation without anything being dropped.
+    // RigExecAssembleSkinParameters reads beside them. inputs:enabled and
+    // inputs:defaultWeight are excluded: read per frame.
     handler.layoutAttributes = {
         _skinTokens->jointIndices, _skinTokens->jointWeights,
         _skinTokens->elementSize, _skinTokens->skinningMethod};

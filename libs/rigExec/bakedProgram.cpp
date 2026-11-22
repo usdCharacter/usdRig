@@ -2245,7 +2245,7 @@ RigExecBakedProgram::SetOverrides(
             B.routedOverrides[path] = o.value;
             continue;
         }
-        // Raw chain bases intentionally ignore interactive whole-array values.
+        // Raw chain bases ignore interactive whole-array values.
         // Upstream placement remains the only replacement of the authored base.
         bool rawChainBase = false;
         if (o.value.IsHolding<VtVec3fArray>())
@@ -3116,9 +3116,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     // dense slots refuse; sharing one vector with the walk would interleave
     // the two lists and race. On a refusal the walk's reasons alone are
     // handed back.
-    // Inline where a task is not allowed or not worth it: with parallel
-    // evaluation off, inside a frozen run, and on an evaluator that has not
-    // compiled, whose tables the slots below have no business reading.
+    // Inline when parallel eval is off, in a frozen run, or uncompiled.
     const bool bakeableBeside = E._compiled &&
                                 RigExecParallelEvaluationEnabled() &&
                                 !RigExecFrozenSerialActive();
@@ -3541,12 +3539,9 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
             // outright and reads its pose off the stage.
             // SI-6, invalidation-index coverage: the prim and every ancestor
             // whose transform the prologue composes go into B.prims, so a
-            // RESYNC that retypes or reparents one rebuilds the program. They
-            // go nowhere else on purpose. Nothing about their VALUE is
-            // captured -- the prologue re-reads the whole ladder every frame
-            // -- so a changed-info notice on one must not rebuild, or an
-            // animated Xform above a constraint target would rebuild the
-            // program once per frame.
+            // RESYNC that retypes or reparents one rebuilds the program. Only
+            // in B.prims: value notices must not rebuild (the prologue
+            // re-reads the ladder every frame).
             B.restFrames[i] = RigExecFrameFromMatrix(GfMatrix4d(1.0));
             B.restPts[i] = B.restFrames[i].points;
             B.xformSlots.push_back(i);
@@ -3971,9 +3966,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     for (const SdfPath &solverPath : E._nativeGuideSolvers) {
         const auto it = B.solverIndex.find(solverPath);
         if (it == B.solverIndex.end()) {
-            // An assertion now rather than a feature: the walk bakes every
-            // batched solver and the guide pass above bakes the rest of
-            // _nativeGuideSolvers, so the two together cover this map exactly.
+            // Walk + guide pass cover this map exactly.
             refuse("solver publishes guides but was not baked", solverPath);
             continue;
         }
@@ -4971,7 +4964,7 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
         // its delta against. A stage read even when the target is a
         // RigExecJoint, because RigExecXformable inherits Xformable and the
         // dynamic walk measures against the authored transform rather than
-        // the rig frame. Do not "improve" this: parity says mirror it.
+        // the rig frame.
         for (size_t k = 0; k < B.deltaBasePaths.size(); ++k) {
             GfMatrix4d matrix(1.0);
             B.deltaBaseOk[k] = E._FrameFromXformRelativeToAsset(

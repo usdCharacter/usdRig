@@ -565,17 +565,14 @@ RigExecBuildVolumeWeightPacket(const TfToken &typeName,
 // Composition. Every input is resolved to a dense field over the same
 // element count before folding, so a static sparse paint and a generated
 // volume field compose without either knowing about the other.
-// Publishes one combine input as a dense read-only view, resolving
-// exactly as the per-point loop did. Dense inputs borrow the packet's
-// own values after the cardinality and negativity checks -- no copy;
-// sparse scatters through a linear merge and anything else (constant
-// or unknown) broadcasts the default, both into *scratch, rejecting
-// negative resolved values in every arm as the loop did. The view
-// stays alive until the next input resolves: packet storage outlives
-// the synchronous fold, and the caller owns the scratch. ResolveAll
-// is deliberately NOT used here: it rejects unsorted, duplicate, and
-// out-of-range sparse support that Resolve tolerates, and it
-// validates constant packets Resolve ignores.
+// Publishes one combine input as a dense read-only view. Dense inputs
+// borrow the packet's own values after the cardinality and negativity
+// checks -- no copy; sparse scatters through a linear merge and anything
+// else (constant or unknown) broadcasts the default, both into *scratch,
+// rejecting negative resolved values in every arm. The view stays alive
+// until the next input resolves: packet storage outlives the synchronous
+// fold, and the caller owns the scratch. Not ResolveAll: it rejects sparse
+// support Resolve accepts.
 static bool
 _ResolveCombineInput(const RigExecWeightPacket &in, size_t elementCount,
                      std::vector<float> *scratch, const float **data,

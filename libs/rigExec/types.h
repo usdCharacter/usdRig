@@ -392,14 +392,8 @@ struct RigExecMoverParameters {
     /// The compiled rig rest state, when the evaluator resolved one: the
     /// smoothing table, the smoothed rest surface and the transport
     /// frames, derived once instead of on every frame. The packet arrays
-    /// stay filled -- the entry feeds the kernel only, and deliberately
-    /// takes no part in operator== below: it is a pure function of the
-    /// arrays, so two packets naming the same arrays name the same
-    /// deformation whether the entry is shared, rebuilt, or refused.
-    /// Comparing it would report a packet change on every hit/refusal
-    /// transition -- a notice that newly varies an input, with the
-    /// current frame's value unchanged, would re-execute a revision
-    /// whose numbers cannot move.
+    /// stay filled; the entry feeds the kernel only. Excluded from
+    /// operator==: pure function of the arrays.
     std::shared_ptr<const RigExecDeltaMushRest> mushRest;
 
     /// Recomputed normals: one value per face corner (faceVarying) rather
@@ -452,7 +446,7 @@ struct RigExecMoverParameters {
                skinTransforms == o.skinTransforms &&
                skinIndices == o.skinIndices && skinWeights == o.skinWeights &&
                skinTopology == o.skinTopology &&
-               // mushRest deliberately excluded: see the member comment.
+               // mushRest: derived, excluded.
                skinElementSize == o.skinElementSize &&
                skinningMethod == o.skinningMethod &&
                normalsPerCorner == o.normalsPerCorner &&

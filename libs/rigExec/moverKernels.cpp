@@ -388,8 +388,8 @@ _BuildCombineWeightPacket(const VdfContext &ctx)
     const TfToken *policy = ctx.GetInputValuePtr<TfToken>(_tokens->rangePolicy);
     const TfToken *mode =
         ctx.GetInputValuePtr<TfToken>(_tokens->combineModeAttr);
-    // Authored target order is preserved: subtract and overlay are order
-    // dependent by design (see the schema doc).
+    // subtract/overlay are order dependent; keep authored order (see the
+    // schema doc).
     std::vector<const RigExecWeightPacket *> inputs;
     {
         VdfReadIterator<RigExecWeightPacket> it(ctx, _tokens->inputPackets);
@@ -686,15 +686,12 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecDynamicWeight)
 }
 
 // Volumetric weight objects.
-// computeFalloffLut is a STUB that returns an empty (linear) table. The
-// real bake -- a named analytic profile, or the resampled spline authored
-// on rigExec:falloffCurve -- arrives as a RigExecValueOverride supplied
-// once per compiled rig by the evaluator (see RigExecFalloffLut in
-// types.h).
+// computeFalloffLut registers an empty (linear) LUT; the evaluator overrides
+// it per compiled rig (see RigExecFalloffLut in types.h).
 // The shared inputs are spelled out per concrete type rather than shared
-// through a macro over the abstract base: the three shapes genuinely
-// differ in what they read, and a registration that lied about its inputs
-// would silently miss an invalidation.
+// through a macro over the abstract base: the three shapes differ in what
+// they read, and a registration that lied about its inputs would silently
+// miss an invalidation.
 
 #define RIGEXEC_VOLUME_WEIGHT_COMMON_INPUTS                                    \
     AttributeValue<TfToken>(_tokens->representation),                          \
@@ -720,8 +717,8 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecDynamicWeight)
         AttributeValue<float>(_tokens->inputsScaleY),                          \
         AttributeValue<float>(_tokens->inputsScaleZ)
 
-// The stub the evaluator overrides. Registered per concrete type for the
-// same reason the packets are.
+// Default overridden by RigExecFalloffLut value override. Registered per
+// concrete type for the same reason the packets are.
 #define RIGEXEC_REGISTER_FALLOFF_LUT_STUB                                      \
     self.PrimComputation(_tokens->computeFalloffLut)                           \
         .Callback<rigExec::RigExecFalloffLut>(                                 \

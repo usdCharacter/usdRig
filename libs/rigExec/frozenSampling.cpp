@@ -3606,8 +3606,8 @@ RigExecSampleFrameInputsWithBurstCache(
                                   time, &sampled, layer, &memo);
             ++weightSite;
         }
-        // Point arrays ride outside the burst memo (always fresh, like the
-        // ribbon points below): correctness first, memoization later.
+        // Point arrays are read every frame, outside the burst memo (like the
+        // ribbon points below).
         _SampleWeightArrays(B.weightObjects[i], &refreshed, time, &sampled,
                             layer, memo, i, touched, B.verifyFrozenStatic);
     }

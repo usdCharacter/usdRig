@@ -280,10 +280,8 @@ struct StepCostConstants {
 constexpr size_t kStepKindCount =
     size_t(RigExecBakedStepKind::ProviderRefresh) + 1;
 
-// Indexed by RigExecBakedStepKind, in the enum's order. Deliberately a
-// deduced-extent array with the assertion below it: a std::array with a
-// stated size accepts too few rows and zero-fills the rest, which would make
-// a newly added step kind free and the schedule silently wrong.
+// Indexed by RigExecBakedStepKind, in the enum's order. Deduced extent +
+// static_assert: a missing row fails to compile.
 constexpr StepCostConstants kStepCosts[] = {
     {0.0401, 0.087594},  // ComposeSubtree   93 samples
     {0.0000, 0.385597},  // Solve            14
@@ -318,63 +316,14 @@ constexpr StepCostConstants kStepCosts[] = {
 static_assert(sizeof(kStepCosts) / sizeof(kStepCosts[0]) == kStepKindCount,
               "rigExec: every baked step kind needs a cost row");
 
-// Four rows are worth reading twice before they are trusted:
-//  * PoseInterpolator is a GUESS, not a fit: two quaternion extractions, a
-//    quaternion delta and one RBF kernel row per pose. No calibration run
-//    has covered a rig with interpolators yet; the first one to do so should
-//    replace the row the way the three below were replaced.
-//  * SnapshotFinals, VolumePlacements and WeightPacket were guesses until
-//    Phase 3 made the rigs that exercise them bake; each is now the MEDIAN of
-//    NINE calibration runs of the one rig that has it, at
-//    RIGEXEC_BAKED_SCHEDULE_CALIBRATE=200 rather than at the default 8
-//    frames, and each carries a caveat the next fitter should know. They are
-//    fitted through the ORIGIN because the sample count could not separate
-//    the two terms (see FitKind):
-//    SnapshotFinals 0.0754..0.0814 over one step of 13_ReadPhases;
-//    VolumePlacements 0.1377..0.1652 over one step of 11_VolumeWeights;
-//    WeightPacket 0.0658..0.0674 over five steps of the same rig, which is
-//    the only one of the three with enough steps for the fit to mean
-//    anything. One run of each printed roughly double the rest and is not in
-//    the spread; the medians are what nine runs agree on.
-//    The frame COUNT is the part worth copying, because the first fit of
-//    these three rows did not do it and was not reproducible. A rig with one
-//    step of a kind gives the fit one sample per run, so the cold frame --
-//    first touch of the arrays, cold caches, the arena still waking -- is an
-//    eighth of the average at the default 8 frames and reads as about 1.8x
-//    the steady-state cost, differently every run. The biped's rows do not
-//    have that problem and do not need the longer run: 93 ComposeSubtree
-//    samples or 252 ProviderMatrix samples move by 3-5% between 8 frames and
-//    200 (0.0914 -> 0.0880, 0.0530 -> 0.0515), which is what puts every row
-//    of this table on one scale. A row fitted on one step must be fitted
-//    warm to join them.
-//    All three sizes are small -- a handful of providers, one volume, a few
-//    packet elements -- so the per-unit terms are honest at that scale and
-//    extrapolate on trust. The guesses they replace were {1.0, 0.2},
-//    {0.5, 0.01} and {0, 0.05}: SnapshotFinals was over-costed by nearly
-//    three, VolumePlacements under-costed by fourteen, WeightPacket by a
-//    third.
-//  * ChainStatus is sized by the chain's vertices, and its row was
-//    re-fitted after that correction: the median per-unit of four
-//    calibration runs of the biped (0.000318 .. 0.000351), which
-//    predicts 8.8us for the 26276 points the step copies. The row it
-//    replaced read 7.79us per REVISION -- the same measurement with the
-//    mesh hidden in it, which would have predicted 23us for a
-//    three-revision chain whatever its size.
-//  * RevisionChunk was re-fitted after the vertex partition landed, which is
-//    what the row it replaced ({0.0000, 0.000914}) asked for: that one
-//    measured ONE chunk over a whole skin, a range RigExecApplySkinKernel
-//    spread over the arena itself, so it described the wall time of an
-//    internally parallel step rather than the work in it. A chunk body is
-//    unconditionally serial, so the new row is honest work. It is the median
-//    of three calibration runs of the biped (fixed 10.34 .. 11.42, per-unit
-//    0.000691 .. 0.000743). The FIXED term is the large one in this table for
-//    a reason worth stating: a chunk gathers and narrows its key's matrices
-//    before it deforms a vertex, so its real cost carries a |key| term this
-//    model has no size for -- the biped's chunks range over 30 to 58
-//    influences -- and the intercept is where that work lands. Giving
-//    RevisionChunk a second size dimension would express it properly; until
-//    then the row predicts the biped's chunks within a microsecond or two,
-//    and a cost row can only pack a bin badly, never change an answer.
+// PoseInterpolator row: unfitted estimate.
+// SnapshotFinals, VolumePlacements and WeightPacket: medians of nine runs,
+// fitted through the origin (see FitKind). Single-step kinds: fit at
+// RIGEXEC_BAKED_SCHEDULE_CALIBRATE=200.
+// ChainStatus is sized by the chain's vertices.
+// RevisionChunk: the fixed term carries the per-chunk gather of key matrices,
+// which has no size dimension here. A cost row affects packing, never an
+// answer.
 
 /// What a task costs to hand to the arena and pick up again, in the same
 /// microseconds. The absorb rule compares a cluster against twice this: a
