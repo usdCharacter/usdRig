@@ -411,6 +411,7 @@ RigExecRunBoundWeightField(const RigExecWeightGraphBinding &binding,
         current = {array->data(), array->size()};
         points = &current;
     }
+    workspace->field.combine = &workspace->combine;
     return RigExecRunWeightField(binding.records, binding.root,
                                  workspace->fields, count, points,
                                  &workspace->field, &workspace->result, error);
@@ -517,7 +518,11 @@ RigExecRunBoundWeightPacket(const RigExecWeightGraphBinding &binding, int id,
     }
     volume.targetPointCount = 0;
     input.targetCount = volume.targetView.count;
-    *output = RigExecRunWeightPacket(record, input);
+    *output = record.kind == 2
+                  ? workspace->combine.CombinePackets(
+                        size_t(id), record, input.inputs, input.targetCount,
+                        input.strength, input.invert)
+                  : RigExecRunWeightPacket(record, input);
     return true;
 }
 bool

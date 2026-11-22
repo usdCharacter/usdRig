@@ -24,6 +24,25 @@ RunsOnOps(const RigExecSceneGeometryOp &op)
     return kind == RigExecRevisionOp::BlendShape ||
            RigExecGeometryOpSupported(kind);
 }
+// Weight combines always run on the op core.
+bool
+CombinesWeights(const RigExecWeightGraphBinding &binding)
+{
+    return std::any_of(
+        binding.records.begin(), binding.records.end(),
+        [](const RigExecWeightRecord &record) { return record.kind == 2; });
+}
+bool
+NeedsOpCore(const RigExecSceneOperation &operation)
+{
+    if (const auto *op = std::get_if<RigExecSceneGeometryOp>(&operation))
+        return RunsOnOps(*op);
+    if (const auto *op = std::get_if<RigExecSceneWeightOp>(&operation))
+        return CombinesWeights(op->binding);
+    if (const auto *op = std::get_if<RigExecSceneFieldOp>(&operation))
+        return CombinesWeights(op->binding);
+    return false;
+}
 } // namespace
 bool
 RigExecSceneProgram::Append(const std::string &key,
@@ -189,11 +208,7 @@ RigExecSceneProgramRuntime::Prepare(const RigExecSceneProgram &program,
     if (!program.identity)
         return Fail(error, "scene program has not been compiled");
     if (std::any_of(program.operations.begin(), program.operations.end(),
-                    [](const RigExecSceneOperation &operation) {
-                        const auto *geometry =
-                            std::get_if<RigExecSceneGeometryOp>(&operation);
-                        return geometry && RunsOnOps(*geometry);
-                    })) {
+                    NeedsOpCore)) {
         std::string why;
         if (!RigExecLoadGeometryOpCore(&why))
             return Fail(error, "op registry unavailable: " + why);

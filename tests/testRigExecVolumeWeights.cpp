@@ -398,6 +398,52 @@ CheckThreeEvaluators(const UsdStageRefPtr &stage, const std::string &what,
     }
 }
 
+// The detached scene program's packet for \p combine is the native combine
+// of the packets it publishes for the combine's inputs.
+static void
+CheckSceneCombinePacket(const UsdStageRefPtr &stage, const std::string &what,
+                        const SdfPath &combine, size_t targetCount)
+{
+    rigExecSceneProgramDrive::SceneRun scene(stage, SdfPath("/Asset/Rig"), 0,
+                                             0);
+    CHECK(scene.ok && scene.Evaluate(0));
+    if (!scene.ok)
+        return;
+    const UsdPrim prim = stage->GetPrimAtPath(combine);
+    const auto token = [&](const char *name) {
+        TfToken value;
+        prim.GetAttribute(TfToken(name)).Get(&value);
+        return value;
+    };
+    const auto scalar = [&](const char *name, float fallback) {
+        float value = fallback;
+        if (const UsdAttribute attribute = prim.GetAttribute(TfToken(name)))
+            attribute.Get(&value);
+        return value;
+    };
+    SdfPathVector inputs;
+    prim.GetRelationship(TfToken("rigExec:inputWeights")).GetTargets(&inputs);
+    std::vector<RigExecWeightPacket> packets;
+    for (const SdfPath &input : inputs) {
+        const VtValue packet =
+            scene.Final(input, RigExecSceneValueDomain::Weight);
+        CHECK(packet.IsHolding<RigExecWeightPacket>());
+        if (!packet.IsHolding<RigExecWeightPacket>())
+            return;
+        packets.push_back(packet.UncheckedGet<RigExecWeightPacket>());
+    }
+    const RigExecWeightPacket want = RigExecBuildCombineWeightPacket(
+        token("rigExec:representation"), token("rigExec:rangePolicy"),
+        token("rigExec:combineMode"), packets, targetCount,
+        scalar("inputs:strength", 1.0f), scalar("inputs:invert", 0.0f));
+    const VtValue got = scene.Final(combine, RigExecSceneValueDomain::Weight);
+    const bool same = got.IsHolding<RigExecWeightPacket>() &&
+                      got.UncheckedGet<RigExecWeightPacket>() == want;
+    if (!same)
+        std::printf("%s: scene combine packet differs\n", what.c_str());
+    CHECK(same);
+}
+
 // A sphere weight inside a bone, stretched along its segment: a 3D FK arm
 // whose Shoulder holds Elbow at (3,0,0) (L = 3) and a RigExecSphereWeight
 // placed at the segment's midpoint by rest:tx = L/2 alone, with strength
@@ -1136,6 +1182,9 @@ TestCombineMultiply()
         const float w = (1.0f - expected[i]) * 0.5f;
         CHECK(Near(shaped[i], Moved(f.base[i], w)));
     }
+    CheckThreeEvaluators(f.stage, "combine-invert-strength", {0.0, 1.0});
+    CheckSceneCombinePacket(f.stage, "combine-invert-strength",
+                            combine.GetPath(), 4);
 }
 
 // `max` unions two volumes, which is the composition a rigger reaches for
@@ -1175,6 +1224,8 @@ TestCombineMaxOfTwoSpheres()
     for (size_t i = 0; i < 4; ++i) {
         CHECK(Near(points[i], Moved(f.base[i], expected[i])));
     }
+    CheckThreeEvaluators(f.stage, "combine-max", {0.0, 1.0});
+    CheckSceneCombinePacket(f.stage, "combine-max", combine.GetPath(), 4);
 }
 
 // `subtract` is the order-DEPENDENT mode, and it is the one that proves
@@ -1222,6 +1273,8 @@ TestCombineSubtractOrder()
     for (size_t i = 0; i < 4; ++i) {
         CHECK(Near(points[i], Moved(f.base[i], 0.75f)));
     }
+    CheckThreeEvaluators(f.stage, "combine-subtract", {0.0, 1.0});
+    CheckSceneCombinePacket(f.stage, "combine-subtract", combine.GetPath(), 4);
 
     // Reverse the authored order and the fold goes NEGATIVE: 0.25 - 1 =
     // -0.75, which rigExec:rangePolicy = "clamp" pulls to zero. This
@@ -1238,6 +1291,9 @@ TestCombineSubtractOrder()
     for (size_t i = 0; i < 4; ++i) {
         CHECK(Near(reversed[i], f.base[i]));
     }
+    CheckThreeEvaluators(f.stage, "combine-subtract-reversed", {0.0, 1.0});
+    CheckSceneCombinePacket(f.stage, "combine-subtract-reversed",
+                            combine.GetPath(), 4);
 }
 
 // A combine whose inputs are ALL constant-representation. Nothing among
@@ -1293,6 +1349,9 @@ TestCombineOfConstantInputs()
     for (size_t i = 0; i < 4; ++i) {
         CHECK(Near(points[i], Moved(f.base[i], 0.25f)));
     }
+    CheckThreeEvaluators(f.stage, "combine-all-constant", {0.0, 1.0});
+    CheckSceneCombinePacket(f.stage, "combine-all-constant", combine.GetPath(),
+                            4);
 }
 
 // inputs:invert exchanges the ends of the band, continuously.

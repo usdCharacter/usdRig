@@ -28,26 +28,39 @@ Volume(const std::vector<RigExecWeightRecord> &records,
     };
     if (object.kind == 2) {
         auto &child = workspace.children[depth];
-        const bool combined = RigExecCombineWeightFieldsStreamed(
-            RigExecWeightCombine(object.combineMode), object.inputs.size(),
-            count,
-            [&](size_t k, const float **data, size_t *size) {
-                if (!Resolve(records, inputs, size_t(object.inputs[k]), count,
-                             current, workspace, depth + 1, &child, error))
-                    return false;
-                *data = child.data();
-                *size = child.size();
-                return true;
-            },
-            out);
+        const auto resolve = [&](size_t k, const float **data, size_t *size) {
+            if (!Resolve(records, inputs, size_t(object.inputs[k]), count,
+                         current, workspace, depth + 1, &child, error))
+                return false;
+            *data = child.data();
+            *size = child.size();
+            return true;
+        };
+        const float strength = read(4, 1), invert = read(5, 0);
+        bool combined;
+        if (workspace.combine) {
+            using Resolver = decltype(resolve);
+            combined = workspace.combine->Combine(
+                id, object, count, strength, invert,
+                [](const void *context, size_t k, const float **data,
+                   size_t *size) {
+                    return (*static_cast<const Resolver *>(context))(k, data,
+                                                                     size);
+                },
+                &resolve, out, error);
+        } else {
+            combined = RigExecCombineWeightFieldsStreamed(
+                RigExecWeightCombine(object.combineMode), object.inputs.size(),
+                count, resolve, out);
+            if (combined)
+                for (float &w : *out)
+                    w = (w + (1.0f - 2.0f * w) * invert) * strength;
+        }
         if (!combined) {
             if (error->empty())
                 *error = who + ": combine inputs disagree on element count";
             return false;
         }
-        const float strength = read(4, 1), invert = read(5, 0);
-        for (float &w : *out)
-            w = (w + (1.0f - 2.0f * w) * invert) * strength;
         return true;
     }
     if (!input.hasPlacement) {

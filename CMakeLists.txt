@@ -152,6 +152,7 @@ add_library(rigExecScene SHARED
     libs/rigExecScene/solverSceneTranslation.cpp
     libs/rigExecScene/usdSceneAccess.cpp
     libs/rigExecScene/weightGraphBinding.cpp
+    libs/rigExecScene/weightOpRunner.cpp
     libs/rigExecScene/weightSceneTranslation.cpp
 )
 target_compile_features(rigExecScene PUBLIC cxx_std_17)

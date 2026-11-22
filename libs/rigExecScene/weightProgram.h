@@ -43,6 +43,21 @@ struct RigExecWeightFieldInputs {
     GfMatrix4d placement = GfMatrix4d(1.0);
     std::string axis = SchemaValueText::x, bounds = SchemaValueText::unbounded;
 };
+/// Runs a combine record's fold, invert and strength in place of the
+/// built-in fold. \p resolve publishes input k as
+/// RigExecCombineWeightFieldsStreamed's resolve does and sets \p error when
+/// that input fails. False with \p error untouched when the inputs disagree
+/// on element count.
+class RigExecWeightCombineRunner {
+public:
+    using Resolve = bool (*)(const void *context, size_t k, const float **data,
+                             size_t *size);
+    virtual ~RigExecWeightCombineRunner() = default;
+    virtual bool Combine(size_t record, const RigExecWeightRecord &,
+                         size_t count, float strength, float invert,
+                         Resolve resolve, const void *context,
+                         std::vector<float> *out, std::string *error) = 0;
+};
 /// Exclusive scratch for one field producer. Dense child storage grows with
 /// recursion depth, not the number of authored combine inputs.
 struct RigExecWeightFieldWorkspace {
@@ -53,6 +68,8 @@ struct RigExecWeightFieldWorkspace {
     /// Splits the volume fields' point loops across threads when set; the
     /// fields are bitwise the same either way.
     const RigExecRangeRunner *ranges = nullptr;
+    /// Borrowed; runs every combine when set.
+    RigExecWeightCombineRunner *combine = nullptr;
 };
 bool RigExecRunWeightField(const std::vector<RigExecWeightRecord> &, int root,
                            const std::vector<RigExecWeightFieldInputs> &,
