@@ -50,6 +50,21 @@ if (_generator_toolset AND GENERATOR MATCHES "Visual Studio|Xcode")
     list(APPEND _forward "-T;${_generator_toolset}")
 endif()
 
+# Resolve the timestamp setter to an absolute path while PATH is still
+# whole: the filter below removes every directory holding the make
+# program, and on a host where Ninja and coreutils share one bin
+# directory that is also the only PATH-visible setter. The negative
+# control and every child configure then run with the filtered PATH.
+if (WIN32)
+    find_program(_mtime_tool powershell.exe)
+else()
+    find_program(_mtime_tool touch)
+endif()
+if (NOT _mtime_tool)
+    message(FATAL_ERROR
+        "checkInstallStaging.cmake needs a timestamp setter (touch or powershell)")
+endif()
+
 # Hide every PATH directory that holds a copy of the make program, so a
 # child configure can only succeed through the forwarded
 # CMAKE_MAKE_PROGRAM. Filtering one known directory would leave a second
@@ -145,14 +160,15 @@ endfunction()
 
 # Copy a reference file's timestamp onto a target with the platform's
 # timestamp tool, then prove the copy took. cmake -E has no reference-mode
-# touch; passing -r there creates a file literally named "-r".
+# touch; passing -r there creates a file literally named "-r". The tool
+# runs by absolute path: the filtered PATH may have removed its directory.
 function(_copy_mtime reference target)
     if (WIN32)
-        execute_process(COMMAND powershell -NoProfile -Command
+        execute_process(COMMAND "${_mtime_tool}" -NoProfile -Command
             "(Get-Item -LiteralPath '${target}').LastWriteTime = (Get-Item -LiteralPath '${reference}').LastWriteTime"
             RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
     else ()
-        execute_process(COMMAND touch -r "${reference}" "${target}"
+        execute_process(COMMAND "${_mtime_tool}" -r "${reference}" "${target}"
             RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
     endif ()
     if (NOT _rc EQUAL 0)
