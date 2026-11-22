@@ -29,6 +29,8 @@ const rigExec::RigExecPortHandle &SkinPoints();
 const rigExec::RigExecPortHandle &SkinTransforms();
 const rigExec::RigExecPortHandle &SkinIndices();
 const rigExec::RigExecPortHandle &SkinWeights();
+/// Optional: blends the skinned points back toward Points.
+const rigExec::RigExecPortHandle &SkinEnvelope();
 const rigExec::RigExecPortHandle &SkinOut();
 
 } // namespace rigExecOps

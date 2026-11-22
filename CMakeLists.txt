@@ -1296,7 +1296,8 @@ set_tests_properties(testRigExecOpsPoints PROPERTIES LABELS "fast")
 
 # Host-side bridge from translated USD movers to op nodes; not installed.
 # Step 10 folds it into rigExecUsd.
-add_library(rigExecSceneOps STATIC libs/rigExecScene/propertyOps.cpp)
+add_library(rigExecSceneOps STATIC libs/rigExecScene/propertyOps.cpp
+    libs/rigExecScene/geometryOps.cpp)
 target_link_libraries(rigExecSceneOps PUBLIC rigExec rigExecScene rigExecOps
     PRIVATE rigExecMath)
 set_target_properties(rigExecSceneOps PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -1308,6 +1309,13 @@ target_compile_definitions(testRigExecScenePropertyOps PRIVATE
 rigexec_link_registrations(testRigExecScenePropertyOps
     TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
 add_test(NAME testRigExecScenePropertyOps COMMAND testRigExecScenePropertyOps)
+add_executable(testRigExecSceneGeometryOps tests/testRigExecSceneGeometryOps.cpp)
+target_link_libraries(testRigExecSceneGeometryOps PRIVATE rigExecSceneOps)
+rigexec_apply_exact_fp_flags(testRigExecSceneGeometryOps)
+rigexec_link_registrations(testRigExecSceneGeometryOps
+    TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
+add_test(NAME testRigExecSceneGeometryOps COMMAND testRigExecSceneGeometryOps)
+set_tests_properties(testRigExecSceneGeometryOps PROPERTIES LABELS "fast")
 
 add_executable(testRigExecOpGraph tests/testRigExecOpGraph.cpp)
 target_link_libraries(testRigExecOpGraph PRIVATE rigExecGraph work Threads::Threads)

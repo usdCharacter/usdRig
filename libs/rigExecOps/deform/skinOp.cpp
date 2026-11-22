@@ -16,6 +16,7 @@ RIGEXEC_DEFINE_PORT_HANDLE(SkinPoints)
 RIGEXEC_DEFINE_PORT_HANDLE(SkinTransforms)
 RIGEXEC_DEFINE_PORT_HANDLE(SkinIndices)
 RIGEXEC_DEFINE_PORT_HANDLE(SkinWeights)
+RIGEXEC_DEFINE_PORT_HANDLE(SkinEnvelope)
 RIGEXEC_DEFINE_PORT_HANDLE(SkinOut)
 
 namespace {
@@ -88,14 +89,15 @@ Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
         else
             rigExec::RigExecApplyLinearBlendSkinKernel<Vec3f, Vec3d>(
                 in.Data(), out.Data(), layout);
-        return true;
+    } else {
+        const auto palette =
+            rigExec::RigExecSkinDualQuatPaletteKernel<Vec3f, Vec3d>(layout);
+        if (!rigExec::RigExecApplyDualQuatSkinKernel<Vec3f, Vec3d>(
+                in.Data(), out.Data(), layout, palette.data(), palette.size()))
+            return Fail(error, "Skin", "dual quaternion blend is degenerate");
     }
-    const auto palette =
-        rigExec::RigExecSkinDualQuatPaletteKernel<Vec3f, Vec3d>(layout);
-    if (!rigExec::RigExecApplyDualQuatSkinKernel<Vec3f, Vec3d>(
-            in.Data(), out.Data(), layout, palette.data(), palette.size()))
-        return Fail(error, "Skin", "dual quaternion blend is degenerate");
-    return true;
+    return BlendEnvelope(in, In<Envelope>(io, SkinEnvelope()), &out, "Skin",
+                         error);
 }
 
 } // namespace
@@ -104,6 +106,7 @@ void
 RegisterSkinOps(rigExec::RigExecOpRegistrar &registrar)
 {
     using rigExec::kRigExecPortInput;
+    using rigExec::kRigExecPortOptional;
     using rigExec::kRigExecPortOutput;
     const auto &points = rigExecStd::Vec3fArray();
     static const rigExec::RigExecPortDesc ports[] = {
@@ -113,6 +116,8 @@ RegisterSkinOps(rigExec::RigExecOpRegistrar &registrar)
         {&SkinIndices(), &rigExecStd::IntArray(), kRigExecPortInput, "indices"},
         {&SkinWeights(), &rigExecStd::FloatArray(), kRigExecPortInput,
          "weights"},
+        {&SkinEnvelope(), &rigExecStd::FloatArray(),
+         kRigExecPortInput | kRigExecPortOptional, "envelope"},
         {&SkinOut(), &points, kRigExecPortOutput, "out"},
     };
     static const rigExec::RigExecOpDesc desc = [] {
