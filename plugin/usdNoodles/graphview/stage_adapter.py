@@ -13,7 +13,7 @@ through the view's state and hooks.
 
 from pxr import Gf, Sdf, Tf, Usd
 
-from UsdNoodles.nodeGraph import unsubscribe_edit_target_warning
+from UsdNoodles.nodeGraph import NodeGraph, unsubscribe_edit_target_warning
 
 from ..nodeGraphBlueprint import NodeGraphBlueprint
 from ..pinUtils import is_hidden_namespace_pin, is_relationship_pin, split_direction_hint
@@ -153,10 +153,12 @@ def adoptPrimsNewToScope(view, resyncedPaths):
     renamed node disappears from the editor until a manual reload.
 
     Only paths in this notice are considered, and only direct children of
-    the scope this graph loads. Note this can re-add a node the user hid
-    with 'D' (which removes from the view without touching USD) if that
-    same prim is later edited — the view follows the stage, which is the
-    contract being asked for here.
+    the scope this graph loads. A resync of the pseudo-root ("/" — USD's
+    spelling for a stage-wide resync) names no child, so it instead
+    reconciles membership against the scope's current direct children.
+    Note this can re-add a node the user hid with 'D' (which removes from
+    the view without touching USD) if that same prim is later edited — the
+    view follows the stage, which is the contract being asked for here.
 
     Returns:
         list[str]: node ids added.
@@ -166,8 +168,20 @@ def adoptPrimsNewToScope(view, resyncedPaths):
     if not stage or scope is None:
         return []
 
+    paths = set(resyncedPaths)
+    if "/" in paths:
+        paths.discard("/")
+        scopePrim = (
+            stage.GetPseudoRoot() if scope == "/"
+            else stage.GetPrimAtPath(scope)
+        )
+        if scopePrim and scopePrim.IsValid():
+            paths.update(
+                str(prim.GetPath()) for prim in scopePrim.GetChildren()
+            )
+
     added = []
-    for pathStr in sorted(resyncedPaths):
+    for pathStr in sorted(paths):
         if "." in pathStr or pathStr in view.nodes:
             continue
         if str(Sdf.Path(pathStr).GetParentPath()) != scope:
@@ -188,6 +202,11 @@ def _movedDestinationForPath(pathStr, movedPaths):
     """
     if not movedPaths:
         return None
+    if not isinstance(movedPaths, dict):
+        destination = pathStr
+        for moves in movedPaths:
+            destination = _movedDestinationForPath(destination, moves) or destination
+        return destination if destination != pathStr else None
     try:
         candidate = Sdf.Path(pathStr)
     except Exception:
@@ -951,8 +970,13 @@ def _applyUsdChangesPass(view, resyncedPaths, infoChangedPaths, trace, movedPath
         # Capture BEFORE validation drops the source ids: the adoption
         # below rebuilds them from their live destinations.
         displayMoves = capturedDisplayedMoves(view, moved)
+        selectedDestinations = {
+            displayMoves[nodeId][0] for nodeId in view._selectedNodes
+            if nodeId in displayMoves
+        }
         removed = validateNodesAgainstStage(view)
         adopted = adoptMovedDisplayedPrims(view, displayMoves)
+        view._selectedNodes.update(selectedDestinations.intersection(adopted))
         adopted.extend(adoptPrimsNewToScope(view, resyncedPaths))
         if removed or adopted:
             if trace is not None:
@@ -1019,64 +1043,97 @@ def readNoticeContext(view):
     return NoticeContext(syncing_selection=view._syncingSelection)
 
 
+def prepareGraphSwitch(view):
+    view._startupSamplePending = False
+    view._clearValueInteractionState()
+    view._lastPrimTreeSelection = []
+    view._lastSelectedNode = None
+    if hasattr(view, "_selection"):
+        view._selection.update("replace", (), ())
+        view._marqueeBase.update("replace", (), ())
+    else:
+        view._selectedNodes.clear()
+        view._selectedLinks.clear()
+        view._marqueeBaseSelectedNodes.clear()
+        view._marqueeBaseSelectedLinks.clear()
+        view._marqueePrevSelectedNodes.clear()
+        view._marqueePrevSelectedLinks.clear()
+    view.marqueeActive = False
+    view.draggingNodes = False
+    view.nodeIdUnderCursor = ""
+    view._renamingNodeId = ""
+    view._renameInput.clear()
+    view._linkUnderCursor = -1
+    view._lastSyncedLinkHover = -1
+    view._hoveredPort = None
+    view._tooltipTimer.stop()
+    view._tooltipProperty = None
+    view._tooltipScreenPos = None
+    view._draggingLink = False
+    view._dragLinkSourceNode = None
+    view._dragLinkSourcePort = None
+    view._dragLinkSourceIsOutput = None
+    view._dragLinkCursorPos = None
+    view._dragLinkValidTarget = False
+    view._dragLinkSyntheticTarget = None
+    view._dragLinkResolvedTarget = None
+    view._clearReconnectState()
+    view._lastPinIndex = -1
+    view._lastLinkCycleIndex = 0
+    view._lastInputLinkIndex = -1
+    view._lastOutputLinkIndex = -1
+    view._lastDanglingLinkIndex = -1
+    view._reconcilePositionGen = 0
+    view._reconciledPositionVersions.clear()
+    view._spatialIndex.clear()
+    view._invalidateBackReferenceLinkDataCache()
+    view._linksNeedSync = True
+    view._portHighlightsDirty = True
+
+
+def resetUnboundGraph(view):
+    """Drop graph, scope and history without touching USD or GL."""
+    view._currentPrimPath = None
+    view._undoHistory = None
+    view._nodeGraph = NodeGraph()
+    view._prepareGraphSwitch()
+    view._nextZOrder = 0
+    view._renderCacheClearPending = True
+    view._invalidateGraphGeometry()
+    view.update()
+
+
+def deferReloadRendering(view, defer):
+    view._deferRenderCacheClear = defer
+    if not defer:
+        # Only FinishReload can resume painting, even if a loader initialized GL.
+        view.initialized = False
+
+
 def _beginReloadOnView(view, frame):
     # Block paint events at the Qt level.  Python-level guards
     # (view.initialized) are insufficient because QGLWidget's internal event
     # handling still touches the GL surface before paintGL() runs, and on
     # NVIDIA Windows drivers this can crash if the stageView's context was
     # just destroyed/recreated on the same thread.
-    view.setUpdatesEnabled(False)
     view.initialized = False
-
-    view._noticeHandler.unregister()
-    view._invalidateBackReferenceLinkDataCache()
-
-    # A value drag / editor / popup pinned to the old stage must not survive
-    # into the new one.
-    view._clearValueInteractionState()
     view._currentTimeCode = frame
-
-    # Clear state that holds dead Usd.Prim / Usd.Stage references
-    view._lastPrimTreeSelection = []
-    view._lastSelectedNode = None
-    if hasattr(view, "_selection"):
-        view._selection.update("replace", (), ())
-    else:
-        view._selectedNodes.clear()
-        view._selectedLinks.clear()
-    view._linkUnderCursor = -1
-    # Drop per-node position watermarks for the torn-down graph; the next
-    # graph's nodes reconcile fresh (and this bounds the map's growth).
-    view._reconciledPositionVersions.clear()
-    view._lastPinIndex = -1
-    view._lastLinkCycleIndex = 0
-    view._lastInputLinkIndex = -1
-    view._lastOutputLinkIndex = -1
-    view._lastDanglingLinkIndex = -1
+    view.setUpdatesEnabled(False)
 
 
 def _loadOnView(view, delta):
     old_state = model.attached_state(view)
     old_graph = getattr(view, "nodeGraph", None)
     if delta.mode == MODE_CONTAINER:
-        loader, args = view.loadContainer, (delta.stage, delta.prim_path)
+        view._populateContainer(delta.stage, delta.prim_path)
     elif delta.mode == MODE_BLUEPRINT:
-        loader, args = view.loadBlueprint, (delta.stage, delta.prim_path)
+        view._populateBlueprint(delta.stage, delta.prim_path)
     else:
-        loader, args = view.loadStage, (delta.stage,)
-
-    # Defer GL deletion until the host renderer has finished teardown.
-    view._deferRenderCacheClear = True
-    try:
-        loader(*args)
-        model.note_graph_replaced(view, old_state, old_graph)
-    finally:
-        view._deferRenderCacheClear = False
-        # A loader can initialize GL; only FinishReload should resume paint.
-        view.initialized = False
+        view._populateStage(delta.stage)
+    model.note_graph_replaced(view, old_state, old_graph)
 
 
-def _finishReloadOnView(view):
+def _finishReloadOnView(view, epoch):
     # Do NOT set view.fontAtlas/view.shaderLibrary to None here.
     # CPython's refcounting would immediately call their C++
     # destructors (which call glDelete*) with no GL context
@@ -1084,30 +1141,34 @@ def _finishReloadOnView(view):
     # initializeGL() replace them while the context IS current --
     # the old destructors then run safely.
 
-    # Run the render-cache clear that the loaders deferred, now that the
-    # driver state has stabilized.  Doing it during BeginReload would race
-    # with the stageView's renderer teardown and crash the NVIDIA driver on
-    # its worker thread.
     if view._renderCacheClearPending:
-        view._renderCacheClearPending = False
-        view.makeCurrent()
-        try:
-            view._nodeRenderManager.clearCache()
-        finally:
-            view.doneCurrent()
+        context = view.context()
+        if context is not None and context.isValid():
+            view.makeCurrent()
+            try:
+                # Leave the clear pending for paintGL if makeCurrent failed.
+                view._clearPendingRenderCache()
+            except Exception as error:
+                Tf.Warn(f"usdNoodles reload could not clear the render cache: {error}")
+            finally:
+                if view._hasCurrentRenderContext():
+                    view.doneCurrent()
 
+    if view._stageSync.isClosed() or view._stageSync.epoch() != epoch:
+        return
     view.linksChanged = True
     view.textChanged = True
     view.initialized = True
     view.setUpdatesEnabled(True)
-    view.update()
+    if not view._stageSync.isClosed() and view._stageSync.epoch() == epoch:
+        view.update()
 
 
 def applyStageDelta(view, delta):
     """Perform one reload delta on *view*, synchronously, owner thread.
 
-    Remove / Adopt / Invalidate are records of work reconciliation already
-    did, so they carry nothing to apply here.
+    Remove / Adopt / Invalidate are records of work reconciliation
+    already did, so they carry nothing to apply here.
     """
     if isinstance(delta, BeginReload):
         _beginReloadOnView(view, delta.frame)
@@ -1116,7 +1177,7 @@ def applyStageDelta(view, delta):
     elif isinstance(delta, ClearHistory):
         view._undoHistory = None
     elif isinstance(delta, FinishReload):
-        _finishReloadOnView(view)
+        _finishReloadOnView(view, delta.epoch)
 
 
 def closeStageLifecycle(view):
@@ -1128,12 +1189,15 @@ def closeStageLifecycle(view):
     receiver that is already gone, because every queued delta and notice is
     dropped by comparing against that epoch.
     """
-    service = getattr(view, "_stageSync", None)
-    if service is None or service.isClosed():
+    service = view._stageSync
+    if service.isClosed():
         return
-    unsubscribe_edit_target_warning(view._showWarningPopup)
-    view._undoHistory = None
-    service.close()
+    try:
+        view._clearValueInteractionState()
+    finally:
+        service.close()
+        view._undoHistory = None
+        unsubscribe_edit_target_warning(view._showWarningPopup)
     dispose = getattr(view, "_disposeView", None)
     if dispose is not None:
         dispose()
@@ -1160,67 +1224,57 @@ def _onStageReplaced(view):
     )
 
 
-def _finishStageReload(view, epoch=None):
-    sync = getattr(view, "_stageSync", None)
-    if not isinstance(sync, StageSync):
-        # Test doubles never ran __init__: run the same policy through a
-        # transient service rather than a second copy of it.
-        sync = _makeStageSync(view)
-        view._stageSync = sync
-    sync.finish(sync.epoch() if epoch is None else epoch)
-
-
 def loadBlueprint(view, stage, primPath, useFieldnames=True):
-    view._currentPrimPath = primPath
-
-    view.nodeGraph = NodeGraphBlueprint()
-    view.nodeGraph.setStage(stage)
-    view._initUndoTracking(stage)
-    view.nodeGraph.load(
+    view._stageSync.loadGraph(
         stage,
-        primPath,
-        view.textRenderer.calculateTextWidth,
-        view.fontAtlas,
-        useFieldnames,
-        nodeFactory=view._nodeFactory,  # Pass the factory
+        (lambda: view._populateBlueprint(stage, primPath, useFieldnames))
+        if stage is not None
+        else view._resetUnboundGraph,
+        view._resetUnboundGraph,
     )
 
-    view._seedNodeZOrders()
-    view._gridPlaceNodes(list(view.nodes.values()))
 
-    view._resetRenderCachesAfterBulkMove()
-
-    view._noticeHandler.register(stage)
-
-    if view.nodes:
-        view.frameAll()
+def populateBlueprint(view, stage, primPath, useFieldnames=True):
+    populateScopedGraph(view, NodeGraphBlueprint, stage, primPath, useFieldnames)
 
 
 def loadContainer(view, stage, primPath, useFieldnames=True):
+    view._stageSync.loadGraph(
+        stage,
+        (lambda: view._populateContainer(stage, primPath, useFieldnames))
+        if stage is not None
+        else view._resetUnboundGraph,
+        view._resetUnboundGraph,
+    )
+
+
+def populateContainer(view, stage, primPath, useFieldnames=True):
     from ..nodeGraphBpContainer import NodeGraphBpContainer
 
-    view._currentPrimPath = primPath
+    populateScopedGraph(view, NodeGraphBpContainer, stage, primPath, useFieldnames)
 
-    view.nodeGraph = NodeGraphBpContainer()
-    view.nodeGraph.setStage(stage)
-    view._initUndoTracking(stage)
-    view.nodeGraph.load(
+
+def populateScopedGraph(view, graphType, stage, primPath, useFieldnames):
+    # The model loaders own the scope check and raise on a missing scope;
+    # the switch must fail rather than bind a graph scoped to nothing.
+    epoch = view._stageSync.epoch()
+    graph = graphType()
+    graph.load(
         stage,
         primPath,
         view.textRenderer.calculateTextWidth,
         view.fontAtlas,
         useFieldnames,
-        nodeFactory=view._nodeFactory,  # Pass the factory
+        nodeFactory=view._nodeFactory,
     )
-
+    if view._stageSync.isClosed() or view._stageSync.epoch() != epoch:
+        return
+    view._currentPrimPath = primPath
+    view._nodeGraph = graph
+    view._initUndoTracking(stage)
     view._seedNodeZOrders()
     view._gridPlaceNodes(list(view.nodes.values()))
-
     view._resetRenderCachesAfterBulkMove()
-
-    # Register for USD change notices on this stage
-    view._noticeHandler.register(stage)
-
     if view.nodes:
         view.frameAll()
 
@@ -1235,20 +1289,56 @@ def loadStage(view, stage):
     root-children scan as the explicit loader primitive; the view
     simply does not invoke it here.
     """
+    view._stageSync.loadGraph(
+        stage,
+        (lambda: view._populateStage(stage))
+        if stage is not None
+        else view._resetUnboundGraph,
+        view._resetUnboundGraph,
+    )
+
+
+def populateStage(view, stage):
     from ..nodeGraphStage import NodeGraphStage
 
+    epoch = view._stageSync.epoch()
+    graph = NodeGraphStage()
+    graph.setStage(stage)
+    graph.syncSelectionToPrimTree = True
+    graph.linksChanged = True
+    if view._stageSync.isClosed() or view._stageSync.epoch() != epoch:
+        return
     view._currentPrimPath = None
-
-    view.nodeGraph = NodeGraphStage()
-    view.nodeGraph.setStage(stage)
+    view._nodeGraph = graph
     view._initUndoTracking(stage)
-    view.nodeGraph.syncSelectionToPrimTree = True
-    view.nodeGraph.linksChanged = True
-
     view._seedNodeZOrders()
-
     view._resetRenderCachesAfterBulkMove()
-    view._noticeHandler.register(stage)
+
+
+def loadSampleGraph(view, jsonPath):
+    view._stageSync.loadGraph(
+        None, lambda: view._populateSampleGraph(jsonPath), view._resetUnboundGraph
+    )
+
+
+def populateSampleGraph(view, jsonPath):
+    from ..nodeGraphJson import NodeGraphJson
+
+    epoch = view._stageSync.epoch()
+    graph = NodeGraphJson()
+    graph.load(jsonPath, view.textRenderer.calculateTextWidth, view.fontAtlas)
+    stage = graph.getStage()
+    if stage is None:
+        raise RuntimeError(f"Could not load sample graph: {jsonPath}")
+    if view._stageSync.isClosed() or view._stageSync.epoch() != epoch:
+        return
+    # The layer editor reads the converted stage from nodeGraphReplaced.
+    view._currentPrimPath = None
+    view._nodeGraph = graph
+    view._initUndoTracking(stage)
+    view._resetRenderCachesAfterBulkMove()
+    if view.nodes:
+        view.frameScene()
 
 
 def _valueRowOnlyChange(node, propertyName):
@@ -1307,23 +1397,7 @@ def _reloadLinksFromUSD(view):
 
 
 def _reloadCurrentGraph(view):
-    """Reload the graph from USD after undo/redo.
-
-    Creates a fresh nodeGraph and re-runs the full load path so that
-    nodes, links, spatial index, and text are rebuilt cleanly from
-    the (now-modified) USD layer state.
-
-    What the loader produces is not the whole graph, though. A loader walks
-    the direct children of one scope; the canvas holds whatever the user put
-    there, at any depth, via 'A' (``addNodesFromPrimTreeSelection``) or node
-    creation under a prim-tree selection -- membership that lives only in
-    memory and that no loader can re-derive. Those nodes are re-added
-    afterwards, along with the positions they were placed at when nothing
-    authored ``ui:nodegraph:node:pos`` to read back. Without that, an
-    unrelated undo answers by wiping the canvas: stage graphs open
-    empty, so the loader contributes nothing and the re-add loop below
-    is the whole membership.
-    """
+    """Rebuild after undo/redo, preserving curated membership and placement."""
     from ..nodeGraphBpContainer import NodeGraphBpContainer
     from ..nodeGraphStage import NodeGraphStage
 
@@ -1336,11 +1410,7 @@ def _reloadCurrentGraph(view):
     # holding one is already talking about the previous graph.
     view._clearValueInteractionState()
 
-    # Save z-order map before reload so restored nodes keep their
-    # front-to-back visual ordering (important for undo of deletes).
     savedZOrders = {nid: node.zOrder for nid, node in view.nodes.items()}
-    # Membership and display-only placement: view state with no USD backing,
-    # so the reload below is the only thing that could lose it.
     savedNodeIds = list(view.nodes.keys())
     savedDisplayPositions = {
         nid: Gf.Vec2d(node.position)
@@ -1349,43 +1419,26 @@ def _reloadCurrentGraph(view):
     }
 
     # Disable notice handler during reload to avoid recursive processing
-    view._noticeHandler.setEnabled(False)
-    try:
-        # Create a fresh nodeGraph of the same type
-        if isinstance(view.nodeGraph, NodeGraphBpContainer):
-            view.nodeGraph = NodeGraphBpContainer()
-            view.nodeGraph.setStage(stage)
-            view.nodeGraph.load(
-                stage,
-                view._currentPrimPath,
-                view.textRenderer.calculateTextWidth,
-                view.fontAtlas,
-                nodeFactory=view._nodeFactory,
-            )
-        elif isinstance(view.nodeGraph, NodeGraphStage):
-            # No loader scan: stage graphs open empty, so a reload
-            # preserves exactly the curated membership the loop below
-            # re-adds rather than re-deriving the loader's idea of the
-            # graph (which would graph root prims the user never asked
-            # for after the first undo).
-            view.nodeGraph = NodeGraphStage()
-            view.nodeGraph.setStage(stage)
-            view.nodeGraph.syncSelectionToPrimTree = True
+    with view._stageSync.suppressed():
+        epoch = view._stageSync.epoch()
+        graph = type(view.nodeGraph)() if isinstance(
+            view.nodeGraph, (NodeGraphStage, NodeGraphBlueprint, NodeGraphBpContainer)
+        ) else NodeGraphBlueprint()
+        if isinstance(graph, NodeGraphStage):
+            graph.setStage(stage)
+            graph.syncSelectionToPrimTree = True
         else:
-            view.nodeGraph = NodeGraphBlueprint()
-            view.nodeGraph.setStage(stage)
-            view.nodeGraph.load(
+            graph.load(
                 stage,
                 view._currentPrimPath,
                 view.textRenderer.calculateTextWidth,
                 view.fontAtlas,
                 nodeFactory=view._nodeFactory,
             )
+        if view._stageSync.isClosed() or view._stageSync.epoch() != epoch:
+            return
+        view._nodeGraph = graph
 
-        # Put back the nodes the user curated onto the canvas that the
-        # loader's scope does not cover. A prim that genuinely went away
-        # (deleted, or deactivated by an undo of its creation) is skipped --
-        # the loaders apply the same rule.
         for nodeId in savedNodeIds:
             if nodeId in view.nodes or "#" in nodeId:
                 continue
@@ -1397,17 +1450,11 @@ def _reloadCurrentGraph(view):
             except Exception as error:
                 Tf.Warn("Graph reload could not re-add %s: %s" % (nodeId, error))
 
-        # Re-apply placements that were never authored. A node whose
-        # position IS authored is left alone -- USD owns that one, and the
-        # reload may be undoing a move that authored it.
         for nodeId, position in savedDisplayPositions.items():
             node = view.nodes.get(nodeId)
             if node is not None and not view._nodeHasAuthoredPosition(node):
                 node.setDisplayPosition(position)
 
-        # Restore saved zOrder values for nodes that existed before reload.
-        # New nodes (from undo restoring deleted nodes) get the next zOrder.
-        # This preserves front-to-back visual ordering across undo/redo.
         maxSaved = max(savedZOrders.values()) if savedZOrders else 0
         view._nextZOrder = maxSaved
         for nid, node in view.nodes.items():
@@ -1421,14 +1468,14 @@ def _reloadCurrentGraph(view):
         view.linksChanged = True
         view._clearRenderCache()
         view._nodeRenderManager.invalidateAll()
-        # Reset position caches so text, icons, and node quads pick up new positions
         view.textRenderer.resetPositionCaches()
         view._cppIconRenderer.resetPositionCaches()
         view._nodeRenderManager.resetNodeQuadCaches()
         view._nodeTransformFrame.reset()
         view.update()
-    finally:
-        view._noticeHandler.setEnabled(True)
+
+    if view._stageSync.epoch() == epoch:
+        view.nodeGraphReplaced.emit()
 
 
 def _isStageViewMidTeardown(view):
@@ -1473,7 +1520,11 @@ def _makeStageSync(view):
         post_notice=getattr(type(view), "_postOwnerCallback", None) and view._postOwnerCallback,
         listen=lambda receiver: UsdNoticeHandler(receiver),
         warn=lambda message: Tf.Warn(message),
+        prepare=lambda: view._prepareGraphSwitch(),
+        reset=lambda: view._resetUnboundGraph(),
+        defer=lambda value: deferReloadRendering(view, value),
         reconcile=lambda resynced, info, trace, moved: applyUsdChanges(
             view, resynced, info, trace=trace, movedPaths=moved
         ),
+        graphReplaced=getattr(getattr(view, "nodeGraphReplaced", None), "emit", None),
     )

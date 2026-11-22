@@ -57,7 +57,10 @@ class NodeGraphBlueprint(NodeGraph):
         useFieldnames=True,
         nodeFactory=None,
     ):
-        # Clear existing data
+        blueprintPrim = stage.GetPrimAtPath(primPath) if primPath else None
+        if not blueprintPrim or blueprintPrim.GetTypeName() != "Blueprint":
+            raise RuntimeError(f"Expected a Blueprint prim at {primPath}")
+
         self.clear()
 
         # The fieldname mode this load ran under; moved-scope
@@ -66,21 +69,7 @@ class NodeGraphBlueprint(NodeGraph):
 
         # Store stage reference for USD-aware nodes
         self._stage = stage
-
-        # Enable selection syncing for Blueprint graphs (they have valid USD prim paths)
         self.syncSelectionToPrimTree = True
-
-        # Get the Blueprint prim
-        blueprintPrim = stage.GetPrimAtPath(primPath)
-        if not blueprintPrim or not blueprintPrim.IsValid():
-            Tf.Warn(f"Could not find Blueprint prim at {primPath}")
-            return
-
-        if blueprintPrim.GetTypeName() != "Blueprint":
-            Tf.Warn(
-                f"Prim at {primPath} is not a Blueprint (type: {blueprintPrim.GetTypeName()})"
-            )
-            return
 
         blueprintPathStr = str(primPath)
 

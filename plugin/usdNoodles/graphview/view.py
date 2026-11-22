@@ -90,6 +90,7 @@ def __init__(view, parent=None, settingsObject=None):
     view.panY = 0.0
     view.lastMousePos = view._widgetPoint()
     view.nodeGraph = NodeGraph()
+    view._startupSamplePending = True
 
     subscribe_edit_target_warning(view._showWarningPopup)
     view._currentPrimPath = None
@@ -167,6 +168,7 @@ def __init__(view, parent=None, settingsObject=None):
     view._valueEditError = False
     view._mungState = None
     view._mungActive = False
+    view._mungSuppression = None
     view._tokenPopup = None
     view._tokenPopupList = SelectableList(max_visible_items=8)
     view._currentTimeCode = Usd.TimeCode.Default()
@@ -271,7 +273,6 @@ def __init__(view, parent=None, settingsObject=None):
     view._nextZOrder = 0
 
     view._stageSync = _makeStageSync(view)
-    view._noticeHandler = view._stageSync.handler()
 
 def nodes(view):
     return view.nodeGraph.nodes
@@ -760,7 +761,6 @@ def _makeCommandRegistry(view):
 
 class GraphView(GraphWidgetBase):
     """Coordinate the graph editor’s widget, model and host lifecycle."""
-    _stageSync = None
     _AUTO_GRID_COLUMNS = 30
     _AUTO_GRID_GAP = 150.0
     _selectedNodes = property(_selection.selected_node_ids)

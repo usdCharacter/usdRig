@@ -20,6 +20,7 @@ whitelist below IS that rule; nothing else in the feature re-decides it.
 
 import math
 from collections import namedtuple
+from contextlib import ExitStack, nullcontext
 
 from pxr import Gf, Sdf, Usd
 
@@ -553,7 +554,8 @@ def pack_components(components, type_name):
 
 
 def write_value(
-    stage, prim, property_name, components, time_code=None, mode="auto", warn=True
+    stage, prim, property_name, components, time_code=None, mode="auto", warn=True,
+    *, on_authored=None,
 ):
     """Author *components* onto *property_name*.  (ok, reason).
 
@@ -584,22 +586,24 @@ def write_value(
     if warn:
         _warn_edit_target(stage)
 
-    if time_code is None:
-        time_code = Usd.TimeCode.Default()
-
+    time = value_write_time(attr, time_code, mode)
     try:
         with Sdf.ChangeBlock():
-            if attr.GetVariability() == Sdf.VariabilityUniform:
-                attr.Set(value)
-            elif mode == "default":
-                attr.Set(value)
-            elif mode == "animation" or attr.GetNumTimeSamples() > 0:
-                attr.Set(value, time_code)
-            else:
-                attr.Set(value)
+            if not attr.Set(value, time):
+                return False, "USD refused the value"
+            if on_authored is not None:
+                # Capture the Sdf opinion before synchronous USD notice delivery.
+                on_authored()
     except Exception as e:  # a locked layer USD refuses late, a bad value
         return False, str(e)
     return True, ""
+
+
+def value_write_time(attr, time_code, mode):
+    if (attr.GetVariability() != Sdf.VariabilityUniform and mode != "default"
+            and (mode == "animation" or attr.GetNumTimeSamples() > 0)):
+        return time_code if time_code is not None else Usd.TimeCode.Default()
+    return Usd.TimeCode.Default()
 
 
 def _warn_edit_target(stage):
@@ -709,3 +713,149 @@ def build_value_row(stage, prim, pin_name, property_name, time_code=None):
     if template is None:
         return None
     return build_value_row_from_template(stage, prim, template, time_code)
+
+
+class ValuePreviewOpinion:
+    """Replay one mapped value and clean up only the specs it introduced."""
+
+    def __init__(self, target, attr, time):
+        self.layer = target.GetLayer()
+        self._target = target
+        self._initial_path = target.MapToSpecPath(attr.GetPath())
+        prim = attr.GetPrim()
+        properties = attr.GetPropertyStack()
+        # A composed Usd handle is path-bound. Keep a pre-preview Sdf identity
+        # that can survive both removal of the preview spec and a namespace edit.
+        self._anchor = next(iter(properties or prim.GetPrimStack()), None)
+        if self._anchor:
+            owner = self._anchor.owner if properties else self._anchor
+            index = prim.GetPrimIndex()
+            node = index.GetNodeProvidingSpec(owner)
+            self._anchor_map = node.mapToRoot.Evaluate() if node else None
+        self.scene_path = attr.GetPath()
+        self._property_name = attr.GetName()
+        self.time = (None if time.IsDefault() else
+                     target.GetMapFunction().timeOffset.GetInverse() * time.GetValue())
+        self.original = read_value_opinion(self.layer, self._initial_path, self.time)
+        self.preview = None
+        self._spec = None
+        self._record_site(self._initial_path)
+
+    def _record_site(self, path):
+        self._created = not self.layer.GetAttributeAtPath(path)
+        self._missing_prims = tuple(
+            prefix for prefix in path.GetPrimOrPrimVariantSelectionPath().GetPrefixes()
+            if prefix.IsPrimPath() and not self.layer.GetPrimAtPath(prefix)
+        )
+
+    def _capture_specs(self, path, retained_prims=()):
+        self._spec = self.layer.GetAttributeAtPath(path)
+        self._prims = retained_prims + tuple(self.layer.GetPrimAtPath(p) for p in self._missing_prims)
+
+    def capture(self):
+        if self._spec is None:
+            self._capture_specs(self._initial_path)
+            self._declaration = self._spec.typeName, self._spec.variability, self._spec.custom
+        self.preview = read_value_opinion(self.layer, self._initial_path, self.time)
+
+    @property
+    def path(self):
+        return self._spec.path if self._spec else None
+
+    def matches(self, path):
+        return path is not None and read_value_opinion(self.layer, path, self.time) == self.preview
+
+    def restore(self, replay_declaration=None):
+        path = self.path
+        if not self.matches(path):
+            return
+        # The replay marker must outlive synchronous notice delivery at block exit.
+        with ExitStack() as replay, Sdf.ChangeBlock():
+            set_value_opinion(self.layer, path, self.time, self.original)
+            spec = self._spec
+            if (self._created and spec
+                    and set(spec.ListInfoKeys()) <= {"typeName", "variability", "custom"}
+                    and (spec.typeName, spec.variability, spec.custom) == self._declaration):
+                if replay_declaration is not None:
+                    replay.enter_context(replay_declaration(path, creating=False))
+                spec.owner.RemoveProperty(spec)
+                self._spec = None
+            # Keep handles rather than old paths so namespace edits cannot
+            # make cleanup delete an unrelated replacement at the old site.
+            for prim in reversed(self._prims):
+                if prim and prim.IsInert():
+                    if prim.nameParent is None:
+                        del self.layer.rootPrims[prim.name]
+                    else:
+                        del prim.nameParent.nameChildren[prim.name]
+
+    def _removed_site(self, stage, scene_path):
+        anchor = self._anchor
+        if not (stage and anchor and self._anchor_map):
+            return None
+        path = self._anchor_map.MapSourceToTarget(anchor.path.StripAllVariantSelections())
+        if not path:
+            return None
+        is_property = isinstance(anchor, Sdf.AttributeSpec)
+        attr = stage.GetAttributeAtPath(path if is_property else path.AppendProperty(self._property_name))
+        if not attr or attr.GetTypeName() != self._declaration[0]:
+            return None
+        prim = attr.GetPrim()
+        if str(attr.GetPath()) != scene_path:
+            return None
+        stack = attr.GetPropertyStack() if is_property else prim.GetPrimStack()
+        if anchor not in stack:
+            return None
+        return self._target.MapToSpecPath(attr.GetPath())
+
+    def redo(self, stage, scene_path, replay_declaration=None):
+        if not (scene_path and stage and self.layer.permissionToEdit
+                and self.layer in stage.GetUsedLayers()):
+            return
+        # Only resolve a new site when our own restore removed the spec.
+        mapped = self._target.MapToSpecPath(Sdf.Path(scene_path))
+        path = self._removed_site(stage, scene_path) if self._spec is None else self.path
+        if path != mapped:
+            return
+        if not path or read_value_opinion(self.layer, path, self.time) != self.original:
+            return
+        spec = self.layer.GetPropertyAtPath(path)
+        if spec and (not isinstance(spec, Sdf.AttributeSpec)
+                     or spec.typeName != self._declaration[0]):
+            return
+        retained_prims = tuple(prim for prim in self._prims if prim)
+        was_created = self._created and spec == self._spec
+        self._record_site(path)
+        replay = (replay_declaration(path, creating=True)
+                  if self._created and replay_declaration is not None else nullcontext())
+        with replay, Sdf.ChangeBlock():
+            if self._created:
+                owner = Sdf.CreatePrimInLayer(self.layer, path.GetPrimOrPrimVariantSelectionPath())
+                type_name, variability, custom = self._declaration
+                Sdf.AttributeSpec(owner, path.name, type_name, variability, custom)
+            self._created = self._created or was_created
+            self._capture_specs(path, retained_prims)
+            set_value_opinion(self.layer, path, self.time, self.preview)
+
+
+def read_value_opinion(layer, path, time):
+    if time is not None:
+        return layer.QueryTimeSample(path, time)
+    spec = layer.GetAttributeAtPath(path)
+    return spec.default if spec and spec.HasInfo("default") else None
+
+
+def set_value_opinion(layer, path, time, value):
+    spec = layer.GetAttributeAtPath(path)
+    if not spec:
+        return
+    with Sdf.ChangeBlock():
+        if time is not None:
+            if value is None:
+                layer.EraseTimeSample(path, time)
+            else:
+                layer.SetTimeSample(path, time, value)
+        elif value is None:
+            spec.ClearInfo("default")
+        else:
+            spec.default = value

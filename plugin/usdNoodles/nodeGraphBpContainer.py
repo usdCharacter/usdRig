@@ -66,7 +66,10 @@ class NodeGraphBpContainer(NodeGraphBlueprint):
         useFieldnames=True,
         nodeFactory=None,
     ):
-        # Clear existing data
+        containerPrim = stage.GetPrimAtPath(primPath) if primPath else None
+        if not containerPrim or containerPrim.GetTypeName() != "Container":
+            raise RuntimeError(f"Expected a Container prim at {primPath}")
+
         self.clear()
 
         # The fieldname mode this load ran under; moved-scope
@@ -75,21 +78,7 @@ class NodeGraphBpContainer(NodeGraphBlueprint):
 
         # Store stage reference for USD-aware nodes
         self._stage = stage
-
-        # Enable selection syncing for Container graphs (they have valid USD prim paths)
         self.syncSelectionToPrimTree = True
-
-        # Get the Container prim
-        containerPrim = stage.GetPrimAtPath(primPath)
-        if not containerPrim or not containerPrim.IsValid():
-            Tf.Warn(f"Could not find Container prim at {primPath}")
-            return
-
-        if containerPrim.GetTypeName() != "Container":
-            Tf.Warn(
-                f"Prim at {primPath} is not a Container (type: {containerPrim.GetTypeName()})"
-            )
-            return
 
         containerPathStr = str(primPath)
 

@@ -45,7 +45,7 @@ except ImportError:
     _has_prim_rename = False
 
 try:
-    from UsdNoodles.graphView import GraphView
+    from UsdNoodles.graphView import GraphView, _makeStageSync
 
     _has_graph_view = True
 except ImportError:
@@ -369,6 +369,9 @@ class _StubGraphView:
         return GraphView._adoptRenamedPrim(
             self, oldNodeId, newPathStr, *placement
         )
+
+    def _invalidateGraphGeometry(self):
+        GraphView._invalidateGraphGeometry(self)
 
     def _resetRenderCachesAfterBulkMove(self, rebuild_links=True):
         return GraphView._resetRenderCachesAfterBulkMove(self, rebuild_links)
@@ -1574,6 +1577,9 @@ class AfterUsdviewRefreshTest(unittest.TestCase):
 
 
 class _ReloadStubGraphView:
+    nodeGraphReplaced = MagicMock()
+    nodeGraph = property(lambda self: self._nodeGraph,
+                         lambda self, graph: setattr(self, "_nodeGraph", graph))
     """The slice of GraphView that ``_reloadCurrentGraph`` drives.
 
     The loader runs for real against a real stage, because the whole point of
@@ -1601,7 +1607,7 @@ class _ReloadStubGraphView:
         self._currentPrimPath = None
         self._nextZOrder = 0
 
-        self._noticeHandler = MagicMock()
+        self._stageSync = _makeStageSync(self)
         self._clearRenderCache = MagicMock()
         self._nodeRenderManager = MagicMock()
         self._cppIconRenderer = MagicMock()

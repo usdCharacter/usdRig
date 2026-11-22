@@ -16,7 +16,7 @@ import unittest
 import weakref
 
 from pxr import Gf, Sdf, Usd
-from UsdNoodles.graphView import GraphView, _push_undo_command
+from UsdNoodles.graphView import GraphView, _makeStageSync, _push_undo_command
 from UsdNoodles.undoHistory import history_for_stage, set_history_backend
 
 
@@ -33,14 +33,42 @@ def _value(stage):
 class _View:
     _cachedValueWriteMode = "default"
 
+    _populateStage = GraphView._populateStage
+    _populateSampleGraph = GraphView._populateSampleGraph
+
     def __init__(self, stage):
-        self.nodes = {}
+        # This double isolates replay from widget reconciliation. Live notice
+        # delivery and graph reconciliation are covered by StageSync tests.
+        self._syncingSelection = True
+        self._deferRenderCacheClear = False
+        self._stageSync = _makeStageSync(self)
+        self.nodeGraph = SimpleNamespace(nodes={})
         self.reloads = 0
         self.bind(stage)
 
     def bind(self, stage):
-        self.nodeGraph = SimpleNamespace(getStage=lambda: stage)
-        self._initUndoTracking(stage)
+        GraphView.loadStage(self, stage)
+
+    nodeGraph = property(lambda self: self._nodeGraph,
+                         lambda self, graph: setattr(self, "_nodeGraph", graph))
+
+    @property
+    def nodes(self):
+        return self.nodeGraph.nodes
+
+    def _prepareGraphSwitch(self):
+        pass
+
+    def _resetUnboundGraph(self):
+        from UsdNoodles.nodeGraph import NodeGraph
+        self.nodeGraph = NodeGraph()
+        self._undoHistory = None
+
+    def _seedNodeZOrders(self):
+        GraphView._seedNodeZOrders(self)
+
+    def _resetRenderCachesAfterBulkMove(self):
+        pass
 
     def _initUndoTracking(self, stage):
         GraphView._initUndoTracking(self, stage)
@@ -67,6 +95,7 @@ class UndoHistoryTest(unittest.TestCase):
             GraphView._loadSampleGraph(view, str(sample))
         stage = view.nodeGraph.getStage()
         self.assertIsNotNone(stage)
+        self.assertIsNone(view._stageSync.boundStage())
         self.assertIs(view._undoHistory, history_for_stage(stage))
         stage.DefinePrim("/Value").CreateAttribute(
             "amount", Sdf.ValueTypeNames.Double).Set(0)

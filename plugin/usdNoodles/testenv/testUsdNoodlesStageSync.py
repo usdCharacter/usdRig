@@ -276,16 +276,22 @@ class _ClosedHostReads(_StubView):
 
 
 class _RecordingHandler:
-    __slots__ = ("events", "enabled")
+    __slots__ = ("events", "enabled", "stage")
 
     def __init__(self, events):
         self.events = events
         self.enabled = True
+        self.stage = None
 
     def register(self, stage):
+        self.stage = stage
         self.events.append(("register", stage))
 
+    def getStage(self):
+        return self.stage
+
     def unregister(self):
+        self.stage = None
         self.events.append(("unregister",))
 
     def isEnabled(self):
@@ -314,6 +320,7 @@ class _RecordingHooks:
         self.sync = stage_sync.StageSync(
             self.read, self.notice, self.apply, self.post, self.listen,
             warn=self.warn, sink=self.publish, reconcile=self.reconcile,
+            reset=lambda: None,
         )
 
     def read(self):
@@ -481,6 +488,20 @@ class AdoptPrimsNewToScopeTest(unittest.TestCase):
         )
 
         self.assertEqual(added, ["/Keeper/Child"])
+
+    def test_a_pseudo_root_resync_reconciles_scope_membership(self):
+        """"/" names no child: membership is reconciled against the
+        scope's current direct children, not the notice's paths."""
+        self.stage.RemovePrim("/Keeper")
+        UsdGeom.Sphere.Define(self.stage, "/Fresh")
+        UsdGeom.Sphere.Define(self.stage, "/Fresh/Kid")
+        UsdGeom.Sphere.Define(self.stage, "/Dormant")
+        self.stage.GetPrimAtPath("/Dormant").SetActive(False)
+        view = _StubView(self.stage, ["/Keeper"])
+
+        added = stage_adapter.adoptPrimsNewToScope(view, {"/"})
+
+        self.assertEqual(added, ["/Fresh"])
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
@@ -1041,20 +1062,20 @@ class ReplaceStalenessTest(unittest.TestCase):
         clear = stage_sync.ClearHistory(3)
         self.assertEqual(hooks.events, [
             ("listen", hooks.receiver),
-            ("read", snapshotA),
+            ("read", snapshotA), ("unregister",),
             ("publish", beginA), ("apply", beginA),
             ("publish", stage_sync.Remove(1, idsA)),
-            ("publish", loadA), ("apply", loadA), ("post", finishA),
-            ("read", snapshotB),
+            ("publish", loadA), ("apply", loadA), ("register", stageA), ("post", finishA),
+            ("read", snapshotB), ("unregister",),
             ("publish", beginB), ("apply", beginB),
             ("publish", stage_sync.Remove(2, idsB)),
-            ("publish", loadB), ("apply", loadB), ("post", finishB),
-            ("read", snapshotB),
+            ("publish", loadB), ("apply", loadB), ("register", stageB), ("post", finishB),
+            ("read", snapshotB), ("unregister",),
             ("publish", beginNone), ("apply", beginNone),
             ("publish", clear), ("apply", clear), ("post", finishNone),
         ])
         self.assertEqual(sync.epoch(), 3)
-        self.assertIs(sync.handler(), hooks.handler)
+        self.assertIsNone(sync.boundStage())
 
         events = hooks.events[:]
         sync.changed(1, {"/Alpha"}, set())
@@ -1127,8 +1148,8 @@ class LoadFailureTest(unittest.TestCase):
         (finishA,) = hooks.queued
         self.assertEqual(hooks.events[-3:], [
             ("apply", stage_sync.Load(1, stageA, "stage", None)),
-            ("warn", "Failed to reload graph after stage replace: load boom"),
             ("post", finishA),
+            ("warn", "Failed to reload graph after stage replace: load boom"),
         ])
         finishA()
         self.assertEqual(hooks.events[-2:], [
@@ -1145,10 +1166,10 @@ class LoadFailureTest(unittest.TestCase):
         load = stage_sync.Load(2, stageB, "container", "/Box")
         finish = stage_sync.FinishReload(2)
         self.assertEqual(hooks.events, [
-            ("read", hooks.stage_context),
+            ("read", hooks.stage_context), ("unregister",),
             ("publish", begin), ("apply", begin),
             ("publish", stage_sync.Remove(2, ())),
-            ("publish", load), ("apply", load), ("post", finishB),
+            ("publish", load), ("apply", load), ("register", stageB), ("post", finishB),
             ("publish", finish), ("apply", finish),
         ])
 
@@ -1184,7 +1205,7 @@ class SuppressionTest(unittest.TestCase):
 
     def test_suppression_restores_on_the_normal_path(self) -> None:
         hooks = _RecordingHooks()
-        handler = hooks.sync.handler()
+        handler = hooks.handler
         self.assertTrue(handler.isEnabled())
         with hooks.sync.suppressed():
             self.assertFalse(handler.isEnabled())
@@ -1206,7 +1227,6 @@ class SuppressionTest(unittest.TestCase):
             self.assertFalse(hooks.handler.isEnabled())
         self.assertTrue(hooks.handler.isEnabled())
         self.assertEqual(hooks.events[1:], [
-            ("setEnabled", False), ("setEnabled", False),
             ("setEnabled", False), ("setEnabled", True),
         ])
 
@@ -1219,15 +1239,18 @@ class CloseTest(unittest.TestCase):
         hooks = _RecordingHooks()
         stage = object()
         hooks.sync.replace(stage, "stage", None, "frame")
-        handler = hooks.sync.handler()
+        handler = hooks.handler
         self.assertIs(handler, hooks.handler)
-        self.assertFalse(any(event[0] == "register" for event in hooks.events))
-        handler.register(stage)
+        self.assertIs(hooks.sync.boundStage(), stage)
+        self.assertEqual([event for event in hooks.events if event[0] == "register"],
+                         [("register", stage)])
+        before_close = hooks.events[:]
         live = hooks.sync.epoch()
         hooks.sync.close()
         self.assertTrue(hooks.sync.isClosed())
         self.assertEqual(hooks.sync.epoch(), live + 1)
-        self.assertEqual(hooks.events[-2:], [("register", stage), ("unregister",)])
+        self.assertEqual(hooks.events, before_close + [("unregister",)])
+        self.assertIsNone(hooks.sync.boundStage())
         events = hooks.events[:]
         hooks.queued[0]()
         hooks.receiver._handleUsdChanges({"/Alpha"}, set())
@@ -1274,7 +1297,6 @@ class NoticeRegistrationTest(unittest.TestCase):
             ),
         )
         service.bind(stage)
-        service.handler().register(stage)
 
         self._rename(stage)
         self._rename(twin)
@@ -1298,6 +1320,93 @@ class NoticeRegistrationTest(unittest.TestCase):
         self.assertTrue(view.linksChanged)
         self.assertTrue(view.textChanged)
         view._hooks.update.assert_called_once()
+
+
+@unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
+class RootResyncSuppressionTest(unittest.TestCase):
+    """A stage-wide resync survives gesture suppression.
+
+    USD spells a stage-wide resync as a resync of "/" alone (pseudo-root
+    metadata, a reconfigured composition): no child path names what
+    changed. Dropped before graph delivery, a gesture whose only
+    structural evidence is that resync releases with the graph holding a
+    node for a prim that is gone and missing a child the stage now shows.
+    The batch keeps the root invalidation under the epoch that produced
+    it, and the final release reconciles membership against the scope's
+    current direct children.
+    """
+
+    @staticmethod
+    def _service(view, apply=None):
+        return stage_sync.StageSync(
+            read=lambda: stage_sync.StageContext(tuple(view.nodes)),
+            notice=lambda: stage_sync.NoticeContext(view._syncingSelection),
+            apply=apply if apply is not None else (lambda delta: None),
+            post=lambda callback: None,
+            listen=lambda receiver: UsdNoticeHandler(receiver),
+            warn=lambda message: None,
+            reset=lambda: None,
+            reconcile=lambda resynced, info, trace, moved: (
+                stage_adapter.applyUsdChanges(
+                    view, resynced, info, trace=trace, movedPaths=moved
+                )
+            ),
+        )
+
+    def test_a_root_only_resync_reconciles_scope_on_release(self) -> None:
+        stage = Usd.Stage.CreateInMemory()
+        UsdGeom.Sphere.Define(stage, "/Alpha")
+        UsdGeom.Sphere.Define(stage, "/Keeper")
+        view = _StubView(stage, ["/Alpha", "/Keeper"])
+        service = self._service(view)
+        service.bind(stage)
+
+        # The stage reconfigures while notices are discarded outright, so
+        # no per-path notice was ever recorded for the change.
+        with service.suppressed():
+            stage.RemovePrim("/Alpha")
+            UsdGeom.Sphere.Define(stage, "/Fresh")
+
+        # A gesture whose only structural evidence is the stage-wide
+        # resync: USD reports the pseudo-root metadata edit as "/".
+        token = service.acquireSuppression(reconcile=True)
+        stage.SetDefaultPrim(stage.GetPrimAtPath("/Keeper"))
+        self.assertEqual(sorted(view.nodes), ["/Alpha", "/Keeper"])
+
+        authored = _layer_text(stage)
+        token.release()
+
+        # Both halves of the reconciliation, with no further USD edit:
+        # the obsolete node dropped, the now-visible child adopted.
+        self.assertEqual(sorted(view.nodes), ["/Fresh", "/Keeper"])
+        self.assertEqual(_layer_text(stage), authored)
+
+    def test_replacing_the_stage_drops_the_pending_root_invalidation(self) -> None:
+        stageA = Usd.Stage.CreateInMemory()
+        UsdGeom.Sphere.Define(stageA, "/Alpha")
+        UsdGeom.Sphere.Define(stageA, "/Keeper")
+        stageB = Usd.Stage.CreateInMemory()
+        UsdGeom.Sphere.Define(stageB, "/Beta")
+        view = _StubView(stageA, ["/Alpha", "/Keeper"])
+
+        def apply(delta):
+            if isinstance(delta, stage_sync.Load):
+                view.nodeGraph._stage = delta.stage
+
+        service = self._service(view, apply=apply)
+        service.bind(stageA)
+        token = service.acquireSuppression(reconcile=True)
+        stageA.SetDefaultPrim(stageA.GetPrimAtPath("/Keeper"))
+        service.replace(stageB, "stage", None, "frame-B")
+        afterReplace = sorted(view.nodes)
+
+        token.release()
+
+        # The old epoch's root invalidation never reaches the replacement
+        # graph: nothing is dropped or adopted from stage A's notice.
+        self.assertEqual(sorted(view.nodes), afterReplace)
+        self.assertNotIn("/Beta", view.nodes)
+        view._addNewNodeFast.assert_not_called()
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
@@ -1360,16 +1469,20 @@ class ProductionAdapterTest(unittest.TestCase):
 
     def test_load_effect_brackets_the_selected_loader_even_on_failure(self) -> None:
         for mode, loader, args in (
-            ("stage", "loadStage", ()),
-            ("blueprint", "loadBlueprint", ("/Bp",)),
-            ("container", "loadContainer", ("/Box",)),
+            ("stage", "_populateStage", ()),
+            ("blueprint", "_populateBlueprint", ("/Bp",)),
+            ("container", "_populateContainer", ("/Box",)),
         ):
             for fail in (False, True):
                 with self.subTest(mode=mode, fail=fail):
                     stage = Usd.Stage.CreateInMemory()
                     view = _StubView(stage)
                     view._deferRenderCacheClear = False
-                    view.initialized = False
+                    view.initialized = True
+                    view._prepareGraphSwitch = lambda: None
+                    view._resetUnboundGraph = lambda: None
+                    view.setUpdatesEnabled = lambda _: None
+                    view._stageSync = _makeStageSync(view)
                     calls = []
 
                     def load(*received):
@@ -1379,12 +1492,12 @@ class ProductionAdapterTest(unittest.TestCase):
                             raise RuntimeError("loader boom")
 
                     setattr(view, loader, load)
-                    delta = stage_sync.Load(1, stage, mode, args[0] if args else None)
-                    if fail:
-                        with self.assertRaisesRegex(RuntimeError, "loader boom"):
-                            stage_adapter.applyStageDelta(view, delta)
-                    else:
-                        stage_adapter.applyStageDelta(view, delta)
+                    with patch("UsdNoodles.graphView.QtCore.QTimer.singleShot") as post, \
+                         patch("UsdNoodles.graphView.Tf.Warn") as warn:
+                        view._stageSync.replace(stage, mode, args[0] if args else None, None)
+                    post.assert_called_once()
+                    self.assertEqual(warn.call_count, int(fail))
+                    self.assertIs(view._stageSync.boundStage(), None if fail else stage)
                     self.assertEqual(calls, [((stage, *args), True)])
                     self.assertFalse(view._deferRenderCacheClear)
                     self.assertFalse(view.initialized)
@@ -1407,7 +1520,6 @@ class ProductionAdapterTest(unittest.TestCase):
         view = self._view(stage, ["/Alpha", "/Keeper"])
         service = _makeStageSync(view)
         service.bind(stage)
-        service.handler().register(stage)
 
         stage.GetPrimAtPath("/Alpha").GetAttribute("radius").Set(3.0)
 
@@ -1434,7 +1546,6 @@ class ProductionAdapterTest(unittest.TestCase):
         view = self._view(stage, ["/Alpha"])
         service = _makeStageSync(view)
         service.bind(stage)
-        service.handler().register(stage)
 
         traces = []
 
@@ -1461,8 +1572,7 @@ class ProductionAdapterTest(unittest.TestCase):
         view = self._view(stageA, ["/Alpha", "/Keeper"], _ClosedHostReads)
         service = _makeStageSync(view)
         view._stageSync = service
-        view._noticeHandler = service.handler()
-        service.handler().register(stageA)
+        service.bind(stageA)
         service.close()
         # usdview has moved on to a new stage and emits to the editor that
         # already closed; the api it hands the slot is the replacement's.
@@ -1481,7 +1591,7 @@ class ProductionAdapterTest(unittest.TestCase):
 
         self.assertEqual(view.host_reads, [])
         posted.assert_not_called()
-        self.assertIsNone(service.handler().getStage())
+        self.assertIsNone(service.boundStage())
         self.assertEqual(view.nodes.iterated, [])
         self.assertEqual(len(view.nodes), 2)
         self.assertIn("/Alpha", view.nodes)
@@ -1576,7 +1686,7 @@ class DockWindowCloseTest(unittest.TestCase):
             len(view.nodes),
             len(view.links),
             view._undoHistory,
-            view._noticeHandler.getStage(),
+            view._stageSync.boundStage(),
         )
 
     def test_close_teardowns_then_ignores_a_later_replace(self):
@@ -1590,8 +1700,8 @@ class DockWindowCloseTest(unittest.TestCase):
             lambda delay, callback: queued.append(callback),
         ):
             # A reload started through the real signal and not yet finished:
-            # the finish is queued, paint is off and the notice receiver is
-            # revoked until it does. Emitting while the editor is open also
+            # the finish is queued, paint is off and the new sender is bound.
+            # Emitting while the editor is open also
             # proves the wiring is live, so the zero-count assertion after the
             # close measures a refused read rather than an unconnected slot.
             self.api.dataModel.signalStageReplaced.emit()
@@ -1607,7 +1717,7 @@ class DockWindowCloseTest(unittest.TestCase):
             self.assertTrue(service.isClosed())
             self.assertEqual(service.epoch(), live + 1)
             self.assertIsNone(view._undoHistory)
-            self.assertIsNone(view._noticeHandler.getStage())
+            self.assertIsNone(view._stageSync.boundStage())
             torn_down = self._state()
 
             # usdview moves on to another stage and emits through the same
@@ -1624,7 +1734,7 @@ class DockWindowCloseTest(unittest.TestCase):
             with patch.object(
                 stage_adapter,
                 "_finishReloadOnView",
-                lambda view: ran.append("finish"),
+                lambda view, epoch: ran.append("finish"),
             ):
                 for callback in queued:
                     callback()
@@ -1658,7 +1768,7 @@ class DockWindowCloseTest(unittest.TestCase):
         self.assertEqual(service.epoch(), live + 1)
         self.assertEqual(self.closes, [(7, True, True)])
         self.assertIsNone(view._undoHistory)
-        self.assertIsNone(view._noticeHandler.getStage())
+        self.assertIsNone(view._stageSync.boundStage())
         self.assertEqual(self.api.post_close_reads, [])
         self.assertEqual(self.api.api_reads, reads)
 

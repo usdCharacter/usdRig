@@ -18,8 +18,8 @@ Two surfaces:
    ``nodeLayout`` now.)
 2. The ``GraphView`` auto-layout action (``_autoLayoutNodes`` /
    ``_applyNodePositions`` / ``_authorNodePosition`` and the "L" key) — tested as
-   unbound methods on ``SimpleNamespace`` fakes with USD/notice/update mocked,
-   mirroring testUsdNoodlesGraphViewRelationships.py. The layout core itself
+   unbound methods on headless view fixtures, including real USD authoring
+   and notice reconciliation through StageSync. The layout core itself
    (``nodeLayout.layout_graph`` / ``place_node``) is covered in
    testUsdNoodlesNodeLayout.py.
 """
@@ -40,8 +40,9 @@ except ImportError as e:  # pragma: no cover - import guard
     _has_core = False
 
 try:
-    from UsdNoodles.graphView import GraphView
+    from UsdNoodles.graphView import GraphView, _makeStageSync
     from UsdNoodles.models import NodeModel
+    from pxr import Sdf, Tf, Usd
     from pxr.Usdviewq.qt import QtCore
 
     _has_graph = True
@@ -140,7 +141,7 @@ def _fake_node(position, size=(200.0, 100.0)):
 
 @unittest.skipUnless(_has_graph, "GraphView not available")
 class TestAutoLayoutAction(unittest.TestCase):
-    """The GraphView action layer, with USD / notices / repaint mocked."""
+    """The GraphView action layer without a rendering widget."""
 
     def test_author_node_position_writes_usd_and_updates_cache(self):
         node = _fake_node(Gf.Vec2d(0.0, 0.0))
@@ -184,6 +185,7 @@ class TestAutoLayoutAction(unittest.TestCase):
             textChanged=False,
             linksChanged=False,
         )
+        view._invalidateGraphGeometry = lambda: GraphView._invalidateGraphGeometry(view)
         GraphView._resetRenderCachesAfterBulkMove(view)
         view._clearRenderCache.assert_called_once()
         view.textRenderer.resetPositionCaches.assert_called_once()
@@ -205,26 +207,22 @@ class TestAutoLayoutAction(unittest.TestCase):
             textChanged=False,
             linksChanged=False,
         )
+        view._invalidateGraphGeometry = lambda: GraphView._invalidateGraphGeometry(view)
         GraphView._resetRenderCachesAfterBulkMove(view, rebuild_links=False)
         view._clearRenderCache.assert_called_once()
         self.assertTrue(view.textChanged)
         self.assertFalse(view.linksChanged)
 
     def test_apply_node_positions_batches_and_refreshes(self):
-        notice = SimpleNamespace(setEnabled=MagicMock())
         view = SimpleNamespace(
             nodes={"A": _fake_node(Gf.Vec2d(0.0, 0.0))},
-            _noticeHandler=notice,
+            _stageSync=_makeStageSync(None),
             _authorNodePosition=MagicMock(),
             _resetRenderCachesAfterBulkMove=MagicMock(),
             update=MagicMock(),
         )
         GraphView._applyNodePositions(view, {"A": (5.0, 6.0)})
         view._authorNodePosition.assert_called_once_with("A", (5.0, 6.0))
-        # Notice handler is disabled during authoring and re-enabled after.
-        self.assertEqual(
-            [c.args[0] for c in notice.setEnabled.call_args_list], [False, True]
-        )
         # Drawables re-bake here; the spatial index / link endpoints / port
         # highlights are NOT touched by this method -- authoring bumped each
         # node's self-versioning position and the single _reconcileMovedNodes
@@ -233,6 +231,84 @@ class TestAutoLayoutAction(unittest.TestCase):
             rebuild_links=False
         )
         view.update.assert_called_once()
+
+    def test_apply_node_positions_keeps_outer_suppression_on_return_and_error(self):
+        stage = Usd.Stage.CreateInMemory()
+        prim = stage.DefinePrim("/A")
+        # Pre-author the attribute so edits produce info-only notices.
+        attr = prim.CreateAttribute(
+            "ui:nodegraph:node:pos", Sdf.ValueTypeNames.Float2
+        )
+        attr.Set(Gf.Vec2f(0, 0))
+        node = NodeModel(stage, prim.GetPath())
+        view = SimpleNamespace(
+            nodes={node.id: node},
+            _syncingSelection=False,
+            _resetRenderCachesAfterBulkMove=MagicMock(),
+            update=MagicMock(),
+        )
+        view._stageSync = _makeStageSync(view)
+        self.addCleanup(view._stageSync.close)
+        view._stageSync.bind(stage)
+
+        noticed_positions = []
+
+        def on_objects_changed(notice, sender):
+            if attr.GetPath() in notice.GetChangedInfoOnlyPaths():
+                noticed_positions.append(tuple(attr.Get()))
+
+        listener = Tf.Notice.Register(
+            Usd.Notice.ObjectsChanged, on_objects_changed, stage
+        )
+        self.addCleanup(listener.Revoke)
+
+        def author(node_id, pos):
+            GraphView._authorNodePosition(view, node_id, pos)
+
+        def author_then_fail(node_id, pos):
+            author(node_id, pos)
+            raise RuntimeError("position edit failed")
+
+        outer = view._stageSync.acquireSuppression()
+        try:
+            view._authorNodePosition = author
+            GraphView._applyNodePositions(view, {node.id: (250, 500)})
+            self.assertEqual(attr.Get(), Gf.Vec2f(0.25, 0.5))
+            self.assertEqual(node.position, Gf.Vec2d(250, 500))
+            self.assertEqual(noticed_positions, [(0.25, 0.5)])
+            view._resetRenderCachesAfterBulkMove.assert_called_once_with(
+                rebuild_links=False
+            )
+            view.update.assert_called_once()
+            view.update.reset_mock()
+
+            attr.Set(Gf.Vec2f(0.5, 0.75))
+            self.assertEqual(node.position, Gf.Vec2d(250, 500))
+            view.update.assert_not_called()
+
+            view._authorNodePosition = author_then_fail
+            with self.assertRaisesRegex(RuntimeError, "position edit failed"):
+                GraphView._applyNodePositions(view, {node.id: (750, 1000)})
+            self.assertEqual(attr.Get(), Gf.Vec2f(0.75, 1.0))
+            self.assertEqual(node.position, Gf.Vec2d(750, 1000))
+
+            attr.Set(Gf.Vec2f(1.0, 1.25))
+            self.assertEqual(node.position, Gf.Vec2d(750, 1000))
+            view._resetRenderCachesAfterBulkMove.assert_called_once_with(
+                rebuild_links=False
+            )
+            view.update.assert_not_called()
+        finally:
+            outer.release()
+
+        view.update.assert_not_called()
+        attr.Set(Gf.Vec2f(1.25, 1.5))
+        view.update.assert_called_once()
+        self.assertEqual(node.position, Gf.Vec2d(1250, 1500))
+        self.assertEqual(
+            noticed_positions,
+            [(0.25, 0.5), (0.5, 0.75), (0.75, 1.0), (1.0, 1.25), (1.25, 1.5)],
+        )
 
     def test_auto_layout_applies_positions_and_pushes_single_undo(self):
         view = SimpleNamespace(
