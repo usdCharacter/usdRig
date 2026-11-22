@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import ntpath
 import os
 import re
 import sys
@@ -68,7 +69,7 @@ USD_FREE_SEEDS = {"rigExecGraph", "rigExecBinary", "rigExecRuntime", "rigExecLzm
 # edge parsed from the add_test itself. These module dependencies are the
 # others: keep in sync with the include()s and fixture usage of the
 # scripts they name.
-SCRIPT_TEST_CONTRIBUTORS = {
+_SCRIPT_TEST_CONTRIBUTOR_DEFS = {
     "cmake/exportManifests.cmake": [
         "testRigExecInstallStaging", "testRigExecExactFpFragment"],
     "cmake/manifestRelocate.cmake": [
@@ -76,6 +77,12 @@ SCRIPT_TEST_CONTRIBUTORS = {
     "cmake/installManifests.cmake": ["testRigExecInstallStaging"],
     "cmake/verifyManifests.cmake": ["testRigExecInstallStaging"],
     "tests/installStaging/CMakeLists.txt": ["testRigExecInstallStaging"],
+}
+# select() looks contributors up by os.path.normpath(changed path); the keys
+# carry the same normalization, so a Windows backslash lookup hits them.
+SCRIPT_TEST_CONTRIBUTORS = {
+    os.path.normpath(rel): names
+    for rel, names in _SCRIPT_TEST_CONTRIBUTOR_DEFS.items()
 }
 # Targets that regenerate the staged inputs the script tests consume.
 SCRIPT_TEST_BUILD_TARGETS = {
@@ -946,6 +953,32 @@ def self_test() -> int:
         print("  FAIL executable-only selection keeps its label tier")
     else:
         print("  ok   executable-only selection keeps its label tier")
+
+    # (g) The contributor keys are normalized by os.path.normpath, the same
+    # normalization select() applies to the changed path. Pin that contract
+    # for the current platform and simulate Windows normalization for both
+    # sides, where the lookup key arrives with backslash separators.
+    check("contributor keys match the lookup normalization",
+          sorted(SCRIPT_TEST_CONTRIBUTORS),
+          sorted(os.path.normpath(k) for k in _SCRIPT_TEST_CONTRIBUTOR_DEFS))
+    win_map = {
+        ntpath.normpath(rel): names
+        for rel, names in _SCRIPT_TEST_CONTRIBUTOR_DEFS.items()
+    }
+    check("Windows path semantics keep every contributor distinct",
+          sorted(win_map),
+          sorted(ntpath.normpath(k) for k in _SCRIPT_TEST_CONTRIBUTOR_DEFS))
+    check("exporter selects both manifest tests (Windows separators)",
+          win_map.get(ntpath.normpath("cmake\\exportManifests.cmake"), []),
+          ["testRigExecInstallStaging", "testRigExecExactFpFragment"])
+    check("fixture selects only the staging test (Windows separators)",
+          win_map.get(
+              ntpath.normpath("tests\\installStaging\\CMakeLists.txt"), []),
+          ["testRigExecInstallStaging"])
+    for name in ("testRigExecInstallStaging", "testRigExecExactFpFragment"):
+        check(f"{name} names the manifest producer target",
+              SCRIPT_TEST_BUILD_TARGETS.get(name, []),
+              ["rigexecSdkManifests"])
 
     if failures:
         print(f"self-test FAILED: {len(failures)} check(s)")
