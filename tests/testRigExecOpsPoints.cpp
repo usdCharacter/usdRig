@@ -6,8 +6,11 @@
 #include "rigExec/api/rigDesc.h"
 #include "rigExecMath/envelope.h"
 #include "rigExecMath/geometryKernels.h"
+#include "rigExecMath/simdKernels.h"
+#include "rigExecMath/solvers.h"
 #include "rigExecOps/deform/deltaMushOp.h"
 #include "rigExecOps/deform/latticeOp.h"
+#include "rigExecOps/deform/matrixDeformOp.h"
 #include "rigExecOps/deform/pointOps.h"
 #include "rigExecOps/deform/surfaceProjectOp.h"
 #include "rigExecOps/deform/wrinkleOp.h"
@@ -668,6 +671,87 @@ TestSurfaceProject()
     }
 }
 
+void
+TestMatrixDeform()
+{
+    using namespace rigExecOps;
+    const Grid grid(9, 31);
+    std::vector<GfVec3f> points = grid.points;
+    points[3] = GfVec3f(-0.0f, 0.0f, -0.0f); // signed zeros at weight 0
+    const Points in = ToStd(points);
+    std::vector<float> envelope(points.size());
+    for (size_t i = 0; i < envelope.size(); ++i)
+        envelope[i] = i % 5 == 0 ? 0.0f : i % 7 == 0 ? 1.0f : 0.11f * (i % 9);
+    envelope[3] = 0.0f;
+    const auto envelopeArray = ToArray(envelope);
+
+    GfMatrix4d turn(1.0);
+    turn.SetRotate(GfRotation(GfVec3d(0.1, 0.3, 1), 70.0));
+    turn.SetTranslateOnly(GfVec3d(3, -2, 5));
+    GfMatrix4d scaled = GfMatrix4d(1.0).SetScale(GfVec3d(1.2, 0.8, 1.0)) * turn;
+    GfMatrix4d slide(1.0);
+    slide.SetTranslate(GfVec3d(0.5, 0.25, -1));
+    for (const GfMatrix4d &t : {turn, scaled, slide, GfMatrix4d(1.0)})
+        for (const bool radial : {false, true}) {
+            MatrixDeformPayload payload;
+            payload.radial = radial;
+            const auto transform = ToStd(t);
+            Node full(MatrixDeform(),
+                      {&MatrixDeformPoints(), &MatrixDeformTransform()},
+                      MatrixDeformOut(), &payload);
+            Node weighted(MatrixDeform(),
+                          {&MatrixDeformPoints(), &MatrixDeformTransform(),
+                           &MatrixDeformEnvelope()},
+                          MatrixDeformOut(), &payload);
+
+            // Full strength.
+            std::vector<GfVec3f> expected = points;
+            if (radial)
+                for (GfVec3f &p : expected)
+                    p = GfVec3f(t.TransformAffine(GfVec3d(p)));
+            else
+                RigExecApplyWeightedMatrixSimd(points.data(), expected.data(),
+                                               1.0f, points.size(), t);
+            Points actual;
+            CHECK(full.Run({&in, &transform}, &actual));
+            if (!SameBits(expected, actual)) {
+                std::printf("matrix full radial %d differs\n", int(radial));
+                CHECK(false);
+            }
+
+            // Weighted.
+            if (radial)
+                for (size_t i = 0; i < points.size(); ++i)
+                    expected[i] =
+                        GfVec3f(RigExecPartialTransform(t, envelope[i])
+                                    .TransformAffine(GfVec3d(points[i])));
+            else
+                RigExecApplyWeightedMatrixSimd(points.data(), expected.data(),
+                                               envelope.data(), points.size(),
+                                               t);
+            CHECK(weighted.Run({&in, &transform, &envelopeArray}, &actual));
+            if (!SameBits(expected, actual)) {
+                std::printf("matrix weighted radial %d differs\n", int(radial));
+                CHECK(false);
+            }
+        }
+
+    // A weight out of range and a short envelope are refused.
+    MatrixDeformPayload payload;
+    Node weighted(MatrixDeform(),
+                  {&MatrixDeformPoints(), &MatrixDeformTransform(),
+                   &MatrixDeformEnvelope()},
+                  MatrixDeformOut(), &payload);
+    const auto transform = ToStd(turn);
+    std::vector<float> bad = envelope;
+    bad[4] = 1.5f;
+    const auto badArray = ToArray(bad);
+    const RigExecArray<float> shortArray(envelope.data(), envelope.size() - 1);
+    Points actual;
+    CHECK(!weighted.Run({&in, &transform, &badArray}, &actual));
+    CHECK(!weighted.Run({&in, &transform, &shortArray}, &actual));
+}
+
 } // namespace
 
 int
@@ -685,6 +769,7 @@ main()
     TestLattice();
     TestWrinkle();
     TestSurfaceProject();
+    TestMatrixDeform();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;
