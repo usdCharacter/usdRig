@@ -10,6 +10,7 @@
 #include "rigExecScene/sceneCompileInputs.h"
 #include "rigExecScene/solverSceneTranslation.h"
 #include "rigExecScene/propertySceneTranslation.h"
+#include "standaloneCapture.h"
 #include "pxr/usd/sdf/attributeSpec.h"
 #include "rigExec/api/types.h"
 #include "rigExec/api/tapSet.h"
@@ -42,76 +43,12 @@ static int failures = 0;
         }                                                                      \
     } while (0)
 
-static VtDictionary
-Metadata(const UsdObject &object)
-{
-    VtDictionary result;
-    for (const auto &[key, value] : object.GetAllMetadata())
-        result[key.GetString()] = value;
-    return result;
-}
-
-// Test-only producer. Production pack export independently traverses USD and
-// serializes the same public Db contract; the runtime sees only these rows.
 static RigExecSceneDb
 Capture(const UsdStageRefPtr &stage, const std::vector<UsdTimeCode> &times)
 {
-    RigExecSceneDb db;
-    db.upAxis = UsdGeomGetStageUpAxis(stage);
-    for (const auto time : times)
-        db.identities.insert(RigExecStandaloneTimeKey(time));
-    db.prims[SdfPath::AbsoluteRootPath()] = {};
-    for (const auto &child : stage->GetPseudoRoot().GetAllChildren())
-        db.prims[SdfPath::AbsoluteRootPath()].children.push_back(
-            child.GetPath());
-    for (const UsdPrim &prim : stage->Traverse()) {
-        db.prims[prim.GetPath()] = {
-            prim.GetTypeName(), prim.GetAppliedSchemas(), Metadata(prim), true};
-        for (const auto &child : prim.GetAllChildren())
-            db.prims[prim.GetPath()].children.push_back(child.GetPath());
-        for (const auto &attribute : prim.GetAttributes()) {
-            RigExecStandaloneAttribute row;
-            row.type = attribute.GetTypeName();
-            row.metadata = Metadata(attribute);
-            if (attribute.HasSpline())
-                row.spline = VtValue(attribute.GetSpline());
-            attribute.GetConnections(&row.connections);
-            row.hasValue = attribute.HasValue();
-            row.variability = attribute.GetVariability();
-            row.hasAuthoredValue = attribute.HasAuthoredValueOpinion();
-            row.hasAuthoredReadableValue = attribute.HasAuthoredValue();
-            row.hasAuthoredConnections = attribute.HasAuthoredConnections();
-            row.mightBeTimeVarying = attribute.ValueMightBeTimeVarying();
-            attribute.GetTimeSamples(&row.sampleTimes);
-            for (const auto &spec :
-                 attribute.GetPropertyStack(UsdTimeCode::Default())) {
-                if (!spec->HasInfo(TfToken("default")))
-                    continue;
-                row.hasAuthoredDefault = true;
-                row.authoredDefault = spec->GetInfo(TfToken("default"));
-                row.defaultBlocked =
-                    row.authoredDefault.IsHolding<SdfValueBlock>();
-                break;
-            }
-            for (const auto time : times) {
-                VtValue value;
-                attribute.Get(&value, time);
-                if (attribute.GetResolveInfo(time).ValueIsBlocked())
-                    row.blockedIdentities.insert(
-                        RigExecStandaloneTimeKey(time));
-                row.resolved[RigExecStandaloneTimeKey(time)] = value;
-            }
-            db.attributes[attribute.GetPath()] = row;
-        }
-        for (const auto &relationship : prim.GetRelationships()) {
-            RigExecStandaloneRelationship row;
-            row.metadata = Metadata(relationship);
-            relationship.GetTargets(&row.targets);
-            db.relationships[relationship.GetPath()] = row;
-        }
-    }
     std::string error;
-    CHECK(db.Validate(&error));
+    RigExecSceneDb db = rigExecTest::Capture(stage, times, &error);
+    CHECK(error.empty());
     if (!error.empty())
         std::printf("Db: %s\n", error.c_str());
     return db;

@@ -1266,6 +1266,21 @@ rigexec_link_registrations(testRigExecOpsMath
 add_test(NAME testRigExecOpsMath COMMAND testRigExecOpsMath)
 set_tests_properties(testRigExecOpsMath PROPERTIES LABELS "fast")
 
+# Host-side bridge from translated USD movers to op nodes; not installed.
+# Step 10 folds it into rigExecUsd.
+add_library(rigExecSceneOps STATIC libs/rigExecScene/propertyOps.cpp)
+target_link_libraries(rigExecSceneOps PUBLIC rigExec rigExecScene rigExecOps
+    PRIVATE rigExecMath)
+set_target_properties(rigExecSceneOps PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_executable(testRigExecScenePropertyOps tests/testRigExecScenePropertyOps.cpp)
+target_link_libraries(testRigExecScenePropertyOps PRIVATE rigExecSceneOps
+    rigExecStandalone)
+target_compile_definitions(testRigExecScenePropertyOps PRIVATE
+    ${_rigexec_schema_resource_define})
+rigexec_link_registrations(testRigExecScenePropertyOps
+    TYPE_LIBRARIES rigExecStdTypes OP_LIBRARIES rigExecOps)
+add_test(NAME testRigExecScenePropertyOps COMMAND testRigExecScenePropertyOps)
+
 add_executable(testRigExecOpGraph tests/testRigExecOpGraph.cpp)
 target_link_libraries(testRigExecOpGraph PRIVATE rigExecGraph work Threads::Threads)
 add_test(NAME testRigExecOpGraph COMMAND testRigExecOpGraph)
