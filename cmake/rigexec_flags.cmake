@@ -41,18 +41,15 @@ endfunction()
 
 # PRIVATE: regex matching a complete compiler argument that sets the
 # floating-point reassociation, contraction, or precision mode. Every
-# alternative is anchored, so a match is always one whole argument: an
-# argument that merely carries a mode spelling in its value
-# (-DFP_LABEL="-ffast-math") is a preprocessor definition, not a mode
-# switch, and never matches. Callers classify the arguments an entry spells
-# with rigexec_fp_strip_mode_arguments, which also covers a grouped entry
-# like "-O2 -ffast-math". Each result-altering sub-option of
-# -ffast-math is listed on its own: one spelled after the canonical flags
-# restores the loosened mode past them. The canonical exact-FP flags
-# themselves match, so a caller that rejects must first exclude an argument
-# equal to a canonical flag. The IEEE-safe negations
-# (-fno-unsafe-math-optimizations, -fsigned-zeros and friends) match no
-# alternative, so a target asking for the safe form is left alone.
+# alternative is anchored, so a match is one whole argument: a mode
+# spelling inside another argument's value (-DFP_LABEL="-ffast-math") is a
+# preprocessor definition and never matches. Callers split an entry into
+# arguments with rigexec_fp_strip_mode_arguments. Each result-altering
+# sub-option of -ffast-math is listed on its own: one spelled after the
+# canonical flags restores the loosened mode past them. The canonical
+# flags themselves match, so a rejecting caller first excludes an argument
+# equal to a canonical flag; the IEEE-safe negations match nothing and
+# leave their target alone.
 function(rigexec_get_exact_fp_mode_regex out_var)
     set(_rigexec_fp_modes
         "-ffast-math"
@@ -76,23 +73,31 @@ function(rigexec_get_exact_fp_mode_regex out_var)
 endfunction()
 
 # PRIVATE: rewrite one option entry with each mode-switch argument it spells
-# removed, and report the removed spellings. The entry is walked once: a
-# leading SHELL: prefix, double-quoted values, and generator-expression
-# punctuation and condition text all stay put, so the entry keeps a shape
-# CMake accepts ($<cond:> is legal), while only complete switch arguments
-# are cut. A quoted value, or a mode spelling glued behind an = inside a
-# -D definition, is therefore never a candidate, and each candidate is a
-# whole switch a compiler could receive. Callers that reject read the
-# removal list and leave the entry alone; callers that rewrite use the
-# entry. An entry with no mode switch comes back unchanged.
+# removed, and report the removed spellings. An argument ends at whitespace
+# and at generator-expression punctuation, which stays put so a rewritten
+# entry keeps a shape CMake accepts ($<cond:> is legal). A SHELL: group is
+# split into the arguments the entry contributes: its quotes are grouping
+# syntax that never reaches the compiler, so a quoted standalone switch is
+# one argument, while a mode spelling glued behind = is not. Quote characters
+# outside a SHELL: group reach the compiler verbatim, so they are not
+# argument boundaries. Callers that reject read the removal list and leave
+# the entry alone; callers that rewrite use the entry. An entry with no
+# mode switch comes back unchanged, and one whose only argument was a mode
+# switch comes back empty.
 function(rigexec_fp_strip_mode_arguments entry entry_out found_out)
     rigexec_get_exact_fp_mode_regex(_rigexec_sm_mode)
     set(_rigexec_sm_prefix "")
-    set(_rigexec_sm_body "${entry} ")
+    set(_rigexec_sm_group "")
+    set(_rigexec_sm_body "${entry}")
     if (_rigexec_sm_body MATCHES "^SHELL:")
         set(_rigexec_sm_prefix "SHELL:")
         string(SUBSTRING "${_rigexec_sm_body}" 6 -1 _rigexec_sm_body)
+        while (_rigexec_sm_body MATCHES "^[\"](.*)[\"]$")
+            string(APPEND _rigexec_sm_group "\"")
+            set(_rigexec_sm_body "${CMAKE_MATCH_1}")
+        endwhile ()
     endif ()
+    string(APPEND _rigexec_sm_body " ")
     string(LENGTH "${_rigexec_sm_body}" _rigexec_sm_len)
     set(_rigexec_sm_i 0)
     set(_rigexec_sm_out "")
@@ -161,8 +166,27 @@ function(rigexec_fp_strip_mode_arguments entry entry_out found_out)
         endif ()
         math(EXPR _rigexec_sm_i "${_rigexec_sm_i} + 1")
     endwhile ()
-    set(${entry_out} "${_rigexec_sm_prefix}${_rigexec_sm_out}" PARENT_SCOPE)
+    if (_rigexec_sm_out STREQUAL "")
+        set(${entry_out} "" PARENT_SCOPE)
+    else ()
+        set(_rigexec_sm_entry "${_rigexec_sm_prefix}${_rigexec_sm_group}")
+        string(APPEND _rigexec_sm_entry "${_rigexec_sm_out}")
+        string(APPEND _rigexec_sm_entry "${_rigexec_sm_group}")
+        set(${entry_out} "${_rigexec_sm_entry}" PARENT_SCOPE)
+    endif ()
     set(${found_out} "${_rigexec_sm_found}" PARENT_SCOPE)
+endfunction()
+
+# PRIVATE: 1 when a SHELL: group carries a generator expression: CMake
+# expands it at generate time, past this pass, so the group's arguments
+# cannot be established here and the group is reported rather than judged
+# or rewritten.
+function(rigexec_fp_group_unestablished entry out_var)
+    if (entry MATCHES "^SHELL:.*[$]<")
+        set(${out_var} 1 PARENT_SCOPE)
+    else ()
+        set(${out_var} 0 PARENT_SCOPE)
+    endif ()
 endfunction()
 
 # PRIVATE: the content of the outermost generator expression, split at the
@@ -262,6 +286,14 @@ function(rigexec_apply_exact_fp_flags target)
     endif ()
     set(_rigexec_fp_kept "")
     foreach (_rigexec_fp_entry IN LISTS _rigexec_fp_own)
+        rigexec_fp_group_unestablished("${_rigexec_fp_entry}"
+            _rigexec_fp_unest)
+        if (_rigexec_fp_unest)
+            message(FATAL_ERROR
+                "rigexec exact-FP: ${target}: grouped compile option "
+                "${_rigexec_fp_entry} selects its arguments by expression, "
+                "which cannot be inspected here")
+        endif ()
         rigexec_fp_strip_mode_arguments("${_rigexec_fp_entry}"
             _rigexec_fp_stripped _rigexec_fp_found)
         set(_rigexec_fp_notable "")
@@ -482,6 +514,12 @@ function(rigexec_fp_option_conflict_reason entry ctx_target depth out_var)
     endif ()
     if (entry MATCHES "[$]<(GENEX_EVAL|EVAL_EXPR):")
         set(${out_var} "unevaluable option expression" PARENT_SCOPE)
+        return ()
+    endif ()
+    rigexec_fp_group_unestablished("${entry}" _rigexec_fp_unest)
+    if (_rigexec_fp_unest)
+        set(${out_var} "group arguments cannot be established (${entry})"
+            PARENT_SCOPE)
         return ()
     endif ()
     rigexec_fp_strip_mode_arguments("${entry}" _rigexec_fp_entry_ignored

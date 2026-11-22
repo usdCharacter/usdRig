@@ -42,6 +42,12 @@ main(int argc, char **argv)
     std::printf("probe keep2 2\n");
 #endif
 
+    // The quoted-group witness's definition outlives the mode switch that
+    // shared its SHELL: entry.
+#if defined(KEEP_QG)
+    std::printf("probe keep-qg %d\n", KEEP_QG);
+#endif
+
     // The label-option witness defines these to a fast-math sub-option
     // spelling; printing them proves a definition carrying that spelling
     // reaches the translation unit instead of being filtered out.

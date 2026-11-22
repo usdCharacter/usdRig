@@ -704,7 +704,7 @@ foreach (_w_needle IN ITEMS
     endif ()
 endforeach ()
 
-# Legs 22-26: -ffast-math's reassociation sub-options spelled on their own
+# Legs 22-30: -ffast-math's reassociation sub-options spelled on their own
 # after the canonical pair restore the loosened mode past it, so the
 # matcher must classify every resolved compiler argument and only that
 # argument. GNU-only: MSVC has no such spelling, and its /fp: family is
@@ -855,6 +855,121 @@ if (NOT _msvc)
             endif ()
         endforeach ()
     endif ()
+endif ()
+
+# Leg 27: the sub-option inside a SHELL: entry's own quotes. Those quotes
+# are grouping syntax, so the entry contributes a complete switch argument
+# that lands after the canonical pair: the rejection must name the
+# consuming target, the owning interface target, and the entry as spelled.
+if (NOT _msvc)
+    set(_work27 "${BUILD_ROOT}/qshell-iface")
+    _witness_configure("${_work27}"
+        "-DWITNESS_UNSAFE_FLAG=${_unsafe_flag}"
+        -DWITNESS_QSHELL_OPTION=ON)
+    if (WITNESS_RC EQUAL 0)
+        _witness_fail("a sub-option grouped inside quotes reached the build "
+            "without a diagnostic (rc=0)")
+    endif ()
+    foreach (_needle IN ITEMS
+        "target witnessQShell carries"
+        "fpQuoted: SHELL:\"${_unsafe_flag}\""
+        "conflicting option \\(${_unsafe_flag}\\)")
+        if (NOT WITNESS_LOG MATCHES "${_needle}")
+            _witness_fail("quoted group rejection lacks '${_needle}':\n"
+                "${WITNESS_LOG}")
+        endif ()
+    endforeach ()
+endif ()
+
+# Leg 28: the same quoted group as the target's own option, sharing the
+# entry with an independent definition: the switch is cut out of the
+# grouping, the definition survives as its own argument, and the probe
+# still prints the exact-mode patterns.
+if (NOT _msvc)
+    set(_work28 "${BUILD_ROOT}/third_party-qgroup-own")
+    _witness_configure("${_work28}"
+        "-DWITNESS_UNSAFE_FLAG=${_unsafe_flag}"
+        -DWITNESS_QGROUP_OPTION=ON)
+    if (NOT WITNESS_RC EQUAL 0)
+        _witness_fail("own quoted group holding a switch aborted the "
+            "configure (rc=${WITNESS_RC}):\n${WITNESS_LOG}")
+    endif ()
+    execute_process(COMMAND "${CMAKE_COMMAND}" --build "${_work28}"
+        ${_build_config}
+        RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
+    if (NOT _rc EQUAL 0)
+        _witness_fail("own quoted group leg failed to build: ${_out}${_err}")
+    endif ()
+    _witness_audit("${_work28}")
+    _witness_run_and_check_exact("${_work28}${_cfgdir}/witnessQGroup")
+    execute_process(COMMAND "${_work28}${_cfgdir}/witnessQGroup${_exe}"
+        RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
+    if (NOT _rc EQUAL 0)
+        _witness_fail("witnessQGroup exited ${_rc}: ${_err}")
+    endif ()
+    if (NOT _out MATCHES "probe keep-qg 1")
+        _witness_fail("the definition lost its argument when the switch "
+            "was cut from its group: ${_out}")
+    endif ()
+    if (EXISTS "${_work28}/compile_commands.json")
+        file(READ "${_work28}/compile_commands.json" _cc28)
+        _witness_count("${_cc28}" "-DKEEP_QG=1" _n)
+        if (_n LESS 1)
+            _witness_fail("-DKEEP_QG=1 missing from the real commands")
+        endif ()
+        _witness_count("${_cc28}" "${_unsafe_flag}" _n)
+        if (NOT _n EQUAL 0)
+            _witness_fail("${_n} copies of the quoted switch remain in "
+                "the commands")
+        endif ()
+    endif ()
+endif ()
+
+# Leg 29: a quoted SHELL: group whose content an expression picks. Its
+# arguments are unknown until generate time, so the consuming target must
+# be told which group it cannot rely on instead of the group being
+# classified as if it were literal.
+if (NOT _msvc)
+    set(_work29 "${BUILD_ROOT}/expr-group-iface")
+    _witness_configure("${_work29}"
+        "-DWITNESS_UNSAFE_FLAG=${_unsafe_flag}"
+        -DWITNESS_EXPR_GROUP=ON)
+    if (WITNESS_RC EQUAL 0)
+        _witness_fail("a grouped option picked by expression reached the "
+            "build without a diagnostic (rc=0)")
+    endif ()
+    set(_needles29
+        "target witnessExprGroup carries"
+        "fpExprGroup: SHELL:\"\\$<1:${_unsafe_flag}>\""
+        "group arguments cannot be established")
+    foreach (_needle IN LISTS _needles29)
+        if (NOT WITNESS_LOG MATCHES "${_needle}")
+            _witness_fail("expression-picked group lacks '${_needle}':\n"
+                "${WITNESS_LOG}")
+        endif ()
+    endforeach ()
+endif ()
+
+# Leg 30: the same shape as the target's own option. An own option is
+# rewritten rather than reported, and an expression inside the group is
+# expanded after this pass, so the configure must abort instead of
+# keeping an un-inspected group.
+if (NOT _msvc)
+    set(_work30 "${BUILD_ROOT}/own-expr-group")
+    _witness_configure("${_work30}" -DWITNESS_OWN_EXPR_GROUP=ON)
+    if (WITNESS_RC EQUAL 0)
+        _witness_fail("an own grouped option picked by expression was kept "
+            "without a diagnostic (rc=0)")
+    endif ()
+    set(_needles30
+        "witnessOwnExprGroup: grouped compile option"
+        "selects its arguments by expression")
+    foreach (_needle IN LISTS _needles30)
+        if (NOT WITNESS_LOG MATCHES "${_needle}")
+            _witness_fail("own expression-picked group abort does not name "
+                "the option (${_needle}):\n${WITNESS_LOG}")
+        endif ()
+    endforeach ()
 endif ()
 
 message(STATUS "exactFpCompilerWitness: command audit and numeric probes "

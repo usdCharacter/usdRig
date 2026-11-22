@@ -13,7 +13,11 @@
 # expression options whose every expanded argument is harmless.
 # WITNESS_LABEL_OPTION adds definitions whose values spell a fast-math
 # sub-option, and WITNESS_LABEL_SWITCH adds that sub-option as a real
-# option beside them.
+# option beside them. WITNESS_QSHELL_OPTION and WITNESS_QGROUP_OPTION
+# group that sub-option inside a SHELL: entry's own quotes, which never
+# reach the compiler as part of the arguments the entry contributes.
+# WITNESS_EXPR_GROUP and WITNESS_OWN_EXPR_GROUP let an expression pick
+# the content of a SHELL: entry, which is unknown until generate time.
 cmake_minimum_required(VERSION 3.26)
 project(rigexec_exact_fp_witness LANGUAGES CXX)
 
@@ -273,6 +277,55 @@ if (WITNESS_LABEL_OPTION)
         target_compile_options(fpIface INTERFACE "${WITNESS_UNSAFE_FLAG}")
     endif ()
     target_link_libraries(witnessLabel PRIVATE fpIface)
+endif ()
+
+if (WITNESS_QSHELL_OPTION)
+    # The switch inside a SHELL: group's own quotes. Those quotes are
+    # grouping syntax, not part of the argument, so the group
+    # contributes the switch as a complete argument placed after the
+    # canonical flags: no ordering can outrank it.
+    add_library(fpQuoted INTERFACE)
+    target_compile_options(fpQuoted INTERFACE
+        "SHELL:\"${WITNESS_UNSAFE_FLAG}\"")
+    add_executable(witnessQShell
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+    target_link_libraries(witnessQShell PRIVATE fpQuoted)
+endif ()
+
+if (WITNESS_QGROUP_OPTION)
+    # The switch shares one quoted SHELL: group with an independent
+    # definition: the switch must be cut out of the grouping and the
+    # definition must still reach the translation unit.
+    add_executable(witnessQGroup
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+    target_compile_options(witnessQGroup PRIVATE
+        "SHELL:\"${WITNESS_UNSAFE_FLAG} -DKEEP_QG=1\"")
+endif ()
+
+if (WITNESS_EXPR_GROUP)
+    # A SHELL: group whose content an expression picks: the arguments it
+    # contributes are unknown until generate time, so the group must be
+    # reported rather than classified or rewritten.
+    add_library(fpExprGroup INTERFACE)
+    target_compile_options(fpExprGroup INTERFACE
+        "SHELL:\"$<1:${WITNESS_UNSAFE_FLAG}>\"")
+    add_executable(witnessExprGroup
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+    target_link_libraries(witnessExprGroup PRIVATE fpExprGroup)
+endif ()
+
+if (WITNESS_OWN_EXPR_GROUP)
+    # The same shape among the target's own options: the helper leaves an
+    # own option it cannot inspect in the command, so it aborts the
+    # configure instead.
+    add_executable(witnessOwnExprGroup
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+    target_compile_options(witnessOwnExprGroup PRIVATE
+        "SHELL:\"$<1:-O2>\"")
 endif ()
 
 if (WITNESS_UNSUPPORTED_LINK)
