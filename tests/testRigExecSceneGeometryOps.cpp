@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <random>
 #include <string>
@@ -31,6 +32,7 @@ int failures = 0;
         }                                                                      \
     } while (0)
 
+using rigExecStd::Mat4d;
 using rigExecStd::RigExecArray;
 using rigExecStd::Vec3f;
 
@@ -482,6 +484,187 @@ TestDerived(const Grid &grid)
     }
 }
 
+/// Runs one projector or dials node and compares it with the native
+/// matrix: both succeed with the same bits, or both fail. True when the
+/// native run succeeded.
+bool
+CompareMatrix(RigExecRevisionOp op, const RigExecRevisionBinding &binding,
+              const RigExecSurfaceProjectorFrames &frames,
+              const RigExecProjectorReads &reads,
+              const std::vector<GfVec3f> &base,
+              const std::vector<GfVec3f> &final, const char *label)
+{
+    GfMatrix4d expected(1.0);
+    std::vector<std::string> diagnostics;
+    const bool nativeOk =
+        RigExecRunGeometryMatrix(op, binding, frames, reads, base, final, "",
+                                 &expected, &diagnostics, nullptr);
+
+    RigExecRigDescBuilder builder;
+    RigExecGeometryMatrixNode node;
+    std::string error;
+    CHECK(
+        RigExecAddGeometryMatrixOp(op, frames, reads, &builder, &node, &error));
+    auto desc = builder.Build(&error);
+    CHECK(desc);
+    if (!desc)
+        return false;
+    auto program = RigExecCompile(*desc, {}, &error);
+    CHECK(program);
+    if (!program)
+        return false;
+    auto evaluator = RigExecEvaluator::Create(program, {}, &error);
+    CHECK(evaluator);
+    CHECK(RigExecWriteGeometryMatrixInputs(binding, frames, reads, base, final,
+                                           node, evaluator.get(), &error));
+    const bool opOk = evaluator->Evaluate(&error);
+    if (opOk != nativeOk) {
+        std::printf("%s: native %d op %d (%s)\n", label, int(nativeOk),
+                    int(opOk), error.c_str());
+        CHECK(false);
+        return false;
+    }
+    if (!opOk)
+        return false;
+    const auto *actual =
+        static_cast<const Mat4d *>(evaluator->GetOutput(node.out));
+    CHECK(actual);
+    if (!actual)
+        return false;
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            if (std::memcmp(&expected[r][c], &actual->_mtx[r][c],
+                            sizeof(double)) != 0) {
+                std::printf("%s: [%d][%d] %.17g vs %.17g\n", label, r, c,
+                            expected[r][c], actual->_mtx[r][c]);
+                CHECK(false);
+                return false;
+            }
+    return true;
+}
+
+void
+TestProjector(const Grid &grid)
+{
+    RigExecRevisionBinding binding;
+    RigExecProjectorReads reads;
+    reads.rayOrigin = GfVec3d(3.3, 2.6, 2.0);
+    reads.rayDirection = GfVec3d(0.05, -0.02, -1.0);
+    reads.rayUp = GfVec3d(0.0, 1.0, 0.0);
+    reads.shaderOffset.SetTranslate(GfVec3d(0.1, 0.2, 0.3));
+    reads.faceVertexCounts = grid.counts;
+    reads.faceVertexIndices = grid.indices;
+
+    // A source casts along its own z: placed above the grid, facing down.
+    GfMatrix4d sourceBase, sourceFinal, spaceFinal, carry;
+    sourceBase.SetRotate(GfRotation(GfVec3d(1, 0, 0), 180.0));
+    sourceBase.SetTranslateOnly(GfVec3d(3.3, 2.6, 2.0));
+    sourceFinal.SetRotate(GfRotation(GfVec3d(1, 0, 0), 180.0) *
+                          GfRotation(GfVec3d(0, 0, 1), 12.0));
+    sourceFinal.SetTranslateOnly(GfVec3d(3.6, 2.4, 2.2));
+    spaceFinal.SetTranslate(GfVec3d(-0.3, 0.1, 0.05));
+    carry.SetScale(1.1);
+
+    struct Case {
+        const char *label;
+        bool named[3], resolved[3];
+        bool reproject;
+        bool meshOffset;
+    };
+    const Case cases[] = {
+        {"no frames", {}, {}, false, false},
+        {"source", {true, false, false}, {true, false, false}, false, false},
+        {"source reproject",
+         {true, false, false},
+         {true, false, false},
+         true,
+         false},
+        {"source and space",
+         {true, true, false},
+         {true, true, false},
+         false,
+         false},
+        {"all three", {true, true, true}, {true, true, true}, false, true},
+        {"space unresolved",
+         {true, true, true},
+         {true, false, false},
+         false,
+         false},
+        {"source unresolved",
+         {true, false, false},
+         {false, false, false},
+         false,
+         true},
+    };
+    for (const Case &c : cases) {
+        RigExecSurfaceProjectorFrames frames;
+        for (int k = 0; k < 3; ++k) {
+            frames.named[k] = c.named[k];
+            frames.resolved[k] = c.resolved[k];
+        }
+        frames.base[0] = sourceBase;
+        frames.final[0] = sourceFinal;
+        frames.base[1] = GfMatrix4d(1.0);
+        frames.final[1] = spaceFinal;
+        frames.final[2] = carry;
+        reads.reproject = c.reproject;
+        binding.meshWorldInverse = GfMatrix4d(1.0);
+        if (c.meshOffset)
+            binding.meshWorldInverse.SetTranslate(GfVec3d(0.0, 0.0, -0.1));
+        CHECK(CompareMatrix(RigExecRevisionOp::SurfaceProjector, binding,
+                            frames, reads, grid.rest, grid.points, c.label));
+    }
+
+    // A ray that misses: both refuse.
+    RigExecProjectorReads miss = reads;
+    miss.rayOrigin = GfVec3d(40.0, 40.0, 2.0);
+    CHECK(!CompareMatrix(RigExecRevisionOp::SurfaceProjector, binding,
+                         RigExecSurfaceProjectorFrames(), miss, grid.rest,
+                         grid.points, "miss"));
+
+    RigExecProjectorReads dials;
+    dials.dials = {0.5, -2.0, std::numeric_limits<double>::quiet_NaN(), 7.25,
+                   1e300};
+    CHECK(CompareMatrix(RigExecRevisionOp::ShaderDials, binding,
+                        RigExecSurfaceProjectorFrames(), dials, {}, {},
+                        "dials"));
+    dials.dials.assign(20, 3.0);
+    CompareMatrix(RigExecRevisionOp::ShaderDials, binding,
+                  RigExecSurfaceProjectorFrames(), dials, {}, {},
+                  "twenty dials");
+
+    // A frame that resolved at compile and not now, or new ray settings,
+    // needs a rebuild.
+    RigExecSurfaceProjectorFrames frames;
+    frames.named[0] = frames.resolved[0] = true;
+    RigExecRigDescBuilder builder;
+    RigExecGeometryMatrixNode node;
+    std::string error;
+    CHECK(RigExecAddGeometryMatrixOp(RigExecRevisionOp::SurfaceProjector,
+                                     frames, reads, &builder, &node, &error));
+    auto desc = builder.Build(&error);
+    auto program = desc ? RigExecCompile(*desc, {}, &error) : nullptr;
+    auto evaluator =
+        program ? RigExecEvaluator::Create(program, {}, &error) : nullptr;
+    CHECK(evaluator);
+    if (evaluator) {
+        RigExecSurfaceProjectorFrames lost = frames;
+        lost.resolved[0] = false;
+        CHECK(!RigExecWriteGeometryMatrixInputs(binding, lost, reads, grid.rest,
+                                                grid.points, node,
+                                                evaluator.get(), &error));
+        CHECK(error.find("resolution") != std::string::npos);
+        RigExecProjectorReads moved = reads;
+        moved.rayUp = GfVec3d(1.0, 0.0, 0.0);
+        CHECK(!RigExecWriteGeometryMatrixInputs(binding, frames, moved,
+                                                grid.rest, grid.points, node,
+                                                evaluator.get(), &error));
+        CHECK(error.find("settings") != std::string::npos);
+    }
+    CHECK(!RigExecAddGeometryMatrixOp(RigExecRevisionOp::Smooth, frames, reads,
+                                      &builder, &node, &error));
+}
+
 /// Smooth, then a matrix, as two connected nodes.
 void
 TestChain(const Grid &grid)
@@ -563,6 +746,7 @@ main()
     TestFrameDriven(grid);
     TestWire(grid);
     TestDerived(grid);
+    TestProjector(grid);
     TestChain(grid);
     TestRefusals(grid);
     if (failures) {

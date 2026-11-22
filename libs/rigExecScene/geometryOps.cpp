@@ -5,6 +5,7 @@
 #include "rigExecOps/deform/latticeOp.h"
 #include "rigExecOps/deform/matrixDeformOp.h"
 #include "rigExecOps/deform/pointOps.h"
+#include "rigExecOps/deform/projectorOps.h"
 #include "rigExecOps/deform/ribbonOp.h"
 #include "rigExecOps/deform/skinOp.h"
 #include "rigExecOps/deform/surfaceProjectOp.h"
@@ -533,6 +534,150 @@ RigExecWriteGeometryOpInputs(const RigExecMoverParameters &p,
     default:
         return Fail(error, "geometry op has no deform op yet");
     }
+}
+
+namespace {
+
+Vec3d
+ToStd(const GfVec3d &v)
+{
+    return Vec3d(v[0], v[1], v[2]);
+}
+
+bool
+SameSettings(const RigExecProjectorReads &a, const RigExecProjectorReads &b)
+{
+    return a.rayOrigin == b.rayOrigin && a.rayDirection == b.rayDirection &&
+           a.rayUp == b.rayUp && a.shaderOffset == b.shaderOffset &&
+           a.reproject == b.reproject;
+}
+
+/// The kernel's own reading of a frame slot: named and resolved. The space
+/// slot (2) has no base.
+bool
+Fed(const RigExecSurfaceProjectorFrames &frames, int k)
+{
+    return frames.named[k] && frames.resolved[k];
+}
+
+} // namespace
+
+bool
+RigExecGeometryMatrixOpSupported(RigExecRevisionOp op)
+{
+    return op == RigExecRevisionOp::SurfaceProjector ||
+           op == RigExecRevisionOp::ShaderDials;
+}
+
+bool
+RigExecAddGeometryMatrixOp(RigExecRevisionOp op,
+                           const RigExecSurfaceProjectorFrames &frames,
+                           const RigExecProjectorReads &reads,
+                           RigExecRigDescBuilder *builder,
+                           RigExecGeometryMatrixNode *node, std::string *error)
+{
+    if (!builder || !node)
+        return Fail(error, "no builder or node");
+    RigExecGeometryMatrixNode result;
+    result.op = op;
+    if (op == RigExecRevisionOp::ShaderDials) {
+        result.node = builder->AddOp(rigExecOps::ShaderDials());
+        result.dials =
+            builder->BindInput(result.node, rigExecOps::ShaderDialsDials());
+        result.outPort = &rigExecOps::ShaderDialsOut();
+    } else if (op == RigExecRevisionOp::SurfaceProjector) {
+        rigExecOps::SurfaceProjectorPayload payload;
+        payload.rayOrigin = ToStd(reads.rayOrigin);
+        payload.rayDirection = ToStd(reads.rayDirection);
+        payload.rayUp = ToStd(reads.rayUp);
+        payload.shaderOffset = ToStd(reads.shaderOffset);
+        payload.reproject = reads.reproject;
+        payload.sourceSpaceNamed = frames.named[1];
+        payload.spaceNamed = frames.named[2];
+        result.settings = reads;
+        result.settings.dials.clear();
+        result.settings.faceVertexCounts.clear();
+        result.settings.faceVertexIndices.clear();
+        const RigExecNodeId n =
+            builder->AddOp(rigExecOps::SurfaceProjector(), &payload);
+        result.node = n;
+        result.basePoints =
+            builder->BindInput(n, rigExecOps::SurfaceProjectorBasePoints());
+        result.points =
+            builder->BindInput(n, rigExecOps::SurfaceProjectorPoints());
+        result.counts =
+            builder->BindInput(n, rigExecOps::SurfaceProjectorCounts());
+        result.indices =
+            builder->BindInput(n, rigExecOps::SurfaceProjectorIndices());
+        result.worldToMesh =
+            builder->BindInput(n, rigExecOps::SurfaceProjectorWorldToMesh());
+        const RigExecPortHandle *bases[3] = {
+            &rigExecOps::SurfaceProjectorSourceBase(),
+            &rigExecOps::SurfaceProjectorSourceSpaceBase(), nullptr};
+        const RigExecPortHandle *finals[3] = {
+            &rigExecOps::SurfaceProjectorSourceFinal(),
+            &rigExecOps::SurfaceProjectorSourceSpaceFinal(),
+            &rigExecOps::SurfaceProjectorSpaceFinal()};
+        for (int k = 0; k < 3; ++k) {
+            result.resolved[k] = Fed(frames, k);
+            if (!result.resolved[k])
+                continue;
+            if (bases[k])
+                result.frameBase[k] = builder->BindInput(n, *bases[k]);
+            result.frameFinal[k] = builder->BindInput(n, *finals[k]);
+        }
+        result.outPort = &rigExecOps::SurfaceProjectorOut();
+    } else {
+        return Fail(error, "not a derived matrix op");
+    }
+    result.out = builder->BindOutput(result.node, *result.outPort);
+    *node = result;
+    return true;
+}
+
+bool
+RigExecWriteGeometryMatrixInputs(const RigExecRevisionBinding &binding,
+                                 const RigExecSurfaceProjectorFrames &frames,
+                                 const RigExecProjectorReads &reads,
+                                 const std::vector<GfVec3f> &base,
+                                 const std::vector<GfVec3f> &final,
+                                 const RigExecGeometryMatrixNode &node,
+                                 RigExecEvaluator *evaluator,
+                                 std::string *error)
+{
+    if (!evaluator)
+        return Fail(error, "no evaluator");
+    if (node.op == RigExecRevisionOp::ShaderDials) {
+        const RigExecArray<double> dials = ToArray(reads.dials);
+        return evaluator->SetInput(node.dials, &dials, error);
+    }
+    for (int k = 0; k < 3; ++k)
+        if (Fed(frames, k) != node.resolved[k])
+            return Fail(error, "projector frame resolution changed");
+    if (!SameSettings(reads, node.settings))
+        return Fail(error, "projector ray settings changed");
+    const RigExecArray<Vec3f> basePoints = ToStd(base);
+    const RigExecArray<Vec3f> points = ToStd(final);
+    const RigExecArray<int> counts = ToArray(reads.faceVertexCounts);
+    const RigExecArray<int> indices = ToArray(reads.faceVertexIndices);
+    const Mat4d worldToMesh = ToStd(binding.meshWorldInverse);
+    if (!evaluator->SetInput(node.basePoints, &basePoints, error) ||
+        !evaluator->SetInput(node.points, &points, error) ||
+        !evaluator->SetInput(node.counts, &counts, error) ||
+        !evaluator->SetInput(node.indices, &indices, error) ||
+        !evaluator->SetInput(node.worldToMesh, &worldToMesh, error))
+        return false;
+    for (int k = 0; k < 3; ++k) {
+        if (!node.resolved[k])
+            continue;
+        const Mat4d b = ToStd(frames.base[k]);
+        const Mat4d f = ToStd(frames.final[k]);
+        if ((Valid(node.frameBase[k]) &&
+             !evaluator->SetInput(node.frameBase[k], &b, error)) ||
+            !evaluator->SetInput(node.frameFinal[k], &f, error))
+            return false;
+    }
+    return true;
 }
 
 } // namespace rigExec

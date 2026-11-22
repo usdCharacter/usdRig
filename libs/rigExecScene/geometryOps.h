@@ -65,6 +65,44 @@ bool RigExecWriteGeometryOpInputs(const RigExecMoverParameters &p,
                                   RigExecEvaluator *evaluator,
                                   std::string *error = nullptr);
 
+/// A derived matrix op (surface projector or shader dials) and its
+/// host-written ports.
+struct RigExecGeometryMatrixNode {
+    RigExecNodeId node = 0;
+    RigExecRevisionOp op = RigExecRevisionOp::ShaderDials;
+    RigExecInputId basePoints, points, counts, indices, dials, worldToMesh;
+    /// Source, source space and rig space: base and final each, by frame
+    /// slot. A slot is fed only when it resolved at compile.
+    RigExecInputId frameBase[3], frameFinal[3];
+    bool resolved[3] = {false, false, false};
+    /// The ray settings baked into the payload.
+    RigExecProjectorReads settings;
+    RigExecOutputId out;
+    const RigExecPortHandle *outPort = nullptr;
+};
+
+/// True for the derived matrix ops this bridge maps.
+bool RigExecGeometryMatrixOpSupported(RigExecRevisionOp op);
+
+/// Adds the matrix op for \p op: its payload from \p reads' ray settings,
+/// its frame ports from which of \p frames named and resolved.
+bool RigExecAddGeometryMatrixOp(RigExecRevisionOp op,
+                                const RigExecSurfaceProjectorFrames &frames,
+                                const RigExecProjectorReads &reads,
+                                RigExecRigDescBuilder *builder,
+                                RigExecGeometryMatrixNode *node,
+                                std::string *error = nullptr);
+
+/// Writes one frame's values. False, writing nothing more, where a frame
+/// slot's resolution or the ray settings differ from compile: the node
+/// must be rebuilt.
+bool RigExecWriteGeometryMatrixInputs(
+    const RigExecRevisionBinding &binding,
+    const RigExecSurfaceProjectorFrames &frames,
+    const RigExecProjectorReads &reads, const std::vector<GfVec3f> &base,
+    const std::vector<GfVec3f> &final, const RigExecGeometryMatrixNode &node,
+    RigExecEvaluator *evaluator, std::string *error = nullptr);
+
 } // namespace rigExec
 
 #endif
