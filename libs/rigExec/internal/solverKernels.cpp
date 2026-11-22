@@ -3,7 +3,9 @@
 #include "rigExec/internal/solverKernels.h"
 #include "rigExec/internal/frameExtraction.h"
 
+#include "rigExecMath/dualQuat.h"
 #include "rigExecMath/geometryKernels.h"
+#include "rigExecMath/ribbonFramesKernel.h"
 #include "rigExecMath/solvers.h"
 
 #include "pxr/base/gf/math.h"
@@ -30,25 +32,19 @@ const GfVec3d _affectAxes[3] = {GfVec3d(1, 0, 0), GfVec3d(0, 1, 0),
 
 namespace {
 
-// Re-bases one aggregate element onto a joint's rest reference.
-// The element's own rest->pose map is measured from \p ownRest and applied to
-// \p jointRest instead, so the frame a pose step BELOW this solver left is
-// carried through the solve rather than replaced. Used only where
-// such a step really wrote the joint, which is what keeps every other rig
-// bit-identical.
-bool
-_RebaseElement(const std::array<GfVec3d, 4> &ownRest,
-               const std::array<GfVec3d, 4> &jointRest,
-               RigExecPointFrame *frame)
+// The joint rest a pose step BELOW this solver really wrote for element
+// \p k, onto which that element is re-based; null keeps the solver's own
+// rest, which is what keeps every other rig bit-identical.
+auto
+_LiveJointRest(const std::vector<std::array<GfVec3d, 4>> &jointRests,
+               const std::vector<bool> &jointRestLive)
 {
-    GfMatrix4d map;
-    if (!RigExecPointsToMatrix(ownRest, frame->points, &map)) {
-        return false;
-    }
-    const uint32_t flags = frame->flags;
-    *frame = RigExecMatrixToPoints(jointRest, map);
-    frame->flags = flags;
-    return true;
+    return [rests = &jointRests,
+            live = &jointRestLive](size_t k) -> const std::array<GfVec3d, 4> * {
+        return k < rests->size() && k < live->size() && (*live)[k]
+                   ? &(*rests)[k]
+                   : nullptr;
+    };
 }
 
 } // namespace
@@ -60,43 +56,12 @@ RigExecSampleRibbonFrames(const std::vector<GfVec3f> &posed,
                           const std::vector<bool> &jointRestLive)
 {
     RigExecPointFrameArray result;
-    if (posed.empty() || rest.empty() || sampleCount < 2) {
-        return result;
-    }
-    const RigExecCurveFrameSamples posedSamples =
-        RigExecSampleCurveRMF(posed, sampleCount);
-    const RigExecCurveFrameSamples restSamples =
-        RigExecSampleCurveRMF(rest, sampleCount);
-    if (posedSamples.GetSize() != size_t(sampleCount) ||
-        restSamples.GetSize() != size_t(sampleCount)) {
-        return result;
-    }
-    result.frames.reserve(sampleCount);
-    result.rests.reserve(sampleCount);
-    for (int k = 0; k < sampleCount; ++k) {
-        RigExecPointFrame frame;
-        frame.points = {
-            GfVec3d(posedSamples.positions[k]),
-            GfVec3d(posedSamples.positions[k] + posedSamples.tangents[k]),
-            GfVec3d(posedSamples.positions[k] + posedSamples.normals[k]),
-            GfVec3d(posedSamples.positions[k] + posedSamples.binormals[k])};
-        frame.flags = RigExecPointFrameValid;
-        std::array<GfVec3d, 4> restPoints = {
-            GfVec3d(restSamples.positions[k]),
-            GfVec3d(restSamples.positions[k] + restSamples.tangents[k]),
-            GfVec3d(restSamples.positions[k] + restSamples.normals[k]),
-            GfVec3d(restSamples.positions[k] + restSamples.binormals[k])};
-        // A sample a pose step below the ribbon already wrote is re-based
-        // onto what that step left; every other sample keeps the rest
-        // curve's own frame as its basis.
-        if (size_t(k) < jointRests.size() && size_t(k) < jointRestLive.size() &&
-            jointRestLive[size_t(k)] &&
-            _RebaseElement(restPoints, jointRests[size_t(k)], &frame)) {
-            restPoints = jointRests[size_t(k)];
-        }
-        result.frames.push_back(frame);
-        result.rests.push_back(restPoints);
-    }
+    RigExecSampleRibbonFramesKernel<GfVec3f, GfVec3d>(
+        posed.data(), posed.size(), rest.data(), rest.size(), sampleCount,
+        &result.frames, &result.rests);
+    RigExecRebaseFramesKernel<GfVec3f, GfVec3d>(
+        _LiveJointRest(jointRests, jointRestLive), &result.frames,
+        &result.rests);
     return result;
 }
 
@@ -131,16 +96,9 @@ RigExecSolveTwistDistribution(
     result.frames = RigExecDistributeTwist(start, end, startRest, endRest,
                                            weights, twistTurns);
     result.rests.assign(result.frames.size(), startRest);
-    // Same rule, same helper: an element a step below this solver wrote is
-    // re-based onto what that step left, measured from the START landmarks
-    // every element of this aggregate is paired with.
-    for (size_t k = 0; k < result.frames.size(); ++k) {
-        if (k < jointRests.size() && k < jointRestLive.size() &&
-            jointRestLive[k] &&
-            _RebaseElement(startRest, jointRests[k], &result.frames[k])) {
-            result.rests[k] = jointRests[k];
-        }
-    }
+    RigExecRebaseFramesKernel<GfVec3f, GfVec3d>(
+        _LiveJointRest(jointRests, jointRestLive), &result.frames,
+        &result.rests);
     return result;
 }
 

@@ -26,6 +26,7 @@
 #include <vector>
 #include "rigExecMath/deltaMushKernel.h"
 #include "rigExecMath/spatialAccel.h"
+#include "rigExecMath/ribbonFramesKernel.h"
 #include "rigExecMath/surfaceProjectorKernel.h"
 
 namespace rigExec {
@@ -494,18 +495,7 @@ void RigExecApplySurfaceProject(std::vector<GfVec3f> *points,
 
 /// Sampled curve frames: positions plus a rotation-minimizing frame per
 /// sample, parameterized by normalized arc length.
-struct RigExecCurveFrameSamples {
-    std::vector<GfVec3f> positions;
-    std::vector<GfVec3f> tangents;
-    std::vector<GfVec3f> normals; ///< rotation-minimizing
-    std::vector<GfVec3f> binormals;
-    std::vector<float> parameters; ///< normalized arc length in [0, 1]
-
-    size_t GetSize() const
-    {
-        return positions.size();
-    }
-};
+using RigExecCurveFrameSamples = RigExecCurveFrameSamplesT<GfVec3f>;
 
 /// Samples a single nonperiodic cubic uniform B-spline (the stock
 /// BasisCurves "cubic"/"bspline" contract) at sampleCount arc-length

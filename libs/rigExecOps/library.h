@@ -26,6 +26,7 @@ void RegisterConstraintOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterWeightOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterChainSolverOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterFrameBlendOps(rigExec::RigExecOpRegistrar &registrar);
+void RegisterRibbonFramesOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterSplineIkOps(rigExec::RigExecOpRegistrar &registrar);
 
 } // namespace rigExecOps

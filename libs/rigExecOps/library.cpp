@@ -23,6 +23,7 @@ Register(rigExec::RigExecOpRegistrar &registrar)
     RegisterWeightOps(registrar);
     RegisterChainSolverOps(registrar);
     RegisterFrameBlendOps(registrar);
+    RegisterRibbonFramesOps(registrar);
     RegisterSplineIkOps(registrar);
 }
 

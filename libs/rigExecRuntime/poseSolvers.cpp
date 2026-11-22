@@ -5,6 +5,7 @@
 #include "dualQuatMath.h"
 #include "rigExecMath/chainSolverKernel.h"
 #include "rigExecMath/frameBlendKernel.h"
+#include "rigExecMath/ribbonFramesKernel.h"
 #include "rigExecMath/splineIkKernel.h"
 #include <algorithm>
 #include <limits>
@@ -282,176 +283,21 @@ _RrDistributeTwist(const RrPointFrame &start, const RrPointFrame &end,
         start, end, startRest, endRest, weights, twistTurns);
 }
 
-// Ribbon substrate (geometryKernels.cpp, solverKernels.cpp).
-
-struct _RrCurveFrameSamples {
-    std::vector<RrVec3f> positions;
-    std::vector<RrVec3f> tangents;
-    std::vector<RrVec3f> normals;
-    std::vector<RrVec3f> binormals;
-    std::vector<float> parameters;
-
-    size_t GetSize() const
-    {
-        return positions.size();
-    }
-};
-
-RrVec3f
-_RrBsplinePoint(const RrVec3f &p0, const RrVec3f &p1, const RrVec3f &p2,
-                const RrVec3f &p3, float t)
+// The joint rest a pose step below the solver wrote for element k
+// (solverKernels.cpp); null keeps the solver's own rest.
+auto
+_RrLiveJointRest(const std::vector<std::array<RrVec3d, 4>> &jointRests,
+                 const std::vector<char> &jointRestLive)
 {
-    const float t2 = t * t, t3 = t2 * t;
-    const float b0 = (1 - 3 * t + 3 * t2 - t3) / 6.0f;
-    const float b1 = (4 - 6 * t2 + 3 * t3) / 6.0f;
-    const float b2 = (1 + 3 * t + 3 * t2 - 3 * t3) / 6.0f;
-    const float b3 = t3 / 6.0f;
-    return p0 * b0 + p1 * b1 + p2 * b2 + p3 * b3;
+    return [rests = &jointRests,
+            live = &jointRestLive](size_t k) -> const std::array<RrVec3d, 4> * {
+        return k < rests->size() && k < live->size() && (*live)[k]
+                   ? &(*rests)[k]
+                   : nullptr;
+    };
 }
 
-// RigExecSampleCurveRMF: a cubic uniform B-spline at sampleCount
-// arc-length parameters, rotation-minimizing frames by the
-// double-reflection method.
-_RrCurveFrameSamples
-_RrSampleCurveRMF(const std::vector<RrVec3f> &controlPoints, int sampleCount)
-{
-    _RrCurveFrameSamples samples;
-    if (sampleCount < 2 || controlPoints.size() < 2) {
-        return samples;
-    }
-
-    const int dense = std::max(sampleCount * 16, 64);
-    std::vector<RrVec3f> densePoints;
-    densePoints.reserve(size_t(dense) + 1);
-    const int spans = int(controlPoints.size()) - 3;
-    for (int i = 0; i <= dense; ++i) {
-        const float u = float(i) / float(dense);
-        if (spans >= 1) {
-            const float s = u * spans;
-            const int span = std::min(spans - 1, int(s));
-            const float t = s - span;
-            densePoints.push_back(_RrBsplinePoint(
-                controlPoints[size_t(span)], controlPoints[size_t(span) + 1],
-                controlPoints[size_t(span) + 2],
-                controlPoints[size_t(span) + 3], t));
-        } else {
-            const float s = u * (controlPoints.size() - 1);
-            const int seg = std::min(int(controlPoints.size()) - 2, int(s));
-            densePoints.push_back(
-                controlPoints[size_t(seg)] +
-                (controlPoints[size_t(seg) + 1] - controlPoints[size_t(seg)]) *
-                    (s - seg));
-        }
-    }
-    std::vector<float> arcLength(densePoints.size(), 0.0f);
-    for (size_t i = 1; i < densePoints.size(); ++i) {
-        arcLength[i] = arcLength[i - 1] +
-                       (densePoints[i] - densePoints[i - 1]).GetLength();
-    }
-    const float total = arcLength.back();
-    if (total <= 1e-12f) {
-        return samples;
-    }
-
-    samples.positions.reserve(size_t(sampleCount));
-    samples.parameters.reserve(size_t(sampleCount));
-    size_t cursor = 0;
-    for (int k = 0; k < sampleCount; ++k) {
-        const float target = total * float(k) / float(sampleCount - 1);
-        while (cursor + 1 < arcLength.size() &&
-               arcLength[cursor + 1] < target) {
-            ++cursor;
-        }
-        const float span = arcLength[cursor + 1] - arcLength[cursor];
-        const float t =
-            span > 1e-12f ? (target - arcLength[cursor]) / span : 0.0f;
-        samples.positions.push_back(
-            densePoints[cursor] +
-            (densePoints[cursor + 1] - densePoints[cursor]) * t);
-        samples.parameters.push_back(float(k) / float(sampleCount - 1));
-    }
-
-    samples.tangents.resize(size_t(sampleCount));
-    for (int k = 0; k < sampleCount; ++k) {
-        const RrVec3f &prev = samples.positions[size_t(std::max(0, k - 1))];
-        const RrVec3f &next =
-            samples.positions[size_t(std::min(sampleCount - 1, k + 1))];
-        RrVec3f tangent = next - prev;
-        const float len = tangent.GetLength();
-        samples.tangents[size_t(k)] =
-            len > 1e-12f ? tangent / len : RrVec3f(1, 0, 0);
-    }
-    samples.normals.resize(size_t(sampleCount));
-    samples.binormals.resize(size_t(sampleCount));
-    {
-        const RrVec3f t0 = samples.tangents[0];
-        RrVec3f candidate(1, 0, 0);
-        float best = 2.0f;
-        for (const RrVec3f axis :
-             {RrVec3f(1, 0, 0), RrVec3f(0, 1, 0), RrVec3f(0, 0, 1)}) {
-            const float align = std::abs(RrDot(axis, t0));
-            if (align < best) {
-                best = align;
-                candidate = axis;
-            }
-        }
-        RrVec3f n0 = candidate - t0 * RrDot(t0, candidate);
-        n0.Normalize();
-        samples.normals[0] = n0;
-        samples.binormals[0] = RrCross(t0, n0);
-    }
-    for (int k = 0; k + 1 < sampleCount; ++k) {
-        const RrVec3f v1 =
-            samples.positions[size_t(k) + 1] - samples.positions[size_t(k)];
-        const float c1 = RrDot(v1, v1);
-        if (c1 <= 1e-20f) {
-            samples.normals[size_t(k) + 1] = samples.normals[size_t(k)];
-            samples.binormals[size_t(k) + 1] = samples.binormals[size_t(k)];
-            continue;
-        }
-        const RrVec3f nL =
-            samples.normals[size_t(k)] -
-            v1 * (2.0f / c1) * RrDot(v1, samples.normals[size_t(k)]);
-        const RrVec3f tL =
-            samples.tangents[size_t(k)] -
-            v1 * (2.0f / c1) * RrDot(v1, samples.tangents[size_t(k)]);
-        const RrVec3f v2 = samples.tangents[size_t(k) + 1] - tL;
-        const float c2 = RrDot(v2, v2);
-        RrVec3f n = c2 > 1e-20f ? nL - v2 * (2.0f / c2) * RrDot(v2, nL) : nL;
-        n -= samples.tangents[size_t(k) + 1] *
-             RrDot(samples.tangents[size_t(k) + 1], n);
-        const float len = n.GetLength();
-        samples.normals[size_t(k) + 1] =
-            len > 1e-12f ? n / len : samples.normals[size_t(k)];
-        samples.binormals[size_t(k) + 1] = RrCross(
-            samples.tangents[size_t(k) + 1], samples.normals[size_t(k) + 1]);
-    }
-    return samples;
-}
-
-RrVec3d
-_RrWiden(const RrVec3f &v)
-{
-    return RrVec3d(double(v[0]), double(v[1]), double(v[2]));
-}
-
-// Re-bases one aggregate element onto a joint's rest reference
-// (solverKernels.cpp).
-bool
-_RrRebaseElement(const std::array<RrVec3d, 4> &ownRest,
-                 const std::array<RrVec3d, 4> &jointRest, RrPointFrame *frame)
-{
-    RrMat4d map = _RrIdentity();
-    if (!RrPointsToMatrix(ownRest, frame->points, &map)) {
-        return false;
-    }
-    const uint32_t flags = frame->flags;
-    *frame = RrMatrixToPoints(jointRest, map);
-    frame->flags = flags;
-    return true;
-}
-
-// RigExecSampleRibbonFrames (solverKernels.cpp).
+// RigExecSampleRibbonFrames (rigExecMath/ribbonFramesKernel.h).
 RrPointFrameArray
 _RrSampleRibbonFrames(const std::vector<RrVec3f> &posed,
                       const std::vector<RrVec3f> &rest, int sampleCount,
@@ -459,45 +305,12 @@ _RrSampleRibbonFrames(const std::vector<RrVec3f> &posed,
                       const std::vector<char> &jointRestLive)
 {
     RrPointFrameArray result;
-    if (posed.empty() || rest.empty() || sampleCount < 2) {
-        return result;
-    }
-    const _RrCurveFrameSamples posedSamples =
-        _RrSampleCurveRMF(posed, sampleCount);
-    const _RrCurveFrameSamples restSamples =
-        _RrSampleCurveRMF(rest, sampleCount);
-    if (posedSamples.GetSize() != size_t(sampleCount) ||
-        restSamples.GetSize() != size_t(sampleCount)) {
-        return result;
-    }
-    result.frames.reserve(size_t(sampleCount));
-    result.rests.reserve(size_t(sampleCount));
-    for (int k = 0; k < sampleCount; ++k) {
-        RrPointFrame frame;
-        frame.points = {_RrWiden(posedSamples.positions[size_t(k)]),
-                        _RrWiden(posedSamples.positions[size_t(k)] +
-                                 posedSamples.tangents[size_t(k)]),
-                        _RrWiden(posedSamples.positions[size_t(k)] +
-                                 posedSamples.normals[size_t(k)]),
-                        _RrWiden(posedSamples.positions[size_t(k)] +
-                                 posedSamples.binormals[size_t(k)])};
-        frame.flags = RrPointFrameValid;
-        std::array<RrVec3d, 4> restPoints = {
-            _RrWiden(restSamples.positions[size_t(k)]),
-            _RrWiden(restSamples.positions[size_t(k)] +
-                     restSamples.tangents[size_t(k)]),
-            _RrWiden(restSamples.positions[size_t(k)] +
-                     restSamples.normals[size_t(k)]),
-            _RrWiden(restSamples.positions[size_t(k)] +
-                     restSamples.binormals[size_t(k)])};
-        if (size_t(k) < jointRests.size() && size_t(k) < jointRestLive.size() &&
-            jointRestLive[size_t(k)] &&
-            _RrRebaseElement(restPoints, jointRests[size_t(k)], &frame)) {
-            restPoints = jointRests[size_t(k)];
-        }
-        result.frames.push_back(frame);
-        result.rests.push_back(restPoints);
-    }
+    RigExecSampleRibbonFramesKernel<RrVec3f, RrVec3d>(
+        posed.data(), posed.size(), rest.data(), rest.size(), sampleCount,
+        &result.frames, &result.rests);
+    RigExecRebaseFramesKernel<RrVec3f, RrVec3d>(
+        _RrLiveJointRest(jointRests, jointRestLive), &result.frames,
+        &result.rests);
     return result;
 }
 
@@ -515,13 +328,9 @@ _RrSolveTwistDistribution(const RrPointFrame &start, const RrPointFrame &end,
     result.frames =
         _RrDistributeTwist(start, end, startRest, endRest, weights, twistTurns);
     result.rests.assign(result.frames.size(), startRest);
-    for (size_t k = 0; k < result.frames.size(); ++k) {
-        if (k < jointRests.size() && k < jointRestLive.size() &&
-            jointRestLive[k] &&
-            _RrRebaseElement(startRest, jointRests[k], &result.frames[k])) {
-            result.rests[k] = jointRests[k];
-        }
-    }
+    RigExecRebaseFramesKernel<RrVec3f, RrVec3d>(
+        _RrLiveJointRest(jointRests, jointRestLive), &result.frames,
+        &result.rests);
     return result;
 }
 

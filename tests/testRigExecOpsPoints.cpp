@@ -7,15 +7,18 @@
 #include "rigExecMath/envelope.h"
 #include "rigExecMath/geometryKernels.h"
 #include "rigExecMath/normalsLayoutKernel.h"
+#include "rigExecMath/ribbonFramesKernel.h"
 #include "rigExecMath/simdKernels.h"
 #include "rigExecMath/solvers.h"
 #include "rigExecMath/splineIk.h"
 #include "rigExecMath/surfaceProjectorKernel.h"
 #include "rigExecMath/weightFields.h"
 #include "rigExecRigTypes/rigTypes.h"
+#include "rigExecRuntime/dualQuatMath.h"
 #include "rigExecOps/constraint/constraintOps.h"
 #include "rigExecOps/solver/chainSolverOps.h"
 #include "rigExecOps/solver/frameBlendOps.h"
+#include "rigExecOps/solver/ribbonFramesOps.h"
 #include "rigExecOps/solver/splineIkOps.h"
 #include "rigExecOps/deform/blendShapeOp.h"
 #include "rigExecOps/deform/deltaMushOp.h"
@@ -2440,6 +2443,129 @@ TestSplineIk()
                     &actual, &error));
 }
 
+void
+TestRibbonFrames()
+{
+    using namespace rigExecOps;
+    using RrVec = rigExecStd::Vec3f;
+    // The frame points as the samples give them: offsets summed in float.
+    const auto landmarks = [](const RigExecCurveFrameSamples &f, size_t k) {
+        const GfVec3f o = f.positions[k];
+        const GfVec3f p[4] = {o, o + f.tangents[k], o + f.normals[k],
+                              o + f.binormals[k]};
+        std::array<GfVec3d, 4> l;
+        for (int j = 0; j < 4; ++j)
+            l[j] = GfVec3d(p[j]);
+        return l;
+    };
+    const auto sameFloats = [](const std::vector<GfVec3f> &a,
+                               const std::vector<RrVec> &b) {
+        if (a.size() != b.size())
+            return false;
+        for (size_t i = 0; i < a.size(); ++i)
+            for (size_t j = 0; j < 3; ++j) {
+                const float x = a[i][j], y = b[i][j];
+                if (std::memcmp(&x, &y, sizeof(float)) != 0)
+                    return false;
+            }
+        return true;
+    };
+    // A B-spline (six points) and a short polygon (three).
+    for (const int count : {6, 3}) {
+        std::vector<GfVec3f> restCurve, posedCurve;
+        for (int i = 0; i < count; ++i) {
+            restCurve.emplace_back(1.4f * i, 0.5f * i, 0.3f * (i % 2));
+            posedCurve.emplace_back(1.3f * i, 0.5f * i + 0.2f * i * i,
+                                    0.4f * i - 0.3f * (i % 2));
+        }
+        const Points restPts = ToStd(restCurve), posedPts = ToStd(posedCurve);
+        for (const int sampleCount : {2, 9}) {
+            const RigExecCurveFrameSamples rest =
+                RigExecSampleCurveRMF(restCurve, sampleCount);
+            const RigExecCurveFrameSamples posed =
+                RigExecSampleCurveRMF(posedCurve, sampleCount);
+            CHECK(posed.GetSize() == size_t(sampleCount));
+
+            // The zero-USD instantiation matches the native one bit for bit.
+            const auto rr = rigExec::RigExecSampleCurveRMFKernel(
+                posedPts.Data(), posedPts.Size(), sampleCount);
+            CHECK(sameFloats(posed.positions, rr.positions));
+            CHECK(sameFloats(posed.tangents, rr.tangents));
+            CHECK(sameFloats(posed.normals, rr.normals));
+            CHECK(sameFloats(posed.binormals, rr.binormals));
+
+            SampleRibbonFramesPayload payload;
+            payload.sampleCount = sampleCount;
+            Node node(SampleRibbonFrames(),
+                      {&SampleRibbonFramesPosed(), &SampleRibbonFramesRest()},
+                      SampleRibbonFramesOut(), &payload);
+            rigExecRig::PointFrameArray actual;
+            CHECK(node.Run({&posedPts, &restPts}, &actual));
+            CHECK(actual.frames.Size() == size_t(sampleCount) &&
+                  actual.rests.Size() == size_t(sampleCount));
+            for (size_t k = 0; k < actual.frames.Size(); ++k) {
+                CHECK(SameBits(landmarks(posed, k), actual.frames[k].points));
+                CHECK(actual.frames[k].flags == rigExecRig::kPointFrameValid);
+                CHECK(SameBits(landmarks(rest, k), actual.rests[k]));
+            }
+
+            // Odd samples re-base onto a joint rest, the same both ways.
+            std::vector<RigExecPointFrame> gfFrames;
+            std::vector<std::array<GfVec3d, 4>> gfRests, joints;
+            std::vector<rigExecRig::PointFrame> rrFrames;
+            std::vector<rigExecRig::PointLandmarks> rrRests, rrJoints;
+            for (size_t k = 0; k < size_t(sampleCount); ++k) {
+                RigExecPointFrame f;
+                f.points = landmarks(posed, k);
+                gfFrames.push_back(f);
+                gfRests.push_back(landmarks(rest, k));
+                joints.push_back(MakeFrame(GfVec3d(0.1 * k, 1.0, 0.0),
+                                           GfVec3d(0, 0, 1), 15.0 * k,
+                                           GfVec3d(1.0))
+                                     .points);
+                rrFrames.push_back(actual.frames[k]);
+                rrRests.push_back(actual.rests[k]);
+                rrJoints.push_back(ToRigLandmarks(joints.back()));
+            }
+            rigExec::RigExecRebaseFramesKernel<GfVec3f, GfVec3d>(
+                [&](size_t k) { return k % 2 ? &joints[k] : nullptr; },
+                &gfFrames, &gfRests);
+            rigExec::RigExecRebaseFramesKernel<rigExecStd::Vec3f,
+                                               rigExecStd::Vec3d>(
+                [&](size_t k) { return k % 2 ? &rrJoints[k] : nullptr; },
+                &rrFrames, &rrRests);
+            for (size_t k = 0; k < gfFrames.size(); ++k) {
+                CHECK(SameBits(gfFrames[k].points, rrFrames[k].points));
+                CHECK(SameBits(gfRests[k], rrRests[k]));
+                CHECK(SameBits(k % 2 ? joints[k] : landmarks(rest, k),
+                               rrRests[k]));
+            }
+        }
+    }
+
+    // One point, one sample and a zero-length curve refuse.
+    SampleRibbonFramesPayload payload;
+    payload.sampleCount = 5;
+    Node node(SampleRibbonFrames(),
+              {&SampleRibbonFramesPosed(), &SampleRibbonFramesRest()},
+              SampleRibbonFramesOut(), &payload);
+    const Points curve = ToStd({GfVec3f(0, 0, 0), GfVec3f(1, 2, 0),
+                                GfVec3f(2, 2, 1), GfVec3f(3, 1, 1)});
+    const Points one = ToStd({GfVec3f(1, 2, 3)});
+    // Two coincident points: a spline of four would sum float weights.
+    const Points flat = ToStd(std::vector<GfVec3f>(2, GfVec3f(1, 2, 3)));
+    rigExecRig::PointFrameArray actual;
+    std::string error;
+    CHECK(node.Run({&curve, &curve}, &actual));
+    CHECK(!node.Run({&one, &curve}, &actual, &error));
+    CHECK(!node.Run({&curve, &flat}, &actual, &error));
+    payload.sampleCount = 1;
+    Node single(SampleRibbonFrames(),
+                {&SampleRibbonFramesPosed(), &SampleRibbonFramesRest()},
+                SampleRibbonFramesOut(), &payload);
+    CHECK(!single.Run({&curve, &curve}, &actual, &error));
+}
+
 int
 main()
 {
@@ -2468,6 +2594,7 @@ main()
     TestWeightFields();
     TestChainSolvers();
     TestFrameBlend();
+    TestRibbonFrames();
     TestSplineIk();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
