@@ -1708,13 +1708,10 @@ private:
     /// for the bake, which holds Export with its keep-set.
     RigExecBakedRoleMode _bakedRoleMode = RigExecBakedRoleMode::Live;
     std::set<SdfPath> _bakedExportKeep;
-    /// This compiled rig already asked for a program and was refused.
-    ///
-    /// The refusal is a property of the compiled rig, so re-asking inside
-    /// it costs a bakeability pass per frame to be told the same thing.
-    /// Reset wherever the answer can have changed: Compile, and a notice
-    /// that hit the program's capture index.
+    /// The last program build was refused at this stage edit serial.
+    /// Evaluate retries only once the serial moves; Compile clears it.
     bool _bakeRefused = false;
+    uint64_t _bakeRefusedSerial = 0;
     /// Why it refused, when anyone asked to be told.
     ///
     /// Concrete admission reasons retained for the failed compiled rig.

@@ -75,10 +75,10 @@ _RetireBakedProgram(std::unique_ptr<RigExecBakedProgram> retiring)
 
 } // namespace
 
-RigExecRigEvaluator::RigExecRigEvaluator(
-    const UsdStageRefPtr &stage, const SdfPath &rigPath)
-    : _stage(stage), _rigPath(rigPath)
-    , _restInputNames(evaluatorDetail::_MakeRestInputNames())
+RigExecRigEvaluator::RigExecRigEvaluator(const UsdStageRefPtr &stage,
+                                         const SdfPath &rigPath)
+    : _stage(stage), _rigPath(rigPath),
+      _restInputNames(evaluatorDetail::_MakeRestInputNames())
 {
     _inputReplayObserver = RigExecInputReplayObserver::Create(stage, rigPath);
     _goldenSuiteObserver = RigExecGoldenSuiteObserver::Create(rigPath);
@@ -86,9 +86,9 @@ RigExecRigEvaluator::RigExecRigEvaluator(
     // resolved-input lookup every read already goes through.
     _resolvedInputs.SetStaticCache(&_staticInputs);
     if (_stage) {
-        _noticeKey = TfNotice::Register(
-            TfCreateWeakPtr(this), &RigExecRigEvaluator::_OnObjectsChanged,
-            UsdStageWeakPtr(_stage));
+        _noticeKey = TfNotice::Register(TfCreateWeakPtr(this),
+                                        &RigExecRigEvaluator::_OnObjectsChanged,
+                                        UsdStageWeakPtr(_stage));
     }
     // The rig evaluates directly against the source stage; the engine
     // authors nothing, so there is no derived stage.
@@ -112,8 +112,7 @@ RigExecRigEvaluator::_EnsureScopedClearShadow()
     // before then is handed over here, in the order it would have been set
     // on a fresh evaluator; everything after is mirrored as it happens.
     RigExecInputReplaySuppression suppressInputReplay;
-    auto shadow = std::make_unique<RigExecRigEvaluator>(
-        _stage, _rigPath);
+    auto shadow = std::make_unique<RigExecRigEvaluator>(_stage, _rigPath);
     shadow->_wholesaleValueClears = true;
     shadow->SetPublishWeightFields(_publishWeightFields);
     shadow->SetSolverGuidesEnabled(_solverGuidesEnabled);
@@ -128,8 +127,7 @@ RigExecRigEvaluator::_EnsureScopedClearShadow()
 }
 
 void
-RigExecRigEvaluator::_VerifyScopedClears(UsdTimeCode time,
-                                         RigExecRigPose *pose)
+RigExecRigEvaluator::_VerifyScopedClears(UsdTimeCode time, RigExecRigPose *pose)
 {
     // A public field rather than a setter, so it is handed over per call.
     _scopedClearShadow->cpuReference = cpuReference;
@@ -153,10 +151,10 @@ RigExecRigEvaluator::_VerifyScopedClears(UsdTimeCode time,
     scalar(shadow.valid, pose->valid, "valid");
     scalar(shadow.comparisonMismatches, pose->comparisonMismatches,
            "baked parity mismatches");
-    scalar(shadow.referenceMismatches,
-           pose->referenceMismatches, "mover graph parity mismatches");
-    scalar(shadow.referenceAgreements,
-           pose->referenceAgreements, "mover graph parity agreements");
+    scalar(shadow.referenceMismatches, pose->referenceMismatches,
+           "mover graph parity mismatches");
+    scalar(shadow.referenceAgreements, pose->referenceAgreements,
+           "mover graph parity agreements");
     if (shadow.movedPropertiesCpu != pose->movedPropertiesCpu) {
         differences.diagnostics.push_back(
             "baked parity: CPU moved properties differ");
@@ -181,19 +179,25 @@ RigExecRigPose
 RigExecRigEvaluator::Evaluate(UsdTimeCode time)
 {
     if (_inputReplayObserver) {
-        _inputReplayObserver->Options(_solverGuidesEnabled, _publishWeightFields);
+        _inputReplayObserver->Options(_solverGuidesEnabled,
+                                      _publishWeightFields);
         _inputReplayObserver->BeginEvaluate(time);
     }
     struct ReplayEvaluationScope {
         RigExecInputReplayObserver *observer;
-        ~ReplayEvaluationScope() { if (observer) observer->EndEvaluate(); }
+        ~ReplayEvaluationScope()
+        {
+            if (observer)
+                observer->EndEvaluate();
+        }
     } replayScope{_inputReplayObserver.get()};
     _EnsureScopedClearShadow();
     RigExecRigPose pose = _EvaluateGeneration(time);
     if (_scopedClearShadow) {
         _VerifyScopedClears(time, &pose);
     }
-    if (_goldenSuiteObserver) _goldenSuiteObserver->Record(pose);
+    if (_goldenSuiteObserver)
+        _goldenSuiteObserver->Record(pose);
     return pose;
 }
 
@@ -203,7 +207,8 @@ RigExecRigEvaluator::SetPublishWeightFields(bool publish)
     if (_inputReplayObserver)
         _inputReplayObserver->Options(_solverGuidesEnabled, publish);
     _publishWeightFields = publish;
-    if (_scopedClearShadow) _scopedClearShadow->SetPublishWeightFields(publish);
+    if (_scopedClearShadow)
+        _scopedClearShadow->SetPublishWeightFields(publish);
 }
 
 void
@@ -225,9 +230,8 @@ RigExecRigEvaluator::SetBakedRoleMode(RigExecBakedRoleMode mode,
 RigExecScopedBakedRoleMode::RigExecScopedBakedRoleMode(
     RigExecRigEvaluator &evaluator, RigExecBakedRoleMode mode,
     std::set<SdfPath> exportKeep)
-    : _evaluator(evaluator)
-    , _previous(evaluator.GetBakedRoleMode())
-    , _previousKeep(evaluator.GetBakedExportKeep())
+    : _evaluator(evaluator), _previous(evaluator.GetBakedRoleMode()),
+      _previousKeep(evaluator.GetBakedExportKeep())
 {
     _evaluator.SetBakedRoleMode(mode, std::move(exportKeep));
 }
@@ -243,17 +247,22 @@ RigExecRigEvaluator::SetSolverGuidesEnabled(bool enabled)
     if (_inputReplayObserver)
         _inputReplayObserver->Options(enabled, _publishWeightFields);
     _solverGuidesEnabled = enabled;
-    if (_scopedClearShadow) _scopedClearShadow->SetSolverGuidesEnabled(enabled);
+    if (_scopedClearShadow)
+        _scopedClearShadow->SetSolverGuidesEnabled(enabled);
 }
 
 RigExecRigPose
 RigExecRigEvaluator::_EvaluateGeneration(UsdTimeCode time)
 {
     TF_PY_ALLOW_THREADS_IN_SCOPE();
-    _lastGenerationRanProgram=false;
-    RIGEXEC_PROFILE_SCOPE_CAT(_profiler,time.IsDefault()?std::string("Evaluate@default"):
-        "Evaluate@"+TfStringPrintf("%g",time.GetValue()),"evaluate");
-    RigExecRigPose pose;pose.time=time;
+    _lastGenerationRanProgram = false;
+    RIGEXEC_PROFILE_SCOPE_CAT(
+        _profiler,
+        time.IsDefault() ? std::string("Evaluate@default")
+                         : "Evaluate@" + TfStringPrintf("%g", time.GetValue()),
+        "evaluate");
+    RigExecRigPose pose;
+    pose.time = time;
     if (cpuReference) {
         std::string error;
         if (!RigExecOracleAvailable(&error)) {
@@ -269,24 +278,26 @@ RigExecRigEvaluator::_EvaluateGeneration(UsdTimeCode time)
     if (_compiled && _compiledRigRestsConstant && _bakedProgramStale &&
         !_restEditedProviders.empty()) {
         std::set<SdfPath> chainTargets;
-        for (const auto &entry : _propertyChains) chainTargets.insert(entry.first);
+        for (const auto &entry : _propertyChains)
+            chainTargets.insert(entry.first);
         for (const SdfPath &provider : _restEditedProviders) {
             if (_ProviderRestMightVary(_stage, _restInputNames, provider,
-                                      chainTargets)) {
+                                       chainTargets)) {
                 restBecameVarying = true;
                 break;
             }
         }
     }
     {
-        RIGEXEC_PROFILE_SCOPE_CAT(_profiler,"Evaluate.Settle","evaluate");
-        if(!_SettleCompiledRig(&pose.diagnostics))return pose;
+        RIGEXEC_PROFILE_SCOPE_CAT(_profiler, "Evaluate.Settle", "evaluate");
+        if (!_SettleCompiledRig(&pose.diagnostics))
+            return pose;
     }
-    if(_bakedProgramStale) {
+    if (_bakedProgramStale) {
         // A full structural recompile already published its own compiled rig reason.
-        const bool restTransition = restBecameVarying &&
-            _bakedProgramBuilds == buildsBeforeSettle;
-        _bakedProgramStale=false;
+        const bool restTransition =
+            restBecameVarying && _bakedProgramBuilds == buildsBeforeSettle;
+        _bakedProgramStale = false;
         _RebuildBakedProgram(std::move(_bakedProgram));
         if (restTransition && _bakedProgram) {
             // ORIGINAL moves every rest channel to per-frame classification
@@ -296,75 +307,92 @@ RigExecRigEvaluator::_EvaluateGeneration(UsdTimeCode time)
                 "rest channel became time-varying: compiled rig rebuilt");
         }
     }
-    if(_compiled && !_bakedProgram && !_bakeRefused)_RebuildBakedProgram();
-    if(!_upstreamRequested.empty() || !_upstreamAdmitted.empty()) {
-        _AdmitUpstreamInputs(time);
-        pose.diagnostics.insert(pose.diagnostics.end(),_upstreamDropLines.begin(),_upstreamDropLines.end());
+    if (_compiled && !_bakedProgram &&
+        (!_bakeRefused || _bakeRefusedSerial != _stageEditSerial)) {
+        _RebuildBakedProgram();
     }
-    const auto unavailable=[&]() {
-        pose.diagnostics.push_back("native program unavailable for compiled rig");
-        pose.diagnostics.insert(pose.diagnostics.end(),_bakeRefusalReasons.begin(),_bakeRefusalReasons.end());
+    if (!_upstreamRequested.empty() || !_upstreamAdmitted.empty()) {
+        _AdmitUpstreamInputs(time);
+        pose.diagnostics.insert(pose.diagnostics.end(),
+                                _upstreamDropLines.begin(),
+                                _upstreamDropLines.end());
+    }
+    const auto unavailable = [&]() {
+        pose.diagnostics.push_back(
+            "native program unavailable for compiled rig");
+        pose.diagnostics.insert(pose.diagnostics.end(),
+                                _bakeRefusalReasons.begin(),
+                                _bakeRefusalReasons.end());
     };
-    if(!_bakedProgram) {
+    if (!_bakedProgram) {
         unavailable();
         return pose;
     }
     // Places this generation's inputs on the standing program and runs it.
     // False with *placed false when it refuses the interactive inputs.
-    const size_t diagnosticsBeforeRun=pose.diagnostics.size();
-    const auto placeAndRun=[&](bool *placed) {
+    const size_t diagnosticsBeforeRun = pose.diagnostics.size();
+    const auto placeAndRun = [&](bool *placed) {
         {
-            RIGEXEC_PROFILE_SCOPE_CAT(_profiler,"Evaluate.PlaceOverrides","evaluate");
+            RIGEXEC_PROFILE_SCOPE_CAT(_profiler, "Evaluate.PlaceOverrides",
+                                      "evaluate");
             _bakedProgram->SetUpstreamInputs(_upstreamAdmitted);
-            *placed=_bakedProgram->SetOverrides(_interactiveOverrides);
-            if(!*placed) {
-                pose.diagnostics.push_back("native program refused interactive inputs");
+            *placed = _bakedProgram->SetOverrides(_interactiveOverrides);
+            if (!*placed) {
+                pose.diagnostics.push_back(
+                    "native program refused interactive inputs");
                 return false;
             }
             _bakedProgram->SetPublishWeightFields(_publishWeightFields);
         }
         // Windowed operations read their inputs at the earlier ticks of
         // their windows: run the ticks the memo lacks, then place the rings.
-        if(_bakedProgram->GetWindowedOpCount()) {
-            RIGEXEC_PROFILE_SCOPE_CAT(_profiler,"Evaluate.WindowHistory","evaluate");
+        if (_bakedProgram->GetWindowedOpCount()) {
+            RIGEXEC_PROFILE_SCOPE_CAT(_profiler, "Evaluate.WindowHistory",
+                                      "evaluate");
             std::vector<RigExecWindowRing> rings;
             std::string why;
-            if(!GetWindowRings(time,&rings,&why)) pose.diagnostics.push_back(why);
+            if (!GetWindowRings(time, &rings, &why))
+                pose.diagnostics.push_back(why);
             _bakedProgram->SetWindowRings(rings);
         }
-        RIGEXEC_PROFILE_SCOPE_CAT(_profiler,"Evaluate.Run","evaluate");
-        return _bakedProgram->Run(time,&pose);
+        RIGEXEC_PROFILE_SCOPE_CAT(_profiler, "Evaluate.Run", "evaluate");
+        return _bakedProgram->Run(time, &pose);
     };
-    bool placed=true;
-    bool completed=placeAndRun(&placed);
-    if(!placed)return pose;
-    if(!completed && _bakedProgram->GetLastBail()==RigExecBakedBail::RoleFlip) {
+    bool placed = true;
+    bool completed = placeAndRun(&placed);
+    if (!placed)
+        return pose;
+    if (!completed &&
+        _bakedProgram->GetLastBail() == RigExecBakedBail::RoleFlip) {
         // A Range role or group gate rested on a value this generation
         // sampled otherwise. Rebuild from the values standing now (Build
         // classifies with the overrides and admitted upstream inputs) and
         // run once more; the bailed run leaves no line, and a second
         // failure is reported like any other.
-        pose.diagnostics.erase(pose.diagnostics.begin()+std::ptrdiff_t(diagnosticsBeforeRun),
+        pose.diagnostics.erase(pose.diagnostics.begin() +
+                                   std::ptrdiff_t(diagnosticsBeforeRun),
                                pose.diagnostics.end());
         _RebuildBakedProgram(std::move(_bakedProgram));
-        if(!_bakedProgram) {
+        if (!_bakedProgram) {
             unavailable();
             return pose;
         }
-        completed=placeAndRun(&placed);
-        if(!placed)return pose;
+        completed = placeAndRun(&placed);
+        if (!placed)
+            return pose;
     }
-    if(!completed) {
-        pose.valid=false;
-        pose.diagnostics.push_back("native program did not complete generation");
+    if (!completed) {
+        pose.valid = false;
+        pose.diagnostics.push_back(
+            "native program did not complete generation");
         return pose;
     }
     _bakedProgram->AdoptBlendSampleLayouts(&_blendSampleShapes);
     _NoteWindowCaptures(time);
     _skinTopologyObservationPending = false;
     ++_bakedGenerations;
-    _bakedProgramPublished=true;
-    _lastGenerationRanProgram=true;
+    _bakedProgramPublished = true;
+    _lastGenerationRanProgram = true;
     return pose;
 }
 
@@ -384,6 +412,9 @@ RigExecRigEvaluator::_RebuildBakedProgram(
     _lastGenerationRanProgram = false;
     RIGEXEC_PROFILE_SCOPE_CAT(_profiler, "Compile.Bake", "compile");
     ++_bakedProgramBuildAttempts;
+    // An edit during the build makes a refusal transient: key it on the
+    // serial the build started from.
+    const uint64_t buildSerial = _stageEditSerial;
     // Preserve concrete compile-admission reasons for an invalid generation.
     std::vector<std::string> reasons;
     _bakedProgram = RigExecBakedProgram::_BuildWithSceneCapture(
@@ -393,7 +424,8 @@ RigExecRigEvaluator::_RebuildBakedProgram(
         std::map<SdfPath, SdfPath> switchOwners;
         for (const auto &sw : _spaceSwitches)
             switchOwners.emplace(sw.target, sw.switchPath);
-        for (const auto &[owner, reason] : _bakedProgram->_GetCycleSkips(switchOwners))
+        for (const auto &[owner, reason] :
+             _bakedProgram->_GetCycleSkips(switchOwners))
             _skippedOperations.emplace(owner, reason);
         if (outgoing && outgoingPublished) {
             // The replacement inherits the geometry nodes that survive,
@@ -415,11 +447,10 @@ RigExecRigEvaluator::_RebuildBakedProgram(
             _bakedProgram->AdoptGeometryStateFrom(*outgoing);
         }
     }
-    // Refusing is a property of the compiled rig, not of the moment: remember it so
-    // the lazy build in Evaluate asks once rather than once per frame. The
-    // reasons ride with it. Evaluate reports them on each frame that has no
-    // program; it does not run a second evaluator.
+    // Remembered per stage edit serial so Evaluate does not rebuild per
+    // frame; Evaluate reports the reasons on each frame without a program.
     _bakeRefused = !_bakedProgram;
+    _bakeRefusedSerial = buildSerial;
     _bakeRefusalReasons = std::move(reasons);
     // Last, once the replacement has taken what it adopts from it.
     _RetireBakedProgram(std::move(outgoing));
