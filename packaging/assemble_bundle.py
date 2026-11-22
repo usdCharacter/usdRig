@@ -206,17 +206,25 @@ def copy_tree(src: Path, dst: Path, trim_dev: bool,
 
 
 def copy_msvc_runtime(app_dir: Path, python_home: Path, usd: Path,
-                      rig: Path) -> list[str]:
+                      rig: Path, runtime_dir: Path | None = None) -> list[str]:
     """Ship the MSVC runtime beside the Windows DLLs that need it.
 
     Neither the OpenUSD nor the RigExec install carries msvcp140.dll, so
     without this the bundle depends on whatever runtime the host's
     System32 (or a stray PATH entry) provides, which may predate the
     compiler the binaries were built with. The bundled CPython's
-    PySide6/shiboken packages carry a current redistributable set; fall
-    back to the Python home and the install trees.
+    PySide6/shiboken packages carry a redistributable set; fall back to the
+    Python home and the install trees.
+
+    With ``runtime_dir`` (the redistributable of the toolset that built the
+    binaries) that runtime is used instead, and it also replaces the older
+    copies anywhere in the bundled Python (PySide6 and shiboken6 carry
+    their own): Windows loads one msvcp140.dll per process, and code from a
+    newer toolset can fail to initialise against an older runtime (PySide6
+    6.5 ships 14.29, 6.8 ships 14.39; VS 2022 17.10+ code needs 14.40+).
     """
     candidates = (
+        *((runtime_dir,) if runtime_dir else ()),
         python_home / "Lib" / "site-packages" / "PySide6",
         python_home / "Lib" / "site-packages" / "shiboken6",
         python_home,
@@ -236,6 +244,11 @@ def copy_msvc_runtime(app_dir: Path, python_home: Path, usd: Path,
             if candidate.is_file():
                 shutil.copy2(candidate, lib / name)
                 copied.append(name)
+    if runtime_dir and source == runtime_dir:
+        for name in MSVC_RUNTIME_NAMES:
+            if (source / name).is_file():
+                for stale in (app_dir / "python").rglob(name):
+                    shutil.copy2(source / name, stale)
     return copied
 
 
@@ -532,9 +545,10 @@ def assemble(args) -> Path:
     copy_tree(python_src, app_dir / "python", args.trim_dev,
               preserve_symlinks=keep_links)
     make_executable(python_executable(app_dir / "python", platform))
+    runtime_dir = getattr(args, "msvc_runtime_dir", "")
     if platform == "windows" and not copy_msvc_runtime(
             app_dir, Path(args.python_home), Path(args.usd_install),
-            Path(args.rig_install)):
+            Path(args.rig_install), Path(runtime_dir) if runtime_dir else None):
         print("assemble_bundle: warning: no MSVC runtime (msvcp140.dll) "
               "found in the Python home or install trees; the bundle "
               "will rely on the host's Visual C++ runtime",
@@ -657,6 +671,10 @@ def main(argv=None) -> int:
                         help="LSMinimumSystemVersion written to the macOS "
                              "app's Info.plist (the build's deployment "
                              "target)")
+    parser.add_argument("--msvc-runtime-dir", default="",
+                        help="Windows: the build toolset's CRT redist "
+                             "directory (Microsoft.VC143.CRT); preferred "
+                             "over the runtime PySide6 ships")
     parser.add_argument("--git-sha", default="")
     parser.add_argument("--archive", default="",
                         help="also write this .zip / .tar.gz of the bundle")

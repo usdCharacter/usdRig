@@ -189,6 +189,13 @@ jobs:
           if ($toolsShort -lt [version]$env:TOOLSET_MIN) { throw "MSVC tools $tools older than the platform's $env:TOOLSET_MIN" }
           if ($sdk -lt [version]$env:SDK_MIN) { throw "Windows SDK $sdk older than the platform's $env:SDK_MIN" }
           "version=$version" >> $env:GITHUB_OUTPUT
+          # The CRT of the toolset that builds the binaries; the bundle ships
+          # it instead of the older one inside the PySide6 wheel.
+          $redist = (Get-Content "$path/VC/Auxiliary/Build/Microsoft.VCRedistVersion.default.txt").Trim()
+          $crt = "$path/VC/Redist/MSVC/$redist/x64/Microsoft.VC143.CRT"
+          if (-not (Test-Path "$crt/msvcp140.dll")) { throw "no MSVC runtime at $crt" }
+          "MSVC redist $redist at $crt"
+          "crt=$crt" >> $env:GITHUB_OUTPUT
 
       - name: macOS toolchain identity (cache key)
         if: runner.os == 'macOS'
@@ -295,6 +302,7 @@ jobs:
             --launcher build/usdRigView.exe `
             --output $bundle --version "$env:VERSION_NUM" `
             --platform windows --platform-slug $env:SLUG `
+            --msvc-runtime-dir "${{ steps.msvc.outputs.crt }}" `
             --source-root . --rig-build-dir build `
             --usdnoodles-dir build/python/UsdNoodles `
             --git-sha "${{ github.sha }}" --trim-dev

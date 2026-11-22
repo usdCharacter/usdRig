@@ -530,5 +530,37 @@ class AssembleBundleTest(unittest.TestCase):
             self.assertIn((app / "rig" / "lib").resolve(), dll_entries)
 
 
+class MsvcRuntimeTest(unittest.TestCase):
+    """The build toolset's runtime wins over the older one PySide6 ships."""
+
+    def test_runtime_dir_replaces_bundled_copies(self):
+        spec = importlib.util.spec_from_file_location("assemble_bundle",
+                                                      ASSEMBLE)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            crt = base / "Microsoft.VC143.CRT"
+            for name in ("msvcp140.dll", "vcruntime140.dll"):
+                touch(crt / name, "14.44\n")
+            home = base / "python-home"
+            wheel = home / "Lib" / "site-packages" / "PySide6"
+            touch(wheel / "msvcp140.dll", "14.29\n")
+            app = base / "app"
+            bundled = app / "python" / "Lib" / "site-packages"
+            for package in ("PySide6", "shiboken6"):
+                touch(bundled / package / "msvcp140.dll", "14.29\n")
+            copied = module.copy_msvc_runtime(app, home, base / "usd",
+                                              base / "rig", crt)
+            self.assertIn("msvcp140.dll", copied)
+            for path in (app / "usd" / "lib" / "msvcp140.dll",
+                         app / "rig" / "lib" / "msvcp140.dll",
+                         bundled / "PySide6" / "msvcp140.dll",
+                         bundled / "shiboken6" / "msvcp140.dll"):
+                self.assertEqual(path.read_text(), "14.44\n", path)
+            self.assertFalse((bundled / "PySide6" / "vcruntime140.dll")
+                             .exists())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
