@@ -1,6 +1,7 @@
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecMath/blendLayoutKernel.h"
 #include "rigExecMath/blendRangeKernel.h"
+#include "rigExecMath/blendShapeKernel.h"
 #include "rigExecMath/dualQuatKernel.h"
 // rigExecRuntime geometry family:RevisionStatic, InfluenceFold,
 // RevisionChunk, RevisionFuse, ChainStatus, Derived.
@@ -1911,96 +1912,35 @@ struct RrGeoBlendChannel {
     std::vector<RrGeoBlendSampleData> samples;
 };
 
-void
-RrGeoAccumulateBlendSample(const RrGeoBlendSampleData &sample,
-                           const std::vector<RrVec3f> &base, float scale,
-                           std::vector<RrVec3f> *deltas)
-{
-    if (sample.layout) {
-        const RrGeoBlendLayout &layout = *sample.layout;
-        if (layout.indices.empty()) {
-            for (size_t i = 0; i < layout.offsets.size(); ++i) {
-                (*deltas)[i] += layout.offsets[i] * scale;
-            }
-            return;
-        }
-        for (size_t k = 0; k < layout.indices.size(); ++k) {
-            (*deltas)[size_t(layout.indices[k])] += layout.offsets[k] * scale;
-        }
-        return;
+struct RrGeoBlendSampleTraits {
+    static float Activation(const RrGeoBlendSampleData &s)
+    {
+        return s.activation;
     }
-    for (size_t i = 0; i < base.size(); ++i) {
-        (*deltas)[i] += ((*sample.points)[i] - base[i]) * scale;
+    static const RrGeoBlendLayout *Layout(const RrGeoBlendSampleData &s)
+    {
+        return s.layout.get();
     }
-}
+    static const RrVec3f *DensePoints(const RrGeoBlendSampleData &s)
+    {
+        return s.points->data();
+    }
+    static size_t DenseCount(const RrGeoBlendSampleData &s)
+    {
+        return s.points->size();
+    }
+};
 
 bool
 RrGeoSumBlendChannels(const std::vector<RrGeoBlendChannel> &channels,
                       const std::vector<RrVec3f> &base,
                       std::vector<RrVec3f> *deltas)
 {
-    if (!deltas || base.empty()) {
-        return false;
-    }
-    deltas->assign(base.size(), RrVec3f(0.0f));
-
-    for (const RrGeoBlendChannel &channel : channels) {
-        if (channel.samples.empty()) {
-            return false; // structural error: fails atomically
-        }
-        for (size_t k = 0; k < channel.samples.size(); ++k) {
-            const RrGeoBlendSampleData &sample = channel.samples[k];
-            const bool shapeOk =
-                sample.layout ? (sample.layout->valid &&
-                                 sample.layout->pointCount == base.size() &&
-                                 sample.points->empty())
-                              : sample.points->size() == base.size();
-            if (!std::isfinite(sample.activation) || sample.activation <= 0 ||
-                !shapeOk ||
-                (k > 0 &&
-                 sample.activation == channel.samples[k - 1].activation)) {
-                return false;
-            }
-        }
-        const float w =
-            std::min(std::max(RigExecBlendInputWeight(channel.weight), 0.0f),
-                     channel.samples.back().activation);
-        if (w == 0.0f) {
-            continue;
-        }
-        size_t hi = 0;
-        while (hi < channel.samples.size() &&
-               channel.samples[hi].activation < w) {
-            ++hi;
-        }
-        if (hi >= channel.samples.size()) {
-            hi = channel.samples.size() - 1;
-        }
-        const float aHi = channel.samples[hi].activation;
-        const float aLo = hi > 0 ? channel.samples[hi - 1].activation : 0.0f;
-        const float t = aHi > aLo ? (w - aLo) / (aHi - aLo) : 1.0f;
-        const RrGeoBlendSampleData *loSample =
-            hi > 0 ? &channel.samples[hi - 1] : nullptr;
-        const RrGeoBlendSampleData &hiSample = channel.samples[hi];
-
-        if (!hiSample.layout && (!loSample || !loSample->layout)) {
-            const std::vector<RrVec3f> *lo =
-                loSample ? loSample->points : nullptr;
-            const std::vector<RrVec3f> &hiPts = *hiSample.points;
-            for (size_t i = 0; i < base.size(); ++i) {
-                const RrVec3f dHi = hiPts[i] - base[i];
-                const RrVec3f dLo = lo ? (*lo)[i] - base[i] : RrVec3f(0.0f);
-                (*deltas)[i] += dLo + (dHi - dLo) * t;
-            }
-            continue;
-        }
-
-        if (loSample) {
-            RrGeoAccumulateBlendSample(*loSample, base, 1.0f - t, deltas);
-        }
-        RrGeoAccumulateBlendSample(hiSample, base, t, deltas);
-    }
-    return true;
+    // Serial: the same bits as the native split.
+    return RigExecSumBlendChannelsKernel<RrGeoBlendSampleTraits>(
+        channels, [](const RrGeoBlendChannel &c) { return c.weight; },
+        base.data(), base.size(), deltas,
+        [](size_t n, const auto &fn) { fn(0, n); });
 }
 
 // The blend-shape kernel's validation, the one definition it runs first and

@@ -2,6 +2,7 @@
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecGraph/windowHistory.h"
 #include "rigExecMath/blendRangeKernel.h"
+#include "rigExecMath/blendShapeKernel.h"
 #include "rigExec/internal/moverGraph.h"
 #include "rigExec/internal/parallel.h"
 #include "rigExec/internal/pathText.h"
@@ -3085,144 +3086,49 @@ RigExecAssembleSkinParameters(
     return params;
 }
 
-// Adds `scale` times one sample's delta into `deltas`.
-// The point of the sparse form: a real corrective moves 1,279 of 26,276
-// points, so the indexed loop touches 4.87% of what the dense one does. The
-// dense branch here exists for a sample that carries a layout with empty
-// indices (offsets parallel to the base points), which is what an authored
-// UsdSkelBlendShape with no pointIndices means, and for the dense-points
-// endpoint of a mixed pair.
-static void
-_AccumulateBlendSample(const RigExecBlendSampleData &sample,
-                       const GfVec3f *base, size_t baseCount, float scale,
-                       std::vector<GfVec3f> *deltas)
-{
-    if (sample.layout) {
-        const RigExecBlendSampleLayout &layout = *sample.layout;
-        if (layout.indices.empty()) {
-            for (size_t i = 0; i < layout.offsets.size(); ++i) {
-                (*deltas)[i] += layout.offsets[i] * scale;
-            }
-            return;
-        }
-        for (size_t k = 0; k < layout.indices.size(); ++k) {
-            (*deltas)[size_t(layout.indices[k])] += layout.offsets[k] * scale;
-        }
-        return;
+namespace {
+
+// The native view of a blend sample for blendShapeKernel.h.
+struct _BlendSampleTraits {
+    static float Activation(const RigExecBlendSampleData &s)
+    {
+        return s.activation;
     }
-    for (size_t i = 0; i < baseCount; ++i) {
-        (*deltas)[i] += (sample.PointData()[i] - base[i]) * scale;
+    static const RigExecBlendSampleLayout *
+    Layout(const RigExecBlendSampleData &s)
+    {
+        return s.layout.get();
     }
-}
+    static const GfVec3f *DensePoints(const RigExecBlendSampleData &s)
+    {
+        return s.PointData();
+    }
+    static size_t DenseCount(const RigExecBlendSampleData &s)
+    {
+        return s.PointCount();
+    }
+};
+
+} // namespace
 
 bool
 RigExecSumBlendChannels(const std::vector<RigExecBlendChannel> &channels,
                         const GfVec3f *base, size_t baseCount,
                         std::vector<GfVec3f> *deltas)
 {
-    if (!deltas || !base || !baseCount) {
-        return false;
-    }
-    deltas->assign(baseCount, GfVec3f(0));
-
-    for (const RigExecBlendChannel &channel : channels) {
-        if (channel.samples.empty()) {
-            return false; // structural error: fails atomically
-        }
-        for (size_t k = 0; k < channel.samples.size(); ++k) {
-            const RigExecBlendSampleData &sample = channel.samples[k];
-            // A sample carries its shape one of two ways, and exactly one:
-            // dense moved points, or a compiled sparse layout. Both
-            // have to describe THIS mesh.
-            const bool shapeOk =
-                sample.layout
-                    ? (sample.layout->valid &&
-                       sample.layout->pointCount == baseCount &&
-                       sample.PointCount() == 0)
-                    : (sample.PointCount() == baseCount && sample.PointData());
-            if (!std::isfinite(sample.activation) || sample.activation <= 0 ||
-                !shapeOk ||
-                (k > 0 &&
-                 sample.activation == channel.samples[k - 1].activation)) {
-                return false;
-            }
-        }
-        // The channel weight is clamped into the authored activation range;
-        // an implicit zero-delta sample sits at activation 0.
-        const float w =
-            std::min(std::max(RigExecBlendInputWeight(channel.weight), 0.0f),
-                     channel.samples.back().activation);
-        if (w == 0.0f) {
-            continue;
-        }
-        size_t hi = 0;
-        while (hi < channel.samples.size() &&
-               channel.samples[hi].activation < w) {
-            ++hi;
-        }
-        if (hi >= channel.samples.size()) {
-            hi = channel.samples.size() - 1;
-        }
-        const float aHi = channel.samples[hi].activation;
-        const float aLo = hi > 0 ? channel.samples[hi - 1].activation : 0.0f;
-        const float t = aHi > aLo ? (w - aLo) / (aHi - aLo) : 1.0f;
-        const RigExecBlendSampleData *loSample =
-            hi > 0 ? &channel.samples[hi - 1] : nullptr;
-        const RigExecBlendSampleData &hiSample = channel.samples[hi];
-
-        if (!hiSample.layout && (!loSample || !loSample->layout)) {
-            // The all-dense case. Must stay bit-identical; gated by
-            // 04_BlendShapeFace and arm blend tests. The sparse branch below
-            // is the same lerp but rounds differently in the last place.
-            const GfVec3f *lo = loSample ? loSample->PointData() : nullptr;
-            const GfVec3f *hiPts = hiSample.PointData();
-            // Each point is independent and every point's contribution keeps
-            // channel-order accumulation, so spreading the point
-            // range across workers is bit-identical to the serial loop. The
-            // per-channel setup above (weights, hi/lo sample pick, t) is cheap
-            // and stays sequential; only the O(points) inner loop parallelises.
-            const GfVec3f *baseData = base;
-            const GfVec3f *hiData = hiPts;
-            const GfVec3f *loData = lo;
-            GfVec3f *deltaData = deltas->data();
-            const size_t nPts = baseCount;
-            auto denseRange = [&](size_t begin, size_t end) {
-                for (size_t i = begin; i < end; ++i) {
-                    const GfVec3f dHi = hiData[i] - baseData[i];
-                    const GfVec3f dLo =
-                        loData ? (loData[i] - baseData[i]) : GfVec3f(0);
-                    deltaData[i] += dLo + (dHi - dLo) * t;
-                }
-            };
-            // Gated like every other launch site in this file: the frozen
-            // assembler calls this kernel too (frozenContext.cpp's
-            // blend-shape replica), and a frozen frame must run on its own
-            // thread alone. The serial branch computes the same bits, which
-            // is what makes the gate free to take.
-            if (RigExecParallelEvaluationEnabled() &&
-                !RigExecFrozenSerialActive() &&
-                nPts >= RigExecGeometryParallelThreshold) {
-                WorkParallelForN(nPts, denseRange, RigExecGeometryGrainSize);
-            } else {
-                denseRange(0, nPts);
-            }
-            continue;
-        }
-
-        // At least one endpoint is sparse. Written as the equivalent
-        // `dLo*(1-t) + dHi*t` so each sample is visited over ITS OWN indices
-        // and the union of the two index sets never has to be formed -- a
-        // point only one endpoint moves simply gets one of the two terms.
-        // Mixed dense/sparse endpoints fall out of this for free, which
-        // matters because an in-between and its full target need not have
-        // been authored the same way.
-        if (loSample) {
-            _AccumulateBlendSample(*loSample, base, baseCount, 1.0f - t,
-                                   deltas);
-        }
-        _AccumulateBlendSample(hiSample, base, baseCount, t, deltas);
-    }
-    return true;
+    // The frozen assembler calls this too, and a frozen frame runs on its
+    // own thread alone.
+    const auto forRange = [](size_t n, const auto &fn) {
+        if (RigExecParallelEvaluationEnabled() &&
+            !RigExecFrozenSerialActive() &&
+            n >= RigExecGeometryParallelThreshold)
+            WorkParallelForN(n, fn, RigExecGeometryGrainSize);
+        else
+            fn(0, n);
+    };
+    return RigExecSumBlendChannelsKernel<_BlendSampleTraits>(
+        channels, [](const RigExecBlendChannel &c) { return c.weight; }, base,
+        baseCount, deltas, forRange);
 }
 
 bool
