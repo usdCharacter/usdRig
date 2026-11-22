@@ -1,5 +1,6 @@
 #include "rigExecSchema/schemaNames.h"
 #include "constraintGraphBinding.h"
+#include "poseOpRunner.h"
 #include "poseProgram.h"
 #include <algorithm>
 #include <cmath>
@@ -652,7 +653,7 @@ RunIkFkMatch(const RigExecConstraintGraphBinding &bound,
 bool
 RigExecRunConstraintGraph(const RigExecConstraintGraphBinding &bound,
                           RigExecTypedValueStore *store, std::string *error,
-                          RigExecWindowRun *window)
+                          RigExecWindowRun *window, RigExecPoseOpRunner *ops)
 {
     if (!store || bound.target.output >= store->values.size())
         return Fail(error, "invalid constraint graph storage");
@@ -788,7 +789,9 @@ RigExecRunConstraintGraph(const RigExecConstraintGraphBinding &bound,
                                             error))
         return failure(error ? *error : "constraint parameter refresh failed");
     RigExecConstraintResult result;
-    if (!RigExecRunConstraint(descriptor.record, input, &result, error))
+    if (!(ops ? RigExecRunConstraintOp(descriptor.record, input, *ops, &result,
+                                       error)
+              : RigExecRunConstraint(descriptor.record, input, &result, error)))
         return failure(error ? *error : "constraint kernel failed");
     if (descriptor.record.kind == RigExecConstraintKind::SingleChainIk) {
         if (result.chain.size() != bound.target.chainOutputs.size())

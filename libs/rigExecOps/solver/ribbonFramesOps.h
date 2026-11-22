@@ -16,11 +16,16 @@ struct SampleRibbonFramesPayload {
 
 const rigExec::RigExecOpHandle &SampleRibbonFrames();
 
-// Posed and Rest (Vec3fArray, cubic uniform B-spline control points). Out
+// Posed and Rest (Vec3fArray, cubic uniform B-spline control points),
+// optional JointRests (PointLandmarksList) and JointRestLive (BoolArray):
+// each sample k live in both is re-based onto JointRests[k]. Out
 // (PointFrameArray, one posed frame per sample on the rest sample's
-// landmarks). A curve that does not sample is an error.
+// landmarks or its live joint rest). A curve that does not sample is an
+// error.
 const rigExec::RigExecPortHandle &SampleRibbonFramesPosed();
 const rigExec::RigExecPortHandle &SampleRibbonFramesRest();
+const rigExec::RigExecPortHandle &SampleRibbonFramesJointRests();
+const rigExec::RigExecPortHandle &SampleRibbonFramesJointRestLive();
 const rigExec::RigExecPortHandle &SampleRibbonFramesOut();
 
 } // namespace rigExecOps

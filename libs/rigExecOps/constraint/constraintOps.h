@@ -58,7 +58,8 @@ const rigExec::RigExecOpHandle &ParentConstraint();
 const rigExec::RigExecOpHandle &AimConstraint();
 
 // Every op: In (PointFrame), Weight (Double, clamped to [0, 1]), Out
-// (PointFrame). A frame the constraint cannot solve passes In through.
+// (PointFrame). A frame the constraint cannot solve comes back as In flagged
+// degenerate.
 //
 // Position, Rotation, Scale and Parent: Sources (PointFrameArray, rests
 // unread) and optional SourceWeights (DoubleArray, one per source; unfed,

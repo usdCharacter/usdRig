@@ -133,6 +133,8 @@ add_library(rigExecScene SHARED
     libs/rigExecScene/jointGroupTranslation.cpp
     libs/rigExecScene/poseCommit.cpp
     libs/rigExecScene/poseGraphBinding.cpp
+    libs/rigExecScene/poseOpRunner.cpp
+    libs/rigExecScene/poseOps.cpp
     libs/rigExecScene/poseSceneTranslation.cpp
     libs/rigExecScene/propertyGraphBinding.cpp
     libs/rigExecScene/propertySceneTranslation.cpp
@@ -1342,6 +1344,12 @@ add_executable(testRigExecSceneGeometryOps tests/testRigExecSceneGeometryOps.cpp
 target_link_libraries(testRigExecSceneGeometryOps PRIVATE rigExecSceneOps)
 add_test(NAME testRigExecSceneGeometryOps COMMAND testRigExecSceneGeometryOps)
 set_tests_properties(testRigExecSceneGeometryOps PROPERTIES LABELS "fast")
+add_executable(testRigExecScenePoseOps tests/testRigExecScenePoseOps.cpp)
+target_link_libraries(testRigExecScenePoseOps PRIVATE rigExecSceneOps)
+target_compile_definitions(testRigExecScenePoseOps PRIVATE
+    ${_rigexec_schema_resource_define})
+add_test(NAME testRigExecScenePoseOps COMMAND testRigExecScenePoseOps
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples")
 
 add_executable(testRigExecOpGraph tests/testRigExecOpGraph.cpp)
 target_link_libraries(testRigExecOpGraph PRIVATE rigExecGraph work Threads::Threads)
@@ -3127,7 +3135,8 @@ foreach(_rigexec_scene_exe IN ITEMS
     testRigExecOneLoopAcceptance testRigExecOpTrace
     testRigExecPatchMover testRigExecPhaseBindings testRigExecPoseInterpolator
     testRigExecPropertyOps testRigExecRestOps testRigExecRuntimeInputs
-    testRigExecScopedClears testRigExecSkinTopology testRigExecSolverBake
+    testRigExecScenePoseOps testRigExecScopedClears testRigExecSkinTopology
+    testRigExecSolverBake
     testRigExecSolverStacking testRigExecSurfaceBinding testRigExecSurfaceProjector
     testRigExecSurfaceSnap testRigExecValueEdits testRigExecVolumeWeights
     testRigExecWeightProgram testRigExecWrinkle

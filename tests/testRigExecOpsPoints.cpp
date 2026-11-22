@@ -1812,11 +1812,16 @@ TestConstraints()
     CHECK(
         SameBits(RigExecApplyAimConstraint(input, target, aimParams), actual));
 
-    // A degenerate source leaves the input as it was.
+    // A degenerate source gives what the native kernel gives.
     rigExecRig::PointFrameArray broken = sources;
     broken.frames[0].flags |= rigExecRig::kPointFrameDegenerate;
+    std::vector<RigExecConstraintSource> brokenSources = gfSources;
+    brokenSources[0].frame.flags |= RigExecPointFrameDegenerate;
+    positionParams.weight = weight;
     CHECK(positionNode.Run({&in, &broken, &weights, &weight}, &actual));
-    CHECK(SameBits(input, actual));
+    CHECK(SameBits(
+        RigExecApplyPositionConstraint(input, brokenSources, positionParams),
+        actual));
 
     // Weights of another length, or offsets, are refused.
     const auto shortWeights = ToArray(std::vector<double>{1.0});
@@ -2248,9 +2253,13 @@ TestFrameBlend()
                                               scaleBlend),
                            actual));
         }
+        // A NaN weight blends as the native kernel does.
         const double nan = std::nan("");
-        std::string error;
-        CHECK(!bare.Run({&rigA, &rigB, &rest, &nan}, &actual, &error));
+        CHECK(bare.Run({&rigA, &rigB, &rest, &nan}, &actual));
+        CHECK(SameBits(RigExecBlendFrames(a, b, restFrame.points, nan,
+                                          RigExecRotationBlend::ShortestArc,
+                                          scaleBlend),
+                       actual));
     }
 
     // Twist distribution: a twist past a half turn, extra turns, an

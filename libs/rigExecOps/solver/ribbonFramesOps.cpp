@@ -1,6 +1,7 @@
 #include "rigExecOps/solver/ribbonFramesOps.h"
 
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/solver/liveRests.h"
 #include "rigExecMath/ribbonFramesKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecRuntime/dualQuatMath.h"
@@ -15,6 +16,8 @@ RIGEXEC_DEFINE_OP_HANDLE(SampleRibbonFrames)
 
 RIGEXEC_DEFINE_PORT_HANDLE(SampleRibbonFramesPosed)
 RIGEXEC_DEFINE_PORT_HANDLE(SampleRibbonFramesRest)
+RIGEXEC_DEFINE_PORT_HANDLE(SampleRibbonFramesJointRests)
+RIGEXEC_DEFINE_PORT_HANDLE(SampleRibbonFramesJointRestLive)
 RIGEXEC_DEFINE_PORT_HANDLE(SampleRibbonFramesOut)
 
 namespace {
@@ -43,6 +46,8 @@ RunSampleRibbonFrames(const void *payload, void *, const RigExecOpIo &io,
     if (p.sampleCount < 2 || frames.size() != size_t(p.sampleCount))
         return Fail(error, "SampleRibbonFrames",
                     "needs two samples and two distinct points per curve");
+    RebaseLive(io, SampleRibbonFramesJointRests(),
+               SampleRibbonFramesJointRestLive(), &frames, &rests);
     PointFrameArray &out = Out<PointFrameArray>(io, SampleRibbonFramesOut());
     out.frames = RigExecArray<PointFrame>(frames.data(), frames.size());
     out.rests = RigExecArray<PointLandmarks>(rests.data(), rests.size());
@@ -55,12 +60,18 @@ void
 RegisterRibbonFramesOps(rigExec::RigExecOpRegistrar &registrar)
 {
     using rigExec::kRigExecPortInput;
+    using rigExec::kRigExecPortOptional;
     using rigExec::kRigExecPortOutput;
+    constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
     const auto &points = rigExecStd::Vec3fArray();
 
     static const rigExec::RigExecPortDesc ports[] = {
         {&SampleRibbonFramesPosed(), &points, kRigExecPortInput, "posed"},
         {&SampleRibbonFramesRest(), &points, kRigExecPortInput, "rest"},
+        {&SampleRibbonFramesJointRests(), &rigExecRig::PointLandmarksList(),
+         kOptional, "jointRests"},
+        {&SampleRibbonFramesJointRestLive(), &rigExecStd::BoolArray(),
+         kOptional, "jointRestLive"},
         {&SampleRibbonFramesOut(), &rigExecRig::PointFrameArrayType(),
          kRigExecPortOutput, "out"},
     };

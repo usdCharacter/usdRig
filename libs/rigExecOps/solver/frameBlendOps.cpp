@@ -1,6 +1,7 @@
 #include "rigExecOps/solver/frameBlendOps.h"
 
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/solver/liveRests.h"
 #include "rigExecMath/frameBlendKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecRuntime/dualQuatMath.h"
@@ -28,6 +29,8 @@ RIGEXEC_DEFINE_PORT_HANDLE(DistributeTwistStartRest)
 RIGEXEC_DEFINE_PORT_HANDLE(DistributeTwistEndRest)
 RIGEXEC_DEFINE_PORT_HANDLE(DistributeTwistWeights)
 RIGEXEC_DEFINE_PORT_HANDLE(DistributeTwistTurns)
+RIGEXEC_DEFINE_PORT_HANDLE(DistributeTwistJointRests)
+RIGEXEC_DEFINE_PORT_HANDLE(DistributeTwistJointRestLive)
 RIGEXEC_DEFINE_PORT_HANDLE(DistributeTwistOut)
 
 namespace {
@@ -43,12 +46,10 @@ using namespace opIo;
 
 bool
 RunBlendFrames(const void *payload, void *, const RigExecOpIo &io,
-               std::string *error)
+               std::string *)
 {
     const auto &p = *static_cast<const BlendFramesPayload *>(payload);
     const double weight = *In<double>(io, BlendFramesWeight());
-    if (!std::isfinite(weight))
-        return Fail(error, "BlendFrames", "needs a finite weight");
     Out<PointFrame>(io, BlendFramesOut()) =
         rigExec::RigExecBlendFramesKernel<Vec3f, Vec3d>(
             *In<PointFrame>(io, BlendFramesA()),
@@ -68,16 +69,18 @@ RunDistributeTwist(const void *, void *, const RigExecOpIo &io,
     const double turns = InOr(io, DistributeTwistTurns(), 0.0);
     const PointLandmarks &startRest =
         *In<PointLandmarks>(io, DistributeTwistStartRest());
-    const std::vector<PointFrame> frames =
+    std::vector<PointFrame> frames =
         rigExec::RigExecDistributeTwistKernel<Vec3f, Vec3d>(
             *In<PointFrame>(io, DistributeTwistStart()),
             *In<PointFrame>(io, DistributeTwistEnd()), startRest,
             *In<PointLandmarks>(io, DistributeTwistEndRest()), weights, turns);
     if (frames.size() != weights.size())
         return Fail(error, "DistributeTwist", "needs a finite twist");
+    std::vector<PointLandmarks> rests(frames.size(), startRest);
+    RebaseLive(io, DistributeTwistJointRests(), DistributeTwistJointRestLive(),
+               &frames, &rests);
     PointFrameArray &out = Out<PointFrameArray>(io, DistributeTwistOut());
     out.frames = RigExecArray<PointFrame>(frames.data(), frames.size());
-    const std::vector<PointLandmarks> rests(frames.size(), startRest);
     out.rests = RigExecArray<PointLandmarks>(rests.data(), rests.size());
     return true;
 }
@@ -112,6 +115,10 @@ RegisterFrameBlendOps(rigExec::RigExecOpRegistrar &registrar)
         {&DistributeTwistWeights(), &rigExecStd::DoubleArray(),
          kRigExecPortInput, "weights"},
         {&DistributeTwistTurns(), &d, kOptional, "twistTurns"},
+        {&DistributeTwistJointRests(), &rigExecRig::PointLandmarksList(),
+         kOptional, "jointRests"},
+        {&DistributeTwistJointRestLive(), &rigExecStd::BoolArray(), kOptional,
+         "jointRestLive"},
         {&DistributeTwistOut(), &rigExecRig::PointFrameArrayType(),
          kRigExecPortOutput, "out"},
     };

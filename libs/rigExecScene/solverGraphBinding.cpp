@@ -1,5 +1,6 @@
 #include "rigExecSchema/schemaNames.h"
 #include "solverGraphBinding.h"
+#include "poseOpRunner.h"
 #include "skeleton2dTranslation.h"
 #include "rigExec/api/types.h"
 #include <algorithm>
@@ -285,7 +286,8 @@ RigExecBindSolverGraph(const RigExecSceneSolverDescriptor &source,
 bool
 RigExecRunSolverGraph(const RigExecSolverGraphBinding &bound,
                       RigExecTypedValueStore *store,
-                      RigExecSolverWorkspace *workspace, std::string *error)
+                      RigExecSolverWorkspace *workspace, std::string *error,
+                      RigExecPoseOpRunner *ops)
 {
     if (!store || !workspace || bound.output >= store->values.size())
         return Fail(error, "invalid solver graph storage");
@@ -447,7 +449,8 @@ RigExecRunSolverGraph(const RigExecSolverGraphBinding &bound,
         }
     }
     const bool valid =
-        RigExecRunSolver(record, input, workspace, &output, error);
+        ops ? RigExecRunSolverOp(record, input, *ops, &output, error)
+            : RigExecRunSolver(record, input, workspace, &output, error);
     store->Publish(bound.output, VtValue(output), !valid, false,
                    output.frames.size(),
                    valid   ? std::string()
