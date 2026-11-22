@@ -968,23 +968,10 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             B.resolvedRoutedPrims.insert(c.weightObject);
         }
 
-        // inputs:sourceWeights and the parent offsets are authored TABLES
-        // the operator reads raw at the frame's own time. They are compiled rig
-        // state rather than captured: the prologue reads them again when
-        // the program stamp or the stage edit serial moved, or when the time
-        // moved and their read can move with it (ConstraintArrays), so an
-        // animated blend between two parents bakes -- and the cardinality
-        // diagnostic the dynamic walk gives a malformed one is reproduced
-        // from the read's numbers rather than refused at bake.
-        // FoldShape and not Fold: nothing about the VALUE is folded, so an
-        // interactive override on one of these tables is not placeable --
-        // which agrees with the dynamic path, whose raw read ignores such an
-        // override too. What FoldShape does NOT buy is edit-time cheapness:
-        // like Fold it puts the property in `rebuild`, so authoring a new
-        // weight rebuilds the program even though the run would have re-read
-        // it anyway. Conservative and correct; the day that costs a rigger
-        // scrubbing a blend curve, the fix is a `Name` that indexes without
-        // rebuilding, not a quieter comment here.
+        // inputs:sourceWeights and the parent offsets: re-read when the program
+        // stamp, the stage edit serial or (for a varying read) the time moved
+        // (ConstraintArrays). FoldShape: edits rebuild; overrides not
+        // placeable.
         {
             RigExecBakedProgramImpl::ConstraintArrays arrays;
             arrays.prim = prim;
@@ -2800,21 +2787,8 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
     }
     BindFrameRecordVersions(&B);
 
-    // The dynamic path answers these from a second exec request, whose
-    // per-provider override is the FINAL frame rather than the mid-walk one
-    // a batch sees -- so they run HERE, after the whole walk, and read the
-    // last version of everything. They write no candidate and bump no
-    // counter: a solver that binds a joint or drives geometry is required
-    // and therefore batched, so one of these poses nothing and the only
-    // thing that reads it is the guide publication.
-    // Not gated on the guide toggle. The toggle can move without the compiled rig
-    // moving, so gating would be a runtime branch in a step body; running
-    // and not publishing is the same published generation, because a
-    // solver step only reads its sampled leaves and the epilogue consults
-    // the toggle where the dynamic path does. The leaves are sampled in the
-    // prologue whether or not a guide solver runs, so the static-input
-    // cache's counters do not move with the toggle
-    // either.
+    // Runs after the walk (reads final versions); writes no candidate, bumps no
+    // counter. Not gated on the guide toggle: the epilogue consults it.
     for (const int si : B.guideSolvers) {
         RigExecBakedProgramImpl::Solver &solver = B.solvers[size_t(si)];
         // +1 for the start provider's synthetic base element.
@@ -5714,23 +5688,10 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
             finish();
             return;
         }
-        // The envelope, in the dynamic path's THREE exclusive arms. A
-        // constraint copies the ORACLE -- the dynamic constraint path does not
-        // go through exec at all, it calls _ResolveWeights and takes its error
-        // string -- so this calls the same function with the same arguments and
-        // the answer is identical by construction. The finite-[0, 1] check
-        // belongs to the OTHER arm and must not be applied to a resolved
-        // envelope: the dynamic path does not check there, so checking would
-        // emit a diagnostic it never emits. The third arm is a GEOMETRY-domain
-        // constraint that binds a weight object. Such a constraint resolves NO
-        // envelope here. Its weight is per POINT and resolves after the solve,
-        // on the revision this delta feeds -- and because a constraint and its
-        // revision are the same mover prim, that revision's own weight packet
-        // IS this constraint's weight object. Leaving `weight` at 1.0 is what
-        // hands the revision a full-strength delta for the per-point lerp to
-        // scale; resolving one element here instead would apply a one-point
-        // answer to the whole mesh AND square the envelope on the point the
-        // packet also covers.
+        // Envelope: the dynamic path's three exclusive arms; calls
+        // _ResolveWeights with the same arguments. No finite-[0, 1] check on a
+        // resolved envelope. Geometry-domain constraint with a weight object:
+        // weight stays 1.0; the revision applies it per point, after the solve.
         double weight = 1.0;
         if (!c.weightObject.IsEmpty() && c.pointsTarget.IsEmpty()) {
             const auto &field = B.weightFields[size_t(c.weightField)];
@@ -6459,22 +6420,11 @@ RigExecBakedPublishPose(RigExecBakedProgramImpl *program, RigExecRigPose *pose)
     RigExecBakedAppendStepLines(&B, RigExecBakedStepLines::Walk,
                                 &pose->diagnostics);
 
-    // An incomplete solver is an authoring gap, not a silent one. Merged
-    // here rather than accumulated during the walk, because the ORDER is a
-    // property of the whole run and a step must not hold a shared one.
-    // The dynamic walk's rule, expressed identically: one line per failing
-    // WRITER (a stacked joint may have several, and the one that failed is
-    // not necessarily the one a joint->solver lookup would name), collected
-    // in walk order, stable-sorted by joint path -- and the sentence says
-    // "fell back to its rest chain" only when NO writer published, because a
-    // joint another writer published keeps that writer's frame and fell back
-    // to nothing. The two streams are compared verbatim, so neither half of
-    // this may drift from the other.
-    // The element comes from jointSolverBinding rather than from
-    // Solver::fallbackSlots, which holds slots only: widening it would
-    // change a serialized, round-trip-verified field for a diagnostic.
-    // Paths are spelled from Build's texts: a frozen worker runs this, and
-    // SdfPath::GetString() interns under a lock.
+    // One line per failing writer, walk order, stable-sorted by joint; text
+    // must match the dynamic walk. "fell back to its rest chain" only when no
+    // writer published. Merged here, not per step: the order belongs to the
+    // whole run. Paths come from Build's texts: SdfPath::GetString() interns
+    // under a lock.
     struct FallbackJoint {
         SdfPath joint;
         size_t jointSlot;

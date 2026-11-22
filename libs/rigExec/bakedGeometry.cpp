@@ -3110,21 +3110,8 @@ RigExecBakedOverlayPointReads(RigExecBakedProgramImpl *program,
 
 namespace {
 
-// WHICH points a revision is assembled against, stated once because the two
-// callers below pass different ones and the difference is invisible until an
-// operator reads them:
-//  * a CHAIN revision gets the chain's AUTHORED base -- the attribute as the
-//    stage holds it -- for every revision of the chain, not the running
-//    value. The dynamic walk reads the base once per target and hands that
-//    same array to every revision, so a lattice's rest points and a
-//    volumeCorrect's reference volume are measured against the mesh as
-//    authored however deep in the chain they sit.
-//  * a DERIVED revision gets the chain's FINAL points, which is what it is
-//    for: recomputeNormals and recomputeExtent take auxPoints = basePoints
-//    and must describe the geometry as published.
-// Taken as a range rather than a vector because the two callers hold the
-// points in different containers and RigExecProviderValues copies them
-// anyway.
+// Chain revisions read the authored base; derived revisions read final
+// points.
 //
 // The provider values both assemblies take: everything but the stage reads.
 RigExecProviderValues

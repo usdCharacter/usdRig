@@ -3098,19 +3098,10 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     // gap between Compile.Bake opening and the first Bake.* mark. Marking
     // it here costs the one branch per mark every other phase already pays.
     RigExecProfilePhases phases(&E._profiler, "compile");
-    // The bakeability walk runs as a task beside the start of the bake --
-    // the entry block, the dense provider slots and the ladder's parallel
-    // resolve -- and is joined before the first thing that COMMITS anything
-    // the refusal would have prevented: the ladder commit, which hands out
-    // override indices. It can, because it reads only the evaluator's
-    // compiled tables and the stage, and so do those three: none of them
-    // writes anything but the program under construction and `ctx`, which
-    // are discarded whole on a refusal.
-    // The two write their refusals to separate vectors, merged in program
-    // order at the join. `ctx.reasons` is what `refuse()` appends to, and the
-    // dense slots refuse; sharing one vector with the walk would interleave
-    // the two lists and race. On a refusal the walk's reasons alone are
-    // handed back.
+    // Bakeability walk is a task joined before the ladder commit (which hands
+    // out override indices); work before the join writes only the program and
+    // `ctx`, discarded on refusal. Refusals in a separate vector, merged in
+    // program order; on a refusal only the walk's reasons are returned.
     // Inline when parallel eval is off, in a frozen run, or uncompiled.
     const bool bakeableBeside = E._compiled &&
                                 RigExecParallelEvaluationEnabled() &&
@@ -3348,21 +3339,10 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     B.ladders.resize(size_t(N));
     for (auto &ladder : B.ladders)
         ladder.interveningSpace.constant = GfMatrix4d(1.0);
-    // Fifteen composed-stage resolutions per provider slot, and on a character
-    // this loop is the other of the two places Build spends most of its time --
-    // see the input binding table below, which is the same shape of problem at
-    // eleven channels instead of fifteen. ResolveBind only READS the stage and
-    // `chainTargets`, so the fifteen calls for one slot don't depend on any
-    // other slot's, and the resolve half moves to a parallel pass. The three
-    // space bindings are matrices, the rotation order a token and the twelve
-    // avars doubles, so ResolveBind's typed result is kept typed rather than
-    // forced into one array -- each paired with its walk, same as
-    // _AvarResolution. The commit's order-free half runs in the same pass: each
-    // chunk of slots records its folds and bindings into a shard of its own
-    // (see RigExecBakedRecordBind), in slot-then-channel order, and the shards
-    // are merged in chunk order after the bakeability join. Recording before
-    // the join is safe because a shard is scratch -- nothing reaches the
-    // program until the merge, and a refused rig never merges.
+    // Bindings resolved in parallel (stage read-only); ResolveBind results stay
+    // typed. Each chunk records into its own shard (RigExecBakedRecordBind) in
+    // slot-then-channel order; shards merge in chunk order after the
+    // bakeability join, and a refused rig never merges.
     RigExecProfilePhases bindPhases(&E._profiler, "compile");
     bindPhases.Next("Bake.ladder.resolve");
     struct _LadderResolution {

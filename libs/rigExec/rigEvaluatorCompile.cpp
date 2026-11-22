@@ -335,37 +335,11 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     }
     stampCompileRegion("Compile.DerivedStartFrames");
 
-    // The structure digest is a pure read of the composed stage that boils it
-    // down to one number, and that number is not consulted until the compiled
-    // rig is committed far below: nothing in between reads it, and compile
-    // authors nothing to the stage for it to miss. So it runs beside the WHOLE
-    // of compile rather than beside only its tail: dispatched after
-    // DiscoverValidate it can land after the main thread reaches the join
-    // below, and compile then pays for the digest in waiting. Safe to dispatch
-    // before DiscoverValidate because that phase AUTHORS NOTHING: it reads the
-    // composed stage and reports, so there is no edit for the digest to race.
-    // And a rig malformed enough for DiscoverValidate to reject is still one
-    // _ComputeStructureDigest reads without complaint -- every lookup in it
-    // goes through GetPrimAtPath/GetAttribute/Get, which hand back invalid
-    // objects that the code already tests for, rather than throwing. The single
-    // precondition it cannot survive is a null _stage, which a dispatch after
-    // DiscoverValidate never sees; hence the guard in the lambda. The 0 that
-    // guard leaves behind is never read -- Compile returns false on a null
-    // stage long before the commit below. It runs as three tasks, one per
-    // segment (_DigestSegment), each writing only its own string; the join
-    // below concatenates them in segment order and hashes the result, which is
-    // the digest one serial walk produces. The Solvers segment is most of the
-    // work, so it is dispatched first. digestParts is declared before the
-    // dispatcher so it outlives it, and WorkDispatcher's destructor waits --
-    // which is what covers the early returns between here and the join.
-    // Declared AFTER retiringBakedProgram so it is still destroyed first: the
-    // digest tasks are joined before the retired program is torn down
-    // underneath them. Anything declared after the dispatcher dies before that
-    // wait, so a task must not reference it: each task holds its own copy of
-    // computeDigestPart, which carries only `this`, &digestParts and
-    // &digestFootprints, all of which outlive the dispatcher. Each task writes
-    // its segment's text and the footprint it recorded (the prims outside the
-    // rig it read) into its own slots.
+    // Digest: 3 tasks (_DigestSegment), stage read-only, joined before commit;
+    // the join concatenates segments in order and hashes. digestParts is
+    // declared after retiringBakedProgram and before the dispatcher, whose
+    // destructor joins; tasks capture only `this`, &digestParts and
+    // &digestFootprints.
     std::string digestParts[_DigestSegmentCount];
     _DigestFootprint digestFootprints[_DigestSegmentCount];
     WorkDispatcher digestDispatcher;
@@ -478,25 +452,10 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     }
 
     compileBlocks.Next("DiscoverValidate.WarmupDispatch");
-    // Dispatched as early as its inputs allow: straight after the providers
-    // are discovered, ahead of the pose-interpolator solve and the
-    // transform-authority pass, which read the stage and author nothing. The
-    // lane task is compile's critical path in both kinds of compiled rig -- the
-    // warm-up and the solver-request preparations behind it in an eager
-    // one, the guides in a deferred one -- so every millisecond it starts
-    // earlier is one off the compile.
-    // Warm the shared exec network, off the critical path, in a compiled rig that
-    // prepares its requests here.
-    // Every request an eager compiled rig prepares -- the solver batches, the
-    // first-frame pose, the main compiled rig request, the guides -- compiles into
-    // the SAME exec network for this stage, and whichever request asks for a
-    // provider first pays to compile it. Asking for all of them at once,
-    // here, builds that shared network in one wide parallel round rather
-    // than in a series of narrow ones, and it runs beside the scheduling
-    // work below that has to happen anyway. It is pure preparation: no value
-    // is read from it, and a request that cannot be built valid simply
-    // leaves the real preparations to compile what they need, and to report
-    // their own failure.
+    // Dispatched after provider discovery: lane task is compile's critical
+    // path. Warm-up prepares every eager request into the shared exec network
+    // in one parallel round. Nothing is read from it; a request that fails to
+    // build is left to the real preparation to report.
     compileBlocks.Next("DiscoverValidate.Providers");
 
     // Pose interpolators, discovered and SOLVED here. Solving is the whole
@@ -693,20 +652,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     }
 
     compileBlocks.Next("DiscoverValidate.OutputCheck");
-    // A rig has to publish SOMETHING.
-    // Controls, joints, volumes, and movers are the four ways it can: a control
-    // publishes its posed frame for the synthesized viewport guide, a joint
-    // publishes a frame whether or not anything moves it, a placed weight
-    // volume publishes its falloff guide while it is being authored, and a
-    // mover publishes whatever its targets are. Zero of all four is a rig that
-    // evaluates to an empty generation every frame, which is far likelier to
-    // be an authoring mistake -- a rig root pointed at the wrong prim -- than
-    // an intent.
-    // An inert mover is not an output, but it is evidence of intent: the rig
-    // root found mover prims, they simply are not wired yet. Failing that is
-    // the same mistake as failing the whole rig for one disconnected mover --
-    // it makes the last wire you pull take the rig down. The error is for a
-    // rig that found NOTHING, which is the misconfiguration it describes.
+    // Error only when no control, joint, volume or mover exists. An inert mover
+    // counts.
     if (newControlPaths.empty() && newJointPaths.empty() &&
         newVolumeWeightPaths.empty() && newMovers.empty() &&
         inertMovers.empty()) {
@@ -796,28 +743,11 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     }
 
     compileBlocks.Next("DiscoverValidate.SolverJointBinding");
-    // View-free solver->joint binding validation. Before teardown, so a bad
-    // binding keeps the previous compiled rig. Recursive over the
-    // composed Solvers subtree. Authored-conflict checks read the SOURCE
-    // stage (_stage).
-    // joint -> (posing solver, element). The validation below already
-    // resolves and bounds-checks exactly this pair; keeping it is what lets
-    // Evaluate extract each bound joint's frame from its solver's aggregate
-    // and supply it as a value override, so the binding never has to be
-    // authored anywhere.
-    // rigExec:joints is an ordered WRITE, not an exclusive claim (solvers
-    // stack), so the value is the ordered stack of writers rather
-    // than one owner. Index 0 writes first; the last entry supplies the
-    // joint's base frame. The order is settled below, once the POSE graph is
-    // complete -- which is later than the solver DAG, because a pair of
-    // writers can be ordered by a solver -> constraint -> solver path and by
-    // nothing else: data flow decides any pair it orders, and the solver
-    // stack ordinal breaks every remaining tie.
-    // The ordered solver walk is hoisted here because four passes need it --
-    // this validation, the consumed-solver relaxation, the solver DAG and the
-    // stack ordinal. Walked once, with the providers, ahead of the exec lane's
-    // dispatch; compile authors nothing to the stage, so that walk is still
-    // the stage's answer here.
+    // Validates solver->joint bindings before teardown, so a bad binding keeps
+    // the previous compiled rig. Authored-conflict checks read _stage.
+    // Value: joint -> ordered writer stack (solver, element); index 0 writes
+    // first, the last supplies the base frame. Ordered once the pose graph is
+    // complete. orderedSolvers is walked once and shared by four passes.
     const std::vector<UsdPrim> &orderedSolvers = aggregateSolvers;
     // Solver -> its position in the SOLVER STACK ORDINAL: the reverse of the
     // composed pre-order of the whole rig, which is _GetMoverExecutionOrder's
@@ -1309,25 +1239,9 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // Compile the solver DAG, including frame inputs carried by a posed
     // namespace ancestor. Rest inputs are independent of posed outputs and
     // therefore never introduce a feedback edge (IK -> blend is legal).
-    // PRODUCERS: the solvers with no position in the pose stack at all.
-    // Two kinds, and both are scheduled by DATA FLOW alone:
-    //   * a solver whose AGGREGATE another solver reads. It is already
-    //     special -- the consumed-solver relaxation makes its rigExec:joints
-    //     a rest reference wherever the consumer claims the same joint -- and
-    //     its consumer cannot read an "earlier version" of an aggregate, so
-    //     the aggregate edge decides the pair and the namespace says nothing
-    //     about it. This is what keeps every IK/FK blend in the repo
-    //     schedulable: reversed sibling order puts the blend BEFORE the
-    //     solvers it blends, because a blend is authored last.
-    //     (The relaxation is per JOINT, not per solver, so a consumed solver
-    //     that also writes a joint its consumer does not name still writes --
-    //     `docs/examples/blend_point_frames.usda` is exactly that shape. It
-    //     is still a producer: what takes it out of the stack is being read,
-    //     not being joint-less.)
-    //   * a solver that writes no joint at all -- one whose aggregate only a
-    //     geometry mover reads.
-    // Every consumer of the ordinal map must therefore test membership rather
-    // than use operator[].
+    // Producers (no pose-stack position) are ordered by data flow only: a
+    // solver whose aggregate another solver reads, or one that writes no joint.
+    // Consumers of the ordinal map test membership, never operator[].
     std::set<SdfPath> aggregateProducers;
     {
         std::set<SdfPath> solverPaths;
@@ -2935,25 +2849,9 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             }
         }
     }
-    // The pose closure is otherwise computed one prim's _CollectPoseInputInfo
-    // at a time, in the constraint pass and again in
-    // PrepareRequests.ProviderClosure. The walk that spends it is
-    // inherently serial (each prim's answer says which prim to ask about
-    // next), but the ASKING is not: a level of the frontier is a set of
-    // independent stage reads.
-    // So the closures are computed here, all at once, by _PoseInputGraph:
-    // its reads are spread across the pool a level at a time, and each
-    // attribute any closure reaches is read once rather than once per prim
-    // that reaches it. The walks below then find their prims already
-    // computed and do set arithmetic only. Concurrent reads of a UsdStage
-    // are what the digest thread, the tap warm-up and the two bake bind
-    // loops already do.
-    // Seeded with every path a closure will be asked for -- the solvers'
-    // frame inputs, every constraint's inputs, and the joints and controls
-    // that PrepareRequests seeds providers from -- plus each one's
-    // frame-provider ancestors, because those are what newNativeProviderPaths
-    // holds by the time ProviderClosure asks. Overshooting is free; missing a
-    // prim only means the walk asks the graph for it in line.
+    // Pose closures precomputed level-parallel (_PoseInputGraph); walks below
+    // do set ops only. Seeded with every path a closure will be asked for plus
+    // its frame-provider ancestors; a missed prim is computed in line.
     {
         RIGEXEC_PROFILE_SCOPE_CAT(_profiler, "PoseInfoPrefetch", "compile");
         std::vector<SdfPath> seeds;
@@ -3234,31 +3132,11 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         }
     }
     compileBlocks.Next("SolverSchedule.FrameInheritance");
-    // Which solvers must wait on which frame constraints. Asked the other way
-    // round: for every pose a solver reads, walk UP to the rig root and pick
-    // up the constraints that target each ancestor on the way. Each
-    // (solver, input) chain is walked ONCE for all constraints, linear in the
-    // ancestor chain rather than a cross product of constraints, solvers,
-    // pose reads and targets, because the map lookup answers "which
-    // constraints target this ancestor" in one step.
-    // The rule, half-open range included: input inherits target's frame when
-    // `input.HasPrefix(target)` AND no newJointBinding entry sits on any path
-    // in [input, target). The TARGET ITSELF is never tested for a binding,
-    // and input == target inherits with no test at all. Hence the binding
-    // check below comes AFTER recording p's
-    // own constraints and not before: a joint binding sitting ON a constraint
-    // target does not disqualify that target, only bindings strictly below
-    // it do. Reversing those two statements silently drops dependencies and
-    // the schedule runs a solver before the constraint it reads.
-    // Targets are prim paths (see _FrameConstraint::targets), so "ancestor
-    // chain" and HasPrefix agree; a target that is somehow not on the chain
-    // is simply never found, so it inherits nothing.
-    // poseDependencies[solver] is a std::set, so the different insertion
-    // ORDER this produces cannot change its contents, and the contents are
-    // all pendingPose/poseConsumers below are built from -- same sets, same
-    // schedule. The `empty()` guard reaches solverPoseReads[solver]'s
-    // operator[] only when at least one constraint survived the pointsTarget
-    // test, so the map gains no empty entries.
+    // Which solvers wait on which frame constraints: for each pose a solver
+    // reads, walk up to the rig root collecting the constraints on each
+    // ancestor. input inherits target's frame iff input.HasPrefix(target) and
+    // no joint binding in [input, target); hence the binding check follows
+    // recording p's own constraints.
     // The last stack ordinal at or beneath a prim: the moment an AtPrim read
     // phase names, since the stack runs a scope's contents before the scope.
     // -1 when nothing in the stack is there, which no constraint precedes.
@@ -3364,29 +3242,12 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             }
         }
     }
-    // poseDependencies is complete here and nowhere earlier: the solver DAG
-    // was finished above, but the constraint pass and the frame-inheritance
-    // walk just added the solver <-> constraint edges.
-    // Order = poseStackOrdinal (namespace pre-order); data flow does not
-    // reorder. A frame read below its writer reads the earlier version (the
-    // directional edges above); a contradicting aggregate read is rejected
-    // at compile time.
-    // So this block does three things and no searching:
-    //   1. put every joint's writer list into ordinal order;
-    //   2. build that joint's INTERLEAVED writer chain -- its solvers and the
-    //      constraints that move it, in one ordinal order;
-    //   3. insert one edge per adjacent pair of that chain, so the schedule
-    //      runs them in it.
-    // A joint's chain is a restriction of one total order, so no two joints
-    // can order the same pair in opposite directions and no edge inserted
-    // here can close a loop.
-    // WIDTH. The hierarchical order is never turned into a global serial
-    // chain: an edge is only ever inserted between two steps that write the
-    // SAME joint, and every other edge in poseDependencies is a real data-flow
-    // one (a reader and a writer of what it reads). Steps -- solvers and
-    // constraints alike -- that share no joint and no data flow therefore
-    // share a Kahn level and may evaluate concurrently.
-    // Tested by testRigExecSolverStacking.
+    // poseDependencies is complete here: the constraint pass and the
+    // frame-inheritance walk added the solver <-> constraint edges. Order =
+    // poseStackOrdinal (namespace pre-order); data flow does not reorder. Per
+    // joint: sort writers by poseStackOrdinal, link adjacent pairs. No
+    // cross-joint edges, so unrelated steps share a Kahn level. Tested by
+    // testRigExecSolverStacking.
     std::map<SdfPath, std::vector<SdfPath>> jointWriterChain;
     /// solver -> (joint -> the step that wrote the joint just before it), the
     /// compile-side half of "the incoming frame is the solver's rest".
@@ -4152,25 +4013,10 @@ RigExecRigEvaluator::_SettleCompiledRig(std::vector<std::string> *diagnostics)
     if (!_compiled && !_CompileUnlessKnownBroken(diagnostics)) {
         return false;
     }
-    // Structural edits begin a new compiled rig: recompile when the composed
-    // mover topology digest changed.
-    // A standing failure memo answers ahead of the digest. It can only match
-    // here when the failure it holds was this same structural recompile:
-    // no notice has arrived since (the serial is the key), so the digest
-    // would come out as it did then -- different from the committed one,
-    // which a failed compile never replaces -- and the compile it leads to
-    // would be answered from the memo anyway.
-    // A digest that comes out equal commits the footprint it recorded: the
-    // stage it read is the one the next notice will be judged against. One
-    // that differs leaves that to the compile it leads to.
-    // An edit that is CERTAINLY structural skips the digest here:
-    // a prim the committed digest listed for its type, or a list it wrote,
-    // has changed, so the digest has moved and would only be computed to
-    // say so -- the compile computes it again anyway, off its critical path.
-    // The rebuild line then waits for the compile's digest, and says what
-    // it says on the digest path: that the digest moved. An edit that came
-    // out equal was a false positive, which RIGEXEC_VERIFY_CERTAIN_STRUCTURAL
-    // counts.
+    // Recompile iff the topology digest changed; a failure memo with the same
+    // serial answers first. An equal digest commits its recorded footprint. A
+    // certainly-structural edit skips the digest here; the compile computes it.
+    // RIGEXEC_VERIFY_CERTAIN_STRUCTURAL counts the false positives.
     bool recompiled = false;
     bool digestMoved = false;
     bool certain = false;
