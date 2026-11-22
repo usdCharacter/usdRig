@@ -3,6 +3,7 @@
 #include "deltaMushKernel.h"
 #include "latticeKernel.h"
 #include "spatialAccel.h"
+#include "volumeCorrectKernel.h"
 #include "wrinkleKernel.h"
 #include "pxr/base/gf/vec3d.h"
 #include "pxr/base/gf/rotation.h"
@@ -22,44 +23,15 @@ namespace rigExec {
 double
 RigExecBoundVolume(const GfVec3f *points, size_t count)
 {
-    if (count < 2) {
-        return 0.0;
-    }
-    GfVec3f lo = points[0], hi = points[0];
-    for (size_t i = 1; i < count; ++i) {
-        for (int a = 0; a < 3; ++a) {
-            lo[a] = std::min(lo[a], points[i][a]);
-            hi[a] = std::max(hi[a], points[i][a]);
-        }
-    }
-    const GfVec3f d = hi - lo;
-    return double(d[0]) * double(d[1]) * double(d[2]);
+    return RigExecBoundVolumeKernel(points, count);
 }
 
 void
 RigExecApplyVolumeCorrect(std::vector<GfVec3f> *points, double referenceVolume,
                           double strength)
 {
-    if (points->empty() || referenceVolume <= 0.0 || strength <= 0.0) {
-        return;
-    }
-    const double current = RigExecBoundVolume(points->data(), points->size());
-    if (current <= 0.0) {
-        return; // degenerate bound: no deterministic correction exists
-    }
-    // Uniform scale about the centroid moving the bound volume toward the
-    // reference; strength blends the correction.
-    const double full = std::cbrt(referenceVolume / current);
-    const double scale =
-        1.0 + std::min(std::max(strength, 0.0), 1.0) * (full - 1.0);
-    GfVec3f centroid(0);
-    for (const GfVec3f &p : *points) {
-        centroid += p;
-    }
-    centroid /= float(points->size());
-    for (GfVec3f &p : *points) {
-        p = centroid + (p - centroid) * float(scale);
-    }
+    RigExecApplyVolumeCorrectKernel(points->data(), points->size(),
+                                    referenceVolume, strength);
 }
 
 bool

@@ -32,6 +32,7 @@
 #include "rigExecMath/surfaceSnapKernel.h"
 #include "rigExecMath/rangeRunner.h"
 #include "rigExecMath/smoothKernel.h"
+#include "rigExecMath/volumeCorrectKernel.h"
 #include "poseInternal.h"
 
 #include <algorithm>
@@ -1269,42 +1270,15 @@ RrGeoApplyDualQuatSkin(const RrVec3f *in, RrVec3f *out,
 double
 RrGeoBoundVolume(const RrVec3f *points, size_t count)
 {
-    if (count < 2) {
-        return 0.0;
-    }
-    RrVec3f lo = points[0], hi = points[0];
-    for (size_t i = 1; i < count; ++i) {
-        for (int a = 0; a < 3; ++a) {
-            lo[a] = std::min(lo[a], points[i][a]);
-            hi[a] = std::max(hi[a], points[i][a]);
-        }
-    }
-    const RrVec3f d = hi - lo;
-    return double(d[0]) * double(d[1]) * double(d[2]);
+    return RigExecBoundVolumeKernel(points, count);
 }
 
 void
 RrGeoApplyVolumeCorrect(std::vector<RrVec3f> *points, double referenceVolume,
                         double strength)
 {
-    if (points->empty() || referenceVolume <= 0.0 || strength <= 0.0) {
-        return;
-    }
-    const double current = RrGeoBoundVolume(points->data(), points->size());
-    if (current <= 0.0) {
-        return; // degenerate bound: no deterministic correction exists
-    }
-    const double full = std::cbrt(referenceVolume / current);
-    const double scale =
-        1.0 + std::min(std::max(strength, 0.0), 1.0) * (full - 1.0);
-    RrVec3f centroid(0.0f);
-    for (const RrVec3f &p : *points) {
-        centroid += p;
-    }
-    centroid /= float(points->size());
-    for (RrVec3f &p : *points) {
-        p = centroid + (p - centroid) * float(scale);
-    }
+    RigExecApplyVolumeCorrectKernel(points->data(), points->size(),
+                                    referenceVolume, strength);
 }
 
 std::vector<std::vector<int>>
