@@ -1,6 +1,7 @@
 // RigExec point-frame math.
 #include "rigExecSchema/schemaNames.h"
 #include "pointFrame.h"
+#include "dualQuat.h"
 
 #include "pxr/base/gf/matrix3d.h"
 #include "pxr/base/gf/rotation.h"
@@ -295,136 +296,7 @@ RigExecReconstructFrame(const std::array<GfVec3d, 4> &restPoints,
 
 namespace {
 
-// Jacobi eigen decomposition of a symmetric 3x3 matrix.
-// Produces eigenvalues (descending) and orthonormal eigenvectors as the
-// *columns* of V (column-convention).
-void
-_SymmetricEigen3(const double m[3][3], double eval[3], double evec[3][3])
-{
-    double a[3][3];
-    double v[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j)
-            a[i][j] = m[i][j];
-
-    for (int sweep = 0; sweep < 64; ++sweep) {
-        double off = std::abs(a[0][1]) + std::abs(a[0][2]) + std::abs(a[1][2]);
-        if (off < 1e-15)
-            break;
-        for (int p = 0; p < 2; ++p) {
-            for (int q = p + 1; q < 3; ++q) {
-                if (std::abs(a[p][q]) < 1e-18)
-                    continue;
-                const double theta = (a[q][q] - a[p][p]) / (2 * a[p][q]);
-                const double t =
-                    (theta >= 0 ? 1.0 : -1.0) /
-                    (std::abs(theta) + std::sqrt(theta * theta + 1));
-                const double cth = 1.0 / std::sqrt(t * t + 1);
-                const double sth = t * cth;
-                for (int k = 0; k < 3; ++k) {
-                    const double akp = a[k][p], akq = a[k][q];
-                    a[k][p] = cth * akp - sth * akq;
-                    a[k][q] = sth * akp + cth * akq;
-                }
-                for (int k = 0; k < 3; ++k) {
-                    const double apk = a[p][k], aqk = a[q][k];
-                    a[p][k] = cth * apk - sth * aqk;
-                    a[q][k] = sth * apk + cth * aqk;
-                }
-                for (int k = 0; k < 3; ++k) {
-                    const double vkp = v[k][p], vkq = v[k][q];
-                    v[k][p] = cth * vkp - sth * vkq;
-                    v[k][q] = sth * vkp + cth * vkq;
-                }
-            }
-        }
-    }
-
-    int order[3] = {0, 1, 2};
-    double d[3] = {a[0][0], a[1][1], a[2][2]};
-    std::sort(order, order + 3, [&](int x, int y) { return d[x] > d[y]; });
-    for (int i = 0; i < 3; ++i) {
-        eval[i] = d[order[i]];
-        for (int k = 0; k < 3; ++k) {
-            evec[k][i] = v[k][order[i]];
-        }
-        // Deterministic hemisphere canonicalization: flip each eigenvector
-        // so its largest-magnitude component is positive. This removes
-        // per-vector sign ambiguity only; it cannot stabilize eigenvector
-        // rotation within a (nearly) repeated eigenspace, which remains an
-        // open gap for the pinned-axis policy.
-        int maxK = 0;
-        for (int k = 1; k < 3; ++k) {
-            if (std::abs(evec[k][i]) > std::abs(evec[maxK][i])) {
-                maxK = k;
-            }
-        }
-        if (evec[maxK][i] < 0) {
-            for (int k = 0; k < 3; ++k) {
-                evec[k][i] = -evec[k][i];
-            }
-        }
-    }
-
-    // Repeated-eigenspace canonicalization: within a (nearly) repeated
-    // eigenvalue group the eigenvectors are only determined up to a
-    // rotation of the subspace, so Jacobi output can rotate under tiny
-    // perturbations. Rebuild each group's basis deterministically from
-    // world-axis projections.
-    const double tol =
-        1e-8 * std::max({std::abs(eval[0]), std::abs(eval[2]), 1.0});
-    const bool eq01 = std::abs(eval[0] - eval[1]) <= tol;
-    const bool eq12 = std::abs(eval[1] - eval[2]) <= tol;
-    if (eq01 && eq12) {
-        // Full isotropy: the canonical basis is the world basis.
-        for (int i = 0; i < 3; ++i)
-            for (int k = 0; k < 3; ++k)
-                evec[k][i] = (k == i) ? 1.0 : 0.0;
-    } else if (eq01 || eq12) {
-        const int a = eq01 ? 0 : 1; // repeated pair indices (a, a+1)
-        const int other = eq01 ? 2 : 0;
-        // Unit normal of the repeated 2D subspace = the distinct vector.
-        const double n[3] = {evec[0][other], evec[1][other], evec[2][other]};
-        // First basis vector: the world axis with the largest projection
-        // into the subspace, projected and normalized.
-        int bestAxis = 0;
-        double bestLen = -1.0;
-        double b1[3] = {0, 0, 0};
-        for (int axis = 0; axis < 3; ++axis) {
-            double p[3];
-            for (int k = 0; k < 3; ++k) {
-                p[k] = ((k == axis) ? 1.0 : 0.0) - n[k] * n[axis];
-            }
-            const double len =
-                std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]);
-            if (len > bestLen) {
-                bestLen = len;
-                bestAxis = axis;
-                for (int k = 0; k < 3; ++k)
-                    b1[k] = p[k] / len;
-            }
-        }
-        (void)bestAxis;
-        // Second basis vector completes the subspace: b2 = n x b1.
-        double b2[3] = {n[1] * b1[2] - n[2] * b1[1],
-                        n[2] * b1[0] - n[0] * b1[2],
-                        n[0] * b1[1] - n[1] * b1[0]};
-        // Sign-canonicalize b2 like the per-vector rule above.
-        int maxK = 0;
-        for (int k = 1; k < 3; ++k) {
-            if (std::abs(b2[k]) > std::abs(b2[maxK]))
-                maxK = k;
-        }
-        if (b2[maxK] < 0) {
-            for (int k = 0; k < 3; ++k)
-                b2[k] = -b2[k];
-        }
-        for (int k = 0; k < 3; ++k) {
-            evec[k][a] = b1[k];
-            evec[k][a + 1] = b2[k];
-        }
-    }
-}
+using GfFrameParams = RigExecTransformParamsKernelT<GfVec3f, GfVec3d>;
 
 } // namespace
 
@@ -434,107 +306,15 @@ RigExecPointsToParams(const std::array<GfVec3d, 4> &restPoints,
                       RigExecAxis reflectionAxis,
                       RigExecTransformParams *params)
 {
-    GfMatrix4d m;
-    if (!RigExecPointsToMatrix(restPoints, posePoints, &m)) {
+    GfFrameParams p;
+    if (!RigExecPointsToParamsKernel<GfVec3f, GfVec3d>(
+            restPoints, posePoints, static_cast<int>(reflectionAxis), &p)) {
         return false;
     }
-
-    // Column-convention linear part L: L[i][j] = m[j][i] for the row-vector
-    // stored matrix.
-    double L[3][3];
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j)
-            L[i][j] = m[j][i];
-
-    // SVD via eigen decomposition of L^T L = V S^2 V^T.
-    double ltl[3][3];
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            double sum = 0;
-            for (int k = 0; k < 3; ++k)
-                sum += L[k][i] * L[k][j];
-            ltl[i][j] = sum;
-        }
-    }
-    double s2[3], V[3][3];
-    _SymmetricEigen3(ltl, s2, V);
-
-    double sigma[3];
-    for (int i = 0; i < 3; ++i) {
-        sigma[i] = std::sqrt(std::max(s2[i], 0.0));
-    }
-    const double detL = L[0][0] * (L[1][1] * L[2][2] - L[1][2] * L[2][1]) -
-                        L[0][1] * (L[1][0] * L[2][2] - L[1][2] * L[2][0]) +
-                        L[0][2] * (L[1][0] * L[2][1] - L[1][1] * L[2][0]);
-    if (sigma[2] < 1e-14 * std::max(1.0, sigma[0])) {
-        return false; // singular posed frame: no SRT decomposition
-    }
-
-    // U = L V S^-1.
-    double U[3][3];
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            double sum = 0;
-            for (int k = 0; k < 3; ++k)
-                sum += L[i][k] * V[k][j];
-            U[i][j] = sum / sigma[j];
-        }
-    }
-
-    // delta = det(U V^T) = sign(det L) for nonsingular L.
-    const double delta = (detL >= 0) ? 1.0 : -1.0;
-
-    // Select singular index k: right-singular direction most aligned with
-    // the pinned reflection axis. Immaterial when delta = +1.
-    int k = 2;
-    if (delta < 0) {
-        const int axis = static_cast<int>(reflectionAxis);
-        double best = -1.0;
-        for (int i = 0; i < 3; ++i) {
-            const double align = std::abs(V[axis][i]);
-            if (align > best) {
-                best = align;
-                k = i;
-            }
-        }
-    }
-
-    // R = U D V^T with D = diag(1,1,delta at index k).
-    double R[3][3];
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            double sum = 0;
-            for (int kk = 0; kk < 3; ++kk) {
-                const double dkk = (kk == k) ? delta : 1.0;
-                sum += U[i][kk] * dkk * V[j][kk];
-            }
-            R[i][j] = sum;
-        }
-    }
-
-    // H = R^T L: upper-triangular-ish stretch with scale on the diagonal.
-    double H[3][3];
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            double sum = 0;
-            for (int kk = 0; kk < 3; ++kk)
-                sum += R[kk][i] * L[kk][j];
-            H[i][j] = sum;
-        }
-    }
-
-    // Quaternion from the proper rotation R (column convention). Build a
-    // row-vector GfMatrix3d = R^T and use Gf's extraction.
-    GfMatrix3d rowR(R[0][0], R[1][0], R[2][0], R[0][1], R[1][1], R[2][1],
-                    R[0][2], R[1][2], R[2][2]);
-    rowR.Orthonormalize();
-    const GfQuatd q = rowR.ExtractRotation().GetQuat();
-
-    params->translation = GfVec3d(m[3][0], m[3][1], m[3][2]);
-    params->rotation = q.GetNormalized();
-    params->scale = GfVec3d(H[0][0], H[1][1], H[2][2]);
-    params->shear =
-        GfVec3d(H[0][1] / H[0][0], H[0][2] / H[0][0], H[1][2] / H[1][1]);
+    params->translation = p.translation;
+    params->rotation = p.rotation;
+    params->scale = p.scale;
+    params->shear = p.shear;
     params->reflectionAxis = reflectionAxis;
     return true;
 }
@@ -542,42 +322,13 @@ RigExecPointsToParams(const std::array<GfVec3d, 4> &restPoints,
 GfMatrix4d
 RigExecParamsToMatrix(const RigExecTransformParams &params)
 {
-    // L = R(q) H(s,h) in column convention; produce the row-vector
-    // GfMatrix4d with translation in row 3.
-    GfMatrix3d rowR;
-    rowR.SetRotate(params.rotation);
-    // rowR is R^T (row-vector). Column R: R[i][j] = rowR[j][i].
-    double R[3][3];
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j)
-            R[i][j] = rowR[j][i];
-
-    const GfVec3d &sc = params.scale;
-    const GfVec3d &sh = params.shear;
-    // H is the SYMMETRIC polar stretch R^T L: diag(scale) with symmetric
-    // off-diagonals h_xy*sx, h_xz*sx, h_yz*sy (inverse of the
-    // normalization applied at decomposition). Rebuilding it upper
-    // triangular would discard half the stretch and break the round trip.
-    double H[3][3] = {
-        {sc[0], sh[0] * sc[0], sh[1] * sc[0]},
-        {sh[0] * sc[0], sc[1], sh[2] * sc[1]},
-        {sh[1] * sc[0], sh[2] * sc[1], sc[2]},
-    };
-
-    double L[3][3];
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            double sum = 0;
-            for (int k = 0; k < 3; ++k)
-                sum += R[i][k] * H[k][j];
-            L[i][j] = sum;
-        }
-    }
-
-    return GfMatrix4d(L[0][0], L[1][0], L[2][0], 0.0, L[0][1], L[1][1], L[2][1],
-                      0.0, L[0][2], L[1][2], L[2][2], 0.0,
-                      params.translation[0], params.translation[1],
-                      params.translation[2], 1.0);
+    GfFrameParams p;
+    p.translation = params.translation;
+    p.rotation = params.rotation;
+    p.scale = params.scale;
+    p.shear = params.shear;
+    p.reflectionAxis = static_cast<int>(params.reflectionAxis);
+    return RigExecParamsToMatrixKernel<GfVec3f, GfVec3d>(p);
 }
 
 RigExecPointFrame
