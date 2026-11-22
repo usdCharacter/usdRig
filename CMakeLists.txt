@@ -2110,6 +2110,16 @@ target_link_libraries(benchEditLatency PRIVATE rigExec)
 target_compile_definitions(benchEditLatency PRIVATE
     ${_rigexec_schema_resource_define})
 
+add_executable(testRigExecDeterminism tests/testRigExecDeterminism.cpp)
+target_link_libraries(testRigExecDeterminism PRIVATE rigExec)
+target_compile_definitions(testRigExecDeterminism PRIVATE
+    ${_rigexec_schema_resource_define})
+add_test(NAME testRigExecDeterminism COMMAND testRigExecDeterminism
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/tutorial_rolling_ball.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/biped/Biped_anim.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/delta_mush_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/skin_mover.usda")
+
 add_executable(benchRigSpeed tests/benchRigSpeed.cpp)
 target_link_libraries(benchRigSpeed PRIVATE rigExec)
 target_compile_definitions(benchRigSpeed PRIVATE
@@ -2948,6 +2958,7 @@ endif()
 # translation functions from the test itself.
 foreach(_rigexec_scene_exe IN ITEMS
     benchEditLatency benchFrameCache benchFrameCacheWarm benchRigSpeed
+    testRigExecDeterminism
     probeCodingError
     rigExecPose rigExecBakeTool
     testRigExecAffineFrames testRigExecArm testRigExecBakedAttribute
