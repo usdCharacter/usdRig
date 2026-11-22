@@ -1,11 +1,14 @@
 # Release bundles
 
-Every `v<major>.<minor>.0` tag builds a self-contained usdRig download for
-Windows, macOS (Apple Silicon), and Linux (Ubuntu x86-64) and attaches it
-to a GitHub Release: `.zip` on Windows, `.tar.gz` elsewhere, plus a
-combined `SHA256SUMS.txt`. A user extracts the archive and runs the
-launcher — no OpenUSD, Python, or Qt install is needed and nothing is
-written outside the extracted directory.
+Every `v<major>.<minor>.0` tag builds self-contained usdRig downloads for
+each supported [VFX Reference Platform](https://vfxplatform.com/) year
+(CY2025, CY2026, CY2027) on Windows x86-64, macOS (Apple Silicon) and
+Linux x86-64, and attaches them to a GitHub Release: `.zip` on Windows,
+`.tar.gz` elsewhere, plus a combined `SHA256SUMS.txt`. Each download is
+named `usdRig-<version>-vfx<year>-<os>-<arch>`, and a matching
+`usdRig-sdk-*` archive holds only the RigExec install. A user extracts
+the archive and runs the launcher — no OpenUSD, Python, or Qt install is
+needed and nothing is written outside the extracted directory.
 
 - Workflow: `.github/workflows/release.yml`
 - Launcher: `packaging/launcher/usdRigView.cpp` (built as `usdRigView`)
@@ -13,6 +16,35 @@ written outside the extracted directory.
 - Tests: `packaging/test_assemble_bundle.py` (ctest:
   `testRigExecBundlePackaging`, needs `-DRIGEXEC_BUILD_VIEWER_LAUNCHER=ON`)
   and `packaging/test_sign_macos.py` (ctest: `testRigExecMacSigning`)
+- Platform years: `packaging/vfx/profiles.json`, read by
+  `packaging/vfx/vfx_profile.py` (tests: `test_vfx_profile.py`)
+- Linux build and checks: `packaging/vfx/build_linux.sh`,
+  `check_bundle.py`, `smoke_linux.sh`
+- Arch Linux / Omarchy recipe: `packaging/aur/PKGBUILD` (not on the AUR yet)
+
+## VFX Reference Platform years
+
+`packaging/vfx/profiles.json` records each year's published versions and
+the pins this repository builds with: the C++ standard usdRig compiles at
+(OpenUSD itself stays at C++17), Python, PySide6, NumPy, the oneTBB and
+OpenSubdiv tags patched into OpenUSD's `build_usd.py`, the macOS
+deployment target, the Windows toolset and SDK minimums, and the Linux
+build image and glibc limit. To add a year, add its entry there and to the
+`year` lists in `release.yml`; drop the oldest year once it leaves the
+platform's support window.
+
+Linux bundles build inside the year's `aswf/ci-base` image, so they load on
+that year's oldest supported distribution (glibc 2.28 / EL8 through CY2026,
+glibc 2.34 / EL9 for CY2027). `check_bundle.py` fails the build if any
+binary needs a newer glibc or libstdc++ or a library that is neither
+bundled nor provided by a desktop system. Each Linux bundle is then run on
+Rocky Linux 8 (glibc 2.28 years) and 9, Ubuntu 22.04 and 24.04, and Arch
+Linux, under Qt's offscreen platform and X11 (Xvfb), with Arch also tried
+under a headless Wayland compositor and installed through the AUR recipe.
+
+The host must provide OpenGL, fontconfig, D-Bus and the X11/xcb (or
+Wayland) client libraries, as any desktop install does. On a minimal
+Ubuntu, `libxcb-cursor0` is the one most often missing.
 
 ## Bundle layout
 
@@ -75,12 +107,14 @@ macOS signature verification.
 1. Bump `project(rigExec VERSION ...)` in `CMakeLists.txt` to match.
    The workflow's gate job refuses a `vX.Y.0` tag that disagrees.
 2. Tag and push: `git tag v0.3.0 && git push origin v0.3.0`.
-3. The release appears when all three platform jobs finish. Patch tags
+3. The release appears when every year and platform job finishes. Patch tags
    (`v0.3.1`) do not trigger bundles.
 
 `workflow_dispatch` builds the same artifacts without publishing:
 give it a `vX.Y.0` version, and set `publish` only when the run should
-create/update the Release for that tag.
+create/update the Release for that tag. Turn `sign` off as well for a
+test run that touches no signing secrets or Apple notarization; the
+workflow refuses `publish` without `sign`.
 
 ## Signing
 
