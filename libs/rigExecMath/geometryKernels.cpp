@@ -3,6 +3,7 @@
 #include "deltaMushKernel.h"
 #include "latticeKernel.h"
 #include "spatialAccel.h"
+#include "surfaceProjectKernel.h"
 #include "volumeCorrectKernel.h"
 #include "wrinkleKernel.h"
 #include "pxr/base/gf/vec3d.h"
@@ -589,37 +590,7 @@ GfVec3f
 _ClosestPointOnTriangle(const GfVec3f &p, const GfVec3f &a, const GfVec3f &b,
                         const GfVec3f &c)
 {
-    // Ericson, Real-Time Collision Detection, 5.1.5.
-    const GfVec3f ab = b - a, ac = c - a, ap = p - a;
-    const float d1 = GfDot(ab, ap), d2 = GfDot(ac, ap);
-    if (d1 <= 0 && d2 <= 0)
-        return a;
-    const GfVec3f bp = p - b;
-    const float d3 = GfDot(ab, bp), d4 = GfDot(ac, bp);
-    if (d3 >= 0 && d4 <= d3)
-        return b;
-    const float vc = d1 * d4 - d3 * d2;
-    if (vc <= 0 && d1 >= 0 && d3 <= 0) {
-        const float v = d1 / (d1 - d3);
-        return a + ab * v;
-    }
-    const GfVec3f cp = p - c;
-    const float d5 = GfDot(ab, cp), d6 = GfDot(ac, cp);
-    if (d6 >= 0 && d5 <= d6)
-        return c;
-    const float vb = d5 * d2 - d1 * d6;
-    if (vb <= 0 && d2 >= 0 && d6 <= 0) {
-        const float w = d2 / (d2 - d6);
-        return a + ac * w;
-    }
-    const float va = d3 * d6 - d5 * d4;
-    if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) {
-        const float w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
-        return b + (c - b) * w;
-    }
-    const float denom = 1.0f / (va + vb + vc);
-    const float v = vb * denom, w = vc * denom;
-    return a + ab * v + ac * w;
+    return RigExecClosestPointOnTriangleKernel(p, a, b, c);
 }
 
 // Whether an owned key still describes a borrowed range: same size and
@@ -738,38 +709,10 @@ RigExecApplySurfaceProject(std::vector<GfVec3f> *points,
         }
         return;
     }
-    for (GfVec3f &p : *points) {
-        float bestDistSq = std::numeric_limits<float>::max();
-        GfVec3f best = p;
-        size_t offset = 0;
-        for (size_t f = 0; f < faceVertexCountsSize; ++f) {
-            const int faceCount = faceVertexCounts[f];
-            for (int c = 1; c + 1 < faceCount; ++c) {
-                const size_t i2 = offset + c + 1;
-                if (i2 >= faceVertexIndicesSize) {
-                    return;
-                }
-                const int ia = faceVertexIndices[offset];
-                const int ib = faceVertexIndices[offset + c];
-                const int ic = faceVertexIndices[i2];
-                if (ia < 0 || ib < 0 || ic < 0 ||
-                    size_t(ia) >= surfacePointsSize ||
-                    size_t(ib) >= surfacePointsSize ||
-                    size_t(ic) >= surfacePointsSize) {
-                    continue;
-                }
-                const GfVec3f q = _ClosestPointOnTriangle(
-                    p, surfacePoints[ia], surfacePoints[ib], surfacePoints[ic]);
-                const float distSq = (q - p).GetLengthSq();
-                if (distSq < bestDistSq) {
-                    bestDistSq = distSq;
-                    best = q;
-                }
-            }
-            offset += faceCount;
-        }
-        p = p + (best - p) * float(w);
-    }
+    RigExecApplySurfaceProjectKernel(
+        points->data(), points->size(), surfacePoints, surfacePointsSize,
+        faceVertexCounts, faceVertexCountsSize, faceVertexIndices,
+        faceVertexIndicesSize, w);
 }
 
 void

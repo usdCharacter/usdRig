@@ -28,6 +28,7 @@
 #include "rigExecMath/surfaceKernelCache.h"
 #include "rigExecMath/wireKernelCache.h"
 #include "rigExecMath/wrinkleKernel.h"
+#include "rigExecMath/surfaceProjectKernel.h"
 #include "rigExecMath/surfaceProjectorKernel.h"
 #include "rigExecMath/surfaceSnapKernel.h"
 #include "rigExecMath/rangeRunner.h"
@@ -1485,37 +1486,7 @@ RrVec3f
 RrGeoClosestPointOnTriangle(const RrVec3f &p, const RrVec3f &a,
                             const RrVec3f &b, const RrVec3f &c)
 {
-    // Ericson, Real-Time Collision Detection, 5.1.5.
-    const RrVec3f ab = b - a, ac = c - a, ap = p - a;
-    const float d1 = RrDot(ab, ap), d2 = RrDot(ac, ap);
-    if (d1 <= 0 && d2 <= 0)
-        return a;
-    const RrVec3f bp = p - b;
-    const float d3 = RrDot(ab, bp), d4 = RrDot(ac, bp);
-    if (d3 >= 0 && d4 <= d3)
-        return b;
-    const float vc = d1 * d4 - d3 * d2;
-    if (vc <= 0 && d1 >= 0 && d3 <= 0) {
-        const float v = d1 / (d1 - d3);
-        return a + ab * v;
-    }
-    const RrVec3f cp = p - c;
-    const float d5 = RrDot(ab, cp), d6 = RrDot(ac, cp);
-    if (d6 >= 0 && d5 <= d6)
-        return c;
-    const float vb = d5 * d2 - d1 * d6;
-    if (vb <= 0 && d2 >= 0 && d6 <= 0) {
-        const float w = d2 / (d2 - d6);
-        return a + ac * w;
-    }
-    const float va = d3 * d6 - d5 * d4;
-    if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) {
-        const float w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
-        return b + (c - b) * w;
-    }
-    const float denom = 1.0f / (va + vb + vc);
-    const float v = vb * denom, w = vc * denom;
-    return a + ab * v + ac * w;
+    return RigExecClosestPointOnTriangleKernel(p, a, b, c);
 }
 
 void
@@ -1525,41 +1496,10 @@ RrGeoApplySurfaceProject(std::vector<RrVec3f> *points,
                          const std::vector<int> &faceVertexIndices,
                          double weight)
 {
-    const double w = std::min(std::max(weight, 0.0), 1.0);
-    if (points->empty() || surfacePoints.empty() || w <= 0.0) {
-        return;
-    }
-    for (RrVec3f &p : *points) {
-        float bestDistSq = std::numeric_limits<float>::max();
-        RrVec3f best = p;
-        size_t offset = 0;
-        for (int faceCount : faceVertexCounts) {
-            for (int c = 1; c + 1 < faceCount; ++c) {
-                const size_t i2 = offset + c + 1;
-                if (i2 >= faceVertexIndices.size()) {
-                    return;
-                }
-                const int ia = faceVertexIndices[offset];
-                const int ib = faceVertexIndices[offset + c];
-                const int ic = faceVertexIndices[i2];
-                if (ia < 0 || ib < 0 || ic < 0 ||
-                    size_t(ia) >= surfacePoints.size() ||
-                    size_t(ib) >= surfacePoints.size() ||
-                    size_t(ic) >= surfacePoints.size()) {
-                    continue;
-                }
-                const RrVec3f q = RrGeoClosestPointOnTriangle(
-                    p, surfacePoints[ia], surfacePoints[ib], surfacePoints[ic]);
-                const float distSq = (q - p).GetLengthSq();
-                if (distSq < bestDistSq) {
-                    bestDistSq = distSq;
-                    best = q;
-                }
-            }
-            offset += faceCount;
-        }
-        p = p + (best - p) * float(w);
-    }
+    RigExecApplySurfaceProjectKernel(
+        points->data(), points->size(), surfacePoints.data(),
+        surfacePoints.size(), faceVertexCounts.data(), faceVertexCounts.size(),
+        faceVertexIndices.data(), faceVertexIndices.size(), weight);
 }
 
 struct RrGeoNurbsCurve {
