@@ -43,6 +43,12 @@ else()
         set_target_properties(glew_static PROPERTIES
             POSITION_INDEPENDENT_CODE ON)
     endif()
+    # noodles' headers use size_t without <cstddef>; libstdc++ before 13
+    # (the VFX Reference Platform's gcc 11) does not pull it in transitively.
+    if (TARGET noodles AND NOT MSVC)
+        target_compile_options(noodles PUBLIC
+            "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include cstddef>")
+    endif()
 endif()
 
 set(_usdnoodles_definitions
