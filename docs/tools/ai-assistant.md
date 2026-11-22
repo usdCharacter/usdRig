@@ -29,9 +29,14 @@ you ask it something.
    orange for running Python, and a red cross for a step that failed. What it
    changed is listed in a green box under the reply.
 4. **Run Code** and **Copy Code** appear when a reply has a block of Python.
-   **Run Code** runs it in usdview and needs **Run code** on.
+   Running that block is a separate action: click **Run Code** with the
+   **Run code** toggle on.
 5. **The message box.** ++ctrl+enter++ sends. While a reply is coming,
-   **Send** becomes **Stop**.
+   **Send** becomes **Stop**. Stopping the reply prevents new tool calls and
+   changes proposed in its final text from being applied. Replacing the open
+   stage also cancels any outstanding reply, including its queued tool calls
+   and final-text changes. You can send a new request on the replacement
+   stage.
 6. **What it may do.** These toggles are remembered:
     - **Selection** sends the selected prims and their attributes with your
       message.
@@ -42,9 +47,18 @@ you ask it something.
       what it prints. It is off until you turn it on, and shows orange when
       on.
 
-All the changes in one reply are one step on the RigExec undo stack, so
-++ctrl+z++ takes the whole reply back. Python it runs can be undone too, as
-long as it only changed the edit target.
+Neither **Stop** nor replacing the stage rolls back changes already made or
+forcibly interrupts a tool that has started. When the changes can be recorded
+on the RigExec undo stack, they go on it as labelled ++ctrl+z++ steps ("AI
+Assistant changes", "AI Assistant pose", "AI Assistant Python") in the order
+the changes were made. Uninterrupted edits from one reply share a step when
+the host supports grouping. If an artist or another reply commits an edit
+between them, the next Assistant edit starts a new step so Undo and Redo follow
+the order of the writes. A new Assistant write after an Undo discards the redo
+branch. A call that changes nothing records no step, and leaves Undo and Redo
+as they were. Hosts without grouping support receive one undo step per edit. Python
+changes can be undone when they only affect the edit target. Undo entries
+from the old reply are not added to the replacement stage's stack.
 
 ## Signing in
 
@@ -88,8 +102,20 @@ controls that drive them instead.
 With a Claude or Codex sign in, the tools are served to Claude Code or Codex
 by the assistant's own MCP server. It only listens on this computer and takes
 a new key for every reply. The other providers use the same tools through
-their own tool calling. A model that cannot use tools answers without them,
-and changes the stage with a block of changes the panel applies.
+their own tool calling. A model that cannot use tools can propose changes in
+its final text. The panel applies them only if the reply is still active on
+its original stage and **Edit stage** was on when you sent the request and is
+still on when the reply finishes.
+
+If waiting for a tool times out, the result tells you whether it started:
+
+- **“The tool expired before it started; it did not run.”** That tool took no
+  action and will not run later. If you still want the change, you can ask for
+  it again.
+- **“The tool already started; its outcome is unknown. Do not retry automatically.”**
+  The tool may have made some or all of the changes, or it may still be
+  running. Check the stage before trying again. If you can't tell whether the
+  tool is done, don't repeat the request yet.
 
 ## Reading files
 

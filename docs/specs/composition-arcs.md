@@ -355,6 +355,17 @@ mis-ordered:
   already there — the opposite of what "Prepend (stronger than existing
   arcs)" promises.
 
+An action that adds one arc without asking where it goes follows
+`UsdReferences.AddReference` instead: an **explicit** opinion stays
+explicit and the new arc joins the back of it, and any other opinion — a
+prepend list, an append list, or none — puts the new arc at the back of
+`prependedItems`, leaving an existing `appendedItems` alone. The
+Assistant's `add_reference` action does this
+(`usdRigAssistant/stage_actions.py`, `do_add_reference`), and
+`tests/python/test_assistant.py`
+(`TestAddReferenceMatchesTheUsdApiOnEveryListOpMode`) compares its authored
+arcs and composed order with the API on every arm.
+
 ## Where the code is
 
 | File | Holds |

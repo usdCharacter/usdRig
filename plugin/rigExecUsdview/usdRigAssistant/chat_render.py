@@ -384,9 +384,14 @@ def changes_html(message):
     return ''.join(parts)
 
 
-def user_html(text, when=None):
+def user_html(text, when=None, note=None):
+    """The artist's turn. note says why it got no reply."""
+    body = markdown(text)
+    if note:
+        body += '<p style="color:{}; font-style:italic">{}</p>'.format(
+            COLORS['note'], inline(note))
     return _block('You', COLORS['user_name'], COLORS['user_bg'],
-                  markdown(text), when)
+                  body, when)
 
 
 def activity_html(steps):

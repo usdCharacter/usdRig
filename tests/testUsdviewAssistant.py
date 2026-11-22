@@ -129,7 +129,6 @@ def testUsdviewInputFunction(appController):
     after = elbow()
     moved = sum((a - b) ** 2 for a, b in zip(after, before)) ** 0.5
     _Check(moved > 1.0, "the pose moved the evaluated elbow: %.3f" % moved)
-    box.finish()
     import rigExecUsdview
     stack = rigExecUsdview.ContainerFor(api)._UndoStack()
     _Check(stack.UndoText() == "AI Assistant pose",
