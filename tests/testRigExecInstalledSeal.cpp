@@ -85,6 +85,21 @@ _WritesSolverScratch(const View &view, long)
     return 1;
 }
 
+// Even a read: the pose interpolator's solve output is builder scratch.
+template <class View>
+int
+_ReadsInterpolatorScratch(const View &view,
+                          decltype(view.GetPoseInterpolator(0).scratch, 0))
+{
+    return 0;
+}
+template <class View>
+long
+_ReadsInterpolatorScratch(const View &view, long)
+{
+    return 1;
+}
+
 // Each pair names one record the view used to lend by index; the first
 // overload is viable only when that accessor still exists.
 template <class View>
@@ -319,6 +334,7 @@ TestSeal()
 
     // Nothing a consumer can reach is a writable execution record.
     CHECK(_WritesSolverScratch(view, 0) == 1);
+    CHECK(_ReadsInterpolatorScratch(view, 0) == 1);
     CHECK(_LendsChainRecord(view, 0) == 1);
     CHECK(_LendsRevisionRecord(view, 0) == 1);
     CHECK(_LendsWeightRecord(view, 0) == 1);

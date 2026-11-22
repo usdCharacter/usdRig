@@ -2200,8 +2200,11 @@ struct RigExecCompiledWeightFacts {
 /// order the program runs them, the operation graph, the declared reads and
 /// writes, the stage-frame admission, the bound paths, and the inputs the
 /// program overrides. Chains, revisions and weight objects are evaluator
-/// state: the view answers them with facts, never with a record. Nothing here
-/// mutates, and nothing here reaches the builder.
+/// state: the view answers them with facts, never with a record. A pose
+/// interpolator's record keeps the solve's output buffer, so the view lends no
+/// pose-interpolator accessor: a retained view cannot read a buffer the
+/// evaluator is rewriting. Nothing here mutates, and nothing here reaches the
+/// builder.
 ///
 /// A record or fact reference borrowed from a view lives as long as the view
 /// does: hold the program, or the shared version from
@@ -2263,9 +2266,6 @@ public:
     GetPropertyRecord(size_t index) const noexcept;
     size_t GetFrameRecordCount() const noexcept;
     const RigExecBakedFrameRecord &GetFrameRecord(size_t index) const noexcept;
-    size_t GetPoseInterpolatorCount() const noexcept;
-    const RigExecBakedPoseInterpolator &
-    GetPoseInterpolator(size_t index) const noexcept;
     size_t GetClusterCount() const noexcept;
     const RigExecBakedCluster &GetCluster(size_t index) const noexcept;
     size_t GetPointBindingCount() const noexcept;

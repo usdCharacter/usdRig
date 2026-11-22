@@ -290,10 +290,8 @@ TestView()
     for (size_t i = 0; i < B.frameRecords.size(); ++i) {
         CHECK(&V.GetFrameRecord(i) == &B.frameRecords[i]);
     }
-    CHECK(V.GetPoseInterpolatorCount() == B.poseInterpolators.size());
-    for (size_t i = 0; i < B.poseInterpolators.size(); ++i) {
-        CHECK(&V.GetPoseInterpolator(i) == &B.poseInterpolators[i]);
-    }
+    // The interpolator record keeps the solve's output buffer: the sealed view
+    // lends no pose-interpolator accessor, so there is no alias to check.
     CHECK(V.GetClusterCount() == B.clustering.clusters.size());
     for (size_t i = 0; i < B.clustering.clusters.size(); ++i) {
         CHECK(&V.GetCluster(i) == &B.clustering.clusters[i]);

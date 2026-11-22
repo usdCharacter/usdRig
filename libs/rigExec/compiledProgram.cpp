@@ -246,18 +246,6 @@ RigExecCompiledProgram::GetFrameRecord(size_t index) const noexcept
 }
 
 size_t
-RigExecCompiledProgram::GetPoseInterpolatorCount() const noexcept
-{
-    return _compiled->poseInterpolators.size();
-}
-
-const RigExecBakedPoseInterpolator &
-RigExecCompiledProgram::GetPoseInterpolator(size_t index) const noexcept
-{
-    return _compiled->poseInterpolators[index];
-}
-
-size_t
 RigExecCompiledProgram::GetClusterCount() const noexcept
 {
     return _compiled->clustering.clusters.size();

@@ -72,7 +72,9 @@ surface for a compiled rig: counts, the records still lent by index in the
 order the program runs them, the operation graph, the declared reads and
 writes, the bound paths and the overridden inputs. Chains, revisions and
 weight objects answer with facts — path, type, target — never with the builder
-record, so a consumer cannot reach the scratch a solver fills. The builder
+record, so a consumer cannot reach the scratch a solver fills. A pose
+interpolator's record keeps the solve's output buffer, so the view lends no
+pose-interpolator accessor at all. The builder
 state itself (`bakedProgramImpl.h`, `bakedSchedule.h`, `bakedOpGraph.h`,
 `frozenProgram.h`, `frozenContextInternal.h`) stays out of the install; internal
 access to it goes through `RigExecBakedProgramAccess`. Detached replay freezes a
