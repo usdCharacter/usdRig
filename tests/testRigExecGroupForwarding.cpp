@@ -510,7 +510,8 @@ TestTwoGroupGate()
     }
     const RigExecRigPose native = evaluator.Evaluate(UsdTimeCode(1));
     CHECK(native.valid);
-    const Program &program = evaluator.GetBakedProgram()->GetStepGraph();
+    const Program &program = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
     const int chainId = FindChain(program, SdfPath("/Asset/Shape.points"));
     CHECK(chainId >= 0);
     if (chainId < 0) {
@@ -582,7 +583,8 @@ TestTwoGroupGate()
         const UsdTimeCode time(index + 1);
         const auto pose = evaluator.Evaluate(time);
         CHECK(pose.valid);
-        CHECK(&evaluator.GetBakedProgram()->GetStepGraph() == &program);
+        CHECK(&rigExec::RigExecBakedProgramAccess::StepGraph(
+                  *evaluator.GetBakedProgram()) == &program);
         CHECK(revision.groupWritten == std::vector<char>({1, 0}));
         const bool refused = std::any_of(
             pose.diagnostics.begin(), pose.diagnostics.end(),
