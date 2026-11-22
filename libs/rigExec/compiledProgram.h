@@ -1689,7 +1689,6 @@ struct RigExecBakedSolver : RigExecSolverRecord {
     /// Every override index a rest channel of that chain registered, so
     /// a drag on one dirties this solver's step.
     std::vector<int> restOverrides;
-    /// SplineIk rebuilds its rest curve from these two beside the rests.
     /// The bake found this solver's rigExec:joints / jointElements
     /// binding malformed in one of the ways its exec computation checks
     /// at runtime. Such a computation warns and returns an EMPTY
@@ -1803,7 +1802,6 @@ struct RigExecBakedSolver : RigExecSolverRecord {
     /// Slots of the joints this solver published no element for. Their
     /// key spells each as `pathTexts` holds it.
     std::vector<int> fallbackSlots;
-    /// FkChain's element table, so the solve allocates nothing.
     /// The `fin` versions this solve reads: one per control, then the
     /// four named controls. Decided at Build like every other read;
     /// -1 controls are bound to their own slot's seed and never
@@ -1996,7 +1994,6 @@ struct RigExecBakedWindowedOp {
     SdfPath path;
 };
 
-/// The compose pass, partitioned into contiguous subtrees at Build.
 /// One compiled RigExecSpaceSwitch, in the program's own terms.
 ///
 /// The compose for an ordinary slot is

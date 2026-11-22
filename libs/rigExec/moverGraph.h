@@ -162,16 +162,6 @@ RigExecMoverStatus
 RigExecStatusForParameters(const RigExecMoverParameters &parameters,
                            const std::string &moverText);
 
-/// Applies the matrix operation of \p p to \p pts in place, returning false
-/// when the packet fails atomically (the envelope does not resolve to the
-/// point count).
-///
-/// The envelope is resolved and applied INSIDE the kernel, unlike the
-/// point3f[] ops: the weighted-matrix rule folds the weight into the movement
-/// (p' = q + w (T q - q)) rather than blending a finished result.
-///
-/// Shared by the mover-graph revision node and by the baked program, which
-/// runs the same operation with no VdfNetwork around it.
 /// The scale a posed frame carries: the length of each column of its linear
 /// part.
 ///
@@ -510,6 +500,16 @@ bool RigExecSimdEnabled();
 /// first on a worker.
 void RigExecRevisionKernelTouchTokens();
 
+/// Applies the matrix operation of \p p to \p pts in place, returning false
+/// when the packet fails atomically (the envelope does not resolve to the
+/// point count).
+///
+/// The envelope is resolved and applied INSIDE the kernel, unlike the
+/// point3f[] ops: the weighted-matrix rule folds the weight into the movement
+/// (p' = q + w (T q - q)) rather than blending a finished result.
+///
+/// Shared by the mover-graph revision node and by the baked program, which
+/// runs the same operation with no VdfNetwork around it.
 bool RigExecApplyMatrixKernel(const RigExecMoverParameters &p,
                               std::vector<GfVec3f> *pts, bool useSimd);
 

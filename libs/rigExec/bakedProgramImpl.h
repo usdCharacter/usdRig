@@ -1343,16 +1343,6 @@ struct RigExecBakedProgramImpl {
     /// Discovery allocates identities on entry, including authored back-edges.
     /// The canonical graph diagnoses cycles after all producer reads exist.
     std::map<SdfPath, int> weightIndex;
-    /// The weight oracle, as the evaluator's own RigExecRigEvaluator::
-    /// _ResolveWeights.
-    ///
-    /// A pointer to a member function rather than a call, because only
-    /// bakedProgram.cpp is the evaluator's friend and the constraint that
-    /// needs it lives in bakedPose.cpp. It is the SAME function the dynamic
-    /// constraint path calls with the same arguments, which is what makes
-    /// the answer and the error string identical by construction rather
-    /// than by review -- a constraint's envelope is one of the two places
-    /// the dynamic path does not go through exec at all.
     /// Per provider slot, where the volume at that slot is placed: the
     /// output of that slot's VolumePlacements step (WeightFrames[slot]), read
     /// by the oracle and by pose.weightFrames. Every noScaleAvars slot has
@@ -1988,6 +1978,23 @@ void RigExecBakedSamplePathLeaves(RigExecBakedProgramImpl *program,
 bool RigExecBakedLeafVaryingNow(const RigExecBakedProgramImpl &program,
                                 const RigExecBakedPathLeaves &leaves, size_t k);
 
+/// Which leaves one RigExecBakedSampleLeaves pass reads.
+enum class RigExecBakedLeafPass : uint8_t { All, BeforeHead, ChainRouted };
+
+/// Prologue step 1's upstream half, after the resolved inputs are cleared
+/// and before the interactive overrides are placed. Compares `upstream`
+/// with `lastUpstream` by value; for every path placed, moved or lifted
+/// (rule 8) it marks the leaves `leafByPath` files there and sets
+/// `upstreamChanged` for the override numbers filed there, and it rebuilds
+/// `upstreamOn`. Then places every value on an `upstreamOracle` path into
+/// the resolved inputs. `upstreamChanged` holds this run's moves only.
+/// Runs on the thread that owns \p program: live's owning thread, or a
+/// frozen worker over its private clone, which passes \p placeOracle false:
+/// it builds no admission set (that reads the stage), and the freeze
+/// refuses every rig with an object the oracle resolves.
+void RigExecBakedPlaceUpstream(RigExecBakedProgramImpl *program,
+                               bool placeOracle = true);
+
 /// Re-reads, through RigExecBakedRead at \p time, every leaf that one of
 /// these says can have moved since it was last sampled, and sets its
 /// `changed` byte by bitwise comparison:
@@ -2024,22 +2031,6 @@ bool RigExecBakedLeafVaryingNow(const RigExecBakedProgramImpl &program,
 /// reader walk), whose walks no chain result can reach, and applies rule 6;
 /// ChainRouted reads the rest once the property chains are published and
 /// RigExecBakedNoteReaderWalks has run. All does both, in one pass.
-enum class RigExecBakedLeafPass : uint8_t { All, BeforeHead, ChainRouted };
-
-/// Prologue step 1's upstream half, after the resolved inputs are cleared
-/// and before the interactive overrides are placed. Compares `upstream`
-/// with `lastUpstream` by value; for every path placed, moved or lifted
-/// (rule 8) it marks the leaves `leafByPath` files there and sets
-/// `upstreamChanged` for the override numbers filed there, and it rebuilds
-/// `upstreamOn`. Then places every value on an `upstreamOracle` path into
-/// the resolved inputs. `upstreamChanged` holds this run's moves only.
-/// Runs on the thread that owns \p program: live's owning thread, or a
-/// frozen worker over its private clone, which passes \p placeOracle false:
-/// it builds no admission set (that reads the stage), and the freeze
-/// refuses every rig with an object the oracle resolves.
-void RigExecBakedPlaceUpstream(RigExecBakedProgramImpl *program,
-                               bool placeOracle = true);
-
 void
 RigExecBakedSampleLeaves(RigExecBakedProgramImpl *program, UsdTimeCode time,
                          bool all,
@@ -3455,73 +3446,6 @@ RigExecBakedDescribePropertyChains(
 /// re-running the walk for either.
 void RigExecBakedDeclareInputDependencies(RigExecBakedProgramImpl *program);
 
-/// Shadows the whole of a run's mutable state, for RIGEXEC_BAKED_VERIFY_CONES.
-///
-/// Capture/Restore are what let one frame run twice from one starting point:
-/// the cone run's answer is captured, the starting point is restored, the
-/// whole program is re-run, and Compare checks retained values and diagnostics.
-/// Work observations are projected through the cone's actual body selection. Nothing here is on a production
-/// path -- the state is large and copying it is the point.
-///
-/// Not compared (scratch, not answers):
-/// Invariant: every mutable field of RigExecBakedProgramImpl,
-/// RigExecBakedStep, GeomChain, GeomRevision and GeomChunk is in Compare or
-/// this list.
-///
-///  * everything Build wrote and no run touches -- the slot tables, the
-///    input bindings, the step graph, the clustering, the cones.
-///    A run that changed one of those would be a run editing the program.
-///  * what only a NOTICE writes and no run reads: `valueEditSerial`/
-///    `editSerial` and the routing's `connectedSources` cache.
-///  * what the PROLOGUE writes: `avarsDisturbed`,
-///    `overridden`/`anyOverridden`/`folded`, the sampled `leaves`,
-///    `routedOverrides`/`lastRoutedOverrides` and `leafSamples`, and the
-///    geometry prologue's sampler pools and routing stamps. Persistent
-///    property versions/validity/records, property publication overlays,
-///    rest and ladder tables, layout handles and shared-step memo lines
-///    are captured below.
-///    The prologue runs ONCE per
-///    generation, before either pass, so both passes see one value of each
-///    by construction. Several are captured and restored anyway, because
-///    they are cheap and putting the second pass back on exactly the first
-///    pass's footing is what the mode is for.
-///  * the cone bookkeeping itself -- `closedSteps`, `closed`, `lastAvars`,
-///    `lastOverridden`, `edited`/`anyEdited` (the first pass consumes them
-///    and the forced second pass needs none),
-///    `lastHaveBase`, `lastTime`, `everRan`,
-///    `lastProgramStamp`, and the provider leaves' `spaceLeafRekey`. The
-///    second pass is FORCED, so its closure differs from the first's;
-///    comparing them would report the mode rather than the program. The run statistics that observers read are
-///    put back by RigExecBakedRunStatistics instead.
-///  * each chain's `spare`, the other half of the published double buffer.
-///    A pass that publishes swaps it with `result`; a pass that skips the
-///    publication does not. The two therefore hold DIFFERENT generations'
-///    arrays after runs that agree exactly about the published one, which is
-///    `result` -- the buffer is storage, and only what `result` names in it
-///    is an answer.
-///  * each revision's `deltasSpare`, the blend delta buffer the packet
-///    before last held: storage the next assembly sums into, never read.
-///  * each revision's `revisionInputs` overlay, which its RevisionStatic
-///    writes and reads within the one body, so no other step can see a
-///    stale one. It is captured and restored -- it costs nothing and it
-///    keeps the second pass starting from exactly the first's state -- but
-///    not compared.
-///  * the RUN STATISTICS, which are restored rather than compared, because
-///    the second pass is forced and so writes different ones by
-///    construction: `lastClosedClusters`, `lastClosedSteps`,
-///    `spaceLeafKeys`, the
-///    clustering's `lastRunTimed`
-///    the closed-operation sets and full-run flag,
-///    and each `RigExecBakedCluster`'s `readyUs`/`startUs`/`endUs`, and each
-///    step's `startUs`/`endUs` and memo/publication stamps.
-///    RigExecBakedRunStatistics takes all of them before the second pass and
-///    puts them back after it, so that every
-///    observer of the frame -- the run report, the profiler trace,
-///    GetClustersRunLastGeneration() -- describes the one run that published
-///    a pose.
-///  * per-step `measured*` accumulators: the calibrator's running averages,
-///    a fit over frames, which an opt-in calibration reads and this mode
-///    does not.
 struct RigExecBakedLadderTables {
     std::vector<GfMatrix4d> restM;
     std::vector<std::array<GfVec3d, 4>> restPts;
@@ -3535,6 +3459,33 @@ struct RigExecBakedLadderTables {
     std::vector<GfMatrix4d> posedAuthoredM;
 };
 
+/// Shadows a run's mutable state for RIGEXEC_BAKED_VERIFY_CONES: Capture,
+/// Restore, re-run forced, Compare values and diagnostics. Debug only.
+///
+/// Not compared (scratch, not answers):
+///  * Build-only state: slot tables, input bindings, step graph,
+///    clustering, cones.
+///  * notice-only state: `valueEditSerial`, `editSerial`, the routing's
+///    `connectedSources`.
+///  * prologue output (once per generation, before either pass):
+///    `avarsDisturbed`, `overridden`/`anyOverridden`/`folded`, `leaves`,
+///    `routedOverrides`/`lastRoutedOverrides`, `leafSamples`, the geometry
+///    prologue's sampler pools and routing stamps.
+///  * cone bookkeeping: `closedSteps`, `closed`, `lastAvars`,
+///    `lastOverridden`, `edited`/`anyEdited`, `lastHaveBase`, `lastTime`,
+///    `everRan`, `lastProgramStamp`, `spaceLeafRekey`.
+///  * each chain's `spare`; only `result` is an answer.
+///  * each revision's `deltasSpare`, and its `revisionInputs` (captured and
+///    restored, not compared).
+///  * run statistics, restored by RigExecBakedRunStatistics:
+///    `lastClosedClusters`, `lastClosedSteps`, `spaceLeafKeys`, the
+///    clustering's `lastRunTimed`, the closed-operation sets, the full-run
+///    flag, cluster `readyUs`/`startUs`/`endUs`, step `startUs`/`endUs` and
+///    memo/publication stamps.
+///  * per-step `measured*` calibration accumulators.
+/// Invariant: every mutable field of RigExecBakedProgramImpl,
+/// RigExecBakedStep, GeomChain, GeomRevision and GeomChunk is compared or
+/// listed here.
 struct RigExecBakedRunShadow {
     /// Copies everything a step reads or writes out of \p program.
     void Capture(const RigExecBakedProgramImpl &program);

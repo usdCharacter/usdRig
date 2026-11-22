@@ -291,7 +291,6 @@ RigExecPrepareRestDerivedIkChain(const std::vector<RigExecPointFrame> &current,
                                  const std::vector<RigExecPointFrame> &rest,
                                  std::vector<RigExecPointFrame> *prepared);
 
-/// Compiles and evaluates one RigExecRoot prim.
 /// The pinned reads a property chain re-uses every frame (rigEvaluator.cpp).
 ///
 /// Opaque: holds per-input UsdAttributeQuery.
@@ -330,6 +329,7 @@ enum class RigExecNoticeDisposition {
     Stale,
 };
 
+/// Compiles and evaluates one RigExecRoot prim.
 /// Calls and stage edits on this evaluator's stage are serialized by its
 /// owning thread. Frozen workers use snapshots and join before owner adoption.
 class RigExecRigEvaluator : public TfWeakBase {
@@ -636,15 +636,6 @@ public:
     /// from this count. Constant authored connections can remain static.
     size_t GetCompiledRigRestFrameCount() const;
 
-    /// Transform provider -> the pose steps that write it, in the order the
-    /// pose walk runs them: the aggregate solvers that name it on
-    /// rigExec:joints and the frame constraints that move it, INTERLEAVED in
-    /// one hierarchical stack. The last entry is the step whose
-    /// frame the pose publishes; a solver entry is also what an AtPrim read
-    /// phase naming that solver resolves against.
-    ///
-    /// Diagnostic access only -- evaluation order itself comes from the
-    /// interleaved pose steps, and this is read back from them.
     /// The compiled rig as one operation graph: every solver batch and
     /// solver, frame constraint, geometry chain and revision, property
     /// chain and revision, exec tap, provider value, space switch and
@@ -945,20 +936,6 @@ private:
         _DigestBesideCompile = 1u << 4,
     };
     static constexpr size_t _DigestSegmentCount = 3;
-    /// The prims one digest read outside the rig's namespace (the
-    /// prim-granular gate): relationship and connection
-    /// targets, missing ones included, the prims read through them -- mover
-    /// target gprims, weight objects, blend inputs and samples, pose-input
-    /// providers -- and the ancestors walked above a prim.
-    ///
-    /// Two kinds, because what the digest reads of a walked ancestor is less
-    /// than what it reads of a prim it looked at: an ancestor contributes its
-    /// validity, type name and own properties and nothing below it, so an
-    /// edit under an ancestor can only reach the digest through a prim the
-    /// walk started from, which is in \c read. Keeping the two apart is what
-    /// leaves an edit elsewhere under a shared ancestor -- a material beside
-    /// the rig, under the asset root the ancestor chains all pass through --
-    /// out of the gate.
     /// What one digest provably hashed, recorded so that an edit which
     /// changes one of these things can be known to move the digest without
     /// recomputing it. Each entry
@@ -1027,6 +1004,20 @@ private:
         /// a sample, a retype or the attribute appearing moves the digest.
         std::unordered_map<SdfPath, TfToken, SdfPath::Hash> sampleCountReads;
     };
+    /// The prims one digest read outside the rig's namespace (the
+    /// prim-granular gate): relationship and connection
+    /// targets, missing ones included, the prims read through them -- mover
+    /// target gprims, weight objects, blend inputs and samples, pose-input
+    /// providers -- and the ancestors walked above a prim.
+    ///
+    /// Two kinds, because what the digest reads of a walked ancestor is less
+    /// than what it reads of a prim it looked at: an ancestor contributes its
+    /// validity, type name and own properties and nothing below it, so an
+    /// edit under an ancestor can only reach the digest through a prim the
+    /// walk started from, which is in \c read. Keeping the two apart is what
+    /// leaves an edit elsewhere under a shared ancestor -- a material beside
+    /// the rig, under the asset root the ancestor chains all pass through --
+    /// out of the gate.
     struct _DigestFootprint {
         /// Prims the digest looked at: an edit on, under or above one is
         /// suspect.
@@ -1121,18 +1112,16 @@ private:
     /// entirely by avars on its joints has no control prims at all -- so it
     /// never fails Compile.
     std::vector<SdfPath> _controlPaths;
-    /// Base computePointFrame per control, parallel to _controlPaths.
     /// Joint -> the ORDERED STACK of solvers that write it, each with the
     /// element of that solver's aggregate the joint takes. Held in memory
     /// rather than authored.
     ///
-    /// Held in memory, never authored onto the joint. It is a compile-time
-    /// choice -- which solvers write this joint, in what order, and which
-    /// element of each one's aggregate frame array is this joint's -- so it
-    /// belongs to the compiled graph, not to the scene. Compile() derives it
-    /// from each solver's ordered rigExec:joints; Evaluate() indexes each solver's frame
-    /// array with it directly instead of going through the joint's
-    /// computePointFrame.
+    /// It is a compile-time choice -- which solvers write this joint, in what
+    /// order, and which element of each one's aggregate frame array is this
+    /// joint's -- so it belongs to the compiled graph, not to the scene.
+    /// Compile() derives it from each solver's ordered rigExec:joints;
+    /// Evaluate() indexes each solver's frame array with it directly instead
+    /// of going through the joint's computePointFrame.
     ///
     /// rigExec:joints is a WRITE, not an exclusive claim (solvers
     /// stack): any number of aggregate solvers may name one
@@ -1616,8 +1605,6 @@ private:
     /// mover execution order. This is the pose-domain counterpart of a points
     /// revision chain and supplies read-phase validation/snapshots.
     std::map<SdfPath, std::vector<SdfPath>> _frameChains;
-    /// Provider -> base computePointFrame tap, for providers that are not
-    /// joints (joints already have _jointFrameTaps).
 
     /// Points target -> the derived normals/extent revisions it feeds.
     ///

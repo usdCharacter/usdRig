@@ -114,6 +114,12 @@ struct RigExecFrameCacheStats {
     size_t bytes = 0;
 };
 
+/// The fold hash of an upstream array \p value
+/// (RigExecUpstreamValue::foldHash): its type and bytes, as the control
+/// digest folds a value, and never 0 (0 marks a scalar). 0 for a value
+/// that is not an array.
+uint64_t RigExecUpstreamFoldHash(const VtValue &value);
+
 /// The control half of the cache key: a hash over the frame's source values
 /// actually read -- the sampled input vector the UI thread built at enqueue
 /// time, plus the evaluator's interactive overrides, which never reach the
@@ -146,12 +152,6 @@ struct RigExecFrameCacheStats {
 /// `inputs.upstream`, the values the vector was sampled under.
 ///
 /// Within-process only, like the key hash: never persisted.
-/// The fold hash of an upstream array \p value
-/// (RigExecUpstreamValue::foldHash): its type and bytes, as the control
-/// digest folds a value, and never 0 (0 marks a scalar). 0 for a value
-/// that is not an array.
-uint64_t RigExecUpstreamFoldHash(const VtValue &value);
-
 uint64_t RigExecControlStateDigest(const RigExecFrameInputs &inputs);
 uint64_t
 RigExecControlStateDigest(const RigExecFrameInputs &inputs,
