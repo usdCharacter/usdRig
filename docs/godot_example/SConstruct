@@ -8,27 +8,34 @@ extension -- never a shared DLL. The FlatBuffers headers come from usdRig's
 thirdparty/flatbuffers/include. Objects go under build/obj/<suffix>, never
 into either source tree.
 Floating point stays precise, and this file never spells the settings out:
-it reads the exact-FP flags from the SDK's installed
-lib/cmake/rigExec/rigexec_flags.cmake fragment (rigexec_get_exact_fp_flags),
-the same authority the CMake build and bin/check_runtime_usd_free.sh follow.
-The USD-free source and include lists come from the manifests the SDK
-installs under share/rigExec/ -- runtimeSources.txt, evalCoreSources.txt,
-runtimeIncludes.txt and evalCoreIncludes.txt -- or, when no SDK is
-installed, from the same four files in a configured usdRig build tree.
+it reads the exact-FP settings the producer built these units with from
+exactFpFlags.txt, the same file bin/check_runtime_usd_free.sh compiles with,
+which the SDK installs beside the manifests. The USD-free source and include
+lists come from the manifests the SDK installs beside exactFpFlags.txt --
+runtimeSources.txt, evalCoreSources.txt, runtimeIncludes.txt and
+evalCoreIncludes.txt -- or, when no SDK is installed, from the same files in a
+configured usdRig build tree. One directory supplies all five, so an
+installed SDK and an in-place build tree are never mixed. That directory is
+the one the installed SDK's own package file names (rigExec_DATA_DIR in
+lib/cmake/rigExec/rigExecConfig.cmake), so a non-default install layout works
+instead of falling back to the build tree.
 Both grammars reserve the first path component "runtime-generated": an
 entry starting with it names a translation unit this SDK ships beside the
 manifests and resolves under the manifest directory M, every other entry
 resolves under the usdRig checkout C. Only a configured build tree may name
-an absolute path, and only inside its own checkout or binary root. Object
-targets are build/obj/<suffix>/generated/<path under M/runtime-generated>
-for generated units and build/obj/<suffix>/checkout/<path under C> for
-checkout units, so debug and release never share an object target.
+an absolute path, and only inside its own checkout or binary root. Every
+source entry is a translation unit, compiled with the language its extension
+names. Object targets are
+build/obj/<suffix>/generated/<path under M/runtime-generated> for generated
+units and build/obj/<suffix>/checkout/<path under C> for checkout units, so
+debug and release never share an object target.
 
 Usage:
     scons platform=<windows|linux|macos> target=<template_debug|template_release>
     scons platform=windows target=template_release api_version=4.7
     scons platform=windows usdrig_root=<usdRig checkout>
     scons platform=windows sdk_root=<usdRig install prefix, default ../usd-install>
+    scons platform=windows manifest_dir=<directory holding the five files>
 """
 
 import os
@@ -39,10 +46,14 @@ from SCons.Script import ARGUMENTS, Default, SConscript
 godot_cpp = os.path.join("thirdparty", "godot-cpp")
 
 MANIFEST_NAMES = ("runtimeSources.txt", "evalCoreSources.txt",
-                  "runtimeIncludes.txt", "evalCoreIncludes.txt")
+                  "runtimeIncludes.txt", "evalCoreIncludes.txt",
+                  "exactFpFlags.txt")
 # The reserved first component of an installed manifest entry: the generated
 # mover payload shipped with the SDK (cmake/rigExecConfig.cmake.in).
 GENERATED_COMPONENT = "runtime-generated"
+# Extensions a source manifest may name, and the language each carries. The
+# exporter (cmake/exportManifests.cmake) accepts the same list.
+UNIT_SUFFIXES = (".c", ".cc", ".cxx", ".cpp", ".c++")
 
 
 def _godot_cpp_env():
@@ -69,62 +80,79 @@ def _read_lines(path):
         return [line.strip() for line in handle if line.strip()]
 
 
-def _exact_fp_flags(fragment, msvc):
-    """The flags rigexec_get_exact_fp_flags sets for this compiler."""
-    with open(fragment, "r", encoding="utf-8") as handle:
-        text = handle.read()
-    body = re.search(
-        r"function\s*\(\s*rigexec_get_exact_fp_flags\b.*?\)(.*?)endfunction\s*\(\s*\)",
-        text, re.S)
-    branch = None
-    if body:
-        if msvc:
-            branch = re.search(r"if\s*\(\s*MSVC\s*\)(.*?)else", body.group(1), re.S)
-        else:
-            branch = re.search(r"else\s*\(\s*\)(.*?)endif", body.group(1), re.S)
-    flags = []
-    if branch:
-        assignment = re.search(r"set\(\s*\$\{\w+\}\s+(.*?)\s+PARENT_SCOPE\s*\)",
-                               branch.group(1), re.S)
-        if assignment:
-            flags = assignment.group(1).split()
-    if not flags:
-        print(fragment + " names no exact-FP flags for "
-              + ("MSVC" if msvc else "non-MSVC") + " builds")
-        raise SystemExit(1)
-    return flags
+def _missing_manifests(directory):
+    return [name for name in MANIFEST_NAMES
+            if not os.path.isfile(os.path.join(directory, name))]
 
 
-def _first_existing(candidates, what):
-    for candidate in candidates:
-        if os.path.isfile(candidate):
-            return candidate
-    print("no " + what + " at: " + ", ".join(candidates))
-    raise SystemExit(1)
-
-
-flags_fragment = _first_existing(
-    (os.path.join(sdk_root, "lib", "cmake", "rigExec", "rigexec_flags.cmake"),
-     os.path.join(usdrig_root, "cmake", "rigexec_flags.cmake")),
-    "the cmake/rigexec_flags.cmake exact-FP fragment")
+def _sdk_manifest_dir():
+    """The data directory the installed SDK names for itself. The installer
+    picks the layout, so read rigExec_DATA_DIR out of the SDK's package file
+    instead of assuming share/rigExec; the default spelling is the fallback
+    for an SDK that ships no package file."""
+    config = os.path.join(sdk_root, "lib", "cmake", "rigExec",
+                          "rigExecConfig.cmake")
+    if os.path.isfile(config):
+        with open(config, "r", encoding="utf-8") as handle:
+            declared = re.search(r'rigExec_DATA_DIR\s+"([^"]+)"',
+                                 handle.read())
+        if declared:
+            # The package file spells its own prefix as ${PACKAGE_PREFIX_DIR}.
+            value = declared.group(1).replace("${PACKAGE_PREFIX_DIR}",
+                                              sdk_root)
+            return os.path.abspath(value)
+    return os.path.join(sdk_root, "share", "rigExec")
 
 
 def _manifest_source():
-    """(manifest directory, its grammar): the SDK's share/rigExec, or a
-    configured usdRig build tree. The two are not interchangeable, so the
-    mode is decided once and every entry is read under it."""
-    for directory, mode in ((os.path.join(sdk_root, "share", "rigExec"), "sdk"),
+    """(manifest directory, its grammar): an SDK data directory, or a
+    configured usdRig build tree. One directory supplies the whole set, so
+    the mode is decided once and every entry is read under it. A directory
+    holding part of the set is the SDK this build meant to use; it is
+    rejected instead of completed from another root."""
+    manifest_dir_arg = ARGUMENTS.get("manifest_dir", "")
+    if manifest_dir_arg:
+        directory = os.path.abspath(manifest_dir_arg)
+        missing = _missing_manifests(directory)
+        if missing:
+            print("manifest_dir " + directory + " is missing " + ", ".join(missing))
+            print("an SDK manifest set is the four manifests plus exactFpFlags.txt")
+            raise SystemExit(1)
+        return directory, "sdk"
+    for directory, mode in ((_sdk_manifest_dir(), "sdk"),
                             (build_root, "build")):
-        if all(os.path.isfile(os.path.join(directory, name))
-               for name in MANIFEST_NAMES):
+        missing = _missing_manifests(directory)
+        if not missing:
             return directory, mode
+        if len(missing) < len(MANIFEST_NAMES):
+            print("the manifest set in " + directory + " is incomplete: missing "
+                  + ", ".join(missing))
+            print("install the SDK, or pass manifest_dir= a directory holding "
+                  + ", ".join(MANIFEST_NAMES))
+            raise SystemExit(1)
     print("no manifest set (" + ", ".join(MANIFEST_NAMES) + ") under "
-          + os.path.join(sdk_root, "share", "rigExec") + " or "
-          + build_root + "; install the usdRig SDK or configure its build")
+          + _sdk_manifest_dir() + " or " + build_root
+          + "; install the usdRig SDK or configure its build")
     raise SystemExit(1)
 
 
 manifest_dir, manifest_mode = _manifest_source()
+
+
+def _exact_fp_flags(directory, msvc):
+    """The settings this producer compiled the manifest's units with."""
+    flags = _read_lines(os.path.join(directory, "exactFpFlags.txt"))
+    if not flags:
+        print(os.path.join(directory, "exactFpFlags.txt")
+              + " names no exact-FP flags")
+        raise SystemExit(1)
+    expected = "/fp:precise" if msvc else "-fno-fast-math"
+    if expected not in flags:
+        print(os.path.join(directory, "exactFpFlags.txt") + " is not "
+              + ("MSVC" if msvc else "gcc/clang") + " settings; install or "
+              "configure the SDK built for this platform")
+        raise SystemExit(1)
+    return flags
 # The generated payload root is M/runtime-generated in both grammars.
 generated_root = os.path.join(manifest_dir, GENERATED_COMPONENT)
 
@@ -138,8 +166,8 @@ def _entry_failure(manifest, entry, attempted, reason):
           + attempted + ")")
     if manifest_mode == "sdk":
         print("the installed SDK does not match this checkout: install an SDK "
-            "built from the same usdRig, whose mover generation writes the "
-            "runtime-generated payload")
+              "built from the same usdRig, whose mover generation writes the "
+              "runtime-generated payload")
     raise SystemExit(1)
 
 
@@ -176,17 +204,26 @@ def _manifest_paths(manifest_name, want_file):
     paths = []
     for entry in _read_lines(manifest):
         path = _resolve(manifest, entry)
-        if not (os.path.isfile(path) if want_file else os.path.isdir(path)):
-            _entry_failure(manifest, entry, path,
-                          "is not a " + ("file" if want_file else "directory"))
+        if want_file:
+            if not os.path.isfile(path):
+                _entry_failure(manifest, entry, path, "is not a file")
+            extension = os.path.splitext(path)[1].lower()
+            if extension not in UNIT_SUFFIXES:
+                _entry_failure(manifest, entry, path,
+                               "is not a translation unit (one of "
+                               + ", ".join(UNIT_SUFFIXES) + ")")
+        elif not os.path.isdir(path):
+            _entry_failure(manifest, entry, path, "is not a directory")
         paths.append((path, _under(generated_root, path)))
     return paths
 
 
-# Bitwise parity with the baked path, from the build's flag authority.
+# Bitwise parity with the baked path, from the settings the producer used.
 is_msvc = env.get("is_msvc", False)
-env.Append(CXXFLAGS=_exact_fp_flags(flags_fragment, is_msvc)
-           + ["/std:c++17" if is_msvc else "-std=c++17"])
+fp_flags = _exact_fp_flags(manifest_dir, is_msvc)
+env.Append(CXXFLAGS=fp_flags + ["/std:c++17" if is_msvc else "-std=c++17"])
+print("manifests: " + manifest_dir + " (" + manifest_mode + " mode); "
+      "exact-FP flags: " + " ".join(fp_flags))
 
 flatbuffers_include = os.path.join(usdrig_root, "thirdparty", "flatbuffers",
                                    "include")
@@ -199,14 +236,8 @@ if not os.path.isfile(os.path.join(flatbuffers_include, "flatbuffers",
 # The USD-free translation units and include directories, exactly as the
 # manifests list them -- the same lists bin/check_runtime_usd_free.sh
 # compiles. The extension needs them all: the runtime links EvalCore.
-runtime_sources = [(path, generated)
-                   for path, generated in
-                   _manifest_paths("runtimeSources.txt", True)
-                   if path.endswith((".cpp", ".c"))]
-runtime_sources += [(path, generated)
-                    for path, generated in
-                    _manifest_paths("evalCoreSources.txt", True)
-                    if path.endswith((".cpp", ".c"))]
+runtime_sources = (_manifest_paths("runtimeSources.txt", True)
+                   + _manifest_paths("evalCoreSources.txt", True))
 if not runtime_sources:
     print("the manifests under " + manifest_dir + " name no source files")
     raise SystemExit(1)
@@ -258,7 +289,8 @@ def _object_key(source, generated):
     stem = os.path.splitext(
         os.path.relpath(source, generated_root if generated else usdrig_root)
         .replace("\\", "/"))[0]
-    if stem.startswith("/") or stem.split("/")[0].endswith(":") or ".." in stem.split("/"):
+    first = stem.split("/")[0]
+    if stem.startswith("/") or first.endswith(":") or ".." in stem.split("/"):
         print(source + " has no object key relative to the "
               + ("generated" if generated else "checkout") + " root")
         raise SystemExit(1)
@@ -270,7 +302,7 @@ objects = [runtime_env.SharedObject(_object_key(source, generated), source)
 lzma_env = env.Clone()
 lzma_env.Append(CPPDEFINES=["Z7_ST", "RIGEXEC_LZMA_PORTABLE_SCALAR"])
 objects += [lzma_env.SharedObject(_object_key(s, False), s)
-           for s in lzma_sources]
+            for s in lzma_sources]
 objects += [
     env.SharedObject(
         os.path.join(obj_root, "addon",

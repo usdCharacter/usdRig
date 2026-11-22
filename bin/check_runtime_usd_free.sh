@@ -136,14 +136,22 @@ for manifest in runtimeIncludes.txt evalCoreIncludes.txt; do
 done
 
 objs=()
+# Each manifest entry is a translation unit: C for .c, C++ for the other
+# extensions cmake/exportManifests.cmake accepts. Anything else is a producer
+# bug and stops the check rather than being skipped.
 compile_one() {
-    local src="$1"
-    local obj="$WORK/${#objs[@]}_$(basename "${src%.*}").o"
-    if [[ "$src" == *.c ]]; then
-        gcc "${CFLAGS[@]}" -c "$src" -o "$obj"
-    else
-        g++ "${CXXFLAGS[@]}" -c "$src" -o "$obj"
-    fi
+    local src="$1" obj extension
+    extension="${src##*.}"
+    obj="$WORK/${#objs[@]}_$(basename "${src%.*}").o"
+    case "$extension" in
+        c)
+            gcc "${CFLAGS[@]}" -c "$src" -o "$obj" ;;
+        cc|cxx|cpp|c++)
+            g++ "${CXXFLAGS[@]}" -c "$src" -o "$obj" ;;
+        *)
+            echo "$src: not a translation unit (supported: .c .cc .cxx .cpp .c++)" >&2
+            exit 1 ;;
+    esac
     objs+=("$obj")
 }
 
@@ -154,16 +162,14 @@ for manifest in runtimeSources.txt evalCoreSources.txt; do
         [[ -z "$src" ]] && continue
         spelling="$src"
         if [[ $installed -eq 1 ]]; then
-            # The installed grammar constrains every entry, whatever its
-            # suffix: resolve and validate before filtering for compilation.
+            # The installed grammar constrains every entry: resolve and
+            # validate before compilation.
             src="$(resolve_manifest_entry "$manifest" "$src")" || exit 1
-            [[ "$src" = *.cpp || "$src" = *.c ]] || continue
             if [[ ! -f "$src" ]]; then
                 echo "$manifest: $spelling: no such source $src" >&2
                 exit 1
             fi
         else
-            [[ "$src" = *.cpp || "$src" = *.c ]] || continue
             [[ "$src" = /* ]] || src="$ROOT/$src"
         fi
         sources+=("$src")

@@ -3197,13 +3197,12 @@ install(FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/generateMoverSchema.py"
     DESTINATION "${RIGEXEC_INSTALL_CMAKEDIR}")
 
-# The exact-FP flags this tree was built with, the generated runtime
-# translation units, and the USD-free file lists rewritten into the
-# installed-manifest grammar, for a host that compiles those sources without
-# CMake (the Godot and Unreal extensions). The payload preserves the build's
-# runtime-generated/ subtree, which the manifests' reserved first component
-# names; the mover declarations above own the built-in list, so this adds no
-# second inventory.
+# The generated runtime translation units, the USD-free file lists rewritten
+# into the installed-manifest grammar, and the exact-FP flags this tree was
+# built with, for a host that compiles those sources without CMake (the Godot
+# and Unreal extensions). The payload preserves the build's runtime-generated/
+# subtree, which the manifests' reserved first component names; the mover
+# declarations above own the built-in list, so this adds no second inventory.
 get_property(_rigexec_builtin_movers GLOBAL PROPERTY RIGEXEC_BUILTIN_MOVERS)
 set(_rigexec_generated_payload "")
 if (_rigexec_builtin_movers)

@@ -800,13 +800,15 @@ jobs:
           source bin/_env.sh
           /tmp/cm326/bin/ctest --test-dir build-326 -R 'testRigExec(InstallStaging|ExactFpFragment)' --output-on-failure
       # The relocated-consumer job rebuilds from these installed files alone:
-      # the share/rigExec manifests with their runtime-generated payload, and
-      # the exact-FP flags fragment the SConstruct reads. No build tree, no
-      # generated objects, no producer path travels with them.
+      # the share/rigExec manifests with their runtime-generated payload, the
+      # exact-FP flags fragment the SConstruct reads, and the package file that
+      # names the data directory. No build tree, no generated objects, no
+      # producer path travels with them.
       - name: Pack installed SDK data for the relocated consumer
         run: |
           tar -C "${GITHUB_WORKSPACE}/usdrig-install" -cf usdrig-sdk-data.tar \
-            share/rigExec lib/cmake/rigExec/rigexec_flags.cmake
+            share/rigExec lib/cmake/rigExec/rigexec_flags.cmake \
+            lib/cmake/rigExec/rigExecConfig.cmake
 
       - name: Upload installed SDK data
         uses: actions/upload-artifact@v4
@@ -821,11 +823,16 @@ jobs:
   # install-check above. It checks out the same commit under a different
   # directory name, asserts the producer's checkout, build and prefix paths
   # hold nothing here, and downloads no build artifact. The USD-free shell
-  # check runs against the relocated manifest directory; then the actual
-  # tutorial archive builds both Godot template configurations in one output
-  # tree against the relocated SDK, and the in-place SCons path is enumerated
-  # against a configured build with no SDK. Every object-path assertion reads
-  # actual SCons outputs; nothing here reimplements the SConstruct mapping.
+  # check runs against the relocated manifest directory, and against a copy
+  # whose manifest adds a .cxx unit; then the actual tutorial archive builds
+  # both Godot template configurations in one output tree against the
+  # relocated SDK, and the in-place SCons path is enumerated against a
+  # configured build with no SDK. The SCons manifest contract is checked at
+  # parse level: an incomplete manifest set is refused instead of completed
+  # from a build tree, a non-default data directory comes from the SDK's own
+  # package file, and a .cxx unit in a manifest reaches the object list. Every
+  # object-path assertion reads actual SCons outputs; nothing here reimplements
+  # the SConstruct mapping.
   # --------------------------------------------------------------------------
   relocated-consumer:
     name: relocated SDK consumer (clean checkout)
@@ -882,13 +889,60 @@ jobs:
             sdk-relocated/share/rigExec/runtimeIncludes.txt \
             sdk-relocated/share/rigExec/evalCoreIncludes.txt \
             sdk-relocated/share/rigExec/exactFpFlags.txt \
-            sdk-relocated/lib/cmake/rigExec/rigexec_flags.cmake
+            sdk-relocated/lib/cmake/rigExec/rigexec_flags.cmake \
+            sdk-relocated/lib/cmake/rigExec/rigExecConfig.cmake
           do
             test -f "$f" || { echo "SDK transfer is missing $f"; exit 1; }
           done
 
+      # The SConstruct resolves the SDK's data directory out of the installed
+      # package file, the same spelling CMake's packaging writes. Read it the
+      # way the consumer does and require all five files there.
+      - name: Resolve the data directory the installed SDK declares
+        run: |
+          python3 - "$GITHUB_WORKSPACE/sdk-relocated" <<'PY'
+          import os, re, sys
+          prefix = sys.argv[1]
+          config = os.path.join(prefix, "lib", "cmake", "rigExec",
+                                "rigExecConfig.cmake")
+          declared = re.search(r'rigExec_DATA_DIR\s+"([^"]+)"', open(config).read())
+          if not declared:
+              sys.exit("the installed package file names no rigExec_DATA_DIR")
+          resolved = declared.group(1).replace("${PACKAGE_PREFIX_DIR}", prefix)
+          print("rigExec_DATA_DIR -> " + resolved)
+          missing = [name for name in ("runtimeSources.txt", "evalCoreSources.txt",
+                                       "runtimeIncludes.txt", "evalCoreIncludes.txt",
+                                       "exactFpFlags.txt")
+                     if not os.path.isfile(os.path.join(resolved, name))]
+          if missing:
+              sys.exit("the declared data directory holds no " + ", ".join(missing))
+          PY
+
       - name: Compile relocated manifests with no pxr include path
-        run: ./consumer-src/bin/check_runtime_usd_free.sh --sdk "$GITHUB_WORKSPACE/sdk-relocated/share/rigExec"
+        run: |
+          ./consumer-src/bin/check_runtime_usd_free.sh \
+            --sdk "$GITHUB_WORKSPACE/sdk-relocated/share/rigExec" \
+            | tee "$GITHUB_WORKSPACE/sdk-objects.txt"
+
+      # The exporter keeps every compiled translation-unit extension (cmake and
+      # the SConstruct share the list), so an installed manifest may name a
+      # .cxx unit. It must resolve under the manifest directory, compile, and
+      # add exactly one object.
+      - name: Compile an installed manifest that names a .cxx unit
+        run: |
+          cp -r sdk-relocated/share/rigExec cxx-sdk
+          printf '#include "rigExecGraph/opGraph.h"\nint RigExecManifestCxxProbe(){ return 0; }\n' \
+            > cxx-sdk/runtime-generated/manifest_probe.cxx
+          sed -i '1i runtime-generated/manifest_probe.cxx' cxx-sdk/runtimeSources.txt
+          ./consumer-src/bin/check_runtime_usd_free.sh --sdk "$GITHUB_WORKSPACE/cxx-sdk" \
+            | tee "$GITHUB_WORKSPACE/sdk-cxx-objects.txt"
+          base="$(grep -o '([0-9]* objects)' "$GITHUB_WORKSPACE/sdk-objects.txt" | grep -o '[0-9]*')"
+          with_cxx="$(grep -o '([0-9]* objects)' "$GITHUB_WORKSPACE/sdk-cxx-objects.txt" | grep -o '[0-9]*')"
+          test -n "$base" && test -n "$with_cxx" \
+            || { echo "the USD-free check reported no object count"; exit 1; }
+          test "$with_cxx" -eq "$((base + 1))" \
+            || { echo "the .cxx entry changed the object count $base -> $with_cxx"; exit 1; }
+          echo "the .cxx entry added one object: $base -> $with_cxx"
 
       # The strict installed-manifest rule stays strict: one producer-absolute
       # entry in an otherwise valid copied SDK manifest must fail, and the
@@ -1185,6 +1239,79 @@ jobs:
                 % (len(debug), len(release)))
           PY
 
+      # One directory supplies the whole set. Here the checkout is configured,
+      # so a usdRig build tree holds a complete manifest set: an SDK prefix or
+      # manifest_dir missing one of the five files must be refused by name,
+      # never completed from the build tree, which would pair one root's
+      # sources with the other's flags and produce a library that drifts.
+      - name: Reject a manifest set missing one file
+        run: |
+          cp -r sdk-relocated sdk-partial
+          rm "sdk-partial/share/rigExec/exactFpFlags.txt"
+          cd tutorial-sdk/godot_rigExec
+          for source in "sdk_root=$GITHUB_WORKSPACE/sdk-partial" \
+                        "manifest_dir=$GITHUB_WORKSPACE/sdk-partial/share/rigExec"; do
+            if scons -Q --tree=all --dry-run platform=linux target=template_debug \
+                api_version=4.7 "$source" \
+                "usdrig_root=$GITHUB_WORKSPACE/consumer-src" \
+                > "$GITHUB_WORKSPACE/partial-sdk.log" 2>&1
+            then
+              echo "an incomplete manifest set built ($source)"; exit 1
+            fi
+            grep -F "missing exactFpFlags.txt" "$GITHUB_WORKSPACE/partial-sdk.log" >/dev/null \
+              || { echo "the failure did not name the missing manifest ($source)"
+                   cat "$GITHUB_WORKSPACE/partial-sdk.log"; exit 1; }
+            if grep -F "build/obj" "$GITHUB_WORKSPACE/partial-sdk.log" >/dev/null; then
+              echo "the incomplete set still enumerated build-tree objects ($source)"
+              exit 1
+            fi
+          done
+
+      # An SDK installed to a non-default data layout names that layout in its
+      # own package file. sdk_root must follow it, and must stay in installed-
+      # SDK mode here even though consumer-src/build now holds a complete
+      # in-place manifest set -- the fallback the tutorial used to take.
+      - name: Follow the data directory the installed SDK declares
+        run: |
+          cp -r sdk-relocated sdk-weird
+          mv sdk-weird/share/rigExec "sdk-weird/share/rigExec data"
+          sed -i 's|rigExec_DATA_DIR "${PACKAGE_PREFIX_DIR}/share/rigExec")|rigExec_DATA_DIR "${PACKAGE_PREFIX_DIR}/share/rigExec data")|' \
+            sdk-weird/lib/cmake/rigExec/rigExecConfig.cmake
+          grep -F 'rigExec_DATA_DIR "${PACKAGE_PREFIX_DIR}/share/rigExec data")' \
+            sdk-weird/lib/cmake/rigExec/rigExecConfig.cmake >/dev/null \
+            || { echo "the SDK package file was not rewritten"; exit 1; }
+          cd tutorial-inplace/godot_rigExec
+          scons -Q --tree=all --dry-run platform=linux target=template_debug \
+            api_version=4.7 "sdk_root=$GITHUB_WORKSPACE/sdk-weird" \
+            "usdrig_root=$GITHUB_WORKSPACE/consumer-src" \
+            > "$GITHUB_WORKSPACE/weird-layout-targets.txt" 2>&1
+          grep -F "manifests: $GITHUB_WORKSPACE/sdk-weird/share/rigExec data (sdk mode)" \
+            "$GITHUB_WORKSPACE/weird-layout-targets.txt" >/dev/null \
+            || { echo "SCons did not take the data directory the SDK declares"
+                 cat "$GITHUB_WORKSPACE/weird-layout-targets.txt"; exit 1; }
+          grep -F "generated/moverCatalog" "$GITHUB_WORKSPACE/weird-layout-targets.txt" >/dev/null \
+            || { echo "the non-default set enumerated no generated object"
+                 exit 1; }
+
+      # The extension gate names the languages the exporter compiles. A .cxx
+      # unit in a build-tree manifest must reach the target list keyed under
+      # the generated payload root, like any other unit.
+      - name: Enumerate a build-tree manifest that names a .cxx unit
+        run: |
+          printf '#include "rigExecGraph/opGraph.h"\nint RigExecManifestCxxProbe(){ return 0; }\n' \
+            > consumer-src/build/runtime-generated/manifest_probe.cxx
+          sed -i '1i runtime-generated/manifest_probe.cxx' \
+            consumer-src/build/runtimeSources.txt
+          mkdir -p empty-sdk
+          cd tutorial-inplace/godot_rigExec
+          scons -Q --tree=all --dry-run platform=linux target=template_release \
+            api_version=4.7 "sdk_root=$GITHUB_WORKSPACE/empty-sdk" \
+            "usdrig_root=$GITHUB_WORKSPACE/consumer-src" \
+            > "$GITHUB_WORKSPACE/cxx-probe-targets.txt" 2>&1
+          grep -F "generated/manifest_probe" "$GITHUB_WORKSPACE/cxx-probe-targets.txt" >/dev/null \
+            || { echo "the .cxx manifest unit reached no object target"
+                 cat "$GITHUB_WORKSPACE/cxx-probe-targets.txt"; exit 1; }
+
       - name: Upload consumer logs
         if: failure()
         uses: actions/upload-artifact@v4
@@ -1196,6 +1323,11 @@ jobs:
             debug-object-hashes.txt
             inplace-debug-targets.txt
             inplace-release-targets.txt
+            partial-sdk.log
+            weird-layout-targets.txt
+            cxx-probe-targets.txt
+            sdk-objects.txt
+            sdk-cxx-objects.txt
 
 
   platform-cpp:

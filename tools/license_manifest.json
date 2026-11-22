@@ -36,10 +36,10 @@
       },
       {
         "archive": "docs/examples/godot_rolling_ball.zip",
-        "blob": "eecfd5f54df633e1703bc50d3bcc6b49eb9b738a",
+        "blob": "c1a4a180911a61fd46965ef1aca847ff006a1267",
         "members": 94,
         "legal_members": 27,
-        "refresh_note": "repacked with the dual-root SConstruct from docs/godot_example/SConstruct in this checkout; the members and their bytes are those of the previous pack - which refreshed the canonical and compatibility NOTICE copies and their package hashes for volumeWeightModel.py - except SConstruct, START_HERE.txt, package_manifest.json and the shipped manifest snapshot, and all 27 mapped legal members match their recorded sources. No sibling godot_rigExec checkout was present, so the add-on payload was re-read from the previous pack's own members",
+        "refresh_note": "repacked with the single-directory SConstruct from docs/godot_example/SConstruct in this checkout, which takes the four source and include manifests plus exactFpFlags.txt from the data directory the installed package file names; the members and their bytes are those of the previous pack - which carried the same contract and the NOTICE copies refreshed for volumeWeightModel.py - except SConstruct, START_HERE.txt, package_manifest.json and the shipped manifest snapshot, whose own archive blob is the previous pack's; all 27 mapped legal members match their recorded sources. No sibling godot_rigExec checkout was present, so the add-on payload was re-read from the previous pack's own members",
         "legal_members_mapped": 27
       },
       {

@@ -1,9 +1,10 @@
 """Package the sibling Godot tutorial for docs; omit caches and stale binaries.
 
 The packaged SConstruct ships from this checkout (docs/godot_example/SConstruct):
-it consumes the SDK's installed lib/cmake/rigExec/rigexec_flags.cmake fragment and
-the share/rigExec source and include manifests, which this repository owns, so the
-build-surface contract stays with the build it describes. Those manifests reserve
+it consumes the manifest set the SDK installs in one directory -- the four
+source and include manifests plus exactFpFlags.txt, in the data directory the
+SDK's own rigExecConfig.cmake names -- which this repository owns, so the
+build-surface contract stays with the build it describes. That set reserves
 the first path component: runtime-generated/ entries resolve under the manifest
 directory, every other entry under the matching usdRig checkout.
 """
@@ -35,12 +36,15 @@ git -C thirdparty/godot-cpp checkout 507ed9d840c01a3c5b2a39af8bb4000bfac30bf5
 git -C thirdparty/godot-cpp submodule update --init --recursive
 python demo/setup_rolling.py --build
 The SConstruct takes its exact-FP flags and its USD-free source and include
-lists from the installed SDK (lib/cmake/rigExec/rigexec_flags.cmake and
-share/rigExec/runtimeSources.txt, evalCoreSources.txt, runtimeIncludes.txt
-and evalCoreIncludes.txt). A manifest entry starting runtime-generated/
-resolves beside the manifests under share/rigExec; every other entry
-resolves under the usdRig checkout. Pass sdk_root=<usd-install> and
-usdrig_root=<usdRig> when those siblings are not the right pair.
+lists from one directory of the installed SDK: exactFpFlags.txt with
+runtimeSources.txt, evalCoreSources.txt, runtimeIncludes.txt and
+evalCoreIncludes.txt, in the data directory the SDK names as rigExec_DATA_DIR
+in lib/cmake/rigExec/rigExecConfig.cmake. A manifest entry starting
+runtime-generated/ resolves beside the manifests; every other entry
+resolves under the usdRig checkout. With no installed SDK the same five
+files are read from a configured usdRig build tree. Pass
+sdk_root=<usd-install>, usdrig_root=<usdRig> or manifest_dir=<that
+directory> when those siblings are not the right pair.
 
 No Godot cache, editor state, credentials, or platform binaries other than
 the tested Windows x86-64 pair are included. Source is included; other

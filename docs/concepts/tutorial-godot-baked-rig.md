@@ -167,11 +167,14 @@ MSVC. If needed, append `--godot "C:/path/to/godot_console.exe"` to setup.
 
 The packaged `SConstruct` spells out no compiler flags and no runtime file
 list. It reads the exact-FP settings from the SDK's installed
-`lib/cmake/rigExec/rigexec_flags.cmake` fragment
-(`rigexec_get_exact_fp_flags`) and the USD-free source and include lists
-from the four manifests the SDK installs under `share/rigExec/`:
-`runtimeSources.txt`, `evalCoreSources.txt`, `runtimeIncludes.txt` and
-`evalCoreIncludes.txt`. Each holds one forward-slash path per line, in
+`exactFpFlags.txt`, and the USD-free source and include lists from the four
+manifests `runtimeSources.txt`, `evalCoreSources.txt`, `runtimeIncludes.txt`
+and `evalCoreIncludes.txt`. One directory supplies all five files: the SDK's
+data directory, which its own package file names as `rigExec_DATA_DIR` in
+`lib/cmake/rigExec/rigExecConfig.cmake`, or a configured usdRig build tree.
+A directory holding part of the set is refused by name; the build never
+completes it from the other root, and `manifest_dir=<directory>` picks the
+directory explicitly. Each holds one forward-slash path per line, in
 order; the two source manifests name files and the two include manifests
 name directories. Let **M** be the directory holding those manifests and
 **C** the usdRig checkout that matches the SDK. The first path component
@@ -180,12 +183,18 @@ ships beside the manifests — the generated mover kernels, mover schemas,
 mover registrations and `moverCatalog.cpp` — and resolves under **M**,
 while every other entry, such as `libs/rigExecRuntime/open.cpp`, resolves
 under **C**. An installed entry is never absolute and never carries a `..`
-segment, and only the root its spelling names is searched. Pass
+segment, and only the root its spelling names is searched. Every source
+entry names a translation unit — `.c`, `.cc`, `.cxx`, `.cpp` or `.c++` —
+the same extensions the exporter compiles, and the unit is compiled with
+the language its extension names. Pass
 `sdk_root=<install prefix>` and `usdrig_root=<checkout>` when the sibling
 `usd-install` and `usdRig` defaults are not the right pair. With no
-installed SDK, the script reads the same four files from a configured
+installed SDK, the script reads the same five files from a configured
 usdRig build tree, where an absolute entry is accepted only inside that
-tree. The extension therefore compiles the same translation units with the
+tree. Objects land in `build/obj/<configuration>/generated/` for payload
+units and `build/obj/<configuration>/checkout/` for checkout units, so one
+output tree holds both Godot configurations without a shared object target.
+The extension therefore compiles the same translation units with the
 same settings as the CMake build; see
 [Evaluation and independent checks](../concepts/baked-vs-dynamic.md).
 
