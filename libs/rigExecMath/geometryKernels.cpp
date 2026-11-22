@@ -217,178 +217,6 @@ RigExecApplyWrinkle(std::vector<GfVec3f> *points,
                                                        indices, settings);
 }
 
-RigExecVertexNormalsTopology
-RigExecBuildVertexNormalsTopology(size_t pointsSize,
-                                  const int *faceVertexCounts,
-                                  size_t faceVertexCountsSize,
-                                  const int *faceVertexIndices,
-                                  size_t faceVertexIndicesSize)
-{
-    RigExecVertexNormalsTopology t;
-    t.pointCount = pointsSize;
-    t.pointIncidences.assign(pointsSize + 1, 0);
-    if ((faceVertexCountsSize > 0 && !faceVertexCounts) ||
-        (faceVertexIndicesSize > 0 && !faceVertexIndices)) {
-        t.pointCount = size_t(-1);
-        return t;
-    }
-    t.faceVertexCountsSize = faceVertexCountsSize;
-    t.faceVertexIndicesSize = faceVertexIndicesSize;
-    // The faces before the first malformed one (fewer than three corners,
-    // or running past the index array).
-    t.faceOffsets.reserve(faceVertexCountsSize);
-    size_t offset = 0;
-    for (size_t f = 0; f < faceVertexCountsSize; ++f) {
-        const int faceCount = faceVertexCounts[f];
-        if (faceCount < 3 ||
-            offset + static_cast<size_t>(faceCount) > faceVertexIndicesSize) {
-            t.malformed = true;
-            break;
-        }
-        t.faceOffsets.push_back(offset);
-        offset += faceCount;
-    }
-    const auto isPoint = [pointsSize](int v) {
-        return v >= 0 && static_cast<size_t>(v) < pointsSize;
-    };
-    for (size_t c = 0; c < offset; ++c) {
-        const int v = faceVertexIndices[c];
-        if (isPoint(v))
-            ++t.pointIncidences[size_t(v) + 1];
-    }
-    for (size_t i = 0; i < pointsSize; ++i)
-        t.pointIncidences[i + 1] += t.pointIncidences[i];
-    t.incidenceFaces.resize(t.pointIncidences[pointsSize]);
-    t.incidenceCorners.resize(t.pointIncidences[pointsSize]);
-    std::vector<size_t> cursor(t.pointIncidences.begin(),
-                               t.pointIncidences.end() - 1);
-    for (size_t f = 0; f < t.faceOffsets.size(); ++f) {
-        const size_t first = t.faceOffsets[f];
-        const int faceCount = faceVertexCounts[f];
-        for (int k = 0; k < faceCount; ++k) {
-            const int v = faceVertexIndices[first + k];
-            if (!isPoint(v))
-                continue;
-            const size_t slot = cursor[size_t(v)]++;
-            t.incidenceFaces[slot] = f;
-            t.incidenceCorners[slot] = first + k;
-        }
-    }
-    return t;
-}
-
-namespace {
-
-// The walk over a \p topology built from these arrays.
-std::vector<GfVec3f>
-_ComputeVertexNormals(const GfVec3f *points, size_t pointsSize,
-                      const int *faceVertexCounts, const int *faceVertexIndices,
-                      const RigExecVertexNormalsTopology &topology,
-                      const RigExecRangeRunner *ranges)
-{
-    std::vector<GfVec3f> normals(pointsSize, GfVec3f(0));
-    const std::vector<size_t> &faceOffsets = topology.faceOffsets;
-    const size_t faces = faceOffsets.size();
-    const size_t corners =
-        faces ? faceOffsets.back() + size_t(faceVertexCounts[faces - 1]) : 0;
-    const auto isPoint = [pointsSize](int v) {
-        return v >= 0 && static_cast<size_t>(v) < pointsSize;
-    };
-
-    // Per face, independently: its unit Newell normal and each usable
-    // corner's interior angle. A face that contributes nothing (fewer than
-    // three usable corners, or fully degenerate) is marked and skipped.
-    std::vector<GfVec3f> faceNormals(faces, GfVec3f(0));
-    std::vector<char> contributes(faces, 0);
-    std::vector<float> cornerWeights(corners, 0.0f);
-    RigExecRunRanges(ranges, faces, 512, [&](size_t begin, size_t end) {
-        std::vector<int> ring;
-        std::vector<size_t> slots;
-        for (size_t f = begin; f < end; ++f) {
-            const size_t first = faceOffsets[f];
-            const int faceCount = faceVertexCounts[f];
-            ring.clear();
-            slots.clear();
-            for (int k = 0; k < faceCount; ++k) {
-                const int v = faceVertexIndices[first + k];
-                if (isPoint(v)) {
-                    ring.push_back(v);
-                    slots.push_back(first + k);
-                }
-            }
-            const size_t n = ring.size();
-            if (n < 3) {
-                continue;
-            }
-
-            // Newell's method: correct for a non-planar n-gon and
-            // independent of triangulation. A fan triangulation gives a
-            // vertex beside the anchor only a sliver triangle, and mirrored
-            // slivers along a symmetry seam cancel to a zero normal.
-            GfVec3f faceNormal(0);
-            for (size_t k = 0; k < n; ++k) {
-                const GfVec3f &p = points[ring[k]];
-                const GfVec3f &q = points[ring[(k + 1) % n]];
-                faceNormal += GfVec3f((p[1] - q[1]) * (p[2] + q[2]),
-                                      (p[2] - q[2]) * (p[0] + q[0]),
-                                      (p[0] - q[0]) * (p[1] + q[1]));
-            }
-            const float faceLength = faceNormal.GetLength();
-            if (faceLength < 1e-20f) {
-                continue;
-            }
-            faceNormal /= faceLength;
-            faceNormals[f] = faceNormal;
-            contributes[f] = 1;
-
-            // Weighted by the interior angle at each corner; zero-length
-            // edges fall back to an unweighted share.
-            for (size_t k = 0; k < n; ++k) {
-                const GfVec3f &p = points[ring[k]];
-                const GfVec3f a = points[ring[(k + 1) % n]] - p;
-                const GfVec3f b = points[ring[(k + n - 1) % n]] - p;
-                const float la = a.GetLength(), lb = b.GetLength();
-                float weight = 1.0f;
-                if (la > 1e-20f && lb > 1e-20f) {
-                    const GfVec3f ua = a / la, ub = b / lb;
-                    weight =
-                        std::atan2(GfCross(ua, ub).GetLength(), GfDot(ua, ub));
-                }
-                cornerWeights[slots[k]] = weight;
-            }
-        }
-    });
-
-    // Each point sums its own incidences in face order then corner order,
-    // the sequence of a single serial walk, so its bits do not depend on
-    // how the points are split. A malformed topology leaves the sums
-    // unnormalized.
-    const bool normalize = !topology.malformed;
-    RigExecRunRanges(ranges, pointsSize, 2048, [&](size_t begin, size_t end) {
-        for (size_t i = begin; i < end; ++i) {
-            GfVec3f sum(0);
-            for (size_t s = topology.pointIncidences[i];
-                 s < topology.pointIncidences[i + 1]; ++s) {
-                const size_t f = topology.incidenceFaces[s];
-                if (contributes[f]) {
-                    sum += faceNormals[f] *
-                           cornerWeights[topology.incidenceCorners[s]];
-                }
-            }
-            if (normalize) {
-                const float len = sum.GetLength();
-                if (len > 1e-12f) {
-                    sum /= len;
-                }
-            }
-            normals[i] = sum;
-        }
-    });
-    return normals;
-}
-
-} // namespace
-
 std::vector<GfVec3f>
 RigExecComputeVertexNormals(const GfVec3f *points, size_t pointsSize,
                             const int *faceVertexCounts,
@@ -407,8 +235,8 @@ RigExecComputeVertexNormals(const GfVec3f *points, size_t pointsSize,
                        faceVertexIndicesSize)) {
         return std::vector<GfVec3f>(pointsSize, GfVec3f(0));
     }
-    return _ComputeVertexNormals(points, pointsSize, faceVertexCounts,
-                                 faceVertexIndices, topology, ranges);
+    return RigExecVertexNormalsKernel(points, pointsSize, faceVertexCounts,
+                                      faceVertexIndices, topology, ranges);
 }
 
 std::vector<GfVec3f>
@@ -424,7 +252,7 @@ RigExecComputeVertexNormals(const GfVec3f *points, size_t pointsSize,
         (faceVertexIndicesSize > 0 && !faceVertexIndices)) {
         return std::vector<GfVec3f>(pointsSize, GfVec3f(0));
     }
-    return _ComputeVertexNormals(
+    return RigExecVertexNormalsKernel(
         points, pointsSize, faceVertexCounts, faceVertexIndices,
         RigExecBuildVertexNormalsTopology(
             pointsSize, faceVertexCounts, faceVertexCountsSize,
@@ -447,25 +275,7 @@ std::vector<GfVec3f>
 RigExecComputeExtent(const GfVec3f *points, size_t pointsSize,
                      const float *widths, size_t widthsSize)
 {
-    if (pointsSize == 0 || !points) {
-        return {};
-    }
-    // A null widths range reads as no widths, whatever its size claims.
-    const size_t widthsCount = widths ? widthsSize : 0;
-    GfVec3f lo = points[0], hi = points[0];
-    for (size_t i = 0; i < pointsSize; ++i) {
-        float pad = 0.0f;
-        if (widthsCount == pointsSize) {
-            pad = widths[i] * 0.5f;
-        } else if (widthsCount == 1) {
-            pad = widths[0] * 0.5f;
-        }
-        for (int a = 0; a < 3; ++a) {
-            lo[a] = std::min(lo[a], points[i][a] - pad);
-            hi[a] = std::max(hi[a], points[i][a] + pad);
-        }
-    }
-    return {lo, hi};
+    return RigExecExtentKernel(points, pointsSize, widths, widthsSize);
 }
 
 std::vector<GfVec3f>

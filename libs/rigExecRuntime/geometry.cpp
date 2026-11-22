@@ -23,6 +23,7 @@
 #include "rigExecMath/deltaMushSettings.h"
 #include "rigExecMath/latticeKernel.h"
 #include "rigExecMath/matrixKernel.h"
+#include "rigExecMath/normalsKernel.h"
 #include "rigExecMath/normalsLayoutKernel.h"
 #include "rigExecMath/pointBlocks.h"
 #include "rigExecMath/skinAcceptance.h"
@@ -1176,84 +1177,21 @@ RrGeoComputeVertexNormals(const std::vector<RrVec3f> &points,
                           const std::vector<int> &faceVertexCounts,
                           const std::vector<int> &faceVertexIndices)
 {
-    std::vector<RrVec3f> normals(points.size(), RrVec3f(0.0f));
-    std::vector<int> ring;
-    size_t offset = 0;
-    for (int faceCount : faceVertexCounts) {
-        if (faceCount < 3 || offset + static_cast<size_t>(faceCount) >
-                                 faceVertexIndices.size()) {
-            return normals;
-        }
-        ring.clear();
-        for (int k = 0; k < faceCount; ++k) {
-            const int v = faceVertexIndices[offset + k];
-            if (v >= 0 && static_cast<size_t>(v) < points.size()) {
-                ring.push_back(v);
-            }
-        }
-        offset += faceCount;
-        const size_t n = ring.size();
-        if (n < 3) {
-            continue;
-        }
-
-        RrVec3f faceNormal(0.0f);
-        for (size_t k = 0; k < n; ++k) {
-            const RrVec3f &p = points[ring[k]];
-            const RrVec3f &q = points[ring[(k + 1) % n]];
-            faceNormal += RrVec3f((p[1] - q[1]) * (p[2] + q[2]),
-                                  (p[2] - q[2]) * (p[0] + q[0]),
-                                  (p[0] - q[0]) * (p[1] + q[1]));
-        }
-        const float faceLength = faceNormal.GetLength();
-        if (faceLength < 1e-20f) {
-            continue; // a fully degenerate face contributes nothing
-        }
-        faceNormal /= faceLength;
-
-        for (size_t k = 0; k < n; ++k) {
-            const RrVec3f &p = points[ring[k]];
-            const RrVec3f a = points[ring[(k + 1) % n]] - p;
-            const RrVec3f b = points[ring[(k + n - 1) % n]] - p;
-            const float la = a.GetLength(), lb = b.GetLength();
-            float weight = 1.0f;
-            if (la > 1e-20f && lb > 1e-20f) {
-                const RrVec3f ua = a / la, ub = b / lb;
-                weight = std::atan2(RrCross(ua, ub).GetLength(), RrDot(ua, ub));
-            }
-            normals[ring[k]] += faceNormal * weight;
-        }
-    }
-    for (RrVec3f &n : normals) {
-        const float len = n.GetLength();
-        if (len > 1e-12f) {
-            n /= len;
-        }
-    }
-    return normals;
+    return RigExecVertexNormalsKernel(
+        points.data(), points.size(), faceVertexCounts.data(),
+        faceVertexIndices.data(),
+        RigExecBuildVertexNormalsTopology(
+            points.size(), faceVertexCounts.data(), faceVertexCounts.size(),
+            faceVertexIndices.data(), faceVertexIndices.size()),
+        nullptr);
 }
 
 std::vector<RrVec3f>
 RrGeoComputeExtent(const std::vector<RrVec3f> &points,
                    const std::vector<float> &widths)
 {
-    if (points.empty()) {
-        return {};
-    }
-    RrVec3f lo = points[0], hi = points[0];
-    for (size_t i = 0; i < points.size(); ++i) {
-        float pad = 0.0f;
-        if (widths.size() == points.size()) {
-            pad = widths[i] * 0.5f;
-        } else if (widths.size() == 1) {
-            pad = widths[0] * 0.5f;
-        }
-        for (int a = 0; a < 3; ++a) {
-            lo[a] = std::min(lo[a], points[i][a] - pad);
-            hi[a] = std::max(hi[a], points[i][a] + pad);
-        }
-    }
-    return {lo, hi};
+    return RigExecExtentKernel(points.data(), points.size(), widths.data(),
+                               widths.size());
 }
 
 // The shared lattice kernel (latticeKernel.h); \p cache, the revision's own,
