@@ -166,6 +166,10 @@ def testUsdviewInputFunction(appController):
     # replies.
     _UndoAcrossLayers(panel, stack, tempfile.mkdtemp(prefix="usdrig_undo_"))
 
+    # A closed reply cannot change the stage any more, so the next checks
+    # run on a new reply, the way the panel starts one per message.
+    box = tools.Toolbox(panel.session, can_edit=True, can_run=True,
+                        parent=panel)
     text, failed = box.call("get_live_evaluator", {})
     _Check(not failed and text, "the live evaluator answers: %s"
            % text[:300])
