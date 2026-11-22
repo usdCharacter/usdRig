@@ -18,12 +18,12 @@
 // Registered plain (baked and dynamic in turn), under the parity entries,
 // and under RIGEXEC_VERIFY_SCOPED_CLEARS=1, where every evaluator is shadowed
 // by one that drops the caches whole and the two poses are compared.
-#include "rigExec/inputReplay.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/profiler.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/evaluatorTesting.h"
+#include "rigExec/internal/inputReplay.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/profiler.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/evaluatorTesting.h"
 
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/plug/registry.h"

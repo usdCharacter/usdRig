@@ -36,7 +36,7 @@
 //     already pinned against the studio's Python at 3.41e-11
 //     (testRigExecRbf); what this adds is that the EVALUATOR hands it the
 //     rotation it is supposed to.
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecMath/rbf.h"
 
 #include "pxr/base/gf/quatf.h"

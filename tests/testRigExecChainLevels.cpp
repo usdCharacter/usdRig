@@ -1,7 +1,7 @@
 // Common producer graph tests: independent geometry branches, exact serial/parallel
 // values, stable held results and causal phased reads.
-#include "rigExec/parallel.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/internal/parallel.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecGraphDependencyCheck.h"
 
 #include "pxr/base/plug/registry.h"

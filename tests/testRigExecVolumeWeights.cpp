@@ -9,14 +9,14 @@
 // paths would still move points, just not the same points.
 // argv[1] = path to the examples directory; the codeless schema plugin is
 // expected at <examples>/../plugin/rigExecSchema/resources.
-#include "rigExec/inputReplay.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/bakedTrace.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/types.h"
-#include "rigExec/weightPackets.h"
-#include "rigExec/frameExtraction.h"
-#include "rigExec/frozenContext.h"
+#include "rigExec/internal/inputReplay.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bakedTrace.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/api/types.h"
+#include "rigExec/internal/weightPackets.h"
+#include "rigExec/internal/frameExtraction.h"
+#include "rigExec/api/frozenContext.h"
 #include "rigExecMath/pointFrame.h"
 #include "rigExecPoseCompare.h"
 #include "rigExecFrozenParity.h"

@@ -1,8 +1,8 @@
-// Tests for the evaluation profiler (libs/rigExec/profiler.h).
+// Tests for the evaluation profiler (libs/rigExec/api/profiler.h).
 // The profiler is deliberately free of USD dependencies, so this test needs
 // no stage: it covers the enabled/disabled gate, nested scopes, summary
 // aggregation, and Chrome Trace output.
-#include "rigExec/profiler.h"
+#include "rigExec/api/profiler.h"
 
 #include <cstdio>
 #include <fstream>

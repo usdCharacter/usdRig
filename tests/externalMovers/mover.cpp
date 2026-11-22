@@ -1,4 +1,4 @@
-#include "rigExec/movers/moverRegistry.h"
+#include "rigExec/api/moverRegistry.h"
 #include "rigExecScene/sceneDescriptors.h"
 #include "kernel.h"
 #include "testExternalMoverSchema.h"

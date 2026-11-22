@@ -21,16 +21,16 @@
 // is a layer opinion, and authoring it the way a rigger does is the only way
 // the test exercises what a rigger would hit.
 // argv[1] = path to the examples directory (for the schema plugin).
-#include "rigExec/inputReplay.h"
+#include "rigExec/internal/inputReplay.h"
 #include "rigExecFrameRecordCheck.h"
 #include "rigExecOpTrace.h"
 #include "rigExecGraphDependencyCheck.h"
 #include "rigExecPoseCompare.h"
 
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/backgroundScheduler.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec3f.h"

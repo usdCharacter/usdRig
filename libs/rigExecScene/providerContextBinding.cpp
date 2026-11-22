@@ -1,6 +1,6 @@
 #include "rigExecSchema/schemaNames.h"
 #include "providerContextBinding.h"
-#include "rigExec/pathText.h"
+#include "rigExec/internal/pathText.h"
 #include "pxr/base/tf/staticTokens.h"
 #include <functional>
 #include <algorithm>

@@ -20,7 +20,7 @@
 //     any other thread must bounce off it rather than race on it, which is
 //     what lets the level-parallel chain walk read through the same resolved
 //     inputs.
-#include "rigExec/moverGraph.h"
+#include "rigExec/internal/moverGraph.h"
 
 #include "pxr/usd/sdf/types.h"
 #include "pxr/usd/usd/attribute.h"

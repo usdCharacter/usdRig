@@ -1,6 +1,6 @@
 #include "rigExecSchema/schemaNames.h"
 #include "weightSceneTranslation.h"
-#include "rigExec/pathText.h"
+#include "rigExec/internal/pathText.h"
 #include <algorithm>
 #include "pxr/base/tf/staticTokens.h"
 #include <set>

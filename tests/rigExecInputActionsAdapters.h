@@ -1,10 +1,10 @@
 #ifndef RIGEXEC_INPUT_ACTIONS_ADAPTERS_H
 #define RIGEXEC_INPUT_ACTIONS_ADAPTERS_H
 
-#include "rigExec/bakedProgram.h"
-#include "rigExec/goldenPose.h"
-#include "rigExec/inputReplay.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/goldenPose.h"
+#include "rigExec/internal/inputReplay.h"
+#include "rigExec/api/rigEvaluator.h"
 #include <cstdio>
 #include <cstdlib>
 #include <string>

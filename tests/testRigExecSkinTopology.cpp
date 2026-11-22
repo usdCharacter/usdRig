@@ -10,12 +10,12 @@
 //  - an interactive override is a value the static reads must prefer over
 //    the stage, and the layout is read through exactly that route.
 // With --baked <examples>, the baked program's own layout handles instead.
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/bakedSchedule.h"
-#include "rigExec/moverGraph.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/evaluatorTesting.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bakedSchedule.h"
+#include "rigExec/internal/moverGraph.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/evaluatorTesting.h"
 #include "rigExecInputActionsAdapters.h"
 
 #include "pxr/base/arch/env.h"

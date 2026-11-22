@@ -10,11 +10,11 @@
 // skipped step's kept placement white-box, and drags of one volume's control
 // on tests/fixtures/volume_placements.usda against live baked.
 #include "rigExecBake/bake.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/types.h"
-#include "rigExec/weightPackets.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/api/types.h"
+#include "rigExec/internal/weightPackets.h"
 #include "rigExecBinary/format.h"
 #include "rigExecGraph/opValues.h"
 #include "rigExecMath/pointFrame.h"

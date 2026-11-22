@@ -18,13 +18,13 @@
 //     calibration keeps it, the step timing table reports it on its own
 //     line, and a clear zeroes exactly the steps a run stamped.
 // argv[1] = path to the examples directory.
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/bakedSchedule.h"
-#include "rigExec/bakedTrace.h"
-#include "rigExec/parallel.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/valueAddress.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bakedSchedule.h"
+#include "rigExec/internal/bakedTrace.h"
+#include "rigExec/internal/parallel.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/valueAddress.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/getenv.h"

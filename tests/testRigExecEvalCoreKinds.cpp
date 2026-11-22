@@ -1,7 +1,7 @@
 // Witness that EvalCore's step kinds are the ordinals the baked program and
 // the wire schema already agree on: same numbers, same spellings, same
 // reserved ordinal.
-#include "rigExec/bakedProgramImpl.h"
+#include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExecEvalCore/kinds.h"
 #include "rigExecEvalCore/step.h"
 #include <cstdint>

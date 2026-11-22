@@ -134,7 +134,7 @@ struct RigExecPointFrame {
     // Constant(...) inputs; RigExecPointFrame has none.
 };
 
-// rigExec/types.cpp
+// rigExec/internal/types.cpp
 #include "pxr/exec/exec/typeRegistry.h"
 TF_REGISTRY_FUNCTION(ExecTypeRegistry)
 {
@@ -366,7 +366,7 @@ self.PrimComputation(_tokens->computeUsingCustomRel)
         .TargetedObjects<int>(ExecBuiltinComputations->computeValue));
 ```
 With a custom struct result on the targeted prims (RigExec's FkChain,
-`libs/rigExec/computations.cpp:764`):
+`libs/rigExec/internal/computations.cpp:764`):
 ```cpp
 .Inputs(Relationship(_tokens->controls)
             .TargetedObjects<RigExecPointFrame>(_tokens->computePointFrame)

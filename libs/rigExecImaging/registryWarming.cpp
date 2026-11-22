@@ -7,10 +7,10 @@
 // the cursor sweep and the skip/budget accessors live here.
 #include "registry.h"
 
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/frameCache.h"
-#include "rigExec/parallel.h"
-#include "rigExec/profiler.h"
+#include "rigExec/api/backgroundScheduler.h"
+#include "rigExec/api/frameCache.h"
+#include "rigExec/internal/parallel.h"
+#include "rigExec/api/profiler.h"
 
 #include "pxr/usd/usd/timeCode.h"
 

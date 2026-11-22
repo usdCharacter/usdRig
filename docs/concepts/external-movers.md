@@ -176,7 +176,7 @@ animated `inputs:offset`. Its payload uses `GfVec3f`, which already supports
 the value comparison needed by `VtValue` and the evaluation cache.
 
 ```cpp
-#include "rigExec/movers/moverRegistry.h"
+#include "rigExec/api/moverRegistry.h"
 #include "rigExecScene/sceneDescriptors.h"
 
 #include <cmath>

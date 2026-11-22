@@ -299,9 +299,9 @@ full reach of the 3 + 3 unit chain, so the arm holds a slight bend. By frame
 ## Where this is specified
 
 Traversal order is `_GetPoseStackOrder` in
-`libs/rigExec/rigEvaluatorInputs.cpp`, the one walk that numbers the pose
+`libs/rigExec/internal/rigEvaluatorInputs.cpp`, the one walk that numbers the pose
 stack over solvers and constraints and the mover stack, and that the
 structure digest also takes. `base`/`preceding`/`final` and `AtPrim`
-checkpoints are `RigExecReadPhaseKind` in `libs/rigExec/moverGraphTypes.h`.
+checkpoints are `RigExecReadPhaseKind` in `libs/rigExec/internal/moverGraphTypes.h`.
 [Cross-domain inputs](../specs/cross-domain-inputs.md) gives the producer
 each phase selects for property, pose, geometry and weight reads.

@@ -1,7 +1,7 @@
 #include "geometryProgram.h"
 #include "rigExecMath/blendLayoutKernel.h"
-#include "rigExec/moverGraph.h"
-#include "rigExec/pathText.h"
+#include "rigExec/internal/moverGraph.h"
+#include "rigExec/internal/pathText.h"
 #include <cmath>
 namespace rigExec {
 RigExecMoverParameters RigExecAssembleGeometry(const RigExecGeometryRecord &record,

@@ -4,11 +4,11 @@
 // Included by tests/testRigExecBinary.cpp AFTER its CHECK macro: every
 // comparison below reports through it. Numbers compare bit for bit: the bake
 // copies values and the file preserves bits, with no arithmetic between.
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/frozenContextInternal.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/rigEvaluatorInternal.h"
-#include "rigExec/moverGraph.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/frozenContextInternal.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/rigEvaluatorInternal.h"
+#include "rigExec/internal/moverGraph.h"
 #include "rigExecBake/revisionReads.h"
 #include "rigExecBinary/format.h"
 #include "rigExecRuntime/stageArrayInputs.h"

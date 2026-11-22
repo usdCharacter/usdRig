@@ -4,7 +4,7 @@
 #ifndef RIGEXEC_IMAGING_BRIDGE_FRESHNESS_H
 #define RIGEXEC_IMAGING_BRIDGE_FRESHNESS_H
 
-#include "rigExec/frameCache.h"
+#include "rigExec/api/frameCache.h"
 
 #include "pxr/usd/sdf/path.h"
 

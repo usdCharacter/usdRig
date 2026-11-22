@@ -4,9 +4,9 @@
 // resolution that replaces compiler-authored rigExec:resolved* wiring with
 // build-time path choices; and packet assembly from provider values, which is
 // what lets a revision run with no derived stage in existence.
-#include "rigExec/moverGraph.h"
+#include "rigExec/internal/moverGraph.h"
 #include "rigExecRevisionProgramTest.h"
-#include "rigExec/types.h"
+#include "rigExec/api/types.h"
 #include "rigExecMath/geometryKernels.h"
 #include "rigExecMath/latticeKernel.h"
 #include "rigExecMath/pointBlocks.h"

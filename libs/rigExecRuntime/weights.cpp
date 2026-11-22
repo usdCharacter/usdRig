@@ -2,8 +2,8 @@
 // the weight oracle (RrResolveWeightOracle) that constraint envelopes and
 // current-phase fields resolve through, ported near the end of this file.
 // A bit-identical port of RigExecBakedRunWeightStep
-// (libs/rigExec/bakedWeights.cpp) with its builders
-// (libs/rigExec/weightPackets.cpp, libs/rigExecMath/weightFields.cpp).
+// (libs/rigExec/internal/bakedWeights.cpp) with its builders
+// (libs/rigExec/internal/weightPackets.cpp, libs/rigExecMath/weightFields.cpp).
 // Gf -> Rr, TfToken comparisons -> token text comparisons, the
 // arithmetic untouched: float stays float, in the same order.
 // Where the baked step reads the stage per frame, the runtime reads the

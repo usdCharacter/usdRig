@@ -6,9 +6,9 @@
 
 #include "bridgeGuideGeometry.h"
 
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecBinary/clothPlayback.h"
-#include "rigExec/movers/clothInputs.h"
+#include "rigExec/internal/movers/clothInputs.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/quatd.h"

@@ -26,7 +26,7 @@
 #ifndef RIGEXEC_IMAGING_UPSTREAM_TABLE_H
 #define RIGEXEC_IMAGING_UPSTREAM_TABLE_H
 
-#include "rigExec/frozenContext.h"
+#include "rigExec/api/frozenContext.h"
 
 #include "pxr/base/vt/value.h"
 #include "pxr/usd/sdf/path.h"

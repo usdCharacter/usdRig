@@ -1,4 +1,4 @@
-#include "rigExec/goldenPose.h"
+#include "rigExec/internal/goldenPose.h"
 #include "pxr/base/vt/array.h"
 
 #include <cmath>

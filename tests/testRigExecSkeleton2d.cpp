@@ -12,7 +12,7 @@
 // whole and fractional indices); the compile refusals; rigging (offsets, IK
 // targets, control bones, joint groups) with parity, value/structural edits
 // and refusals; and no stage authoring.
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/gf/rotation.h"
 #include "pxr/usd/sdf/layer.h"

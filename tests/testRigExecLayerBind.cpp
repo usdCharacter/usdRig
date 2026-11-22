@@ -3,7 +3,7 @@
 // where its content's points land, flips and cross scale included, with the
 // group under a translated, scaled parent; native, frozen and .rigexec agree.
 // The tests/fixtures/layerBind goldens come from: rigExecPose <fixture>.usda --rig /Char/Rig --frames 0,1,2,3,4 --golden-out <fixture>.golden
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/usd/sdf/layer.h"
 #include "pxr/usd/usdGeom/xformable.h"

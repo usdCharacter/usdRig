@@ -4,7 +4,7 @@
 #include "bridgeGuides.h"
 
 #include "bridgeGuideGeometry.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec3d.h"

@@ -8,7 +8,7 @@
 # exercised headlessly by tests/python/test_gizmo_rotation.py.
 #
 # Row-vector convention, leftmost factor applies first, matching the
-# evaluator (libs/rigExec/computations.cpp:144-175).
+# evaluator (libs/rigExec/internal/computations.cpp:144-175).
 #
 import math
 

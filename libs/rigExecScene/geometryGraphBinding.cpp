@@ -1,6 +1,6 @@
 #include "rigExecSchema/schemaNames.h"
 #include "geometryGraphBinding.h"
-#include "rigExec/moverGraph.h"
+#include "rigExec/internal/moverGraph.h"
 #include "pxr/base/tf/staticTokens.h"
 #include <algorithm>
 namespace rigExec {

@@ -1,14 +1,14 @@
-#include "rigExec/goldenPose.h"
-#include "rigExec/goldenSuite.h"
+#include "rigExec/internal/goldenPose.h"
+#include "rigExec/internal/goldenSuite.h"
 #if defined(RIGEXEC_EXPLICIT_ORACLE_REGISTRATION) || defined(RIGEXEC_TEST_ORACLE_RECOVERY)
 #include "rigExecOracle/registerOracle.h"
 #endif
 #ifdef RIGEXEC_TEST_ORACLE_RECOVERY
-#include "rigExec/oracleDispatch.h"
+#include "rigExec/internal/oracleDispatch.h"
 #endif
 #ifndef RIGEXEC_ORACLE_GOLDEN_ONLY
-#include "rigExec/bakedProgram.h"
-#include "rigExec/frozenContext.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/api/frozenContext.h"
 #include "pxr/base/plug/registry.h"
 #endif
 

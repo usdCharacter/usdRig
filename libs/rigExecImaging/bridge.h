@@ -11,10 +11,10 @@
 #include "sceneIndices.h"
 #include "snapshotStore.h"
 
-#include "rigExec/frameCache.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/outputAffectedIndex.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/frameCache.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/internal/outputAffectedIndex.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/usd/usd/notice.h"
 

@@ -14,9 +14,9 @@
 // RIGEXEC_BAKED_VERIFY_CONES, the cone run with a forced run of everything:
 // the edited-vs-forced check this routing has to pass.
 // argv[1] = path to the examples directory.
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/getenv.h"

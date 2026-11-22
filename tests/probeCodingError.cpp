@@ -1,8 +1,8 @@
 #include "rigExecSchema/schemaTokens.h"
 // Diagnostic probe: isolates which phase of evaluator compilation emits
 // the nonfatal "Applying predicate to invalid prim" coding error.
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/tapSet.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/api/tapSet.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/errorMark.h"

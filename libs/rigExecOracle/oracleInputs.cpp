@@ -1,6 +1,6 @@
-#include "rigExec/oracleInputs.h"
-#include "rigExec/movers/moverRegistry.h"
-#include "rigExec/moverGraph.h"
+#include "rigExec/internal/oracleInputs.h"
+#include "rigExec/api/moverRegistry.h"
+#include "rigExec/internal/moverGraph.h"
 #include <set>
 #include "pxr/usd/usd/primRange.h"
 #include "pxr/usd/usdSkel/blendShape.h"

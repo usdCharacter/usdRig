@@ -6,13 +6,13 @@
 // producers, while allowing descriptor enumeration across domain boundaries.
 // Cone verification compares incremental work with a forced common-graph run.
 // argv[1] = path to the examples directory.
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedOpValues.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/bakedSchedule.h"
-#include "rigExec/bakedTrace.h"
-#include "rigExec/outputAffectedIndex.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedOpValues.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bakedSchedule.h"
+#include "rigExec/internal/bakedTrace.h"
+#include "rigExec/internal/outputAffectedIndex.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/plug/registry.h"

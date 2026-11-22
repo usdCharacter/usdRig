@@ -8,10 +8,10 @@
 // program, a frame-cache worker and the binary runtime, and on the biped,
 // where an arm edit moves shoulder-corrective points that share index
 // ranges with the face clusters.
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/valueAddress.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/valueAddress.h"
 #include "rigExecMath/pointBlocks.h"
 
 #include "pxr/base/gf/matrix4d.h"

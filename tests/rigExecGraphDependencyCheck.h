@@ -1,6 +1,6 @@
 #ifndef RIGEXEC_TEST_GRAPH_DEPENDENCY_CHECK_H
 #define RIGEXEC_TEST_GRAPH_DEPENDENCY_CHECK_H
-#include "rigExec/bakedTrace.h"
+#include "rigExec/internal/bakedTrace.h"
 #include "pxr/usd/sdf/path.h"
 #include <limits>
 #include <vector>

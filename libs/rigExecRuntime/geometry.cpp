@@ -4,8 +4,8 @@
 #include "rigExecMath/dualQuatKernel.h"
 // rigExecRuntime geometry family:RevisionStatic, InfluenceFold,
 // RevisionChunk, RevisionFuse, ChainStatus, Derived.
-// A zero-USD port of the baked geometry loop (libs/rigExec/bakedGeometry.cpp
-// driven by the movers in libs/rigExec/moverGraph.cpp and the kernels in
+// A zero-USD port of the baked geometry loop (libs/rigExec/internal/bakedGeometry.cpp
+// driven by the movers in libs/rigExec/internal/moverGraph.cpp and the kernels in
 // libs/rigExecMath). The scalars an assembler reads through their
 // connections, blend channel weights and default weights are read over the
 // input slots, and so is every array the file lists as an input (path-read

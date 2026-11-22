@@ -14,7 +14,7 @@
 // tiers, and no stage authoring. Live evaluation is checked against the
 // tables' expectations, the frame-cache worker and the .rigexec runtime
 // against live, bit for bit.
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecBake/bake.h"
 #include "rigExecImaging/bridge.h"
 #include "rigExecImaging/playback.h"

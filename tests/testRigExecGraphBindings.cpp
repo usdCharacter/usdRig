@@ -1,7 +1,7 @@
 #include "rigExecScene/solverGraphBinding.h"
 #include "rigExecScene/autoClavicleGraph.h"
 #include "pxr/base/gf/rotation.h"
-#include "rigExec/frameExtraction.h"
+#include "rigExec/internal/frameExtraction.h"
 #include "rigExecScene/constraintGraphBinding.h"
 #include <cstdio>
 #include <cstring>

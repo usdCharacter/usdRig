@@ -7,7 +7,7 @@
 # exercised headlessly by tests/python/test_gizmo_frames.py, including a
 # comparison against the native evaluator through the _rigexec binding.
 #
-# Conventions (libs/rigExec/computations.cpp:144-175, 196-215, 284-285),
+# Conventions (libs/rigExec/internal/computations.cpp:144-175, 196-215, 284-285),
 # row-vector, leftmost factor applies first:
 #
 #   avars = S * R(rotationOrder) * Rspin(+X) * T
@@ -18,7 +18,7 @@
 #
 # where "parent" is the nearest namespace-ancestor RigExecXformable and the
 # whole rig is in ASSET space: the world transform of the RigExecRoot's
-# parent prim places it (libs/rigExec/rigEvaluator.h:79-84).
+# parent prim places it (libs/rigExec/api/rigEvaluator.h:79-84).
 #
 import math
 

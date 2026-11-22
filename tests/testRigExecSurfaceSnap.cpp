@@ -1,4 +1,4 @@
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecMath/geometryKernels.h"
 #include "rigExecMath/surfaceSnapKernel.h"
 #include "rigExecBake/bake.h"

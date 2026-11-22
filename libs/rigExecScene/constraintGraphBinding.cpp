@@ -8,7 +8,7 @@
 #include "rigExecGraph/windowHistory.h"
 #include "rigExecMath/harmonicsKernel.h"
 #include "rigExecMath/ikFkMatchKernel.h"
-#include "rigExec/frameExtraction.h"
+#include "rigExec/internal/frameExtraction.h"
 #include "pxr/base/gf/matrix4d.h"
 namespace rigExec {
 TF_DEFINE_PRIVATE_TOKENS(_tokens,

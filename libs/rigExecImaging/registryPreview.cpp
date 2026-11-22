@@ -4,7 +4,7 @@
 // only, never stage writes.
 #include "registry.h"
 
-#include "rigExec/parallel.h"
+#include "rigExec/internal/parallel.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec2f.h"

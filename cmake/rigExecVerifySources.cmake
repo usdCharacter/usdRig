@@ -4,12 +4,12 @@
 # librigExec by the root list, and this target is never installed, exported
 # or linked. It becomes an opt-in shared library later.
 add_library(rigExecVerify OBJECT
-    libs/rigExec/bakedVerify.cpp
-    libs/rigExec/oracleDispatch.cpp
-    libs/rigExec/scalarReferenceAdapter.cpp
-    libs/rigExec/inputReplay.cpp
-    libs/rigExec/tapSet.cpp
-    libs/rigExec/computations.cpp)
+    libs/rigExec/internal/bakedVerify.cpp
+    libs/rigExec/internal/oracleDispatch.cpp
+    libs/rigExec/internal/scalarReferenceAdapter.cpp
+    libs/rigExec/internal/inputReplay.cpp
+    libs/rigExec/internal/tapSet.cpp
+    libs/rigExec/internal/computations.cpp)
 target_compile_features(rigExecVerify PRIVATE cxx_std_17)
 target_include_directories(rigExecVerify PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/libs")

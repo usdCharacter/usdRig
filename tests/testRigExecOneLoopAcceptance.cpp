@@ -1,14 +1,14 @@
 // Canonical one-loop acceptance over actual native operations, production
 // translation and backend runners. Fixtures are the supported oneloop_* scenes.
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/bakedSchedule.h"
-#include "rigExec/bakedTrace.h"
-#include "rigExec/frozenContext.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bakedSchedule.h"
+#include "rigExec/internal/bakedTrace.h"
+#include "rigExec/api/frozenContext.h"
 #include "rigExecBake/bake.h"
 #include "rigExecBinary/format.h"
 #include "rigExecRuntime/runtime.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/getenv.h"

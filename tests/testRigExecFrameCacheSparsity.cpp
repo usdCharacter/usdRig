@@ -8,10 +8,10 @@
 // closures under test are never hand-drawn -- and the capture-index test
 // builds a REAL baked program over a REAL in-memory rig and routes REAL
 // stage notices through it.
-#include "rigExec/frameCacheSparsity.h"
-#include "rigExec/bakedSchedule.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/frozenProgram.h"
+#include "rigExec/internal/frameCacheSparsity.h"
+#include "rigExec/internal/bakedSchedule.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/internal/frozenProgram.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/notice.h"

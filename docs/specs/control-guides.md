@@ -103,7 +103,7 @@ attrs (see `guide:radius` there). The codeless plugin
 `bin/gen_schema.sh`, or `bin\gen_schema.bat` on Windows -- both resolve the
 USD python layout themselves).
 
-## Evaluator (`libs/rigExec/rigEvaluator.h`, `rigEvaluatorCompile.cpp`)
+## Evaluator (`libs/rigExec/api/rigEvaluator.h`, `rigEvaluatorCompile.cpp`)
 
 - Compile: discover `_controlPaths` (all `RigExecControl` prims beneath the
   rig, `_DiscoverControls`, a namespace walk parallel to
@@ -112,7 +112,7 @@ USD python layout themselves).
 - `RigExecRigPose` gains
   `std::map<SdfPath, RigExecPointFrame> controlFrames;` (ASSET-space, like
   joint frames), filled by the baked program in `Evaluate`
-  (`libs/rigExec/bakedPose.cpp`): each control's base frame, since controls
+  (`libs/rigExec/internal/bakedPose.cpp`): each control's base frame, since controls
   are inputs, or its revised frame when a pose constraint names the control
   in `rigExec:moves`.
 

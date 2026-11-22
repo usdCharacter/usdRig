@@ -1,6 +1,6 @@
 // SurfaceProjector frames remain target-local under static asset placement.
 // Exercise the shared graph without authoring during evaluation.
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/gf/rotation.h"
 #include "pxr/base/plug/registry.h"

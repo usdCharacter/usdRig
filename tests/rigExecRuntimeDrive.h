@@ -9,7 +9,7 @@
 #define RIGEXEC_TEST_RUNTIME_DRIVE_H
 
 #include "rigExecBake/bake.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecRuntime/runtime.h"
 #include "rigExecSampler/inputSampler.h"
 

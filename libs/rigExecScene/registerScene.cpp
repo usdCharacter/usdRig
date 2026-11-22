@@ -1,6 +1,6 @@
 // Installs the translation entry points the evaluator calls. Linked into
 // librigExecScene, not librigExec.
-#include "rigExec/sceneDispatch.h"
+#include "rigExec/internal/sceneDispatch.h"
 #include "rigExecScene/registerScene.h"
 #include "rigExecScene/usdSceneAccess.h"
 

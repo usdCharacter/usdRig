@@ -244,9 +244,9 @@ are no-mutex zones. Do not add mutexes, lock-taking helpers, shared mutable
 caches, or blocking synchronization there. This includes indirect locks from
 profiling and logging: collect per-step data locally and publish it at the
 existing boundary. Respect the contracts in
-[bodyPurity.h](libs/rigExec/bodyPurity.h),
-[bakedSchedule.h](libs/rigExec/bakedSchedule.h), and
-[frozenContext.h](libs/rigExec/frozenContext.h).
+[bodyPurity.h](libs/rigExec/internal/bodyPurity.h),
+[bakedSchedule.h](libs/rigExec/internal/bakedSchedule.h), and
+[frozenContext.h](libs/rigExec/api/frozenContext.h).
 
 Sample live USD inputs on the owning thread before dispatch. Computation
 bodies consume captured facts and declared typed values; workers own their
@@ -294,7 +294,7 @@ parallel lanes. Many ordinary calls take a lock and serialize those lanes:
   the last reference to one. `GetString()`, `GetText()`, and `GetAsToken()`
   intern the text under a lock; on parallel lanes and per-frame paths,
   spell paths with `RigExecPathText` or `RigExecSpellPathText` from
-  [pathText.h](libs/rigExec/pathText.h). A single-threaded Build pass that
+  [pathText.h](libs/rigExec/internal/pathText.h). A single-threaded Build pass that
   spells each path once is faster with `GetString()`: a fresh memo spells
   every ancestor again. Measure before converting one.
 - A function-local `static` runs a thread-safe initialization guard. Library

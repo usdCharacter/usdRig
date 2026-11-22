@@ -1,9 +1,9 @@
 #include "rigExecSchema/schemaNames.h"
 #include "geometrySceneTranslation.h"
 #include "providerProgram.h"
-#include "rigExec/movers/moverRegistry.h"
-#include "rigExec/moverGraph.h"
-#include "rigExec/pathText.h"
+#include "rigExec/api/moverRegistry.h"
+#include "rigExec/internal/moverGraph.h"
+#include "rigExec/internal/pathText.h"
 #include "pxr/usd/usdGeom/xformOp.h"
 #include "pxr/base/tf/staticTokens.h"
 #include <algorithm>

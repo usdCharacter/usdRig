@@ -4,8 +4,8 @@
 #include "rigExecBake/computedCapture.h"
 #include "rigExecBake/pathTable.h"
 #include "rigExecBake/staticCapture.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecScene/providerRecordExport.h"
 
 #include <algorithm>

@@ -13,10 +13,10 @@
 // The meshes here are deliberately larger than RigExecGeometryParallelThreshold
 // (and the small one deliberately smaller), because a threshold that is never
 // crossed in a test is a threshold that is never tested.
-#include "rigExec/moverGraph.h"
+#include "rigExec/internal/moverGraph.h"
 #include "rigExecRevisionProgramTest.h"
-#include "rigExec/parallel.h"
-#include "rigExec/types.h"
+#include "rigExec/internal/parallel.h"
+#include "rigExec/api/types.h"
 
 #include "rigExecMath/envelope.h"
 #include "rigExecMath/simdKernels.h"

@@ -1,5 +1,5 @@
 #include "rigExecScene/typedValues.h"
-#include "rigExec/weightPackets.h"
+#include "rigExec/internal/weightPackets.h"
 #include <cstdint>
 #include <cstring>
 #include <iostream>

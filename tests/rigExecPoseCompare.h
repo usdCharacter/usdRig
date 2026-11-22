@@ -5,7 +5,7 @@
 #ifndef RIGEXEC_TESTS_POSE_COMPARE_H
 #define RIGEXEC_TESTS_POSE_COMPARE_H
 
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/usd/usd/stage.h"
 

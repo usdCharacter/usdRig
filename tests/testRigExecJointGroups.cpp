@@ -5,7 +5,7 @@
 // .rigexec parity (with the active member held in the runtime), structural
 // group edits that recompile against a value edit that does not, and the
 // compile refusals.
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/usd/sdf/layer.h"
 #include "pxr/usd/usd/relationship.h"

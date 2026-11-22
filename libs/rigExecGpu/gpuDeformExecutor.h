@@ -10,7 +10,7 @@
 #ifndef RIGEXEC_GPU_DEFORM_EXECUTOR_H
 #define RIGEXEC_GPU_DEFORM_EXECUTOR_H
 
-#include "rigExec/gpuCloth.h"
+#include "rigExec/internal/gpuCloth.h"
 #include "rigExecMath/gpuDeformProgram.h"
 
 #include <cstdint>
@@ -34,7 +34,7 @@ public:
     /// device failed; each job's `ok` says how that chain fared.
     bool Run(std::vector<RigExecGpuDeformJob> *jobs);
 
-    /// Solves every cloth window (rigExec/gpuCloth.h) and waits for the
+    /// Solves every cloth window (rigExec/internal/gpuCloth.h) and waits for the
     /// points. Returns false when the device failed; each job's `ok` says
     /// how that cloth fared.
     bool RunCloth(std::vector<RigExecGpuClothJob> *jobs);

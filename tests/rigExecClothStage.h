@@ -5,7 +5,7 @@
 #ifndef RIGEXEC_TEST_CLOTH_STAGE_H
 #define RIGEXEC_TEST_CLOTH_STAGE_H
 
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/vt/array.h"

@@ -5,11 +5,11 @@
 
 #include "bridgeFreshness.h"
 
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/frameCache.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/outputAffectedIndex.h"
-#include "rigExec/taskListCache.h"
+#include "rigExec/api/backgroundScheduler.h"
+#include "rigExec/api/frameCache.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/internal/outputAffectedIndex.h"
+#include "rigExec/internal/taskListCache.h"
 
 #include "pxr/base/tf/token.h"
 #include "pxr/usd/sdf/path.h"

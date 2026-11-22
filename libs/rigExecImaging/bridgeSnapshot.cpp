@@ -1,7 +1,7 @@
 // Snapshot payload construction owned by the imaging bridge.
 #include "bridgeSnapshot.h"
 
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/gf/vec3d.h"
 #include "pxr/base/gf/vec3f.h"

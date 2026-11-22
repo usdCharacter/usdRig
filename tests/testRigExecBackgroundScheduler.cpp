@@ -43,9 +43,9 @@
 // be flipped in-process, so its off mode is covered by the fallback test plus
 // the validation-plan runs of this binary under =0. The fallback test forces
 // the gate closed and passes in every ambient mode.
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/parallel.h"
+#include "rigExec/api/backgroundScheduler.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/internal/parallel.h"
 
 #include "pxr/base/tf/getenv.h"
 #include "pxr/base/tf/setenv.h"

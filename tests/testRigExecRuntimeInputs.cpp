@@ -29,7 +29,7 @@
 // a write that moves no keyed field; and a sampler that skips static
 // provider inputs plays what one reading every input plays, and follows a
 // Default edit or new keys after NoteStageChanged.
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecBake/bake.h"
 #include "rigExecBake/staticReport.h"
 #include "rigExecRuntime/runtime.h"

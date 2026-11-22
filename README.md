@@ -237,11 +237,11 @@ evaluation and no failure falls back to it.
 
 OpenExec runs in these places:
 
-- [libs/rigExec/types.cpp](libs/rigExec/types.cpp) registers the value types with
-  `ExecTypeRegistry`; [libs/rigExec/computations.cpp](libs/rigExec/computations.cpp)
-  and [libs/rigExec/moverKernels.cpp](libs/rigExec/moverKernels.cpp) register the
+- [libs/rigExec/internal/types.cpp](libs/rigExec/internal/types.cpp) registers the value types with
+  `ExecTypeRegistry`; [libs/rigExec/internal/computations.cpp](libs/rigExec/internal/computations.cpp)
+  and [libs/rigExec/internal/moverKernels.cpp](libs/rigExec/internal/moverKernels.cpp) register the
   schema computations against the production kernels.
-- [libs/rigExec/tapSet.cpp](libs/rigExec/tapSet.cpp) owns the one `ExecUsdSystem`
+- [libs/rigExec/internal/tapSet.cpp](libs/rigExec/internal/tapSet.cpp) owns the one `ExecUsdSystem`
   per stage and builds its batched requests.
 - `rigExecPose --exec-crosscheck` compares each eligible native row, bit for bit,
   with a one-key request fed that operation's captured inputs as overrides:

@@ -1,5 +1,5 @@
 // RigExecClothMover's compiled rig, per-tick packet and windowed solve, shared by
-// the native mover (libs/rigExec/movers/clothMover.cpp) and the zero-USD
+// the native mover (libs/rigExec/internal/movers/clothMover.cpp) and the zero-USD
 // runtime, which installs RigExecClothPlaybackKernel for the type itself, so
 // a .rigexec cloth plays wherever the runtime runs. Header-only and
 // USD-free: both sides build the same compiled rig, pack the same packets and run

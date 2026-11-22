@@ -2,8 +2,8 @@
 // interactive drags and their release. Independent scalar reference checks
 // remain enabled; compile or admission refusal is a failure, never a skip.
 // argv[1] = path to the examples directory.
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/types.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/api/types.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"

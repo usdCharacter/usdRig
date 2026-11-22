@@ -1,6 +1,6 @@
 #include "typedValues.h"
-#include "rigExec/bakedOpValues.h"
-#include "rigExec/weightPackets.h"
+#include "rigExec/internal/bakedOpValues.h"
+#include "rigExec/internal/weightPackets.h"
 namespace rigExec {
 namespace {
 template<class Array> bool SameArray(const Array &a,const Array &b) {

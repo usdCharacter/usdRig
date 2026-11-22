@@ -7,11 +7,11 @@
 #include "bridgeSampling.h"
 #include "warmIndex.h"
 
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/frameCacheSparsity.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/backgroundScheduler.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/frameCacheSparsity.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/tf/diagnostic.h"
 

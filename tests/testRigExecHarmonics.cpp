@@ -4,10 +4,10 @@
 // history, the measuring space, the envelope, and the history memo.
 #include "rigExecRuntimeDrive.h"
 #include "rigExecSceneProgramDrive.h"
-#include "rigExec/frameCache.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/evaluatorTesting.h"
+#include "rigExec/api/frameCache.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/evaluatorTesting.h"
 #include "rigExecMath/harmonicsKernel.h"
 
 #include "pxr/base/plug/registry.h"

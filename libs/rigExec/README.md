@@ -18,6 +18,17 @@ reports cycles, assigns canonical IDs and lowers safe linear clusters.
 | `rigExecGraph/opGraph.cpp` | Common producer compiler, SCC reporting, clusters and readiness executor |
 | `rigExecScene/sceneProgramTranslation.cpp` | Detached typed graph assembly from composed scene descriptors |
 
+## Layout
+
+Public headers are in `api/` and install; everything else is in
+`internal/` and does not, except the internal headers that installed
+headers still include (`tools/rigexec_installed_internal.txt`). Include
+them as `rigExec/api/...` and `rigExec/internal/...`. Outside rigExec, only
+rigExecBinary, rigExecBake and tests may include `rigExec/internal/`;
+`tools/check_internal_includes.py` holds today's other uses as an
+allowlist that may only shrink. The file names below are under
+`internal/`.
+
 ## Build layers
 
 The sources here compile as four OBJECT targets, each declared with its

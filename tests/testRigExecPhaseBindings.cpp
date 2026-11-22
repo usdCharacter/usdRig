@@ -5,14 +5,14 @@
 // Held runs retain prior answers without executing clean reader bodies.
 //
 // argv[1] = path to the examples directory.
-#include "rigExec/inputReplay.h"
+#include "rigExec/internal/inputReplay.h"
 #include "rigExecFrameRecordCheck.h"
 
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/bakedSchedule.h"
-#include "rigExec/bakedTrace.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/scalarReferenceAdapter.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bakedSchedule.h"
+#include "rigExec/internal/bakedTrace.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/scalarReferenceAdapter.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"

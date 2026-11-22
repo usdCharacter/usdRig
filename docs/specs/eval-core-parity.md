@@ -25,7 +25,7 @@ no golden, fixture, tolerance or test was edited to produce these numbers.
 | Base SHA | `d489797a181feba318aebfeb2e60d619f00bd98a` (`factory/issue-64`, PR #65 head; the checkout this page was written in, clean, `git status` empty) |
 | Build tree | same worktree, `build/`; `cmake --build build --target testRigExecRuntimeGeometry testRigExecRuntimeFixture` → `ninja: no work to do`, so the witness binaries match the base SHA byte for byte |
 | Capture / fixture identities | `tests/fixtures/minimal.rigexec` (checked-in program `testRigExecRuntimeFixture` opens); `tests/exampleFixtures.cmake` (the bake/frame/input table `testRigExecRuntimeGeometry` and `verify_binary_*` walk); `tests/fixtures/{skeleton2d,layerBind,volumeSkin}/*.golden` (fixed scalar captures for Linux x86-64, GCC 13, Ubuntu 24.04 math — see [fixture checks](../../tests/fixtures/README.md)); the 60 frozen-path files and the `exec_crosscheck_*` rows are unchanged by this page |
-| Selector | `bin/test_changed.sh --explain libs/rigExec/bakedGeometry.cpp libs/rigExecRuntime/geometry.cpp libs/rigExecMath/pointBlocks.h` → libraries `rigExec`, `rigExecRuntime`; **115 direct executables**; **142 direct tests** (the `-R` regex ctest prints); `pointBlocks.h` has 6 includers (`libs/rigExec/moverGraph.cpp`, `libs/rigExec/bakedProgramImpl.h`, `libs/rigExecRuntime/geometry.cpp`, `tests/testRigExecGroupForwarding.cpp`, `tests/testRigExecMoverGraph.cpp`, `tests/testRigExecSurfaceKernelCache.cpp`) |
+| Selector | `bin/test_changed.sh --explain libs/rigExec/internal/bakedGeometry.cpp libs/rigExecRuntime/geometry.cpp libs/rigExecMath/pointBlocks.h` → libraries `rigExec`, `rigExecRuntime`; **115 direct executables**; **142 direct tests** (the `-R` regex ctest prints); `pointBlocks.h` has 6 includers (`libs/rigExec/internal/moverGraph.cpp`, `libs/rigExec/internal/bakedProgramImpl.h`, `libs/rigExecRuntime/geometry.cpp`, `tests/testRigExecGroupForwarding.cpp`, `tests/testRigExecMoverGraph.cpp`, `tests/testRigExecSurfaceKernelCache.cpp`) |
 
 Parity-witness outcomes at the base SHA (ctest, `bin/_env.sh` sourced):
 
@@ -61,7 +61,7 @@ range composition — owner `skin-dispatch-lift`.
   (`bakedExecCrossCheckRows.cpp:1175-1211`):
   `NoEquivalent <label or kind:object:part> [target <chain target>] part <N> op
   <descriptorKey>`. Geometry steps carry no compiled label except
-  `SkinTopology <mover>` (`libs/rigExec/bakedGeometry.cpp:6862`), and the four
+  `SkinTopology <mover>` (`libs/rigExec/internal/bakedGeometry.cpp:6862`), and the four
   revision kinds get the `target <chain target>` clause (1183-1188). **No
   geometry step has an OpenExec result row**: the oracle compares baked with
   OpenExec and never with RigExecRuntime. The runtime's witnesses are the ones
@@ -79,7 +79,7 @@ range composition — owner `skin-dispatch-lift`.
 
 ## Step kinds
 
-`RigExecBakedStepKind` (`libs/rigExec/bakedProgramImpl.h:1331`), the wire's
+`RigExecBakedStepKind` (`libs/rigExec/internal/bakedProgramImpl.h:1331`), the wire's
 `StepKind` (`libs/rigExecBinary/rigexec.fbs:118`) and the runtime's
 `RigExecWireStepKind` (`libs/rigExecBinary/format.h:508`) are the same
 ordinals. `RigExecBakedIsGeometryStep` (`bakedProgramImpl.h:1375`) calls eight
@@ -121,7 +121,7 @@ after the lift.
 
 ## Name-matched helper pairs (layer 1)
 
-Step/orchestration bodies, one per engine. `core` is `libs/rigExec/bakedGeometry.cpp`,
+Step/orchestration bodies, one per engine. `core` is `libs/rigExec/internal/bakedGeometry.cpp`,
 `playback` is `libs/rigExecRuntime/geometry.cpp`.
 
 | helper (oracle key = its step kind) | core | lines | playback | lines | sim | observed difference | cache / version effect | witness | disposition / owner |
@@ -151,10 +151,10 @@ Step/orchestration bodies, one per engine. `core` is `libs/rigExec/bakedGeometry
 ## Per-op apply and acceptance layer (layer 2, shared with the dynamic walk)
 
 The same apply and acceptance bodies exist a third time: the dynamic walk in
-`libs/rigExec/moverGraph.cpp` shares them with the baked path, and RigExecRuntime
+`libs/rigExec/internal/moverGraph.cpp` shares them with the baked path, and RigExecRuntime
 mirrors them again. These are the bodies the lift must make single-homed; the
 dynamic walk keeps calling them, it does not gain a second copy. `core` here is
-`libs/rigExec/moverGraph.cpp`, `playback` is `libs/rigExecRuntime/geometry.cpp`.
+`libs/rigExec/internal/moverGraph.cpp`, `playback` is `libs/rigExecRuntime/geometry.cpp`.
 
 | body | core | playback | disposition / owner |
 | --- | --- | --- | --- |

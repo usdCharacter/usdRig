@@ -13,8 +13,8 @@
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecBake/bake.h"
 #include "rigExecBake/staticReport.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"

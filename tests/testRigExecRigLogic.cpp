@@ -6,7 +6,7 @@
 // their mesh primvars and a morph connected to one), each one against the
 // shared kernel driven directly, against the frame-cache worker, and against
 // the .rigexec runtime played over the same timeline, bit for bit.
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecBinary/format.h"
 #include "rigExecMath/conditionalTableKernel.h"
 #include "rigExecMath/mlpKernel.h"

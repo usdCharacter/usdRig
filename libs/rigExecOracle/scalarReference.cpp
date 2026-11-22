@@ -1,7 +1,7 @@
 #include "rigExecSchema/schemaNames.h"
-#include "rigExec/scalarReference.h"
-#include "rigExec/rigEvaluatorInternal.h"
-#include "rigExec/rigEvaluatorConstraints.h"
+#include "rigExec/internal/scalarReference.h"
+#include "rigExec/internal/rigEvaluatorInternal.h"
+#include "rigExec/internal/rigEvaluatorConstraints.h"
 #include "rigExecMath/envelope.h"
 #include <algorithm>
 #include <cmath>

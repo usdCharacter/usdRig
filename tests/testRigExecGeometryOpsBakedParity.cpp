@@ -6,9 +6,9 @@
 // THE PROGRAM -- a rig that quietly declined would otherwise compare the
 // dynamic path with itself and pass having proved nothing.
 // argv[1] = the examples directory, argv[2] = the ribbon probe layer.
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/types.h"
-#include "rigExec/movers/moverRegistry.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/api/types.h"
+#include "rigExec/api/moverRegistry.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/vt/value.h"

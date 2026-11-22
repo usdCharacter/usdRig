@@ -4,10 +4,10 @@
 #ifndef RIGEXEC_TEST_FROZEN_PARITY_H
 #define RIGEXEC_TEST_FROZEN_PARITY_H
 
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/backgroundScheduler.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include <memory>
 #include <string>

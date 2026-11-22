@@ -6,8 +6,8 @@
 // an authored value, held to the evaluator with the same value authored in
 // the session layer.
 #include "rigExecBake/bake.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecBinary/format.h"
 #include "rigExecMath/propertyMath.h"
 #include "rigExecRuntime/runtime.h"

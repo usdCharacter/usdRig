@@ -115,7 +115,7 @@ set_target_properties(rigExecMath PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Keep value-codec template instantiations private to its archive. Only the
 # two declared codec functions become Windows DLL exports.
-add_library(rigExecInputValues STATIC libs/rigExec/inputReplayValues.cpp)
+add_library(rigExecInputValues STATIC libs/rigExec/internal/inputReplayValues.cpp)
 target_include_directories(rigExecInputValues PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/libs")
 target_link_libraries(rigExecInputValues PRIVATE vt sdf ts)
 target_compile_definitions(rigExecInputValues PRIVATE RIGEXEC_INPUT_VALUES_EXPORTS)
@@ -190,8 +190,8 @@ add_library(rigExec SHARED
     $<TARGET_OBJECTS:rigExecEval>
     $<TARGET_OBJECTS:rigExecSchedule>
     $<TARGET_OBJECTS:rigExecVerify>
-    libs/rigExec/rigEvaluator.cpp
-    libs/rigExec/rigEvaluatorNotices.cpp
+    libs/rigExec/internal/rigEvaluator.cpp
+    libs/rigExec/internal/rigEvaluatorNotices.cpp
 )
 target_include_directories(rigExec PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
@@ -244,7 +244,7 @@ target_sources(rigExecOracle INTERFACE
     "$<INSTALL_INTERFACE:${RIGEXEC_INSTALL_CMAKEDIR}/oracleLinkAnchor.cpp>")
 
 target_sources(rigExec INTERFACE
-    "$<BUILD_INTERFACE:$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:${CMAKE_CURRENT_SOURCE_DIR}/libs/rigExec/observerHostExit.cpp>>")
+    "$<BUILD_INTERFACE:$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:${CMAKE_CURRENT_SOURCE_DIR}/libs/rigExec/internal/observerHostExit.cpp>>")
 
 add_library(rigExec::rigExec ALIAS rigExec)
 include(cmake/rigExecMoverPlugin.cmake)
@@ -490,9 +490,9 @@ set_target_properties(rigExecRuntime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # the same way inside this build and against an installed SDK.
 add_library(rigExec::rigExecRuntime ALIAS rigExecRuntime)
 rigexec_add_mover(ClothMover BUILTIN
-    DEFINITION libs/rigExec/movers/clothDefinition.h
+    DEFINITION libs/rigExec/internal/movers/clothDefinition.h
     TYPE rigExec::RigExecClothDefinition
-    USD_ADAPTER libs/rigExec/movers/clothMover.cpp
+    USD_ADAPTER libs/rigExec/internal/movers/clothMover.cpp
     FACTORY RigExecClothUsdAdapter
     SCHEMA libs/rigExecSchema/schema.usda
     SCHEMA_TYPE RigExecClothMover)
@@ -3054,6 +3054,18 @@ foreach(_lib rigExecGraph rigExecEvalCore rigExecScene rigExecMath rigExec rigEx
             PATTERN "evaluatorTesting.h" EXCLUDE
             PATTERN "internal" EXCLUDE
             PATTERN "*.h")
+endforeach()
+# rigExec installs api/ only, plus the internal headers that installed
+# headers still include; tools/check_internal_includes.py keeps the list
+# equal to that closure.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/rigexec_installed_internal.txt")
+file(STRINGS tools/rigexec_installed_internal.txt _rigexec_installed_internal
+    REGEX "^[^#]")
+foreach(_header IN LISTS _rigexec_installed_internal)
+    get_filename_component(_dir "${_header}" DIRECTORY)
+    install(FILES "libs/rigExec/internal/${_header}"
+        DESTINATION "${RIGEXEC_INSTALL_INCLUDEDIR}/rigExec/internal/${_dir}")
 endforeach()
 # The FlatBuffers runtime headers the generated rigExecBinary headers
 # include; their license installs with the others below.

@@ -1,7 +1,7 @@
 #include "rigExecSchema/schemaNames.h"
 #include "solverGraphBinding.h"
 #include "skeleton2dTranslation.h"
-#include "rigExec/types.h"
+#include "rigExec/api/types.h"
 #include <algorithm>
 #include "pxr/base/vt/types.h"
 #include "pxr/base/tf/staticTokens.h"

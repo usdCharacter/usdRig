@@ -2,7 +2,7 @@
 #include "pxr/base/ts/spline.h"
 #include "sceneDb.h"
 #include "sceneRuntime.h"
-#include "rigExec/movers/moverRegistry.h"
+#include "rigExec/api/moverRegistry.h"
 #include "pxr/base/tf/type.h"
 #include "pxr/usd/usd/schemaRegistry.h"
 #include <cmath>

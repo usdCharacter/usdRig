@@ -1,5 +1,5 @@
 #include "sceneGraphBinding.h"
-#include "rigExec/frameExtraction.h"
+#include "rigExec/internal/frameExtraction.h"
 #include <type_traits>
 namespace rigExec {
 bool RigExecReadSceneGraphValue(const RigExecTypedValueStore &store,RigExecValueId id,

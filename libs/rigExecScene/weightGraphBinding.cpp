@@ -1,7 +1,7 @@
 #include "rigExecSchema/schemaNames.h"
 #include "weightGraphBinding.h"
 #include "sceneGraphTypedRead.h"
-#include "rigExec/frameExtraction.h"
+#include "rigExec/internal/frameExtraction.h"
 #include <algorithm>
 #include <cstring>
 #include "pxr/base/tf/staticTokens.h"

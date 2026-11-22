@@ -1,6 +1,6 @@
 // rigExecRuntime shared kernels (M2 framework).
 // Bit-identical ports of the point-frame kernels every family reads,
-// from libs/rigExecMath/pointFrame.cpp, libs/rigExec/frameExtraction.h
+// from libs/rigExecMath/pointFrame.cpp, libs/rigExec/internal/frameExtraction.h
 // and libs/rigExec/solverKernels.cpp. Gf -> Rr, algorithm untouched.
 #include "rigExecRuntime/store.h"
 

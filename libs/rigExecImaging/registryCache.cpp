@@ -6,8 +6,8 @@
 #include "registry.h"
 #include "registryInternal.h"
 
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/frameCache.h"
+#include "rigExec/api/backgroundScheduler.h"
+#include "rigExec/api/frameCache.h"
 #include "rigExecSchema/schemaTokens.h"
 
 #include "warmIndex.h"

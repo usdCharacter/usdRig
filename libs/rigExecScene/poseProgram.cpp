@@ -4,8 +4,8 @@
 #include "pxr/base/gf/rotation.h"
 #include <cmath>
 #include <limits>
-#include "rigExec/solverKernels.h"
-#include "rigExec/frameExtraction.h"
+#include "rigExec/internal/solverKernels.h"
+#include "rigExec/internal/frameExtraction.h"
 namespace rigExec {
 namespace {
 struct PoseMath {

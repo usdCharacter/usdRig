@@ -2,7 +2,7 @@
 #define RIGEXEC_GRAPH_WEIGHT_PROGRAM_H
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecMath/rangeRunner.h"
-#include "rigExec/weightPackets.h"
+#include "rigExec/internal/weightPackets.h"
 #include "pxr/base/ts/spline.h"
 #include <array>
 #include <deque>

@@ -1,5 +1,5 @@
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/movers/moverRegistry.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/api/moverRegistry.h"
 #include "rigExecMath/geometryKernels.h"
 #include "rigExecAuthoring/rigBuilder.h"
 

@@ -16,10 +16,10 @@
 #include "rigExecBinary/format.h"
 #include "rigExecMath/avarScale.h"
 #include "rigExecSchema/schemaTokens.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/bakedSchedule.h"
-#include "rigExec/bakedTrace.h"
-#include "rigExec/frozenContext.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bakedSchedule.h"
+#include "rigExec/internal/bakedTrace.h"
+#include "rigExec/api/frozenContext.h"
 #include "rigExecRuntimeDrive.h"
 #include "rigExecClothStage.h"
 
@@ -31,7 +31,7 @@
 #include "pxr/usd/usd/primRange.h"
 #include "pxr/usd/usd/references.h"
 
-#include "rigExec/frameCacheSparsity.h"
+#include "rigExec/internal/frameCacheSparsity.h"
 
 #include "pxr/base/gf/rotation.h"
 #include "pxr/base/gf/matrix4f.h"

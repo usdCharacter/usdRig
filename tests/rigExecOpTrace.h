@@ -1,4 +1,4 @@
-// Assertions over the baked program's op trace (rigExec/bakedTrace.h).
+// Assertions over the baked program's op trace (rigExec/internal/bakedTrace.h).
 // A trace lists the steps one run executed with their 1-based completion
 // sequence numbers; a graph lists every step with its predecessors and
 // successors. These helpers answer "did X finish before Y" and "does the
@@ -7,7 +7,7 @@
 #ifndef RIGEXEC_TESTS_OP_TRACE_H
 #define RIGEXEC_TESTS_OP_TRACE_H
 
-#include "rigExec/bakedTrace.h"
+#include "rigExec/internal/bakedTrace.h"
 
 #include <cstddef>
 #include <cstdint>

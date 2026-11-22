@@ -1,6 +1,6 @@
 #include "poseGraphBinding.h"
-#include "rigExec/frameExtraction.h"
-#include "rigExec/pathText.h"
+#include "rigExec/internal/frameExtraction.h"
+#include "rigExec/internal/pathText.h"
 #include "rigExecSchema/schemaNames.h"
 #include "pxr/base/tf/staticTokens.h"
 #include <algorithm>

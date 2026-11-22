@@ -1,7 +1,7 @@
 // Compile notices for UsdSkel data RigExec does not reproduce: unnormalized
 // skin weights, constant-interpolation skin bindings, and blend shape
 // inbetweens / normalOffsets.
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usd/usdSkel/blendShape.h"

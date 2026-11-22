@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <set>
-#include "rigExec/frameExtraction.h"
+#include "rigExec/internal/frameExtraction.h"
 #include "pxr/base/tf/staticTokens.h"
 namespace rigExec {
 TF_DEFINE_PRIVATE_TOKENS(_tokens,

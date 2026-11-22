@@ -23,9 +23,9 @@
 //     is still functional afterwards.
 //   * DROP. Corrupt input is declined, never served: invalid poses,
 //     oversized entries, and null out-params all miss.
-#include "rigExec/frameCache.h"
-#include "rigExec/frameCacheSparsity.h"
-#include "rigExec/frozenContext.h"
+#include "rigExec/api/frameCache.h"
+#include "rigExec/internal/frameCacheSparsity.h"
+#include "rigExec/api/frozenContext.h"
 
 // These headers only name the baked program's implementation and the
 // frozen snapshot, so editing either rebuilds just the sources that read

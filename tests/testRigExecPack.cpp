@@ -1,8 +1,8 @@
 #include "rigExecSchema/schemaTokens.h"
 #include "rigExecStandalone/pack.h"
 #include "rigExecStandalone/system.h"
-#include "rigExec/inputReplayValues.h"
-#include "rigExec/types.h"
+#include "rigExec/internal/inputReplayValues.h"
+#include "rigExec/api/types.h"
 #include "rigExecAuthoring/rigBuilder.h"
 #include <cstring>
 #include <cstdint>

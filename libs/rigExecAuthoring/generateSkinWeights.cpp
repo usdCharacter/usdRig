@@ -3,8 +3,8 @@
 #include "rigBuilder.h"
 
 // _BakeFalloffLut: compile's own falloff table, so fields match evaluation.
-#include "rigExec/rigEvaluatorInternal.h"
-#include "rigExec/weightPackets.h"
+#include "rigExec/internal/rigEvaluatorInternal.h"
+#include "rigExec/internal/weightPackets.h"
 #include "rigExecMath/pointFrame.h"
 #include "rigExecScene/authoredRestSpace.h"
 #include "rigExecScene/setupTransform.h"

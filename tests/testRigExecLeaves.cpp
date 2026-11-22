@@ -4,13 +4,13 @@
 // admission under edits, lifts and held frames, alongside numerical and
 // body-purity checks. Every registered example participates.
 // argv[1] = path to the examples directory.
-#include "rigExec/inputReplay.h"
-#include "rigExec/bakedOpValues.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/bodyPurity.h"
-#include "rigExec/frozenContextInternal.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/internal/inputReplay.h"
+#include "rigExec/internal/bakedOpValues.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bodyPurity.h"
+#include "rigExec/internal/frozenContextInternal.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecBake/bake.h"
 #include "rigExecBake/revisionReads.h"
 #include "rigExecBinary/format.h"

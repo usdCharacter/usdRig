@@ -1,5 +1,5 @@
 #include "sceneGraphTypedRead.h"
-#include "rigExec/pathText.h"
+#include "rigExec/internal/pathText.h"
 #include <algorithm>
 namespace rigExec {
 namespace {

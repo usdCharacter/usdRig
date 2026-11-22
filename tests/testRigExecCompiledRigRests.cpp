@@ -20,9 +20,9 @@
 // joint's rest frame and its posed frame together and comparing the two
 // halves against each other proves nothing.
 // argv[1] = path to the examples directory.
-#include "rigExec/inputReplay.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/bakedProgramImpl.h"
+#include "rigExec/internal/inputReplay.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/bakedProgramImpl.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/getenv.h"

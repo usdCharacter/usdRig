@@ -3,7 +3,7 @@
 #ifndef RIGEXEC_IMAGING_BRIDGE_SAMPLING_H
 #define RIGEXEC_IMAGING_BRIDGE_SAMPLING_H
 
-#include "rigExec/frozenContext.h"
+#include "rigExec/api/frozenContext.h"
 
 #include "pxr/usd/sdf/path.h"
 #include "pxr/usd/usd/notice.h"

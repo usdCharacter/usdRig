@@ -2,8 +2,8 @@
 // control digest covers, and the per-control coverage query.
 #include "bridgeFreshness.h"
 
-#include "rigExec/frozenContext.h"
-#include "rigExec/outputAffectedIndex.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/internal/outputAffectedIndex.h"
 
 #include <algorithm>
 #include <set>

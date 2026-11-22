@@ -1,7 +1,7 @@
 // Owner-thread snapshots of the existing imaging evaluator for live tools.
 #include "profilerApi.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
 #include "pxr/base/js/json.h"
 #include "pxr/base/js/value.h"
 #include "pxr/base/work/threadLimits.h"

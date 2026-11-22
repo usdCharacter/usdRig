@@ -5,9 +5,9 @@
 #include "rigExecBake/revisionReads.h"
 #include "rigExecBake/serialize.h"
 #include "rigExecBake/staticCapture.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/movers/moverRegistry.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/moverRegistry.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecBinary/format.h"
 #include "rigExecBinary/generated/presentation_generated.h"
 

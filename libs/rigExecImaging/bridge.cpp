@@ -8,9 +8,9 @@
 #include "bridgeSnapshot.h"
 
 #include "rigExecMath/pointFrame.h"
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/frameCacheSparsity.h"
-#include "rigExec/parallel.h"
+#include "rigExec/api/backgroundScheduler.h"
+#include "rigExec/internal/frameCacheSparsity.h"
+#include "rigExec/internal/parallel.h"
 #include "rigExecScene/authoredRestSpace.h"
 
 #include "pxr/base/tf/diagnostic.h"

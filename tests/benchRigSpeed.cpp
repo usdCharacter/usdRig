@@ -6,7 +6,7 @@
 // (or frames 1..[frames] when it has none), one sample per pass.
 // Prints one RESULT line per phase: median, min, max and p10/p90 in ms.
 
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"

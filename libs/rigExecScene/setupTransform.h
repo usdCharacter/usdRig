@@ -4,7 +4,7 @@
 #ifndef RIGEXEC_SCENE_SETUP_TRANSFORM_H
 #define RIGEXEC_SCENE_SETUP_TRANSFORM_H
 
-#include "rigExec/pathText.h"
+#include "rigExec/internal/pathText.h"
 #include "rigExecScene/providerProgram.h"
 
 #include "pxr/base/gf/matrix4d.h"

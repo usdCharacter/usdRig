@@ -1,7 +1,7 @@
 #ifndef RIGEXEC_REVISION_PROGRAM_TEST_H
 #define RIGEXEC_REVISION_PROGRAM_TEST_H
-#include "rigExec/moverGraph.h"
-#include "rigExec/types.h"
+#include "rigExec/internal/moverGraph.h"
+#include "rigExec/api/types.h"
 #include "rigExecGraph/opGraph.h"
 #include <algorithm>
 #include <cstring>

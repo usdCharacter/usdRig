@@ -1,7 +1,7 @@
 #ifndef RIGEXEC_SAMPLER_RUNTIME_POSE_PROJECTION_H
 #define RIGEXEC_SAMPLER_RUNTIME_POSE_PROJECTION_H
 
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecRuntime/runtime.h"
 
 namespace rigExec {

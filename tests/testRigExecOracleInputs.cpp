@@ -1,8 +1,8 @@
-#include "rigExec/weightReference.h"
-#include "rigExec/oracleInputs.h"
-#include "rigExec/scalarReferenceAdapter.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/internal/weightReference.h"
+#include "rigExec/internal/oracleInputs.h"
+#include "rigExec/internal/scalarReferenceAdapter.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "pxr/usd/usd/stage.h"
 #include <iostream>
 #define CHECK(x) do { if (!(x)) { std::cerr << "failed: " << #x << "\n"; return 1; } } while(false)

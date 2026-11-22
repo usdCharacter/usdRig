@@ -4,9 +4,9 @@
 #define RIGEXEC_TESTS_FRAME_RECORD_CHECK_H
 
 #include "rigExecPhaseQueryObserver.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/usd/sdf/path.h"

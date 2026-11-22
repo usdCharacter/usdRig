@@ -1,0 +1,22 @@
+# Internal headers that installed headers still include, relative
+# to libs/rigExec/internal/. CMake installs exactly these; each is a
+# leak through the public headers to remove.
+# Regenerate with tools/check_internal_includes.py --write-allowlist.
+
+bakedClusters.h
+bakedTrace.h
+bodyPurity.h
+gpuCloth.h
+gpuDeformTranslation.h
+liveOperationGraph.h
+moverGraphCaches.h
+moverGraphTypes.h
+oracleInputs.h
+outputAffectedIndex.h
+pathText.h
+scalarReferenceAdapter.h
+solverKernels.h
+taskListCache.h
+valueAddress.h
+weightPackets.h
+weightReference.h

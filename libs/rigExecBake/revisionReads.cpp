@@ -1,8 +1,8 @@
 // .rigexec path-read enumeration.
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecBake/revisionReads.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/moverGraph.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/moverGraph.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec2f.h"

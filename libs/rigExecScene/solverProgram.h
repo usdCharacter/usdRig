@@ -7,7 +7,7 @@
 #include "rigExecMath/jointGroupKernel.h"
 #include "rigExecMath/pointFrame.h"
 namespace rigExec {
-// Defined in rigExec/types.h; held and passed by pointer here.
+// Defined in rigExec/api/types.h; held and passed by pointer here.
 struct RigExecPointFrameArray;
 enum class RigExecSolverKind {
     FkChain,

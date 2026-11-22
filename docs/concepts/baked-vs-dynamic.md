@@ -101,7 +101,7 @@ schema computations with `EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA`:
   Affine-frame providers: expressions on `outputs:matrix`.
 
 The registered callbacks call the same kernels as the compiled operations; for
-example, the solver glue in `libs/rigExec/solverKernels.h` serves both. A
+example, the solver glue in `libs/rigExec/internal/solverKernels.h` serves both. A
 matching row shows that a registration binds the same inputs as the compiled
 operation. It is not an independent check of the arithmetic.
 
@@ -135,7 +135,7 @@ no value, or when the encoded result differs in any bit.
 Other rows are not judged by OpenExec:
 
 - Aim, rotation and parent constraints in supported configurations are judged
-  by an independent C++ witness (`libs/rigExec/independentConstraintCheck.h`).
+  by an independent C++ witness (`libs/rigExec/internal/independentConstraintCheck.h`).
 - Other constraints, every other step kind, and rows whose provider slot is
   not a first-frame pose are skip-only `NoEquivalent` rows. Blend channels and
   samples are recorded for presence only.
@@ -169,7 +169,7 @@ requests before a prim removal reaches OpenExec, which works around the
 `tests/python/test_rigexec_stage_edits.py`.
 
 `RigExecValueAddress` and `RigExecValueOverride` are declared in
-`libs/rigExec/valueAddress.h` as plain data types. Production uses them for
+`libs/rigExec/internal/valueAddress.h` as plain data types. Production uses them for
 interactive overrides, falloff tables and input replay; the ExecUsd-backed
 `RigExecTapSet` sits on top of that contract and its header includes no
 OpenExec header.
@@ -241,34 +241,34 @@ Paths are relative to the repository root.
 | | `rigExecRuntime` links neither USD nor OpenExec | `CMakeLists.txt:343` |
 | | The installed package requires the same OpenUSD targets | `cmake/rigExecConfig.cmake.in:20-25` |
 | | The schema plugin's library is `rigExecImaging`; there is no `Exec` plugInfo block | `CMakeLists.txt:2610-2612` |
-| | `RigExecLoadComputations()` is an empty link anchor | `libs/rigExec/types.cpp:16` |
+| | `RigExecLoadComputations()` is an empty link anchor | `libs/rigExec/internal/types.cpp:16` |
 | | `probeEsfCompatibility` is built only on request and has no test | `CMakeLists.txt:1898-1899` |
-| Value types | Nine `ExecTypeRegistry::RegisterType` calls | `libs/rigExec/types.cpp:205-215` |
-| Schema computations | Joint, Control and VolumeWeight providers (macros, then uses) | `libs/rigExec/computations.cpp:434-563`, `:565`, `:567`, `:590` |
-| | FkChain, TwoBoneIk, BlendPointFrames, TwistDistribution, SplineIk | `libs/rigExec/computations.cpp:764`, `:951`, `:1088`, `:1151`, `:1378` |
-| | Weight packets, blend descriptors and Ribbon | `libs/rigExec/moverKernels.cpp:665-884` |
-| | `computeFalloffLut` stub | `libs/rigExec/moverKernels.cpp:730-733` |
-| | Mover parameters and status, never requested | `libs/rigExec/movers/matrixMover.cpp:437`, `blendShapeMover.cpp:625`, `curveMover.cpp:662`, `deltaMushMover.cpp:151`, `latticeMover.cpp:286`, `smoothMover.cpp:117`, `surfaceMover.cpp:276`, `volumeCorrectMover.cpp:106`, `wrinkleMover.cpp:174` |
-| | Affine-frame expressions, never requested | `libs/rigExec/affineFrameComputations.cpp:231-315` |
+| Value types | Nine `ExecTypeRegistry::RegisterType` calls | `libs/rigExec/internal/types.cpp:205-215` |
+| Schema computations | Joint, Control and VolumeWeight providers (macros, then uses) | `libs/rigExec/internal/computations.cpp:434-563`, `:565`, `:567`, `:590` |
+| | FkChain, TwoBoneIk, BlendPointFrames, TwistDistribution, SplineIk | `libs/rigExec/internal/computations.cpp:764`, `:951`, `:1088`, `:1151`, `:1378` |
+| | Weight packets, blend descriptors and Ribbon | `libs/rigExec/internal/moverKernels.cpp:665-884` |
+| | `computeFalloffLut` stub | `libs/rigExec/internal/moverKernels.cpp:730-733` |
+| | Mover parameters and status, never requested | `libs/rigExec/internal/movers/matrixMover.cpp:437`, `blendShapeMover.cpp:625`, `curveMover.cpp:662`, `deltaMushMover.cpp:151`, `latticeMover.cpp:286`, `smoothMover.cpp:117`, `surfaceMover.cpp:276`, `volumeCorrectMover.cpp:106`, `wrinkleMover.cpp:174` |
+| | Affine-frame expressions, never requested | `libs/rigExec/internal/affineFrameComputations.cpp:231-315` |
 | | Production affine-frame operation | `libs/rigExecScene/providerProgram.cpp:631` |
-| Requests | One `ExecUsdSystem` per stage in a weak table, created only here | `libs/rigExec/tapSet.cpp:82-147`, `libs/rigExec/tapSet.cpp:108` |
-| | Value keys, request build and preparation | `libs/rigExec/tapSet.cpp:213-255` |
-| | Time change, overrides, compute and extraction | `libs/rigExec/tapSet.cpp:316`, `:319-340`, `:344-346`, `:350-357` |
-| | `RIGEXEC_TAP_TIMING` | `libs/rigExec/debugCodes.h:19`, `libs/rigExec/tapSet.cpp:44-50` |
+| Requests | One `ExecUsdSystem` per stage in a weak table, created only here | `libs/rigExec/internal/tapSet.cpp:82-147`, `libs/rigExec/internal/tapSet.cpp:108` |
+| | Value keys, request build and preparation | `libs/rigExec/internal/tapSet.cpp:213-255` |
+| | Time change, overrides, compute and extraction | `libs/rigExec/internal/tapSet.cpp:316`, `:319-340`, `:344-346`, `:350-357` |
+| | `RIGEXEC_TAP_TIMING` | `libs/rigExec/internal/debugCodes.h:19`, `libs/rigExec/internal/tapSet.cpp:44-50` |
 | | The only tap-set creator under `libs` | `libs/rigExecOracle/bakedExecCrossCheck.cpp:50` |
 | Invalidation | Registry stage-notice hook | `libs/rigExecImaging/registryInvalidation.cpp:496` |
-| | Prim-removal workaround and its defect | `libs/rigExec/tapSet.cpp:111-113`, `:118-136`, `tests/python/test_rigexec_stage_edits.py:7-12` |
+| | Prim-removal workaround and its defect | `libs/rigExec/internal/tapSet.cpp:111-113`, `:118-136`, `tests/python/test_rigexec_stage_edits.py:7-12` |
 | Reference check | Row construction | `libs/rigExecOracle/bakedExecCrossCheckRows.cpp:441-608` |
-| | Constraint rows and their independent witness | `libs/rigExecOracle/bakedExecCrossCheckRows.cpp:505-542`, `libs/rigExec/independentConstraintCheck.h` |
+| | Constraint rows and their independent witness | `libs/rigExecOracle/bakedExecCrossCheckRows.cpp:505-542`, `libs/rigExec/internal/independentConstraintCheck.h` |
 | | Override coverage | `libs/rigExecOracle/bakedExecCrossCheck.cpp:37-43`, `:76-86` |
 | | Request evaluation and bit-exact comparison | `libs/rigExecOracle/bakedExecCrossCheck.cpp:103`, `:114-119` |
-| | Row capture around operation bodies | `libs/rigExec/bakedSchedule.cpp:2360-2362`, `libs/rigExec/bakedPose.cpp:3613`, `:3679`, `:4666`, `:5484-5485` |
-| | Frozen clone, which omits the rows | `libs/rigExec/frozenSnapshot.cpp:89` |
+| | Row capture around operation bodies | `libs/rigExec/internal/bakedSchedule.cpp:2360-2362`, `libs/rigExec/internal/bakedPose.cpp:3613`, `:3679`, `:4666`, `:5484-5485` |
+| | Frozen clone, which omits the rows | `libs/rigExec/internal/frozenSnapshot.cpp:89` |
 | | Enable hook | `libs/rigExecOracle/bakedExecCrossCheckRows.cpp:680-685` |
 | | `rigExecPose --exec-crosscheck` and backend refusals | `tools/rigExecPose.cpp:1435`, `:1551-1557`, `:1159`, `:1168` |
 | | CTest registration | `CMakeLists.txt:703-705`, `:909-910`, `:923-931` |
 | Direct test references | Tap sets built by tests | `tests/testRigExecDefaultSpaces.cpp:56`, `tests/testRigExecArm.cpp:198`, `tests/testRigExecConstraints.cpp:2630`, `tests/testRigExecStandalone.cpp:548`, `tests/testRigExecStandalone.cpp:916`, `tests/testRigExecInteractive.cpp:162` |
 | Esf | Adapter with no callers | `libs/rigExecStandalone/adapter.h:7-8`, `libs/rigExecStandalone/adapter.cpp:182-186` |
 | | Standalone runtime translation into the shared graph | `libs/rigExecStandalone/sceneRuntime.cpp:4-18` |
-| Shared data types | `RigExecValueAddress`, `RigExecValueOverride` | `libs/rigExec/valueAddress.h:30-48`, `libs/rigExec/valueAddress.h:63-88` |
-| | Production uses of the override type | `libs/rigExec/bakedProgram.h:456`, `libs/rigExec/frameCache.h:159` |
+| Shared data types | `RigExecValueAddress`, `RigExecValueOverride` | `libs/rigExec/internal/valueAddress.h:30-48`, `libs/rigExec/internal/valueAddress.h:63-88` |
+| | Production uses of the override type | `libs/rigExec/api/bakedProgram.h:456`, `libs/rigExec/api/frameCache.h:159` |

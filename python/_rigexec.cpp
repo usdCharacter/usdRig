@@ -20,8 +20,8 @@
 #include "pxr/usd/usd/timeCode.h"
 #include "pxr/external/boost/python/extract.hpp"
 
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/evaluatorTesting.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/evaluatorTesting.h"
 #include "rigExecGpu/gpuDeformExecutor.h"
 #include "rigExecMath/pointFrame.h"
 #include "rigExecMath/rbf.h"

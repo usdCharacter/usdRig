@@ -1,10 +1,10 @@
 #include "registerOracle.h"
-#include "rigExec/oracleDispatch.h"
-#include "rigExec/goldenSuite.h"
-#include "rigExec/goldenPose.h"
-#include "rigExec/oracleInputs.h"
-#include "rigExec/scalarReferenceAdapter.h"
-#include "rigExec/weightReference.h"
+#include "rigExec/internal/oracleDispatch.h"
+#include "rigExec/internal/goldenSuite.h"
+#include "rigExec/internal/goldenPose.h"
+#include "rigExec/internal/oracleInputs.h"
+#include "rigExec/internal/scalarReferenceAdapter.h"
+#include "rigExec/internal/weightReference.h"
 
 #include <memory>
 

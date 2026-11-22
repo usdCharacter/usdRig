@@ -3,8 +3,8 @@
 #include "pxr/base/tf/staticTokens.h"
 #include "providerContextBinding.h"
 #include "rigExecMath/poseArithmeticKernel.h"
-#include "rigExec/movers/moverRegistry.h"
-#include "rigExec/pathText.h"
+#include "rigExec/api/moverRegistry.h"
+#include "rigExec/internal/pathText.h"
 #include "rigExecMath/harmonicsKernel.h"
 #include <set>
 #include <algorithm>

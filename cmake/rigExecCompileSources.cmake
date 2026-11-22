@@ -4,21 +4,21 @@
 # objects are composed into librigExec by the root list, and this target is
 # never installed, exported or linked.
 add_library(rigExecCompile OBJECT
-    libs/rigExec/types.cpp
-    libs/rigExec/sceneDispatch.cpp
-    libs/rigExec/bakedOpGraph.cpp
-    libs/rigExec/bakedOpValues.cpp
-    libs/rigExec/crossDomainInputs.cpp
-    libs/rigExec/parallel.cpp
-    libs/rigExec/frozenDigest.cpp
-    libs/rigExec/rigEvaluatorChainPlan.cpp
-    libs/rigExec/rigEvaluatorCompile.cpp
-    libs/rigExec/rigEvaluatorDependencies.cpp
-    libs/rigExec/rigEvaluatorDigest.cpp
-    libs/rigExec/rigEvaluatorLiveGraph.cpp
-    libs/rigExec/rigEvaluatorValidation.cpp
-    libs/rigExec/bakedProgram.cpp
-    libs/rigExec/compiledProgram.cpp
+    libs/rigExec/internal/types.cpp
+    libs/rigExec/internal/sceneDispatch.cpp
+    libs/rigExec/internal/bakedOpGraph.cpp
+    libs/rigExec/internal/bakedOpValues.cpp
+    libs/rigExec/internal/crossDomainInputs.cpp
+    libs/rigExec/internal/parallel.cpp
+    libs/rigExec/internal/frozenDigest.cpp
+    libs/rigExec/internal/rigEvaluatorChainPlan.cpp
+    libs/rigExec/internal/rigEvaluatorCompile.cpp
+    libs/rigExec/internal/rigEvaluatorDependencies.cpp
+    libs/rigExec/internal/rigEvaluatorDigest.cpp
+    libs/rigExec/internal/rigEvaluatorLiveGraph.cpp
+    libs/rigExec/internal/rigEvaluatorValidation.cpp
+    libs/rigExec/internal/bakedProgram.cpp
+    libs/rigExec/internal/compiledProgram.cpp
     # Scene programs that compose compiled descriptors.
     libs/rigExecScene/constraintProgram.cpp
     libs/rigExecScene/geometryProgram.cpp

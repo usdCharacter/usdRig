@@ -1,5 +1,5 @@
 // The evaluator has one compiled graph; legacy custom policy is inert.
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"
 #include "pxr/usd/sdf/types.h"

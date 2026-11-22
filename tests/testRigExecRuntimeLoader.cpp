@@ -26,10 +26,10 @@
 // fresh evaluator's generation at that time, actual operation counts and diagnostics
 // included.
 #include "rigExecBake/bake.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/moverGraph.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/moverGraph.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecBinary/format.h"
 #include "rigExecRuntime/runtime.h"
 #include "rigExecExampleFixtures.h"

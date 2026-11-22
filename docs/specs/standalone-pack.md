@@ -49,7 +49,7 @@ else {
 ```
 
 Include `rigExecStandalone/pack.h`, `rigExecStandalone/system.h`, and
-`rigExec/types.h`; link `rigExec::rigExecStandalone`. Calls on one runtime are
+`rigExec/api/types.h`; link `rigExec::rigExecStandalone`. Calls on one runtime are
 serialized by its host. `SetValue`, `SetConnections`, `SetTargets`, and
 `SetPrimActive` deliver ephemeral changes to the retained compiler. The result
 owns copied values; no cache view crosses the API boundary. `EvaluateResolved`

@@ -4,9 +4,9 @@
 // contract: no second proof mechanism, no parallel dependency model.
 #include "bridgeFrameCache.h"
 
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/frameCacheSparsity.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/frameCacheSparsity.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include <set>
 #include <string>

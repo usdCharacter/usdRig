@@ -2,7 +2,7 @@
 #include "rigExecBake/staticCapture.h"
 #include "rigExecBake/computedCapture.h"
 #include "rigExecBake/pathTable.h"
-#include "rigExec/bakedProgramImpl.h"
+#include "rigExec/internal/bakedProgramImpl.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec2f.h"

@@ -1,5 +1,5 @@
 #include "rigExecMath/geometryKernels.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecAuthoring/rigBuilder.h"
 #include "rigExecBake/bake.h"
 #include "rigExecRuntime/runtime.h"

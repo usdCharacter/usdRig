@@ -1,5 +1,5 @@
-#include "rigExec/goldenPose.h"
-#include "rigExec/types.h"
+#include "rigExec/internal/goldenPose.h"
+#include "rigExec/api/types.h"
 
 #include "pxr/base/gf/quatd.h"
 #include "pxr/base/gf/quatf.h"

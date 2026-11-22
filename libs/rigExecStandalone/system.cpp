@@ -1,9 +1,9 @@
 #include "rigExecSchema/schemaNames.h"
 #include "system.h"
 #include "sceneRuntime.h"
-#include "rigExec/inputReplayValues.h"
+#include "rigExec/internal/inputReplayValues.h"
 #include "pxr/base/vt/types.h"
-#include "rigExec/movers/moverRegistry.h"
+#include "rigExec/api/moverRegistry.h"
 #include <algorithm>
 #include <cstring>
 #include <cmath>

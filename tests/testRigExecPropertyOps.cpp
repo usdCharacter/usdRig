@@ -3,14 +3,14 @@
 // generations and frozen jobs check cache freshness and publication, including
 // input/target/checkpoint drags, malformed inputs and source capture failure.
 // argv[1] = path to the examples directory.
-#include "rigExec/inputReplay.h"
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/bakedTrace.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/rigEvaluatorPropertyBindings.h"
+#include "rigExec/internal/inputReplay.h"
+#include "rigExec/api/backgroundScheduler.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bakedTrace.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/rigEvaluatorPropertyBindings.h"
 #include "rigExecBake/bake.h"
 #include "rigExecMath/propertyMath.h"
 #include "rigExecPromotionCases.h"

@@ -1,8 +1,8 @@
 #ifndef RIGEXEC_GRAPH_GEOMETRY_PROGRAM_H
 #define RIGEXEC_GRAPH_GEOMETRY_PROGRAM_H
-#include "rigExec/moverGraphCaches.h"
-#include "rigExec/moverGraphTypes.h"
-#include "rigExec/types.h"
+#include "rigExec/internal/moverGraphCaches.h"
+#include "rigExec/internal/moverGraphTypes.h"
+#include "rigExec/api/types.h"
 #include "rigExecMath/surfaceKernelCache.h"
 #include "pxr/base/vt/types.h"
 #include <memory>

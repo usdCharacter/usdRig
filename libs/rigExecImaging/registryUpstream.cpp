@@ -6,7 +6,7 @@
 #include "registry.h"
 #include "registryInternal.h"
 
-#include "rigExec/frameCacheSparsity.h"
+#include "rigExec/internal/frameCacheSparsity.h"
 
 #include "upstreamTable.h"
 

@@ -1,5 +1,5 @@
 #include "sceneVersionRoutes.h"
-#include "rigExec/moverGraph.h"
+#include "rigExec/internal/moverGraph.h"
 #include <algorithm>
 namespace rigExec {
 namespace {

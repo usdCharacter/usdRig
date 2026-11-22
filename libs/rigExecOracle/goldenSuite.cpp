@@ -1,5 +1,5 @@
-#include "rigExec/goldenSuite.h"
-#include "rigExec/goldenPose.h"
+#include "rigExec/internal/goldenSuite.h"
+#include "rigExec/internal/goldenPose.h"
 
 #include <atomic>
 #include <cstdio>

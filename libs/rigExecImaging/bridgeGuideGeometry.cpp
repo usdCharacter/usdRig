@@ -5,7 +5,7 @@
 #include "rigExecSchema/schemaNames.h"
 #include "bridgeGuideGeometry.h"
 
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/imaging/hd/tokens.h"

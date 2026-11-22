@@ -115,7 +115,7 @@ ExecUsdValueKey(const UsdPrim &provider, const TfToken &computation);
   predicate to invalid prim": `EsfUsdStageData::_UpdateForResync` applies
   `UsdPrimDefaultPredicate` to the missing prim (`esfUsd/stageData.cpp:361`).
   `RigExecTapSet` drops its requests and system before that listener runs
-  (`libs/rigExec/tapSet.cpp:118-136`).
+  (`libs/rigExec/internal/tapSet.cpp:118-136`).
 
 ### Builtin computation tokens (`exec/builtinComputations.h`)
 Accessed via `ExecBuiltinComputations->...`:
@@ -343,13 +343,13 @@ Build/runtime requirements:
 - Hold: `UsdStageRefPtr` (or rely on system's ref), one move-only
   `ExecUsdRequest`, and the key vector's index→tap mapping. All tap sets on a
   stage share one `ExecUsdSystem` (one compiled network and value cache per
-  stage; `libs/rigExec/tapSet.cpp:82-147`).
+  stage; `libs/rigExec/internal/tapSet.cpp:82-147`).
 - Rebuilding the tap set means building a *new* request (keys are fixed at
   BuildRequest; there is no append API).
 - Invalidations arrive synchronously inside authoring and ChangeTime calls,
   possibly on a worker thread: your callback should only flip atomic dirty
   bits / forward notifications; evaluation must happen later on the caller's
-  pull. `RigExecTapSet` sets a `std::atomic<bool>` (`libs/rigExec/tapSet.h:214`).
+  pull. `RigExecTapSet` sets a `std::atomic<bool>` (`libs/rigExec/api/tapSet.h:214`).
 - Re-Compute after invalidation to keep callbacks flowing (interest renewal).
 - Cache views are transient: compute → extract → drop; never store a view
   across stage edits, ChangeTime, or request/system destruction.

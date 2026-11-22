@@ -8,12 +8,12 @@
 // live here.
 #include "registry.h"
 
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/frameCache.h"
-#include "rigExec/frameCacheSparsity.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/profiler.h"
+#include "rigExec/api/backgroundScheduler.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/frameCache.h"
+#include "rigExec/internal/frameCacheSparsity.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/api/profiler.h"
 
 #include "pxr/usd/usd/timeCode.h"
 

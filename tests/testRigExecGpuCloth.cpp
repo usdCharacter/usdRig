@@ -1,4 +1,4 @@
-// RigExecClothMover's device solve (rigExec/gpuCloth.h, rigExecGpu): the
+// RigExecClothMover's device solve (rigExec/internal/gpuCloth.h, rigExecGpu): the
 // GPU kernel against the CPU kernel on the same windows -- a curtain a
 // sphere sweeps through, and a body-sized one for timing -- and a live rig
 // whose cloth the publication boundary solves on the GPU, against the same
@@ -6,8 +6,8 @@
 // not bit for bit, so it is held to a distance and to the collisions. With
 // no OpenGL 4.5 device the suite says so and checks the CPU fallback alone.
 #include "rigExecClothStage.h"
-#include "rigExec/gpuCloth.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/internal/gpuCloth.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecGpu/gpuDeformExecutor.h"
 #include "rigExecMath/clothKernel.h"
 

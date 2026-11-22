@@ -1,9 +1,9 @@
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 #ifdef RIGEXEC_EXPLICIT_SCENE_REGISTRATION
 #include "rigExecScene/registerScene.h"
 #endif
 #ifdef RIGEXEC_TEST_SCENE_RECOVERY
-#include "rigExec/sceneDispatch.h"
+#include "rigExec/internal/sceneDispatch.h"
 #include "rigExecScene/registerScene.h"
 #endif
 

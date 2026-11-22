@@ -1,5 +1,5 @@
-#include "rigExec/goldenSuite.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/internal/goldenSuite.h"
+#include "rigExec/api/rigEvaluator.h"
 #include <string>
 
 using namespace rigExec;

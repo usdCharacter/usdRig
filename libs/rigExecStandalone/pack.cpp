@@ -1,7 +1,7 @@
 #include "pxr/base/ts/spline.h"
 #include "pxr/usd/usdGeom/metrics.h"
 #include "pack.h"
-#include "rigExec/inputReplayValues.h"
+#include "rigExec/internal/inputReplayValues.h"
 #include <stdexcept>
 #include "pxr/base/tf/errorMark.h"
 #include "pxr/base/vt/array.h"

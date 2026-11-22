@@ -2,7 +2,7 @@
 #include "sceneProgramLayout.h"
 #include "pxr/base/tf/staticTokens.h"
 #include "sceneCompileInputs.h"
-#include "rigExec/pathText.h"
+#include "rigExec/internal/pathText.h"
 #include <algorithm>
 namespace rigExec {
 TF_DEFINE_PRIVATE_TOKENS(_tokens,

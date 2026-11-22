@@ -1,6 +1,6 @@
 #include "pxr/base/gf/vec3i.h"
 #include "providerRecordExport.h"
-#include "rigExec/pathText.h"
+#include "rigExec/internal/pathText.h"
 #include <type_traits>
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec3f.h"

@@ -12,11 +12,11 @@
 // jobs (the worker's snapshot) publish what the live program publishes.
 #include "rigExecRuntimeDrive.h"
 
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/backgroundScheduler.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecMath/pathCurveKernel.h"
 #include "rigExecRuntime/runtime.h"
 

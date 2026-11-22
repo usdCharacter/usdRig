@@ -1,6 +1,6 @@
-#include "rigExec/inputReplay.h"
-#include "rigExec/moverGraph.h"
-#include "rigExec/movers/moverRegistry.h"
+#include "rigExec/internal/inputReplay.h"
+#include "rigExec/internal/moverGraph.h"
+#include "rigExec/api/moverRegistry.h"
 #include "pxr/base/plug/registry.h"
 #include <cstdio>
 #include <cstdlib>

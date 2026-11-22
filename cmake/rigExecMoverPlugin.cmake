@@ -2,7 +2,7 @@ include_guard(GLOBAL)
 include(CMakeParseArguments)
 include("${CMAKE_CURRENT_LIST_DIR}/rigexec_flags.cmake")
 
-# Must equal RigExecMoverPluginApiVersion in rigExec/movers/moverRegistry.h:
+# Must equal RigExecMoverPluginApiVersion in rigExec/api/moverRegistry.h:
 # the loader refuses a library whose metadata names another version.
 set(RIGEXEC_MOVER_PLUGIN_API_VERSION 8)
 

@@ -34,9 +34,9 @@
 //   * Frame cost is min-of-5 pass means over 40 animated frames each, with
 //     the minimum clusters-run across the 200 frames proving every timed
 //     frame ran the whole program rather than an empty cone.
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/parallel.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/parallel.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecMath/pointFrame.h"
 
 #include "pxr/base/gf/matrix4d.h"

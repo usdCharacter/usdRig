@@ -1,7 +1,7 @@
 // RigExec pulled upstream inputs. See upstreamTable.h for the contract.
 #include "rigExecImaging/upstreamTable.h"
 
-#include "rigExec/frameCache.h"
+#include "rigExec/api/frameCache.h"
 
 #include "pxr/base/gf/math.h"
 #include "pxr/base/gf/matrix4d.h"

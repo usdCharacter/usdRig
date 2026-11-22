@@ -1,9 +1,9 @@
 // .rigexec array inputs.
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecBake/arrayReads.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/moverGraph.h"
-#include "rigExec/rigEvaluatorInternal.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/moverGraph.h"
+#include "rigExec/internal/rigEvaluatorInternal.h"
 
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec3f.h"

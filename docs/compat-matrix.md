@@ -26,7 +26,7 @@ bump here, and update the pinned sidecars.
 |---|---|---|---|
 | `.rigexec` format (writer) | **32** | `RigExecFormatVersion` in `libs/rigExecBinary/format.h` | every bake stamps it |
 | `.rigexec` format (reader) | **20 through 32** | `RigExecFormatOldestReadable` in `libs/rigExecBinary/format.h` | `libs/rigExecBinary/format.cpp` refuses others at open with a re-export suggestion; a `static_assert` pins the oldest readable, and `tests/testRigExecFormat.cpp` and `tests/testRigExecRuntimeLoader.cpp` pin the accepted range |
-| Mover plugin API | **8** | `RigExecMoverPluginApiVersion` in `libs/rigExec/movers/moverRegistry.h` | the loader (`moverRegistry.cpp`) rejects a plugin whose metadata `RigExecMoverPlugin` value differs; `cmake/rigExecMoverPlugin.cmake` stamps the same number into plugin metadata |
+| Mover plugin API | **8** | `RigExecMoverPluginApiVersion` in `libs/rigExec/api/moverRegistry.h` | the loader (`moverRegistry.cpp`) rejects a plugin whose metadata `RigExecMoverPlugin` value differs; `cmake/rigExecMoverPlugin.cmake` stamps the same number into plugin metadata |
 | External-mover wire type IDs | plain API4 IDs, pinned | `RigExecExternalInputType` in `libs/rigExecBinary/external.h` | the format's `InputTag` numeric inventory; IDs never renumber |
 
 Reader rules: a file older than the oldest readable version is refused with a
@@ -134,7 +134,7 @@ When a record layout or handler ABI changes:
    if old files stop opening, raise `RigExecFormatOldestReadable`, its
    `static_assert` in `format.cpp`, and the range tests together.
 2. Plugin ABI: raise `RigExecMoverPluginApiVersion` in
-   `libs/rigExec/movers/moverRegistry.h` and
+   `libs/rigExec/api/moverRegistry.h` and
    `RIGEXEC_MOVER_PLUGIN_API_VERSION` in `cmake/rigExecMoverPlugin.cmake` in
    the same commit, and update the rebuild paragraph in
    [external movers](concepts/external-movers.md).

@@ -2,7 +2,7 @@
 // every frame matches the single-threaded run byte for byte.
 //   testRigExecDeterminism <stage>...
 
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/matrix4f.h"
