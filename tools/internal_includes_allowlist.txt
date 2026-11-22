@@ -57,6 +57,7 @@ libs/rigExecScene/geometryProgram.cpp | rigExec/internal/moverGraph.h
 libs/rigExecScene/geometryProgram.cpp | rigExec/internal/pathText.h
 libs/rigExecScene/geometryProgram.h | rigExec/internal/moverGraphCaches.h
 libs/rigExecScene/geometryProgram.h | rigExec/internal/moverGraphTypes.h
+libs/rigExecScene/geometryProgram.h | rigExec/internal/moverPacket.h
 libs/rigExecScene/geometrySceneTranslation.cpp | rigExec/internal/moverGraph.h
 libs/rigExecScene/geometrySceneTranslation.cpp | rigExec/internal/pathText.h
 libs/rigExecScene/jointGroupTranslation.cpp | rigExec/internal/pathText.h

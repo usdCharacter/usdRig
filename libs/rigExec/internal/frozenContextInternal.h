@@ -6,6 +6,7 @@
 #include "rigExecSchema/schemaNames.h"
 #include "rigExec/api/frozenContext.h"
 #include "rigExec/internal/frozenProgram.h"
+#include "rigExec/internal/moverPacket.h"
 #include "rigExec/internal/valueAddress.h"
 
 #include "pxr/base/gf/matrix4d.h"

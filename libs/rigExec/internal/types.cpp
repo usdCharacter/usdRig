@@ -1,6 +1,7 @@
 // RigExec exec type registrations.
 #include "rigExecSchema/schemaNames.h"
 #include "rigExec/api/types.h"
+#include "rigExec/internal/moverPacket.h"
 
 #include "pxr/exec/exec/typeRegistry.h"
 

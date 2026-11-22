@@ -14,6 +14,7 @@
 
 #include "rigExecSchema/schemaNames.h"
 #include "rigExec/api/types.h"
+#include "rigExec/internal/moverPacket.h"
 
 #include "pxr/base/tf/staticTokens.h"
 #include "pxr/exec/vdf/context.h"

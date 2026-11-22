@@ -26,6 +26,8 @@
 
 namespace rigExec {
 
+struct RigExecMoverParameters;
+
 /// One revision of a chain, as the translation reads it.
 struct RigExecGpuRevisionInput {
     RigExecRevisionOp op = RigExecRevisionOp::Matrix;

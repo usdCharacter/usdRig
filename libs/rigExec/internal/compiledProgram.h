@@ -16,6 +16,7 @@
 #include "rigExec/internal/frameExtraction.h"
 #include "rigExec/internal/gpuDeformTranslation.h"
 #include "rigExec/internal/moverGraph.h"
+#include "rigExec/internal/moverPacket.h"
 #include "rigExec/internal/oracleInputs.h"
 #include "rigExec/internal/pathText.h"
 #include "rigExec/internal/scalarReferenceAdapter.h"

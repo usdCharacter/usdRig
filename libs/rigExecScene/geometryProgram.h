@@ -2,6 +2,7 @@
 #define RIGEXEC_GRAPH_GEOMETRY_PROGRAM_H
 #include "rigExec/internal/moverGraphCaches.h"
 #include "rigExec/internal/moverGraphTypes.h"
+#include "rigExec/internal/moverPacket.h"
 #include "rigExec/api/types.h"
 #include "rigExecMath/surfaceKernelCache.h"
 #include "pxr/base/vt/types.h"

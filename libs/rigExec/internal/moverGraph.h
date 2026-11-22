@@ -7,6 +7,7 @@
 #include "rigExec/internal/bodyPurity.h"
 #include "rigExec/internal/moverGraphCaches.h"
 #include "rigExec/internal/moverGraphTypes.h"
+#include "rigExec/internal/moverPacket.h"
 #include "rigExec/api/types.h"
 
 #include "rigExecMath/simdKernels.h"
