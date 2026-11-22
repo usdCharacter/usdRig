@@ -1,0 +1,132 @@
+#include "rigExecOps/deform/skinOp.h"
+
+#include "rigExecMath/skinKernel.h"
+#include "rigExecOps/opIo.h"
+#include "rigExecRuntime/dualQuatMath.h"
+
+#include <cmath>
+#include <iterator>
+#include <string>
+
+namespace rigExecOps {
+
+RIGEXEC_DEFINE_OP_HANDLE(Skin)
+
+RIGEXEC_DEFINE_PORT_HANDLE(SkinPoints)
+RIGEXEC_DEFINE_PORT_HANDLE(SkinTransforms)
+RIGEXEC_DEFINE_PORT_HANDLE(SkinIndices)
+RIGEXEC_DEFINE_PORT_HANDLE(SkinWeights)
+RIGEXEC_DEFINE_PORT_HANDLE(SkinOut)
+
+namespace {
+
+using namespace opIo;
+using rigExecStd::Mat4d;
+using rigExecStd::Vec3d;
+using rigExecStd::Vec3f;
+using Transforms = rigExecStd::RigExecArray<Mat4d>;
+using Indices = rigExecStd::RigExecArray<int32_t>;
+using Layout = rigExec::RigExecSkinLayoutOf<Mat4d>;
+
+// The programs' default; the SSE and scalar forms agree only to tolerance.
+constexpr bool kUseSimd = true;
+
+bool
+Usable(const Transforms &transforms)
+{
+    for (const Mat4d &m : transforms) {
+        for (int r = 0; r < 4; ++r)
+            for (int c = 0; c < 4; ++c)
+                if (!std::isfinite(m[r][c]))
+                    return false;
+        if (m[0][3] != 0 || m[1][3] != 0 || m[2][3] != 0 || m[3][3] != 1)
+            return false;
+    }
+    return true;
+}
+
+bool
+Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
+    std::string *error)
+{
+    const SkinPayload &p = *static_cast<const SkinPayload *>(payload);
+    const Points &in = *In<Points>(io, SkinPoints());
+    const Transforms &transforms = *In<Transforms>(io, SkinTransforms());
+    const Indices &indices = *In<Indices>(io, SkinIndices());
+    const Envelope &weights = *In<Envelope>(io, SkinWeights());
+
+    Layout layout;
+    layout.transforms = transforms.Data();
+    layout.transformCount = transforms.Size();
+    layout.indices = indices.Data();
+    layout.weights = weights.Data();
+    layout.indexCount = indices.Size();
+    layout.elementSize = p.elementSize < 1 ? 0 : size_t(p.elementSize);
+    layout.pointCount = in.Size();
+    if (!layout.elementSize || !layout.transformCount)
+        return Fail(error, "Skin", "needs an influence and elementSize >= 1");
+    if (weights.Size() != indices.Size() ||
+        indices.Size() != in.Size() * layout.elementSize)
+        return Fail(error, "Skin",
+                    "indices and weights need elementSize per point");
+    for (size_t i = 0; i < indices.Size(); ++i) {
+        if (indices[i] < 0 || size_t(indices[i]) >= layout.transformCount)
+            return Fail(error, "Skin", "an index is outside the influences");
+        if (!std::isfinite(weights[i]) || weights[i] < 0.0f)
+            return Fail(error, "Skin",
+                        "weights must be finite and non-negative");
+    }
+    if (!Usable(transforms))
+        return Fail(error, "Skin", "transforms must be finite and affine");
+
+    Points &out = Out<Points>(io, SkinOut());
+    out = Points(in.Size());
+    if (p.method == SkinMethod::ClassicLinear) {
+        if (kUseSimd)
+            rigExec::RigExecApplyLinearBlendSkinSimdKernel<Vec3f, Vec3d>(
+                in.Data(), out.Data(), layout, nullptr);
+        else
+            rigExec::RigExecApplyLinearBlendSkinKernel<Vec3f, Vec3d>(
+                in.Data(), out.Data(), layout);
+        return true;
+    }
+    const auto palette =
+        rigExec::RigExecSkinDualQuatPaletteKernel<Vec3f, Vec3d>(layout);
+    if (!rigExec::RigExecApplyDualQuatSkinKernel<Vec3f, Vec3d>(
+            in.Data(), out.Data(), layout, palette.data(), palette.size()))
+        return Fail(error, "Skin", "dual quaternion blend is degenerate");
+    return true;
+}
+
+} // namespace
+
+void
+RegisterSkinOps(rigExec::RigExecOpRegistrar &registrar)
+{
+    using rigExec::kRigExecPortInput;
+    using rigExec::kRigExecPortOutput;
+    const auto &points = rigExecStd::Vec3fArray();
+    static const rigExec::RigExecPortDesc ports[] = {
+        {&SkinPoints(), &points, kRigExecPortInput, "points"},
+        {&SkinTransforms(), &rigExecStd::Mat4dArray(), kRigExecPortInput,
+         "transforms"},
+        {&SkinIndices(), &rigExecStd::IntArray(), kRigExecPortInput, "indices"},
+        {&SkinWeights(), &rigExecStd::FloatArray(), kRigExecPortInput,
+         "weights"},
+        {&SkinOut(), &points, kRigExecPortOutput, "out"},
+    };
+    static const rigExec::RigExecOpDesc desc = [] {
+        rigExec::RigExecOpDesc d;
+        d.nameSpace = "rig";
+        d.name = "Skin";
+        d.ports = ports;
+        d.portCount = std::size(ports);
+        d.run = &Run;
+        d.capabilities = rigExec::kRigExecOpBakeable;
+        d.payload = rigExec::RigExecPayloadHandlingFor<SkinPayload>();
+        return d;
+    }();
+    registrar.Add(Skin(), desc);
+}
+
+} // namespace rigExecOps

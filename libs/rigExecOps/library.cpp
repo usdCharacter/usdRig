@@ -13,6 +13,7 @@ Register(rigExec::RigExecOpRegistrar &registrar)
     RegisterWrinkleOps(registrar);
     RegisterSurfaceProjectOps(registrar);
     RegisterMatrixDeformOps(registrar);
+    RegisterSkinOps(registrar);
 }
 
 const rigExec::RigExecOpLibraryDesc kLibrary = [] {

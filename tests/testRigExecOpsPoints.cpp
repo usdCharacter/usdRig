@@ -12,11 +12,14 @@
 #include "rigExecOps/deform/latticeOp.h"
 #include "rigExecOps/deform/matrixDeformOp.h"
 #include "rigExecOps/deform/pointOps.h"
+#include "rigExecOps/deform/skinOp.h"
 #include "rigExecOps/deform/surfaceProjectOp.h"
 #include "rigExecOps/deform/wrinkleOp.h"
 
 #include "pxr/base/gf/rotation.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -752,6 +755,118 @@ TestMatrixDeform()
     CHECK(!weighted.Run({&in, &transform, &shortArray}, &actual));
 }
 
+void
+TestSkin()
+{
+    using namespace rigExecOps;
+    const Grid grid(9, 31);
+    const std::vector<GfVec3f> &points = grid.points;
+    const Points in = ToStd(points);
+
+    GfMatrix4d turn(1.0);
+    turn.SetRotate(GfRotation(GfVec3d(0.1, 0.3, 1), 70.0));
+    turn.SetTranslateOnly(GfVec3d(3, -2, 5));
+    GfMatrix4d bend(1.0);
+    bend.SetRotate(GfRotation(GfVec3d(1, 0, 0.2), -140.0));
+    const GfMatrix4d squash =
+        GfMatrix4d(1.0).SetScale(GfVec3d(1.3, 0.7, 1.0)) * bend;
+    GfMatrix4d shear(1.0);
+    shear[1][0] = 0.4;
+    shear.SetTranslateOnly(GfVec3d(0.5, 0.25, -1));
+    const std::vector<GfMatrix4d> gf = {turn, squash, shear, GfMatrix4d(1.0)};
+    std::vector<rigExecStd::Mat4d> mats;
+    for (const GfMatrix4d &m : gf)
+        mats.push_back(ToStd(m));
+    const auto transforms = ToArray(mats);
+
+    const int elementSize = 3;
+    std::mt19937 rng(7);
+    std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+    std::vector<int> indices(points.size() * elementSize);
+    std::vector<float> weights(indices.size());
+    for (size_t i = 0; i < points.size(); ++i) {
+        float total = 0.0f;
+        for (int k = 0; k < elementSize; ++k) {
+            const size_t s = i * elementSize + k;
+            indices[s] = int((i + 3 * k) % gf.size());
+            weights[s] = i % 11 == size_t(k) ? 0.0f : unit(rng);
+            total += weights[s];
+        }
+        // Normalized, under one and over one.
+        const float scale = i % 3 == 0   ? 1.0f / total
+                            : i % 3 == 1 ? 0.6f
+                                         : 1.0f;
+        for (int k = 0; k < elementSize; ++k)
+            weights[i * elementSize + k] *= scale;
+    }
+    const auto indexArray = ToArray(indices);
+    const auto weightArray = ToArray(weights);
+
+    RigExecSkinLayout layout;
+    layout.transforms = gf.data();
+    layout.transformCount = gf.size();
+    layout.indices = indices.data();
+    layout.weights = weights.data();
+    layout.indexCount = indices.size();
+    layout.elementSize = elementSize;
+    layout.pointCount = points.size();
+    CHECK(layout.Validate());
+
+    for (const SkinMethod method :
+         {SkinMethod::ClassicLinear, SkinMethod::DualQuaternion}) {
+        SkinPayload payload;
+        payload.method = method;
+        payload.elementSize = elementSize;
+        Node node(
+            Skin(),
+            {&SkinPoints(), &SkinTransforms(), &SkinIndices(), &SkinWeights()},
+            SkinOut(), &payload);
+        std::vector<GfVec3f> expected(points.size());
+        if (method == SkinMethod::ClassicLinear)
+            RigExecApplyLinearBlendSkinSimd(points.data(), expected.data(),
+                                            layout);
+        else
+            CHECK(RigExecApplyDualQuatSkin(points.data(), expected.data(),
+                                           layout));
+        Points actual;
+        CHECK(node.Run({&in, &transforms, &indexArray, &weightArray}, &actual));
+        if (!SameBits(expected, actual)) {
+            std::printf("skin method %d differs\n", int(method));
+            CHECK(false);
+        }
+    }
+
+    // Unusable layouts are refused.
+    SkinPayload payload;
+    payload.elementSize = elementSize;
+    Node node(
+        Skin(),
+        {&SkinPoints(), &SkinTransforms(), &SkinIndices(), &SkinWeights()},
+        SkinOut(), &payload);
+    Points actual;
+    std::vector<int> outside = indices;
+    outside[5] = int(gf.size());
+    const auto outsideArray = ToArray(outside);
+    CHECK(!node.Run({&in, &transforms, &outsideArray, &weightArray}, &actual));
+    std::vector<float> negative = weights;
+    negative[5] = -0.1f;
+    const auto negativeArray = ToArray(negative);
+    CHECK(!node.Run({&in, &transforms, &indexArray, &negativeArray}, &actual));
+    const RigExecArray<float> shortArray(weights.data(), weights.size() - 1);
+    CHECK(!node.Run({&in, &transforms, &indexArray, &shortArray}, &actual));
+    std::vector<rigExecStd::Mat4d> projective = mats;
+    projective[1][0][3] = 0.5;
+    const auto projectiveArray = ToArray(projective);
+    CHECK(
+        !node.Run({&in, &projectiveArray, &indexArray, &weightArray}, &actual));
+    payload.elementSize = 0;
+    Node empty(
+        Skin(),
+        {&SkinPoints(), &SkinTransforms(), &SkinIndices(), &SkinWeights()},
+        SkinOut(), &payload);
+    CHECK(!empty.Run({&in, &transforms, &indexArray, &weightArray}, &actual));
+}
+
 } // namespace
 
 int
@@ -770,6 +885,7 @@ main()
     TestWrinkle();
     TestSurfaceProject();
     TestMatrixDeform();
+    TestSkin();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;
