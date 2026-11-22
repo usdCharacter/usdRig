@@ -19,6 +19,7 @@ void RegisterMatrixDeformOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterSkinOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterBlendShapeOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterDerivedOps(rigExec::RigExecOpRegistrar &registrar);
+void RegisterWireOps(rigExec::RigExecOpRegistrar &registrar);
 
 } // namespace rigExecOps
 

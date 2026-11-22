@@ -17,6 +17,7 @@
 #include "rigExecOps/deform/pointOps.h"
 #include "rigExecOps/deform/skinOp.h"
 #include "rigExecOps/deform/surfaceProjectOp.h"
+#include "rigExecOps/deform/wireOp.h"
 #include "rigExecOps/deform/wrinkleOp.h"
 
 #include "pxr/base/gf/rotation.h"
@@ -1210,6 +1211,116 @@ TestRecomputeExtent()
     CHECK(error.find("no points") != std::string::npos);
 }
 
+void
+TestWire()
+{
+    using namespace rigExecOps;
+    Grid grid(9, 17);
+    // A clamped cubic along the grid's diagonal, and a posed copy.
+    std::vector<GfVec3f> rest, posed;
+    for (int i = 0; i < 6; ++i) {
+        rest.emplace_back(1.6f * i, 1.5f * i, 0.4f * (i % 2));
+        posed.push_back(rest.back() +
+                        GfVec3f(0.3f * i, -0.2f * (i % 3), 0.5f + 0.1f * i));
+    }
+    posed[2] = rest[2]; // a control point at rest moves nothing
+    WirePayload payload;
+    payload.order = 4;
+    payload.knots = {0, 0, 0, 0, 1, 2, 3, 3, 3, 3};
+    const RigExecNurbsCurve restCurve{&rest, payload.order, &payload.knots};
+    const RigExecNurbsCurve posedCurve{&posed, payload.order, &payload.knots};
+    const std::vector<GfVec2f> bind = RigExecBindWire(grid.points, restCurve);
+
+    const Points in = ToStd(grid.points);
+    const Points restArray = ToStd(rest);
+    const Points posedArray = ToStd(posed);
+    RigExecArray<rigExecStd::Vec2f> bindArray(bind.size());
+    for (size_t i = 0; i < bind.size(); ++i)
+        bindArray[i] = rigExecStd::Vec2f(bind[i][0], bind[i][1]);
+    std::vector<float> envelope(grid.points.size());
+    for (size_t i = 0; i < envelope.size(); ++i)
+        envelope[i] = i % 6 == 0 ? 0.0f : 0.09f * (i % 13);
+    const auto envelopeArray = ToArray(envelope);
+
+    for (const double dropoff : {0.0, 1.5, 4.0}) {
+        payload.dropoffDistance = dropoff;
+        Node dense(Wire(),
+                   {&WirePoints(), &WireRestCurve(), &WireCurve(),
+                    &WireBindCoords(), &WireEnvelope()},
+                   WireOut(), &payload);
+        std::vector<GfVec3f> expected = grid.points;
+        CHECK(RigExecApplyWire(&expected, restCurve, posedCurve, bind.data(),
+                               bind.size(), dropoff, 0, expected.size()));
+        Blend(grid.points, envelope, &expected);
+        Points actual;
+        CHECK(dense.Run(
+            {&in, &restArray, &posedArray, &bindArray, &envelopeArray},
+            &actual));
+        CHECK(SameBits(expected, actual));
+
+        // A sparse field moves only the named points, by their weights,
+        // with binds one per point or one per index.
+        Node sparse(Wire(),
+                    {&WirePoints(), &WireRestCurve(), &WireCurve(),
+                     &WireBindCoords(), &WireWeightIndices(), &WireWeights()},
+                    WireOut(), &payload);
+        std::vector<int> indices;
+        std::vector<float> weights;
+        std::vector<GfVec2f> sparseBind;
+        for (int i = 1; i < int(grid.points.size()); i += 3) {
+            indices.push_back(i);
+            weights.push_back(0.2f + 0.07f * (i % 9));
+            sparseBind.push_back(bind[size_t(i)]);
+        }
+        const auto indexArray = ToArray(indices);
+        const auto weightArray = ToArray(weights);
+        for (const bool perIndex : {false, true}) {
+            const std::vector<GfVec2f> &b = perIndex ? sparseBind : bind;
+            RigExecWireBasis basis;
+            CHECK(RigExecBuildWireBasis(b.data(), b.size(), grid.points.size(),
+                                        indices, payload.order, payload.knots,
+                                        rest.size(), dropoff, &basis));
+            expected = grid.points;
+            CHECK(RigExecApplyWireBasis(&expected, basis, indices, weights,
+                                        rest, posed));
+            RigExecArray<rigExecStd::Vec2f> bArray(b.size());
+            for (size_t i = 0; i < b.size(); ++i)
+                bArray[i] = rigExecStd::Vec2f(b[i][0], b[i][1]);
+            CHECK(sparse.Run({&in, &restArray, &posedArray, &bArray,
+                              &indexArray, &weightArray},
+                             &actual));
+            CHECK(SameBits(expected, actual));
+        }
+    }
+
+    // Curves that disagree, binds of another length and both weightings at
+    // once are refused.
+    Node all(Wire(),
+             {&WirePoints(), &WireRestCurve(), &WireCurve(), &WireBindCoords(),
+              &WireEnvelope(), &WireWeightIndices(), &WireWeights()},
+             WireOut(), &payload);
+    Node dense(
+        Wire(),
+        {&WirePoints(), &WireRestCurve(), &WireCurve(), &WireBindCoords()},
+        WireOut(), &payload);
+    const Points shortCurve = ToStd({rest[0], rest[1], rest[2], rest[3]});
+    const RigExecArray<rigExecStd::Vec2f> shortBind(3);
+    const RigExecArray<int> oneIndex(1);
+    const RigExecArray<float> oneWeight(1);
+    Points actual;
+    std::string error;
+    CHECK(!dense.Run({&in, &restArray, &shortCurve, &bindArray}, &actual,
+                     &error));
+    CHECK(error.find("fit") != std::string::npos);
+    CHECK(!dense.Run({&in, &restArray, &posedArray, &shortBind}, &actual,
+                     &error));
+    CHECK(error.find("fit") != std::string::npos);
+    CHECK(!all.Run({&in, &restArray, &posedArray, &bindArray, &envelopeArray,
+                    &oneIndex, &oneWeight},
+                   &actual, &error));
+    CHECK(error.find("not both") != std::string::npos);
+}
+
 int
 main()
 {
@@ -1230,6 +1341,7 @@ main()
     TestBlendShape();
     TestRecomputeNormals();
     TestRecomputeExtent();
+    TestWire();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;
